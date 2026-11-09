@@ -52,19 +52,22 @@ function handlerEntry(home: string): string {
   const stdio = pathToFileURL(req.resolve('@modelcontextprotocol/sdk/server/stdio.js')).href;
   const mcp = pathToFileURL(fileURLToPath(new URL('../../dist/index.js', import.meta.url))).href;
   const core = new URL('../../../core/dist/index.js', import.meta.url).href;
+  const store = new URL('../../../store-sqlite/dist/index.js', import.meta.url).href;
   const entry = join(home, 'handler-entry.mjs');
   writeFileSync(
     entry,
     [
       `import { StdioServerTransport } from '${stdio}';`,
-      `import { createRealmMcpServer, JsonTraceBufferStore } from '${mcp}';`,
-      `import { createDefaultRegistry, JsonFileStore, JsonWorkflowStore, JsonFileFailedAttemptStore } from '${core}';`,
+      `import { join } from 'node:path';`,
+      `import { createRealmMcpServer } from '${mcp}';`,
+      `import { createDefaultRegistry } from '${core}';`,
+      `import { openRealmHome } from '${store}';`,
       `const registry = createDefaultRegistry();`,
       `registry.register('handler', 'stamp', { id: 'stamp', execute: async () => ({ data: { stamped: true } }) });`,
       // #616 PR-2a (ii-b): an embedding host passes the four stores (the library has no default);
-      // here the file stores on this child's HOME, as the README's example opens them.
-      `const runStore = new JsonFileStore();`,
-      `const server = createRealmMcpServer({ registry, runStore, workflowStore: new JsonWorkflowStore(), traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore), failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath) });`,
+      // #616 PR-2c c10b-2: here the SQLite home of this child's HOME, through the store package.
+      `const home = await openRealmHome({ home: join(process.env.HOME, '.realm') });`,
+      `const server = createRealmMcpServer({ registry, runStore: home.runStore, workflowStore: home.workflowStore, traceBufferStore: home.traceBufferStore, failedAttemptStore: home.failedAttemptStore });`,
       `await server.connect(new StdioServerTransport());`,
     ].join('\n'),
   );

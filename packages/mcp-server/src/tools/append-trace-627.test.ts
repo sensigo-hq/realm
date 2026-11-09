@@ -12,7 +12,6 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: whether
 // the reply's hint and next_actions name an answer way, and the hint — never a token.
 import { describe, it, expect, afterEach } from 'vitest';
-import { join } from 'node:path';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, loadWorkflowFromString } from '@sensigo/realm';
 import type { WorkflowDefinition, WorkflowRegistrar } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -40,8 +39,8 @@ const YAML = [
 /** Names an answer way, in a reply's hint or next_actions (correction 2 adds the CLI command). */
 const ANSWER_WAY = /submit_human_response|call_with|claim_token|present_question|run respond/;
 /** The handing-off doors' sentence for a register remedy (correction 2, 3.1). */
-const WAITS_ONCE_REPAIRED =
-  'Once the copy is repaired, the question waits for an answer outside this conversation.';
+const WAITS_ONCE_REGISTERED =
+  'Once it is registered, the question waits for an answer outside this conversation.';
 /** A damaged registered copy: it has no steps, so Realm cannot use it. */
 const DAMAGED = {
   id: 'at627',
@@ -88,7 +87,6 @@ async function atGate(gateAnswers: Door, forms = false) {
   };
   const gateId = (await runStore.get(started.run_id)).record.pending_gate!.gate_id;
   return {
-    copy: join(h.path, 'workflows', 'at627.json'),
     workflowStore,
     runId: started.run_id,
     gateId,
@@ -137,7 +135,7 @@ describe('#627 W correction 1 (A2) — append_trace’s error reply names no ans
     expect({
       status: parsed['status'],
       namesAnswer: ANSWER_WAY.test(hint) || ANSWER_WAY.test(next),
-      waitsOutside: hint.includes(WAITS_ONCE_REPAIRED),
+      waitsOutside: hint.includes(WAITS_ONCE_REGISTERED),
     }).toEqual({ status: 'error', namesAnswer: false, waitsOutside: true });
   });
 });
@@ -174,7 +172,7 @@ describe('#627 W correction 2 (3.1, MCP F7) — a copy Realm cannot read: the wa
       expect({
         traceNamesAnswer: ANSWER_WAY.test(trace.hint) || ANSWER_WAY.test(trace.next),
         answerNamesAnswer: ANSWER_WAY.test(answer.hint) || ANSWER_WAY.test(answer.next),
-        waitsOnceRepaired: trace.hint.includes(WAITS_ONCE_REPAIRED),
+        waitsOnceRepaired: trace.hint.includes(WAITS_ONCE_REGISTERED),
       }).toEqual({
         traceNamesAnswer: false,
         answerNamesAnswer: false,
@@ -196,7 +194,7 @@ describe('#627 W correction 2 (3.1, MCP F7) — a copy Realm cannot read: the wa
       words: register?.human_readable,
       againFrom: register?.human_readable.includes('again from') ?? true,
     }).toEqual({
-      words: `Workflow 'at627''s registered copy (${s.copy}) cannot be used; an operator repairs it, outside this conversation. ${WAITS_ONCE_REPAIRED}`,
+      words: `An operator registers workflow 'at627' again, outside this conversation. ${WAITS_ONCE_REGISTERED}`,
       againFrom: false,
     });
   });

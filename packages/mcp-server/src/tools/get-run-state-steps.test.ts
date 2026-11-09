@@ -20,7 +20,7 @@ import { handleGetRunState } from './get-run-state.js';
 import { loadPriceSource } from '../price-source.js';
 import { createRealmMcpServer } from '../server.js';
 import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
-import { makeTempHome } from '../test-support/temp-home.js';
+import { makeTempHome, seedRun } from '../test-support/temp-home.js';
 
 function makeStore(run: RunRecord): RunStore {
   return declared({
@@ -413,7 +413,7 @@ describe('#600 caching PR P (G12) — get_run_state money', () => {
   it("createRealmMcpServer with no provider: the installed list only, every figure saying 'no economics file is configured on this server'", async () => {
     const h = await makeTempHome();
     const record = run('claude-sonnet-5-5', { provider: 'anthropic' });
-    await h.stores.runStore.save(record);
+    await seedRun(h.stores.runStore, record);
     const server = createRealmMcpServer({
       ...h.stores,
       workflowStore: workflowStore(),

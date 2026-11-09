@@ -33,7 +33,8 @@ import { handleGetRunState } from './get-run-state.js';
 import { handleAbandonRun } from './abandon-run.js';
 import { generateProtocol } from '../protocol/generator.js';
 import { createRealmMcpServer } from '../server.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, seedRun, type TempHome } from '../test-support/temp-home.js';
+import { randomUUID } from 'node:crypto';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — the home is a test location: its
  *  clock file (first set to the host's reading) sits in the home's own folder, and `setClockOf`
@@ -561,13 +562,19 @@ describe('the answer as data — an answer-only step, a planted name, a long nam
       { runStore, workflowStore },
     );
     const { record: run } = await runStore.get(o.runId);
-    await runStore.update({
+    // #616 PR-2c c10b-2: stored evidence cannot change; the planted shape is saved as a run of its own.
+    const plantedId = randomUUID();
+    await seedRun(runStore, {
       ...run,
+      id: plantedId,
       evidence: run.evidence
         .filter((e) => withExecution || e.kind === 'gate_response')
         .map((e) => (e.kind === 'gate_response' ? { ...e, ...extra } : e)),
     });
-    return handleGetRunState({ run_id: o.runId, include_steps: true }, { runStore, workflowStore });
+    return handleGetRunState(
+      { run_id: plantedId, include_steps: true },
+      { runStore, workflowStore },
+    );
   }
 
   it('a step with an answer and NO execution entry still has a view: attempts [] and the answer', async () => {
