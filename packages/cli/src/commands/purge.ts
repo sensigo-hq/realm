@@ -166,10 +166,10 @@ export interface PurgeRunsResult {
   /**
    * #616 PR-2c c9: set only when a SQLite home's purge deleted the runs (`dryRun` false, a `purge`
    * given): the bytes the store file shrank by on disk (a floor: pages still in the write-ahead log
-   * do not show), and whether its checkpoint answered busy (another process was using the file, so
-   * the log was not reset).
+   * do not show), whether its checkpoint answered busy (another process was using the file, so the
+   * log was not reset), and (c10a-3b-ii) why the free pages were not all returned, when they were not.
    */
-  store_file?: { reclaimed_bytes: number; checkpoint_busy: boolean };
+  store_file?: { reclaimed_bytes: number; checkpoint_busy: boolean; pages_not_returned?: string };
 }
 
 /**
@@ -492,11 +492,27 @@ async function purgeThroughHome(
     routeRefusal(result, runId, report.stopped?.error);
   }
   const checkpoint = report.checkpoint;
+  const vacuumError = report.vacuum?.error;
   result.store_file = {
     reclaimed_bytes: report.file_bytes_reclaimed,
     checkpoint_busy: checkpoint !== undefined && 'busy' in checkpoint && checkpoint.busy !== 0,
+    ...(vacuumError === undefined ? {} : { pages_not_returned: vacuumReason(vacuumError) }),
   };
   return result;
+}
+
+/**
+ * Why the free pages were not all returned, in the purge line's words (#616 PR-2c c10a-3b-ii). The
+ * store's own messages say "Nothing was written" and name paths; neither is right here, the deletes
+ * stood. A plain error is SQLite's own message, without its trailing period.
+ */
+function vacuumReason(error: unknown): string {
+  if (error instanceof WorkflowError) {
+    if (error.code === 'STATE_RUN_BUSY') return 'another process was using the store';
+    if (error.code === 'STATE_STORE_FULL') return 'the disk is full';
+    return error.code;
+  }
+  return (error instanceof Error ? error.message : String(error)).replace(/\.$/, '');
 }
 
 /** A refused or failed run of a SQLite home's purge: `STATE_RUN_BUSY` → `blocked` with its reason, else `failed`. */
@@ -653,6 +669,12 @@ export function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void
     `Purged ${result.purged.length}/${result.selected.length} run(s) (${formatBytes(freedBytes)} freed, store-reported${shrank}). ` +
       `${result.already_purged.length} already gone, ${result.blocked.length} blocked, ${result.failed.length} failed.`,
   );
+  if (storeFile?.pages_not_returned !== undefined) {
+    console.log(
+      `realm.db's free pages were not all returned: ${storeFile.pages_not_returned}. ` +
+        'The next purge that deletes a run returns them.',
+    );
+  }
   if (storeFile !== undefined && result.purged.length > 0) {
     console.log('Copies of the deleted runs in backups made before this purge are not touched.');
   }

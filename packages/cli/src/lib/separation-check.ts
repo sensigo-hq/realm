@@ -39,6 +39,7 @@ import {
   switchPathsCondition,
   realmHomePath,
 } from '@sensigo/realm';
+import { readRegisteredWorkflows, type RegisteredWorkflowsRead } from '@sensigo/realm-store-sqlite';
 import { PLAIN, type RenderCtx } from '../output/writer.js';
 import {
   lookups,
@@ -68,6 +69,9 @@ export interface SeparationProbes extends SwitchProbes {
   userName: (uid: number) => string | undefined;
   /** A path's own owner and mode, a link's not its target's (#819 correction 1, SEP-00 (g)). */
   lstat: (path: string) => { uid: number; mode: number } | { error: string };
+  /** The registered workflows of the store at `home`, read without writing to the store file
+   *  (#616 PR-2c c10a-3b-ii): the store package's `readRegisteredWorkflows`, or a cell's fake. */
+  registeredWorkflows: (home: string) => RegisteredWorkflowsRead | Promise<RegisteredWorkflowsRead>;
 }
 
 const tryAccess = (path: string, mode: number): boolean => {
@@ -143,6 +147,7 @@ export function systemProbes(): SeparationProbes {
         return undefined;
       }
     },
+    registeredWorkflows: (home) => readRegisteredWorkflows({ home }),
     realPath: (path) => {
       try {
         return realpathSync(path);
@@ -198,14 +203,16 @@ function storeReach(
       detail: 'this login owns the store, so it can change who may open it',
     };
   }
-  const runs = join(store, 'runs');
-  const workflows = join(store, 'workflows');
-  const writable = [store, runs, workflows].filter((p) => probes.exists(p) && probes.canWrite(p));
+  // #616 PR-2c c10a-3b-ii: the SQLite home is the folder, the store file and its two side files. The
+  // old JSON store's folders are fence files now and are never looked at.
+  const file = join(store, 'realm.db');
+  const writable = [store, file, `${file}-wal`, `${file}-shm`].filter(
+    (p) => probes.exists(p) && probes.canWrite(p),
+  );
   if (writable.length > 0)
     return { basis: 'measured', answer: 'yes', detail: `${writable[0]} is writable` };
-  const readable = [runs, workflows].filter((p) => probes.exists(p) && probes.canRead(p));
-  if (readable.length > 0)
-    return { basis: 'measured', answer: 'yes', detail: `${readable[0]} can be read` };
+  if (probes.exists(file) && probes.canRead(file))
+    return { basis: 'measured', answer: 'yes', detail: `${file} can be read` };
   return { basis: 'measured', answer: 'no' };
 }
 
@@ -335,41 +342,24 @@ function trustRootFiles(probes: SeparationProbes, roots: readonly string[]): str
  * What the registered workflows tell the check, where the store can be read: the deployment roots
  * they name (`trust_root`), and each one's `extensions:` files resolved against its stored
  * `source_dir` (correction 1 D3, as the extension loader resolves them). `readable: false` when the
- * workflows' folder cannot be listed (the separate-user setup, where it is the store of another user).
+ * store could not be opened read-only (the separate-user setup, where it is the store of another
+ * user; #616 PR-2c c10a-3b-ii: also a store this login can read and whose log it cannot open).
  */
-function storedDefinitions(
+async function storedDefinitions(
   probes: SeparationProbes,
   store: string,
-): { roots: string[]; extensions: string[]; readable: boolean } {
-  const dir = join(store, 'workflows');
-  const names = probes.list(dir);
+): Promise<{ roots: string[]; extensions: string[]; readable: boolean }> {
+  const read = await probes.registeredWorkflows(store);
   const roots: string[] = [];
   const extensions: string[] = [];
-  for (const name of names ?? []) {
-    if (!name.endsWith('.json')) continue;
-    const text = probes.readText(join(dir, name));
-    if (text === undefined) continue;
-    try {
-      const def = JSON.parse(text) as {
-        trust_root?: unknown;
-        source_dir?: unknown;
-        extensions?: unknown;
-      };
-      if (typeof def.trust_root === 'string' && def.trust_root !== '') roots.push(def.trust_root);
-      const declared =
-        typeof def.extensions === 'string'
-          ? [def.extensions]
-          : Array.isArray(def.extensions)
-            ? def.extensions.filter((e): e is string => typeof e === 'string')
-            : [];
-      if (typeof def.source_dir === 'string') {
-        for (const e of declared) extensions.push(resolve(def.source_dir, e));
-      }
-    } catch {
-      // a copy that is not JSON names no root and no extension
+  if (read.state === 'ok') {
+    for (const workflow of read.workflows) {
+      if (workflow.trust_root !== undefined) roots.push(workflow.trust_root);
+      if (workflow.source_dir === undefined) continue;
+      for (const e of workflow.extensions ?? []) extensions.push(resolve(workflow.source_dir, e));
     }
   }
-  return { roots, extensions, readable: names !== undefined };
+  return { roots, extensions, readable: read.state !== 'unreadable' };
 }
 
 /** The sticky bit (`o+t`) of a folder's mode. */
@@ -418,9 +408,10 @@ function chainChangeable(probes: SeparationProbes, path: string): boolean {
  * Condition 4: can this login change a file Realm executes? The deployment roots' `realm.yaml` and
  * its module references, the `--extensions-module` file, the registered workflows' extension files,
  * the Node binary and Realm's own package folder (correction 1 D3, the design's M2) — each, or a
- * folder above it (correction 2, 5.6). `unread`: the registered workflows could not be listed, so
- * their extension files were not checked. With no realm.yaml found, the executed files and the
- * package are still checked (correction 2, 5.7): one changeable is "yes"; none is "unknown".
+ * folder above it (correction 2, 5.6). `unread`: the store could not be opened read-only, so the
+ * registered workflows' extension files were not checked. With no realm.yaml found, the executed
+ * files and the package are still checked (correction 2, 5.7): one changeable is "yes"; none is
+ * "unknown".
  */
 function trustRootWritable(
   probes: SeparationProbes,
@@ -429,7 +420,7 @@ function trustRootWritable(
   unread: boolean,
 ): ConditionReading {
   const notRead = unread
-    ? "; the registered workflows' extension files were not read (the store cannot be read)"
+    ? "; the registered workflows' extension files were not read (the store could not be opened read-only)"
     : '';
   const manifests = trustRootFiles(probes, roots);
   const files = [...manifests, ...executed];
@@ -592,14 +583,11 @@ export async function measureSeparation(args: {
         : ownsStore
           ? 'own_store'
           : 'owner_unread';
-  const stored = storedDefinitions(probes, store);
+  const stored = await storedDefinitions(probes, store);
   // Correction 1 (D3): the registered workflows' extension files are "not read" only where some may
-  // exist — a store this login cannot open, or a workflows folder it cannot list. A store that is
-  // not there, or one with no workflows folder, has none to read. Correction 2 (5.1): "no workflows
-  // folder" only when its stat says ENOENT — `existsSync` answers false on EACCES too.
-  const folder = probes.stat(join(store, 'workflows'));
-  const noFolder = 'error' in folder && folder.error === 'ENOENT';
-  const unread = !stored.readable && state !== 'missing' && !(state === 'present' && noFolder);
+  // exist. #616 PR-2c c10a-3b-ii: the store's read says which — `unreadable` for a store this login
+  // cannot open read-only, `no_store` for a home with no `realm.db`, which has none to read.
+  const unread = !stored.readable;
   const executed = [
     ...(args.extensionsModule !== undefined ? [resolve(args.extensionsModule)] : []),
     ...stored.extensions,
@@ -624,7 +612,7 @@ export async function measureSeparation(args: {
     time_basis: {
       basis: 'measured',
       answer: 'fact',
-      detail: "this machine's clock (the JSON store keeps no clock of its own)",
+      detail: "this machine's clock (the store keeps no clock of its own)",
     },
     agent_sandbox: agentSandbox(probes),
     economics_writable: economicsWritable(probes, args.roots),
@@ -663,7 +651,8 @@ export type CheckEvidence = SeparationEvidence & {
    *  (correction 2, 5.3). */
   service_user_from?: string;
   door: 'mcp' | 'serve';
-  /** The registered workflows could not be listed, so their extension files were not checked. */
+  /** The store could not be opened read-only, so the registered workflows' extension files were not
+   *  checked. */
   extensions_unread: boolean;
   /** #819 follow-up 2 (walk --check wording): the conditions whose unknown rests on nothing read
    *  now — another answer host (never looked at), the service user when none is named (no way is
@@ -871,7 +860,7 @@ export function separationClaim(
       'every Realm server on this machine starts with --gate-answers withheld',
       ...(e.extensions_unread === true
         ? [
-            "no registered workflow's extension file (not read: the store cannot be read) can be changed by this login",
+            "no registered workflow's extension file (not read: the store could not be opened read-only) can be changed by this login",
           ]
         : []),
     ];

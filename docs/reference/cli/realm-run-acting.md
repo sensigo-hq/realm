@@ -650,6 +650,8 @@ Copies of the deleted runs in backups made before this purge are not touched.
 
 The bytes freed are what the store reports for the deleted runs; `realm.db shrank by` is what the file gave back on disk — a floor: SQLite gives back whole pages, and only once nothing is left on them — a page that still holds other rows stays, and so does each table's first page, so a few small runs often give back nothing — and pages still in the write-ahead log do not show in it yet. When another process was using the log, one more line says `realm.db's log was not reset: another process was using it. The space is returned at a later checkpoint; the deleted text may stay readable in realm.db-wal until a later purge resets the log.`
 
+When the store's free pages could not all be returned, one more line says so: `realm.db's free pages were not all returned: <reason>. The next purge that deletes a run returns them.`
+
 A run that changed after `purge` selected it is reported `blocked` and kept whole — a run that was resumed with the sentence that it is no longer terminal, and any other change, such as a cleanup step that completed, as `changed_since_selected` (added after version 0.48.0). A blocked run keeps every row: a run that owes a cleanup step is blocked as `drain_pending` with its trace entries and refused answers kept, and a dry run lists it among the runs that would be purged.
 
 The line about `realm run resume` counts the selected runs that had a failed step `resume` could have made runnable again: a failed cleanup step is not counted, since `resume --from` refuses it. A run whose workflow cannot be read is counted when it has any failed step: `resume` refuses it until the workflow is registered again, and only the workflow tells a cleanup step from another.

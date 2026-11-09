@@ -61,14 +61,7 @@ function machine(
   present: string[] = [],
   owners: Record<string, number> = { [STORE]: REALM_UID },
 ): SeparationProbes {
-  const exists = new Set([
-    STORE,
-    `${STORE}/runs`,
-    `${STORE}/workflows`,
-    ...Object.keys(files),
-    ...present,
-    GETENT,
-  ]);
+  const exists = new Set([STORE, `${STORE}/realm.db`, ...Object.keys(files), ...present, GETENT]);
   const base: SeparationProbes = {
     login: () => 'agent',
     uid: () => ME,
@@ -86,6 +79,7 @@ function machine(
     exists: (p) => exists.has(p),
     readText: (p) => files[p],
     list: () => [],
+    registeredWorkflows: () => ({ state: 'ok', workflows: [] }),
     connect: async () => false,
     // #790: the switch-path readers' probes.
     realPath: () => undefined,
@@ -127,6 +121,9 @@ const CANNOT_RECORD =
 const MAY = 'An agent running as agent may still be able to answer a gate:';
 const CONDITION_4 =
   'This login can change files Realm executes (realm.yaml, extension modules, and the Node binary and Realm package this check runs from)';
+/** #616 PR-2c c10a-3b-ii: what the store's read answers (its own shapes, c10a-3b-i). */
+const UNREADABLE = () => ({ state: 'unreadable' as const, code: 'EACCES' });
+const NO_STORE = () => ({ state: 'no_store' as const });
 
 describe('#627 W — the separation check (cell 26)', () => {
   it('the positive cell: separate user, conditions 1–4 measured no, --gate-answers withheld on the line → "cannot record", with its proviso', async () => {
@@ -149,7 +146,7 @@ describe('#627 W — the separation check (cell 26)', () => {
     // (a) red per cell when its conjunct is skipped; (b) prints each claim.
     expect({
       sameLogin: await claim(machine({}, PROJECT_FILES, [], {})),
-      store: await claim(machine({ canWrite: (p) => p === `${STORE}/runs` })),
+      store: await claim(machine({ canWrite: (p) => p === `${STORE}/realm.db` })),
       become: await claim(machine({}, PROJECT_FILES, ['/usr/bin/su'])),
       docker: await claim(
         machine({ connect: async () => true }, PROJECT_FILES, ['/var/run/docker.sock']),
@@ -205,7 +202,7 @@ describe('#627 W — the separation check (cell 26)', () => {
     const yes = await measure(
       machine(
         {
-          canWrite: (p) => p === `${STORE}/runs` || p === PROJECT,
+          canWrite: (p) => p === `${STORE}/realm.db` || p === PROJECT,
           connect: async () => true,
         },
         // Correction 1 (D4): the agent's app settings are read from the login's own home, never $HOME.
@@ -236,7 +233,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       sandbox: [conditionLine('agent_sandbox', yes), conditionLine('agent_sandbox', no)],
     }).toEqual({
       store: [
-        `This login can write Realm's store or open its files: yes (measured) — ${STORE}/runs is writable.`,
+        `This login can write Realm's store or open its files: yes (measured) — ${STORE}/realm.db is writable.`,
         "This login can write Realm's store or open its files: no (measured).",
         `This login can write Realm's store or open its files: unknown (Realm's store was not found at ${STORE}; observed now).`,
       ],
@@ -278,7 +275,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       `  ${CONDITION_4}: no (measured) — 3 files and folders checked.`,
       // #819 follow-up 2 re-pin (walk --check wording): nothing is read for it — was "unknown (…; observed now)"
       '  Another Realm server or CLI that takes answers uses this store: not measured (another Realm server or CLI could use this store, and one look cannot rule it out).',
-      "  The store's time basis: this machine's clock (the JSON store keeps no clock of its own) (fact).",
+      "  The store's time basis: this machine's clock (the store keeps no clock of its own) (fact).",
       "  The agent's app runs it in a sandbox: no (read from two files) — only /home/agent/.claude/settings.json and /home/agent/.codex/config.toml were looked at.",
       // #819 follow-up 2 re-pin (walk --check wording): it answers its own question — was "no
       // runner.cache.economics is set (fact)"
@@ -314,7 +311,7 @@ describe('#627 W — the separation check (cell 26)', () => {
           : p === HOME
             ? { uid: REALM_UID, mode: 0o40755 }
             : { error: 'ENOENT' },
-      list: () => undefined,
+      registeredWorkflows: UNREADABLE,
     });
     // (a) red when a missing store or an owned unreachable one is read as the same login, or an
     //     EACCES store as absent; (b) prints each header and the two store lines.
@@ -334,7 +331,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       },
       // Correction 2 (5.3): the owner read from the folder above the store is labelled so.
       denied: {
-        header: `Separation: separate user — An agent running as agent cannot record a gate answer through this server, the terminal or Realm's files, provided no program Realm runs as realm, read from the owner of ${HOME}, can run code for it, Realm's server runs this Node and this Realm package, every Realm server on this machine starts with --gate-answers withheld, and no registered workflow's extension file (not read: the store cannot be read) can be changed by this login.`,
+        header: `Separation: separate user — An agent running as agent cannot record a gate answer through this server, the terminal or Realm's files, provided no program Realm runs as realm, read from the owner of ${HOME}, can run code for it, Realm's server runs this Node and this Realm package, every Realm server on this machine starts with --gate-answers withheld, and no registered workflow's extension file (not read: the store could not be opened read-only) can be changed by this login.`,
         store: `  This login can write Realm's store or open its files: no (measured) — ${STORE}: permission denied.`,
         become: `  This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password being asked: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).`,
       },
@@ -372,16 +369,12 @@ describe('#627 W — the separation check (cell 26)', () => {
       machine(
         {
           canWrite: (p) => p === ext,
-          list: (p) => (p === `${STORE}/workflows` ? ['wf.json'] : []),
-        },
-        {
-          ...PROJECT_FILES,
-          [`${STORE}/workflows/wf.json`]: JSON.stringify({
-            id: 'wf',
-            source_dir: '/srv/wf-src',
-            extensions: './ext/tools.mjs',
+          registeredWorkflows: () => ({
+            state: 'ok',
+            workflows: [{ id: 'wf', source_dir: '/srv/wf-src', extensions: ['./ext/tools.mjs'] }],
           }),
         },
+        PROJECT_FILES,
         [ext],
       ),
     );
@@ -391,32 +384,23 @@ describe('#627 W — the separation check (cell 26)', () => {
     );
   });
 
-  it('correction 1 (D3): the extension files are "not read" only where some may exist — per conjunct: a missing store, a store with no workflows folder, an unlistable folder, a store this login cannot open', async () => {
+  it('correction 1 (D3): the extension files are "not read" only where some may exist — per conjunct: a missing store, a home with no realm.db, a store that could not be opened read-only, a store this login cannot open', async () => {
     const line = async (over: Partial<SeparationProbes>) =>
       conditionLine('trust_root_writable', await measure(machine(over)));
     const CHECKED = '3 files and folders checked.';
     const NOT_READ =
-      "the registered workflows' extension files were not read (the store cannot be read)";
+      "the registered workflows' extension files were not read (the store could not be opened read-only)";
     const tail = (l: string) =>
       l.endsWith(CHECKED) ? 'checked' : l.includes(NOT_READ) ? 'not read' : l;
-    // (a) red per cell when its conjunct is dropped — a missing store, or a store with no workflows
-    //     folder, said to hold unread files; an unlistable folder, or a store this login cannot open,
-    //     not said so; (b) prints each line's tail.
+    // (a) red per cell when its conjunct is dropped — a missing store, or a home with no realm.db,
+    //     said to hold unread files; a store that could not be opened read-only, or a store this
+    //     login cannot open, not said so; (b) prints each line's tail.
     expect({
-      missing: tail(await line({ stat: () => ({ error: 'ENOENT' }), list: () => undefined })),
-      // Correction 2 (5.1): the folder's own stat says ENOENT.
-      noFolder: tail(
-        await line({
-          stat: (p) =>
-            p === `${STORE}/workflows`
-              ? { error: 'ENOENT' }
-              : p === STORE
-                ? { uid: REALM_UID, mode: 0o40755 }
-                : { uid: ME, mode: 0o40755 },
-          list: () => undefined,
-        }),
+      missing: tail(
+        await line({ stat: () => ({ error: 'ENOENT' }), registeredWorkflows: NO_STORE }),
       ),
-      unlistable: tail(await line({ list: (p) => (p === `${STORE}/workflows` ? undefined : []) })),
+      noRealmDb: tail(await line({ registeredWorkflows: NO_STORE })),
+      unlistable: tail(await line({ registeredWorkflows: UNREADABLE })),
       denied: tail(
         await line({
           stat: (p) =>
@@ -425,12 +409,12 @@ describe('#627 W — the separation check (cell 26)', () => {
               : p === HOME
                 ? { uid: REALM_UID, mode: 0o40755 }
                 : { error: 'ENOENT' },
-          list: () => undefined,
+          registeredWorkflows: UNREADABLE,
         }),
       ),
     }).toEqual({
       missing: 'checked',
-      noFolder: 'checked',
+      noRealmDb: 'checked',
       unlistable: 'not read',
       denied: 'not read',
     });
@@ -453,7 +437,7 @@ describe('#627 W — the separation check (cell 26)', () => {
   });
 
   it('correction 1 (F6): gate-answers.md :58 — a store this login can only read is a separate user who can read Realm’s store (correction 2, 5.4)', async () => {
-    const e = await measure(machine({ canRead: (p) => p === `${STORE}/runs` }));
+    const e = await measure(machine({ canRead: (p) => p === `${STORE}/realm.db` }));
     // (a) red when a readable store keeps the claim (`:58`'s "or read"), or (5.4) reads as the same
     //     login; (b) prints the header.
     expect(renderSeparation(e)[0]).toBe(
@@ -472,27 +456,15 @@ describe('#627 W — the separation check (cell 26)', () => {
 });
 
 describe('#627 W correction 2 — the separation check says what it measured (part 5, 8.5)', () => {
-  it('5.1: a store folder this login cannot enter (EACCES, so `exists` is false) is "not read", never "no workflows folder"', async () => {
+  it('5.1: a store the login can stat and cannot open read-only is "not read", never "no store"', async () => {
     const line = conditionLine(
       'trust_root_writable',
-      await measure(
-        machine({
-          exists: (p) =>
-            p !== `${STORE}/workflows` && (p === STORE || p === `${PROJECT}/realm.yaml`),
-          stat: (p) =>
-            p === `${STORE}/workflows`
-              ? { error: 'EACCES' }
-              : p === STORE
-                ? { uid: REALM_UID, mode: 0o40755 }
-                : { uid: ME, mode: 0o40755 },
-          list: () => undefined,
-        }),
-      ),
+      await measure(machine({ registeredWorkflows: UNREADABLE })),
     );
-    // (a) red when the folder reads as absent from `exists` (the "not read" clause dropped); (b)
+    // (a) red when the "not read" clause is dropped, or an unreadable answer is read as no store; (b)
     //     prints the line.
     expect(line).toContain(
-      "the registered workflows' extension files were not read (the store cannot be read)",
+      "the registered workflows' extension files were not read (the store could not be opened read-only)",
     );
   });
 
@@ -500,7 +472,7 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
     '5.1, on the real filesystem: a HOME whose .realm is mode 000 — the extension files are not read',
     async () => {
       const home = await mkdtemp(join(tmpdir(), 'realm-sep-627-'));
-      await mkdir(join(home, '.realm', 'workflows'), { recursive: true });
+      await mkdir(join(home, '.realm'), { recursive: true });
       await chmod(join(home, '.realm'), 0o000);
       const saved = process.env['HOME'];
       process.env['HOME'] = home;
@@ -511,8 +483,9 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
           roots: [],
           door: 'mcp',
         });
-        // (a) red when a locked store reads as one with no workflows folder; (b) prints the field
-        //     (condition 4 itself may read "yes" from a writable Node binary on this host).
+        // (a) red when a locked store reads as one with no realm.db (#616 PR-2c c10a-3b-ii: the real
+        //     `readRegisteredWorkflows`, whose `lstat` is refused); (b) prints the field (condition 4
+        //     itself may read "yes" from a writable Node binary on this host).
         expect(e.extensions_unread).toBe(true);
       } finally {
         if (saved === undefined) delete process.env['HOME'];
@@ -561,7 +534,7 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
               : p === HOME
                 ? { uid: owner, mode: 0o40755 }
                 : { error: 'ENOENT' },
-          list: () => undefined,
+          registeredWorkflows: UNREADABLE,
         }),
       );
     const root = renderSeparation(await deniedUnder(0));
@@ -664,7 +637,7 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
     writable: string[],
     owners: Record<string, number>,
   ): SeparationProbes => {
-    const there = new Set([STORE, `${STORE}/runs`, `${STORE}/workflows`, ...Object.keys(files)]);
+    const there = new Set([STORE, `${STORE}/realm.db`, ...Object.keys(files)]);
     return machine({
       exists: (p) => there.has(resolve(p)),
       readText: (p) => files[resolve(p)],
@@ -830,7 +803,7 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
 
   it('C4: a store this login cannot open — the header says so, never only "against the store at"', async () => {
     const header = async (stat: SeparationProbes['stat']) =>
-      renderSeparation(await measure(machine({ stat, list: () => undefined })))[1];
+      renderSeparation(await measure(machine({ stat, registeredWorkflows: UNREADABLE })))[1];
     // (a) red when a store that could not be stat'ed is named as one the check measured against;
     //     (b) prints both headers.
     expect({
@@ -874,7 +847,7 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
     const lines = renderSeparation(
       await measure(
         machine(
-          { uid: () => undefined, canRead: (p) => p === `${STORE}/runs` },
+          { uid: () => undefined, canRead: (p) => p === `${STORE}/realm.db` },
           PROJECT_FILES,
           [],
           {},
@@ -1315,6 +1288,109 @@ describe('#819 Unit B: the words', () => {
         'Separation: separate user — ',
         `  This login can become Realm's service user (realm) without a password being asked: unknown (${SUDO_UNSPLIT.cause}; observed now).`,
       ],
+    });
+  });
+});
+
+describe('#616 PR-2c c10a-3b-ii — the check measures the SQLite home', () => {
+  const FILE = `${STORE}/realm.db`;
+  const FENCES = [`${STORE}/runs`, `${STORE}/workflows`];
+  const REACH = "This login can write Realm's store or open its files";
+
+  it('condition 1 reads the folder, the store file and its two side files; the old folders, fence files now, are never probed', async () => {
+    const line = async (over: Partial<SeparationProbes>) =>
+      conditionLine(
+        'store_reach',
+        await measure(machine(over, PROJECT_FILES, [`${FILE}-wal`, `${FILE}-shm`, ...FENCES])),
+      );
+    const only = (path: string) => (p: string) => p === path;
+    // (a) red per row: `folder`, `file`, `wal`, `shm` when that path leaves the list of what is
+    //     probed; `readable` when the store file is not read for reach; `fenceWritable` and
+    //     `fenceReadable` when the old folders are probed again; (b) prints each line.
+    expect({
+      folder: await line({ canWrite: only(STORE) }),
+      file: await line({ canWrite: only(FILE) }),
+      wal: await line({ canWrite: only(`${FILE}-wal`) }),
+      shm: await line({ canWrite: only(`${FILE}-shm`) }),
+      readable: await line({ canRead: only(FILE) }),
+      fenceWritable: await line({ canWrite: (p) => FENCES.includes(p) }),
+      fenceReadable: await line({ canRead: (p) => FENCES.includes(p) }),
+    }).toEqual({
+      folder: `${REACH}: yes (measured) — ${STORE} is writable.`,
+      file: `${REACH}: yes (measured) — ${FILE} is writable.`,
+      wal: `${REACH}: yes (measured) — ${FILE}-wal is writable.`,
+      shm: `${REACH}: yes (measured) — ${FILE}-shm is writable.`,
+      readable: `${REACH}: yes (measured) — ${FILE} can be read.`,
+      fenceWritable: `${REACH}: no (measured).`,
+      fenceReadable: `${REACH}: no (measured).`,
+    });
+  });
+
+  it("the registered workflows come from the store's read: each entry's trust_root and its extension files, against its source_dir, are measured", async () => {
+    const OTHER_ROOT = '/srv/wf-root';
+    const MANIFEST = `${OTHER_ROOT}/realm.yaml`;
+    const EXT = '/srv/wf-src/ext/tools.mjs';
+    const line = async (writable: string) =>
+      conditionLine(
+        'trust_root_writable',
+        await measure(
+          machine(
+            {
+              canWrite: (p) => p === writable,
+              registeredWorkflows: () => ({
+                state: 'ok',
+                workflows: [
+                  // A copy that names nothing (not JSON, or another Realm's shape): `{ id }`.
+                  { id: 'bare' },
+                  {
+                    id: 'wf',
+                    trust_root: OTHER_ROOT,
+                    source_dir: '/srv/wf-src',
+                    extensions: ['./ext/tools.mjs'],
+                  },
+                ],
+              }),
+            },
+            { ...PROJECT_FILES, [MANIFEST]: 'version: 1\n' },
+            [EXT],
+          ),
+        ),
+      );
+    // (a) red: `root` when the roots are not read from the entries; `extension` when the extension
+    //     files are not, or not against `source_dir`; `count` when either is dropped (its files: two
+    //     manifests, the extension, the Node binary, the package folder); (b) prints each line.
+    expect({
+      root: await line(MANIFEST),
+      extension: await line(EXT),
+      count: await line('/nowhere'),
+    }).toEqual({
+      root: `${CONDITION_4}: yes (measured) — ${MANIFEST} can be changed.`,
+      extension: `${CONDITION_4}: yes (measured) — ${EXT} can be changed.`,
+      count: `${CONDITION_4}: no (measured) — 5 files and folders checked.`,
+    });
+  });
+
+  it('a store that could not be opened read-only says so in the condition line and in the claim, in the same words as the docs', async () => {
+    const e = await measure(machine({ registeredWorkflows: UNREADABLE }));
+    const page = readFileSync(
+      new URL('../../../../docs/reference/mcp/gate-answers.md', import.meta.url),
+      'utf8',
+    );
+    const DOCS =
+      "when the store could not be opened read-only, that no registered workflow's extension file can be changed by this login.";
+    // (a) red when the claim's proviso or the condition's clause keeps the old words, or the docs
+    //     sentence and the check stop saying the same; (b) prints the line, the claim and whether
+    //     the page holds the sentence.
+    expect({
+      line: conditionLine('trust_root_writable', e),
+      claim: separationClaim(e).includes(
+        "no registered workflow's extension file (not read: the store could not be opened read-only) can be changed by this login",
+      ),
+      docs: page.includes(DOCS),
+    }).toEqual({
+      line: `${CONDITION_4}: no (measured) — 3 files and folders checked; the registered workflows' extension files were not read (the store could not be opened read-only).`,
+      claim: true,
+      docs: true,
     });
   });
 });

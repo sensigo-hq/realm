@@ -45,6 +45,10 @@ const EXPECTED_CODES: ReadonlySet<string> = new Set([
   'STATE_STORE_VERSION_OLDER',
   // The store's open: a newer Realm migrated the file.
   'STATE_STORE_VERSION_NEWER',
+  // The disk is full: the store's write refused.
+  'STATE_STORE_FULL',
+  // Writes fenced: the store refused a write after a failure.
+  'STATE_STORE_WRITES_FENCED',
 ]);
 
 /**
