@@ -59,12 +59,12 @@
 //      `STATE_RUN_BUSY`; the batches already committed stay, and their count is reported first.
 // The handle's `schemaVersion` stays what the open found.
 //
-// Opened for `'check'` (c8a1; DELTAS 50 Q1, 52 (0)), the entry returns a check handle instead:
+// Opened for `'check'` (c8a1, c8a3; DELTAS 50 Q1, 52), the entry returns a check handle instead:
 // `{ path, check(), close() }`, with no `backup` and no `migrate`. The verb is the open's switch: the
-// open (`check`) reads the file through a read-only connection and makes nothing in the home (no
-// fence, no set-up, no checkpoint), and every refusal of it is unchanged; an older file is refused
-// too, since the check opens without `acceptOlderSchema`. `check()` returns the published report
-// (`store-check.ts`).
+// check's open (`openForCheck`) reads the file through a read-only connection and makes nothing in
+// the home (no fence, no set-up, no checkpoint). It keeps refusing what makes reading impossible or
+// wrong; every other refusal of the open is an outcome the report gives as a finding, an older file
+// included. `check()` returns the published report (`store-check.ts`).
 import { randomBytes } from 'node:crypto';
 import {
   closeSync,
@@ -93,7 +93,7 @@ import type { RealmDb, Verify } from './connection.js';
 import { loadSqlite, openDatabase, type DatabaseLike } from './driver.js';
 import { assertLocalFilesystem, SYSTEM_PROBE } from './filesystem-gate.js';
 import { DATABASE_FILE, systemErrorText } from './home.js';
-import { openRealmDb, type OpenSeams } from './open-file.js';
+import { openForCheck, openRealmDb, type OpenSeams } from './open-file.js';
 import { runCheck, type CheckReport } from './store-check.js';
 import { staleStampsOf } from './run-scan.js';
 import { migrateSchema, type SchemaStepReport } from './schema-ladder.js';
@@ -137,8 +137,8 @@ export interface MaintenanceHome {
 }
 
 /**
- * A Realm home opened for `'check'` (c8a1): the store file, its read-only check and `close()`. It
- * has no `backup` and no `migrate`.
+ * A Realm home opened for `'check'` (c8a1, c8a3): the store file, its read-only check and `close()`.
+ * It has no `backup` and no `migrate`.
  */
 export interface MaintenanceCheckHome {
   /** The store file this handle checks: `<home>/realm.db`. */
@@ -868,22 +868,15 @@ export async function openMaintenance(
 }
 
 /**
- * The entry opened for `'check'` (c8a1): the open's read-only path (`check`), without
- * `acceptOlderSchema`, so an older file is refused as `refused_files` says; then the handle.
+ * The entry opened for `'check'` (c8a1, c8a3): the check's open (`openForCheck`), its outcomes kept
+ * for the report; then the handle.
  */
 async function openCheck(
   home: string,
   source: string,
   seams: MaintenanceSeams,
 ): Promise<MaintenanceCheckHome> {
-  const db = await openRealmDb(home, { clock: systemClock, check: true }, seams);
-  let schemaVersion: number;
-  try {
-    schemaVersion = await fileVersion(db);
-  } catch (err) {
-    db.close();
-    throw err;
-  }
+  const file = await openForCheck(home, { clock: systemClock }, seams);
   const probe = seams.probe ?? SYSTEM_PROBE;
   // The facts the file cannot give: the library's version, and what the filesystem gate judged (it
   // asks again; it reads and writes nothing).
@@ -899,10 +892,8 @@ async function openCheck(
     path: source,
     async check(): Promise<CheckReport> {
       if (closed) throw new Error(`The maintenance handle on ${source} is closed.`);
-      return runCheck(db, {
+      return runCheck(file, {
         path: source,
-        schemaVersion,
-        readsUpTo: db.schemaVersion,
         sqliteVersion,
         filesystem,
         platform: probe.platform,
@@ -911,7 +902,7 @@ async function openCheck(
     close(): void {
       if (closed) return;
       closed = true;
-      db.close();
+      file.db?.close();
     },
   };
 }

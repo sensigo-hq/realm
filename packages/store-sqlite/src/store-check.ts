@@ -1,10 +1,13 @@
-// store-check.ts — issue #616 PR-2c, unit c8a1 (design d4-frozen-r3 §8 `realm db check`; DELTAS 50,
-// 51, 52 (0)-(1), 53): the report the maintenance entry opened for `'check'` returns
+// store-check.ts — issue #616 PR-2c, units c8a1 and c8a3 (design d4-frozen-r3 §8 `realm db check`;
+// DELTAS 50, 51, 52, 53): the report the maintenance entry opened for `'check'` returns
 // (`openRealmHomeForMaintenance({ verb: 'check' })`, `maintenance.ts`). It is a published contract
-// for scripts, so its words, its check ids and its finding codes are each composed here, once.
+// for scripts, so its words, its check ids, its finding codes and the checks each finding stops are
+// each composed here, once.
 //
-// The check runs on the entry's read-only connection (`open-file.ts`, `check`) and writes nothing to
-// the store file. In order:
+// The check's open (`open-file.ts`, `openForCheck`) hands over every outcome of the open's checks
+// (c8a3): each becomes its finding, and each check it stops is listed in `not_run` with that
+// finding's code (a `part` when the check ran in part). Then, on the open's read-only connection,
+// when the file could be read, writing nothing to the store file:
 //   1. the measured facts that a read transaction can read: the page counts and this connection's
 //      durability settings, as read back;
 //   2. SQLite's integrity check, `PRAGMA integrity_check(N)`, in its own read transaction. Anything
@@ -22,19 +25,42 @@ import { lstatSync } from 'node:fs';
 import { WorkflowError } from '@sensigo/realm';
 import type { RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
+import { META_ROW_PART, type CheckedFile, type FileOutcome } from './open-file.js';
 
-/** The checks c8a1 runs: one `as const` list (framework R3; c8a3 and c8b add their own). */
-export const CHECK_IDS = ['integrity'] as const;
+/** The checks, in the order they run and are reported: one `as const` list (framework R3; c8b adds its own). */
+export const CHECK_IDS = [
+  'open',
+  'header',
+  'version',
+  'schema',
+  'settings',
+  'writable',
+  'integrity',
+] as const;
 /** A check's id. */
 export type CheckId = (typeof CHECK_IDS)[number];
 
-/** The finding codes c8a1 reports: one `as const` list (framework R3; c8a3 and c8b add their own). */
-export const CHECK_FINDING_CODES = ['integrity_failed', 'integrity_unreadable'] as const;
+/** The finding codes, in the contract's order: one `as const` list (framework R3; c8b adds its own). */
+export const CHECK_FINDING_CODES = [
+  'open_failed',
+  'header_damaged',
+  'newer_version',
+  'older_version',
+  'version_unknown',
+  'schema_differs',
+  'settings_differ',
+  'not_writable',
+  'integrity_failed',
+  'integrity_unreadable',
+] as const;
 /** A finding's code. */
 export type CheckFindingCode = (typeof CHECK_FINDING_CODES)[number];
 
+/** The data checks (c8b's): what "every data check" stops. None until c8b lands. */
+const DATA_CHECKS: readonly CheckId[] = [];
+
 /** What this version does not check, always listed: one `as const` list. */
-export const NOT_CHECKED_IDS = ['other_processes', 'refused_files', 'data_checks'] as const;
+export const NOT_CHECKED_IDS = ['other_processes', 'data_checks'] as const;
 /** A `not_checked` entry's check. */
 export type NotCheckedId = (typeof NOT_CHECKED_IDS)[number];
 
@@ -58,7 +84,7 @@ export interface CheckFinding {
   readonly examples?: readonly string[];
 }
 
-/** A check that did not run, and the finding that says why (none in c8a1). */
+/** A check that did not run, or ran in part, and the finding that says why. */
 export interface CheckNotRun {
   readonly check: CheckId;
   /** The code of the finding in the same report that says why. */
@@ -118,8 +144,8 @@ export interface CheckReport {
   readonly status: 'ok' | 'findings';
   /** The store file's absolute path. */
   readonly path: string;
-  /** The file's schema version (`user_version`). */
-  readonly schema_version: number;
+  /** The file's schema version (`user_version`); absent when it could not be read. */
+  readonly schema_version?: number;
   /** The newest schema version this Realm reads. */
   readonly reads_up_to: number;
   readonly facts: CheckFacts;
@@ -128,13 +154,9 @@ export interface CheckReport {
   readonly not_checked: readonly CheckNotChecked[];
 }
 
-/** What the check needs besides the connection: the facts it does not read from the file. */
+/** What the check needs besides the open's: the facts it does not read from the file. */
 export interface CheckContext {
   readonly path: string;
-  /** The file's schema version as the open read it (`user_version`). */
-  readonly schemaVersion: number;
-  /** The newest schema version this Realm reads. */
-  readonly readsUpTo: number;
   readonly sqliteVersion: string | undefined;
   readonly filesystem: CheckFilesystem | undefined;
   /** The platform the durability pragmas are read for (macOS reads two more). */
@@ -146,13 +168,6 @@ const NOT_CHECKED: readonly CheckNotChecked[] = [
   {
     check: 'other_processes',
     why: "Other Realm processes' connection settings cannot be read from here.",
-  },
-  {
-    check: 'refused_files',
-    why:
-      "A file the store's open refuses (a damaged header, another schema version, a changed schema " +
-      'or setting, a file or folder Realm cannot write to) is refused with one error line, not ' +
-      'reported: those reports are not built in this version yet.',
   },
   {
     check: 'data_checks',
@@ -203,6 +218,172 @@ function integrityUnreadable(errcode: number): CheckFinding {
     code: 'integrity_unreadable',
     message: `SQLite could not finish its integrity check: SQLite error ${String(errcode)}, the file is damaged.`,
   };
+}
+
+/** The checks an outcome of the open stops, whole. */
+type Stops = readonly CheckId[];
+
+/** The checks `open_failed` stops: every other check but `writable`, which runs whenever the file exists. */
+const AFTER_THE_OPEN: Stops = [
+  ...CHECK_IDS.filter((id) => id !== 'open' && id !== 'writable'),
+  ...DATA_CHECKS,
+];
+
+/** The checks `header_damaged` stops: everything that reads the file after its header. */
+const AFTER_THE_HEADER: Stops = [
+  ...CHECK_IDS.filter((id) => id !== 'open' && id !== 'header' && id !== 'writable'),
+  ...DATA_CHECKS,
+];
+
+/** The schema's names in a difference's words: its keys (type and name), in its order. */
+function names(keys: readonly string[]): string {
+  return keys.join(', ');
+}
+
+/** One outcome of the open as its finding, the checks it stops whole, and whether it stops the meta row. */
+function fileFinding(outcome: FileOutcome): {
+  readonly finding: CheckFinding;
+  readonly stops: Stops;
+  readonly metaRow: boolean;
+} {
+  switch (outcome.kind) {
+    case 'open_failed':
+      return {
+        finding: {
+          check: 'open',
+          code: 'open_failed',
+          message: `SQLite could not open the file: ${outcome.errstr} (SQLite error ${String(outcome.errcode)}).`,
+        },
+        stops: AFTER_THE_OPEN,
+        metaRow: false,
+      };
+    case 'header_damaged':
+      return {
+        finding: {
+          check: 'header',
+          code: 'header_damaged',
+          message:
+            'The file is not a readable SQLite database: its header or schema cannot be read.',
+        },
+        stops: AFTER_THE_HEADER,
+        metaRow: false,
+      };
+    case 'newer_version':
+      return {
+        finding: {
+          check: 'version',
+          code: 'newer_version',
+          message: `Written by a later version of Realm (schema version ${String(outcome.file)}; this version reads up to ${String(outcome.realm)}).`,
+        },
+        stops: ['schema', ...DATA_CHECKS],
+        metaRow: true,
+      };
+    case 'older_version':
+      return {
+        finding: {
+          check: 'version',
+          code: 'older_version',
+          message: `Written by an earlier version: schema version ${String(outcome.file)}; this version needs ${String(outcome.realm)}; run \`realm db migrate\`.`,
+        },
+        stops: DATA_CHECKS,
+        metaRow: false,
+      };
+    case 'version_unknown':
+      return {
+        finding: {
+          check: 'version',
+          code: 'version_unknown',
+          message:
+            outcome.file === 0
+              ? "The file's schema version is 0: it was never set up (a first open was interrupted) or it is not a Realm store."
+              : `The file's schema version is ${String(outcome.file)}, which no version of Realm writes.`,
+        },
+        stops: ['schema', ...DATA_CHECKS],
+        metaRow: true,
+      };
+    case 'schema_differs': {
+      const { missing, extra, changed } = outcome.difference;
+      const parts = [
+        ...(missing.length > 0 ? [`missing ${names(missing)}`] : []),
+        ...(extra.length > 0 ? [`extra ${names(extra)}`] : []),
+        ...(changed.length > 0 ? [`changed ${names(changed)}`] : []),
+      ];
+      return {
+        finding: {
+          check: 'schema',
+          code: 'schema_differs',
+          message: `The schema differs from schema version ${String(outcome.version)}'s: ${parts.join('; ')}.`,
+        },
+        stops: DATA_CHECKS,
+        metaRow: outcome.metaTable,
+      };
+    }
+    case 'settings_differ':
+      return {
+        finding: {
+          check: 'settings',
+          code: 'settings_differ',
+          message: `A store setting differs: ${outcome.setting} is ${outcome.found}, expected ${outcome.expected}.`,
+        },
+        stops: [],
+        // A missing row in a present meta table: the page size it records is not compared.
+        metaRow: outcome.setting === META_ROW_PART,
+      };
+    case 'not_writable':
+      return {
+        finding: {
+          check: 'writable',
+          code: 'not_writable',
+          message:
+            'Realm cannot write to this file or its folder: every other command that opens this store, reads included, is refused until it can, except the checks that only look at it.',
+        },
+        stops: [],
+        metaRow: false,
+      };
+    default: {
+      const unknown: never = outcome;
+      throw new Error(
+        `An outcome of the open the check has no words for: ${JSON.stringify(unknown)}`,
+      );
+    }
+  }
+}
+
+/**
+ * The open's outcomes as the report's findings and `not_run` (DELTAS 52, 54 R1): the findings in the
+ * checks' order; each stopped check once, with the first stopping code in the codes' order, whole
+ * entries before a `part` one.
+ */
+function fileFindings(outcomes: readonly FileOutcome[]): {
+  readonly findings: CheckFinding[];
+  readonly notRun: CheckNotRun[];
+} {
+  const composed = outcomes.map(fileFinding);
+  const findings = composed
+    .map((c) => c.finding)
+    .sort((a, b) => CHECK_IDS.indexOf(a.check) - CHECK_IDS.indexOf(b.check));
+  const byCode = [...composed].sort(
+    (a, b) =>
+      CHECK_FINDING_CODES.indexOf(a.finding.code) - CHECK_FINDING_CODES.indexOf(b.finding.code),
+  );
+  // A check with a finding of its own ran, so it is never listed as not run whole.
+  const ran = new Set(findings.map((f) => f.check));
+  const notRun: CheckNotRun[] = [];
+  for (const { finding, stops } of byCode) {
+    for (const check of stops) {
+      if (!ran.has(check) && !notRun.some((n) => n.check === check)) {
+        notRun.push({ check, because: finding.code });
+      }
+    }
+  }
+  // The meta row's part of `settings`, once, unless `settings` did not run at all.
+  for (const { finding, metaRow } of byCode) {
+    if (metaRow && !notRun.some((n) => n.check === 'settings')) {
+      notRun.push({ check: 'settings', because: finding.code, part: META_ROW_PART });
+    }
+  }
+  notRun.sort((a, b) => CHECK_IDS.indexOf(a.check) - CHECK_IDS.indexOf(b.check));
+  return { findings, notRun };
 }
 
 /** SQLite's corrupt error (11) and its extended codes (267, 523, 779), as the store passes it on. */
@@ -260,8 +441,22 @@ function durabilityOf(c: DatabaseLike, platform: string): CheckDurability {
   return durability;
 }
 
-/** Runs the check on the entry's read-only connection (see the module comment). */
-export async function runCheck(db: RealmDb, context: CheckContext): Promise<CheckReport> {
+/** The facts and findings read on the open's read-only connection: steps 1-3 of the module comment. */
+async function onTheConnection(
+  db: RealmDb,
+  platform: string,
+): Promise<{
+  readonly read:
+    | {
+        readonly pageSize: number | undefined;
+        readonly pageCount: number | undefined;
+        readonly freelistCount: number | undefined;
+        readonly durability: CheckDurability;
+      }
+    | undefined;
+  readonly findings: CheckFinding[];
+  readonly wal: { readonly log: number; readonly checkpointed: number } | undefined;
+}> {
   // 1. The facts a read transaction reads.
   const read = await measured(() =>
     db.snapshot(
@@ -269,7 +464,7 @@ export async function runCheck(db: RealmDb, context: CheckContext): Promise<Chec
         pageSize: pragmaInteger(c, 'page_size'),
         pageCount: pragmaInteger(c, 'page_count'),
         freelistCount: pragmaInteger(c, 'freelist_count'),
-        durability: durabilityOf(c, context.platform),
+        durability: durabilityOf(c, platform),
       }),
       { takesReading: false },
     ),
@@ -299,6 +494,20 @@ export async function runCheck(db: RealmDb, context: CheckContext): Promise<Chec
       return { log: Number(row['log']), checkpointed: Number(row['checkpointed']) };
     }),
   );
+  return { read, findings, wal };
+}
+
+/**
+ * Runs the check (see the module comment): the open's outcomes as findings and `not_run`, then, when
+ * the file could be read, the facts and the integrity check on its read-only connection.
+ */
+export async function runCheck(file: CheckedFile, context: CheckContext): Promise<CheckReport> {
+  const { findings, notRun } = fileFindings(file.outcomes);
+  const measuredOn =
+    file.db === undefined ? undefined : await onTheConnection(file.db, context.platform);
+  const read = measuredOn?.read;
+  const wal = measuredOn?.wal;
+  if (measuredOn !== undefined) findings.push(...measuredOn.findings);
   const frames = (value: number | undefined): number | undefined =>
     value !== undefined && Number.isInteger(value) && value >= 0 ? value : undefined;
   const walFrames = frames(wal?.log);
@@ -316,12 +525,11 @@ export async function runCheck(db: RealmDb, context: CheckContext): Promise<Chec
     ...optional('wal_frames', walFrames),
     ...optional('wal_frames_copied', walFramesCopied),
   };
-  const notRun: CheckNotRun[] = [];
   return {
     status: findings.length === 0 && notRun.length === 0 ? 'ok' : 'findings',
     path: context.path,
-    schema_version: context.schemaVersion,
-    reads_up_to: context.readsUpTo,
+    ...(file.schemaVersion === undefined ? {} : { schema_version: file.schemaVersion }),
+    reads_up_to: file.readsUpTo,
     facts,
     findings,
     not_run: notRun,
