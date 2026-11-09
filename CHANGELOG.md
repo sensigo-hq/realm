@@ -271,6 +271,7 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 - **The `realm-mcp` command runs from its own file and opens `~/.realm` itself. It now keeps its store in `realm.db` there, as every `realm` command does; it needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later, to start, and a home that still holds the old JSON folders is refused with `STATE_HOME_HOLDS_LEGACY_STORE` until they are moved aside (issue #616).**
 - **BREAKING — `createRealmMcpServer` takes its stores (issue #616).** The library has no default store: pass `runStore`, `workflowStore`, `traceBufferStore` and `failedAttemptStore`, opened once per process; a JavaScript caller that omits one is refused at construction, before anything is opened. The published tool handlers require the stores their server passes them; a direct caller that omits one is refused by name.
 - **An `'in-transaction'` adapter of `fencedTraceBufferContract` gives `fenceRuns` as `{ put, remove }`, without `readCount`.** Such a store reads its runs inside its own transaction, so the contract does not count them. (#616)
+- **A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the MCP server's way out (the operator's command on `realm mcp`'s and `realm serve`'s person line), also when the copy has no file (the SQLite store's copies); only a copy that is not there says `realm workflow register <file>`. (#616)
 
 ### Removed
 
