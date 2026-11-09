@@ -439,7 +439,7 @@ function plain(value: unknown): string {
 
 /** A value of an example as JSON, so that 1 and "1" differ; NULL is `null` (c8b1). */
 function json(value: unknown): string {
-  return JSON.stringify(typeof value === 'bigint' ? Number(value) : value) ?? 'null';
+  return JSON.stringify(value) ?? 'null';
 }
 
 /** Entries grouped by their run, in first-seen order: one example per run (c8b1). */
@@ -460,7 +460,7 @@ function dataFinding(
   return { check, code, message, count, examples: examples.slice(0, MAX_EXAMPLES) };
 }
 
-/** The checks each scan of the pass stops when SQLite's corrupt error stops it (Behaviour 4). */
+/** The checks each scan of the pass stops when it cannot finish (Behaviour 4; correction 1). */
 const SCAN_STOPS: Record<'runs' | 'evidence' | 'blobs', readonly CheckId[]> = {
   runs: ['records', 'phase_index', 'key_hashes', 'filter_columns', 'placeholders'],
   evidence: ['evidence_hashes', 'placeholders'],
@@ -469,9 +469,9 @@ const SCAN_STOPS: Record<'runs' | 'evidence' | 'blobs', readonly CheckId[]> = {
 
 /**
  * The data pass's results as the report's findings and `not_run` (c8b1; DELTAS 54): a check whose
- * scans all finished keeps its result; a scan stopped by SQLite's corrupt error is the one
- * `data_unreadable` finding, and the checks it stops are not run because of it, their partial
- * findings dropped.
+ * scans all finished keeps its result; a scan stopped by SQLite's corrupt error or a too-large
+ * integer is the one `data_unreadable` finding, and the checks it stops are not run because of it,
+ * their partial findings dropped.
  */
 function recordFindings(pass: RecordPass): {
   readonly findings: CheckFinding[];
@@ -592,16 +592,19 @@ function recordFindings(pass: RecordPass): {
       ),
     );
   }
-  // A scan stopped by the damage: one finding, the first stopped scan's code; its checks not run.
+  // A scan that could not finish: one finding, the first stopped scan's words; its checks not run.
   const notRun: CheckNotRun[] = [];
   const stopped = (['runs', 'evidence', 'blobs'] as const).filter((scan) => !pass[scan].done);
   if (stopped.length > 0) {
     const first = pass[stopped[0]!];
-    const errcode = first.done ? 0 : first.errcode;
     findings.push({
       check: 'data_read',
       code: 'data_unreadable',
-      message: `SQLite could not read the store's data: SQLite error ${String(errcode)}, the file is damaged.`,
+      // Only SQLite's corrupt error is called damage; a too-large integer claims no cause.
+      message:
+        'errcode' in first
+          ? `SQLite could not read the store's data: SQLite error ${String(first.errcode)}, the file is damaged.`
+          : "Realm could not read the store's data: a stored integer is too large for Realm to read.",
     });
     for (const scan of stopped) {
       for (const check of SCAN_STOPS[scan]) {

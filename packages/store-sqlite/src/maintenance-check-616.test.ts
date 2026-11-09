@@ -1073,6 +1073,8 @@ interface Seeded {
   readonly evidence?: ReadonlyArray<readonly [number, string, string]>;
   /** The stored text, edited by hand after `JSON.stringify` (which orders keys as JS does). */
   readonly text?: (json: string) => string;
+  /** The `workflow_context_snapshots` blob row's text. */
+  readonly blob?: string;
 }
 
 /** Inserts `runs` into the home's store file in one transaction, through the one loader. */
@@ -1086,6 +1088,7 @@ function seedRuns(home: string, template: Template, runs: readonly Seeded[]): vo
     const entry = c.prepare(
       'INSERT INTO evidence (run_id, seq, entry, entry_sha256) VALUES (?, ?, ?, ?)',
     );
+    const blob = c.prepare('INSERT INTO run_blobs (run_id, name, value) VALUES (?, ?, ?)');
     for (const seeded of runs) {
       const record = structuredClone(template.record);
       record['id'] = seeded.id;
@@ -1100,6 +1103,9 @@ function seedRuns(home: string, template: Template, runs: readonly Seeded[]): vo
         seeded.keyHash ?? null,
       );
       for (const [seq, text, hash] of seeded.evidence ?? []) entry.run(seeded.id, seq, text, hash);
+      if (seeded.blob !== undefined) {
+        blob.run(seeded.id, 'workflow_context_snapshots', seeded.blob);
+      }
     }
     c.exec('COMMIT');
   } finally {
@@ -1125,11 +1131,57 @@ function rewriteRecord(
   }
 }
 
+/** Stamps a run with the derivation's answer for its record as `JSON.parse` reads it. */
+function restamped(home: string, id: string): void {
+  const c = openDatabase(join(home, 'realm.db'));
+  try {
+    const text = String(c.prepare('SELECT record FROM runs WHERE id = ?').get(id)?.['record']);
+    const phase = deriveRunPhase(JSON.parse(text) as RunRecord);
+    c.prepare('UPDATE runs SET run_phase = ? WHERE id = ?').run(phase, id);
+  } finally {
+    c.close();
+  }
+}
+
 /** A home with one run the store made, and the template its row gives. */
 async function seededHome(): Promise<{ home: string; template: Template; clean: string }> {
   const home = await storeHome();
   const template = templateOf(home);
   return { home, template, clean: String(template.record['id']) };
+}
+
+/**
+ * A copy of the closed home `base` with one leaf page of `object` (a table or an index; the `skip`-th)
+ * overwritten: `bytes` of 0x5a at `offset` within the page, or, when `offset` is negative, at the start
+ * of the first record past its middle.
+ */
+function pageDamaged(
+  base: string,
+  object: string,
+  skip: number,
+  offset: number,
+  bytes: number,
+): string {
+  const home = join(tmp(), '.realm');
+  cpSync(base, home, { recursive: true });
+  const file = join(home, 'realm.db');
+  const raw = openDatabase(file, { readOnly: true });
+  const leaf = Number(
+    raw
+      .prepare(
+        "SELECT pageno FROM dbstat WHERE name = ? AND pagetype = 'leaf' ORDER BY pageno LIMIT 1 OFFSET ?",
+      )
+      .get(object, skip)?.['pageno'],
+  );
+  const pageSize = Number(raw.prepare('PRAGMA page_size').get()?.['page_size']);
+  raw.close();
+  const fd = openSync(file, 'r+');
+  const page = Buffer.alloc(pageSize);
+  readSync(fd, page, 0, pageSize, (leaf - 1) * pageSize);
+  const at = offset >= 0 ? offset : page.indexOf('{"id":"run-', pageSize / 2);
+  writeSync(fd, Buffer.alloc(bytes, 0x5a), 0, bytes, (leaf - 1) * pageSize + at);
+  closeSync(fd);
+  return home;
 }
 
 /** Every example a report names, joined, for the "a clean run is not named" assertions. */
@@ -1254,20 +1306,7 @@ describe('#616 PR-2c c8b1 — check 1: one cell per code, a clean run beside it 
         ',"sealed_by":{"arm":"completed","arm":"failed"},"pending_gate":{"gate_id":"g1","gate_id":"g2"}}'
       );
     });
-    // The stamp the derivation gives the record as JSON.parse reads it (the last of each pair).
-    const parsed = JSON.parse(
-      String(
-        (() => {
-          const c = openDatabase(join(home, 'realm.db'), { readOnly: true });
-          try {
-            return c.prepare("SELECT record FROM runs WHERE id = 'nested'").get()?.['record'];
-          } finally {
-            c.close();
-          }
-        })(),
-      ),
-    ) as RunRecord;
-    rawly(home, `UPDATE runs SET run_phase = '${deriveRunPhase(parsed)}' WHERE id = 'nested'`);
+    restamped(home, 'nested');
     const report = await check(home);
     // (1) red when the columns are not compared with the record, or each column is its own example;
     //     (2) prints the findings.
@@ -1343,12 +1382,17 @@ describe('#616 PR-2c c8b1 — check 2: the filter columns compared as SQLite sto
     seedRuns(home, template, [
       { id: 'typed-1', change: (r) => (r['created_at'] = true) },
       { id: 'typed-2', change: (r) => (r['updated_at'] = 12345) },
+      // Correction 1: text holding a lone surrogate at an INTEGER path.
+      { id: 'typed-4', change: (r) => (r['version'] = 'y\udc00z') },
       {
         // An object as SQLite keeps it: an integer-like key after another, and 1.0 as written.
         id: 'typed-3',
         change: (r) => (r['rerun_of'] = 'OBJECT'),
         text: (json) =>
-          json.replace('"rerun_of":"OBJECT"', '"rerun_of":{"b":[1,"x"],"2":1.0,"1":null}'),
+          json.replace(
+            '"rerun_of":"OBJECT"',
+            '"rerun_of":{"b":[1,"x"],"2":1.0,"1":null,"s":"\\ud83d"}',
+          ),
       },
     ]);
     const report = await check(home);
@@ -1391,28 +1435,8 @@ describe('#616 PR-2c c8b1 — check 3: a damaged page and a bad record', () => {
     );
     base = home;
   }, 120_000);
-  /** `offset` within the page, or, when negative, the start of the first record past its middle. */
   function leafDamaged(offset: number, bytes: number): string {
-    const home = join(tmp(), '.realm');
-    cpSync(base, home, { recursive: true });
-    const file = join(home, 'realm.db');
-    const raw = openDatabase(file, { readOnly: true });
-    const leaf = Number(
-      raw
-        .prepare(
-          "SELECT pageno FROM dbstat WHERE name = 'runs' AND pagetype = 'leaf' ORDER BY pageno LIMIT 1 OFFSET 5",
-        )
-        .get()?.['pageno'],
-    );
-    const pageSize = Number(raw.prepare('PRAGMA page_size').get()?.['page_size']);
-    raw.close();
-    const fd = openSync(file, 'r+');
-    const page = Buffer.alloc(pageSize);
-    readSync(fd, page, 0, pageSize, (leaf - 1) * pageSize);
-    const at = offset >= 0 ? offset : page.indexOf('{"id":"run-', pageSize / 2);
-    writeSync(fd, Buffer.alloc(bytes, 0x5a), 0, bytes, (leaf - 1) * pageSize + at);
-    closeSync(fd);
-    return home;
+    return pageDamaged(base, 'runs', 5, offset, bytes);
   }
 
   it.each([
@@ -1487,41 +1511,51 @@ describe('#616 PR-2c c8b1 — check 3: a damaged page and a bad record', () => {
     },
   );
 
-  it("SQLite error 10 in the pass (the open's seam) — check() rejects at once with SQLite's words, never data_unreadable", async () => {
-    const home = await storeHome();
-    const io = Object.assign(new Error('disk I/O error'), {
-      code: 'ERR_SQLITE_ERROR',
-      errcode: 10,
-      errstr: 'disk I/O error',
-    });
-    const openFile = (path: string, options?: { readonly readOnly: true }): DatabaseLike => {
-      const real = openDatabase(path, options);
-      return {
-        exec: (sql: string) => real.exec(sql),
-        prepare: (sql: string) =>
-          sql.startsWith('SELECT rowid AS r, id, record')
-            ? ({
-                all: () => {
-                  throw io;
-                },
-              } as unknown as ReturnType<DatabaseLike['prepare']>)
-            : real.prepare(sql),
-        close: () => real.close(),
-        get isTransaction() {
-          return real.isTransaction;
-        },
+  it.each([
+    [
+      'SQLite error 10',
+      Object.assign(new Error('disk I/O error'), {
+        code: 'ERR_SQLITE_ERROR',
+        errcode: 10,
+        errstr: 'disk I/O error',
+      }),
+      'disk I/O error (SQLite error 10)',
+    ],
+    // Correction 1: only the driver's too-large refusal (its code) stops a scan.
+    ['a plain RangeError', new RangeError('not the driver refusing'), 'not the driver refusing'],
+  ] as const)(
+    "%s in the pass (the open's seam) — check() rejects at once, in that error's words, never data_unreadable",
+    async (_label, error, message) => {
+      const home = await storeHome();
+      const openFile = (path: string, options?: { readonly readOnly: true }): DatabaseLike => {
+        const real = openDatabase(path, options);
+        return {
+          exec: (sql: string) => real.exec(sql),
+          prepare: (sql: string) =>
+            sql.startsWith('SELECT rowid AS r, id, record')
+              ? ({
+                  all: () => {
+                    throw error;
+                  },
+                } as unknown as ReturnType<DatabaseLike['prepare']>)
+              : real.prepare(sql),
+          close: () => real.close(),
+          get isTransaction() {
+            return real.isTransaction;
+          },
+        };
       };
-    };
-    const m = await openMaintenance({ home, verb: 'check' }, { openFile });
-    const got = await refusal(m.check());
-    m.close();
-    // (1) red when any SQLite error is read as damage (a report with data_unreadable resolves); (2)
-    //     prints what check() did.
-    expect({ resolved: got['resolved'], message: got['message'] }).toEqual({
-      resolved: undefined,
-      message: 'disk I/O error (SQLite error 10)',
-    });
-  });
+      const m = await openMaintenance({ home, verb: 'check' }, { openFile });
+      const got = await refusal(m.check());
+      m.close();
+      // (1) red when any SQLite error is read as damage (a report with data_unreadable resolves); (2)
+      //     prints what check() did.
+      expect({ resolved: got['resolved'], message: got['message'] }).toEqual({
+        resolved: undefined,
+        message,
+      });
+    },
+  );
 });
 
 describe('#616 PR-2c c8b1 — check 4: a file whose finding stops the data checks, a phase lie planted in it', () => {
@@ -1584,6 +1618,182 @@ describe('#616 PR-2c c8b1 — check 7: a 10,000-run home', () => {
       fact: report.facts.phase_other_stamps,
     }).toEqual({ status: 'ok', codes: [], fact: 0 });
   }, 120_000);
+});
+
+describe('#616 PR-2c c8b1 correction 1 — a lone surrogate, as the driver reads it back', () => {
+  it('check 1: runs the store wrote with a lone surrogate in a key or a workflow id — nothing found', async () => {
+    const home = join(tmp(), '.realm');
+    const h = await openRealmHome({ home });
+    const params = {};
+    await h.runStore.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params,
+      idempotencyKey: 'a\ud83d',
+    });
+    await h.runStore.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params,
+      idempotencyKey: '\udc00b',
+    });
+    await h.runStore.create({ workflowId: 'wf\ud83d', workflowVersion: 1, params });
+    h.close();
+    const report = await check(home);
+    // (1) red when a record's text is compared without its read-back form (a false alarm on a store
+    //     Realm wrote itself); (2) prints the status and the findings.
+    expect({ status: report.status, findings: report.findings }).toEqual({
+      status: 'ok',
+      findings: [],
+    });
+  });
+
+  it('check 2: a true difference beside one is still named, the last repeated value holding the surrogate, the record printed unmapped', async () => {
+    const { home, template } = await seededHome();
+    seedRuns(home, template, [{ id: 'nested-s' }]);
+    rewriteRecord(home, 'nested-s', (record) => {
+      delete record['pending_gate'];
+      return (
+        JSON.stringify(record).slice(0, -1) +
+        ',"pending_gate":{"gate_id":"g1","gate_id":"x\\ud83d"}}'
+      );
+    });
+    restamped(home, 'nested-s');
+    const report = await check(home);
+    // (1) red when any text that is not well formed is skipped; (2) prints the findings.
+    expect(report.findings).toEqual([
+      {
+        check: 'filter_columns',
+        code: 'filter_column_differs',
+        message: '1 run holds a filter column that differs from its record.',
+        count: 1,
+        examples: ['run nested-s, column pending_gate_id: stored "g1", record "x\\ud83d"'],
+      },
+    ]);
+  });
+});
+
+describe('#616 PR-2c c8b1 correction 1 — a stored integer too large to read', () => {
+  it("check 3: a version of 2^60 in a record's text (the foreign connection, beside a clean run) — the report resolves, data_unreadable in the words that claim no cause, the runs scan's checks not run, evidence_hashes' result kept", async () => {
+    const { home, template, clean } = await seededHome();
+    seedRuns(home, template, [
+      {
+        id: 'ev-bad',
+        change: (r) => (r['evidence'] = { $realm_rows: 1 }),
+        evidence: [[0, '{"a":1}', 'bad0']],
+      },
+    ]);
+    // An INSERT: the version fence refuses an UPDATE that jumps. In the record's text: a JS number
+    // this large rounds. Through the foreign connection, never `save()` (which accepts it today).
+    const c = await openForeignConnection(home);
+    connections.push(c);
+    const record = JSON.stringify({ ...template.record, id: 'huge' });
+    const huge = record.replace(/"version":\d+/, '"version":1152921504606846976');
+    c.prepare(
+      'INSERT INTO runs (id, record, run_phase, phase_version, key_hash) VALUES (?, ?, ?, ?, NULL)',
+    ).run('huge', huge, template.phase, template.stamp);
+    c.close();
+    connections.pop();
+    const report = await check(home);
+    // (1) red when the error is passed on (check() rejects), when it is called damage, or when the
+    //     evidence scan's result is lost; (2) prints the findings, not_run, the fact and the run.
+    expect({
+      seeded: huge !== record,
+      findings: report.findings,
+      not_run: report.not_run,
+      fact: report.facts.phase_other_stamps,
+      cleanNamed: named(report).includes(clean),
+    }).toEqual({
+      seeded: true,
+      findings: [
+        {
+          check: 'evidence_hashes',
+          code: 'evidence_hash_mismatch',
+          message: '1 evidence entry does not match its stored hash.',
+          count: 1,
+          examples: ['run ev-bad, entry 0'],
+        },
+        {
+          check: 'data_read',
+          code: 'data_unreadable',
+          message:
+            "Realm could not read the store's data: a stored integer is too large for Realm to read.",
+        },
+      ],
+      not_run: stopped(
+        'data_unreadable',
+        'records',
+        'phase_index',
+        'key_hashes',
+        'filter_columns',
+        'placeholders',
+      ),
+      fact: undefined,
+      cleanNamed: false,
+    });
+  });
+});
+
+describe("#616 PR-2c c8b1 correction 1 — check 4: each scan's stop set, with a planted finding kept", () => {
+  // 400 runs, each with an evidence row and a blob, then a bad evidence hash and a phase lie: what
+  // each stopped scan leaves is then a positive result, never an empty one.
+  let base: string;
+  beforeAll(async () => {
+    const { home, template } = await seededHome();
+    const text = JSON.stringify({ pad: 'e'.repeat(800) });
+    const hash = evidenceEntrySha256(text);
+    seedRuns(home, template, [
+      ...Array.from({ length: 400 }, (_, i) => ({
+        id: `run-${String(i).padStart(5, '0')}`,
+        change: (r: Record<string, unknown>) => {
+          r['evidence'] = { $realm_rows: 1 };
+          r['workflow_context_snapshots'] = { $realm_blob: 'workflow_context_snapshots' };
+        },
+        evidence: [[0, text, hash]] as const,
+        blob: '{}',
+      })),
+      {
+        id: 'zz-ev-bad',
+        change: (r: Record<string, unknown>) => (r['evidence'] = { $realm_rows: 1 }),
+        evidence: [[0, text, 'bad0']] as const,
+      },
+      { id: 'zz-lie', phase: 'completed' },
+    ]);
+    base = home;
+  }, 120_000);
+
+  it.each([
+    [
+      'the evidence scan',
+      'evidence',
+      5,
+      ['evidence_hashes', 'placeholders'],
+      ['phase_index_wrong', 'data_unreadable'],
+    ],
+    [
+      'the blob-name read (its covering index)',
+      'sqlite_autoindex_run_blobs_1',
+      0,
+      ['placeholders'],
+      ['evidence_hash_mismatch', 'phase_index_wrong', 'data_unreadable'],
+    ],
+  ] as const)(
+    '%s meets SQLite error 11 — only its checks are not run, the others keep their findings',
+    async (_label, object, skip, stops, codes) => {
+      const report = await check(pageDamaged(base, object, skip, 0, 16));
+      // (1) red when that scan's entry in SCAN_STOPS changes, or a scan's result is lost beside it; (2)
+      //     prints the data codes, not_run and the data_unreadable message.
+      expect({
+        codes: report.findings.filter((f) => f.check !== 'integrity').map((f) => f.code),
+        not_run: report.not_run,
+        message: report.findings.find((f) => f.code === 'data_unreadable')?.message,
+      }).toEqual({
+        codes,
+        not_run: stopped('data_unreadable', ...stops),
+        message: "SQLite could not read the store's data: SQLite error 11, the file is damaged.",
+      });
+    },
+  );
 });
 
 describe("#616 PR-2c c8a1, c8a3 — the contract's laws, over every report the cells built", () => {

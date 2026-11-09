@@ -14,8 +14,10 @@
 // meets SQLite's corrupt error (`errcode & 0xff` 11) is stopped and says so, and the scans after it
 // still run; the results live outside the transaction's body, because after such an error SQLite
 // reports it again at the transaction's COMMIT (AUD-C8B1-17), which `snapshot` makes after the body.
-// Any other error (the store's busy refusal included) is passed on. The check (`store-check.ts`)
-// composes every word of the report from what this returns.
+// A stored integer too large for the driver to read stops its scan the same way (correction 1; DELTAS
+// "Row 54 addendum"): exactly the driver's `RangeError` with `code: 'ERR_OUT_OF_RANGE'`. Any other
+// error (the store's busy refusal included) is passed on. The check (`store-check.ts`) composes every
+// word of the report from what this returns.
 import {
   deriveRunPhase,
   REALM_STORE_SCHEMA,
@@ -27,9 +29,14 @@ import type { DatabaseLike } from './driver.js';
 import { isEvidencePlaceholder, isFieldPlaceholder, keyHashOf } from './run-rows.js';
 import { checkEvidenceEntries } from './schema-ladder.js';
 
-/** One scan of the pass: it ran to its end, or SQLite's corrupt error stopped it (its code). */
+/**
+ * One scan of the pass: it ran to its end, or SQLite's corrupt error stopped it (its code), or a stored
+ * integer too large for the driver to read did.
+ */
 export type ScanOutcome =
-  { readonly done: true } | { readonly done: false; readonly errcode: number };
+  | { readonly done: true }
+  | { readonly done: false; readonly errcode: number }
+  | { readonly done: false; readonly tooLarge: true };
 
 /** What the pass found. A list of a scan that did not finish is not to be read. */
 export interface RecordPass {
@@ -118,11 +125,24 @@ function at(record: unknown, path: readonly string[]): unknown {
 /** A number in SQLite's text form for a numeric literal (what TEXT or INTEGER affinity converts). */
 const NUMERIC = /^\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\s*$/;
 
+/** A surrogate with no partner: in `u` mode a pair is one code point, outside this range. */
+const LONE_SURROGATE = /[\uD800-\uDFFF]/gu;
+
+/**
+ * Text as the driver reads it back from a column (correction 1): `JSON.stringify` writes a lone
+ * surrogate as an escape, SQLite stores it as three bytes that are not UTF-8 (ED A0 BD), and the
+ * driver decodes each of them as U+FFFD (AUD-C8B1C1-01).
+ */
+function asReadBack(text: string): string {
+  return text.replace(LONE_SURROGATE, '\uFFFD\uFFFD\uFFFD');
+}
+
 /**
  * Whether a column's stored value is what SQLite stores for the record's value there (Behaviour 2):
  * the value mapped first (a boolean to 1 or 0, null or absent to NULL, an object or array to its JSON
  * text), then given the column's affinity. An object or array is compared as JSON, both texts read
- * back by `JSON.parse`, so the key order and number spelling SQLite keeps do not count as a difference.
+ * back by `JSON.parse`, so the key order and number spelling SQLite keeps do not count as a difference;
+ * it keeps a lone surrogate's escape as written, so only plain text is mapped to its read-back form.
  */
 function storedAs(stored: unknown, value: unknown, affinity: 'TEXT' | 'INTEGER'): boolean {
   if (value === ABSENT || value === null) return stored === null;
@@ -134,14 +154,20 @@ function storedAs(stored: unknown, value: unknown, affinity: 'TEXT' | 'INTEGER')
       return false;
     }
   }
-  const mapped = typeof value === 'boolean' ? (value ? 1 : 0) : value;
-  const held = typeof stored === 'bigint' ? Number(stored) : stored;
+  const mapped =
+    typeof value === 'boolean'
+      ? value
+        ? 1
+        : 0
+      : typeof value === 'string'
+        ? asReadBack(value)
+        : value;
   if (affinity === 'TEXT') {
-    return typeof mapped === 'number' ? held === String(mapped) : held === mapped;
+    return typeof mapped === 'number' ? stored === String(mapped) : stored === mapped;
   }
   // INTEGER affinity: a text that reads as a number is stored as that number.
-  if (typeof mapped === 'string' && NUMERIC.test(mapped)) return held === Number(mapped);
-  return held === mapped;
+  if (typeof mapped === 'string' && NUMERIC.test(mapped)) return stored === Number(mapped);
+  return stored === mapped;
 }
 
 /** SQLite's corrupt error (11) and its extended codes (267, 523, 779), as a code; `undefined` for any
@@ -202,12 +228,19 @@ function collected(): Collected {
   };
 }
 
-/** Runs one scan: done, or stopped by SQLite's corrupt error; any other error is passed on. */
+/** The driver's refusal of a stored integer past 2^53: exactly this error, no other `RangeError`. */
+function isTooLargeInteger(err: unknown): boolean {
+  return err instanceof RangeError && (err as { code?: unknown }).code === 'ERR_OUT_OF_RANGE';
+}
+
+/** Runs one scan: done, or stopped by SQLite's corrupt error or a too-large integer; any other error
+ *  is passed on. */
 function scan(read: () => void): ScanOutcome {
   try {
     read();
     return { done: true };
   } catch (err) {
+    if (isTooLargeInteger(err)) return { done: false, tooLarge: true };
     const errcode = isBusy(err) ? undefined : corruptCode(err);
     if (errcode === undefined) throw err;
     return { done: false, errcode };
@@ -405,7 +438,7 @@ export async function readRecords(db: RealmDb, running: string): Promise<RecordP
     if (errcode === undefined) throw err;
     // A scan that met the damage said so; SQLite then reports it again at the COMMIT, and what the
     // scans collected stands. A damage met anywhere else leaves no scan to trust.
-    const met = [out.runs, out.evidence, out.blobs].some((s) => !s.done && s.errcode !== 0);
+    const met = [out.runs, out.evidence, out.blobs].some((s) => s !== NOT_RUN && !s.done);
     if (!finished || !met) {
       const stopped: ScanOutcome = { done: false, errcode };
       out = { ...collected(), runs: stopped, evidence: stopped, blobs: stopped };
