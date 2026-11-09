@@ -2,8 +2,8 @@
 // effective registry can't satisfy the workflow's auto-step handlers/adapters. The `?? createDefaultRegistry()`
 // fallback is the HARD invariant: a filesystem-only workflow with NO supplied registry must NOT false-warn.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import type { WorkflowDefinition, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -35,8 +35,8 @@ function handlerDef(): WorkflowDefinition {
 
 describe('#134 pre-flight capability warning', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();

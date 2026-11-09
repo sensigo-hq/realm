@@ -46,6 +46,28 @@ describe('#715 (a) correction 1 (C-6) — reportExpectedRefusal', () => {
     });
   });
 
+  it('a full disk: one Error line on stderr, exit code 1, true', () => {
+    // A store write refused with STATE_STORE_FULL. (a) red when the list loses the code (the entry
+    // rethrows it and a stack prints); (b) prints what was written.
+    const r = call(refusal('STATE_STORE_FULL'));
+    expect(r, JSON.stringify(r)).toEqual({
+      handled: true,
+      written: ['Error: a refusal coded STATE_STORE_FULL\n'],
+      exitCode: 1,
+    });
+  });
+
+  it('writes fenced after a failure: one Error line on stderr, exit code 1, true', () => {
+    // A store write refused with STATE_STORE_WRITES_FENCED. (a) red when the list loses the code (the
+    // entry rethrows it and a stack prints); (b) prints what was written.
+    const r = call(refusal('STATE_STORE_WRITES_FENCED'));
+    expect(r, JSON.stringify(r)).toEqual({
+      handled: true,
+      written: ['Error: a refusal coded STATE_STORE_WRITES_FENCED\n'],
+      exitCode: 1,
+    });
+  });
+
   it('read by its code, not its class: an object from another copy of the library is handled too', () => {
     // (a) red when the handler tests `instanceof WorkflowError`; (b) prints what was written.
     const foreign = { code: 'STATE_TEST_CLOCK_FOREIGN', message: 'from another copy' };

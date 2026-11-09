@@ -1,7 +1,8 @@
 // Integration tests for the start_run_batch tool business logic.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JsonFileStore, WorkflowError } from '@sensigo/realm';
+import { WorkflowError } from '@sensigo/realm';
+import type { RunStore } from '@sensigo/realm';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -32,7 +33,7 @@ function mockWorkflowStore(workflows: Record<string, ReturnType<typeof mockWorkf
 
 describe('handleStartRunBatch', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
+  let runStore: RunStore;
 
   beforeEach(async () => {
     h = await makeTempHome();

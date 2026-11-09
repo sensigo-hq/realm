@@ -12,9 +12,9 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: whether
 // the reply's hint and next_actions name an answer way, and the hint — never a token.
 import { describe, it, expect, afterEach } from 'vitest';
-import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, loadWorkflowFromString } from '@sensigo/realm';
+import type { WorkflowDefinition, WorkflowRegistrar } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
@@ -42,6 +42,11 @@ const ANSWER_WAY = /submit_human_response|call_with|claim_token|present_question
 /** The handing-off doors' sentence for a register remedy (correction 2, 3.1). */
 const WAITS_ONCE_REPAIRED =
   'Once the copy is repaired, the question waits for an answer outside this conversation.';
+/** A damaged registered copy: it has no steps, so Realm cannot use it. */
+const DAMAGED = {
+  id: 'at627',
+  schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+} as WorkflowDefinition;
 
 type Door = 'offered' | 'asked' | 'withheld';
 
@@ -82,7 +87,13 @@ async function atGate(gateAnswers: Door, forms = false) {
     run_id: string;
   };
   const gateId = (await runStore.get(started.run_id)).record.pending_gate!.gate_id;
-  return { copy: join(h.path, 'workflows', 'at627.json'), runId: started.run_id, gateId, text };
+  return {
+    copy: join(h.path, 'workflows', 'at627.json'),
+    workflowStore,
+    runId: started.run_id,
+    gateId,
+    text,
+  };
 }
 
 /** A reply's hint and next_actions, when it is Realm's JSON reply; nothing for an SDK error text. */
@@ -100,20 +111,18 @@ function judged(reply: string): { hint: string; next: string } {
 
 describe('#627 W correction 1 (A2) — append_trace’s error reply names no answer way under withheld', () => {
   it.each([
-    ['unreadable', async (copy: string) => writeFile(copy, '{ not json')],
+    ['unreadable', async (store: WorkflowRegistrar) => store.register(DAMAGED)],
     [
       'newer (W-r2)',
-      async (copy: string) => {
-        const parsed = JSON.parse(await readFile(copy, 'utf8')) as Record<string, unknown>;
-        await writeFile(
-          copy,
-          JSON.stringify({ ...parsed, schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1 }),
-        );
-      },
+      async (store: WorkflowRegistrar) =>
+        store.register({
+          ...(await store.get('at627')),
+          schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1,
+        }),
     ],
   ] as const)('the registered copy %s', async (_label, damage) => {
     const s = await atGate('withheld');
-    await damage(s.copy);
+    await damage(s.workflowStore);
     const reply = await s.text('append_trace', {
       run_id: s.runId,
       step_id: 'after',
@@ -143,7 +152,7 @@ describe('#627 W correction 2 (3.1, MCP F7) — a copy Realm cannot read: the wa
     '%s: neither append_trace nor submit_human_response names an answer way',
     async (_label, door, forms, handsOff) => {
       const s = await atGate(door, forms);
-      await writeFile(s.copy, '{ not json');
+      await s.workflowStore.register(DAMAGED);
       const trace = judged(
         await s.text('append_trace', {
           run_id: s.runId,
@@ -176,7 +185,7 @@ describe('#627 W correction 2 (3.1, MCP F7) — a copy Realm cannot read: the wa
 
   it('get_run_state on a handing-off door: the elsewhere entry for the repair holds the sentence', async () => {
     const s = await atGate('withheld');
-    await writeFile(s.copy, '{ not json');
+    await s.workflowStore.register(DAMAGED);
     const read = JSON.parse(await s.text('get_run_state', { run_id: s.runId })) as {
       elsewhere?: Array<{ verb: string; human_readable: string }>;
     };

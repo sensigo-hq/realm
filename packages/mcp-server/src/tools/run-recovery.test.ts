@@ -1,8 +1,8 @@
 // Tests for the 0.10.0 run-recovery surface: abandon_run MCP tool + get_run_state's
 // next_actions / next_actions_status.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import type { WorkflowDefinition, PendingGate } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import type { WorkflowDefinition, PendingGate, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client';
@@ -28,7 +28,7 @@ const autoFirst: WorkflowDefinition = {
 };
 
 async function callRegisteredAbandon(
-  runStore: JsonFileStore,
+  runStore: RunStore,
   args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const server = new McpServer({ name: 'test', version: '0' });
@@ -45,8 +45,8 @@ async function callRegisteredAbandon(
 
 describe('abandon_run MCP tool', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -194,8 +194,8 @@ describe('abandon_run MCP tool', () => {
 
 describe('get_run_state — next_actions_status', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -283,8 +283,8 @@ describe('get_run_state — next_actions_status', () => {
 
 describe('get_run_state — claim liveness (issue #101 wedge detection)', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -354,8 +354,8 @@ describe('get_run_state — claim liveness (issue #101 wedge detection)', () => 
 
 describe('get_run_state — gate_waiting + fan-out wedge (issue #101 gate/fan-out correction)', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -430,8 +430,8 @@ describe('get_run_state — gate_waiting + fan-out wedge (issue #101 gate/fan-ou
 
 describe('get_run_state — skip_details surfacing (issue #111)', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -486,8 +486,8 @@ describe('get_run_state — skip_details surfacing (issue #111)', () => {
 // LINK did not exist, so an agent that reran a run could not tell which run it replaced.
 describe('the rerun is linked — start_run → abandon_run → start_run(rerun) → get_run_state', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();

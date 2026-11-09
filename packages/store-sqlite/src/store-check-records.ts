@@ -8,7 +8,11 @@
 //      hashed, never parsed, and each run's rows numbered;
 //   3. the blobs, by name only.
 // Then each run's placeholders are matched with its evidence rows and blobs. A row whose run is gone
-// is not judged (c8b2's orphans judge it), nor is a run whose record is not JSON.
+// is not judged here (the orphans read below judges it), nor is a run whose record is not JSON.
+//
+// In the same transaction, the reads that compare the tables (c8b2): the meta row's purge counter and
+// horizon with the count of purged ids; the rows of the five tables whose run is gone; each workflow's
+// pointer with its newest registration; and each stored workflow version's hash with its text.
 //
 // Every per-row judgement is kept from throwing: one bad row is one entry in a finding. A scan that
 // meets SQLite's corrupt error (`errcode & 0xff` 11) is stopped and says so, and the scans after it
@@ -28,6 +32,7 @@ import { isBusy, type RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
 import { isEvidencePlaceholder, isFieldPlaceholder, keyHashOf } from './run-rows.js';
 import { checkEvidenceEntries } from './schema-ladder.js';
+import { workflowVersionHash } from './workflow-store.js';
 
 /**
  * One scan of the pass: it ran to its end, or SQLite's corrupt error stopped it (its code), or a stored
@@ -37,6 +42,25 @@ export type ScanOutcome =
   | { readonly done: true }
   | { readonly done: false; readonly errcode: number }
   | { readonly done: false; readonly tooLarge: true };
+
+/** The purge counter, the horizon and the count of purged ids, as stored. */
+export interface Horizon {
+  readonly tombSeq: unknown;
+  readonly since: unknown;
+  readonly throughSeq: unknown;
+  readonly purgedIds: unknown;
+}
+
+/** A workflow whose pointer does not match its newest registration; `null` where a side is missing. */
+export interface PointerWrong {
+  readonly workflowId: string;
+  readonly pointer: string | null;
+  readonly pointerAt: string | null;
+  readonly newest: string | null;
+  readonly newestAt: string | null;
+  /** A stored copy of its own workflow sits under the pointer's hash. */
+  readonly copy: boolean;
+}
 
 /** What the pass found. A list of a scan that did not finish is not to be read. */
 export interface RecordPass {
@@ -68,6 +92,26 @@ export interface RecordPass {
   }[];
   /** Each placeholder that does not match its rows, by run and field (`evidence` or a field's name). */
   readonly placeholderMismatch: readonly { readonly runId: string; readonly field: string }[];
+  /** The tombstone reads (c8b2): the meta row, and the count of purged ids. */
+  readonly tombstones: ScanOutcome;
+  /** What the tombstone reads found; absent when the store has no meta row. */
+  readonly horizon?: Horizon;
+  /** The five orphan reads (c8b2). */
+  readonly orphans: ScanOutcome;
+  /** Rows whose run is gone, by table and run, in {@link ORPHAN_TABLES}' order. */
+  readonly orphanRows: readonly {
+    readonly table: string;
+    readonly runId: string;
+    readonly rows: number;
+  }[];
+  /** The pointer read (c8b2). */
+  readonly pointers: ScanOutcome;
+  /** Each workflow whose pointer does not match its newest registration. */
+  readonly pointerWrong: readonly PointerWrong[];
+  /** The versions read (c8b2). */
+  readonly versions: ScanOutcome;
+  /** Each stored workflow version whose hash is not its text's. */
+  readonly versionWrong: readonly { readonly workflowId: string; readonly hash: string }[];
   /** How many runs another phase derivation stamped. */
   readonly otherStamps: number;
 }
@@ -209,6 +253,14 @@ interface Collected {
   filterDiffers: { runId: string; column: string; stored: unknown; record: unknown }[];
   placeholderMismatch: { runId: string; field: string }[];
   otherStamps: number;
+  tombstones: ScanOutcome;
+  horizon?: Horizon;
+  orphans: ScanOutcome;
+  orphanRows: { table: string; runId: string; rows: number }[];
+  pointers: ScanOutcome;
+  pointerWrong: PointerWrong[];
+  versions: ScanOutcome;
+  versionWrong: { workflowId: string; hash: string }[];
 }
 
 const NOT_RUN: ScanOutcome = { done: false, errcode: 0 };
@@ -225,6 +277,13 @@ function collected(): Collected {
     filterDiffers: [],
     placeholderMismatch: [],
     otherStamps: 0,
+    tombstones: NOT_RUN,
+    orphans: NOT_RUN,
+    orphanRows: [],
+    pointers: NOT_RUN,
+    pointerWrong: [],
+    versions: NOT_RUN,
+    versionWrong: [],
   };
 }
 
@@ -407,6 +466,104 @@ function judgePlaceholders(
   }
 }
 
+/** The meta row's counter and horizon, and the count of purged ids (c8b2). No meta row, no horizon. */
+function scanTombstones(c: DatabaseLike, out: Collected): void {
+  const meta = c
+    .prepare(
+      'SELECT tomb_seq, tombstones_since, tombstones_through_seq FROM store_meta WHERE one = 1',
+    )
+    .get();
+  if (meta === undefined) return;
+  const purged = c.prepare('SELECT count(*) AS n FROM purged_ids').get();
+  out.horizon = {
+    tombSeq: meta['tomb_seq'],
+    since: meta['tombstones_since'],
+    throughSeq: meta['tombstones_through_seq'],
+    purgedIds: purged?.['n'],
+  };
+}
+
+/** The tables that hold a run's rows, each judged for rows whose run is gone. */
+export const ORPHAN_TABLES = [
+  'evidence',
+  'run_blobs',
+  'trace_buffer',
+  'trace_sealed',
+  'failed_attempts',
+] as const;
+
+/** Every row whose run is gone, counted by table and run (c8b2). */
+function scanOrphans(c: DatabaseLike, out: Collected): void {
+  for (const table of ORPHAN_TABLES) {
+    const rows = c
+      .prepare(
+        `SELECT t.run_id AS run_id, count(*) AS n FROM ${table} t WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = t.run_id) GROUP BY t.run_id ORDER BY t.run_id`,
+      )
+      .all();
+    for (const row of rows) {
+      out.orphanRows.push({ table, runId: String(row['run_id']), rows: Number(row['n']) });
+    }
+  }
+}
+
+/** Each workflow's pointer beside its newest registration (by seq), and whether its copy is stored. */
+const POINTERS = `SELECT coalesce(w.id, n.id) AS id, w.current_hash AS pointer, w.registered_at AS pointer_at,
+  n.hash AS newest, n.registered_at AS newest_at,
+  EXISTS (SELECT 1 FROM workflow_versions v WHERE v.hash = w.current_hash AND v.id = w.id) AS copy
+FROM workflows w FULL JOIN (
+  SELECT r.id, r.hash, r.registered_at FROM workflow_registrations r
+  WHERE r.seq = (SELECT max(m.seq) FROM workflow_registrations m WHERE m.id = r.id)
+) n ON n.id = w.id ORDER BY 1`;
+
+/** Text or NULL, as a pointer read returns it. */
+function textOrNull(value: unknown): string | null {
+  return value === null || value === undefined ? null : String(value);
+}
+
+/** The workflows whose pointer does not match their newest registration (c8b2). */
+function scanPointers(c: DatabaseLike, out: Collected): void {
+  for (const row of c.prepare(POINTERS).all()) {
+    const copy = row['copy'] === 1;
+    const pointer = textOrNull(row['pointer']);
+    const pointerAt = textOrNull(row['pointer_at']);
+    const newest = textOrNull(row['newest']);
+    const newestAt = textOrNull(row['newest_at']);
+    if (
+      pointer === null ||
+      !copy ||
+      newest === null ||
+      pointer !== newest ||
+      pointerAt !== newestAt
+    ) {
+      out.pointerWrong.push({
+        workflowId: String(row['id']),
+        pointer,
+        pointerAt,
+        newest,
+        newestAt,
+        copy,
+      });
+    }
+  }
+}
+
+/** Every stored workflow version whose hash is not its text's, a page at a time (c8b2). */
+function scanVersions(c: DatabaseLike, out: Collected): void {
+  const select = (where: string): string =>
+    `SELECT rowid AS r, hash, id, definition FROM workflow_versions ${where} ORDER BY rowid LIMIT ?`;
+  const next = c.prepare(select('WHERE rowid > ?'));
+  let page = c.prepare(select('')).all(RECORDS_PAGE);
+  while (page.length > 0) {
+    for (const row of page) {
+      if (workflowVersionHash(String(row['definition'])) !== row['hash']) {
+        out.versionWrong.push({ workflowId: String(row['id']), hash: String(row['hash']) });
+      }
+    }
+    if (page.length < RECORDS_PAGE) break;
+    page = next.all(page[page.length - 1]!['r'], RECORDS_PAGE);
+  }
+}
+
 /**
  * The pass (see the module comment), on the check's read-only connection. `running` is the running
  * phase derivation's fingerprint. Rejects only with an error that is not SQLite's corrupt error.
@@ -429,6 +586,10 @@ export async function readRecords(db: RealmDb, running: string): Promise<RecordP
         if (out.runs.done && out.evidence.done && out.blobs.done) {
           judgePlaceholders(expected, numbered, names, out);
         }
+        out.tombstones = scan(() => scanTombstones(c, out));
+        out.orphans = scan(() => scanOrphans(c, out));
+        out.pointers = scan(() => scanPointers(c, out));
+        out.versions = scan(() => scanVersions(c, out));
         finished = true;
       },
       { takesReading: false },
@@ -438,10 +599,28 @@ export async function readRecords(db: RealmDb, running: string): Promise<RecordP
     if (errcode === undefined) throw err;
     // A scan that met the damage said so; SQLite then reports it again at the COMMIT, and what the
     // scans collected stands. A damage met anywhere else leaves no scan to trust.
-    const met = [out.runs, out.evidence, out.blobs].some((s) => s !== NOT_RUN && !s.done);
+    const all = [
+      out.runs,
+      out.evidence,
+      out.blobs,
+      out.tombstones,
+      out.orphans,
+      out.pointers,
+      out.versions,
+    ];
+    const met = all.some((s) => s !== NOT_RUN && !s.done);
     if (!finished || !met) {
       const stopped: ScanOutcome = { done: false, errcode };
-      out = { ...collected(), runs: stopped, evidence: stopped, blobs: stopped };
+      out = {
+        ...collected(),
+        runs: stopped,
+        evidence: stopped,
+        blobs: stopped,
+        tombstones: stopped,
+        orphans: stopped,
+        pointers: stopped,
+        versions: stopped,
+      };
     }
   }
   return out;

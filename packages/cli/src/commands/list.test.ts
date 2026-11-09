@@ -4,7 +4,11 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listRuns, renderCauseSegment, listCommand } from './list.js';
-import { buildFailedAttemptRecord, serializeFailedAttemptLine } from '@sensigo/realm';
+import {
+  FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
+  buildFailedAttemptRecord,
+  serializeFailedAttemptLine,
+} from '@sensigo/realm';
 import type { RunStore, RunRecord, FailedAttemptRecord, WorkflowDefinition } from '@sensigo/realm';
 import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 import { makeTempHome } from '../test-support/temp-home.js';
@@ -899,6 +903,37 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       );
       // the LATEST record's step/code is shown — never the first attempt's.
       expect(result).not.toContain('first_attempt_step');
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it('capped floor: attempts at the byte ceiling render "≥N×", never a bare "N×"', async () => {
+    const h = await makeTempHome();
+    try {
+      const runId = 'run-cause-capped';
+      const run = makeIdleStuckRun({ id: runId });
+      const fas = h.home.failedAttemptStore;
+      const validRec = buildFailedAttemptRecord({
+        run_id: runId,
+        workflow_id: 'test-workflow',
+        step_id: 'classify',
+        ts: '2026-07-01T00:00:00.000Z',
+        error_code: 'VALIDATION_OUTPUT_SCHEMA',
+        ajv_errors: [],
+        params: {},
+        trace_entry_count: 0,
+      });
+      await fas.append(runId, serializeFailedAttemptLine({ ...validRec }).line);
+      // #616 PR-2c c10a-4a: a padding line of the ceiling's size puts the run's stored size past it, so
+      // `read` reports capped. It is not valid JSON, so the reader skips it: one record is counted.
+      await fas.append(runId, 'x'.repeat(FAILED_ATTEMPT_SIDECAR_MAX_BYTES));
+
+      const store = makeStore([run]);
+      const result = await listRuns(undefined, store, undefined, true, undefined, fas);
+      // (a) red when the capped run prints a bare count; (b) prints the listing.
+      expect(result).toContain('rejected: ≥1× (classify: VALIDATION_OUTPUT_SCHEMA)');
+      expect(result).not.toContain('rejected: 1× (');
     } finally {
       await h.cleanup();
     }

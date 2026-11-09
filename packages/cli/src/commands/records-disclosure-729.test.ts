@@ -27,6 +27,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { buildExportBundle, exportDisclosureLine, exportDisclosureRefusal } from './export.js';
 import { inspectReceiptLine, type InspectSurfaceReceipt } from './inspect.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const SECRET = 'FAKE-RECORD-SECRET-0729';
@@ -1956,6 +1957,37 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
       problemAtTier: true,
       none: `No failed attempts recorded for run ${missing}.`,
     });
+  }, 60_000);
+
+  it('I-4 (#616 PR-2c c10a-4a): a stored record that disagrees with its rows is a failed read: the attempts are withheld, and the line says so once', async () => {
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { record: run } = await h.home.runStore.create({
+      workflowId: 'held-729',
+      workflowVersion: 1,
+      params: {},
+    });
+    await failedAttemptHolding(h, run.id);
+    const foreign = await openForeignConnection(h.path);
+    try {
+      foreign
+        .prepare(
+          `UPDATE runs SET record = json_set(record, '$.evidence', json('{"$realm_rows":99}'), '$.version', json_extract(record, '$.version') + 1) WHERE id = ?`,
+        )
+        .run(run.id);
+    } finally {
+      foreign.close();
+    }
+    const r = read(home, ['run', 'attempts', run.id]);
+    // (a) red when a record the store cannot read back is treated as no record (the problem prints
+    //     at the tier), or its plain refusal escapes the catch (no attempts print); (b) prints the
+    //     count of withheld lines and booleans, never the value.
+    expect({
+      withheld: r.stderr.split('\n').filter((l) => l.startsWith('Values withheld')).length,
+      shown: `${r.stdout}${r.stderr}`.includes(SECRET),
+      problemIsShape: problem(r.stdout)?.startsWith('‹string, ') ?? false,
+    }).toEqual({ withheld: 1, shown: false, problemIsShape: true });
   }, 60_000);
 
   it('I-5: attempts says the withheld line only when it has attempts to show', async () => {
