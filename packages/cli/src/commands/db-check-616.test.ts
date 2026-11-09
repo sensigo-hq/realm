@@ -14,12 +14,14 @@ import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   closeSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
   readSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
   writeSync,
@@ -502,6 +504,11 @@ describe('#616 c8a2 — check 6: the page says what the command does', { timeout
       `${THIS}, checks 1, 2 and 3`,
     ],
     [
+      'the side files of a read-only file',
+      'The side files SQLite creates beside a read-only file are read-only too: when you make the file writable, make `realm.db-wal` and `realm.db-shm` writable as well, or Realm still cannot write to the store.',
+      `${THIS}, correction 1, check 2`,
+    ],
+    [
       '--json',
       "`--json` prints the report: `status` (`ok` or `findings`), `path`, `schema_version`, `reads_up_to`, `facts`, `findings`, `not_run` and `not_checked`. A finding's `examples_of`, present only when it differs from `count`, says how many examples exist: `orphaned_rows` counts rows, and its examples are one per table and run.",
       `${THIS}, checks 1 and 2 (examples_of)`,
@@ -598,5 +605,98 @@ describe('#616 c8a2 — check 6: the page says what the command does', { timeout
       .map((l) => l.replace(/^- /, ''));
     // (1) red when the store's sentences change and the page does not follow; (2) prints both lists.
     expect({ printed, listed }).toEqual({ printed: NOT_CHECKED, listed: NOT_CHECKED });
+  });
+});
+
+describe('#616 c8a2 correction 1 — check 1: a masked field', { timeout: 120_000 }, () => {
+  /** A fake, set in a secret-named variable. It is also a plain table name. */
+  const FAKE = 'fake0value0for0the0report';
+
+  it.each([
+    [
+      'examples',
+      FAKE,
+      1,
+      () => orphanRows([[`run-${FAKE}`, 1]]),
+      (r: CheckReport) => r.findings.find((f) => f.code === 'orphaned_rows')?.examples?.[0],
+      '    failed_attempts, run ',
+    ],
+    [
+      'message',
+      FAKE,
+      1,
+      () => onFile((db) => db.exec(`CREATE TABLE ${FAKE} (x)`)),
+      (r: CheckReport) => r.findings.find((f) => f.code === 'schema_differs')?.message,
+      '✗ The schema differs',
+    ],
+    [
+      // `why` only: `check` is a `fact`, and keeps the word in `finalizer_after_delete`.
+      'why',
+      'finalizer',
+      0,
+      () => Promise.resolve(),
+      (r: CheckReport) => r.not_checked.find((n) => n.check === 'finalizer_after_delete')?.why,
+      'Not checked in this version: A run deleted',
+    ],
+  ] as const)(
+    '`%s` hides the value in --json and in the text',
+    async (_key, value, code, seed, field, prefix) => {
+      await makeStore();
+      await seed();
+      const env = { FAKE_API_TOKEN: value };
+      const json = realm(['db', 'check', '--json'], env);
+      const text = realm(['db', 'check'], env);
+      const masked = (shown: string | undefined) => ({
+        redacted: shown?.includes('[REDACTED]') === true,
+        holdsValue: shown?.includes(value) === true,
+      });
+      const hidden = { redacted: true, holdsValue: false };
+      // (1) red when this key is classed `fact` in CHECK_JSON_TABLE, or its text line stops being masked,
+      //     or the field is gone; (2) prints the exit codes and these labels, never the value.
+      expect({
+        codes: [json.code, text.code],
+        json: masked(field(JSON.parse(json.stdout) as CheckReport)),
+        text: masked(linesOf(text.stdout).find((l) => l.startsWith(prefix))),
+      }).toEqual({ codes: [code, code], json: hidden, text: hidden });
+    },
+  );
+});
+
+describe('#616 c8a2 correction 1 — check 2: a read-only file', { timeout: 120_000 }, () => {
+  // The break is outside our code: this cell goes red if SQLite or the store stops giving the side files
+  // the file's own mode, and the page's sentence about them is then untrue.
+  it.skipIf(AS_ROOT)('a journey: checked, then made writable, then its side files', async () => {
+    await makeStore();
+    chmodSync(file, 0o444);
+    locked.push(file);
+    realm(['db', 'check']);
+    const sideFiles = [`${file}-wal`, `${file}-shm`];
+    const state = (path: string): string =>
+      !existsSync(path) ? 'absent' : (statSync(path).mode & 0o222) === 0 ? 'read-only' : 'writable';
+    // (1) red when the side files are missing or take another mode; (2) prints each one's state.
+    expect(sideFiles.map(state)).toEqual(['read-only', 'read-only']);
+
+    const yaml = join(base, 'workflow.yaml');
+    writeFileSync(
+      yaml,
+      'id: pre\nname: pre\nversion: 1\nsteps:\n  compute:\n    description: Compute.\n    execution: auto\n',
+    );
+    chmodSync(file, 0o644);
+    const refused = realm(['workflow', 'register', yaml]);
+    // (1) red when the write passes with the side files still read-only, or the refusal is not its one
+    //     line; (2) prints the code, the number of lines and whether it starts so, with stderr.
+    expect(
+      {
+        code: refused.code,
+        lines: linesOf(refused.stderr).length,
+        starts: refused.stderr.startsWith('Error: Realm cannot write to'),
+      },
+      refused.stderr,
+    ).toEqual({ code: 1, lines: 1, starts: true });
+
+    for (const path of sideFiles) chmodSync(path, 0o644);
+    const written = realm(['workflow', 'register', yaml]);
+    // (1) red when the write is still refused with all three writable; (2) prints the code and stderr.
+    expect(written.code, written.stderr).toBe(0);
   });
 });

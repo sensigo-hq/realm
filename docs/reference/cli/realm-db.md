@@ -118,7 +118,7 @@ Each report lists what this version cannot check:
 - A purged run's key hash cannot be recomputed: no key is kept.
 - A run deleted while a finalizer was still owed cannot be detected: the purge record keeps no finalizer field.
 
-**Exit code:** 0 when every check ran and found nothing. 1 when a problem is found or a check could not run, and 1 when the command refuses, with one `Error:` line on standard error and nothing on standard output. A file Realm cannot write to exits 1, a read-only copy included (`findings[].code` is `not_writable`).
+**Exit code:** 0 when every check ran and found nothing. 1 when a problem is found or a check could not run, and 1 when the command refuses, with one `Error:` line on standard error and nothing on standard output. A file Realm cannot write to exits 1, a read-only copy included (`findings[].code` is `not_writable`). The side files SQLite creates beside a read-only file are read-only too: when you make the file writable, make `realm.db-wal` and `realm.db-shm` writable as well, or Realm still cannot write to the store.
 
 `--json` prints the report: `status` (`ok` or `findings`), `path`, `schema_version`, `reads_up_to`, `facts`, `findings`, `not_run` and `not_checked`. A finding's `examples_of`, present only when it differs from `count`, says how many examples exist: `orphaned_rows` counts rows, and its examples are one per table and run.
 
