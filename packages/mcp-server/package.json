@@ -47,6 +47,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.0",
     "@sensigo/realm": "*",
+    "@sensigo/realm-store-sqlite": "*",
     "proper-lockfile": "^4.1.2",
     "zod": "^4.6.7"
   },

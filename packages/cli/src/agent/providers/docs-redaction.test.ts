@@ -38,11 +38,6 @@ import { startAnthropicStub } from '../test-support/anthropic-stub.js';
 import { makeTempHome } from '../../test-support/temp-home.js';
 import { resolveMcpServerEntry } from '../test-support/mcp-server-entry.js';
 import { leakedForms } from '../test-support/redaction-oracle.js';
-import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from '../test-support/mcp-bin-on-json.js';
-
-// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that start the `realm-mcp` bin. One name, so
-// a cell's only change is this token and prettier leaves its body as it was.
-const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 
 /**
  * #729 PR-3 (L-5): `redactSecretValues` is gone; the loader masks a builder's error at source with
@@ -261,7 +256,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
     });
   });
 
-  xit("a run's params are kept as given in the run's file; realm run export masks them", async () => {
+  it("a run's params are kept as given in the run's file; realm run export masks them", async () => {
     claim(
       TOOLS_PAGE,
       "A run's params are kept as given in the run's file; `realm run export` writes them masked too, except that the export file shows your home folder and user name, which the agent and a log hide when they are 8 or more characters long.",

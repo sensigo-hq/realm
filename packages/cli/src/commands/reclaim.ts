@@ -16,7 +16,7 @@ import { openCliHome } from '../lib/home.js';
 /**
  * Pure outcome→(glyph, message) renderer (issue #221 [M4]) — the SINGLE source of both reclaim
  * CLI messages, shared by batch mode (`--all`) and per-step mode. Extracted (the `isAutoReclaimable`
- * precedent above) because the `.action` handler hard-wires a real `JsonFileStore` and is not
+ * precedent above) because the `.action` handler opens the real home and is not
  * unit-reachable; this function IS. `✓` marks the one MUTATING outcome (`reclaimed`); every other
  * outcome — including the new `no_active_claim` — gets the NEUTRAL glyph `•` (the house
  * informational bullet: purge.ts:419, reclaim.ts's own dry-run listing above). The
