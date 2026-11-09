@@ -1,10 +1,9 @@
 // purge command — the operator-invoked, IRREVERSIBLE run-deletion primitive (issue #107).
 //
-// Deletes a terminal/abandoned run and ALL its co-located on-disk artifacts (run file + the
-// idempotency-key pointer when owned, the failed-attempt sidecar, orphaned WAL trace-buffer files)
-// via the PerRunArtifactStore marker — no store or command hard-codes another store's filename
-// layout; each store deletes only its own artifacts. Dry-run by default; `--force` to actually
-// delete (a single <id> ALSO requires `--force` — naming a run is selection, not consent).
+// Deletes a terminal/abandoned run and everything stored for it (the run's rows, its trace lines and
+// seals, its failed attempts) through the home's purge: each store's own code deletes its own rows.
+// Dry-run by default; `--force` to actually delete (a single <id> ALSO requires `--force` — naming
+// a run is selection, not consent).
 //
 // Non-negotiable invariants (do not weaken): terminal-only (never a non-terminal or `gate_waiting`
 // run — issue #279, increment 2, PR-C: keyed on the DERIVED phase, never the persisted one, so a

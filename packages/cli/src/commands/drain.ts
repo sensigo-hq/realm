@@ -529,9 +529,8 @@ export interface DrainRuntimeDeps {
 /**
  * The full `realm run drain` behaviour (--void / --all / per-run dry-run/--force), factored out of
  * the Commander `.action()` so tests can drive it directly against an explicitly-constructed store
- * (bypassing JsonFileStore's `$HOME`-derived default entirely) rather than through
- * `drainCommand.parseAsync(...)`, whose own default-store construction cannot be relied on to
- * respect a test's `$HOME` override (see the file-header note).
+ * rather than through `drainCommand.parseAsync(...)`, which opens the CLI's home (see the
+ * file-header note).
  */
 export async function runDrainAction(
   runId: string | undefined,
