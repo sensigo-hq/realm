@@ -2,13 +2,8 @@
 // Focus: a gate resolution that COMPLETES the run must fire the run's finalizers using the
 // project registry threaded via stores.registry / stores.registryProvider (mirrors execute_step).
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  ExtensionRegistry,
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-} from '@sensigo/realm';
-import type { WorkflowDefinition, StepHandler } from '@sensigo/realm';
+import { ExtensionRegistry, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import type { WorkflowDefinition, StepHandler, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleSubmitHumanResponse } from './submit-human-response.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -52,8 +47,8 @@ function recordingHandler(): { handler: StepHandler; ran: () => number } {
 
 describe('handleSubmitHumanResponse — fires finalizers on gate completion', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();

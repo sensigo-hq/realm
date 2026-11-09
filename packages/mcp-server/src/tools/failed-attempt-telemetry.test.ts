@@ -3,15 +3,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   JsonFileFailedAttemptStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
 } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type { WorkflowDefinition, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleExecuteStep, handleExecuteStepTool } from './execute-step.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import type { FailedAttemptStoreLike } from './start-run.js';
 
 // First step is an agent step with an output_schema → a missing-field submission fails
 // VALIDATION_OUTPUT_SCHEMA on the write-free pre-claim path.
@@ -36,8 +35,8 @@ const wf: WorkflowDefinition = {
 
 describe('execute_step failed-attempt telemetry', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
@@ -152,9 +151,9 @@ describe('execute_step failed-attempt telemetry', () => {
 
 describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
-  let failedAttemptStore: JsonFileFailedAttemptStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
+  let failedAttemptStore: FailedAttemptStoreLike;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
@@ -246,9 +245,9 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
 
 describe('execute_step failed-attempt telemetry — VALIDATION_EXHAUSTED (issue #220, pin (t))', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
-  let failedAttemptStore: JsonFileFailedAttemptStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
+  let failedAttemptStore: FailedAttemptStoreLike;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
@@ -329,9 +328,9 @@ describe('execute_step failed-attempt records: a chained step refused after the 
     },
   };
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
-  let failedAttemptStore: JsonFileFailedAttemptStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
+  let failedAttemptStore: FailedAttemptStoreLike;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {

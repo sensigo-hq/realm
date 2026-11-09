@@ -7,7 +7,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -20,28 +20,27 @@ import {
   formatDuration,
   loadWorkflowFromString,
   type EngineReply,
+  type RegistryListing,
   type WorkflowDefinition,
+  type WorkflowRegistrar,
 } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { renderReply } from '../render-reply.js';
 import { zOf } from '../test-support/instant.js';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
 // the cell opened, in place of a real sleep; the in-process server (or a spawned child) reads that
 // clock from the location's file.
-const OPENED: TestLocation[] = [];
-async function located(dir: string): Promise<string> {
+const OPENED: TestHome[] = [];
+async function located(dir: string): Promise<void> {
   // A second server on the same folder in one cell shares its location (and its clock).
-  const open = OPENED.find((l) => l.root === dir);
-  if (open !== undefined) return open.runsDir;
-  const loc = await createTestLocation({ start: new Date(), root: dir });
-  OPENED.push(loc);
-  return loc.runsDir;
+  if (OPENED.some((l) => l.root === dir)) return;
+  OPENED.push(await createTestHome({ start: new Date(), root: dir }));
 }
 async function passes(ms: number): Promise<void> {
   for (const loc of OPENED) await loc.clock.advance(ms);
@@ -84,7 +83,10 @@ afterEach(async () => {
   for (const h of handles.splice(0).reverse()) await h.cleanup();
 });
 
-async function connect(registry?: ExtensionRegistry) {
+async function connect(
+  registry?: ExtensionRegistry,
+  wrap?: (real: WorkflowRegistrar) => WorkflowRegistrar,
+) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-'));
   await located(dir);
   const h = await makeTempHome({ home: dir });
@@ -92,6 +94,7 @@ async function connect(registry?: ExtensionRegistry) {
   const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
     ...h.stores,
+    ...(wrap !== undefined ? { workflowStore: wrap(workflowStore) } : {}),
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -926,12 +929,39 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
       'mcp/tools.md',
       '`list_workflows` refuses with its own fields — `status`, `error_code`, `error_details`, `errors`, `agent_action` and `hint`, with `workflows` and `unreadable` empty — and `get_workflow_protocol` refuses with plain text, marked as an error, as the MCP layer does (above).',
     );
-    const { call, dir } = await connect();
+    // The registry itself cannot be read: the listing answers with one `registry_broken` entry, as
+    // Realm's registry does, and the tool words the refusal. Everything else stays the real store's
+    // (bound to it, so its release line and its `get` work through the wrapper).
+    const { call, dir } = await connect(
+      undefined,
+      (real) =>
+        new Proxy(real, {
+          get(target, prop) {
+            if (prop === 'listWithDiagnostics') {
+              return async (): Promise<RegistryListing> => {
+                const file = join(dir, 'workflows');
+                return {
+                  workflows: [],
+                  unreadable: [
+                    {
+                      file,
+                      class: 'registry_broken',
+                      errno: 'ENOTDIR',
+                      reason: `the workflow registry at ${file} cannot be read (ENOTDIR)`,
+                      repair: `make ${file} a readable directory`,
+                    },
+                  ],
+                  mismatched: [],
+                };
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        }),
+    );
     const protocol = await call('get_workflow_protocol', { workflow_id: 'nope' });
     expect([protocol._text, protocol._isError]).toEqual(['Error: Workflow not found: nope', true]);
-    // The registry directory itself cannot be read: here it is a file.
-    rmSync(join(dir, 'workflows'), { recursive: true, force: true });
-    writeFileSync(join(dir, 'workflows'), 'not a directory');
     const listed = await call('list_workflows', {});
     // (a) red when list_workflows' refusal gains or loses a field; (b) prints its keys.
     expect(listed['status']).toBe('error');

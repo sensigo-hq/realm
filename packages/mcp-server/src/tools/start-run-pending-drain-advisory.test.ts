@@ -3,8 +3,8 @@
 // recovery verb — disclosure only, never a policy input (decideIdempotencyPolicy's own domain is
 // unchanged; this warning is added by the CALLER after the policy already decided 'reuse').
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import type { WorkflowDefinition, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -22,8 +22,8 @@ const IDEMPOTENCY_KEY = 'pending-drain-advisory-key';
 
 describe('start_run — pending-drain advisory on idempotent reuse (issue #279, increment 1, PR-B)', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();

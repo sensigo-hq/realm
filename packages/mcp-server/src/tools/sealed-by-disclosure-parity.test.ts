@@ -29,8 +29,13 @@
 // readers most likely to take a named step as THE culprit, which is the misreading #373 exists to
 // prevent. The discriminating cell below pins the absence.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
-import type { RunRecord, SealedBy, WorkflowDefinition } from '@sensigo/realm';
+import type {
+  RunRecord,
+  SealedBy,
+  WorkflowDefinition,
+  RunStore,
+  WorkflowRegistrar,
+} from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 import type { RunStateSummary } from './get-run-state.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -76,8 +81,8 @@ const definition = {
 } as unknown as WorkflowDefinition;
 
 let h: TempHome;
-let runStore: JsonFileStore;
-let workflowStore: JsonWorkflowStore;
+let runStore: RunStore;
+let workflowStore: WorkflowRegistrar;
 
 beforeEach(async () => {
   h = await makeTempHome();

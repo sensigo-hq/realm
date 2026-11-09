@@ -6,12 +6,11 @@
 // when the run cannot go on until its workflow is corrected. Whole-message pins.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -44,8 +43,8 @@ const def = (id: string, withAgent: boolean): WorkflowDefinition => ({
 
 describe('#625 PR-2a, C64 and C65 — one hint for a run handed back with nothing run', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   beforeEach(async () => {
     h = await makeTempHome();
     runStore = h.stores.runStore;

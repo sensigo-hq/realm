@@ -5,7 +5,6 @@
 // read through the renderer — the words unchanged unless a §Table row of the prompt says otherwise.
 import { describe, it, expect, vi } from 'vitest';
 import {
-  JsonFileStore,
   ExtensionRegistry,
   advanceRun,
   composeWaysAt,
@@ -32,7 +31,7 @@ import { makeTempHome } from './test-support/temp-home.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
-async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T> {
+async function withStore<T>(fn: (store: RunStore) => Promise<T>): Promise<T> {
   const h = await makeTempHome();
   try {
     return await fn(h.stores.runStore);

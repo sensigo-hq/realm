@@ -1,14 +1,7 @@
 // Tests for the append_trace MCP tool business logic.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  InMemoryTraceBufferStore,
-  BUFFER_LIMIT_COUNT,
-} from '@sensigo/realm';
-import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
+import { InMemoryTraceBufferStore, BUFFER_LIMIT_COUNT } from '@sensigo/realm';
+import type { WorkflowDefinition, RunRecord, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import { handleAppendTrace, registerAppendTrace } from './append-trace.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -39,20 +32,18 @@ function makeWorkflowDef(): WorkflowDefinition {
 
 describe('handleAppendTrace', () => {
   let h: TempHome;
-  let workflowDir: string;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   let traceBufferStore: InMemoryTraceBufferStore;
 
   beforeEach(async () => {
     h = await makeTempHome();
-    workflowDir = join(h.path, 'workflows');
     runStore = h.stores.runStore;
     workflowStore = h.stores.workflowStore;
     traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
-    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    await h.stores.workflowStore.register(def);
   });
   afterEach(async () => {
     await h.cleanup();
@@ -312,20 +303,18 @@ describe('handleAppendTrace', () => {
 
 describe('append_trace terminal-run guard (issue #187)', () => {
   let h: TempHome;
-  let workflowDir: string;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   let traceBufferStore: InMemoryTraceBufferStore;
 
   beforeEach(async () => {
     h = await makeTempHome();
-    workflowDir = join(h.path, 'workflows');
     runStore = h.stores.runStore;
     workflowStore = h.stores.workflowStore;
     traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
-    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    await h.stores.workflowStore.register(def);
   });
   afterEach(async () => {
     await h.cleanup();
@@ -414,21 +403,19 @@ describe('append_trace terminal-run guard (issue #187)', () => {
 
 describe('registerAppendTrace — ResponseEnvelope error shape', () => {
   let h: TempHome;
-  let workflowDir: string;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   let traceBufferStore: InMemoryTraceBufferStore;
   let client: Client;
 
   beforeEach(async () => {
     h = await makeTempHome();
-    workflowDir = join(h.path, 'workflows');
     runStore = h.stores.runStore;
     workflowStore = h.stores.workflowStore;
     traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
-    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    await h.stores.workflowStore.register(def);
 
     const server = new McpServer({ name: 'test', version: '0.0.0' });
     registerAppendTrace(server, { runStore, workflowStore, traceBufferStore });
