@@ -101,6 +101,15 @@ export interface PromptCacheRequest {
 }
 
 /**
+ * Caching 3-M (D-1): one provider call's own cache choice, and what it was chosen on (the record's
+ * `cache_auto`). Every request of the call sends and records by it.
+ */
+export interface CallCacheChoice {
+  choice: CacheChoice;
+  auto: CacheAuto;
+}
+
+/**
  * Issue #600 PR 2 (B4) — which kind of endpoint a request went to, from the SDK client it went
  * through: `custom` when the client's `baseURL` is a string other than the SDK's own default
  * address, `default` when it is that address, nothing when the client has no string `baseURL`. So
@@ -184,6 +193,11 @@ export abstract class LlmProvider {
        * ignores this option sends what it always sent. Absent when Realm found no split.
        */
       cachePrefixChars?: number;
+      /**
+       * Caching 3-M (D-1): this call's own cache choice. A provider that ignores it sends what it
+       * always sent. Absent: the provider's own choice, as ever.
+       */
+      cacheChoice?: CallCacheChoice;
     },
   ): Promise<CallStepWithMetaResult> {
     // issue #401: the clock is PASSED THROUGH here. This base delegation is the route every
@@ -269,6 +283,8 @@ export abstract class ToolCapableLlmProvider extends LlmProvider {
        * OpenAI's cache key; Anthropic's tool loop keeps #899's marking and does not split.
        */
       cachePrefixChars?: number;
+      /** Caching 3-M (D-1): as `callStepWithMeta`'s; OpenAI's tool path does not read it. */
+      cacheChoice?: CallCacheChoice;
     },
   ): Promise<StepWithToolsResult>;
 }

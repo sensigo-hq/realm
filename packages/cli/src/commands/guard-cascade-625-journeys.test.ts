@@ -22,11 +22,6 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
 import { makeTempHome } from '../test-support/temp-home.js';
 import { writtenSnapshot } from '@sensigo/realm';
-import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from '../agent/test-support/mcp-bin-on-json.js';
-
-// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that start the `realm-mcp` bin. One name, so
-// a cell's only change is this token and prettier leaves its body as it was.
-const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 
 /** The built CLI. THREE `..`: commands → src → cli. */
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
@@ -135,7 +130,7 @@ const guardSettled = (run: RunRecord): boolean =>
 // ---------------------------------------------------------------------------
 
 describe('issue #625 crown — gate → guard over real MCP stdio', () => {
-  xit('approve: ONE submit_human_response returns the guard as passed and the run completes — no call ever names the guard', async () => {
+  it('approve: ONE submit_human_response returns the guard as passed and the run completes — no call ever names the guard', async () => {
     const h = await makeTempHome();
     mkdirSync(h.path, { recursive: true });
     const home = h.root;
@@ -181,7 +176,7 @@ describe('issue #625 crown — gate → guard over real MCP stdio', () => {
     }
   }, 60_000);
 
-  xit('reject: the guard aborts in the same call — ended_by, the abort sentence, status ok, phase aborted', async () => {
+  it('reject: the guard aborts in the same call — ended_by, the abort sentence, status ok, phase aborted', async () => {
     const h = await makeTempHome();
     mkdirSync(h.path, { recursive: true });
     const home = h.root;
@@ -253,7 +248,7 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
     );
   }
 
-  xit(`at least ${MIN_ROUNDS} rounds: the built CLI answers and is SIGKILLed at a varying point`, async () => {
+  it(`at least ${MIN_ROUNDS} rounds: the built CLI answers and is SIGKILLed at a varying point`, async () => {
     const h = await makeTempHome();
     mkdirSync(h.path, { recursive: true });
     const home = h.root;
@@ -372,7 +367,7 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
 // ---------------------------------------------------------------------------
 
 describe('issue #625 two answerers — one answer, one guard entry, the loser told the true phase', () => {
-  xit('10 rounds: two MCP server processes answer one gate with different choices', async () => {
+  it('10 rounds: two MCP server processes answer one gate with different choices', async () => {
     const h = await makeTempHome();
     mkdirSync(h.path, { recursive: true });
     const home = h.root;
@@ -465,7 +460,7 @@ describe('issue #625 `realm agent --run-id` on a run an external answer moved pa
       },
     );
 
-  xit('gate → guard → agent step: the guard is already settled, and the agent reaches the agent step', async () => {
+  it('gate → guard → agent step: the guard is already settled, and the agent reaches the agent step', async () => {
     const h = await makeTempHome();
     mkdirSync(h.path, { recursive: true });
     const home = h.root;
@@ -501,7 +496,7 @@ describe('issue #625 `realm agent --run-id` on a run an external answer moved pa
     await h.cleanup();
   }, 120_000);
 
-  xit('a run the guard ended: the existing terminal-state refusal naming the phase, exit 1 — never "phase: running"', async () => {
+  it('a run the guard ended: the existing terminal-state refusal naming the phase, exit 1 — never "phase: running"', async () => {
     const h = await makeTempHome();
     mkdirSync(h.path, { recursive: true });
     const home = h.root;

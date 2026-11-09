@@ -21,53 +21,11 @@ import type {
   RunPhase,
   RunHealthFinding,
   FailedAttemptReadResult,
-  RunListing,
-  UnreadableRunFileEntry,
   WorkflowDefinition,
 } from '@sensigo/realm';
-import { dirname } from 'node:path';
 import { parseDuration } from '../lib/parse-duration.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
-
-/**
- * issue #719 (B3): a run store as Realm's commands list it — the JSON store's
- * `listWithDiagnostics` when the store has it (every production command builds one), else
- * `list()`, which has nothing more to say.
- */
-export type ListableRunStore = Pick<RunStore, 'list'> & {
-  listWithDiagnostics?: (workflowId?: string) => Promise<RunListing>;
-};
-
-/** issue #719 (B3): every readable run, and the run files that could not be read as runs. */
-export async function listRunsDiagnosed(
-  store: ListableRunStore,
-  workflowId?: string,
-): Promise<RunListing> {
-  if (typeof store.listWithDiagnostics === 'function') {
-    return store.listWithDiagnostics(workflowId);
-  }
-  // #715 (b) (D-15, D-28): the same Listing shape, from `list()` — nothing more to say.
-  return { ...(await store.list(workflowId)), unreadable: [], copies: [] };
-}
-
-/**
- * issue #719 (B3): the stderr lines for the run files a command could not read — one per file
- * (`⚠ <reason> <way out>`), then the count, ending with `tail`: `' and are not listed.'` for a
- * listing, `'; <command> did not act on them.'` for a command that acts on runs. Empty when every
- * file was read.
- */
-export function unreadableRunLines(
-  unreadable: readonly UnreadableRunFileEntry[],
-  tail: string,
-): string[] {
-  if (unreadable.length === 0) return [];
-  const folder = dirname(unreadable[0]!.path);
-  return [
-    ...unreadable.map((u) => `⚠ ${u.reason} ${u.repair}`),
-    `⚠ ${unreadable.length} run file(s) in '${folder}' could not be read${tail}`,
-  ];
-}
 
 /** Returns a chalk-coloured phase label — `phase` is the caller's already-DERIVED value (issue
  *  #279, increment 2, PR-C — D-3 leg vi: render sweep), never a raw `run.run_phase` read here.
@@ -228,7 +186,7 @@ const MAX_CAUSE_SUMMARY_CHARS = 80;
 /**
  * Renders the `--stuck` cause-attribution segment (issue #219) from a `FailedAttemptStore` read —
  * pure and unit-testable in isolation from `listRuns`/the filesystem. `''` for the empty case (no
- * records — the CLI-driven / no-sidecar / genuinely-parked-between-drives case), which the caller
+ * records — the CLI-driven / genuinely-parked-between-drives case), which the caller
  * appends as a no-op — cause is NEVER fabricated. Non-empty results are ALWAYS prefixed with the
  * same `'  '` two-space separator the claim/capability label groups use, so callers can
  * unconditionally `line += renderCauseSegment(result)`.
@@ -283,19 +241,13 @@ export type StuckDefinitionProbe =
  * @param failedAttemptStore Explicit injection (issue #219) for `--stuck` cause attribution —
  *                          deliberately NOT derived from `store` (no structural typing/duck-typed
  *                          `runsDirPath` probing on the `RunStore` interface, which stays plain
- *                          and untouched). The caller (the CLI action, which holds a concrete
- *                          `JsonFileStore` and its real `runsDirPath` getter) constructs this and
+ *                          and untouched). The caller (the CLI action, from the home it opened)
  *                          passes it in; `undefined` means best-effort skip — no cause attribution
  *                          — never a crash. `listRuns` never constructs one itself.
  * @param workflowProbe     issue #558 PR-T: the `--stuck` definition probe (the caller holds the
  *                          registrar); see {@link StuckDefinitionProbe}. #616 PR-2c c5b: awaited
  *                          once per distinct workflow id, one after another, before any run is
  *                          judged. `undefined` ⇒ zero findings, no footer.
- * @param listing           issue #719 (R15): the whole listing (`listRunsDiagnosed`), when the
- *                          caller has read it — then `store.list()` is not called, so one damaged
- *                          run file never hides the rest. When damaged files exist and no
- *                          readable run matches, the output says `No readable runs found` (with
- *                          the filter); the caller prints the damaged files.
  * @returns                 Formatted output string.
  */
 export async function listRuns(
@@ -306,15 +258,11 @@ export async function listRuns(
   idleThresholdMs?: number,
   failedAttemptStore?: FailedAttemptStore,
   workflowProbe?: (workflowId: string) => Promise<StuckDefinitionProbe | undefined>,
-  listing?: RunListing,
 ): Promise<string> {
-  const snapshots = (listing ?? (await store.list(workflowId))).snapshots;
+  const snapshots = (await store.list(workflowId)).snapshots;
   const runs = snapshots.map((s) => s.record);
   // #715 (b) (D6-17, D-26): each row is judged at its own snapshot's `at`.
   const atOf = new Map(snapshots.map((s) => [s.record.id, s.at]));
-  // issue #719 (C2): with damaged run files in the store, an empty result says "readable" — stdout
-  // alone (piped, or with stderr gone) must not say no run matched when a damaged file may be one.
-  const damaged = listing !== undefined && listing.unreadable.length > 0;
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
 
   let filtered = runs;
@@ -421,18 +369,10 @@ export async function listRuns(
 
   if (filtered.length === 0) {
     const scope = workflowId !== undefined ? ` for workflow '${workflowId}'` : '';
-    const readable = damaged ? 'readable ' : '';
     if (stuck === true) {
-      return `No ${readable}stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}).`;
+      return `No stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}).`;
     }
-    if (!damaged) return `No runs found${scope}.`;
-    const filters = [
-      ...(workflowId !== undefined ? [`workflow '${workflowId}'`] : []),
-      ...(statusFilter !== undefined ? [`status '${statusFilter}'`] : []),
-    ];
-    return filters.length > 0
-      ? `No readable runs found for ${filters.join(' and ')}.`
-      : 'No readable runs found.';
+    return `No runs found${scope}.`;
   }
 
   filtered.sort((a, b) => (parseStamp(b.updated_at) ?? NaN) - (parseStamp(a.updated_at) ?? NaN));
@@ -548,9 +488,9 @@ export async function listRuns(
       if (residualLabels.length > 0) {
         line += `  ${residualLabels.join(', ')}`;
       }
-      // issue #219: cause attribution, appended LAST — best-effort, per-run (one run's sidecar
-      // I/O failure never aborts the rest of the list). `records.length === 0` (no throw) means
-      // absence — the CLI-driven / no-sidecar / parked-between-drives case — renders nothing
+      // issue #219: cause attribution, appended LAST — best-effort, per-run (one run's failed-attempt
+      // read failure never aborts the rest of the list). `records.length === 0` (no throw) means
+      // absence — the CLI-driven / parked-between-drives case — renders nothing
       // (renderCauseSegment returns '', a no-op append). A genuine read() throw is a DIFFERENT,
       // visible outcome — never conflated with absence (issue #183) and never silently swallowed
       // into the empty rendering.
@@ -706,9 +646,6 @@ export const listCommand = new Command('list')
       }
 
       try {
-        // issue #719 (B3): the readable runs on stdout; each run file that could not be read, with
-        // its way out, on stderr; exit 0 (as `realm workflow list`).
-        const listing = await listRunsDiagnosed(store, opts.workflow);
         const output = await listRuns(
           opts.workflow,
           store,
@@ -717,15 +654,8 @@ export const listCommand = new Command('list')
           idleThresholdMs,
           failedAttemptStore,
           workflowProbe,
-          listing,
         );
         console.log(output);
-        // issue #719 (F5): a copy of a run whose own file reads is named with its way out, and
-        // not counted among the files that could not be read.
-        for (const c of listing.copies) console.error(`⚠ ${c.reason} ${c.repair}`);
-        for (const line of unreadableRunLines(listing.unreadable, ' and are not listed.')) {
-          console.error(line);
-        }
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(1);

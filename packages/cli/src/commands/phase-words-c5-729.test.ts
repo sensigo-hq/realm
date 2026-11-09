@@ -226,8 +226,8 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
   }, 60_000);
 
   it('run-migrate.ts — `(phase …)` in the stamped bucket: a phase the stamp keeps prints as one word', async () => {
-    // A record whose phase the stamp keeps (the branch every stamped run reaches once the phase is
-    // derived, never stored; the `→` branch's stored ≠ derived case is c10a-4's, on a tampered row).
+    // A record whose phase the stamp keeps: every stamped run, since the phase is derived, never
+    // stored.
     const same = await seed('c5-migrate-same', {
       run_phase: 'abandoned',
       terminal_state: true,

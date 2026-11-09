@@ -51,6 +51,11 @@ export const CACHE_NOT_COMPARED_CAUSES = [
   'not_recorded',
   /** The record holds no earlier request that asked for caching to compare this one with. */
   'no_earlier_request',
+  /** The predecessor is another run's request, and this request or that one caches its input (an
+   *  Anthropic tool step's turn, or OpenAI's own automatic caching): the earlier request's read and
+   *  write include that run's own input, so a new input always reads less and the comparison means
+   *  nothing. The counts are not read for this. */
+  'input_in_cached_part',
   /** A count the comparison needs was not reported: the request's read, its predecessor's read,
    *  or on Anthropic its predecessor's write. */
   'counts_not_reported',
@@ -71,11 +76,12 @@ export const CACHE_MISS_RULES = [
 export type CacheMissRule = (typeof CACHE_MISS_RULES)[number];
 
 /**
- * Where a request's predecessor is: an earlier entry of the same list (`at`, its position), or the
- * `reference` the request carries. The reference's own `from` says where it was found; this answer
- * does not repeat it.
+ * Where a request's predecessor is: an earlier entry of the same list (`at`, its position), the
+ * `reference` the request carries when it came from this run's own record (`reference`), or the one
+ * it carries when it came from another run (`earlier_run`).
  */
-export type CachePredecessorPlace = { from: 'list'; at: number } | { from: 'reference' };
+export type CachePredecessorPlace =
+  { from: 'list'; at: number } | { from: 'reference' } | { from: 'earlier_run' };
 
 /** The answer for one request (Behaviour 6). */
 export type CacheReadVerdict =
@@ -164,7 +170,17 @@ function locatePredecessor(
     }
   }
   const reference = entry['reference'];
-  return asked(reference) ? { place: { from: 'reference' }, record: reference } : undefined;
+  if (!asked(reference)) return undefined;
+  return {
+    place: reference['from'] === 'earlier_run' ? { from: 'earlier_run' } : { from: 'reference' },
+    record: reference,
+  };
+}
+
+/** Whether a side's cached part holds its own input: a marked conversation (an Anthropic tool step's
+ *  turn), or the provider's own rules (OpenAI's automatic caching runs into the message). */
+function cachesInput(side: Entry): boolean {
+  return marks(side).has('conversation') || side['cache_requested'] === 'provider_rules';
 }
 
 /**
@@ -187,6 +203,13 @@ function verdictAt(list: readonly unknown[], i: number): CacheReadVerdict {
   if (placeInCall(entry) === undefined) return { outcome: 'not_compared', cause: 'not_recorded' };
   const predecessor = locatePredecessor(list, i);
   if (predecessor === undefined) return { outcome: 'not_compared', cause: 'no_earlier_request' };
+  // Only against another run: a re-drive of this run has the same input, so it is judged as ever.
+  if (
+    predecessor.place.from === 'earlier_run' &&
+    (cachesInput(entry) || cachesInput(predecessor.record))
+  ) {
+    return { outcome: 'not_compared', cause: 'input_in_cached_part' };
+  }
   const exact = entry['provider'] === 'anthropic';
   const read = reported(entry['cache_read_input_tokens']);
   const before = reported(predecessor.record['cache_read_input_tokens']);
@@ -229,14 +252,14 @@ export function cacheReadVerdicts(requests: unknown): CacheReadVerdict[] {
  * never a proven cause.
  */
 export const CACHE_MISS_CAUSES = [
-  /** The provider differs: drive 2 ran with another `--provider` (inside one list the provider is
+  /** The provider differs: this drive or run used another `--provider` (inside one list the provider is
    *  stamped once per drive, so it cannot differ there). */
   'provider_changed',
-  /** The address differs, between the provider's own and another one: drive 2 ran with or without
+  /** The address differs, between the provider's own and another one: this drive or run went with or without
    *  `--base-url`, `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` (`endpoint` records only that kind,
    *  never the address itself). */
   'endpoint_changed',
-  /** The model the response named differs: drive 2 ran with another `--model`, or an address
+  /** The model the response named differs: this drive or run used another `--model`, or an address
    *  answered from another model (a gateway's fallback, which can happen inside one list too). */
   'model_changed',
   /** The request or its predecessor has no `prefix_parts` on the record (another writer's request,
@@ -248,15 +271,15 @@ export const CACHE_MISS_CAUSES = [
   /** Inside one list, whether strict output was sent differs, in either direction: Realm's own
    *  strict-output ladder moved it (#236, #311, #313, the sticky drop). */
   'strict_ladder',
-  /** Against an earlier drive's request, whether strict output was sent differs; the record cannot
-   *  tell whether Realm or the operator changed it (`--strict-base-url`, a workflow edit, or
-   *  Realm's own retries in either drive). */
+  /** Against an earlier drive's or run's request, whether strict output was sent differs; the record
+   *  cannot tell whether Realm or the operator changed it (`--strict-base-url`, a workflow edit, or
+   *  Realm's own retries in either one). */
   'strict_changed',
   /** The tools part differs: inside one list the MCP server listed different tools between
-   *  attempts; against an earlier drive's request also a workflow edit (on Anthropic a schema edit
+   *  attempts; against an earlier drive's or run's request also a workflow edit (on Anthropic a schema edit
    *  changes the submit tool). */
   'tools',
-  /** The system text differs: against an earlier drive's request, an edit of the agent profile or
+  /** The system text differs: against an earlier drive's or run's request, an edit of the agent profile or
    *  of the step's schema, or another Realm version's base text (a step's `instructions:` never
    *  reach the model); Realm never changes it within a drive. */
   'system',
@@ -266,14 +289,16 @@ export const CACHE_MISS_CAUSES = [
   'repair_feedback',
   /** The prompt part differs where both requests had it cached, against an earlier drive's request:
    *  from the step's input, the workflow file (every drive re-loads it), or that drive's repair
-   *  feedback (the earlier request can be a repair attempt's first request). */
+   *  feedback (the earlier request can be a repair attempt's first request). Against an earlier
+   *  run's request the part compared is the prompt's fixed start, so only the workflow file or its
+   *  context values can move it. */
   'prompt',
-  /** The answer-format part differs: against an earlier drive's request, JSON mode moved with
+  /** The answer-format part differs: against an earlier drive's or run's request, JSON mode moved with
    *  `--base-url` while the client's kind stayed the same (a schema edit also changes the
    *  instructions, so it is named `system`). */
   'format',
   /** What carried a cache marker or the key differs (no `cache_marked` is none): against an
-   *  earlier drive's request `--prompt-cache off`, a setting stated on a gateway, or a workflow
+   *  earlier drive's or run's request `--prompt-cache off`, a setting stated on a gateway, or a workflow
    *  edit that moves where the prompt's fixed start ends; inside one list only Realm's gateway rule
    *  dropping OpenAI's key. A lifetime-only change is not one: on Anthropic it reads in full. */
   'cache_settings',
@@ -447,7 +472,7 @@ function causeAt(
     typeof strictBefore === 'boolean' &&
     strictNow !== strictBefore;
   if (from === 'list' && strictDiffers) return 'strict_ladder';
-  if (from === 'reference' && strictDiffers) return 'strict_changed';
+  if (from !== 'list' && strictDiffers) return 'strict_changed';
   if (differs('tools')) return 'tools';
   if (differs('system')) return 'system';
   const promptCompared = promptInside(now) && promptInside(before) && split(now) === split(before);
@@ -462,7 +487,7 @@ function causeAt(
   ) {
     return 'repair_feedback';
   }
-  if (from === 'reference' && promptCompared && differs('prompt')) return 'prompt';
+  if (from !== 'list' && promptCompared && differs('prompt')) return 'prompt';
   if (differs('format')) return 'format';
   if (!sameSet(marks(now), marks(before))) return 'cache_settings';
   const gap = missGap(now, before);
@@ -489,8 +514,8 @@ export function cacheMissCauses(requests: unknown): (CacheMissCause | undefined)
  * whatever its cause; for every other, `undefined`. `[]` when `requests` is not an array.
  *
  * The gap's basis is the verdict's predecessor: inside one list it is one drive's clock; against
- * the reference it is two drives' clocks, possibly two hosts'. Across drives the gap is never a
- * safety fact: nothing destructive or order-bearing gates on it.
+ * a reference or another run's request it is two drives' clocks, possibly two hosts'. Across drives
+ * the gap is never a safety fact: nothing destructive or order-bearing gates on it.
  */
 export function cacheMissGaps(requests: unknown): (CacheMissGap | undefined)[] {
   if (!Array.isArray(requests)) return [];

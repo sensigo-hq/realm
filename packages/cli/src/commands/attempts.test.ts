@@ -133,8 +133,26 @@ describe('realm run attempts (CLI command)', () => {
     // #616 PR-2c c10a-4a: through the store: a line of the ceiling's size, which the reader skips.
     await h.home.failedAttemptStore.append(runId, 'z'.repeat(FAILED_ATTEMPT_SIDECAR_MAX_BYTES));
     await attemptsCommand.parseAsync([runId], { from: 'user' });
-    // (a) red when the note is dropped; (b) prints the output.
-    expect(logged().toLowerCase()).toContain('ceiling');
+    // (a) red when this note (the branch after the table) is dropped or says `sidecar` again;
+    // (b) prints the output.
+    expect(logged()).toContain(
+      "Note: the run's failed attempts reached their size ceiling; later attempts were dropped (append-and-stop keeps the first N).",
+    );
+  });
+
+  it('shows the capped note after "no failed attempts" when the ceiling holds no readable record', async () => {
+    const runId = nextRunId();
+    const { FAILED_ATTEMPT_SIDECAR_MAX_BYTES } = await import('@sensigo/realm');
+    // No valid record: one line of the ceiling's size, which the reader skips, so `read` answers
+    // `records: []`, `capped: true` (the branch with no record to print).
+    await h.home.failedAttemptStore.append(runId, 'z'.repeat(FAILED_ATTEMPT_SIDECAR_MAX_BYTES));
+    await attemptsCommand.parseAsync([runId], { from: 'user' });
+    const out = logged();
+    // (a) red when this branch's note is dropped or says `sidecar` again; (b) prints the output.
+    expect(out).toContain(`No failed attempts recorded for run ${runId}.`);
+    expect(out).toContain(
+      "Note: the run's failed attempts reached their size ceiling; later attempts were dropped.",
+    );
   });
 });
 

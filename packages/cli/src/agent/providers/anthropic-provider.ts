@@ -25,6 +25,7 @@ import {
   ANTHROPIC_MODELS_URL,
   endpointOf,
   responseModel,
+  type CallCacheChoice,
   type ProviderCapabilities,
   type CallStepWithMetaResult,
 } from './llm-provider.js';
@@ -216,7 +217,12 @@ function plainRecord(value: unknown): Record<string, unknown> | undefined {
  * never comes here. Anthropic's reason goes on as it came: core's one normaliser closes the value
  * where the record is written, as it does a provider module's.
  */
-function cacheDiagnosticsFacts(ask: CacheAsk, body: Rec, response: unknown): Partial<UsageRecord> {
+function cacheDiagnosticsFacts(
+  ask: CacheAsk,
+  body: Rec,
+  response: unknown,
+  choice: CacheChoice,
+): Partial<UsageRecord> {
   if ('diagnostics' in body) {
     const named = (body['diagnostics'] as { previous_message_id: string | null })
       .previous_message_id;
@@ -230,7 +236,11 @@ function cacheDiagnosticsFacts(ask: CacheAsk, body: Rec, response: unknown): Par
           }) as CacheDiagnostics,
     };
   }
-  return ask.probed ? { cache_diagnostics: { asked: false, cause: 'rejected' } } : {};
+  // Caching 3-M (D-1): only a request that would have asked: a request whose choice is `off` never
+  // would, whatever Anthropic refused earlier in the drive.
+  return ask.probed && choice !== 'off'
+    ? { cache_diagnostics: { asked: false, cause: 'rejected' } }
+    : {};
 }
 
 /** Caching 3-M (B1, B2a): the answer's id, when it passes core's one check; else nothing. */
@@ -714,14 +724,19 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     return this.cacheChoice;
   }
 
+  /** Caching 3-M (D-1): the choice a request of this call follows: the call's own, else the provider's. */
+  private choiceFor(call: CallCacheChoice | undefined): CacheChoice {
+    return call?.choice ?? this.settledChoice();
+  }
+
   /**
    * Caching 3-M (B2a): whether a request this provider marks for caching carries the question: the
-   * drive is still asking and the settled choice asks to cache something (a request that asks to
+   * drive is still asking and this call's choice asks to cache something (a request that asks to
    * cache nothing is never judged, so it leaves no fingerprint at Anthropic). Read when a body is
    * built.
    */
-  private asksWhy(): boolean {
-    return this.cacheAsk.asking && this.settledChoice() !== 'off';
+  private asksWhy(call: CallCacheChoice | undefined): boolean {
+    return this.cacheAsk.asking && this.choiceFor(call) !== 'off';
   }
 
   /** Issue #898 — whether an `auto` choice waits for {@link settleAutoChoice}. */
@@ -789,22 +804,29 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * lifetime split. Never `provider`: `realm agent` stamps that. The lifetime unit: when the setting
    * is `auto`, also `cache_auto` — the basis of the choice and the gaps it read (`no_measurement`
    * when none was given), and (#898) where its prices came from when it needed any — whatever it
-   * chose, `off` included.
+   * chose, `off` included. Caching 3-M (D-1): a call with its own choice records that choice and
+   * what it was chosen on; the setting's source and runner stay the provider's.
    */
-  private requestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
+  private requestFacts(
+    response: unknown,
+    client: unknown,
+    call: CallCacheChoice | undefined,
+  ): Partial<UsageRecord> {
     const { value, source, by, auto } = this.promptCache;
-    const choice = this.settledChoice();
+    const choice = this.choiceFor(call);
     const model = responseModel(response);
     const endpoint = endpointOf(client, ANTHROPIC_DEFAULT_BASE_URL);
     const basis = auto ?? { basis: 'no_measurement' as const };
     const cacheAuto =
-      value === 'auto'
-        ? normalizeCacheAuto({
-            basis: basis.basis,
-            ...(basis.gaps_s !== undefined ? { gaps_s: basis.gaps_s } : {}),
-            ...(this.autoPrices !== undefined ? { prices: this.autoPrices } : {}),
-          })
-        : undefined;
+      call !== undefined
+        ? normalizeCacheAuto(call.auto)
+        : value === 'auto'
+          ? normalizeCacheAuto({
+              basis: basis.basis,
+              ...(basis.gaps_s !== undefined ? { gaps_s: basis.gaps_s } : {}),
+              ...(this.autoPrices !== undefined ? { prices: this.autoPrices } : {}),
+            })
+          : undefined;
     return {
       ...(model !== undefined ? { model } : {}),
       ...(choice === 'off'
@@ -926,6 +948,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     billed?: UsageRecord[],
     // caching 3-B (C2): where the prompt's stable head ends; every request of the step cuts there.
     cachePrefixChars?: number,
+    // Caching 3-M (D-1): this call's own choice; every request of the call, the retries included.
+    call?: CallCacheChoice,
   ): Promise<CallStepWithMetaResult> {
     // issue #401: counters are PER-INVOCATION, minted beside the client they count for. A
     // module-global would attribute one step's wire attempts to another's failure.
@@ -966,7 +990,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const requestStart = new Date().toISOString();
       // caching 3-B (C3): the head block, when the step's prompt was split. The JSON retry and a
       // repair attempt both START with the prompt, so they send the same head seconds later.
-      const shaped = userContentWithHead(userContent, cachePrefixChars, this.settledChoice());
+      const shaped = userContentWithHead(userContent, cachePrefixChars, this.choiceFor(call));
       // caching 3-B (E3): the same request without Realm's markers, after a gateway refused them.
       const bare = userContentWithHead(userContent, cachePrefixChars, 'off');
       let sent: Record<string, unknown> = {};
@@ -983,7 +1007,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         const opts: Record<string, unknown> = {
           model: this.model,
           max_tokens: resolveMaxTokens(this.model),
-          system: systemWithCache(systemPrompt, withCache ? this.settledChoice() : 'off'),
+          system: systemWithCache(systemPrompt, withCache ? this.choiceFor(call) : 'off'),
           messages: [{ role: 'user', content: (withCache ? shaped : bare).content }],
         };
         if (submitTool !== undefined) {
@@ -991,7 +1015,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           opts['tool_choice'] = { type: 'auto' };
         }
         // Caching 3-M (B2a): last, and only when asking; the JSON retry names the first answer.
-        if (asks && this.asksWhy()) {
+        if (asks && this.asksWhy(call)) {
           opts['diagnostics'] = { previous_message_id: previousAnswerId };
         }
         sent = opts;
@@ -1023,7 +1047,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           // caching 3-B (E3; MA2-3B-IA1-12): sent without the cache fields after an endpoint refused
           // them, the request records no ask, as #899's final request does: any ask would be false.
           ...(sentWithCache
-            ? this.requestFacts(response, client)
+            ? this.requestFacts(response, client, call)
             : this.toolsRequestFacts(response, client)),
           // caching 3-M (A-0): with no head (a step with no `prompt:`), the parts of what was sent —
           // the prompt as this request sent it (the JSON retry's carries the reminder).
@@ -1037,7 +1061,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           // caching 3-M (piece B1): the answer's id, checked.
           ...responseIdFacts(response),
           // caching 3-M (piece B3a): what this send asked, and what came back.
-          ...cacheDiagnosticsFacts(this.cacheAsk, sent, response),
+          ...cacheDiagnosticsFacts(this.cacheAsk, sent, response, this.choiceFor(call)),
         }),
       );
       return {
@@ -1139,7 +1163,12 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock; cachePrefixChars?: number },
+    opts?: {
+      structuredOutputStrict?: boolean;
+      llmClock?: LlmClock;
+      cachePrefixChars?: number;
+      cacheChoice?: CallCacheChoice;
+    },
   ): Promise<CallStepWithMetaResult> {
     const billed: UsageRecord[] = [];
     try {
@@ -1151,6 +1180,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         opts?.llmClock,
         billed,
         opts?.cachePrefixChars,
+        opts?.cacheChoice,
       );
     } catch (err) {
       attachBilledUsage(err, billed);
@@ -1178,6 +1208,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       llmClock?: LlmClock;
       /** Caching 3-B (C2): not read here — Anthropic's tool loop keeps #899's marking. */
       cachePrefixChars?: number;
+      cacheChoice?: CallCacheChoice;
     },
   ): Promise<StepWithToolsResult> {
     // issue #610: the accumulator is owned by the ENTRY POINT, as `callStep`'s is. One catch here
@@ -1437,7 +1468,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // Issue #899: unless the choice is `off`, the turn asks to cache `system` and the
       // conversation so far — a marker on a COPY of the last message, never on `history`.
       // Caching 3-B (E3): without the markers after a gateway refused them.
-      const choice = withCache ? this.settledChoice() : 'off';
+      const choice = withCache ? this.choiceFor(options.cacheChoice) : 'off';
       const opts: Record<string, unknown> = {
         model: this.model,
         max_tokens: resolveMaxTokens(this.model),
@@ -1449,7 +1480,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       };
       if (requestTools !== undefined) opts['tools'] = requestTools;
       // Caching 3-M (B2a): last, and only when asking; a turn names the answer before it.
-      if (asks && this.asksWhy()) {
+      if (asks && this.asksWhy(options.cacheChoice)) {
         opts['diagnostics'] = { previous_message_id: previousAnswerId };
       }
       return { body: opts, key };
@@ -1490,7 +1521,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         (withCache: boolean, body: Rec) =>
         (response: unknown, client: unknown): Partial<UsageRecord> => ({
           ...(withCache
-            ? this.requestFacts(response, client)
+            ? this.requestFacts(response, client, options.cacheChoice)
             : this.toolsRequestFacts(response, client)),
           ...anthropicPartsFacts(body, system, prompt, 'conversation'),
           ...(this.cacheFields.rejected !== undefined
@@ -1498,7 +1529,12 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
             : {}),
           // caching 3-M (piece B3a): here, not in `bounded`: the final extraction also goes through
           // that, and it never asks.
-          ...cacheDiagnosticsFacts(this.cacheAsk, body, response),
+          ...cacheDiagnosticsFacts(
+            this.cacheAsk,
+            body,
+            response,
+            this.choiceFor(options.cacheChoice),
+          ),
         });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const send = async (withCache: boolean): Promise<{ response: any; key: string }> => {
