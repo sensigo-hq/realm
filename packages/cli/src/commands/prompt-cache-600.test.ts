@@ -9,7 +9,7 @@
 // CI host a cell prints the command's output, the request's `system` field or the stored request
 // facts: no environment, header or key.
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -804,6 +804,94 @@ describe('realm agent --cache-diagnostics: a flag that cannot act is refused at 
         first: r.stderr.includes(ACTS) ? r.stderr.trim().split('\n')[0] : '',
         runs: (await runFiles()).length,
       }).toEqual({ name, refused: false, first: '', runs: 1 });
+    },
+    30_000,
+  );
+});
+
+// Caching 3-M (B2b follow-up, from MA 3's review of #1091): the line in `agent.ts` that hands an
+// operator's `--cache-diagnostics` to `resolveProvider` had no cell of its own — `resolveProvider`'s
+// cell calls it directly, and the stand-in's address always reads custom. These cells drive the built
+// CLI at Anthropic's own address: the child gets a `--require` preload that replaces `fetch`, records
+// each request body and answers like Anthropic, so nothing leaves the machine and the body is the
+// evidence.
+const FETCH_STAND_IN = [
+  "const { appendFileSync } = require('node:fs');",
+  'let n = 0;',
+  'globalThis.fetch = async (url, init) => {',
+  '  n += 1;',
+  "  appendFileSync(process.env.FETCH_STAND_IN_LOG, JSON.stringify({ url: String(url), body: String(init.body) }) + '\\n');",
+  '  return new Response(',
+  '    JSON.stringify({',
+  "      id: 'msg_stand_in' + n, type: 'message', role: 'assistant', model: 'claude-x-20260101',",
+  "      content: [{ type: 'text', text: '{\"summary\":\"ok\"}' }], stop_reason: 'end_turn', stop_sequence: null,",
+  '      usage: { input_tokens: 20, output_tokens: 3, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },',
+  '    }),',
+  "    { status: 200, headers: { 'content-type': 'application/json' } },",
+  '  );',
+  '};',
+].join('\n');
+
+describe("realm agent --cache-diagnostics at Anthropic's own address: what is sent (caching 3-M B2b follow-up)", () => {
+  const MESSAGES = 'https://api.anthropic.com/v1/messages';
+
+  // Real case: an operator leaves the question on, states `on`, or turns it off, and the request body
+  // Anthropic receives must say so. (a) red when `agent.ts` stops handing the operator's value to
+  // `resolveProvider` (the `off` row), when the default is off (the unstated row), or when the address
+  // is read from the variable (the empty-address row, whose `on` is then refused); (b) prints the argv,
+  // the exit code, the address and the key each request carried.
+  it.each([
+    { name: 'unstated: asks', flag: [] as string[], extraEnv: {}, asks: true },
+    { name: 'on: asks', flag: ['--cache-diagnostics', 'on'], extraEnv: {}, asks: true },
+    { name: 'off: does not ask', flag: ['--cache-diagnostics', 'off'], extraEnv: {}, asks: false },
+    {
+      name: 'on with an empty ANTHROPIC_BASE_URL (the SDK reads it as unset): accepted, asks',
+      flag: ['--cache-diagnostics', 'on'],
+      extraEnv: { ANTHROPIC_BASE_URL: '' },
+      asks: true,
+    },
+  ])(
+    '$name',
+    async ({ flag, extraEnv, asks }) => {
+      const log = join(root, 'requests.jsonl');
+      const preload = join(root, 'fetch-stand-in.cjs');
+      writeFileSync(preload, FETCH_STAND_IN, 'utf8');
+      const r = await runCli(
+        ['agent', ...wf('wf'), '--model', 'claude-x', ...flag],
+        env({
+          ANTHROPIC_API_KEY: 'k-600',
+          NODE_OPTIONS: `--require ${preload}`,
+          FETCH_STAND_IN_LOG: log,
+          ...extraEnv,
+        }),
+      );
+      const sent = existsSync(log)
+        ? readFileSync(log, 'utf8')
+            .split('\n')
+            .filter((line) => line !== '')
+            .map((line) => JSON.parse(line) as { url: string; body: string })
+        : [];
+      const seen = sent.map(({ url, body }) => {
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        return {
+          url,
+          diagnostics: 'diagnostics' in parsed ? parsed['diagnostics'] : 'none',
+          last: Object.keys(parsed).at(-1) === 'diagnostics' ? 'diagnostics' : 'not diagnostics',
+        };
+      });
+      expect(
+        { flag, code: r.code, seen, stderr: r.code === 0 ? '' : r.stderr.trim() },
+        r.stdout + r.stderr,
+      ).toEqual({
+        flag,
+        code: 0,
+        seen: [
+          asks
+            ? { url: MESSAGES, diagnostics: { previous_message_id: null }, last: 'diagnostics' }
+            : { url: MESSAGES, diagnostics: 'none', last: 'not diagnostics' },
+        ],
+        stderr: '',
+      });
     },
     30_000,
   );

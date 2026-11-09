@@ -155,7 +155,7 @@ function validationWedgeEntry(
 }
 
 /**
- * #715 (b) (04 §A, census class `outside`): the failed-attempt sidecar's own stamp — a log line's
+ * #715 (b) (04 §A, census class `outside`): a failed-attempt record's own stamp — a log line's
  * time, read from the host's clock and compared with nothing on the run record. Its own function, so
  * the class law (no `outside` read in a function that reads a run's instants) holds by construction.
  */
@@ -272,7 +272,7 @@ export interface AgentDeps {
    * call below. Without this, `realm agent`'s driver never adopted/fenced a step's streamed
    * `append_trace` WAL content at all (the mixed-wiring gap D3 identifies: CLI executors passed
    * no `traceBufferStore`, so acknowledged appends were neither adopted nor refused when a CLI
-   * runner settled). Constructed in `agent.ts`, beside the concrete `JsonFileStore`. Optional so
+   * runner settled). Opened in `agent.ts` from the home, beside the run store. Optional so
    * an existing caller that omits it keeps today's behavior exactly (no trace adoption at all).
    */
   traceBufferStore?: TraceBufferStore;

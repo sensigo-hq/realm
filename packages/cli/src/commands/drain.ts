@@ -45,7 +45,6 @@ import {
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { agentReadyReason, inFlightReasons } from './run-advance.js';
-import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
 
@@ -530,9 +529,8 @@ export interface DrainRuntimeDeps {
 /**
  * The full `realm run drain` behaviour (--void / --all / per-run dry-run/--force), factored out of
  * the Commander `.action()` so tests can drive it directly against an explicitly-constructed store
- * (bypassing JsonFileStore's `$HOME`-derived default entirely) rather than through
- * `drainCommand.parseAsync(...)`, whose own default-store construction cannot be relied on to
- * respect a test's `$HOME` override (see the file-header note).
+ * rather than through `drainCommand.parseAsync(...)`, which opens the CLI's home (see the
+ * file-header note).
  */
 export async function runDrainAction(
   runId: string | undefined,
@@ -616,21 +614,14 @@ export async function runDrainAction(
       process.exit(1);
     }
     // issue #719 (B3): its own `try` — a listing that throws is rendered like every other failure
-    // here, never an unhandled rejection. The readable runs are acted on; a damaged run file is
-    // reported, not acted on.
+    // here, never an unhandled rejection.
     let runs: RunRecord[];
     // #715 (b) (D-26): each row is judged at its own snapshot's `at`.
     let atOf: Map<string, Date>;
     try {
-      const listing = await listRunsDiagnosed(runStore);
+      const listing = await runStore.list();
       runs = listing.snapshots.map((s) => s.record);
       atOf = new Map(listing.snapshots.map((s) => [s.record.id, s.at]));
-      for (const line of unreadableRunLines(
-        listing.unreadable,
-        '; realm run drain --all did not act on them.',
-      )) {
-        console.error(line);
-      }
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

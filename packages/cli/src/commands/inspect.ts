@@ -858,7 +858,8 @@ export function gapWords(seconds: number): string {
 /** Caching 3-M A-2b2 — the request a miss is compared with, numbered as the line numbers its own. */
 function predecessorWords(miss: CostMiss): string {
   const place = miss.derived.predecessor;
-  return place.from === 'list' ? `request ${String(place.at + 1)}` : "an earlier drive's request";
+  if (place.from === 'list') return `request ${String(place.at + 1)}`;
+  return place.from === 'earlier_run' ? "an earlier run's request" : "an earlier drive's request";
 }
 
 /** A miss's lifetime in words; one no whole-seconds word fits (only another writer's) as seconds. */
@@ -869,17 +870,24 @@ function missLifetimeWords(seconds: number): string {
 /**
  * Caching 3-M A-2b2 — THE sentence for each cause: what differs from the request it is compared
  * with (`prev`), and who or what could have changed it. Where a cause's sources differ by scope
- * (inside one list, or against an earlier drive's request), it has one sentence per scope. Only a
+ * (inside one list, against an earlier drive's request, or against an earlier run's), it has one
+ * sentence per scope. Only a
  * pause prints a lifetime, and only a pause or no difference prints the gap. Checked by the build
  * against the one cause list.
  */
 const MISS_SENTENCES = {
-  provider_changed: (prev) =>
-    `the provider differs from ${prev} (another --provider, the API key that chose the provider ` +
-    'when none was given, or an o1 model, which has its own provider)',
-  endpoint_changed: (prev) =>
-    `the address moved between the provider's own and another one since ${prev} ` +
-    '(--base-url, ANTHROPIC_BASE_URL or OPENAI_BASE_URL)',
+  provider_changed: (prev, miss) =>
+    miss.derived.predecessor.from === 'earlier_run'
+      ? `the provider differs from ${prev} (another --provider, or the API key that chose the ` +
+        'provider when none was given)'
+      : `the provider differs from ${prev} (another --provider, the API key that chose the provider ` +
+        'when none was given, or an o1 model, which has its own provider)',
+  endpoint_changed: (prev, miss) =>
+    miss.derived.predecessor.from === 'earlier_run'
+      ? `the address moved between the provider's own and another one since ${prev} ` +
+        '(ANTHROPIC_BASE_URL)'
+      : `the address moved between the provider's own and another one since ${prev} ` +
+        '(--base-url, ANTHROPIC_BASE_URL or OPENAI_BASE_URL)',
   model_changed: (prev, miss) =>
     miss.derived.predecessor.from === 'list'
       ? `a different model answered than for ${prev} (the endpoint answered from another model)`
@@ -891,28 +899,47 @@ const MISS_SENTENCES = {
   final_request: (prev) =>
     `Realm's own final request of a tool step sends no tools, so its start differs from what ${prev} cached`,
   strict_ladder: (prev) => `Realm switched strict output on or off after ${prev} (its own retries)`,
-  strict_changed: (prev) =>
-    `strict output was sent on only one of this request and ${prev} ` +
-    "(--strict-base-url, a workflow edit, or Realm's own retries in either drive)",
-  tools: (prev, miss) =>
-    miss.derived.predecessor.from === 'list'
-      ? `the tools differ from ${prev} (the MCP server listed different tools)`
-      : `the tools differ from ${prev} (the MCP server listed different tools, or the workflow ` +
-        "changed: the step's tools, or on Anthropic its schema, which Realm sends as its answer tool)",
+  strict_changed: (prev, miss) =>
+    miss.derived.predecessor.from === 'earlier_run'
+      ? `strict output was sent on only one of this request and ${prev} ` +
+        "(a workflow edit, or Realm's own retries in either run)"
+      : `strict output was sent on only one of this request and ${prev} ` +
+        "(--strict-base-url, a workflow edit, or Realm's own retries in either drive)",
+  tools: (prev, miss) => {
+    const from = miss.derived.predecessor.from;
+    if (from === 'list')
+      return `the tools differ from ${prev} (the MCP server listed different tools)`;
+    if (from === 'earlier_run') {
+      return `the tools differ from ${prev} (the step's schema, which Realm sends as its answer tool on Anthropic)`;
+    }
+    return (
+      `the tools differ from ${prev} (the MCP server listed different tools, or the workflow ` +
+      "changed: the step's tools, or on Anthropic its schema, which Realm sends as its answer tool)"
+    );
+  },
   system: (prev) =>
     `the system text differs from ${prev} (the agent profile, the step's schema, or another Realm version)`,
   repair_feedback: (prev) =>
     `Realm's own repair feedback, added after a rejected answer, changed the prompt ${prev} cached`,
-  prompt: (prev) =>
-    `the prompt differs from ${prev} ` +
-    "(the step's input, the workflow file, or that drive's repair feedback)",
+  prompt: (prev, miss) =>
+    miss.derived.predecessor.from === 'earlier_run'
+      ? `the prompt's fixed start differs from ${prev} (the workflow file or its context values)`
+      : `the prompt differs from ${prev} ` +
+        "(the step's input, the workflow file, or that drive's repair feedback)",
   format: (prev) => `the answer format differs from ${prev} (JSON mode moved with --base-url)`,
-  cache_settings: (prev, miss) =>
-    miss.derived.predecessor.from === 'list'
-      ? "Realm stopped sending OpenAI's cache key after the endpoint refused it"
-      : `what was marked for caching differs from ${prev} (--prompt-cache, Realm dropping ` +
-        "OpenAI's cache key after an endpoint refused it, or an edit that moved where the " +
-        "prompt's fixed start ends)",
+  cache_settings: (prev, miss) => {
+    const from = miss.derived.predecessor.from;
+    if (from === 'list')
+      return "Realm stopped sending OpenAI's cache key after the endpoint refused it";
+    if (from === 'earlier_run') {
+      return `what was marked for caching differs from ${prev} (an edit that moved where the prompt's fixed start ends)`;
+    }
+    return (
+      `what was marked for caching differs from ${prev} (--prompt-cache, Realm dropping ` +
+      "OpenAI's cache key after an endpoint refused it, or an edit that moved where the " +
+      "prompt's fixed start ends)"
+    );
+  },
   possibly_expired: (prev, miss) => {
     const { gap_s: gap, lifetime_s: lifetime, lifetime_from: from } = miss.derived;
     // One function feeds both this cause and its gap (A-2a3), so both are always present here.
@@ -938,13 +965,44 @@ export function missSentence(miss: CostMiss): string {
   return MISS_SENTENCES[miss.derived.cause](predecessorWords(miss), miss);
 }
 
+/** Caching 3-M B3b — a reason Anthropic gives a count for: what changed, then the count if given. */
+const changedWords =
+  (what: string) =>
+  (tokens: number | undefined): string =>
+    tokens !== undefined ? `${what} (about ${String(tokens)} tokens it could not reuse)` : what;
+
+/**
+ * Caching 3-M B3b — THE words for what Anthropic said about a miss, one per reason. Only the four
+ * reasons Anthropic gives a count for can print one. Checked by the build against the one list.
+ */
+const ANTHROPIC_WORDS = {
+  messages_changed: changedWords('the messages changed'),
+  system_changed: changedWords('the system text changed'),
+  tools_changed: changedWords('the tools changed'),
+  model_changed: changedWords('the model changed'),
+  previous_message_not_found: () => 'it could not find the earlier request',
+  unavailable: () => 'it could not compare the two requests',
+  no_divergence: () => 'it found no difference between the two requests',
+  unknown: () => 'something Realm does not recognise yet',
+} satisfies Record<
+  NonNullable<CostMiss['provider']>['reason'],
+  (tokens: number | undefined) => string
+>;
+
+/** Caching 3-M B3b — a miss line's clause for what Anthropic said, or nothing when it said nothing. */
+export function anthropicClause(miss: CostMiss): string {
+  if (miss.provider === undefined) return '';
+  const { reason, cache_missed_input_tokens: tokens } = miss.provider;
+  return `; Anthropic says ${ANTHROPIC_WORDS[reason](tokens)}`;
+}
+
 /**
  * Caching 3-M A-2b1 — THE one composer of a cost's miss lines, shared by the step's line, each
  * attempt's line and the failure block's `usage:` line: one line per request that missed the
  * cache, in list order, from the cost view's `misses` (worked out in core; nothing here recomputes
  * them). The read count is what the request read: the expected count less the shortfall. A-2b2:
- * after a dash, its cause's sentence. A-2b3: then what the miss cost, when core priced it from the
- * runner's economics file.
+ * after a dash, its cause's sentence. B3b: then what Anthropic said, when it answered. A-2b3: last,
+ * what the miss cost, when core priced it from the runner's economics file.
  */
 function missLines(cost: CostView | undefined): string[] {
   if (cost?.misses === undefined) return [];
@@ -954,6 +1012,7 @@ function missLines(cost: CostView | undefined): string[] {
       `cache miss: request ${String(miss.position + 1)} of ${String(cost.requests)} ` +
       `read ${String(expected - shortfall)} of ${String(expected)} expected tokens — ` +
       missSentence(miss) +
+      anthropicClause(miss) +
       (miss.extra_usd !== undefined
         ? `; this miss cost about ${formatUsd(miss.extra_usd)} more than a full read (your economics file)`
         : '')

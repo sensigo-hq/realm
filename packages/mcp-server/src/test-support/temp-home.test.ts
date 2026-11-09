@@ -5,11 +5,17 @@
 // a test seeds a run through the handle and drives a child with `HOME: root`, or opens the handle on a
 // test location; the helper must open the folder the test names and remove only what it made.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { loadWorkflowFromString, type RunStore } from '@sensigo/realm';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import {
+  buildFailedAttemptRecord,
+  loadWorkflowFromString,
+  serializeFailedAttemptLine,
+  type RunStore,
+} from '@sensigo/realm';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
+import { openMcpHome } from '../home.js';
 import { makeTempHome, runCount, runIds, type TempHome } from './temp-home.js';
 
 const YAML = [
@@ -21,6 +27,13 @@ const YAML = [
   '    description: A step.',
   '    execution: auto',
 ].join('\n');
+
+/** The store's names in a home after the open, the write-ahead log's two files left out. */
+const STORE_NAMES = ['dedup', 'realm.db', 'replays', 'runs', 'workflows'];
+const entriesOf = (folder: string): string[] =>
+  readdirSync(folder)
+    .filter((e) => e !== 'realm.db-wal' && e !== 'realm.db-shm')
+    .sort();
 
 let decoy: string;
 let savedHome: string | undefined;
@@ -37,7 +50,7 @@ afterEach(() => {
 
 const handles: TempHome[] = [];
 const scratches: string[] = [];
-const locations: TestLocation[] = [];
+const locations: TestHome[] = [];
 afterEach(async () => {
   for (const h of handles.splice(0)) await h.cleanup();
   for (const l of locations.splice(0)) await l.remove();
@@ -50,7 +63,7 @@ function scratch(): string {
 }
 
 describe('#616 PR-2a (ii-a) — makeTempHome', () => {
-  it('four stores on one fresh folder; cleanup() twice leaves nothing', async () => {
+  it('four stores in one fresh home: a new handle reads each back; the home holds the five names; cleanup() twice leaves nothing', async () => {
     const home = await makeTempHome();
     const { runStore, workflowStore, traceBufferStore, failedAttemptStore } = home.stores;
     const { record: run } = await runStore.create({
@@ -59,37 +72,89 @@ describe('#616 PR-2a (ii-a) — makeTempHome', () => {
       params: {},
     });
     await workflowStore.register(loadWorkflowFromString(YAML));
-    await failedAttemptStore.append(run.id, '{"attempt":1}');
-    // The fenced append reads the run through the trace buffer's reader: it passes only when that
-    // reader is this home's run store, which holds the run.
-    await traceBufferStore.appendFenced(run.id, 'a', [{ event: 'e' }], {
-      kind: 'run_at_version',
-      version: run.version,
+    const attempt = buildFailedAttemptRecord({
+      run_id: run.id,
+      workflow_id: 'home616',
+      step_id: 'a',
+      ts: '2026-07-01T00:00:00.000Z',
+      error_code: 'VALIDATION_OUTPUT_SCHEMA',
+      ajv_errors: [],
+      params: {},
+      trace_entry_count: 0,
     });
-    const runs = readdirSync(join(home.path, 'runs'));
-    const wrote = {
-      run: runs.includes(`${run.id}.json`),
-      failedAttempt: runs.includes(`${run.id}.attempts.jsonl`),
-      trace: runs.some((f) => f.startsWith(`trace-buffer-${run.id}-`)),
-      workflow: readdirSync(join(home.path, 'workflows')).length > 0,
-      decoyHasRealm: existsSync(join(decoy, '.realm')),
+    await failedAttemptStore.append(run.id, serializeFailedAttemptLine({ ...attempt }).line);
+    await traceBufferStore.append(run.id, 'a', [{ event: 'e' }]);
+    const entries = entriesOf(home.path);
+    // Closed, then opened afresh: what the new handle reads is in that folder's store, nowhere else.
+    await openMcpHome({ home: home.path }).then((h) => h.close());
+    const again = await openMcpHome({ home: home.path });
+    const readBack = {
+      run: (await again.runStore.get(run.id)).record.id,
+      workflow: (await again.workflowStore.get('home616')).id,
+      attempts: (await again.failedAttemptStore.read(run.id)).records.length,
+      trace: Object.values(await again.traceBufferStore.readAllForRun(run.id)).flat().length,
     };
+    again.close();
+    const decoyHasRealm = existsSync(join(decoy, '.realm'));
     const folder = dirname(home.path);
     await home.cleanup();
     await home.cleanup();
-    // (1) red when the helper builds one of its stores on another folder — the default home (the
-    //     decoy then holds a `.realm`; the run, the record or the copy is missing here), or a trace
-    //     buffer whose reader is another folder's run store (the fenced append refuses) — or when
-    //     `cleanup()` leaves the folder or throws the second time;
-    // (2) prints what each store left where, whether the decoy holds a `.realm`, and whether the
-    //     temp folder is still there.
-    expect({ ...wrote, leftAfterCleanup: existsSync(folder) }).toEqual({
-      run: true,
-      failedAttempt: true,
-      trace: true,
-      workflow: true,
+    // (1) red when the helper opens one of its stores on another folder — the default home (the decoy
+    //     then holds a `.realm`, and the new handle reads nothing back) — or the home is opened
+    //     somewhere else than `path`, or `cleanup()` leaves the folder or throws the second time;
+    // (2) prints what the new handle read, the home's entries, whether the decoy holds a `.realm`, and
+    //     whether the temp folder is still there.
+    expect({ entries, readBack, decoyHasRealm, leftAfterCleanup: existsSync(folder) }).toEqual({
+      entries: STORE_NAMES,
+      readBack: { run: run.id, workflow: 'home616', attempts: 1, trace: 1 },
       decoyHasRealm: false,
       leftAfterCleanup: false,
+    });
+  });
+
+  it('the default home is read at the open, not when the module loads', async () => {
+    // This module was imported before HOME was set (in beforeEach, above).
+    const elsewhere = scratch();
+    process.env['HOME'] = elsewhere;
+    const home = await openMcpHome();
+    const path = home.path;
+    const db = existsSync(join(elsewhere, '.realm', 'realm.db'));
+    home.close();
+    // (1) red when the door reads the home once, at module load (the store lands under the home in
+    //     place at import); (2) prints the home's path and whether `realm.db` is under this HOME.
+    expect({ path, db }).toEqual({ path: join(elsewhere, '.realm'), db: true });
+  });
+
+  it('one handle per home per process: a second open hands back the same four stores, and close() on either ends it for both', async () => {
+    const path = join(scratch(), '.realm');
+    const first = await openMcpHome({ home: path });
+    const second = await openMcpHome({ home: path });
+    const same = {
+      runStore: first.runStore === second.runStore,
+      workflowStore: first.workflowStore === second.workflowStore,
+      traceBufferStore: first.traceBufferStore === second.traceBufferStore,
+      failedAttemptStore: first.failedAttemptStore === second.failedAttemptStore,
+    };
+    second.close();
+    const afterClose = await first.workflowStore.list().then(
+      () => 'resolved',
+      () => 'rejected',
+    );
+    const reopened = await openMcpHome({ home: path });
+    const reopenedIsNew = reopened.workflowStore !== first.workflowStore;
+    reopened.close();
+    // (1) red when a second open builds a new handle (the stores are other objects), or `close()`
+    //     leaves the first caller's handle open; (2) prints which stores are shared, how the first
+    //     caller's read ended, and whether the reopen is a new handle.
+    expect({ same, afterClose, reopenedIsNew }).toEqual({
+      same: {
+        runStore: true,
+        workflowStore: true,
+        traceBufferStore: true,
+        failedAttemptStore: true,
+      },
+      afterClose: 'rejected',
+      reopenedIsNew: true,
     });
   });
 });
@@ -106,41 +171,40 @@ describe('#616 PR-2b b3 — makeTempHome(), the CLI helper’s shape', () => {
       named: basename(h.root).startsWith('realm-temp-home-'),
       exists: existsSync(h.root),
       path: h.path,
-      runsDir: h.stores.runStore.runsDirPath,
+      db: existsSync(join(h.path, 'realm.db')),
     }).toEqual({
       underTmp: true,
       named: true,
       exists: true,
       path: join(h.root, '.realm'),
-      runsDir: join(h.root, '.realm', 'runs'),
+      db: true,
     });
   });
 
-  it('a given .realm path: its parent is the root, the path as given, and only the registry’s folder is created', async () => {
+  it('a given .realm path: its parent is the root, the path as given, and the open creates the store there', async () => {
     const s = scratch();
     const given = join(s, '.realm');
     const h = await makeTempHome({ home: given });
     handles.push(h);
-    // (1) red when `root` is undefined on every given path, or the helper or the opener creates
-    //     anything at the open but the registry's folder (this opener builds the registry there,
-    //     unlike the CLI's door); (2) prints `root`, `path` and what the scratch folder and the
-    //     given folder hold.
+    // (1) red when `root` is undefined on every given path, or the helper opens another folder than
+    //     the one given (the store is then not there); (2) prints `root`, `path` and what the scratch
+    //     folder and the given folder hold.
     expect({
       root: h.root,
       path: h.path,
       scratch: readdirSync(s),
-      given: readdirSync(given),
+      given: entriesOf(given),
     }).toEqual({
       root: s,
       path: given,
       scratch: ['.realm'],
-      given: ['workflows'],
+      given: STORE_NAMES,
     });
   });
 
-  it('a test location by its own root: no root, the location’s runs, and its clock read at the open', async () => {
+  it('a test home by its own root: no root, the test home’s folder, and its clock read at the open', async () => {
     const T = '2031-04-05T06:07:08.000Z';
-    const location = await createTestLocation({ start: T, root: join(scratch(), 'loc') });
+    const location = await createTestHome({ start: T, root: join(scratch(), 'loc') });
     locations.push(location);
     const h = await makeTempHome({ home: location.root });
     handles.push(h);
@@ -150,16 +214,16 @@ describe('#616 PR-2b b3 — makeTempHome(), the CLI helper’s shape', () => {
       params: {},
     });
     const { at } = await h.stores.runStore.get(record.id);
-    // (1) red when `root` is `dirname(home)` on every given path (a location's parent is no child's
-    //     HOME), or the opener opens another folder than the location's, or the run store runs on
-    //     the real clock (a handle opened before the location's clock file existed);
-    // (2) prints `root`, both runs folders and the snapshot's `at`.
+    // (1) red when `root` is `dirname(home)` on every given path (a test home's parent is no child's
+    //     HOME), or the door opens another folder than the test home's, or the run store runs on the
+    //     real clock (the home's test-clock file not read at the open);
+    // (2) prints `root`, the path, whether `realm.db` is in the test home, and the snapshot's `at`.
     expect({
       root: h.root,
       path: h.path,
-      runsDir: h.stores.runStore.runsDirPath,
+      db: existsSync(join(location.root, 'realm.db')),
       at: at.toISOString(),
-    }).toEqual({ root: undefined, path: location.root, runsDir: location.runsDir, at: T });
+    }).toEqual({ root: undefined, path: location.root, db: true, at: T });
   });
 
   it('cleanup() removes the helper’s own root, and a second call resolves', async () => {
@@ -183,30 +247,30 @@ describe('#616 PR-2b b3 — makeTempHome(), the CLI helper’s shape', () => {
     mkdirSync(given);
     const h = await makeTempHome({ home: given });
     await h.cleanup();
-    // (1) red when cleanup removes every root, the helper's own or not (a test location's handle,
-    //     or a second handle on another handle's folder, would remove that folder under the test);
-    // (2) prints the folder and whether it, and its registry's folder, still exist.
+    // (1) red when cleanup removes every root, the helper's own or not (a test home's handle, or a
+    //     handle on another handle's folder, would remove that folder under the test);
+    // (2) prints the folder and whether it, and the store file in it, still exist.
     expect({
       given,
       exists: existsSync(given),
-      workflows: existsSync(join(given, 'workflows')),
+      db: existsSync(join(given, 'realm.db')),
     }).toEqual({
       given,
       exists: true,
-      workflows: true,
+      db: true,
     });
   });
 });
 
 describe('#616 PR-2c c0 — runCount and runIds read the runs through the store', () => {
   it('on a fresh home: 0 and [] with no runs folder made first; after two creates: 2 and both ids, ascending', async () => {
-    // Each reader takes its first look at a fresh home of its own: `list()` makes the runs folder,
-    // so a reader that runs after the other would find a folder already there.
+    // Each reader takes its first look at a fresh home of its own. #616 PR-2c c10b-2: on the SQLite
+    // home `runs` is the store's fence FILE, never a folder.
     const counted = await makeTempHome();
     const listed = await makeTempHome();
     const h = await makeTempHome();
     handles.push(counted, listed, h);
-    const folderBefore = [counted, listed].map((t) => existsSync(join(t.path, 'runs')));
+    const folderBefore = [counted, listed].map((t) => statSync(join(t.path, 'runs')).isDirectory());
     const fresh = {
       count: await runCount(counted.stores.runStore),
       ids: await runIds(listed.stores.runStore),
@@ -217,7 +281,7 @@ describe('#616 PR-2c c0 — runCount and runIds read the runs through the store'
     const count = await runCount(store);
     const ids = await runIds(store);
     // (1) red when a reader counts the files in the runs folder (`readdir`) instead of asking the
-    //     store: the opener makes no runs folder at the open, so on the fresh home the read throws ENOENT;
+    //     store: the home holds no runs folder (`runs` is a file), so on the fresh home the read throws;
     //     `ascending` checks this store's listing only — the JSON store's `list()` already sorts, so
     //     the order is guarded by the next cell, whose store answers out of order; (2) prints whether
     //     the folder was there first, the count

@@ -1,10 +1,9 @@
 // purge command — the operator-invoked, IRREVERSIBLE run-deletion primitive (issue #107).
 //
-// Deletes a terminal/abandoned run and ALL its co-located on-disk artifacts (run file + the
-// idempotency-key pointer when owned, the failed-attempt sidecar, orphaned WAL trace-buffer files)
-// via the PerRunArtifactStore marker — no store or command hard-codes another store's filename
-// layout; each store deletes only its own artifacts. Dry-run by default; `--force` to actually
-// delete (a single <id> ALSO requires `--force` — naming a run is selection, not consent).
+// Deletes a terminal/abandoned run and everything stored for it (the run's rows, its trace lines and
+// seals, its failed attempts) through the home's purge: each store's own code deletes its own rows.
+// Dry-run by default; `--force` to actually delete (a single <id> ALSO requires `--force` — naming
+// a run is selection, not consent).
 //
 // Non-negotiable invariants (do not weaken): terminal-only (never a non-terminal or `gate_waiting`
 // run — issue #279, increment 2, PR-C: keyed on the DERIVED phase, never the persisted one, so a
@@ -31,7 +30,6 @@ import type {
   RunStore,
   PerRunArtifactStore,
   RunScopedFencePredicate,
-  UnreadableRunFileEntry,
   WorkflowRegistrar,
 } from '@sensigo/realm';
 import {
@@ -48,7 +46,6 @@ import {
 } from '@sensigo/realm';
 import type { PurgeReport, PurgeSelection } from '@sensigo/realm-store-sqlite';
 import { parseDuration } from '../lib/parse-duration.js';
-import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
 
@@ -193,11 +190,6 @@ export interface PurgeRunsOptions {
    * refuses is no path). Absent, or a workflow that cannot be read: see {@link resumableOf}.
    */
   workflows?: Pick<WorkflowRegistrar, 'get'> | undefined;
-  /**
-   * issue #719 (B3), batch mode: told the run files that could not be read as runs — never
-   * selected, never deleted.
-   */
-  onUnreadable?: ((entries: UnreadableRunFileEntry[]) => void) | undefined;
 }
 
 /**
@@ -271,10 +263,7 @@ export async function purgeRuns(
     }
   } else {
     const thresholdMs = options.olderThan !== undefined ? parseDuration(options.olderThan) : 0;
-    // issue #719 (B3): the readable runs are candidates; a damaged run file is reported, never
-    // purged.
-    const { snapshots, unreadable } = await listRunsDiagnosed(anchorStore, options.workflow);
-    if (unreadable.length > 0) options.onUnreadable?.(unreadable);
+    const { snapshots } = await anchorStore.list(options.workflow);
     // #715 (b) (D-26): each row judged at its own snapshot's `at`.
     for (const snapshot of snapshots) {
       const run = snapshot.record;
@@ -755,11 +744,6 @@ export const purgeCommand = new Command('purge')
       ];
 
       const dryRun = opts.force !== true;
-      const onUnreadable = (entries: UnreadableRunFileEntry[]): void => {
-        for (const line of unreadableRunLines(entries, '; realm run purge did not act on them.')) {
-          console.error(line);
-        }
-      };
       try {
         // #616 PR-2c c9/c10a-3a: the fourth argument is the home's own purge, so the store path
         // runs — bounded batches, the free pages returned, the log reset once, the shrink reported.
@@ -770,7 +754,6 @@ export const purgeCommand = new Command('purge')
             workflow: opts.workflow,
             dryRun,
             workflows: home.workflowStore,
-            onUnreadable,
           },
           runStore,
           artifactStores,

@@ -95,10 +95,11 @@ export const CLI_COMMANDS: WayRenderer<string, CliHost> = {
   inspect: (way, _basis, host) => (host.ctx ?? PLAIN).cmd(`realm run inspect ${way.run_id}`),
   abandon: (way, _basis, host) => (host.ctx ?? PLAIN).cmd(`realm run abandon ${way.run_id}`),
   // Correction 2 (3.2): `path` is the registered COPY that cannot be used — `register` takes a source,
-  // so the command for it reads why the copy cannot be used and its way out.
+  // so the command for it reads why the copy cannot be used and its way out. #616 PR-2c c10a-4c: a
+  // copy in a database has no path, so `copy` says the same of it.
   register: (way, _basis, host) =>
     (host.ctx ?? PLAIN).cmd(
-      way.path !== undefined
+      way.path !== undefined || way.copy === 'unusable'
         ? `realm workflow validate --registered ${shellWord(way.workflow_id)}`
         : 'realm workflow register <file>',
     ),
