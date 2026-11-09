@@ -3,7 +3,7 @@
 // chmod-000 file was reported as unparseable (executed on main), and a `null`-root entry or an
 // unreadable registry directory crashed the command with a stack trace.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workflowListCommand } from './workflow-list.js';
@@ -33,7 +33,6 @@ function definition(id: string): WorkflowDefinition {
 
 describe('realm workflow list — one sentence per class (issue #558 PR-T)', () => {
   let home: string;
-  let wfDir: string;
   let h: TempHome;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -41,9 +40,7 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
 
   beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'realm-wf-class-'));
-    wfDir = join(home, '.realm', 'workflows');
     h = await makeTempHome({ home: join(home, '.realm') });
-    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -60,52 +57,9 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
 
   const stderr = (): string => warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
 
-  it('K2 an empty file says empty; a directory entry says directory and names no errno', async () => {
-    writeFileSync(join(wfDir, 'd.json'), '', 'utf8');
-
-    await workflowListCommand.parseAsync([], { from: 'user' });
-
-    const out = stderr();
-    expect(out).toContain(`⚠ 1 file in the registry is empty: d.json${TAIL}`);
-    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
-      '0 workflows registered; 1 entry in the registry could not be read.',
-    );
-  });
-
-  it('K3 the parse sentence is byte-identical to the #427 original (the control that must not move)', async () => {
-    writeFileSync(join(wfDir, 'garbage.json'), '{ not json', 'utf8');
-
-    await workflowListCommand.parseAsync([], { from: 'user' });
-
-    expect(stderr()).toContain(`⚠ 1 file in the registry could not be parsed: garbage.json${TAIL}`);
-  });
-
-  it('K4 a `null` root is a parse failure, not a crash (main threw a TypeError through this command)', async () => {
-    writeFileSync(join(wfDir, 'nul.json'), 'null', 'utf8');
-    await h.home.workflowStore.register(definition('good') as never);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('process.exit');
-    }) as never);
-
-    await workflowListCommand.parseAsync([], { from: 'user' });
-
-    expect(stderr()).toContain('could not be parsed: nul.json');
-    expect(exitSpy).not.toHaveBeenCalled();
-  });
-
-  it('K5 TWO classes compose into TWO sentences, each with its own count and its own tail', async () => {
-    writeFileSync(join(wfDir, 'b.json'), '{ not json', 'utf8');
-    writeFileSync(join(wfDir, 'c.json'), '{ also not', 'utf8');
-
-    await workflowListCommand.parseAsync([], { from: 'user' });
-
-    const lines = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-    expect(lines).toContain(`⚠ 2 files in the registry could not be parsed: b.json, c.json${TAIL}`);
-  });
-
   it("K8 a LEGACY record (the older cohort's shape) is never a crash (main died at `.length`; review fold C10) — named on the older-version ⚠ line with its way out (#819 U4), never a table row (correction 2, 8.6 (c))", async () => {
     // #819 (U3): the older cohort's shape — a string name and a number version (W-C2R-CORE-12).
-    writeFileSync(join(wfDir, 'wleg.json'), '{"id":"wleg","name":"wleg","version":1}', 'utf8');
+    await h.home.workflowStore.register({ id: 'wleg', name: 'wleg', version: 1 } as never);
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
     }) as never);

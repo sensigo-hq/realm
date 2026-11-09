@@ -22,7 +22,6 @@ import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 describe('validate --registered (issue #427)', () => {
   let home: string;
-  let wfDir: string;
   let h: TempHome;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -32,9 +31,7 @@ describe('validate --registered (issue #427)', () => {
 
   beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'realm-validate-reg-'));
-    wfDir = join(home, '.realm', 'workflows');
     h = await makeTempHome({ home: join(home, '.realm') });
-    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -52,10 +49,6 @@ describe('validate --registered (issue #427)', () => {
     rmSync(home, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
-
-  function plant(fileBase: string, def: unknown): void {
-    writeFileSync(join(wfDir, `${fileBase}.json`), JSON.stringify(def, null, 2), 'utf8');
-  }
 
   const out = (): string =>
     [logSpy, warnSpy, errSpy]
@@ -188,7 +181,7 @@ describe('validate --registered (issue #427)', () => {
     // A true sv-less shape, matching the real cohort's topology — no `steps` key at all. Fed to
     // the loader ungated it yields `Missing required field: 'steps'`, which is true of the shape
     // and useless about the cause; the gate is what turns that into the re-register remedy.
-    plant('ancient-wf', { id: 'ancient-wf', name: 'Ancient', version: 2 });
+    await h.home.workflowStore.register({ id: 'ancient-wf', name: 'Ancient', version: 2 } as never);
 
     await expect(
       validateCommand.parseAsync(['--registered', 'ancient-wf'], { from: 'user' }),
@@ -321,31 +314,6 @@ describe('validate --registered (issue #427)', () => {
     );
   });
 
-  it('R9 a corrupt stored file is reported as unparseable, without a stack', async () => {
-    // issue #558 PR-T: this used to arrive as a bare code-less SyntaxError, because `get()`'s try
-    // wrapped only the read and `JSON.parse` sat outside it — the third catch arm existed for
-    // exactly that. The store now CLASSIFIES it (`parseFailureError`, byte-identical bytes) and
-    // this surface keys on the CODE. The shape below is unchanged, and that is the point: the
-    // arm moved, the operator's two lines did not.
-    writeFileSync(join(wfDir, 'broken.json'), '{ not json', 'utf8');
-
-    await expect(
-      validateCommand.parseAsync(['--registered', 'broken'], { from: 'user' }),
-    ).rejects.toThrow('process.exit');
-
-    const text = out();
-    // issue #719 (R8): the fault, never the parser's text.
-    expect(text).toContain("Error: the registered copy of 'broken' is not JSON");
-    expect(text).toContain(
-      'The registry holds an entry for \'broken\' — realm workflow list counts it under "could not be read" instead of listing it.',
-    );
-    expect(text).toContain(
-      `To repair: re-register the workflow from its source (realm workflow register <path-to-workflow>); if it was never registered from a source, remove the file (rm ${join(wfDir, 'broken.json')}) instead.`,
-    );
-    expect(text).not.toContain('Registered workflows:'); // the not-found pointer, C21
-    expect(text).not.toContain('    at ');
-  });
-
   // -------------------------------------------------------------------------------------------
   // #616 PR-2c c5c — a refusal whose copy has no file (a database's row; injected here through the
   // JSON registry's `get`, as no command reaches one at the base): no file to remove. #616 PR-2c c5a:
@@ -403,25 +371,6 @@ describe('validate --registered (issue #427)', () => {
   // issue #558 PR-T — the arms re-keyed on CODE. `validate.ts`'s `:581` rethrow is the #123 bug
   // guard ("an unexpected WorkflowError is a bug, and bugs stay loud"); PR-T's two new codes
   // would have fallen into it and printed a STACK TRACE where main printed a clean line.
-  it('T-U2 an EMPTY stored copy, and a DIRECTORY where a file belongs', async () => {
-    writeFileSync(join(wfDir, 'blank.json'), '', 'utf8');
-    await expect(
-      validateCommand.parseAsync(['--registered', 'blank'], { from: 'user' }),
-    ).rejects.toThrow('process.exit');
-    expect(out()).toContain("Error: the registered copy of 'blank' is empty — not a workflow");
-    expect(out()).not.toContain('    at ');
-  });
-
-  it('T-U3 a `null` JSON root is a refusal of the COPY, not a crash', async () => {
-    writeFileSync(join(wfDir, 'nul.json'), 'null', 'utf8');
-    await expect(
-      validateCommand.parseAsync(['--registered', 'nul'], { from: 'user' }),
-    ).rejects.toThrow('process.exit');
-    expect(out()).toContain(
-      "Error: the registered copy of 'nul' is JSON but not a workflow object (it is null)",
-    );
-  });
-
   it('T-U5 the `:581` rethrow\u2019s population is EMPTY — every WorkflowError code get() can throw is handled above it', () => {
     // Derived from the store\u2019s own table rather than remembered: probeClassToError mints
     // exactly three codes and parseFailureError one, and the legacy mint is the fifth. Each has

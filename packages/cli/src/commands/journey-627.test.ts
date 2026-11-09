@@ -332,10 +332,8 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
             await call('get_run_state:due', 'get_run_state', { run_id: runId });
             await store.update({ ...(await store.get(runId)).record, pending_gate: gate });
             // The corrupt-definition variant, at each live registrar site this session serves.
-            const copy = join(home, '.realm', 'workflows', `${def.id}.json`);
-            const { readFileSync } = await import('node:fs');
-            const good = readFileSync(copy, 'utf8');
-            writeFileSync(copy, '{ not json');
+            const good = await h.home.workflowStore.get(def.id);
+            await h.home.workflowStore.register({ id: def.id, schema_version: 1 } as never);
             await call('get_run_state:corrupt', 'get_run_state', { run_id: runId });
             await call('execute_step:corrupt', 'execute_step', {
               run_id: runId,
@@ -349,7 +347,7 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
               step_id: downstream ?? gate.step_name,
               entries: [{ event: 'journey' }],
             });
-            writeFileSync(copy, good);
+            await h.home.workflowStore.register(good as never);
             // Settled by the person's CLI answer.
             const answered = await realm(home, proj, [
               'run',

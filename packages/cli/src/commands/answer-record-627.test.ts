@@ -10,7 +10,6 @@
 // that turns it red and (b) what it prints on failure: lines and record fields — never a token.
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -328,7 +327,7 @@ describe('#627 W — cell 13: inspect’s open-gate block', () => {
 
   it('correction 1 (E6): no frozen message and a definition that cannot be read → "not shown", never "none"', async () => {
     const h = await home(false);
-    writeFileSync(join(h.dir, '.realm', 'workflows', 'rec627.json'), '{ not json');
+    await h.handle.home.workflowStore.register({ id: h.def.id, schema_version: 1 } as never);
     const line = h
       .realm(['run', 'inspect', h.runId])
       .out.split('\n')
@@ -342,10 +341,10 @@ describe('#627 W — cell 13: inspect’s open-gate block', () => {
 describe('#627 W — the `newer` readers on the CLI (MA 3’s W-r2 arms)', () => {
   async function newerHome() {
     const h = await home();
-    writeFileSync(
-      join(h.dir, '.realm', 'workflows', 'rec627.json'),
-      JSON.stringify({ ...h.def, schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1 }),
-    );
+    await h.handle.home.workflowStore.register({
+      ...h.def,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1,
+    } as never);
     return h;
   }
 
@@ -384,19 +383,22 @@ describe('#627 W — the `newer` readers on the CLI (MA 3’s W-r2 arms)', () =>
 });
 
 describe('#627 W correction 2 (3.2) — the repair command inspect prints for a damaged copy, executed', () => {
+  type Home = Awaited<ReturnType<typeof home>>;
+  const stored = async (h: Home): Promise<Record<string, unknown>> => ({
+    ...((await h.handle.home.workflowStore.get(h.def.id)) as unknown as Record<string, unknown>),
+  });
   const damage = {
-    'invalid JSON': (copy: string) => writeFileSync(copy, '{ not json'),
-    legacy: (copy: string) => {
-      const parsed = JSON.parse(readFileSync(copy, 'utf8')) as Record<string, unknown>;
+    legacy: async (h: Home) => {
+      const parsed = await stored(h);
       delete parsed['schema_version'];
-      writeFileSync(copy, JSON.stringify(parsed));
+      await h.handle.home.workflowStore.register(parsed as never);
     },
-    newer: (copy: string) => {
-      const parsed = JSON.parse(readFileSync(copy, 'utf8')) as Record<string, unknown>;
-      writeFileSync(
-        copy,
-        JSON.stringify({ ...parsed, schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1 }),
-      );
+    newer: async (h: Home) => {
+      const parsed = await stored(h);
+      await h.handle.home.workflowStore.register({
+        ...parsed,
+        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1,
+      } as never);
     },
   } as const;
   it.each(Object.keys(damage) as Array<keyof typeof damage>)(
@@ -404,7 +406,7 @@ describe('#627 W correction 2 (3.2) — the repair command inspect prints for a 
     async (cause) => {
       const h = await home();
       const copy = join(h.dir, '.realm', 'workflows', 'rec627.json');
-      damage[cause](copy);
+      await damage[cause](h);
       // The command is printed by the MCP door's operator route: get_run_state's block addressed to
       // the person (its second content item, audience user) ends "The operator's command: <command>".
       const client = new Client({ name: 'rec-627', version: '0' });

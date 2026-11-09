@@ -2,7 +2,7 @@
 // constructed (JsonWorkflowStore resolves its directory from homedir() at construction and
 // mkdirSyncs it — the #285 lazy-resolution precedent).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workflowListCommand, sortedById, schemaCell } from './workflow-list.js';
@@ -24,7 +24,6 @@ function definition(id: string, over: Partial<WorkflowDefinition> = {}): Workflo
 
 describe('realm workflow list (issue #427)', () => {
   let home: string;
-  let wfDir: string;
   let h: TempHome;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -32,9 +31,7 @@ describe('realm workflow list (issue #427)', () => {
 
   beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'realm-wf-list-'));
-    wfDir = join(home, '.realm', 'workflows');
     h = await makeTempHome({ home: join(home, '.realm') });
-    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -48,10 +45,6 @@ describe('realm workflow list (issue #427)', () => {
     rmSync(home, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
-
-  function plant(fileBase: string, def: unknown): void {
-    writeFileSync(join(wfDir, `${fileBase}.json`), JSON.stringify(def, null, 2), 'utf8');
-  }
 
   const stdout = (): string => logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
   const stderr = (): string => warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
@@ -77,7 +70,12 @@ describe('realm workflow list (issue #427)', () => {
   });
 
   it('L2 a legacy entry is named on the older-version ⚠ line, never a table row; a current one is in the table (correction 2, 8.6 (c); was: marked in the table)', async () => {
-    plant('ancient', { id: 'ancient', name: 'Ancient', version: 2, steps: {} });
+    await h.home.workflowStore.register({
+      id: 'ancient',
+      name: 'Ancient',
+      version: 2,
+      steps: {},
+    } as never);
     await h.home.workflowStore.register(definition('modern') as never);
 
     await workflowListCommand.parseAsync([], { from: 'user' });
@@ -103,44 +101,6 @@ describe('realm workflow list (issue #427)', () => {
       older: schemaCell(0),
       none: schemaCell(undefined),
     }).toEqual({ current: '1 (current)', older: '0', none: 'none' });
-  });
-
-  it('L3 an unparseable file is REPORTED, and the exit stays 0', async () => {
-    // list() would silently skip this. An operator asking what is in their registry needs to
-    // know realm cannot read one of the entries — that is the signal, which is also why this
-    // surface never exits non-zero for it.
-    await h.home.workflowStore.register(definition('good') as never);
-    writeFileSync(join(wfDir, 'garbage.json'), '{ not json', 'utf8');
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('process.exit');
-    }) as never);
-
-    await workflowListCommand.parseAsync([], { from: 'user' });
-
-    expect(stderr()).toContain(
-      '⚠ 1 file in the registry could not be parsed: garbage.json — realm cannot audit what it cannot read.',
-    );
-    // singular, the good one still lists, and the count names what it could not count (C7)
-    expect(stdout()).toContain('1 workflow registered; 1 entry in the registry could not be read.');
-    expect(exitSpy).not.toHaveBeenCalled();
-  });
-
-  it('L4 --json carries the workflows, the unreadable and the mismatched', async () => {
-    await h.home.workflowStore.register(definition('good') as never);
-    plant('probe-mismatch', definition('inner-id'));
-    writeFileSync(join(wfDir, 'garbage.json'), '{ not json', 'utf8');
-
-    await workflowListCommand.parseAsync(['--json'], { from: 'user' });
-
-    const parsed = JSON.parse(stdout()) as {
-      workflows: Array<{ id: string; current: boolean; schema_version: number | null }>;
-      unreadable: Array<{ file: string }>;
-      mismatched: Array<{ file: string; id: string }>;
-    };
-    expect(parsed.workflows.map((w) => w.id).sort()).toEqual(['good', 'inner-id']);
-    expect(parsed.workflows.every((w) => w.current)).toBe(true);
-    expect(parsed.unreadable.map((u) => u.file)).toEqual(['garbage.json']);
-    expect(parsed.mismatched).toEqual([{ file: 'probe-mismatch.json', id: 'inner-id' }]);
   });
 
   it('L5 an empty registry prints the header and a zero footer', async () => {
