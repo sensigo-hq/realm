@@ -674,12 +674,14 @@ function elsewhereWords(entry: Unavailable, host: McpHost): string {
  * conversation too.
  */
 function registerWords(way: RegisterWay, host: McpHost): string {
-  const repair =
-    way.path !== undefined
-      ? `Workflow '${way.workflow_id}''s registered copy (${way.path}) cannot be used; an operator repairs it, outside this conversation.`
-      : `An operator registers workflow '${way.workflow_id}' again, outside this conversation.`;
+  // #616 PR-2c c10a-4c: a copy in a database has no file, and is still a copy that cannot be used.
+  const unusable = way.path !== undefined || way.copy === 'unusable';
+  const named = way.path !== undefined ? ` (${way.path})` : '';
+  const repair = unusable
+    ? `Workflow '${way.workflow_id}''s registered copy${named} cannot be used; an operator repairs it, outside this conversation.`
+    : `An operator registers workflow '${way.workflow_id}' again, outside this conversation.`;
   if (!doorWithholdsAnswers(mcpDoorPolicy(host))) return repair;
-  return way.path !== undefined
+  return unusable
     ? `${repair} Once the copy is repaired, the question waits for an answer outside this conversation.`
     : `${repair} Once it is registered, the question waits for an answer outside this conversation.`;
 }

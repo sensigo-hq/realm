@@ -405,7 +405,7 @@ describe('#627 W correction 2 (3.2) — the repair command inspect prints for a 
     },
   } as const;
   it.each(Object.keys(damage) as Array<keyof typeof damage>)(
-    '%s: realm mcp tells the person an operator registers the workflow again and prints the operator command, never "Failed to read workflow file"',
+    '%s: realm mcp tells the person the copy cannot be used and prints the command that names the fault; a format refusal\'s command exits 1, names the copy and a way out, never "Failed to read workflow file"',
     async (cause) => {
       const h = await home();
       await damage[cause](h);
@@ -431,20 +431,33 @@ describe('#627 W correction 2 (3.2) — the repair command inspect prints for a 
         await client.close();
       }
       const printed = /The operator's command: (.+)$/m.exec(person)?.[1];
-      // #616 PR-2c c10a-3a: the store's refusals carry no copy path, so the way the CLI prints is the
-      // placeholder (a person fills in the file); it is printed, never run here.
-      // (a) red when the way out is dropped, the person line changes, or the generic failure comes
-      //     back; (b) prints the printed command and two booleans.
+      // The pointer arm's own words match none of the way-out sentences these rows look for, so its
+      // row is printed and not run.
+      const run = cause !== 'not JSON';
+      const ran = run && printed !== undefined ? h.realm(printed.split(' ').slice(1)) : undefined;
+      const said = `${ran?.out ?? ''}${ran?.err ?? ''}`;
+      // #616 PR-2c c10a-4c: a copy in the SQLite registry has no file, and the way out still names
+      // the command that says what is wrong with it. (a) red when the door reads the path alone
+      // (the placeholder and "registers again" come back), the person line changes, or the printed
+      // command does not name the copy and a way out; (b) prints the command, its exit, the person
+      // block (a test workflow's words) and three booleans.
       expect({
         printed,
-        person: person.includes(
-          "An operator registers workflow 'rec627' again, outside this conversation.",
-        ),
-        generic: person.includes('Failed to read workflow file'),
+        person,
+        ...(run && {
+          code: ran?.code,
+          namesCopy: said.includes("'rec627'"),
+          wayOut: (cause === 'legacy'
+            ? /Re-register it with:/
+            : /registered by a later version of Realm/
+          ).test(said),
+          generic: said.includes('Failed to read workflow file'),
+        }),
       }).toEqual({
-        printed: 'realm workflow register <file>',
-        person: true,
-        generic: false,
+        printed: 'realm workflow validate --registered rec627',
+        person:
+          "Workflow 'rec627''s registered copy cannot be used; an operator repairs it, outside this conversation. The operator's command: realm workflow validate --registered rec627",
+        ...(run && { code: 1, namesCopy: true, wayOut: true, generic: false }),
       });
     },
     60_000,
