@@ -895,6 +895,24 @@ describe('#616 PR-2c c8a3 — check 4: still refused in check mode, no handle', 
       }).toEqual(expected);
     },
   );
+
+  // #616 PR-2c c8a3 correction 1: the search half of the folder's question stays a refusal; its
+  // write half is check 2's finding (the 0555 cell, its pin).
+  it.skipIf(AS_ROOT)(
+    "correction 1: a home folder the login cannot search (0644) — the store's read-only refusal, as before c8a3",
+    async () => {
+      const home = await storeHome();
+      lock(home, 0o644, 0o755);
+      const got = await refusal(openMaintenance({ home, verb: 'check' }));
+      // (1) red when check mode does not ask whether the folder can be searched (the old-store
+      //     guard's lstat then fails with a raw EACCES; the write half asked too is the 0555 cell's
+      //     break); (2) prints the refusal.
+      expect({ code: got['code'], message: got['message'] }).toEqual({
+        code: 'STATE_STORE_READONLY',
+        message: `Realm cannot write to ${home}: permission denied. The store needs a home that Realm can write to.`,
+      });
+    },
+  );
 });
 
 describe('#616 PR-2c c8a3 — check 4c: usable and blockedBy, read as a second caller would', () => {

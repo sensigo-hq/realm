@@ -36,9 +36,10 @@
 //
 // The maintenance entry's check (`openForCheck`, PR-2c c8a1 and c8a3; DELTAS 50 Q1, 52) runs the same
 // checks and writes nothing: the connection and any reopen are read-only (`SQLITE_OPEN_READONLY`, so
-// no close copies the WAL into the file); step 3 only looks (the old-store guard; no folder, fence or
-// file is made); nothing is set up. It still refuses what makes reading impossible or wrong: the
-// floor, a network filesystem, the old-store guard, and a `realm.db` that is not a regular file. Every
+// no close copies the WAL into the file); step 3 only looks (whether the home can be searched, and the
+// old-store guard; no folder, fence or file is made); nothing is set up. It still refuses what makes
+// reading impossible or wrong: the floor, a network filesystem, a home folder it cannot search, the
+// old-store guard, and a `realm.db` that is not a regular file. Every
 // other refusal of steps 4-6 becomes an outcome, and the checks go on (c8a3): whether Realm may write
 // the file and its folder (asked whenever the file exists); SQLite's own error at the connection or
 // the header read, taken before the store maps it (26 and 11 there: the header cannot be read); then
@@ -787,8 +788,9 @@ export async function openRealmDb(
 /**
  * The maintenance entry's check opens the file through this (c8a1, c8a3; see the module comment): a
  * read-only connection, and every outcome of the open's checks instead of its first refusal. It
- * still refuses the floor, a network filesystem, the old-store guard, a `realm.db` that is not a
- * regular file, a connection pragma that does not read back, and a store busy past its budget.
+ * still refuses the floor, a network filesystem, a home folder it cannot search, the old-store guard,
+ * a `realm.db` that is not a regular file, a connection pragma that does not read back, and a store
+ * busy past its budget.
  */
 export async function openForCheck(
   home: string,

@@ -239,16 +239,16 @@ function createDatabaseFile(path: string): boolean {
  * Prepares the Realm home at `home` for its database (see the module comment) and returns the
  * database file's path. The open (unit 7b) continues from there: it checks the file, sets it up and
  * opens the connection. With `check` (the maintenance entry opened for `'check'`, #616 PR-2c c8a1,
- * c8a3) it only looks: the old-store guard, its refusal unchanged; it makes no folder, no fence and no
- * file, and leaves the folder's writability to the check, which reports it ({@link homeIsWritable}).
+ * c8a3) it only looks: whether the folder can be searched, and the old-store guard, their refusals
+ * unchanged; it makes no folder, no fence and no file, and leaves the folder's writability to the
+ * check, which reports it ({@link homeIsWritable}).
  */
 export function prepareHome(home: string, check = false): string {
-  if (!check) {
-    writing(home, () => {
-      mkdirSync(home, { recursive: true });
-      accessSync(home, constants.W_OK | constants.X_OK);
-    });
-  }
+  writing(home, () => {
+    if (!check) mkdirSync(home, { recursive: true });
+    // The check asks only the search half (c8a3 correction 1): the write half is its finding.
+    accessSync(home, check ? constants.X_OK : constants.W_OK | constants.X_OK);
+  });
   const found = LEGACY_STORE_NAMES.map((name) => ({ name, is: inspect(join(home, name)) }));
   if (found.some((f) => f.is === 'legacy' || f.is === 'other')) throw guardRefusal(home, found);
   const database = join(home, DATABASE_FILE);
