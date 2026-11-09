@@ -13,14 +13,22 @@
 // Caching 3-M (piece A-1): a request's `reference`, the copy of its predecessor, is kept only in its
 // one shape, and each field inside it obeys the rule that field obeys on the request itself. Piece
 // A-1b: a request's `request_in_call`, its place in its provider call, is kept as a non-negative
-// safe integer or dropped.
+// safe integer or dropped. Piece B3a: a request's `cache_diagnostics`, what it asked Anthropic about a
+// cache miss and what came back, is rebuilt in one of its shapes from its named keys, or dropped.
 import { CONTROL_CHAR, readStoredName } from './holder.js';
 import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
+import { counter } from '../economics/price-source.js';
 import {
   CACHE_CONTROL_FIELDS,
+  CACHE_DIAGNOSTICS_WORDS,
   CACHE_MARKED_PARTS,
+  CACHE_MISS_TYPES,
   CACHE_REFERENCE_SOURCES,
   type CacheControlsRejected,
+  type CacheDiagnostics,
+  type CacheDiagnosticsWord,
+  type CacheMissReason,
+  type CacheMissType,
   type CacheReference,
   type PrefixParts,
 } from '../types/run-record.js';
@@ -48,8 +56,8 @@ const NAME_FIELDS = [
  * `CACHE_REFERENCE_SOURCES` and its `request_start` a string, or deleted whole; inside it, each
  * copied field passes the rule it passes here and is dropped alone when it fails, and any other key
  * (a `reference`, a `request_index`, a `request_in_call`) is dropped. Caching 3-M (piece B1):
- * `response_id` is kept only when it passes `normalizeResponseId`, or deleted.
- * Every other field, and every entry that is not an object (a `null`, a number), passes through
+ * `response_id` is kept only when it passes `normalizeResponseId`, or deleted. Piece B3a:
+ * `cache_diagnostics` is rebuilt by `normalizeCacheDiagnostics`, or deleted. Every other field, and every entry that is not an object (a `null`, a number), passes through
  * unchanged. Total: it never throws, because it runs inside `recordDriveFailure`'s fence, where a
  * throw loses the record. It returns new objects; the input is not changed.
  */
@@ -98,6 +106,43 @@ export function normalizeResponseId(value: unknown): string | undefined {
     !CONTROL_CHAR.test(value)
     ? value
     : undefined;
+}
+
+/** A named id's answer: a word, or a reason whose `type` is a string (outside the list: `unknown`). */
+function normalizeCacheMissResult(
+  value: unknown,
+): CacheDiagnosticsWord | CacheMissReason | undefined {
+  if ((CACHE_DIAGNOSTICS_WORDS as readonly unknown[]).includes(value)) {
+    return value as CacheDiagnosticsWord;
+  }
+  if (!plainObject(value) || typeof value['type'] !== 'string') return undefined;
+  const type = (CACHE_MISS_TYPES as readonly string[]).includes(value['type'])
+    ? (value['type'] as CacheMissType)
+    : 'unknown';
+  const tokens = counter(value['cache_missed_input_tokens']);
+  return typeof tokens === 'number' ? { type, cache_missed_input_tokens: tokens } : { type };
+}
+
+/**
+ * Caching 3-M (piece B3a) — the one check a request's `cache_diagnostics` passes, at the write gate
+ * (`boundRequestFacts`), so a provider module's own field obeys it too. It rebuilds the value from
+ * its named keys, at both levels, in one of the three shapes of `CacheDiagnostics`, and anything else
+ * is `undefined`: dropped whole. A `cache_missed_input_tokens` that is no counter goes alone.
+ */
+function normalizeCacheDiagnostics(value: unknown): CacheDiagnostics | undefined {
+  if (!plainObject(value)) return undefined;
+  if (value['asked'] === false) {
+    return value['cause'] === 'rejected' ? { asked: false, cause: 'rejected' } : undefined;
+  }
+  if (value['asked'] !== true) return undefined;
+  if (value['reference_id'] === null) {
+    return value['result'] === undefined ? { asked: true, reference_id: null } : undefined;
+  }
+  const id = normalizeResponseId(value['reference_id']);
+  const result = normalizeCacheMissResult(value['result']);
+  return id === undefined || result === undefined
+    ? undefined
+    : { asked: true, reference_id: id, result };
 }
 
 /** A SHA-256 as Realm writes it: 64 lowercase hex characters, no prefix. */
@@ -211,4 +256,5 @@ const SPLIT_FACT_NORMALIZERS: readonly [string, (value: unknown) => unknown][] =
   ['reference', normalizeReference],
   ['request_in_call', nonNegativeSafeInteger],
   ['response_id', normalizeResponseId],
+  ['cache_diagnostics', normalizeCacheDiagnostics],
 ];

@@ -22,6 +22,7 @@ import type {
   UsageRecord,
   PrefixParts,
   CacheControlsRejected,
+  CacheDiagnostics,
   CacheReference,
   WorkflowContextSnapshot,
 } from '../types/run-record.js';
@@ -42,6 +43,8 @@ import {
 
 type Row<T> = Record<keyof T, DisclosureClass>;
 type Element<T> = T extends readonly (infer E)[] ? E : never;
+/** Every key of every arm of a union: `keyof` over a union is only the keys all its arms share. */
+type KeysOfUnion<T> = T extends unknown ? keyof T : never;
 
 // ── The gate ──────────────────────────────────────────────────────────────────────────────────
 
@@ -100,6 +103,18 @@ const CACHE_CONTROLS_REJECTED_TABLE = {
  *  anything a configuration says); realm agent's own prints, where the requested model is known,
  *  show it (01 #16). Caching 3-M (piece A-1): every row but `reference`, which holds a copy of some
  *  of these rows — declared apart so the copy can take its rows from here. */
+/**
+ * Caching 3-M (piece B3a): `cache_diagnostics`, flat over its three arms. `result` is a `fact`, closed
+ * at the write by `normalizeCacheDiagnostics`: under a `nested` row a string would show as its shape.
+ * `reference_id` is a provider's id, a `value` as `response_id` is (F-S8).
+ */
+const CACHE_DIAGNOSTICS_TABLE = {
+  asked: 'fact',
+  cause: 'fact',
+  reference_id: 'value',
+  result: 'fact',
+} as const satisfies Record<KeysOfUnion<CacheDiagnostics>, DisclosureClass>;
+
 const USAGE_RECORD_ROWS = {
   request_index: 'fact',
   request_start: 'fact',
@@ -126,6 +141,8 @@ const USAGE_RECORD_ROWS = {
   // Caching 3-M (piece B1): the provider's answer id (`msg_…`), a provider's text and so never a
   // fact (F-S8); closed at the adapter and the write by `normalizeResponseId`.
   response_id: 'value',
+  // Caching 3-M (piece B3a): what the request asked Anthropic about a cache miss, closed at the write.
+  cache_diagnostics: { nested: CACHE_DIAGNOSTICS_TABLE },
   // Caching 3-M (piece A-1b): the request's place in its provider call, a number realm mints
   // (`mintRequestIds`); normalised at the write (`boundRequestFacts`).
   request_in_call: 'fact',
@@ -527,6 +544,18 @@ export const PREFIX_PARTS_FACTS = {
   prompt: 'hash',
   format: 'hash',
 } as const satisfies FactProducers<typeof PREFIX_PARTS_TABLE, PrefixParts>;
+
+/** Caching 3-M (piece B3a): per arm, as `SKIP_DETAIL_FACTS`: over the union nothing would be forced. */
+export const CACHE_DIAGNOSTICS_FACTS = {
+  rejected: { cause: 'enum' } satisfies FactProducers<
+    typeof CACHE_DIAGNOSTICS_TABLE,
+    Extract<CacheDiagnostics, { asked: false }>
+  >,
+  named: { result: 'enum' } satisfies FactProducers<
+    typeof CACHE_DIAGNOSTICS_TABLE,
+    Extract<CacheDiagnostics, { reference_id: string }>
+  >,
+} as const;
 
 export const CACHE_CONTROLS_REJECTED_FACTS = {
   dropped: 'enum',

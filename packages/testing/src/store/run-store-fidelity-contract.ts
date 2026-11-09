@@ -148,6 +148,7 @@ const TCK_REFERENCE = {
  * predecessor: `TCK_REFERENCE`, every one of its fields. Piece A-1b adds `request_in_call`, the
  * request's place in its provider call: a place other than 0, which no store default could produce.
  * Piece B1 adds `response_id`, the id of the provider's answer: Anthropic's documented example id.
+ * Piece B3a adds `cache_diagnostics`, in its state with a reason object.
  */
 const TCK_REQUEST_FACTS: Required<
   Pick<
@@ -173,6 +174,7 @@ const TCK_REQUEST_FACTS: Required<
     | 'reference'
     | 'request_in_call'
     | 'response_id'
+    | 'cache_diagnostics'
   >
 > = {
   model: 'tck-model-2026-01-01',
@@ -216,6 +218,12 @@ const TCK_REQUEST_FACTS: Required<
   request_in_call: 7,
   // caching 3-M (piece B1): the answer's id, Anthropic's documented example (anth-pc@2026-10-09.md:1107)
   response_id: 'msg_01XFDUDYJgAACzvnptvVoYEL',
+  // caching 3-M (piece B3a): the shape with the most keys, a reason with its count
+  cache_diagnostics: {
+    asked: true,
+    reference_id: 'msg_01XFDUDYJgAACzvnptvVoYEL',
+    result: { type: 'messages_changed', cache_missed_input_tokens: 1200 },
+  },
 };
 
 /** The program the holder laws name — a synthetic label, never a real host or user. */
