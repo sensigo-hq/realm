@@ -2302,8 +2302,8 @@ describe(
       const failed = await started(p.def);
       realm(['run', 'advance', failed]);
       const withStep = realm(['run', 'purge', failed]);
-      // The workflow no longer readable: its registry entry removed.
-      rmSync(join(home, '.realm', 'workflows', 'c213-purge.json'));
+      // The workflow no longer readable: its stored copy damaged (no steps).
+      await workflowStore.register({ id: 'c213-purge', schema_version: 1 } as never);
       const unread = realm(['run', 'purge', id]);
       const line = (r: { out: string[] }) => r.out.find((l) => l.includes("'realm run resume'"));
       // (a) red when a failed cleanup step counts as a resume path, a step resume takes does not,

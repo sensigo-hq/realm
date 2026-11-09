@@ -2033,7 +2033,7 @@ async function c3Run(
         },
       ],
     } as unknown as RunRecord);
-    writeFileSync(join(home, '.realm', 'workflows', 'c3docs.json'), 'not json');
+    await handle.home.workflowStore.register({ id: 'c3docs', schema_version: 1 } as never);
     if (state === 'gone') rmSync(path);
     if (state === 'invalid') writeFileSync(path, 'version: 1\nnot_a_key: true\n');
   }
@@ -2425,7 +2425,7 @@ async function c4Ended(
   const { abandonRun } = await import('@sensigo/realm');
   await abandonRun(store, ended, reason);
   if (state === 'gone') {
-    writeFileSync(join(home, '.realm', 'workflows', 'c4docs.json'), 'not json');
+    await handle.home.workflowStore.register({ id: 'c4docs', schema_version: 1 } as never);
     rmSync(path);
   }
   return { home, ended, live };

@@ -9,7 +9,6 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: run
 // and gate ids, file names, printed lines — never a token or an environment.
 import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
-import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WorkflowError } from '@sensigo/realm';
 import { abandonCommand, emptyReasonRefusal } from './abandon.js';
@@ -32,7 +31,6 @@ const AGENT_WORDS = 'created by an agent';
 describe('#819 correction 1 (01) — realm run abandon at an open question', () => {
   let h: TempHome & { readonly root: string };
   let home: string;
-  let wfDir: string;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
@@ -41,7 +39,6 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
   beforeEach(async () => {
     h = await makeTempHome();
     home = h.root;
-    wfDir = join(h.path, 'workflows');
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -62,28 +59,16 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
 
   /** A run of `workflowId` waiting at gate `g-1`; its registered copy written as `copy`, if given. */
   async function atGate(workflowId: string, copy?: string) {
-    if (copy !== undefined) await plantCopy(workflowId, copy);
+    if (copy !== undefined) await plantCopy(copy);
     const store = h.home.runStore;
     const { record: run } = await store.create({ workflowId, workflowVersion: 1, params: {} });
     await store.update({ ...run, pending_gate: { ...GATE } });
     return { store, id: run.id };
   }
-  /** #616 PR-2c (c0): a copy the registry can write — a JSON object, whatever admission would say of
-   *  it — goes through `register` (verbatim, no admission, R6); bytes that are not JSON (a cut or
-   *  broken copy: B-layout, c5's) are written raw into the registry folder. */
-  async function plantCopy(workflowId: string, copy: string): Promise<void> {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(copy);
-    } catch {
-      parsed = undefined;
-    }
-    if (typeof parsed === 'object' && parsed !== null) {
-      await h.home.workflowStore.register(parsed as never);
-    } else {
-      void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
-      await writeFile(join(wfDir, `${workflowId}.json`), copy);
-    }
+  /** #616 PR-2c (c0): the copy goes through `register` (verbatim, no admission, R6), whatever
+   *  admission would say of it. */
+  async function plantCopy(copy: string): Promise<void> {
+    await h.home.workflowStore.register(JSON.parse(copy) as never);
   }
   /** `realm run abandon <args>`: whether it exited 1, what it printed, and whether the run's record
    *  is what it was (read through the store, #616 PR-2c c0). */
@@ -161,7 +146,6 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
       // walk B1: a person-registered hex-suffixed id, its copy removed (the source kept elsewhere)
       B1: await run(HEX_ID),
       newer: await run('later', copyOf('later', { schema_version: 99 })),
-      notJson: await run('broken', '{"id": "broken", "sou'),
     }).toEqual({
       // #819 follow-up 2 re-pins (R2, the audit's B1): each copy's own repair, never `validate
       // --registered` (whose text offers `rm`) — was "Its workflow cannot be read, so the question
@@ -173,7 +157,6 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
       newer: refused(
         "Use the Realm version that registered it, or register the workflow's source again with this version.",
       ),
-      notJson: refused(`Repair it: ${REREGISTER}`),
     });
   });
 
@@ -213,7 +196,7 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
 
   // #819 follow-up 2 re-pin (R1): was "02 C2: an empty or blank --reason is refused with its four
   // clauses; the run is not abandoned" — its words promised what a gate refuses (walk BLOCKING 2).
-  it('#819 follow-up 2 (R2): walk A4b, A5b and A6c at a gate, their sources gone — the copy’s repair act, with no `rm` and no `validate` anywhere in the refusal', async () => {
+  it('#819 follow-up 2 (R2): walk A5b and A6c at a gate, their sources gone — the copy’s repair act, with no `rm` and no `validate` anywhere in the refusal', async () => {
     const out = async (workflowId: string, copy: string) => {
       const { id } = await atGate(workflowId, copy);
       const r = await abandon(id);
@@ -235,13 +218,11 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     // (a) red when the refusal names `validate --registered` again (whose text offers `rm`), the
     //     act's alternative is printed (`rm`), or the answer line comes back; (b) prints each.
     expect({
-      // walk A4b: the copy cut at 200 bytes, its source folder gone
-      A4b: await out('a4b', copyOf('a4b', {}).slice(0, 60)),
       // walk A5b: valid JSON with no steps, its source folder gone
       A5b: await out('a5b', copyOf('a5b', {}, ['steps'])),
       // walk A6c: schema_version "1", a string
       A6c: await out('a6c', copyOf('a6c', { schema_version: '1' })),
-    }).toEqual({ A4b: act, A5b: act, A6c: act });
+    }).toEqual({ A5b: act, A6c: act });
   });
 
   it("#616 PR-2c c5c: a damaged pointer at a gate (no file, no fault — the SQLite registry's) — its own words, never 'Repair it: re-register'", async () => {

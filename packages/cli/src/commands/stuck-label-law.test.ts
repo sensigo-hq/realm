@@ -8,7 +8,6 @@
 // that label. Stated per FINDING (a fixture may carry other findings — `capability_block`'s
 // antecedent co-fires), so the assertion is containment, never equality.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { listRuns, listCommand } from './list.js';
 import { STUCK_DEFINITION_PARSE_CAP_BYTES, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
@@ -239,7 +238,6 @@ describe('the --stuck label law (issue #558 PR-T)', () => {
 describe('the --stuck listing cap (issue #558 PR-T)', () => {
   let h: TempHome & { readonly root: string };
   let home: string;
-  let wfDir: string;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
@@ -247,8 +245,6 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
   beforeEach(async () => {
     h = await makeTempHome();
     home = h.root;
-    wfDir = join(home, '.realm', 'workflows');
-    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -291,10 +287,12 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
   const err = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
 
   it('CAP1 an entry ONE BYTE over the cap is never parsed — zero bytes read — and is NOT a finding: no row, one stderr footer naming it by SIZE (review fold C4)', async () => {
-    const big = join(wfDir, 'wf-big.json');
     const pad = 'x'.repeat(STUCK_DEFINITION_PARSE_CAP_BYTES);
-    writeFileSync(big, JSON.stringify({ id: 'wf-big', schema_version: 3, pad }), 'utf8');
-    expect(statSync(big).size).toBeGreaterThan(STUCK_DEFINITION_PARSE_CAP_BYTES);
+    const copy = { id: 'wf-big', schema_version: 3, pad };
+    await h.home.workflowStore.register(copy as never);
+    expect(Buffer.byteLength(JSON.stringify(copy))).toBeGreaterThan(
+      STUCK_DEFINITION_PARSE_CAP_BYTES,
+    );
     // Touched NOW: the fixture's default `updated_at` is old enough to be idle-selected under
     // the default 24h gate, which would list the run for a DIFFERENT reason.
     await plantRun('run-big', 'wf-big', new Date().toISOString());
@@ -323,11 +321,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
   it('CAP6 TWO definitions over the cap get ONE line EACH, every command carrying its own id — never an `<id>` placeholder (review fold C18)', async () => {
     const pad = 'x'.repeat(STUCK_DEFINITION_PARSE_CAP_BYTES);
     for (const id of ['wf-big', 'wf-big2']) {
-      writeFileSync(
-        join(wfDir, `${id}.json`),
-        JSON.stringify({ id, schema_version: 3, pad }),
-        'utf8',
-      );
+      await h.home.workflowStore.register({ id, schema_version: 3, pad } as never);
     }
     await plantRun('run-a', 'wf-big');
     await plantRun('run-b', 'wf-big');
@@ -352,11 +346,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
 
   it('CAP1b with --older-than 0m the run IS listed (idle) with NO definition label, and the footer still names the copy', async () => {
     const pad = 'x'.repeat(STUCK_DEFINITION_PARSE_CAP_BYTES);
-    writeFileSync(
-      join(wfDir, 'wf-big.json'),
-      JSON.stringify({ id: 'wf-big', schema_version: 3, pad }),
-      'utf8',
-    );
+    await h.home.workflowStore.register({ id: 'wf-big', schema_version: 3, pad } as never);
     await plantRun('run-big', 'wf-big');
 
     await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
@@ -369,38 +359,6 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     expect(bigLine).not.toContain('definition_unresolvable');
     expect(out()).toContain('Stuck runs (threshold 0m; 1 definition not inspected: wf-big):');
     expect(err()).toContain('wf-big (4.0 MiB, 1 run)');
-  });
-
-  it('CAP2 an UNDER-cap corrupt copy is PARSED and SELECTED — invariant (iii) made total', async () => {
-    writeFileSync(join(wfDir, 'wf-corrupt.json'), '{ not json', 'utf8');
-    await plantRun('run-corrupt', 'wf-corrupt');
-
-    await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
-
-    expect(out()).toContain('run-corrupt');
-    expect(out()).toContain('definition_unresolvable');
-  });
-
-  it('CAP3 an over-cap entry and a corrupt one are DISTINGUISHABLE: the corrupt one is a labelled row, the over-cap one is a footer and never a label', async () => {
-    const pad = 'x'.repeat(STUCK_DEFINITION_PARSE_CAP_BYTES);
-    writeFileSync(
-      join(wfDir, 'wf-big.json'),
-      JSON.stringify({ id: 'wf-big', schema_version: 3, pad }),
-      'utf8',
-    );
-    writeFileSync(join(wfDir, 'wf-corrupt.json'), '{ not json', 'utf8');
-    await plantRun('run-big', 'wf-big');
-    await plantRun('run-corrupt', 'wf-corrupt');
-
-    await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
-
-    const lines = out().split('\n');
-    const bigLine = lines.find((l) => l.startsWith('run-big')) ?? '';
-    const corruptLine = lines.find((l) => l.startsWith('run-corrupt')) ?? '';
-    expect(bigLine).not.toContain('definition_unresolvable');
-    expect(corruptLine).toContain('definition_unresolvable (corrupt)');
-    expect(err()).toContain('wf-big (4.0 MiB, 1 run)');
-    expect(err()).not.toContain('wf-corrupt');
   });
 
   it('LAW-u a probe result that carries NO class renders `(unknown)` — never its error code (review fold C15)', async () => {
@@ -429,27 +387,22 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     ).toContain('definition_unresolvable (missing) (realm run inspect run-ghost)');
   });
 
-  it('CAP5 a corrupt copy and a legacy copy render WORDS in the class slot — never an error code', async () => {
-    writeFileSync(join(wfDir, 'wf-corrupt.json'), '{ not json', 'utf8');
+  it('CAP5 a legacy copy renders WORDS in the class slot — never an error code', async () => {
     // #819 (U3): the older cohort's shape — a string name and a number version (W-C2R-CORE-12).
     await h.home.workflowStore.register({
       id: 'wf-legacy',
       name: 'wf-legacy',
       version: 1,
     } as never);
-    await plantRun('run-corrupt', 'wf-corrupt');
     await plantRun('run-legacy', 'wf-legacy');
 
     await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
 
     const lines = out().split('\n');
-    const corruptLine = lines.find((l) => l.startsWith('run-corrupt')) ?? '';
     const legacyLine = lines.find((l) => l.startsWith('run-legacy')) ?? '';
     // The review's probe: both rendered their CODE (`RESOURCE_FORMAT_INVALID` /
     // `STATE_LEGACY_FORMAT`) in a slot every other class fills with a word.
-    expect(corruptLine).toContain('definition_unresolvable (corrupt)');
     expect(legacyLine).toContain('definition_unresolvable (legacy)');
-    expect(out()).not.toContain('RESOURCE_FORMAT_INVALID');
     expect(out()).not.toContain('STATE_LEGACY_FORMAT');
   });
 

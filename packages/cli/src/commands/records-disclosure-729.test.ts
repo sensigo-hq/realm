@@ -1148,7 +1148,7 @@ describe('#729 PR-3 correction 2 (C5) — a misspelt name in a manifest’s `dis
 
 /**
  * A run whose record names its project's manifest (as the loader writes it since v0.14.0) and whose
- * workflow copy is then damaged (not JSON). Its params and a step's input and output hold the
+ * workflow copy is then damaged (no steps). Its params and a step's input and output hold the
  * declared value.
  */
 async function damagedCopyWithRecordedManifest(): Promise<{ home: string; runId: string }> {
@@ -1203,7 +1203,7 @@ async function damagedCopyWithRecordedManifest(): Promise<{ home: string; runId:
       },
     ],
   } as unknown as RunRecord);
-  writeFileSync(join(home, '.realm', 'workflows', 'damaged-729.json'), 'not json');
+  await workflows.register({ id: 'damaged-729', schema_version: 1 } as never);
   return { home, runId: run.id };
 }
 
@@ -1563,7 +1563,7 @@ async function withheldRun(
       ],
     } as unknown as RunRecord);
     if (state !== 'intact') {
-      writeFileSync(join(home, '.realm', 'workflows', 'held-729.json'), 'not json');
+      await h.home.workflowStore.register({ id: 'held-729', schema_version: 1 } as never);
       if (state === 'gone') rmSync(path);
       else writeFileSync(path, 'version: 1\nnot_a_key: true\n');
     }
@@ -1888,7 +1888,7 @@ async function endedRuns(
   const live = await create();
   await abandonRun(store, ended, reason);
   if (state === 'gone') {
-    writeFileSync(join(home, '.realm', 'workflows', 'ended-729.json'), 'not json');
+    await h.home.workflowStore.register({ id: 'ended-729', schema_version: 1 } as never);
     rmSync(path);
   }
   return { home, ended, live };
