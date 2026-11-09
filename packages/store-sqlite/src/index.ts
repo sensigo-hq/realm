@@ -4,7 +4,8 @@
 // 12a; only `openRealmHome` constructs one), and the types of the handle's purge (PR-2c c9); and
 // `openRealmHomeForMaintenance` (PR-2c c6), the entry of the verbs that act on the store file
 // (`realm db backup`, `realm db migrate`, and its check, c8a1), with its handles', its verbs' and its
-// reports' types. Every other module is internal.
+// reports' types; and `readRegisteredWorkflows` (PR-2c c10a-3b-i, DELTAS 56), the separation check's
+// one read-only look at the registered workflows, with its result types. Every other module is internal.
 export { openRealmHome, type OpenRealmHomeOptions, type RealmHome } from './open-realm-home.js';
 export {
   openRealmHomeForMaintenance,
@@ -35,3 +36,9 @@ export type {
   PurgeSelection,
   PurgeVacuum,
 } from './home-purge.js';
+// #616 PR-2c c10a-3b-i (DELTAS 56): the separation check's read-only look at the registered workflows.
+export {
+  readRegisteredWorkflows,
+  type RegisteredWorkflow,
+  type RegisteredWorkflowsRead,
+} from './read-registered-workflows.js';

@@ -28,19 +28,22 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { systemClock } from '@sensigo/realm';
+import { deriveRunPhase, systemClock, type RunRecord } from '@sensigo/realm';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createSqliteLoader, openDatabase, type DatabaseLike } from './driver.js';
+import { evidenceEntrySha256 } from './evidence-hash.js';
 import { SYSTEM_PROBE } from './filesystem-gate.js';
 import { openRealmHome, type RealmHome } from './index.js';
 import { openMaintenance } from './maintenance.js';
 import { openForCheck } from './open-file.js';
+import { keyHashOf } from './run-rows.js';
 import {
   CHECK_FINDING_CODES,
   CHECK_IDS,
   INTEGRITY_CHECK_LIMIT,
   type CheckReport,
 } from './store-check.js';
+import { filterColumns } from './store-check-records.js';
 import { openForeignConnection } from './test-support/foreign-connection.js';
 import { ladder } from './test-support/schema-versions.js';
 
@@ -393,6 +396,8 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
       findings: report.findings,
       not_run: report.not_run,
       not_checked: report.not_checked.map((n) => n.check),
+      // #616 PR-2c c8b1: the entries' words too (the narrowed data_checks sentence among them).
+      not_checked_words: report.not_checked,
       facts: {
         sqlite_version: typeof f.sqlite_version,
         node_version: f.node_version,
@@ -407,6 +412,8 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
         wal_bytes: integer(f.wal_bytes),
         wal_frames: f.wal_frames,
         wal_frames_copied: f.wal_frames_copied,
+        // #616 PR-2c c8b1: the data pass's fact.
+        phase_other_stamps: integer(f.phase_other_stamps),
       },
     }).toEqual({
       status: 'ok',
@@ -414,7 +421,26 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
       versions: [1, 1],
       findings: [],
       not_run: [],
-      not_checked: ['other_processes', 'data_checks'],
+      // #616 PR-2c c8b1: the two not-checked entries of the data pass.
+      not_checked: ['other_processes', 'tombstone_phase', 'purged_key_hash', 'data_checks'],
+      not_checked_words: [
+        {
+          check: 'other_processes',
+          why: "Other Realm processes' connection settings cannot be read from here.",
+        },
+        {
+          check: 'tombstone_phase',
+          why: "A purged run's phase cannot be verified: its record is gone.",
+        },
+        {
+          check: 'purged_key_hash',
+          why: "A purged run's key hash cannot be recomputed: no key is kept.",
+        },
+        {
+          check: 'data_checks',
+          why: 'The checks on tombstones, orphaned rows, workflow pointers and workflow version hashes are not built in this version yet.',
+        },
+      ],
       facts: {
         sqlite_version: 'string',
         node_version: process.version,
@@ -437,6 +463,7 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
         // A clean close leaves no WAL; the read-only open makes an empty one: 0 and 0, measured.
         wal_frames: 0,
         wal_frames_copied: 0,
+        phase_other_stamps: 'integer',
       },
     });
   });
@@ -540,6 +567,17 @@ const newer = (n: number, m: number): Record<string, unknown> => ({
 });
 const stopped = (because: string, ...checks: string[]): Array<Record<string, unknown>> =>
   checks.map((c) => ({ check: c, because }));
+/** #616 PR-2c c8b1: the data checks and the pass's read, which every finding of the file that stops
+ *  "every data check" adds to `not_run`, in the checks' order. */
+const DATA_STOPPED = [
+  'records',
+  'evidence_hashes',
+  'phase_index',
+  'key_hashes',
+  'filter_columns',
+  'placeholders',
+  'data_read',
+];
 const metaRow = (because: string): Record<string, unknown> => ({
   check: 'settings',
   because,
@@ -564,7 +602,10 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
             'The file is not a readable SQLite database: its header or schema cannot be read.',
         },
       ],
-      not_run: stopped('header_damaged', 'version', 'schema', 'settings', 'integrity'),
+      not_run: [
+        ...stopped('header_damaged', 'version', 'schema', 'settings', 'integrity'),
+        ...stopped('header_damaged', ...DATA_STOPPED),
+      ],
     });
   });
 
@@ -577,7 +618,11 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
       status: 'findings',
       schema_version: 2,
       findings: [newer(2, 1)],
-      not_run: [...stopped('newer_version', 'schema'), metaRow('newer_version')],
+      not_run: [
+        ...stopped('newer_version', 'schema'),
+        metaRow('newer_version'),
+        ...stopped('newer_version', ...DATA_STOPPED),
+      ],
     });
   });
 
@@ -597,7 +642,7 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
             'Written by an earlier version: schema version 1; this version needs 2; run `realm db migrate`.',
         },
       ],
-      not_run: [],
+      not_run: stopped('older_version', ...DATA_STOPPED),
       reads_up_to: 2,
     });
   });
@@ -637,7 +682,11 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
           message: 'A store setting differs: auto_vacuum is 0, expected 2.',
         },
       ],
-      not_run: [...stopped('version_unknown', 'schema'), metaRow('version_unknown')],
+      not_run: [
+        ...stopped('version_unknown', 'schema'),
+        metaRow('version_unknown'),
+        ...stopped('version_unknown', ...DATA_STOPPED),
+      ],
       unchanged: true,
     });
   });
@@ -656,7 +705,11 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
           message: "The file's schema version is -3, which no version of Realm writes.",
         },
       ],
-      not_run: [...stopped('version_unknown', 'schema'), metaRow('version_unknown')],
+      not_run: [
+        ...stopped('version_unknown', 'schema'),
+        metaRow('version_unknown'),
+        ...stopped('version_unknown', ...DATA_STOPPED),
+      ],
     });
   });
 
@@ -700,7 +753,7 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
           message: "The schema differs from schema version 1's: missing trigger runs_insert_once.",
         },
       ],
-      not_run: [],
+      not_run: stopped('schema_differs', ...DATA_STOPPED),
     });
   });
 
@@ -769,7 +822,10 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
             'SQLite could not open the file: unable to open database file (SQLite error 14).',
         },
       ],
-      not_run: stopped('open_failed', 'header', 'version', 'schema', 'settings', 'integrity'),
+      not_run: [
+        ...stopped('open_failed', 'header', 'version', 'schema', 'settings', 'integrity'),
+        ...stopped('open_failed', ...DATA_STOPPED),
+      ],
     });
   });
 });
@@ -794,7 +850,10 @@ describe('#616 PR-2c c8a3 — checks 2 and 3: a read-only folder, a dropped meta
           },
           NOT_WRITABLE,
         ],
-        not_run: stopped('open_failed', 'header', 'version', 'schema', 'settings', 'integrity'),
+        not_run: [
+          ...stopped('open_failed', 'header', 'version', 'schema', 'settings', 'integrity'),
+          ...stopped('open_failed', ...DATA_STOPPED),
+        ],
       });
     },
   );
@@ -815,7 +874,7 @@ describe('#616 PR-2c c8a3 — checks 2 and 3: a read-only folder, a dropped meta
             "The schema differs from schema version 1's: missing table store_meta, trigger store_meta_insert_once, trigger store_meta_no_delete, trigger store_meta_immutable, trigger store_meta_forward, trigger store_meta_insert_types, trigger store_meta_update_types.",
         },
       ],
-      not_run: [metaRow('schema_differs')],
+      not_run: [metaRow('schema_differs'), ...stopped('schema_differs', ...DATA_STOPPED)],
     });
   });
 });
@@ -963,9 +1022,778 @@ describe('#616 PR-2c c8a3 — check 5: one report holding newer_version, not_wri
     //     on a newer file; (2) prints the codes and not_run.
     expect({ codes: report.findings.map((f) => f.code), not_run: report.not_run }).toEqual({
       codes: ['newer_version', 'not_writable', 'integrity_failed'],
-      not_run: [...stopped('newer_version', 'schema'), metaRow('newer_version')],
+      not_run: [
+        ...stopped('newer_version', 'schema'),
+        metaRow('newer_version'),
+        ...stopped('newer_version', ...DATA_STOPPED),
+      ],
     });
   });
+});
+
+// ---- #616 PR-2c c8b1: the data pass over every run's stored record. Real files with the triggers
+// on, the runs written by hand beside a run the store made (its row the template); the damaged page
+// by an overwrite of a closed file; SQLite error 10 through the open's `openFile` seam. ----
+
+/** A run's row as the store wrote it: its record parsed, its phase and its stamp. */
+interface Template {
+  readonly record: Record<string, unknown>;
+  readonly phase: string;
+  readonly stamp: string;
+}
+
+/** The first run of `home`, as the store wrote it. */
+function templateOf(home: string): Template {
+  const c = openDatabase(join(home, 'realm.db'), { readOnly: true });
+  try {
+    const row = c
+      .prepare('SELECT record, run_phase, phase_version FROM runs ORDER BY rowid LIMIT 1')
+      .get();
+    return {
+      record: JSON.parse(String(row?.['record'])) as Record<string, unknown>,
+      phase: String(row?.['run_phase']),
+      stamp: String(row?.['phase_version']),
+    };
+  } finally {
+    c.close();
+  }
+}
+
+/** A run written by hand: the template's record under `id`, changed by `change`. */
+interface Seeded {
+  readonly id: string;
+  readonly change?: (record: Record<string, unknown>) => void;
+  /** The stored phase; the derivation's answer for the record when left out. */
+  readonly phase?: string;
+  /** The stored stamp; the template's (the running one) when left out. */
+  readonly stamp?: string;
+  /** The stored key hash; NULL when left out. */
+  readonly keyHash?: string;
+  /** Evidence rows: seq, text and stored hash. */
+  readonly evidence?: ReadonlyArray<readonly [number, string, string]>;
+  /** The stored text, edited by hand after `JSON.stringify` (which orders keys as JS does). */
+  readonly text?: (json: string) => string;
+  /** The `workflow_context_snapshots` blob row's text. */
+  readonly blob?: string;
+}
+
+/** Inserts `runs` into the home's store file in one transaction, through the one loader. */
+function seedRuns(home: string, template: Template, runs: readonly Seeded[]): void {
+  const c = openDatabase(join(home, 'realm.db'));
+  try {
+    c.exec('BEGIN');
+    const run = c.prepare(
+      'INSERT INTO runs (id, record, run_phase, phase_version, key_hash) VALUES (?, ?, ?, ?, ?)',
+    );
+    const entry = c.prepare(
+      'INSERT INTO evidence (run_id, seq, entry, entry_sha256) VALUES (?, ?, ?, ?)',
+    );
+    const blob = c.prepare('INSERT INTO run_blobs (run_id, name, value) VALUES (?, ?, ?)');
+    for (const seeded of runs) {
+      const record = structuredClone(template.record);
+      record['id'] = seeded.id;
+      seeded.change?.(record);
+      const phase = seeded.phase ?? deriveRunPhase(record as unknown as RunRecord);
+      const json = JSON.stringify(record);
+      run.run(
+        seeded.id,
+        seeded.text === undefined ? json : seeded.text(json),
+        phase,
+        seeded.stamp ?? template.stamp,
+        seeded.keyHash ?? null,
+      );
+      for (const [seq, text, hash] of seeded.evidence ?? []) entry.run(seeded.id, seq, text, hash);
+      if (seeded.blob !== undefined) {
+        blob.run(seeded.id, 'workflow_context_snapshots', seeded.blob);
+      }
+    }
+    c.exec('COMMIT');
+  } finally {
+    c.close();
+  }
+}
+
+/** A run's next stored record, written by hand: `change` applied, its version moved by one. */
+function rewriteRecord(
+  home: string,
+  id: string,
+  text: (record: Record<string, unknown>) => string,
+): void {
+  const c = openDatabase(join(home, 'realm.db'));
+  try {
+    const record = JSON.parse(
+      String(c.prepare('SELECT record FROM runs WHERE id = ?').get(id)?.['record']),
+    ) as Record<string, unknown>;
+    record['version'] = Number(record['version']) + 1;
+    c.prepare('UPDATE runs SET record = ? WHERE id = ?').run(text(record), id);
+  } finally {
+    c.close();
+  }
+}
+
+/** Stamps a run with the derivation's answer for its record as `JSON.parse` reads it. */
+function restamped(home: string, id: string): void {
+  const c = openDatabase(join(home, 'realm.db'));
+  try {
+    const text = String(c.prepare('SELECT record FROM runs WHERE id = ?').get(id)?.['record']);
+    const phase = deriveRunPhase(JSON.parse(text) as RunRecord);
+    c.prepare('UPDATE runs SET run_phase = ? WHERE id = ?').run(phase, id);
+  } finally {
+    c.close();
+  }
+}
+
+/** A home with one run the store made, and the template its row gives. */
+async function seededHome(): Promise<{ home: string; template: Template; clean: string }> {
+  const home = await storeHome();
+  const template = templateOf(home);
+  return { home, template, clean: String(template.record['id']) };
+}
+
+/**
+ * A copy of the closed home `base` with one leaf page of `object` (a table or an index; the `skip`-th)
+ * overwritten: `bytes` of 0x5a at `offset` within the page, or, when `offset` is negative, at the start
+ * of the first record past its middle.
+ */
+function pageDamaged(
+  base: string,
+  object: string,
+  skip: number,
+  offset: number,
+  bytes: number,
+): string {
+  const home = join(tmp(), '.realm');
+  cpSync(base, home, { recursive: true });
+  const file = join(home, 'realm.db');
+  const raw = openDatabase(file, { readOnly: true });
+  const leaf = Number(
+    raw
+      .prepare(
+        "SELECT pageno FROM dbstat WHERE name = ? AND pagetype = 'leaf' ORDER BY pageno LIMIT 1 OFFSET ?",
+      )
+      .get(object, skip)?.['pageno'],
+  );
+  const pageSize = Number(raw.prepare('PRAGMA page_size').get()?.['page_size']);
+  raw.close();
+  const fd = openSync(file, 'r+');
+  const page = Buffer.alloc(pageSize);
+  readSync(fd, page, 0, pageSize, (leaf - 1) * pageSize);
+  const at = offset >= 0 ? offset : page.indexOf('{"id":"run-', pageSize / 2);
+  writeSync(fd, Buffer.alloc(bytes, 0x5a), 0, bytes, (leaf - 1) * pageSize + at);
+  closeSync(fd);
+  return home;
+}
+
+/** Every example a report names, joined, for the "a clean run is not named" assertions. */
+function named(report: CheckReport): string {
+  return JSON.stringify(report.findings.map((f) => f.examples ?? []));
+}
+
+describe('#616 PR-2c c8b1 — check 1: one cell per code, a clean run beside it not named', () => {
+  it('evidence_hash_mismatch — two entries whose stored hash is wrong: count 2', async () => {
+    const { home, template, clean } = await seededHome();
+    seedRuns(home, template, [
+      {
+        id: 'ev-bad',
+        change: (r) => (r['evidence'] = { $realm_rows: 2 }),
+        evidence: [
+          [0, '{"a":1}', 'bad0'],
+          [1, '{"a":2}', 'bad1'],
+        ],
+      },
+    ]);
+    const report = await check(home);
+    // (1) red when the check stops at the first mismatch (count 1), or its branch is removed; (2)
+    //     prints the findings.
+    expect({
+      status: report.status,
+      findings: report.findings,
+      cleanNamed: named(report).includes(clean),
+    }).toEqual({
+      status: 'findings',
+      findings: [
+        {
+          check: 'evidence_hashes',
+          code: 'evidence_hash_mismatch',
+          message: '2 evidence entries do not match their stored hash.',
+          count: 2,
+          examples: ['run ev-bad, entry 0', 'run ev-bad, entry 1'],
+        },
+      ],
+      cleanNamed: false,
+    });
+  });
+
+  it("phase_index_wrong — a stamp UPDATEd at the running fingerprint, and a terminal run with sealed_by null ('derived: none', and no filter column named)", async () => {
+    const { home, template, clean } = await seededHome();
+    seedRuns(home, template, [
+      { id: 'ph-lie' },
+      {
+        id: 'ph-null',
+        change: (r) => {
+          r['terminal_state'] = true;
+          r['sealed_by'] = null;
+        },
+        phase: 'completed',
+      },
+    ]);
+    rawly(home, "UPDATE runs SET run_phase = 'completed' WHERE id = 'ph-lie'");
+    const report = await check(home);
+    // (1) red when the stamp is not judged, or a derivation that throws escapes (check() rejects) or
+    //     is skipped, or sealed_by null is read as a filter difference; (2) prints the findings.
+    expect({
+      status: report.status,
+      findings: report.findings,
+      cleanNamed: named(report).includes(clean),
+    }).toEqual({
+      status: 'findings',
+      findings: [
+        {
+          check: 'phase_index',
+          code: 'phase_index_wrong',
+          message: "2 runs carry a phase that differs from their record's.",
+          count: 2,
+          examples: [
+            `run ph-lie: stored completed, derived ${template.phase}`,
+            'run ph-null: stored completed, derived: none',
+          ],
+        },
+      ],
+      cleanNamed: false,
+    });
+  });
+
+  it('key_hash_mismatch — a wrong key hash by INSERT, and a key that is not text', async () => {
+    const { home, template, clean } = await seededHome();
+    seedRuns(home, template, [
+      { id: 'key-wrong', change: (r) => (r['idempotency_key'] = 'k1'), keyHash: 'deadbeef' },
+      { id: 'key-number', change: (r) => (r['idempotency_key'] = 5), keyHash: 'x' },
+    ]);
+    const report = await check(home);
+    const right = keyHashOf(String(template.record['workflow_id']), 'k1');
+    // (1) red when the key hash is not recomputed, or a key that is not text throws or passes; (2)
+    //     prints the findings.
+    expect({
+      status: report.status,
+      findings: report.findings,
+      cleanNamed: named(report).includes(clean),
+    }).toEqual({
+      status: 'findings',
+      findings: [
+        {
+          check: 'key_hashes',
+          code: 'key_hash_mismatch',
+          message: '2 runs carry a key hash that does not match their key.',
+          count: 2,
+          examples: [
+            `run key-wrong: stored deadbeef, derived ${right}`,
+            'run key-number: stored x, derived: none',
+          ],
+        },
+      ],
+      cleanNamed: false,
+    });
+  });
+
+  it('filter_column_differs — sealed_by.arm and pending_gate.gate_id each repeated in place (a version+1 UPDATE): one example holding both', async () => {
+    const { home, template, clean } = await seededHome();
+    seedRuns(home, template, [{ id: 'nested' }]);
+    rewriteRecord(home, 'nested', (record) => {
+      delete record['sealed_by'];
+      delete record['pending_gate'];
+      return (
+        JSON.stringify(record).slice(0, -1) +
+        ',"sealed_by":{"arm":"completed","arm":"failed"},"pending_gate":{"gate_id":"g1","gate_id":"g2"}}'
+      );
+    });
+    restamped(home, 'nested');
+    const report = await check(home);
+    // (1) red when the columns are not compared with the record, or each column is its own example;
+    //     (2) prints the findings.
+    expect({
+      status: report.status,
+      findings: report.findings,
+      cleanNamed: named(report).includes(clean),
+    }).toEqual({
+      status: 'findings',
+      findings: [
+        {
+          check: 'filter_columns',
+          code: 'filter_column_differs',
+          message: '1 run holds a filter column that differs from its record.',
+          count: 1,
+          examples: [
+            'run nested, column sealed_by_arm: stored "completed", record "failed"; column pending_gate_id: stored "g1", record "g2"',
+          ],
+        },
+      ],
+      cleanNamed: false,
+    });
+  });
+
+  it('placeholder_mismatch — an extra evidence row, a blob placeholder with no blob row (a version+1 UPDATE), and a record with no evidence key', async () => {
+    const { home, template, clean } = await seededHome();
+    const text = '{"a":1}';
+    seedRuns(home, template, [
+      { id: 'ph-extra', evidence: [[0, text, evidenceEntrySha256(text)]] },
+      { id: 'ph-noblob' },
+      { id: 'ph-noev' },
+    ]);
+    rewriteRecord(home, 'ph-noblob', (record) =>
+      JSON.stringify({
+        ...record,
+        workflow_context_snapshots: { $realm_blob: 'workflow_context_snapshots' },
+      }),
+    );
+    rewriteRecord(home, 'ph-noev', (record) => {
+      delete record['evidence'];
+      return JSON.stringify(record);
+    });
+    const report = await check(home);
+    // (1) red when a disjunct of the rule is not judged (the rows, the blob, an absent placeholder);
+    //     (2) prints the findings.
+    expect({
+      status: report.status,
+      findings: report.findings,
+      cleanNamed: named(report).includes(clean),
+    }).toEqual({
+      status: 'findings',
+      findings: [
+        {
+          check: 'placeholders',
+          code: 'placeholder_mismatch',
+          message: '3 runs hold stored placeholders that do not match their rows.',
+          count: 3,
+          examples: [
+            'run ph-extra, evidence',
+            'run ph-noblob, workflow_context_snapshots',
+            'run ph-noev, evidence',
+          ],
+        },
+      ],
+      cleanNamed: false,
+    });
+  });
+});
+
+describe('#616 PR-2c c8b1 — check 2: the filter columns compared as SQLite stores them', () => {
+  it('true, a number and an object at filter paths, each what SQLite stores — no filter_column_differs; the nine columns compared', async () => {
+    const { home, template } = await seededHome();
+    seedRuns(home, template, [
+      { id: 'typed-1', change: (r) => (r['created_at'] = true) },
+      { id: 'typed-2', change: (r) => (r['updated_at'] = 12345) },
+      // Correction 1: text holding a lone surrogate at an INTEGER path.
+      { id: 'typed-4', change: (r) => (r['version'] = 'y\udc00z') },
+      {
+        // An object as SQLite keeps it: an integer-like key after another, and 1.0 as written.
+        id: 'typed-3',
+        change: (r) => (r['rerun_of'] = 'OBJECT'),
+        text: (json) =>
+          json.replace(
+            '"rerun_of":"OBJECT"',
+            '"rerun_of":{"b":[1,"x"],"2":1.0,"1":null,"s":"\\ud83d"}',
+          ),
+      },
+    ]);
+    const report = await check(home);
+    // (1) red when a value is compared as JS holds it (true vs 1, 12345 vs '12345') or an object's
+    //     text is compared raw, or the columns are not read from the schema; (2) prints the codes
+    //     and the columns compared.
+    expect({
+      codes: report.findings.map((f) => f.code),
+      columns: filterColumns().map((c) => c.name),
+    }).toEqual({
+      codes: [],
+      columns: [
+        'workflow_id',
+        'terminal_state',
+        'sealed_by_arm',
+        'created_at',
+        'updated_at',
+        'idempotency_key',
+        'rerun_of',
+        'version',
+        'pending_gate_id',
+      ],
+    });
+  });
+});
+
+describe('#616 PR-2c c8b1 — check 3: a damaged page and a bad record', () => {
+  // A closed store of 400 runs, each padded so the runs table spans many leaf pages; each cell
+  // overwrites a part of one leaf page (the sixth) in its own copy (AUD-C8B1-05, -21).
+  let base: string;
+  beforeAll(async () => {
+    const { home, template } = await seededHome();
+    seedRuns(
+      home,
+      template,
+      Array.from({ length: 400 }, (_, i) => ({
+        id: `run-${String(i).padStart(5, '0')}`,
+        change: (r: Record<string, unknown>) => (r['params'] = { pad: 'p'.repeat(800) }),
+      })),
+    );
+    base = home;
+  }, 120_000);
+  function leafDamaged(offset: number, bytes: number): string {
+    return pageDamaged(base, 'runs', 5, offset, bytes);
+  }
+
+  it.each([
+    ['leaf-header', 0, 16],
+    ['leaf-cellptr', 8, 40],
+  ] as const)(
+    '%s: the runs scan meets SQLite error 11 — the report resolves with the integrity finding and data_unreadable, the runs scan checks not run, evidence_hashes kept',
+    async (_label, offset, bytes) => {
+      const report = await check(leafDamaged(offset, bytes));
+      // (1) red when the corrupt error is caught only inside the transaction (its COMMIT then rejects
+      //     check()), when it costs the integrity finding or the evidence scan's result, or when the
+      //     wrong checks are not run; (2) prints the codes and not_run.
+      expect({
+        integrity: report.findings.some((f) => f.check === 'integrity'),
+        data: report.findings.filter((f) => f.check !== 'integrity'),
+        not_run: report.not_run,
+      }).toEqual({
+        integrity: true,
+        data: [
+          {
+            check: 'data_read',
+            code: 'data_unreadable',
+            message:
+              "SQLite could not read the store's data: SQLite error 11, the file is damaged.",
+          },
+        ],
+        not_run: stopped(
+          'data_unreadable',
+          'records',
+          'phase_index',
+          'key_hashes',
+          'filter_columns',
+          'placeholders',
+        ),
+      });
+    },
+  );
+
+  it.each([
+    // The middle: the opening bytes of the first record past the page's middle (this layout's records
+    // are not where the auditor's fixed offset fell; there it lands in the page's free space).
+    // The page's structure intact, SQLite's integrity check reports nothing for this one (pinned).
+    ['leaf-mid', -1, 7, false],
+    ['leaf-end', 16_384 - 300, 300, true],
+  ] as const)(
+    '%s: one record will not parse — record_unreadable for that run; any integrity finding and every other check still there',
+    async (_label, offset, bytes, integrity) => {
+      const report = await check(leafDamaged(offset, bytes));
+      const unreadable = report.findings.find((f) => f.code === 'record_unreadable');
+      // (1) red when the bad record stops the pass (check() rejects, or data_unreadable), or costs
+      //     the integrity finding; (2) prints the codes and the unreadable finding.
+      expect({
+        codes: report.findings.map((f) => f.code).filter((c) => c !== 'integrity_failed'),
+        integrity: report.findings.some((f) => f.check === 'integrity'),
+        unreadable: {
+          message: unreadable?.message,
+          count: unreadable?.count,
+          examples: unreadable?.examples?.length,
+        },
+        not_run: report.not_run,
+      }).toEqual({
+        codes: ['record_unreadable'],
+        integrity,
+        unreadable: {
+          message:
+            '1 run holds a stored record that is not JSON; the checks that read a record skipped it.',
+          count: 1,
+          examples: 1,
+        },
+        not_run: [],
+      });
+    },
+  );
+
+  it.each([
+    [
+      'SQLite error 10',
+      Object.assign(new Error('disk I/O error'), {
+        code: 'ERR_SQLITE_ERROR',
+        errcode: 10,
+        errstr: 'disk I/O error',
+      }),
+      'disk I/O error (SQLite error 10)',
+    ],
+    // Correction 1: only the driver's too-large refusal (its code) stops a scan.
+    ['a plain RangeError', new RangeError('not the driver refusing'), 'not the driver refusing'],
+  ] as const)(
+    "%s in the pass (the open's seam) — check() rejects at once, in that error's words, never data_unreadable",
+    async (_label, error, message) => {
+      const home = await storeHome();
+      const openFile = (path: string, options?: { readonly readOnly: true }): DatabaseLike => {
+        const real = openDatabase(path, options);
+        return {
+          exec: (sql: string) => real.exec(sql),
+          prepare: (sql: string) =>
+            sql.startsWith('SELECT rowid AS r, id, record')
+              ? ({
+                  all: () => {
+                    throw error;
+                  },
+                } as unknown as ReturnType<DatabaseLike['prepare']>)
+              : real.prepare(sql),
+          close: () => real.close(),
+          get isTransaction() {
+            return real.isTransaction;
+          },
+        };
+      };
+      const m = await openMaintenance({ home, verb: 'check' }, { openFile });
+      const got = await refusal(m.check());
+      m.close();
+      // (1) red when any SQLite error is read as damage (a report with data_unreadable resolves); (2)
+      //     prints what check() did.
+      expect({ resolved: got['resolved'], message: got['message'] }).toEqual({
+        resolved: undefined,
+        message,
+      });
+    },
+  );
+});
+
+describe('#616 PR-2c c8b1 — check 4: a file whose finding stops the data checks, a phase lie planted in it', () => {
+  it.each(['older_version', 'schema_differs'] as const)('%s', async (code) => {
+    const home = await storeHome();
+    rawly(home, "UPDATE runs SET run_phase = 'completed'");
+    if (code === 'schema_differs') rawly(home, 'DROP TRIGGER runs_insert_once');
+    const report = await check(
+      home,
+      code === 'older_version' ? { schemaVersion: 2, versions: ladder() } : {},
+    );
+    // (1) red when a data check runs on a stopped file (the lie's finding or the pass's fact
+    //     appears); (2) prints the codes, not_run's data entries and the fact.
+    expect({
+      codes: report.findings.map((f) => f.code),
+      data: report.not_run.filter((n) => DATA_STOPPED.includes(n.check)),
+      fact: report.facts.phase_other_stamps,
+    }).toEqual({ codes: [code], data: stopped(code, ...DATA_STOPPED), fact: undefined });
+  });
+});
+
+describe('#616 PR-2c c8b1 — check 5: phase_other_stamps', () => {
+  it('3 runs over 2 other stamps — the fact is 3, and nothing is found', async () => {
+    const { home, template } = await seededHome();
+    seedRuns(home, template, [
+      { id: 'old-1', stamp: 'other-a' },
+      { id: 'old-2', stamp: 'other-a' },
+      { id: 'old-3', stamp: 'other-b' },
+    ]);
+    const report = await check(home);
+    // (1) red when the stamps are counted, not the runs (2), or a run at another stamp is judged;
+    //     (2) prints the fact and the codes.
+    expect({
+      fact: report.facts.phase_other_stamps,
+      codes: report.findings.map((f) => f.code),
+    }).toEqual({
+      fact: 3,
+      codes: [],
+    });
+  });
+});
+
+describe('#616 PR-2c c8b1 — check 7: a 10,000-run home', () => {
+  it('seeded by raw inserts in one transaction — the report resolves with nothing found (the time is reported, not asserted)', async () => {
+    const { home, template } = await seededHome();
+    seedRuns(
+      home,
+      template,
+      Array.from({ length: 10_000 }, (_, i) => ({ id: `scale-${String(i).padStart(5, '0')}` })),
+    );
+    const started = performance.now();
+    const report = await check(home);
+    const seconds = (performance.now() - started) / 1000;
+    console.info(`c8b1 check 7: the check of 10,001 runs took ${seconds.toFixed(2)} s`);
+    // (1) red when the pass loses a run or finds one wrong on a clean home; (2) prints the status,
+    //     the codes and the fact.
+    expect({
+      status: report.status,
+      codes: report.findings.map((f) => f.code),
+      fact: report.facts.phase_other_stamps,
+    }).toEqual({ status: 'ok', codes: [], fact: 0 });
+  }, 120_000);
+});
+
+describe('#616 PR-2c c8b1 correction 1 — a lone surrogate, as the driver reads it back', () => {
+  it('check 1: runs the store wrote with a lone surrogate in a key or a workflow id — nothing found', async () => {
+    const home = join(tmp(), '.realm');
+    const h = await openRealmHome({ home });
+    const params = {};
+    await h.runStore.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params,
+      idempotencyKey: 'a\ud83d',
+    });
+    await h.runStore.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params,
+      idempotencyKey: '\udc00b',
+    });
+    await h.runStore.create({ workflowId: 'wf\ud83d', workflowVersion: 1, params });
+    h.close();
+    const report = await check(home);
+    // (1) red when a record's text is compared without its read-back form (a false alarm on a store
+    //     Realm wrote itself); (2) prints the status and the findings.
+    expect({ status: report.status, findings: report.findings }).toEqual({
+      status: 'ok',
+      findings: [],
+    });
+  });
+
+  it('check 2: a true difference beside one is still named, the last repeated value holding the surrogate, the record printed unmapped', async () => {
+    const { home, template } = await seededHome();
+    seedRuns(home, template, [{ id: 'nested-s' }]);
+    rewriteRecord(home, 'nested-s', (record) => {
+      delete record['pending_gate'];
+      return (
+        JSON.stringify(record).slice(0, -1) +
+        ',"pending_gate":{"gate_id":"g1","gate_id":"x\\ud83d"}}'
+      );
+    });
+    restamped(home, 'nested-s');
+    const report = await check(home);
+    // (1) red when any text that is not well formed is skipped; (2) prints the findings.
+    expect(report.findings).toEqual([
+      {
+        check: 'filter_columns',
+        code: 'filter_column_differs',
+        message: '1 run holds a filter column that differs from its record.',
+        count: 1,
+        examples: ['run nested-s, column pending_gate_id: stored "g1", record "x\\ud83d"'],
+      },
+    ]);
+  });
+});
+
+describe('#616 PR-2c c8b1 correction 1 — a stored integer too large to read', () => {
+  it("check 3: a version of 2^60 in a record's text (the foreign connection, beside a clean run) — the report resolves, data_unreadable in the words that claim no cause, the runs scan's checks not run, evidence_hashes' result kept", async () => {
+    const { home, template, clean } = await seededHome();
+    seedRuns(home, template, [
+      {
+        id: 'ev-bad',
+        change: (r) => (r['evidence'] = { $realm_rows: 1 }),
+        evidence: [[0, '{"a":1}', 'bad0']],
+      },
+    ]);
+    // An INSERT: the version fence refuses an UPDATE that jumps. In the record's text: a JS number
+    // this large rounds. Through the foreign connection, never `save()` (which accepts it today).
+    const c = await openForeignConnection(home);
+    connections.push(c);
+    const record = JSON.stringify({ ...template.record, id: 'huge' });
+    const huge = record.replace(/"version":\d+/, '"version":1152921504606846976');
+    c.prepare(
+      'INSERT INTO runs (id, record, run_phase, phase_version, key_hash) VALUES (?, ?, ?, ?, NULL)',
+    ).run('huge', huge, template.phase, template.stamp);
+    c.close();
+    connections.pop();
+    const report = await check(home);
+    // (1) red when the error is passed on (check() rejects), when it is called damage, or when the
+    //     evidence scan's result is lost; (2) prints the findings, not_run, the fact and the run.
+    expect({
+      seeded: huge !== record,
+      findings: report.findings,
+      not_run: report.not_run,
+      fact: report.facts.phase_other_stamps,
+      cleanNamed: named(report).includes(clean),
+    }).toEqual({
+      seeded: true,
+      findings: [
+        {
+          check: 'evidence_hashes',
+          code: 'evidence_hash_mismatch',
+          message: '1 evidence entry does not match its stored hash.',
+          count: 1,
+          examples: ['run ev-bad, entry 0'],
+        },
+        {
+          check: 'data_read',
+          code: 'data_unreadable',
+          message:
+            "Realm could not read the store's data: a stored integer is too large for Realm to read.",
+        },
+      ],
+      not_run: stopped(
+        'data_unreadable',
+        'records',
+        'phase_index',
+        'key_hashes',
+        'filter_columns',
+        'placeholders',
+      ),
+      fact: undefined,
+      cleanNamed: false,
+    });
+  });
+});
+
+describe("#616 PR-2c c8b1 correction 1 — check 4: each scan's stop set, with a planted finding kept", () => {
+  // 400 runs, each with an evidence row and a blob, then a bad evidence hash and a phase lie: what
+  // each stopped scan leaves is then a positive result, never an empty one.
+  let base: string;
+  beforeAll(async () => {
+    const { home, template } = await seededHome();
+    const text = JSON.stringify({ pad: 'e'.repeat(800) });
+    const hash = evidenceEntrySha256(text);
+    seedRuns(home, template, [
+      ...Array.from({ length: 400 }, (_, i) => ({
+        id: `run-${String(i).padStart(5, '0')}`,
+        change: (r: Record<string, unknown>) => {
+          r['evidence'] = { $realm_rows: 1 };
+          r['workflow_context_snapshots'] = { $realm_blob: 'workflow_context_snapshots' };
+        },
+        evidence: [[0, text, hash]] as const,
+        blob: '{}',
+      })),
+      {
+        id: 'zz-ev-bad',
+        change: (r: Record<string, unknown>) => (r['evidence'] = { $realm_rows: 1 }),
+        evidence: [[0, text, 'bad0']] as const,
+      },
+      { id: 'zz-lie', phase: 'completed' },
+    ]);
+    base = home;
+  }, 120_000);
+
+  it.each([
+    [
+      'the evidence scan',
+      'evidence',
+      5,
+      ['evidence_hashes', 'placeholders'],
+      ['phase_index_wrong', 'data_unreadable'],
+    ],
+    [
+      'the blob-name read (its covering index)',
+      'sqlite_autoindex_run_blobs_1',
+      0,
+      ['placeholders'],
+      ['evidence_hash_mismatch', 'phase_index_wrong', 'data_unreadable'],
+    ],
+  ] as const)(
+    '%s meets SQLite error 11 — only its checks are not run, the others keep their findings',
+    async (_label, object, skip, stops, codes) => {
+      const report = await check(pageDamaged(base, object, skip, 0, 16));
+      // (1) red when that scan's entry in SCAN_STOPS changes, or a scan's result is lost beside it; (2)
+      //     prints the data codes, not_run and the data_unreadable message.
+      expect({
+        codes: report.findings.filter((f) => f.check !== 'integrity').map((f) => f.code),
+        not_run: report.not_run,
+        message: report.findings.find((f) => f.code === 'data_unreadable')?.message,
+      }).toEqual({
+        codes,
+        not_run: stopped('data_unreadable', ...stops),
+        message: "SQLite could not read the store's data: SQLite error 11, the file is damaged.",
+      });
+    },
+  );
 });
 
 describe("#616 PR-2c c8a1, c8a3 — the contract's laws, over every report the cells built", () => {

@@ -20,6 +20,8 @@ Duplicate webhooks: each id is remembered, as a hash, for its window, measured o
 
 The workflow registry stores each distinct definition text once, under its hash, with a pointer per workflow to its current text and a record of every move of that pointer; an identical re-register writes nothing.
 
+`readRegisteredWorkflows({ home? })` reads, for the separation check, the registered workflows' ids with their `trust_root`, `source_dir` and `extensions` where stored — read-only: it writes nothing to the store file (SQLite may create or update its two side files beside it, `realm.db-wal` and `realm.db-shm`), and answers `no_store` or `unreadable` instead of throwing.
+
 ## Failed attempts and replays
 
 Failed attempts are kept per run in append order; recording stops once a run's records reach 256 KiB, and recording one never fails the step.
