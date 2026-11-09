@@ -186,7 +186,7 @@ const MAX_CAUSE_SUMMARY_CHARS = 80;
 /**
  * Renders the `--stuck` cause-attribution segment (issue #219) from a `FailedAttemptStore` read —
  * pure and unit-testable in isolation from `listRuns`/the filesystem. `''` for the empty case (no
- * records — the CLI-driven / no-sidecar / genuinely-parked-between-drives case), which the caller
+ * records — the CLI-driven / genuinely-parked-between-drives case), which the caller
  * appends as a no-op — cause is NEVER fabricated. Non-empty results are ALWAYS prefixed with the
  * same `'  '` two-space separator the claim/capability label groups use, so callers can
  * unconditionally `line += renderCauseSegment(result)`.
@@ -241,8 +241,7 @@ export type StuckDefinitionProbe =
  * @param failedAttemptStore Explicit injection (issue #219) for `--stuck` cause attribution —
  *                          deliberately NOT derived from `store` (no structural typing/duck-typed
  *                          `runsDirPath` probing on the `RunStore` interface, which stays plain
- *                          and untouched). The caller (the CLI action, which holds a concrete
- *                          `JsonFileStore` and its real `runsDirPath` getter) constructs this and
+ *                          and untouched). The caller (the CLI action, from the home it opened)
  *                          passes it in; `undefined` means best-effort skip — no cause attribution
  *                          — never a crash. `listRuns` never constructs one itself.
  * @param workflowProbe     issue #558 PR-T: the `--stuck` definition probe (the caller holds the
@@ -489,9 +488,9 @@ export async function listRuns(
       if (residualLabels.length > 0) {
         line += `  ${residualLabels.join(', ')}`;
       }
-      // issue #219: cause attribution, appended LAST — best-effort, per-run (one run's sidecar
-      // I/O failure never aborts the rest of the list). `records.length === 0` (no throw) means
-      // absence — the CLI-driven / no-sidecar / parked-between-drives case — renders nothing
+      // issue #219: cause attribution, appended LAST — best-effort, per-run (one run's failed-attempt
+      // read failure never aborts the rest of the list). `records.length === 0` (no throw) means
+      // absence — the CLI-driven / parked-between-drives case — renders nothing
       // (renderCauseSegment returns '', a no-op append). A genuine read() throw is a DIFFERENT,
       // visible outcome — never conflated with absence (issue #183) and never silently swallowed
       // into the empty rendering.

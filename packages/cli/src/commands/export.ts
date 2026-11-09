@@ -89,13 +89,13 @@ export interface ExportBundle {
   exported_at: string;
   /** The full RunRecord — steps, evidence, skip_details, claims, etc. */
   run: RunRecord;
-  /** Parsed failed-attempt records; `[]` if none were ever recorded for this run OR if the sidecar
+  /** Parsed failed-attempt records; `[]` if none were ever recorded for this run OR if the store
    *  read failed (see `artifact_errors` — the empty array does not by itself mean "none recorded"
    *  in that case; check `complete` first). */
   attempts: FailedAttemptRecord[];
-  /** True if the run hit the failed-attempt sidecar's 256KB ceiling — later attempts were dropped
+  /** True if the run hit the failed-attempt store's 256KB ceiling — later attempts were dropped
    *  at write time (append-and-stop), so `attempts` is NOT exhaustive. Independent of `complete`:
-   *  a sidecar can be BOTH fully readable AND capped (a known, positively-characterized
+   *  a run's attempts can be BOTH fully readable AND capped (a known, positively-characterized
    *  truncation) — that is a different signal from a read that failed outright. */
   attempts_capped: boolean;
   /** `{ <stepId>: [...] }` — every buffered/WAL entry for the run, across all steps; `{}` if none
@@ -268,6 +268,7 @@ export async function buildExportBundle(
     attemptsCapped = result.capped;
   } catch (err) {
     artifactErrors.push({
+      // Kept for readers of existing bundles: this label is a value they key on.
       artifact: 'failed-attempt sidecar',
       code: errnoCodeOf(err),
       message: err instanceof Error ? err.message : String(err),
@@ -279,6 +280,7 @@ export async function buildExportBundle(
     wal = await stores.traceBufferStore.readAllForRun(runId);
   } catch (err) {
     artifactErrors.push({
+      // Kept for readers of existing bundles: this label is a value they key on.
       artifact: 'trace-buffer WAL',
       code: errnoCodeOf(err),
       message: err instanceof Error ? err.message : String(err),
@@ -508,7 +510,7 @@ function formatBytes(n: number): string {
 
 export const exportCommand = new Command('export')
   .description(
-    "Archive a run's evidence (record + failed-attempt sidecar + WAL traces) into one inspectable JSON bundle — read-only",
+    "Archive a run's evidence (record + failed attempts + trace lines) into one inspectable JSON bundle — read-only",
   )
   .argument('<run-id>', 'ID of the run to export')
   .option('--out <path>', 'Output file or directory (default: ./<run-id>.realm.json)')
