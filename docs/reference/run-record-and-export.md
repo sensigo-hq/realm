@@ -146,7 +146,7 @@ A request `realm agent` sent also records what Realm asked for (except, on Anthr
 
 Each request also carries a `request_id`, a random UUID that Realm itself mints (added after version 0.48.0). It is not the model service's own request id. Realm replaces any `request_id` a provider module puts in the usage it returns. A request recorded before this version has none, and Realm never matches it against a new request.
 
-An Anthropic request also carries `response_id`, the id of the answer (`msg_…`, added after version 0.48.0). It is kept only when it starts with `msg_`, is at most 256 characters and has no control character. OpenAI's requests have none; a provider module's own `response_id` is kept under the same rule.
+An Anthropic request also carries `response_id`, the id of the answer (`msg_…`, added after version 0.48.0). Inside one provider call at Anthropic's own address, Realm sends this id back with the next request when it asks Anthropic why that request missed the cache (`--cache-diagnostics`). It is kept only when it starts with `msg_`, is at most 256 characters and has no control character. OpenAI's requests have none; a provider module's own `response_id` is kept under the same rule.
 
 Each request `realm agent` records also carries `request_in_call` (added after version 0.48.0): its place, from 0, among the recorded requests of one call Realm made to the model's provider for the step. A step's attempt is one call, and a repair attempt is a new one. A single-shot step's first request and a tool step's first turn are 0; a tool step's later turns, a JSON retry, and the request a tool step sends once it has used up its tool calls are 1 and up. A request recorded before this version has none.
 

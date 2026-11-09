@@ -43,8 +43,10 @@ import { settleAutoFromPriceFile } from '../agent/auto-prices.js';
 import {
   autoFallbackWindowText,
   cacheableStepCounts,
+  parseCacheDiagnostics,
   parsePromptCache,
   resolvePromptCache,
+  type CacheDiagnosticsSetting,
 } from '../agent/prompt-cache.js';
 import { reattachable, resolveRunAttach } from '../agent/run-attach.js';
 import {
@@ -159,7 +161,9 @@ const SCHEMA_RETRIES_DEFAULT = 2;
  * (only when it differs from its default, so the command never shows a value nobody typed),
  * `--llm-timeout`, `--mint-writer-nonce` and `--prompt-cache` (issue #600 PR 2: only when it was
  * stated and the provider can apply it — there is no Commander default, so a default is never
- * repeated). Left out: `--workflow`, `--params` and `--register` (they apply only when a run is
+ * repeated), then `--cache-diagnostics off` (caching 3-M B2b: a stated `off` only; a stated `on` is
+ * what unstated means where it can act, and where it cannot it would print a refused command). Left
+ * out: `--workflow`, `--params` and `--register` (they apply only when a run is
  * created) and the hidden `--no-release-line-advisory` and `--spawned-by-listen` (listen's own).
  * A value outside `[A-Za-z0-9._/:@%+=,-]` is single-quoted, `'` written `'\''`.
  *
@@ -185,6 +189,7 @@ export function buildReattachFlags(opts: {
   promptCache?: string;
   promptCacheSource?: 'stated' | 'default';
   providerAppliesPromptCache?: boolean;
+  cacheDiagnostics?: string;
 }): string {
   const words: string[] = [];
   if (opts.providerModule !== undefined) {
@@ -211,6 +216,7 @@ export function buildReattachFlags(opts: {
   ) {
     words.push('--prompt-cache', shellWord(opts.promptCache));
   }
+  if (opts.cacheDiagnostics === 'off') words.push('--cache-diagnostics', 'off');
   return words.join(' ');
 }
 
@@ -302,6 +308,12 @@ export const agentCommand = new Command('agent')
     `What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under ${autoFallbackWindowText()}, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (\`short\` and \`long\` alike); on a drive realm listen starts, \`auto\` chooses between that and no caching, as for Anthropic, and without usable prices asks for 30 minutes when a recent gap is under 27 minutes; \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
     parsePromptCache,
   )
+  // Caching 3-M (B2b): no Commander default — unstated means on where it can act, and stays unstated.
+  .option(
+    '--cache-diagnostics <on|off>',
+    "Whether to ask Anthropic why a request missed the cache: on or off. On by default at Anthropic's own address, for a request marked for caching. Each request that asks leaves a short-lived fingerprint of what it sent at Anthropic.",
+    parseCacheDiagnostics,
+  )
   // issue #620 PR-C: the repo's first hidden option. `realm listen` appends it to every child it
   // spawns (buildAgentArgv): listen tells the operator once at startup, so a child per webhook
   // must not repeat the release-line advisory. Hidden because it is listen's, not an operator's.
@@ -341,6 +353,7 @@ export const agentCommand = new Command('agent')
       schemaRetries: number;
       llmTimeout: number;
       promptCache?: PromptCacheSetting;
+      cacheDiagnostics?: CacheDiagnosticsSetting;
       spawnedByListen?: boolean;
       logMode?: boolean;
       cacheGaps?: string;
@@ -373,7 +386,8 @@ export const agentCommand = new Command('agent')
       // agents it starts; refused here, before anything is loaded, when an operator types it.
       if (opts.cacheGaps !== undefined && opts.spawnedByListen !== true) {
         console.error(
-          `Error: --cache-gaps is realm listen's own option, passed to the agents it starts; remove it. ${tail}`,
+          // eslint-disable-next-line no-restricted-syntax -- prose naming the program, not a command to copy (#729 PR-3, L-2).
+          `Error: --cache-gaps is set by realm listen for the agents it starts; it is not an operator's option. Remove it. ${tail}`,
         );
         process.exit(1);
       }
@@ -395,6 +409,27 @@ export const agentCommand = new Command('agent')
           `Error: --prompt-cache has nothing to apply to: workflow '${definition.id}' has no agent step, so the flag would change nothing. Remove --prompt-cache. ${tail}`,
         );
         process.exit(1);
+      };
+      // Caching 3-M (B2b): a stated `on` that cannot act is refused at load, with its reason (the
+      // inert-config policy); `off` is true everywhere. A drive `realm listen` started is neither
+      // refused nor disclosed: a refusal would exit a child after listen has answered 202, so it
+      // simply does not ask (a named narrowing of design-d4 §D4.13).
+      const refusesDiagnosticsOn = opts.cacheDiagnostics === 'on' && opts.spawnedByListen !== true;
+      const nothingToAskFor = (why: string, remedy: string): never => {
+        console.error(
+          `Error: --cache-diagnostics on has nothing to act on: ${why} ${remedy} ${tail}`,
+        );
+        process.exit(1);
+      };
+      // Last of the load's refusals, once the definition is read, as `--prompt-cache`'s own.
+      const refuseInertCacheDiagnostics = (definition: WorkflowDefinition): void => {
+        if (!refusesDiagnosticsOn) return;
+        const counts = cacheableStepCounts(definition);
+        if (counts.singleShot + counts.withTools > 0) return;
+        nothingToAskFor(
+          `workflow '${definition.id}' has no agent step, so the flag would change nothing.`,
+          'Remove --cache-diagnostics.',
+        );
       };
       let exitCode: number;
       try {
@@ -429,10 +464,11 @@ export const agentCommand = new Command('agent')
             opts.model !== undefined ||
             opts.baseUrl !== undefined ||
             opts.strictBaseUrl === true ||
-            opts.promptCache !== undefined
+            opts.promptCache !== undefined ||
+            refusesDiagnosticsOn
           ) {
             console.error(
-              'Error: --provider-module cannot be combined with --provider, --model, --base-url, --strict-base-url, or --prompt-cache',
+              'Error: --provider-module cannot be combined with --provider, --model, --base-url, --strict-base-url, --prompt-cache, or --cache-diagnostics on',
             );
             process.exit(1);
           }
@@ -497,7 +533,30 @@ export const agentCommand = new Command('agent')
             baseUrl: opts.baseUrl,
             strictBaseUrl: opts.strictBaseUrl === true,
             promptCache,
+            cacheDiagnostics: opts.cacheDiagnostics,
           }));
+          // Caching 3-M (B2b): the chosen provider, never `--provider`, and the address from the
+          // built provider, never the variable (the SDK treats an empty one as unset).
+          if (refusesDiagnosticsOn) {
+            if (flags.provider !== 'anthropic') {
+              nothingToAskFor(
+                `only Anthropic answers this question, and this drive uses ${flags.provider}.`,
+                'Remove --cache-diagnostics, or use --provider anthropic.',
+              );
+            }
+            if (opts.promptCache === 'off') {
+              nothingToAskFor(
+                '--prompt-cache off asks for no caching, so no request can miss.',
+                'Remove --cache-diagnostics, or choose another --prompt-cache.',
+              );
+            }
+            if (provider.capabilities().endpoint === 'custom') {
+              nothingToAskFor(
+                "only Anthropic's own address answers this question, and ANTHROPIC_BASE_URL points elsewhere.",
+                'Remove --cache-diagnostics, or unset ANTHROPIC_BASE_URL.',
+              );
+            }
+          }
           requestedModel = flags.model;
           // caching 3-B (row 4): every built-in provider applies the setting (Anthropic asks for a
           // lifetime; OpenAI decides by it whether to send the cache key), so no stated setting is
@@ -554,7 +613,10 @@ export const agentCommand = new Command('agent')
           // ended with extensions_load_failed). Reads only, and only when the flag was stated. A read
           // that fails leaves the judgement to resolveRunAttach, which raises its own error, so an
           // unreadable run or definition fails exactly as it does without the flag.
-          if (opts.promptCache !== undefined && opts.spawnedByListen !== true) {
+          if (
+            (opts.promptCache !== undefined && opts.spawnedByListen !== true) ||
+            refusesDiagnosticsOn
+          ) {
             const stated = await store
               .get(opts.runId)
               .then(({ record: run }) =>
@@ -564,7 +626,10 @@ export const agentCommand = new Command('agent')
                 }),
               )
               .catch(() => undefined);
-            if (stated !== undefined) refuseInertPromptCache(stated);
+            if (stated !== undefined) {
+              refuseInertPromptCache(stated);
+              refuseInertCacheDiagnostics(stated);
+            }
           }
           // #729 PR-3 correction 4 (I-11): an ended run is refused below with its stored reason, so
           // its manifest is read first, as `attempts` reads it — the reason is masked with the run's
@@ -653,6 +718,7 @@ export const agentCommand = new Command('agent')
           const definition = loadWorkflowFromFile(filePath);
           // issue #600 PR 2 (C3e): before params, extensions and the run.
           refuseInertPromptCache(definition);
+          refuseInertCacheDiagnostics(definition);
 
           // issue #586: apply a declared `params_schema` BEFORE the run is created (the run is
           // minted inside `runAgent` below). No local catch: the outer catch already renders a

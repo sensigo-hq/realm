@@ -811,12 +811,12 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
         created: {
           code: 1,
           stderr:
-            "Error: --cache-gaps is realm listen's own option, passed to the agents it starts; remove it. Nothing was started.",
+            "Error: --cache-gaps is set by realm listen for the agents it starts; it is not an operator's option. Remove it. Nothing was started.",
         },
         attached: {
           code: 1,
           stderr:
-            "Error: --cache-gaps is realm listen's own option, passed to the agents it starts; remove it. If run run_600_none exists, it was not changed.",
+            "Error: --cache-gaps is set by realm listen for the agents it starts; it is not an operator's option. Remove it. If run run_600_none exists, it was not changed.",
         },
         runs: [],
         requests: 0,
@@ -908,6 +908,14 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
 
   // Cell 12; #898 S11. (a) red when the option's description differs from B4's words, or (#898) it
   // keeps the old words, with no price file and no fallback; (b) prints it.
+  // Caching 3-M B2b. An operator reading --help must learn what asking leaves at Anthropic. (a) red
+  // when the description differs from the prompt's words; (b) prints it.
+  it("the help: realm agent's --cache-diagnostics description", () => {
+    expect(agentCommand.options.find((o) => o.long === '--cache-diagnostics')?.description).toBe(
+      "Whether to ask Anthropic why a request missed the cache: on or off. On by default at Anthropic's own address, for a request marked for caching. Each request that asks leaves a short-lived fingerprint of what it sent at Anthropic.",
+    );
+  });
+
   it("the help: realm agent's --prompt-cache description", () => {
     expect(agentCommand.options.find((o) => o.long === '--prompt-cache')?.description).toBe(
       "What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under 54 minutes, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (`short` and `long` alike); on a drive realm listen starts, `auto` chooses between that and no caching, as for Anthropic, and without usable prices asks for 30 minutes when a recent gap is under 27 minutes; `off` turns OpenAI's caching off. Other providers' own caching applies.",
