@@ -730,7 +730,7 @@ Added after version 0.48.0. Brings Realm's own JSON documents into the store: ru
 
 Before the store is opened and before any file is read, every `<path>` is looked at. The first one that cannot be imported from is named, and nothing is imported: `Error: <path>: no such file or folder`, `Error: <path>: neither a file nor a folder`, `Error: <path>: no .json files (a folder is read for .json files directly in it, not below it)`, or `Error: <path>: <the system's reason>`. The store's own refusals, such as a home that still holds the old store's folders, are one `Error:` line, and nothing is imported.
 
-Each file gets one line, in the order of the arguments and a folder's files in name order: a word, two spaces, the file, and after a colon why it was not imported.
+Each file gets one line, in the order of the arguments, a folder's files in the order of their names by character code (`10.json` before `2.json`, `B.json` before `a.json`): a word, two spaces, the file, and after a colon why it was not imported.
 
 | Word        | What it means                                                                                                                                                               |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

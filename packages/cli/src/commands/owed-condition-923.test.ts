@@ -66,7 +66,7 @@ interface Home {
 }
 
 const folders: string[] = [];
-/** Every handle a cell opened; a location's handle after the one that made its root. */
+/** Every handle a cell opened; a located cell's ONE handle, on a test home under a fresh root (see `folders`). */
 const handles: TempHome[] = [];
 afterEach(async () => {
   for (const t of handles.splice(0).reverse()) await t.cleanup();
@@ -90,18 +90,19 @@ async function freshHome(): Promise<Home> {
  * spawned `realm` reads instead of waiting on the real one for a question to expire.
  */
 async function locatedHome(): Promise<Home & { clock: TestHome['clock'] }> {
-  const made = await makeTempHome();
-  handles.push(made);
-  const home = realpathSync(made.root);
-  const loc = await createTestHome({ start: new Date(), root: join(home, '.realm') });
-  // The location's own handle, opened after it: its stores take the location's clock.
-  const t = await makeTempHome({ home: loc.root });
+  // #616 PR-2c c10a-2d: a root no handle holds; the ONE handle opened on its test home holds the
+  // stores, which take the location's clock. The folder goes after the handles are closed.
+  const owned = mkdtempSync(join(tmpdir(), 'realm-923-located-'));
+  folders.push(owned);
+  const home = realpathSync(owned);
+  const th = await createTestHome({ start: new Date(), root: join(home, '.realm') });
+  const t = await makeTempHome({ home: th.root });
   handles.push(t);
   return {
     home,
     runs: t.home.runStore,
     workflows: t.home.workflowStore,
-    clock: loc.clock,
+    clock: th.clock,
   };
 }
 

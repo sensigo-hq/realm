@@ -113,7 +113,6 @@ describe('LAW 1 — no rendered line ever contains "— REFUSED" (issue #540)', 
   });
 
   it('law1/register-carry: same shape through register — err.warnings carried on a hard throw', async () => {
-    mkdirSync(join(dir, '.realm', 'workflows'), { recursive: true });
     const originalHome = process.env['HOME'];
     process.env['HOME'] = dir;
     try {

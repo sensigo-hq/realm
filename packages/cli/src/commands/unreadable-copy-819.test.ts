@@ -6,7 +6,7 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: file
 // names, printed lines — never a token or an environment.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { inspectRun } from './inspect.js';
 import { workflowListCommand } from './workflow-list.js';
@@ -22,7 +22,7 @@ describe('#819 U2 — a copy with no steps, on the CLI', () => {
     h = await makeTempHome();
     home = h.root;
     wfDir = join(home, '.realm', 'workflows');
-    await mkdir(wfDir, { recursive: true });
+    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     // W's walk 1: the copy at the current format, its `steps` key removed.

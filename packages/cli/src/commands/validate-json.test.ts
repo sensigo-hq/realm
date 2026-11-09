@@ -27,6 +27,7 @@ import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { LoaderWarning } from '@sensigo/realm';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 // =================================================================================================
 // U1 — the severity normalizer's ONLY honest pin (unit-level; no fixture can produce this input —
 // every mint site in the tree already resolves severity at construction, so minted ≡ effective
@@ -57,6 +58,7 @@ describe('normalizeDiagnosticSeverity — the emit guard (issue #454, unit-level
 describe('validate --json (issue #454)', () => {
   let home: string;
   let wfDir: string;
+  let h: TempHome;
   let originalHome: string | undefined;
   let savedNoNudge: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -64,11 +66,12 @@ describe('validate --json (issue #454)', () => {
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
     home = mkdtempSync(join(tmpdir(), 'realm-validate-json-'));
     wfDir = join(home, '.realm', 'workflows');
-    mkdirSync(wfDir, { recursive: true });
+    h = await makeTempHome({ home: join(home, '.realm') });
+    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     savedNoNudge = process.env['REALM_NO_NUDGE'];
@@ -81,11 +84,12 @@ describe('validate --json (issue #454)', () => {
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
     if (savedNoNudge === undefined) delete process.env['REALM_NO_NUDGE'];
     else process.env['REALM_NO_NUDGE'] = savedNoNudge;
+    await h.cleanup();
     rmSync(home, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -554,7 +558,7 @@ steps:
 
   describe('J7/J7b/J7c/J7d — registered mode', () => {
     it('J7 stored-and-valid: mode registered, schema_version set, path null, exit 0 (purity pins the suppressed headers)', async () => {
-      plant('stored-wf', stored());
+      await h.home.workflowStore.register(stored() as never);
 
       await validateCommand.parseAsync(['--registered', 'stored-wf', '--json'], { from: 'user' });
 
@@ -634,9 +638,10 @@ steps:
     }, 20_000);
 
     it("J7c (:423 registered load-failure) the R1 shape + --json: workflow_id = requested, schema_version = CURRENT (the table's only pin of that claim)", async () => {
-      plant(
-        'stored-wf',
-        stored({ steps: { a: { description: 'a', execution: 'agent', timeout_seconds: 60 } } }),
+      await h.home.workflowStore.register(
+        stored({
+          steps: { a: { description: 'a', execution: 'agent', timeout_seconds: 60 } },
+        }) as never,
       );
 
       await expect(
@@ -653,11 +658,10 @@ steps:
     }, 20_000);
 
     it('J7d (:430 registered escalation) a stored dependson step key survives the RUNTIME_ONLY strip', async () => {
-      plant(
-        'stored-wf',
+      await h.home.workflowStore.register(
         stored({
           steps: { a: { description: 'a', execution: 'agent', dependson: ['nothing'] } },
-        }),
+        }) as never,
       );
 
       await expect(
@@ -805,7 +809,7 @@ steps:
       /** Builds whatever files/registered entries are needed; returns the CLI args EXCLUDING
        *  --json (the runner appends it for the json leg, and reuses the same args bare for the
        *  human leg — same fixture, both legs, since validate never mutates what it reads). */
-      setup: () => string[];
+      setup: () => string[] | Promise<string[]>;
     }
 
     it('walks every family scenario: json parses as one object, exit parity, stderr silent, counts match', async () => {
@@ -1095,15 +1099,15 @@ steps:
         },
         {
           name: 'J7 registered success',
-          setup: () => {
-            plant('t-j7', stored({ id: 't-j7' }));
+          setup: async () => {
+            await h.home.workflowStore.register(stored({ id: 't-j7' }) as never);
             return ['--registered', 't-j7'];
           },
         },
         {
           name: 'J7-strict registered success + --strict (the only --strict leg this fork gets)',
-          setup: () => {
-            plant('t-j7-strict', stored({ id: 't-j7-strict' }));
+          setup: async () => {
+            await h.home.workflowStore.register(stored({ id: 't-j7-strict' }) as never);
             return ['--registered', 't-j7-strict', '--strict'];
           },
         },
@@ -1153,26 +1157,24 @@ steps:
         },
         {
           name: 'J7c (:423) registered load-failure',
-          setup: () => {
-            plant(
-              't-j7c',
+          setup: async () => {
+            await h.home.workflowStore.register(
               stored({
                 id: 't-j7c',
                 steps: { a: { description: 'a', execution: 'agent', timeout_seconds: 60 } },
-              }),
+              }) as never,
             );
             return ['--registered', 't-j7c'];
           },
         },
         {
           name: 'J7d (:430) registered escalation',
-          setup: () => {
-            plant(
-              't-j7d',
+          setup: async () => {
+            await h.home.workflowStore.register(
               stored({
                 id: 't-j7d',
                 steps: { a: { description: 'a', execution: 'agent', dependson: ['nothing'] } },
-              }),
+              }) as never,
             );
             return ['--registered', 't-j7d'];
           },
@@ -1199,7 +1201,7 @@ steps:
 
       try {
         for (const scenario of scenarios) {
-          const args = scenario.setup();
+          const args = await scenario.setup();
 
           // --- the JSON leg ---
           logSpy.mockClear();

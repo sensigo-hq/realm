@@ -117,7 +117,7 @@ export type {
  */
 export { deriveCacheDetail } from './engine/execution-loop.js';
 // issue #600 PR 2 (A3): the names a request record carries, bounded where the record is written.
-export { boundRequestFacts } from './engine/request-facts.js';
+export { boundRequestFacts, normalizeResponseId } from './engine/request-facts.js';
 export { abandonRun, ABANDON_KILL_ADVISORY } from './engine/abandon-run.js';
 export {
   buildFailedAttemptRecord,

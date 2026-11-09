@@ -128,7 +128,6 @@ describe('register — `Error loading extensions:` (issue #451)', () => {
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'realm-register-ext-home-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

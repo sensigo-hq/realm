@@ -367,3 +367,45 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
     });
   });
 });
+
+// Caching 3-M (piece B1), check 1: the id of a provider's answer, run through the write gate every
+// provider's record passes. A request is written with `response_id` and the other fields it always
+// has; the cell reads whether the gate kept the id. (a) red per row as named; (b) prints the row,
+// the kept record's keys and the id's length, never the id.
+describe('caching 3-M B1 — response_id is kept only when it passes the one check', () => {
+  // Anthropic's documented answer id (anth-pc@2026-10-09.md:1107); every captured id has its shape.
+  const DOCUMENTED = 'msg_01XFDUDYJgAACzvnptvVoYEL';
+  const kept = (value: unknown): { keys: string[]; kept: boolean; length?: number } => {
+    const [out] = boundRequestFacts([
+      { request_index: 0, request_start: '2026-11-08T05:00:00.000Z', response_id: value },
+    ]) as Record<string, unknown>[];
+    const id = out?.['response_id'];
+    return {
+      keys: Object.keys(out ?? {}).sort(),
+      kept: id !== undefined,
+      ...(typeof id === 'string' ? { length: id.length } : {}),
+    };
+  };
+  // Can fail: the prefix check removed (the UUID row), `<` 256 for `≤` (the 256 row), the control
+  // check removed (the tab row), a set with only U+0000–U+001F (the U+0085 row), a set without
+  // U+007F (the DEL row), the string test removed (the array row: its string form passes the other
+  // three parts).
+  it.each<[string, unknown, boolean]>([
+    ["Anthropic's documented id", DOCUMENTED, true],
+    ["OpenAI's chat id", 'chatcmpl-AbC123dEf456', false],
+    ["a gateway's UUID", '715a0000-0000-4000-8000-00000000715a', false],
+    ['257 characters on that shape', `msg_01${'A'.repeat(251)}`, false],
+    ['exactly 256 characters on that shape', `msg_01${'A'.repeat(250)}`, true],
+    ['a tab inside the id', 'msg_01XFDUDYJg\tAACzvnptvVoYEL', false],
+    ['U+0085 inside the id', 'msg_01XFDUDYJg\u0085AACzvnptvVoYEL', false],
+    ['U+007F (DEL) inside the id', 'msg_01XFDUDYJg\u007fAACzvnptvVoYEL', false],
+    ['a number', 42, false],
+    ['an array holding the documented id', [DOCUMENTED], false],
+  ])('%s', (label, value, expected) => {
+    let result: ReturnType<typeof kept> | undefined;
+    expect(() => {
+      result = kept(value);
+    }, label).not.toThrow();
+    expect(result?.kept, `${label}: ${JSON.stringify(result)}`).toBe(expected);
+  });
+});

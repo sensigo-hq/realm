@@ -4,7 +4,7 @@
 // before parseAsync isolates it safely (same technique as abandon.test.ts /
 // register-description-echo.test.ts).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerCommand } from './register.js';
@@ -19,7 +19,6 @@ describe('register --strict (issue #169)', () => {
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'realm-register-strict-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -179,7 +178,6 @@ describe('register — a hard load error carries its warnings (issue #424)', () 
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'realm-register-424-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -270,7 +268,6 @@ describe('register — the loader voice and multi-error lines (issue #425)', () 
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'realm-register-425-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -373,7 +370,6 @@ describe('register --strict — the summary counts in the plural (issue #427)', 
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'realm-register-plural-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     vi.spyOn(console, 'log').mockImplementation(() => {});

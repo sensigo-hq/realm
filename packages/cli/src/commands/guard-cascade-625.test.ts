@@ -10,7 +10,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -127,7 +127,6 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
     h = await makeTempHome();
     home = h.root;
     project = mkdtempSync(join(tmpdir(), 'realm-625-project-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
     // The handle's stores: the home the commands open through HOME.

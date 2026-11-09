@@ -123,6 +123,9 @@ const USAGE_RECORD_ROWS = {
   cache_split_offered: 'fact',
   // #715 (R): an id realm mints per request (`mintRequestIds`), never a provider's.
   request_id: 'fact',
+  // Caching 3-M (piece B1): the provider's answer id (`msg_…`), a provider's text and so never a
+  // fact (F-S8); closed at the adapter and the write by `normalizeResponseId`.
+  response_id: 'value',
   // Caching 3-M (piece A-1b): the request's place in its provider call, a number realm mints
   // (`mintRequestIds`); normalised at the write (`boundRequestFacts`).
   request_in_call: 'fact',

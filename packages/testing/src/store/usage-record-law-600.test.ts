@@ -11,7 +11,8 @@
 // `cache_controls_rejected`, `cache_key_sent`): eighteen fields then, each red against a store that drops it.
 // Caching 3-M (piece A-1) adds the nineteenth, `reference`, the copy of a request's predecessor: an
 // object the law compares whole, so a store that drops a key inside it fails. Piece A-1b adds the
-// twentieth, `request_in_call`, the request's place in its provider call.
+// twentieth, `request_in_call`, the request's place in its provider call. Piece B1 adds the
+// twenty-first, `response_id`, the id of the provider's answer.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // law's message, which names the field, where it was, and the test values written and read back.
@@ -32,9 +33,9 @@ const agentWf: WorkflowDefinition = {
   steps: { s: { description: 'S.', execution: 'agent', depends_on: [] } },
 };
 
-/** The twenty request fields the law holds: the ten issue #600 adds to `UsageRecord` (PR 2's nine,
- *  the lifetime unit's `cache_auto`), #715 (R)'s `request_id`, caching 3-B's seven, 3-M's
- *  `reference` and A-1b's `request_in_call`. */
+/** The twenty-one request fields the law holds: the ten issue #600 adds to `UsageRecord` (PR 2's
+ *  nine, the lifetime unit's `cache_auto`), #715 (R)'s `request_id`, caching 3-B's seven, 3-M's
+ *  `reference`, A-1b's `request_in_call` and B1's `response_id`. */
 const FIELDS = [
   'model',
   'cache_requested',
@@ -56,6 +57,7 @@ const FIELDS = [
   'cache_key_sent',
   'reference',
   'request_in_call',
+  'response_id',
 ] as const;
 
 /** The USAGE_RECORD_ROUNDTRIP case of the TCK, against `store`. */
