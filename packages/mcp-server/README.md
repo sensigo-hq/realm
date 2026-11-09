@@ -44,7 +44,7 @@ await server.connect(new StdioServerTransport());
 
 This opens Realm's home (`~/.realm`, or the `home` you pass) and its SQLite store once for this process — the same store every `realm` command uses — and needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later. To supply your own stores instead, call `createRealmMcpServer` with the four stores: the library then loads no SQLite and runs on any Node 22.
 
-The library has no default store: a JavaScript caller that omits one of the four is refused by name, before anything is opened.
+`createRealmMcpServer` has no default store: a JavaScript caller that omits one of the four is refused by name, before anything is opened.
 
 ## API Reference
 

@@ -6,13 +6,14 @@
 
 The package exports more than 200 values. This page covers the ones named above. Most of the rest are the parts the `realm` command is built from.
 
-| Package                  | Holds                                                            |
-| ------------------------ | ---------------------------------------------------------------- |
-| `@sensigo/realm`         | The engine, the loader, the file stores, the built-in adapters.  |
-| `@sensigo/realm-mcp`     | The MCP server, as a function you can call with your own stores. |
-| `@sensigo/realm-testing` | An in-memory run store, and the tests for a store of your own.   |
+| Package                       | Holds                                                            |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `@sensigo/realm`              | The engine, the loader, the file stores, the built-in adapters.  |
+| `@sensigo/realm-mcp`          | The MCP server, as a function you can call with your own stores. |
+| `@sensigo/realm-testing`      | An in-memory run store, and the tests for a store of your own.   |
+| `@sensigo/realm-store-sqlite` | The Realm home: the SQLite store every `realm` command uses.     |
 
-All three are ES modules and need Node 22 or later.
+All four are ES modules and need Node 22 or later; `@sensigo/realm-store-sqlite` needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.
 
 ## Run a workflow from your own program
 

@@ -197,7 +197,7 @@ describe('#616 PR-2a (ii-b) — the docs', () => {
     );
     claim(
       'packages/mcp-server/README.md',
-      'The library has no default store: a JavaScript caller that omits one of the four is refused by name, before anything is opened.',
+      '`createRealmMcpServer` has no default store: a JavaScript caller that omits one of the four is refused by name, before anything is opened.',
     );
     claim(
       'packages/mcp-server/README.md',
@@ -225,6 +225,14 @@ describe('#616 PR-2a (ii-b) — the docs', () => {
       'Runs, workflows, failed attempts, trace entries, replays and dedup marks, in one `realm.db`',
     );
     claim('docs/reference/core-library.md', 'const { runStore: store } = await openRealmHome();');
+    claim(
+      'docs/reference/core-library.md',
+      'The Realm home: the SQLite store every `realm` command uses.',
+    );
+    claim(
+      'docs/reference/core-library.md',
+      'All four are ES modules and need Node 22 or later; `@sensigo/realm-store-sqlite` needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.',
+    );
   });
 
   it('error-codes.md: the new raisers of VALIDATION_OPTION_INVALID; the CHANGELOG entry', () => {
