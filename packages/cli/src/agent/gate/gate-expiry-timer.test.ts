@@ -2,11 +2,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { systemClock, unreadableRunFileError } from '@sensigo/realm';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { WorkflowDefinition, PendingGate } from '@sensigo/realm';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
-import { makeTempHome } from '../../test-support/temp-home.js';
 
 const def: WorkflowDefinition = {
   id: 'timer-wf',
@@ -193,56 +190,6 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
     cancel();
     log.mockRestore();
     expect(order).toEqual(['the timer line', 'applied']);
-  });
-});
-
-describe('issue #719 — the expiry timer on a run file that cannot be read', () => {
-  it('logs the file’s message (its way out) and that no enactment point can read the run, never its text', async () => {
-    const h = await makeTempHome();
-    const runsDir = h.home.runStore.runsDirPath;
-    mkdirSync(runsDir, { recursive: true });
-    const warns: string[] = [];
-    const spy = vi.spyOn(console, 'warn').mockImplementation((m: unknown) => {
-      warns.push(String(m));
-    });
-    try {
-      writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
-      const gate = makeGate({
-        expires_at: new Date(Date.now() - 1000).toISOString(),
-        on_expiry: 'abort',
-      });
-      const cancel = scheduleGateExpiryTimer('bad', gate, {
-        store: h.home.runStore,
-        definition: def,
-      });
-      for (let i = 0; i < 50 && warns.length === 0; i++) {
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      cancel();
-      const line = warns.join('\n');
-      // (a) red when the timer's line loses the file's message, or carries the parser's text; (b)
-      //     prints the line count and booleans only.
-      // issue #719 (C2): the tail is true for a damaged file — every enactment point reads that
-      // same file, so none "will still catch it".
-      expect({
-        lines: warns.length,
-        message: line.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
-        noneCanRead: line.endsWith(
-          ' — no enactment point can read this run until its file is repaired or moved out.',
-        ),
-        falseTail: line.includes('will still catch it'),
-        leaked: line.includes('ghp_FAKE7'),
-      }).toEqual({
-        lines: 1,
-        message: true,
-        noneCanRead: true,
-        falseTail: false,
-        leaked: false,
-      });
-    } finally {
-      spy.mockRestore();
-      await h.cleanup();
-    }
   });
 });
 

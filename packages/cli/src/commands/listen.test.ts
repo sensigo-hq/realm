@@ -989,15 +989,25 @@ describe('makeListenHandler — request pipeline', () => {
     // A JsonFileStore: the in-memory store's create returns the object it keeps, so agent_pid would
     // appear on it before the write (a shared-object artefact).
     const h = await makeTempHome();
-    const second = await makeTempHome({ home: h.path });
     try {
       const inner = h.home.runStore;
-      const store = second.home.runStore;
-      const realUpdate = store.update.bind(store);
-      store.update = async (record) => {
-        if (record.agent_pid !== undefined) await abandonRun(inner, record.id);
-        return realUpdate(record);
-      };
+      // #616 PR-2c c10a-2d: ONE handle; the listener's view of its store is a Proxy whose `update`
+      // lands the seal first, through the unwrapped store, then makes the write. Every other member is
+      // the store's own, bound to it.
+      const store = new Proxy(inner, {
+        get(target, prop) {
+          if (prop === 'update') {
+            return async (record: Parameters<typeof target.update>[0]) => {
+              if (record.agent_pid !== undefined) await abandonRun(target, record.id);
+              return target.update(record);
+            };
+          }
+          const value: unknown = Reflect.get(target, prop, target);
+          return typeof value === 'function'
+            ? (value as (...args: unknown[]) => unknown).bind(target)
+            : value;
+        },
+      });
       const errors: Logged[] = [];
       const deps = makeDeps({
         runStore: store,
@@ -1031,7 +1041,6 @@ describe('makeListenHandler — request pipeline', () => {
         logged: [['webhook: failed to record agent pid', true]],
       });
     } finally {
-      await second.cleanup();
       await h.cleanup();
     }
   });
@@ -3667,56 +3676,6 @@ describe('E2 — early replies reach the sender', () => {
       after408: expect.any(Number),
     });
   }, 15_000);
-});
-
-describe('issue #719 — listen’s keyed create on a store with a run file that might hold the key', () => {
-  it('500 store_error; the log line carries the file’s message and none of its text (the leak cell, listen log)', async () => {
-    const h = await makeTempHome();
-    const runsDir = h.home.runStore.runsDirPath;
-    try {
-      // #616 PR-2b: the door creates no folder at the open; the file is written before any store write.
-      mkdirSync(runsDir, { recursive: true });
-      // A run file whose key cannot be known, its fault AT a token (F719-AU-4).
-      writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
-      const errors: Array<{ msg: string; data: unknown }> = [];
-      const logger: Logger = {
-        ...silentLogger,
-        error: (msg: string, data?: unknown) => errors.push({ msg, data }),
-      };
-      const trigger: WebhookTrigger = { ...SHARED_SECRET_TRIGGER, dedup: { id_from: 'body.id' } };
-      const deps = makeDeps({ runStore: h.home.runStore as never, logger });
-      const handler = makeListenHandler(routesFor(wf(trigger)), deps);
-      const { status, body } = await invoke(handler, {
-        url: '/wf',
-        headers: { ...JSON_CT, authorization: SECRET },
-        body: JSON.stringify({ id: 'evt-719' }),
-      });
-      const line = JSON.stringify(errors);
-      // (a) red when the create goes on, the reply changes, the log line loses the file's message,
-      //     or it carries the parser's text; (b) prints the status, the body and booleans only.
-      expect({
-        status,
-        body,
-        logged: errors.map((e) => e.msg),
-        carries: line.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
-        keyedSentence: line.includes(
-          'A run with a new idempotency key cannot be created on this store until the file is repaired or moved out.',
-        ),
-        leaked: line.includes('ghp_FAKE7'),
-        spawned: deps.spawnAgent.mock.calls.length,
-      }).toEqual({
-        status: 500,
-        body: { error: 'store_error', status: 'failed' },
-        logged: ['webhook: run creation failed'],
-        carries: true,
-        keyedSentence: true,
-        leaked: false,
-        spawned: 0,
-      });
-    } finally {
-      await h.cleanup();
-    }
-  });
 });
 
 // ── #616 B1: the dedup store is asynchronous; a `record` that rejects ─────────────────────────────

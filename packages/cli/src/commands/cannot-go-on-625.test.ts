@@ -8,10 +8,11 @@
 // `--expired --force` leaving one — `realm run resume` and `realm listen`'s sweeper (C64, the census).
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   ExtensionRegistry,
   executeChain,
@@ -19,12 +20,12 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type StepDefinition,
   type WorkflowDefinition,
-  writeTestClockFile,
+  type RunStore,
 } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import { sweepExpiredGates } from './listen.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
@@ -94,34 +95,44 @@ const inputWayOut = (id: string, deps: boolean): string =>
 async function stores(located = false): Promise<{
   home: string;
   path: string;
-  runs: JsonFileStore;
+  runs: RunStore;
   workflows: RealmWorkflowRegistrar;
-  clock?: TestLocation['clock'];
+  clock?: TestHome['clock'];
   cleanup: () => Promise<void>;
 }> {
-  const made = await makeTempHome();
-  // #715 (b) 04 §D (B4): `located` makes `~/.realm` a test location BEFORE the store opens (a store
-  // takes its clock when it is built), so a cell moves the clock the spawned `realm` reads instead of
-  // waiting on the real one: the location's own handle, opened after it, holds the stores.
-  const loc = located
-    ? await createTestLocation({ start: new Date(), root: made.path })
-    : undefined;
-  const h = loc !== undefined ? await makeTempHome({ home: loc.root }) : made;
+  if (!located) {
+    const made = await makeTempHome();
+    return {
+      home: made.root,
+      path: made.path,
+      runs: made.home.runStore,
+      workflows: made.home.workflowStore,
+      cleanup: () => made.cleanup(),
+    };
+  }
+  // #715 (b) 04 §D (B4); #616 PR-2c c10a-2d: `located` makes `<owned>/.realm` a test home BEFORE the
+  // store opens (a store takes its clock when it is opened), and the ONE handle opened on it holds the
+  // stores, so a cell moves the clock this handle and a spawned `realm` read. No other handle opens it.
+  const owned = mkdtempSync(join(tmpdir(), 'realm-c64-located-'));
+  const th = await createTestHome({ start: new Date(), root: join(owned, '.realm') });
+  const h = await makeTempHome({ home: th.root });
   return {
-    home: made.root,
+    home: owned,
     path: h.path,
     runs: h.home.runStore,
     workflows: h.home.workflowStore,
-    ...(loc !== undefined ? { clock: loc.clock } : {}),
+    clock: th.clock,
     cleanup: async () => {
-      if (h !== made) await h.cleanup();
-      await made.cleanup();
+      // The store closed before its folder goes.
+      await h.cleanup();
+      await th.remove();
+      rmSync(owned, { recursive: true, force: true });
     },
   };
 }
 
 /** A run at its open gate: `decide` opened, unanswered. */
-async function atGate(runs: JsonFileStore, d: WorkflowDefinition): Promise<[string, string]> {
+async function atGate(runs: RunStore, d: WorkflowDefinition): Promise<[string, string]> {
   const { record: run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
   await executeStep(runs, d, {
     runId: run.id,
@@ -366,7 +377,7 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
   }, 60000);
 
   it("listen's sweeper: an expiry that leaves the run unable to go on logs `cannot_go_on` (the step, then the way out); the control (an agent step ready) logs none", async () => {
-    const { path, runs, workflows, cleanup } = await stores();
+    const { runs, workflows, clock, cleanup } = await stores(true);
     try {
       const stuck = wf('c64-sweep', { decide: gate(true), compute: needsN(['decide']) });
       const ready = wf('c64-sweep-ctl', {
@@ -384,18 +395,9 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
         warn: () => {},
         error: () => {},
       };
-      // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
-      await writeTestClockFile(path, new Date(Date.now() + 3_600_000));
-      const reopened = await makeTempHome({ home: path });
-      try {
-        await sweepExpiredGates({
-          runStore: reopened.home.runStore,
-          workflowStore: workflows,
-          logger,
-        } as never);
-      } finally {
-        await reopened.cleanup();
-      }
+      // #715 (b): the store's clock decides — the one handle's test-home clock moved an hour on.
+      await clock!.advance(3_600_000);
+      await sweepExpiredGates({ runStore: runs, workflowStore: workflows, logger } as never);
       const fields = (runId: string) =>
         logged.find(
           ([m, f]) => m === 'listen: sweeper enacted an expired gate' && f['run_id'] === runId,

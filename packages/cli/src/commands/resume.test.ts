@@ -2,11 +2,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resumeRun } from './resume.js';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   WorkflowError,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   findEligibleSteps,
+  type RunStore,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -38,7 +38,7 @@ const testWorkflow: WorkflowDefinition = {
 
 describe('resumeRun', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
+  let runStore: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
 
   beforeEach(async () => {

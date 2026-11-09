@@ -14,7 +14,6 @@ import { fileURLToPath } from 'node:url';
 import { advanceRunFromShell, runAdvanceCommand } from './run-advance.js';
 import {
   ExtensionRegistry,
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   declareReleaseLine,
   advanceRun,
@@ -81,7 +80,7 @@ describe(
   () => {
     let h: TempHome & { readonly root: string };
     let home: string;
-    let runStore: JsonFileStore;
+    let runStore: RunStore;
     let workflowStore: RealmWorkflowRegistrar;
 
     beforeEach(async () => {
@@ -118,14 +117,14 @@ describe(
       return run.id;
     }
 
-    it('realm-run-acting.md, realm-run-reading.md: realm run has fifteen subcommands, nine that act, each in the table; advance has its synopsis', () => {
+    it('realm-run-acting.md, realm-run-reading.md: realm run has sixteen subcommands, ten that act, each in the table; advance has its synopsis', () => {
       claim(
         'docs/reference/cli/realm-run-acting.md',
-        '`realm run` has fifteen subcommands. This page covers the nine that change a run or the store.',
+        '`realm run` has sixteen subcommands. This page covers the ten that change a run or the store.',
       );
       claim(
         'docs/reference/cli/realm-run-reading.md',
-        '`realm run` has fifteen subcommands. This page covers the six that only read: they change no run. The other nine are in',
+        '`realm run` has sixteen subcommands. This page covers the six that only read: they change no run. The other ten are in',
       );
       const help = realm(['run', '--help']).out;
       const commands = help
@@ -139,8 +138,8 @@ describe(
       // (a) red when a subcommand is added or removed without the pages, or advance's synopsis
       //     drifts from its usage; (b) prints what --help lists.
       expect([commands.length, rows.length, rows.every((r) => commands.includes(r))]).toEqual([
-        15,
-        9,
+        16,
+        10,
         true,
       ]);
       expect(usage).toBe('Usage: realm run advance [options] <run-id>');

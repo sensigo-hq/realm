@@ -7,7 +7,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { respondToGate, respondCommand } from './respond.js';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   WorkflowError,
   ExtensionRegistry,
@@ -15,24 +14,22 @@ import {
   submitHumanResponse,
   composeStepViews,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  type RunStore,
 } from '@sensigo/realm';
 import type { WorkflowDefinition, StepHandler, RunRecord } from '@sensigo/realm';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
 // the cell opened, in place of a real sleep; the in-process server (or a spawned child) reads that
 // clock from the location's file.
-const OPENED: TestLocation[] = [];
-async function located(dir: string): Promise<string> {
+const OPENED: TestHome[] = [];
+async function located(dir: string): Promise<void> {
   // A second server on the same folder in one cell shares its location (and its clock).
-  const open = OPENED.find((l) => l.root === dir);
-  if (open !== undefined) return open.runsDir;
-  const loc = await createTestLocation({ start: new Date(), root: dir });
-  OPENED.push(loc);
-  return loc.runsDir;
+  if (OPENED.some((l) => l.root === dir)) return;
+  OPENED.push(await createTestHome({ start: new Date(), root: dir }));
 }
 async function passes(ms: number): Promise<void> {
   for (const loc of OPENED) await loc.clock.advance(ms);
@@ -84,7 +81,7 @@ describe('respondToGate', () => {
   let h: TempHome;
   /** The other handles a cell opened, cleaned after it. */
   const extras: TempHome[] = [];
-  let runStore: JsonFileStore;
+  let runStore: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
 
   beforeEach(async () => {
@@ -224,7 +221,7 @@ const gateFinalizerWorkflow: WorkflowDefinition = {
 
 describe('respondToGate — fires finalizers on gate completion (registry threaded)', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
+  let runStore: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
 
   beforeEach(async () => {
@@ -543,9 +540,9 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
 // -------------------------------------------------------------------------------------------------
 describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
   let h: TempHome;
-  /** The other handles (the workflow store's own, bob's), cleaned before `h`. */
+  /** The other handles (the workflow store's own), cleaned before `h`; bob reads through a Proxy over the one store (c10a-2d). */
   const extras: TempHome[] = [];
-  let runStore: JsonFileStore;
+  let runStore: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
   let registry: ExtensionRegistry;
   let runId: string;
@@ -580,7 +577,7 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
   });
 
   /** `realm run respond <run> --gate <gate> --choice ship [--by <by>]`: its `Responded:` line. */
-  async function respond(by?: string, store: JsonFileStore = runStore): Promise<string> {
+  async function respond(by?: string, store: RunStore = runStore): Promise<string> {
     const outcome = await respondToGate(
       runId,
       { gate: gateId, choice: 'ship', ...(by !== undefined ? { by } : {}) },
@@ -669,32 +666,39 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
   });
 
   it("5. the race: bob reads the question open, alice's answer lands, bob's submit finds it settled — bob's line names alice", async () => {
-    // Bob's own store over the same folder (a delegating wrapper is refused at admission). Its FIRST
-    // read returns the record with the question open — after alice's answer, written through the
-    // other instance, has landed. Bob's submit then reads the settled question (`already_settled`).
-    const bobHome = await makeTempHome({ home: h.path });
-    extras.push(bobHome);
-    const bobStore = bobHome.home.runStore;
-    const read = bobStore.get.bind(bobStore);
+    // #616 PR-2c c10a-2d: bob's view of the one store: a Proxy whose `get` records each read and, on
+    // the first, submits alice's answer through the unwrapped store; every other member is the store's
+    // own, bound to it (the store's admission reads three members by duck type, so the Proxy passes).
+    // Bob's FIRST read returns the record with the question open — after alice's answer has landed.
+    // Bob's submit then reads the settled question (`already_settled`).
     const reads: RunRecord[] = [];
     let aliceStatus: string | undefined;
-    bobStore.get = async (id: string) => {
-      const snapshot = await read(id);
-      const record = snapshot.record;
-      reads.push(record);
-      if (reads.length === 1) {
-        const alice = await submitHumanResponse(runStore, answererWorkflow, {
-          runId,
-          gateId,
-          choice: 'ship',
-          respondedBy: 'alice',
-          caller: 'respond',
-          registry,
-        });
-        aliceStatus = alice.status;
-      }
-      return snapshot;
-    };
+    const bobStore = new Proxy(runStore, {
+      get(target, prop) {
+        if (prop === 'get') {
+          return async (id: string) => {
+            const snapshot = await target.get(id);
+            reads.push(snapshot.record);
+            if (reads.length === 1) {
+              const alice = await submitHumanResponse(target, answererWorkflow, {
+                runId,
+                gateId,
+                choice: 'ship',
+                respondedBy: 'alice',
+                caller: 'respond',
+                registry,
+              });
+              aliceStatus = alice.status;
+            }
+            return snapshot;
+          };
+        }
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === 'function'
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
     const bob = await respond('bob', bobStore);
     const answersAfter =
       composeStepViews((await runStore.get(runId)).record)['decide']?.answers ?? [];
@@ -804,7 +808,7 @@ describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its w
 
   /** The refused answer's lines, as the command prints them. */
   async function refusedLines(
-    runStore: JsonFileStore,
+    runStore: RunStore,
     workflowStore: RealmWorkflowRegistrar,
     runId: string,
   ): Promise<string[]> {

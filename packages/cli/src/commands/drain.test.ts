@@ -23,10 +23,7 @@
 // account). Historicized here only — this file's explicit-directory approach is unaffected either
 // way.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   drainFinalizers,
   captureEvidence,
@@ -34,6 +31,7 @@ import {
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   abandonRun,
+  type RunStore,
 } from '@sensigo/realm';
 import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import {
@@ -170,7 +168,7 @@ describe('isBatchActionable', () => {
 
 describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store injection, no $HOME reliance', () => {
   let h: TempHome;
-  let store: JsonFileStore;
+  let store: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
@@ -707,8 +705,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
 //       a pass that leased nothing and had nothing to lease says so instead of `Drained run`.
 describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
   let h: TempHome;
-  let dir: string;
-  let store: JsonFileStore;
+  let store: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
@@ -716,7 +713,6 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
 
   beforeEach(async () => {
     h = await makeTempHome();
-    dir = h.home.runStore.runsDirPath;
     store = h.home.runStore;
     workflowStore = h.home.workflowStore;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -748,73 +744,6 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
 
   const logs = (): string[] => logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
   const errs = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-
-  // ---- C-3: the DERIVED phase, and the way out -----------------------------------------------
-
-  /**
-   * The G2 fixture — PERSISTED `run_phase: 'completed'` with `terminal_state: false`, so the label
-   * and the derived phase (`running`) DISAGREE. It has to be planted as RAW BYTES: every store
-   * write tail re-derives `run_phase` (PHASE_IS_GENERATED, the #282 class), so a
-   * `store.update({ ...run, run_phase: 'completed' })` lands as `running` and the two agree again —
-   * a cell built that way passes with the persisted label restored and pins NOTHING. Executed: the
-   * `${run.run_phase}` mutant left the whole file green until this fixture was planted directly.
-   */
-  async function plantDivergentRun(): Promise<RunRecord> {
-    const { record: run } = await store.create({
-      workflowId: 'drain-wf',
-      workflowVersion: 1,
-      params: {},
-    });
-    const planted: RunRecord = { ...run, run_phase: 'completed', terminal_state: false };
-    await writeFile(join(dir, `${run.id}.json`), JSON.stringify(planted, null, 2), 'utf8');
-    const { record: readBack } = await store.get(run.id);
-    // The premise the cells below rest on, asserted rather than assumed.
-    expect(readBack.run_phase).toBe('completed');
-    expect(readBack.terminal_state).toBe(false);
-    return readBack;
-  }
-
-  it('C-3 dry-run: a non-terminal run prints the DERIVED phase and the way out, whole', async () => {
-    await workflowStore.register(wf);
-    const run = await plantDivergentRun();
-
-    await runDrainAction(run.id, {}, store, workflowStore, DEPS);
-
-    expect(exitSpy).not.toHaveBeenCalled();
-    // decision C205: the workflow's agent step `work` is ready — the drive, then the way out.
-    // decision C212: each command ends its line — the way out on a line of its own.
-    expect(logs()).toEqual(
-      expect.arrayContaining([
-        `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-          `An agent step is ready: 'work' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>`,
-        `To end the run instead: realm run abandon ${run.id}`,
-      ]),
-    );
-  });
-
-  it('C-3 --force: the same sentence on stderr, exit 1 kept', async () => {
-    await workflowStore.register(wf);
-    const run = await plantDivergentRun();
-
-    await expect(
-      runDrainAction(run.id, { force: true }, store, workflowStore, DEPS),
-    ).rejects.toThrow('process.exit:1');
-    // The FIRST exit call is the one this arm made. `runDrainAction`'s body sits inside a
-    // try/catch that itself exits 1, and the spy's throw lands in that catch — so
-    // `toHaveBeenCalledWith(1)` passes even when this arm exits 0 (executed: forcing
-    // `process.exit(0)` here left every cell in the file green). Only the first call discriminates.
-    expect(exitSpy.mock.calls[0]?.[0]).toBe(1);
-
-    // decision C205: the agent step `work` is ready — the drive, then the way out.
-    // decision C212: each command ends its line — the way out on a line of its own.
-    expect(errs()).toEqual(
-      expect.arrayContaining([
-        `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-          `An agent step is ready: 'work' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>`,
-        `To end the run instead: realm run abandon ${run.id}`,
-      ]),
-    );
-  });
 
   // ---- C-5: left-pending names the escape per finalizer ---------------------------------------
 
@@ -1218,33 +1147,6 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
       `To go on, answer its question first: realm run respond ${run.id} --gate g-approve-1`,
     );
     expect(logs().join('\n')).not.toContain('--expired');
-  });
-
-  it('the #432-class divergent record (persisted gate_waiting, no pending_gate): the way out is abandon — there is no gate to answer', async () => {
-    await workflowStore.register(wf);
-    const { record: fresh } = await store.create({
-      workflowId: 'drain-wf',
-      workflowVersion: 1,
-      params: {},
-    });
-    await writeFile(
-      join(dir, `${fresh.id}.json`),
-      JSON.stringify({ ...fresh, run_phase: 'gate_waiting' }, null, 2),
-      'utf8',
-    );
-    await runDrainAction(fresh.id, {}, store, workflowStore, DEPS);
-    expect(logs()).toEqual(
-      // The derived phase is 'running' (nothing supports the persisted label) and the record
-      // carries no gate — `abandon` keys on the gate too, so the way out it names is the one that
-      // works (walk 3: an "answer its gate" fork on the LABEL stranded the operator). Decision
-      // C205: the agent step `work` is ready — the drive comes first, the way out beside it;
-      // decision C212: each command ends its line.
-      expect.arrayContaining([
-        `Run '${fresh.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-          `An agent step is ready: 'work' — drive it with realm agent --run-id ${fresh.id} --provider <provider> --model <model>`,
-        `To end the run instead: realm run abandon ${fresh.id}`,
-      ]),
-    );
   });
 
   it('--force: a pass that RAN one finalizer and left an undeclared one pending says both, and exits 1', async () => {

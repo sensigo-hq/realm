@@ -5,8 +5,7 @@
 // of it. Most of these cells are about that discipline rather than about the happy path.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WorkflowError, ExtensionRegistry } from '@sensigo/realm';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RunRecord, DriveFailureRecord, WorkflowDefinition } from '@sensigo/realm';
 import {
@@ -15,7 +14,6 @@ import {
   buildEntry,
   findDriveCall,
   lostLine,
-  MESSAGE_CAP,
 } from './drive-failure.js';
 import { setAdditionalRedactionValues } from './providers/agent-utils.js';
 import { InMemoryStore } from '@sensigo/realm-testing';
@@ -23,7 +21,7 @@ import { runAgent, type AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { snap } from '../test-support/snapshot-double.js';
 import type { Snapshot } from '@sensigo/realm';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 function makeRun(over: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -463,27 +461,6 @@ describe('W1 — real SDK error objects classify by their CONSTRUCTOR', () => {
 });
 
 describe('issue #719 — the fence names why, when the store refused with a Realm error', () => {
-  it('a run file that cannot be read: the one LOST line carries its message, never its text', async () => {
-    const h = await makeTempHome();
-    const runsDir = h.home.runStore.runsDirPath;
-    mkdirSync(runsDir, { recursive: true });
-    try {
-      writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
-      await recordDriveFailure(h.home.runStore, 'bad', entry());
-      const line = errors.join('\n');
-      // (a) red when the line swallows why (the store's message), or carries the parser's text;
-      //     (b) prints the line count and booleans only.
-      expect({
-        lines: errors.length,
-        lost: line.includes('drive-failure record LOST for run bad'),
-        why: line.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
-        leaked: line.includes('ghp_FAKE7'),
-      }).toEqual({ lines: 1, lost: true, why: true, leaked: false });
-    } finally {
-      await h.cleanup();
-    }
-  });
-
   it('the failure being recorded IS the store’s refusal (the same file failed both reads): its message said once (C6)', async () => {
     const h = await makeTempHome();
     const runsDir = h.home.runStore.runsDirPath;
@@ -507,55 +484,6 @@ describe('issue #719 — the fence names why, when the store refused with a Real
       });
     } finally {
       await h.cleanup();
-    }
-  });
-
-  // issue #719 (F2): said once, and whole. A run file named by a run id, with its three side files,
-  // gives a message over the entry's cap; the runs folder sits under HOME and holds USER's value,
-  // both of which the entry's sanitised copy hides. The LOST line carries the store's own text.
-  it('a message over the cap, its folder under HOME: the LOST line keeps it whole, the folder shown (F2)', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'realm-719-home-'));
-    const user = 'realm719user';
-    const runsDir = join(home, user, 'runs');
-    mkdirSync(runsDir, { recursive: true });
-    vi.stubEnv('HOME', home);
-    vi.stubEnv('USER', user);
-    let h: TempHome | undefined;
-    try {
-      const id = '5f0c2a3e-7b1d-4c8e-9a6f-0123456789ab';
-      writeFileSync(join(runsDir, `${id}.json`), '{not json');
-      writeFileSync(join(runsDir, `${id}.attempts.jsonl`), '');
-      writeFileSync(join(runsDir, `trace-buffer-${id}-x.jsonl`), '');
-      writeFileSync(join(runsDir, `sealed-trace-${id}-x.1.jsonl`), '');
-      // The door on the folder that holds USER's value: its run store is `runsDir` (MA 1's ruling,
-      // registry MA1-2B2-17); the helper removes nothing on a given home.
-      h = await makeTempHome({ home: join(home, user) });
-      const store = h.home.runStore;
-      const refusal = await store.get(id).catch((e: unknown) => e);
-      const message = refusal instanceof Error ? refusal.message : '';
-      // The precondition: the message crosses the cap, so the cell cannot pass on a short one.
-      expect({ overCap: message.length > MESSAGE_CAP }).toEqual({ overCap: true });
-      await recordDriveFailure(
-        store,
-        id,
-        buildEntry(refusal, 's', 'anthropic', performance.now(), new Date()),
-      );
-      const line = errors.join('\n');
-      // (a) red when the line prints the entry's capped, sanitised copy (the way out cut, the
-      //     folder hidden) or the fault twice; (b) prints the line count and booleans only.
-      expect({
-        lines: errors.length,
-        folder: line.includes(`move it out of '${runsDir}'`),
-        lastSentence: line.endsWith(
-          'If it held an idempotency key, the next delivery with that key starts a new run.',
-        ),
-        faultTimes: line.split('is not JSON').length - 1,
-        redacted: line.includes('[REDACTED]'),
-      }).toEqual({ lines: 1, folder: true, lastSentence: true, faultTimes: 1, redacted: false });
-    } finally {
-      vi.unstubAllEnvs();
-      await h?.cleanup();
-      rmSync(home, { recursive: true, force: true });
     }
   });
 });

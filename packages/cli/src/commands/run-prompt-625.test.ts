@@ -24,7 +24,7 @@ vi.mock('node:readline/promises', () => ({
 }));
 
 import { runCommand, setQuestionWatchIntervalForTests, setInFlightWatchForTests } from './run.js';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { quotedForTerminal } from '../lib/holder-render.js';
 import { lagless } from '../test-support/lag.js';
@@ -155,6 +155,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
   });
 
   afterEach(async () => {
+    const madeLocation = location;
     location = undefined;
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
@@ -162,6 +163,10 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     else process.env['HOME'] = savedHome;
     await located?.cleanup();
     located = undefined;
+    // The located handle closed before its folder goes.
+    await madeLocation?.remove();
+    if (owned2 !== undefined) rmSync(owned2, { recursive: true, force: true });
+    owned2 = undefined;
     await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     mocks.question.mockReset();
@@ -177,32 +182,37 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     if (preview === -1) throw new Error(`the prompt never showed a gate:\n${lines.join('\n')}`);
     return lines.slice(preview + 1);
   };
-  const runId = async (): Promise<string> => (await runIds(h.home.runStore))[0]!;
+  // The command's run lives under the located root once `locate()` ran: read it through `stores()`.
+  const runId = async (): Promise<string> => (await runIds(stores().runStore))[0]!;
   const gateId = (): string => {
     const line = logged().find((l) => l.startsWith('  ⏸  Gate: confirm | gate_id: '));
     if (line === undefined) throw new Error('the prompt never printed the gate id');
     return line.replace('  ⏸  Gate: confirm | gate_id: ', '');
   };
 
-  /** The stored record, read through the cell's handle on the scratch home. */
+  /** The stored record, read through the cell's current handle (`stores()`: the located one once `locate()` ran). */
   async function readRecord() {
     return (await stores().runStore.get(await runId())).record;
   }
 
   /**
    * #715 (b) 04 §D (B4): no cell waits on the real clock for a question to expire. A cell whose
-   * question must expire under `realm workflow run` makes the scratch `~/.realm` a test location
-   * BEFORE the command builds its store (`locate()`), and moves that clock past the deadline
+   * question must expire under `realm workflow run` makes a fresh root's `.realm` a test home and points
+   * HOME at it BEFORE the command builds its store (`locate()`), and moves that clock past the deadline
    * (`pastDue()`); this process's own expiry timer waits on the store's clock, so it fires then.
    * (C146's race cells below keep the real clock, with their reason.)
    */
-  let location: TestLocation | undefined;
-  /** #616 PR-2b: a second handle on the location, opened after it (a store takes its clock when it
-   *  is opened); the home's own handle keeps the cleanup. */
+  let location: TestHome | undefined;
+  /** #616 PR-2c c10a-2d: the ONE test handle on the location, opened on a fresh root no other handle
+   *  holds (a store takes its clock when it is opened); HOME points at that root, so the command under
+   *  test, which runs in this process and opens its own door under HOME, opens the same location. */
   let located: TempHome | undefined;
+  let owned2: string | undefined;
   async function locate(): Promise<void> {
-    location = await createTestLocation({ start: new Date(), root: h.path });
-    located = await makeTempHome({ home: h.path });
+    owned2 = mkdtempSync(join(tmpdir(), 'realm-625-prompt-located-'));
+    location = await createTestHome({ start: new Date(), root: join(owned2, '.realm') });
+    located = await makeTempHome({ home: location.root });
+    process.env['HOME'] = owned2;
   }
   /** The stores a cell's sites use: the location's handle once `locate()` made one, else the home's. */
   const stores = (): CliHome => (located ?? h).home;
@@ -1396,12 +1406,14 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     );
 
     it('C179: another process takes the agent step between the loop’s read and the prompt’s claim — said as taken, no prompt; the loop waits for it', async () => {
-      const { JsonFileStore } = await import('@sensigo/realm');
-      const original = JsonFileStore.prototype.claimStep;
+      // The prototype the handle's instance has: the command opens its own handle through the door,
+      // so a spy on `h.home.runStore` would intercept nothing (c10a-2a).
+      const proto = Object.getPrototypeOf(h.home.runStore) as CliHome['runStore'];
+      const original = proto.claimStep;
       let raced = false;
       // The other process's claim lands first, in the moment before this prompt's own claim.
-      vi.spyOn(JsonFileStore.prototype, 'claimStep').mockImplementation(async function (
-        this: InstanceType<typeof JsonFileStore>,
+      vi.spyOn(proto, 'claimStep').mockImplementation(async function (
+        this: CliHome['runStore'],
         ...args: Parameters<typeof original>
       ) {
         const [id, step, def, claimant] = args;
@@ -1809,13 +1821,14 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         }
         return '';
       });
-      const { JsonFileStore } = await import('@sensigo/realm');
-      const original = JsonFileStore.prototype.get;
+      // The prototype the handle's instance has (as C179's spy).
+      const proto = Object.getPrototypeOf(h.home.runStore) as CliHome['runStore'];
+      const original = proto.get;
       let fired = false;
       // The first read 1.5 s (the watch) after the answer is the watch's last: it returns the record
       // it read, and the other process completes `sleep` before that read's caller sees it.
-      vi.spyOn(JsonFileStore.prototype, 'get').mockImplementation(async function (
-        this: InstanceType<typeof JsonFileStore>,
+      vi.spyOn(proto, 'get').mockImplementation(async function (
+        this: CliHome['runStore'],
         ...args: Parameters<typeof original>
       ) {
         const r = await original.apply(this, args);

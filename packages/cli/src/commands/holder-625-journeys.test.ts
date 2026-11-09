@@ -19,7 +19,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JsonFileStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, type RunStore } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -62,7 +62,7 @@ afterAll(async () => {
   await h.cleanup();
 });
 
-const runs = (): JsonFileStore => h.home.runStore;
+const runs = (): RunStore => h.home.runStore;
 
 type Reply = Record<string, unknown> & {
   status: string;
