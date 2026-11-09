@@ -25,7 +25,9 @@ import { lstatSync } from 'node:fs';
 import { WorkflowError } from '@sensigo/realm';
 import type { RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
+import { runPhaseDerivationFingerprint } from '@sensigo/realm';
 import { META_ROW_PART, type CheckedFile, type FileOutcome } from './open-file.js';
+import { corruptCode, readRecords, type RecordPass } from './store-check-records.js';
 
 /** The checks, in the order they run and are reported: one `as const` list (framework R3; c8b adds its own). */
 export const CHECK_IDS = [
@@ -36,6 +38,14 @@ export const CHECK_IDS = [
   'settings',
   'writable',
   'integrity',
+  // c8b1: the data checks, each run's stored record (`store-check-records.ts`), and the pass's read.
+  'records',
+  'evidence_hashes',
+  'phase_index',
+  'key_hashes',
+  'filter_columns',
+  'placeholders',
+  'data_read',
 ] as const;
 /** A check's id. */
 export type CheckId = (typeof CHECK_IDS)[number];
@@ -52,15 +62,36 @@ export const CHECK_FINDING_CODES = [
   'not_writable',
   'integrity_failed',
   'integrity_unreadable',
+  // c8b1 (DELTAS 54).
+  'record_unreadable',
+  'evidence_hash_mismatch',
+  'phase_index_wrong',
+  'key_hash_mismatch',
+  'filter_column_differs',
+  'placeholder_mismatch',
+  'data_unreadable',
 ] as const;
 /** A finding's code. */
 export type CheckFindingCode = (typeof CHECK_FINDING_CODES)[number];
 
-/** The data checks (c8b's): what "every data check" stops. None until c8b lands. */
-const DATA_CHECKS: readonly CheckId[] = [];
+/** The data checks (c8b's, and the pass's read): what "every data check" stops. */
+const DATA_CHECKS: readonly CheckId[] = [
+  'records',
+  'evidence_hashes',
+  'phase_index',
+  'key_hashes',
+  'filter_columns',
+  'placeholders',
+  'data_read',
+];
 
 /** What this version does not check, always listed: one `as const` list. */
-export const NOT_CHECKED_IDS = ['other_processes', 'data_checks'] as const;
+export const NOT_CHECKED_IDS = [
+  'other_processes',
+  'tombstone_phase',
+  'purged_key_hash',
+  'data_checks',
+] as const;
 /** A `not_checked` entry's check. */
 export type NotCheckedId = (typeof NOT_CHECKED_IDS)[number];
 
@@ -136,6 +167,9 @@ export interface CheckFacts {
   /** How many of those frames are already copied into the database: NOOP's `checkpointed`, which
    *  counts every frame copied since the WAL was last reset, across checkpoints. */
   readonly wal_frames_copied?: number;
+  /** How many runs another phase derivation stamped (c8b1): an upgrade's normal state, never a
+   *  finding (`realm db migrate` re-stamps them). Counted by the data pass; absent when it did not run. */
+  readonly phase_other_stamps?: number;
 }
 
 /** The report `check()` resolves to: the published contract (DELTAS 51). */
@@ -170,10 +204,17 @@ const NOT_CHECKED: readonly CheckNotChecked[] = [
     why: "Other Realm processes' connection settings cannot be read from here.",
   },
   {
+    check: 'tombstone_phase',
+    why: "A purged run's phase cannot be verified: its record is gone.",
+  },
+  {
+    check: 'purged_key_hash',
+    why: "A purged run's key hash cannot be recomputed: no key is kept.",
+  },
+  {
     check: 'data_checks',
     why:
-      "The checks on the store's data (evidence hashes, the phase index, tombstones, placeholders, " +
-      'key hashes, filter columns, orphaned rows, workflow pointers and workflow version hashes) are ' +
+      'The checks on tombstones, orphaned rows, workflow pointers and workflow version hashes are ' +
       'not built in this version yet.',
   },
 ];
@@ -386,10 +427,191 @@ function fileFindings(outcomes: readonly FileOutcome[]): {
   return { findings, notRun };
 }
 
-/** SQLite's corrupt error (11) and its extended codes (267, 523, 779), as the store passes it on. */
-function corruptCode(err: unknown): number | undefined {
-  const errcode = (err as { errcode?: unknown }).errcode;
-  return typeof errcode === 'number' && (errcode & 0xff) === 11 ? errcode : undefined;
+/** "1 <one>" or "<n> <many>": a message's two forms (c8b1). */
+function counted(n: number, one: string, many: string): string {
+  return n === 1 ? one : `${String(n)} ${many}`;
+}
+
+/** A value of an example: plain text for a phase or a hash, `none` for NULL (c8b1). */
+function plain(value: unknown): string {
+  return value === null || value === undefined ? 'none' : String(value);
+}
+
+/** A value of an example as JSON, so that 1 and "1" differ; NULL is `null` (c8b1). */
+function json(value: unknown): string {
+  return JSON.stringify(typeof value === 'bigint' ? Number(value) : value) ?? 'null';
+}
+
+/** Entries grouped by their run, in first-seen order: one example per run (c8b1). */
+function byRun<T extends { readonly runId: string }>(entries: readonly T[]): Map<string, T[]> {
+  const runs = new Map<string, T[]>();
+  for (const entry of entries) runs.set(entry.runId, [...(runs.get(entry.runId) ?? []), entry]);
+  return runs;
+}
+
+/** A finding of the data pass: its count and at most {@link MAX_EXAMPLES} examples of the same unit. */
+function dataFinding(
+  check: CheckId,
+  code: CheckFindingCode,
+  message: string,
+  count: number,
+  examples: readonly string[],
+): CheckFinding {
+  return { check, code, message, count, examples: examples.slice(0, MAX_EXAMPLES) };
+}
+
+/** The checks each scan of the pass stops when SQLite's corrupt error stops it (Behaviour 4). */
+const SCAN_STOPS: Record<'runs' | 'evidence' | 'blobs', readonly CheckId[]> = {
+  runs: ['records', 'phase_index', 'key_hashes', 'filter_columns', 'placeholders'],
+  evidence: ['evidence_hashes', 'placeholders'],
+  blobs: ['placeholders'],
+};
+
+/**
+ * The data pass's results as the report's findings and `not_run` (c8b1; DELTAS 54): a check whose
+ * scans all finished keeps its result; a scan stopped by SQLite's corrupt error is the one
+ * `data_unreadable` finding, and the checks it stops are not run because of it, their partial
+ * findings dropped.
+ */
+function recordFindings(pass: RecordPass): {
+  readonly findings: CheckFinding[];
+  readonly notRun: CheckNotRun[];
+} {
+  const findings: CheckFinding[] = [];
+  const runs = pass.runs.done;
+  if (runs && pass.unreadable.length > 0) {
+    const n = pass.unreadable.length;
+    findings.push(
+      dataFinding(
+        'records',
+        'record_unreadable',
+        n === 1
+          ? '1 run holds a stored record that is not JSON; the checks that read a record skipped it.'
+          : `${String(n)} runs hold a stored record that is not JSON; the checks that read a record skipped them.`,
+        n,
+        pass.unreadable.map((id) => `run ${id}`),
+      ),
+    );
+  }
+  if (pass.evidence.done && pass.evidenceMismatches.length > 0) {
+    const n = pass.evidenceMismatches.length;
+    findings.push(
+      dataFinding(
+        'evidence_hashes',
+        'evidence_hash_mismatch',
+        counted(
+          n,
+          '1 evidence entry does not match its stored hash.',
+          'evidence entries do not match their stored hash.',
+        ),
+        n,
+        pass.evidenceMismatches.map((e) => `run ${e.runId}, entry ${String(e.seq)}`),
+      ),
+    );
+  }
+  if (runs && pass.phaseWrong.length > 0) {
+    const n = pass.phaseWrong.length;
+    findings.push(
+      dataFinding(
+        'phase_index',
+        'phase_index_wrong',
+        counted(
+          n,
+          "1 run carries a phase that differs from its record's.",
+          "runs carry a phase that differs from their record's.",
+        ),
+        n,
+        pass.phaseWrong.map(
+          (p) =>
+            `run ${p.runId}: stored ${plain(p.stored)}, ` +
+            (p.derived === undefined ? 'derived: none' : `derived ${p.derived}`),
+        ),
+      ),
+    );
+  }
+  if (runs && pass.keyHashWrong.length > 0) {
+    const n = pass.keyHashWrong.length;
+    findings.push(
+      dataFinding(
+        'key_hashes',
+        'key_hash_mismatch',
+        counted(
+          n,
+          '1 run carries a key hash that does not match its key.',
+          'runs carry a key hash that does not match their key.',
+        ),
+        n,
+        pass.keyHashWrong.map(
+          (k) =>
+            `run ${k.runId}: ` +
+            (k.stored === null ? 'stored: none' : `stored ${plain(k.stored)}`) +
+            ', ' +
+            (k.derived === undefined || k.derived === null
+              ? 'derived: none'
+              : `derived ${k.derived}`),
+        ),
+      ),
+    );
+  }
+  if (runs && pass.filterDiffers.length > 0) {
+    const grouped = byRun(pass.filterDiffers);
+    findings.push(
+      dataFinding(
+        'filter_columns',
+        'filter_column_differs',
+        counted(
+          grouped.size,
+          '1 run holds a filter column that differs from its record.',
+          'runs hold a filter column that differs from their record.',
+        ),
+        grouped.size,
+        [...grouped].map(
+          ([id, columns]) =>
+            `run ${id}, ` +
+            columns
+              .map((c) => `column ${c.column}: stored ${json(c.stored)}, record ${json(c.record)}`)
+              .join('; '),
+        ),
+      ),
+    );
+  }
+  const complete = runs && pass.evidence.done && pass.blobs.done;
+  if (complete && pass.placeholderMismatch.length > 0) {
+    const grouped = byRun(pass.placeholderMismatch);
+    findings.push(
+      dataFinding(
+        'placeholders',
+        'placeholder_mismatch',
+        counted(
+          grouped.size,
+          '1 run holds stored placeholders that do not match their rows.',
+          'runs hold stored placeholders that do not match their rows.',
+        ),
+        grouped.size,
+        [...grouped].map(([id, fields]) => `run ${id}, ${fields.map((f) => f.field).join('; ')}`),
+      ),
+    );
+  }
+  // A scan stopped by the damage: one finding, the first stopped scan's code; its checks not run.
+  const notRun: CheckNotRun[] = [];
+  const stopped = (['runs', 'evidence', 'blobs'] as const).filter((scan) => !pass[scan].done);
+  if (stopped.length > 0) {
+    const first = pass[stopped[0]!];
+    const errcode = first.done ? 0 : first.errcode;
+    findings.push({
+      check: 'data_read',
+      code: 'data_unreadable',
+      message: `SQLite could not read the store's data: SQLite error ${String(errcode)}, the file is damaged.`,
+    });
+    for (const scan of stopped) {
+      for (const check of SCAN_STOPS[scan]) {
+        if (!notRun.some((n) => n.check === check))
+          notRun.push({ check, because: 'data_unreadable' });
+      }
+    }
+    notRun.sort((a, b) => CHECK_IDS.indexOf(a.check) - CHECK_IDS.indexOf(b.check));
+  }
+  return { findings, notRun };
 }
 
 /** The store's busy refusal, which `check()` passes on. */
@@ -445,6 +667,7 @@ function durabilityOf(c: DatabaseLike, platform: string): CheckDurability {
 async function onTheConnection(
   db: RealmDb,
   platform: string,
+  records: boolean,
 ): Promise<{
   readonly read:
     | {
@@ -455,6 +678,7 @@ async function onTheConnection(
       }
     | undefined;
   readonly findings: CheckFinding[];
+  readonly pass: RecordPass | undefined;
   readonly wal: { readonly log: number; readonly checkpointed: number } | undefined;
 }> {
   // 1. The facts a read transaction reads.
@@ -487,14 +711,16 @@ async function onTheConnection(
     if (errcode === undefined) throw err;
     findings.push(integrityUnreadable(errcode));
   }
-  // 3. The WAL's frames, outside any read transaction: NOOP copies and writes nothing.
+  // 3. The data pass (c8b1), when no finding of the file stopped it: one read transaction.
+  const pass = records ? await readRecords(db, runPhaseDerivationFingerprint()) : undefined;
+  // 4. The WAL's frames, outside any read transaction: NOOP copies and writes nothing.
   const wal = await measured(() =>
     db.autocommit((c) => {
       const row = c.prepare('PRAGMA wal_checkpoint(NOOP)').get() ?? {};
       return { log: Number(row['log']), checkpointed: Number(row['checkpointed']) };
     }),
   );
-  return { read, findings, wal };
+  return { read, findings, pass, wal };
 }
 
 /**
@@ -503,11 +729,19 @@ async function onTheConnection(
  */
 export async function runCheck(file: CheckedFile, context: CheckContext): Promise<CheckReport> {
   const { findings, notRun } = fileFindings(file.outcomes);
+  // The data checks run only when no finding of the file put them in `not_run` (c8b1).
+  const records = !notRun.some((n) => DATA_CHECKS.includes(n.check));
   const measuredOn =
-    file.db === undefined ? undefined : await onTheConnection(file.db, context.platform);
+    file.db === undefined ? undefined : await onTheConnection(file.db, context.platform, records);
   const read = measuredOn?.read;
   const wal = measuredOn?.wal;
+  const pass = measuredOn?.pass;
   if (measuredOn !== undefined) findings.push(...measuredOn.findings);
+  if (pass !== undefined) {
+    const data = recordFindings(pass);
+    findings.push(...data.findings);
+    notRun.push(...data.notRun);
+  }
   const frames = (value: number | undefined): number | undefined =>
     value !== undefined && Number.isInteger(value) && value >= 0 ? value : undefined;
   const walFrames = frames(wal?.log);
@@ -524,6 +758,7 @@ export async function runCheck(file: CheckedFile, context: CheckContext): Promis
     ...optional('wal_bytes', sizeOf(`${context.path}-wal`, 0)),
     ...optional('wal_frames', walFrames),
     ...optional('wal_frames_copied', walFramesCopied),
+    ...optional('phase_other_stamps', pass?.runs.done === true ? pass.otherStamps : undefined),
   };
   return {
     status: findings.length === 0 && notRun.length === 0 ? 'ok' : 'findings',
