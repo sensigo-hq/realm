@@ -4,7 +4,9 @@
 // `realm run resume`. Whole-message pins.
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   executeStep,
@@ -206,9 +208,13 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
   }, 60000);
 
   it('drain --expired --force that leaves the run open names the owed call after its line', async () => {
-    const h = await makeTempHome();
-    const home = h.root;
-    let located: TempHome | undefined;
+    // #715 (b) 04 §D (B4); #616 PR-2c c10a-2d: `<owned>/.realm` is a test home, made BEFORE the store
+    // opens (a store takes its clock when it is opened); the cell's ONE handle is opened on it, and its
+    // clock moves the time the spawned `realm` reads. No other handle opens the folder.
+    const owned = mkdtempSync(join(tmpdir(), 'realm-owed-call-located-'));
+    const th = await createTestHome({ start: new Date(), root: join(owned, '.realm') });
+    const h = await makeTempHome({ home: th.root });
+    const home = owned;
     try {
       const d: WorkflowDefinition = {
         id: 'cli-expiry-owed-wf',
@@ -233,12 +239,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         },
       };
       await h.home.workflowStore.register(d);
-      // #715 (b) 04 §D (B4): `~/.realm` is a test location, made BEFORE the store opens (a store takes
-      // its clock when it is built); the cell moves the clock the spawned `realm` reads instead of
-      // waiting on the real one. #616 PR-2b: a second handle on the location, opened after it.
-      const loc = await createTestHome({ start: new Date(), root: h.path });
-      located = await makeTempHome({ home: h.path });
-      const runs = located.home.runStore;
+      const runs = h.home.runStore;
       const { record: run } = await runs.create({
         workflowId: d.id,
         workflowVersion: 1,
@@ -250,7 +251,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         input: {},
         dispatcher: async () => ({}),
       });
-      await loc.clock.advance(1300);
+      await th.clock.advance(1300);
       const drained = realm(home, ['run', 'drain', run.id, '--expired', '--force']);
       expect(drained.status).toBe(0);
       expect(drained.stdout).toContain(
@@ -258,8 +259,10 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
           `To run the step the engine owes ('after'): realm run advance ${run.id}`,
       );
     } finally {
-      await located?.cleanup();
+      // The store closed before its folder goes.
       await h.cleanup();
+      await th.remove();
+      rmSync(owned, { recursive: true, force: true });
     }
   }, 60000);
 });

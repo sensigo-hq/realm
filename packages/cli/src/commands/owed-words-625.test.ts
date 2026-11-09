@@ -2,7 +2,8 @@
 // that no journey cell reaches: `realm run advance`'s fit words, identity and driver words and every
 // `Stopped:` reason; `inspect`'s refused-step line; listen's sweeper `owed` field.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -22,11 +23,11 @@ import {
   WorkflowError,
   type Attributed,
   type StepHandlerResult,
-  writeTestClockFile,
   type RunStore,
 } from '@sensigo/realm';
 import { FIT_WORDS, fitWords, advanceRunFromShell } from './run-advance.js';
 import { stopReasons } from './ways-renderer.js';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome } from '../test-support/temp-home.js';
 
 // #729 PR-0 (A-10, T-14): `stoppedReasons` is replaced by the CLI renderer's `stopReasons`, which reads
@@ -62,14 +63,42 @@ const wf = (id: string, steps: WorkflowDefinition['steps']): WorkflowDefinition 
   steps,
 });
 
-async function stores() {
-  const h = await makeTempHome();
+async function stores(located = false): Promise<{
+  home: string;
+  path: string;
+  runs: RunStore;
+  workflows: RealmWorkflowRegistrar;
+  clock?: TestHome['clock'];
+  cleanup: () => Promise<void>;
+}> {
+  if (!located) {
+    const h = await makeTempHome();
+    return {
+      home: h.root,
+      path: h.path,
+      runs: h.home.runStore,
+      workflows: h.home.workflowStore,
+      cleanup: () => h.cleanup(),
+    };
+  }
+  // #616 PR-2c c10a-2d: `located` makes `<owned>/.realm` a test home BEFORE the store opens (a store
+  // takes its clock when it is opened); the ONE handle opened on it holds the stores, and its clock
+  // moves the time they read. No other handle opens it.
+  const owned = mkdtempSync(join(tmpdir(), 'realm-owed-words-located-'));
+  const th = await createTestHome({ start: new Date(), root: join(owned, '.realm') });
+  const h = await makeTempHome({ home: th.root });
   return {
-    home: h.root,
+    home: owned,
     path: h.path,
     runs: h.home.runStore,
     workflows: h.home.workflowStore,
-    cleanup: () => h.cleanup(),
+    clock: th.clock,
+    cleanup: async () => {
+      // The store closed before its folder goes.
+      await h.cleanup();
+      await th.remove();
+      rmSync(owned, { recursive: true, force: true });
+    },
   };
 }
 
@@ -469,7 +498,7 @@ describe('#625 PR-2a — inspect names each engine step that cannot run', () => 
 
 describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves", () => {
   it('the enacted-expiry log line gains `owed`', async () => {
-    const { path, runs, workflows, cleanup } = await stores();
+    const { runs, workflows, clock, cleanup } = await stores(true);
     try {
       const d = wf('sweep-owed-wf', {
         confirm: {
@@ -504,18 +533,9 @@ describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves"
         warn: () => {},
         error: () => {},
       };
-      // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
-      await writeTestClockFile(path, new Date(Date.now() + 3_600_000));
-      const reopened = await makeTempHome({ home: path });
-      try {
-        await sweepExpiredGates({
-          runStore: reopened.home.runStore,
-          workflowStore: workflows,
-          logger,
-        } as never);
-      } finally {
-        await reopened.cleanup();
-      }
+      // #715 (b): the store's clock decides — the one handle's test-home clock moved an hour on.
+      await clock!.advance(3_600_000);
+      await sweepExpiredGates({ runStore: runs, workflowStore: workflows, logger } as never);
       const line = logged.find(([m]) => m === 'listen: sweeper enacted an expired gate');
       expect((line?.[1] as Record<string, unknown>)['owed']).toEqual(['after']);
       expect(

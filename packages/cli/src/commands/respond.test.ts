@@ -540,7 +540,7 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
 // -------------------------------------------------------------------------------------------------
 describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
   let h: TempHome;
-  /** The other handles (the workflow store's own, bob's), cleaned before `h`. */
+  /** The other handles (the workflow store's own), cleaned before `h`; bob reads through a Proxy over the one store (c10a-2d). */
   const extras: TempHome[] = [];
   let runStore: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
@@ -666,32 +666,39 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
   });
 
   it("5. the race: bob reads the question open, alice's answer lands, bob's submit finds it settled — bob's line names alice", async () => {
-    // Bob's own store over the same folder (a delegating wrapper is refused at admission). Its FIRST
-    // read returns the record with the question open — after alice's answer, written through the
-    // other instance, has landed. Bob's submit then reads the settled question (`already_settled`).
-    const bobHome = await makeTempHome({ home: h.path });
-    extras.push(bobHome);
-    const bobStore = bobHome.home.runStore;
-    const read = bobStore.get.bind(bobStore);
+    // #616 PR-2c c10a-2d: bob's view of the one store: a Proxy whose `get` records each read and, on
+    // the first, submits alice's answer through the unwrapped store; every other member is the store's
+    // own, bound to it (the store's admission reads three members by duck type, so the Proxy passes).
+    // Bob's FIRST read returns the record with the question open — after alice's answer has landed.
+    // Bob's submit then reads the settled question (`already_settled`).
     const reads: RunRecord[] = [];
     let aliceStatus: string | undefined;
-    bobStore.get = async (id: string) => {
-      const snapshot = await read(id);
-      const record = snapshot.record;
-      reads.push(record);
-      if (reads.length === 1) {
-        const alice = await submitHumanResponse(runStore, answererWorkflow, {
-          runId,
-          gateId,
-          choice: 'ship',
-          respondedBy: 'alice',
-          caller: 'respond',
-          registry,
-        });
-        aliceStatus = alice.status;
-      }
-      return snapshot;
-    };
+    const bobStore = new Proxy(runStore, {
+      get(target, prop) {
+        if (prop === 'get') {
+          return async (id: string) => {
+            const snapshot = await target.get(id);
+            reads.push(snapshot.record);
+            if (reads.length === 1) {
+              const alice = await submitHumanResponse(target, answererWorkflow, {
+                runId,
+                gateId,
+                choice: 'ship',
+                respondedBy: 'alice',
+                caller: 'respond',
+                registry,
+              });
+              aliceStatus = alice.status;
+            }
+            return snapshot;
+          };
+        }
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === 'function'
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
     const bob = await respond('bob', bobStore);
     const answersAfter =
       composeStepViews((await runStore.get(runId)).record)['decide']?.answers ?? [];

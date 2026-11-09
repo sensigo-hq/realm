@@ -989,15 +989,25 @@ describe('makeListenHandler — request pipeline', () => {
     // A JsonFileStore: the in-memory store's create returns the object it keeps, so agent_pid would
     // appear on it before the write (a shared-object artefact).
     const h = await makeTempHome();
-    const second = await makeTempHome({ home: h.path });
     try {
       const inner = h.home.runStore;
-      const store = second.home.runStore;
-      const realUpdate = store.update.bind(store);
-      store.update = async (record) => {
-        if (record.agent_pid !== undefined) await abandonRun(inner, record.id);
-        return realUpdate(record);
-      };
+      // #616 PR-2c c10a-2d: ONE handle; the listener's view of its store is a Proxy whose `update`
+      // lands the seal first, through the unwrapped store, then makes the write. Every other member is
+      // the store's own, bound to it.
+      const store = new Proxy(inner, {
+        get(target, prop) {
+          if (prop === 'update') {
+            return async (record: Parameters<typeof target.update>[0]) => {
+              if (record.agent_pid !== undefined) await abandonRun(target, record.id);
+              return target.update(record);
+            };
+          }
+          const value: unknown = Reflect.get(target, prop, target);
+          return typeof value === 'function'
+            ? (value as (...args: unknown[]) => unknown).bind(target)
+            : value;
+        },
+      });
       const errors: Logged[] = [];
       const deps = makeDeps({
         runStore: store,
@@ -1031,7 +1041,6 @@ describe('makeListenHandler — request pipeline', () => {
         logged: [['webhook: failed to record agent pid', true]],
       });
     } finally {
-      await second.cleanup();
       await h.cleanup();
     }
   });
