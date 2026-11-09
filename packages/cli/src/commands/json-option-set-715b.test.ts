@@ -25,7 +25,7 @@ function commandsOf(group: string, commands: readonly Command[]): Array<[string,
 }
 
 describe('#715 (b) Amendment 5 — the CLI commands that print JSON', () => {
-  it('exactly `realm run attempts`, `realm workflow validate` and `realm workflow list` declare --json', () => {
+  it('exactly `realm run attempts`, `realm workflow validate`, `realm workflow list` and `realm db check` declare --json', () => {
     const all = [
       ...commandsOf('workflow', workflowCommands),
       ...commandsOf('run', runCommands),
@@ -35,7 +35,7 @@ describe('#715 (b) Amendment 5 — the CLI commands that print JSON', () => {
     const withJson = new Set(
       all.filter(([, c]) => c.options.some((o) => o.long === '--json')).map(([path]) => path),
     );
-    const expected = new Set(['run attempts', 'workflow validate', 'workflow list']);
+    const expected = new Set(['run attempts', 'workflow validate', 'workflow list', 'db check']);
     // (a) red when a command gains (or loses) `--json` — e.g. `realm run list`; its adder decides
     //     whether the JSON carries `as_of`; (b) prints only the set difference.
     expect({

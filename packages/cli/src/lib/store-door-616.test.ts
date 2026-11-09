@@ -376,12 +376,12 @@ describe('#616 PR-2a (iii) — every store comes through the one door', () => {
 });
 
 /** #616 PR-2c c10a-3a correction 1: the SQLite openers the CLI's production source may call, each
- *  with the only files allowed to: the door, and the two verbs that act on the store file. */
+ *  with the only files allowed to: the door, and the three verbs that act on the store file. */
 const OPENERS: ReadonlyArray<{ opener: string; allowed: readonly string[] }> = [
   { opener: 'openRealmHome', allowed: ['lib/home.ts'] },
   {
     opener: 'openRealmHomeForMaintenance',
-    allowed: ['commands/db-backup.ts', 'commands/db-migrate.ts'],
+    allowed: ['commands/db-backup.ts', 'commands/db-migrate.ts', 'commands/db-check.ts'],
   },
 ];
 
