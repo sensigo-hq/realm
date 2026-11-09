@@ -24,14 +24,25 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..
  * A file that builds a JSON-file store, takes a lock, or starts the built CLI. The store's members,
  * each with what puts a file in the set:
  * - `new JsonFileStore(` constructs the store, which takes the lock library's locks;
- * - `openCliHome(` and `openMcpHome(` are the CLI's and the MCP server's doors, which construct the
- *   run store (a `JsonFileStore`); four CLI test files call `openCliHome(` directly;
- * - `makeTempHome(` is each package's test helper, which opens its package's door (#616 PR-2b).
- * The last three last until #616 unit 2c flips the door to SQLite, and leave in that unit: a SQLite
- * write lock holds against a faked `Date` (MA 3, 2026-11-06).
+ * - `openMcpHome(` is the MCP server's door, which constructs the run store (a `JsonFileStore`);
+ * - in `packages/mcp-server/**` only, `makeTempHome(` is that package's test helper, which opens that
+ *   door (#616 PR-2b).
+ * #616 PR-2c c10a-3a: the CLI's door and its helper open the SQLite home, whose write lock holds
+ * against a faked `Date` (MA 3, 2026-11-06), so `openCliHome(` left this list and the CLI's
+ * `makeTempHome(` does not count. The two MCP tokens leave when c10b flips that door.
  */
 const TAKES_REAL_LOCKS =
-  /new JsonFileStore\(|lockfile\.lock\(|proper-lockfile|dist\/index\.js|spawnSync\(|execFileSync\(|makeTempHome\(|openCliHome\(|openMcpHome\(/;
+  /new JsonFileStore\(|lockfile\.lock\(|proper-lockfile|dist\/index\.js|spawnSync\(|execFileSync\(|openMcpHome\(/;
+/** The MCP package's test helper opens a door that still builds a JSON store (`makeTempHome(`). */
+const MCP_HELPER = /makeTempHome\(/;
+
+/** Whether the file at `path` (repo-relative) takes real locks: the tokens, and the helper by package. */
+function takesRealLocks(path: string, text: string): boolean {
+  return (
+    TAKES_REAL_LOCKS.test(text) ||
+    (path.startsWith('packages/mcp-server/') && MCP_HELPER.test(text))
+  );
+}
 
 /** A fake of the global `Date` (timers alone, or `performance`, are not). */
 function fakesDate(text: string): boolean {
@@ -57,12 +68,6 @@ function fakesDate(text: string): boolean {
 const ALLOWED: Record<string, string> = {
   'packages/core/src/store/json-file-store-clock-715.test.ts':
     "the S4 cell: a JSON store beside a faked `Date`, by design — it shows the store's time is its clock's, not the faked global",
-  'packages/cli/src/agent/drive-failure.test.ts':
-    'D7/D8 spy `Date.now` in cells that build no store (elapsed is monotonic whatever the wall does); the JSON-store cells run on the real clock',
-  'packages/cli/src/agent/gate/slack-gate-notifier.test.ts':
-    "the fake timers live in cells that build no store (the reminder timers and the Slack transport's deadline: host timers, D6-64); the JSON-store cells run on the real clock",
-  'packages/cli/src/commands/listen.test.ts':
-    'the dedup-window cells fake `Date` alone (the window is an `outside` read, #177) and build no store; the JSON-store cells run on the real clock',
   'packages/cli/src/output/writer.test.ts':
     "U1-6 fakes timers for the writer's idle flush (a duration) in a cell that starts nothing; the cells that start the CLI run on the real clock",
 };
@@ -130,7 +135,7 @@ function violations(files: ReadonlyArray<{ path: string; text: string }>): strin
     .filter(
       (f) =>
         f.path !== SELF &&
-        TAKES_REAL_LOCKS.test(f.text) &&
+        takesRealLocks(f.path, f.text) &&
         fakesDate(f.text) &&
         ALLOWED[f.path] === undefined,
     )
@@ -162,12 +167,16 @@ describe('#715 (b) 04 §B.3 — a test that takes real locks never fakes the glo
         path: 'seed/to-fake-date.test.ts',
         text: store + "vi.useFakeTimers({\n  toFake: [\n    'setTimeout',\n    'Date',\n  ],\n});",
       },
-      // The three below: (a) red when `makeTempHome\(`, `openCliHome\(` or `openMcpHome\(` is lost
-      // from `TAKES_REAL_LOCKS`; (b) the list printed lacks that seed's name.
-      { path: 'seed/helper.test.ts', text: 'const h = await makeTempHome();\nvi.useFakeTimers();' },
+      // The three below (#616 PR-2c c10a-3a): (a) red when the helper counts in every package (the
+      // CLI seed is flagged), the helper no longer counts in the MCP package, or `openMcpHome\(` is
+      // lost from `TAKES_REAL_LOCKS`; (b) the list printed gains or lacks that seed's name.
       {
-        path: 'seed/cli-door.test.ts',
-        text: 'const h = await openCliHome({ home: dir });\nvi.useFakeTimers();',
+        path: 'packages/cli/src/seed/helper.test.ts',
+        text: 'const h = await makeTempHome();\nvi.useFakeTimers();',
+      },
+      {
+        path: 'packages/mcp-server/src/seed/helper.test.ts',
+        text: 'const h = await makeTempHome();\nvi.useFakeTimers();',
       },
       {
         path: 'seed/mcp-door.test.ts',
@@ -184,8 +193,7 @@ describe('#715 (b) 04 §B.3 — a test that takes real locks never fakes the glo
       'seed/system-time.test.ts',
       'seed/spy.test.ts',
       'seed/to-fake-date.test.ts',
-      'seed/helper.test.ts',
-      'seed/cli-door.test.ts',
+      'packages/mcp-server/src/seed/helper.test.ts',
       'seed/mcp-door.test.ts',
     ]);
   });
@@ -194,7 +202,7 @@ describe('#715 (b) 04 §B.3 — a test that takes real locks never fakes the glo
     // (a) red when an allowed file was converted and its entry left behind; (b) prints the entries.
     const stale = Object.keys(ALLOWED).filter((p) => {
       const text = readFileSync(join(ROOT, p), 'utf8');
-      return !(TAKES_REAL_LOCKS.test(text) && fakesDate(text));
+      return !(takesRealLocks(p, text) && fakesDate(text));
     });
     expect(stale).toEqual([]);
   });

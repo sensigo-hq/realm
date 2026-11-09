@@ -93,24 +93,51 @@ const EVIDENCE_FIRST_PAGE =
 const EVIDENCE_NEXT_PAGE =
   'SELECT rowid AS r, run_id, seq, entry, entry_sha256 FROM evidence WHERE rowid > ? ORDER BY rowid LIMIT ?';
 
-/** Re-checks every evidence entry against its stored hash, a page at a time; returns how many it read. */
-function recheckEvidence(db: DatabaseLike): number {
+/** One evidence entry as the re-check reads it: its run, its seq as stored, and whether it matches. */
+export interface EvidenceEntryCheck {
+  readonly runId: string;
+  readonly seq: unknown;
+  /** Its stored text hashes to its stored `entry_sha256`. */
+  readonly matches: boolean;
+}
+
+/**
+ * Re-checks every evidence entry against its stored hash, a page at a time in rowid order, and hands
+ * each to `visit`; returns how many it read. The one re-check: the ladder's (`recheckEvidence`, which
+ * refuses at the first mismatch) and `realm db check`'s evidence scan (#616 PR-2c c8b1, which collects
+ * every one). `visit` may throw to stop.
+ */
+export function checkEvidenceEntries(
+  db: DatabaseLike,
+  visit: (entry: EvidenceEntryCheck) => void,
+): number {
   const next = db.prepare(EVIDENCE_NEXT_PAGE);
   let page = db.prepare(EVIDENCE_FIRST_PAGE).all(EVIDENCE_RECHECK_PAGE);
   let checked = 0;
   while (page.length > 0) {
     for (const row of page) {
-      if (evidenceEntrySha256(String(row['entry'])) !== row['entry_sha256']) {
-        throw new Error(
-          `Evidence entry ${String(row['seq'])} of run ${String(row['run_id'])} does not match its stored hash.`,
-        );
-      }
+      visit({
+        runId: String(row['run_id']),
+        seq: row['seq'],
+        matches: evidenceEntrySha256(String(row['entry'])) === row['entry_sha256'],
+      });
     }
     checked += page.length;
     if (page.length < EVIDENCE_RECHECK_PAGE) break;
     page = next.all(page[page.length - 1]!['r'], EVIDENCE_RECHECK_PAGE);
   }
   return checked;
+}
+
+/** Re-checks every evidence entry against its stored hash; refuses at the first that differs. */
+function recheckEvidence(db: DatabaseLike): number {
+  return checkEvidenceEntries(db, (entry) => {
+    if (!entry.matches) {
+      throw new Error(
+        `Evidence entry ${String(entry.seq)} of run ${entry.runId} does not match its stored hash.`,
+      );
+    }
+  });
 }
 
 function userVersion(db: DatabaseLike): number {

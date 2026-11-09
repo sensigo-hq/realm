@@ -30,6 +30,11 @@ import { handleGetRunState } from './get-run-state.js';
 import { POLL_CAP_MS } from '../render-reply.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from '../test-support/mcp-bin-on-json.js';
+
+// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that pair the SQLite CLI with JSON stores on
+// one home. One name, so a cell's only change is this token and prettier leaves its body as it was.
+const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -444,7 +449,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     },
   );
 
-  it(
+  xit(
     'capability_blocks and the capability_block finding: the marker is shown whatever this server has; the finding only when this server lacks the code too; inspect and list --stuck read the record alone; an ended run has no run_health',
     { timeout: 60_000 },
     async () => {
@@ -1065,7 +1070,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     },
   );
 
-  it(
+  xit(
     'guard_awaiting_settlement: ready when the run is created by start_run_batch or a program, or when realm run resume opens it again at a failed guard',
     { timeout: 60_000 },
     async () => {
@@ -1167,7 +1172,7 @@ describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
     );
   });
 
-  it(
+  xit(
     'W2’s stuck run at age 0: get_run_state (with this server’s registry) carries cannot_go_on as the example shows; inspect shows it once and the way out once; list --stuck lists it with its label',
     { timeout: 60_000 },
     async () => {

@@ -103,6 +103,22 @@ function isPlaceholder(
 }
 
 /**
+ * Whether a stored record's `evidence` is the placeholder the writer makes: `{"$realm_rows": n}` with
+ * n a safe integer, 0 or more. The read and `realm db check` (#616 PR-2c c8b1) judge it alike.
+ */
+export function isEvidencePlaceholder(value: unknown): boolean {
+  return isPlaceholder(value, ROWS, (n) => Number.isSafeInteger(n) && (n as number) >= 0);
+}
+
+/**
+ * Whether a stored record's value at a write-once field `name` is the placeholder the writer makes:
+ * `{"$realm_blob": "<name>"}`. The read and `realm db check` (#616 PR-2c c8b1) judge it alike.
+ */
+export function isFieldPlaceholder(value: unknown, name: string): boolean {
+  return isPlaceholder(value, BLOB, (held) => held === name);
+}
+
+/**
  * How deep `value` is nested, counting each object and array on the deepest path (a scalar is 0, the
  * record itself 1), as SQLite counts JSON nesting. Iterative, so a record nested far deeper than the
  * limit cannot overflow the stack; it stops as soon as a path reaches `stopAt`, which also ends the
@@ -545,7 +561,7 @@ export function readRunInTransaction(db: DatabaseLike, runId: string): RunRecord
     .all(runId);
   const blobs = db.prepare('SELECT name, value FROM run_blobs WHERE run_id = ?').all(runId);
 
-  if (isPlaceholder(core['evidence'], ROWS, (n) => Number.isSafeInteger(n) && (n as number) >= 0)) {
+  if (isEvidencePlaceholder(core['evidence'])) {
     const count = (core['evidence'] as JsonObject)[ROWS] as number;
     if (entries.length !== count) {
       throw disagreement(
@@ -568,7 +584,7 @@ export function readRunInTransaction(db: DatabaseLike, runId: string): RunRecord
 
   const stored = new Map(blobs.map((blob) => [String(blob['name']), String(blob['value'])]));
   for (const name of stored.keys()) {
-    if (!WRITE_ONCE.has(name) || !isPlaceholder(core[name], BLOB, (held) => held === name)) {
+    if (!WRITE_ONCE.has(name) || !isFieldPlaceholder(core[name], name)) {
       throw disagreement(
         runId,
         `the store holds field ${name} and its record no placeholder for it`,
@@ -576,7 +592,7 @@ export function readRunInTransaction(db: DatabaseLike, runId: string): RunRecord
     }
   }
   for (const name of WRITE_ONCE) {
-    if (!isPlaceholder(core[name], BLOB, (held) => held === name)) continue;
+    if (!isFieldPlaceholder(core[name], name)) continue;
     const value = stored.get(name);
     if (value === undefined) {
       throw disagreement(

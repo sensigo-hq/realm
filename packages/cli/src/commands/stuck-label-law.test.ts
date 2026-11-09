@@ -235,6 +235,11 @@ describe('the --stuck label law (issue #558 PR-T)', () => {
 // `get()` stays uncapped by #552's Resolution, so the run path is unchanged. Above the cap the
 // finding NAMES the size and reads ZERO bytes — a listing must never be the surface that
 // detonates a #557 expansion bomb.
+/** A store write's promise with its result dropped. */
+const voidOf = async (p: Promise<unknown>): Promise<void> => {
+  await p;
+};
+
 describe('the --stuck listing cap (issue #558 PR-T)', () => {
   let h: TempHome & { readonly root: string };
   let home: string;
@@ -266,23 +271,26 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     extra: Record<string, unknown> = {},
   ): Promise<void> =>
     // #616 PR-2c (c0): saved verbatim through the store (its updated_at kept, its phase derived).
-    h.home.runStore.save({
-      id,
-      workflow_id: workflowId,
-      workflow_version: 1,
-      run_phase: 'running',
-      completed_steps: [],
-      in_progress_steps: [],
-      failed_steps: [],
-      skipped_steps: [],
-      version: 1,
-      params: {},
-      evidence: [],
-      created_at: OLDER,
-      updated_at: updatedAt,
-      terminal_state: false,
-      ...extra,
-    } as RunRecord);
+    // c10a-3a: the SQLite store's `save` resolves to its outcome; the planting needs none of it.
+    voidOf(
+      h.home.runStore.save({
+        id,
+        workflow_id: workflowId,
+        workflow_version: 1,
+        run_phase: 'running',
+        completed_steps: [],
+        in_progress_steps: [],
+        failed_steps: [],
+        skipped_steps: [],
+        version: 1,
+        params: {},
+        evidence: [],
+        created_at: OLDER,
+        updated_at: updatedAt,
+        terminal_state: false,
+        ...extra,
+      } as RunRecord),
+    );
   const out = (): string => logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
   const err = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
 

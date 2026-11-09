@@ -1294,15 +1294,19 @@ describe(
       const id = await started(def);
       // The other program's claim lands in the window between this program's pick and its claim:
       // a module this `realm` loads (--extensions-module) claims `process` as racer-a first.
-      const core = pathToFileURL(realpathSync(join(ROOT, 'packages/core/dist/index.js'))).href;
+      const storePackage = pathToFileURL(
+        realpathSync(join(ROOT, 'packages/store-sqlite/dist/index.js')),
+      ).href;
       const racer = join(elsewhere, 'racer.mjs');
       writeFileSync(
         racer,
         [
-          `import { JsonFileStore } from ${JSON.stringify(core)};`,
-          'const claim = JsonFileStore.prototype.claimStep;',
+          `import { openRealmHome } from ${JSON.stringify(storePackage)};`,
+          // The class's prototype, reached through the one handle: no store class is named.
+          `const proto = Object.getPrototypeOf((await openRealmHome({ home: ${JSON.stringify(join(home, '.realm'))} })).runStore);`,
+          'const claim = proto.claimStep;',
           'let raced = false;',
-          'JsonFileStore.prototype.claimStep = async function (runId, step, definition, claimant) {',
+          'proto.claimStep = async function (runId, step, definition, claimant) {',
           "  if (!raced && step === 'process') {",
           '    raced = true;',
           "    await claim.call(this, runId, step, definition, { by: 'racer-a', by_source: 'ambient', channel: 'advance' });",

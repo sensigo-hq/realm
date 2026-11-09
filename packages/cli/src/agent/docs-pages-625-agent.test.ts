@@ -1077,28 +1077,27 @@ describe(
         "any other `blocked` reply prints its own reason (`✗ Precondition failed for step 'ask'.`) and stops the drive with exit code 1.",
       );
       await fresh();
-      // While the model answers `ask`, the provider module rewrites `first`'s recorded answer, so the
-      // engine's own read refuses the step the drive's read let it pick.
+      // While the model answers `ask`, the provider module records a later answer for `first` (stored
+      // evidence is append-only), so the engine's own read refuses the step the drive's read let it pick.
       symlinkSync(join(ROOT, 'node_modules'), join(home, 'node_modules'), 'dir');
       writeFileSync(join(home, 'package.json'), JSON.stringify({ type: 'module' }));
       writeFileSync(
         join(home, 'p.mjs'),
         [
           "import { LlmProvider } from '@sensigo/realm-cli/agent';",
-          "import { JsonFileStore } from '@sensigo/realm';",
+          "import { openRealmHome } from '@sensigo/realm-store-sqlite';",
           "import { join } from 'node:path';",
           'let calls = 0;',
           'class Flip extends LlmProvider {',
           '  async callStep() {',
           '    calls += 1;',
           '    if (calls === 1) return { ok: true };',
-          "    const store = new JsonFileStore(join(process.env.HOME, '.realm', 'runs'));",
+          "    const { runStore: store } = await openRealmHome({ home: join(process.env.HOME, '.realm') });",
           '    const { snapshots } = await store.list();',
           '    const { record: fresh } = await store.get(snapshots[0].record.id);',
-          '    const evidence = fresh.evidence.map((e) =>',
-          "      e.step_id === 'first' ? { ...e, output_summary: { ...e.output_summary, ok: false } } : e,",
-          '    );',
-          '    await store.update({ ...fresh, evidence });',
+          "    const first = fresh.evidence.find((e) => e.step_id === 'first');",
+          '    const later = { ...first, output_summary: { ...first.output_summary, ok: false } };',
+          '    await store.update({ ...fresh, evidence: [...fresh.evidence, later] });',
           '    return {};',
           '  }',
           '}',

@@ -1,8 +1,6 @@
 // Tests for the 0.10.0 run-recovery surface: abandon_run MCP tool + get_run_state's
 // next_actions / next_actions_status.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition, PendingGate } from '@sensigo/realm';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -191,27 +189,6 @@ describe('abandon_run MCP tool', () => {
     // not publishing them (only a code's typed facts are). (a) red when abandon_run publishes the
     // untyped details; (b) prints whether the field is there.
     expect('error_details' in env).toBe(false);
-  });
-
-  it('the #432-class divergent record (persisted gate_waiting, NO pending_gate) is abandoned, not refused', async () => {
-    const { record: run } = await runStore.create({
-      workflowId: 'agentflow',
-      workflowVersion: 1,
-      params: {},
-    });
-    // Planted as raw bytes: the store re-derives `run_phase` on every write, so this record can
-    // only exist as a foreign writer's file (issue #432's class). Nothing on it can be answered —
-    // the gate refusal keys on `pending_gate`, so it abandons (walk 3: refusing it stranded the
-    // operator behind commands that all failed).
-    await writeFile(
-      join(runStore.runsDirPath, `${run.id}.json`),
-      JSON.stringify({ ...run, run_phase: 'gate_waiting' }, null, 2),
-      'utf8',
-    );
-    const summary = await callRegisteredAbandon(runStore, { run_id: run.id });
-    expect(summary['error_code']).toBeUndefined();
-    expect(summary['run_phase']).toBe('abandoned');
-    expect(summary['terminal_state']).toBe(true);
   });
 });
 

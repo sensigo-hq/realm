@@ -233,7 +233,8 @@ async function resumableOf(
  * its report is routed as below ({@link purgeThroughHome}); `artifactStores` then serve the preview's
  * stats only. Without it (the JSON stores), deletion is anchor-structural (issue
  * #184): every `artifactStores` entry (non-anchor stores only) must succeed BEFORE
- * `anchorStore.deleteAllForRun` — the `JsonFileStore` run file — is ever called, and only on
+ * `anchorStore.deleteAllForRun` — the `JsonFileStore` run file (the JSON arm, unreachable from the
+ * CLI since c10a-3a: every command passes `purge`; PR-3 deletes it) — is ever called, and only on
  * total success. Any throw before that point leaves the anchor (and therefore the run) intact —
  * the crash-anchor property is now structural (guaranteed by this function's control flow), not
  * merely positional (an array-ordering convention a future edit could silently break — see
@@ -721,14 +722,14 @@ export const purgeCommand = new Command('purge')
       // The door's trace buffer reads through the anchor store: the `run_at_version` fence (issue
       // #715 (a)) is evaluated against it, inside the trace buffer's own critical section (#616 PR-0).
       const traceBufferStore = home.traceBufferStore;
-      // The crash-anchor is now STRUCTURAL, not positional (issue #184): runStore (JsonFileStore)
-      // is passed to purgeRuns as the separate anchorStore argument, and purgeRuns's own control
+      // The crash-anchor is now STRUCTURAL, not positional (issue #184): runStore is passed to
+      // purgeRuns as the separate anchorStore argument, and purgeRuns's own control
       // flow guarantees it is only ever deleted after every entry below has succeeded — it is
       // deliberately ABSENT from this array. purge-guard.test.ts's ANCHOR check asserts this
       // absence via source-text; do not re-add it here.
       const artifactStores: PerRunArtifactStore[] = [
-        traceBufferStore, // JsonTraceBufferStore
-        failedAttemptStore, // JsonFileFailedAttemptStore
+        traceBufferStore, // SqliteTraceBufferStore
+        failedAttemptStore, // SqliteFailedAttemptStore
       ];
 
       const dryRun = opts.force !== true;
@@ -738,6 +739,8 @@ export const purgeCommand = new Command('purge')
         }
       };
       try {
+        // #616 PR-2c c9/c10a-3a: the fourth argument is the home's own purge, so the store path
+        // runs — bounded batches, the free pages returned, the log reset once, the shrink reported.
         const result = await purgeRuns(
           {
             runId,
@@ -749,6 +752,7 @@ export const purgeCommand = new Command('purge')
           },
           runStore,
           artifactStores,
+          home.purge,
         );
 
         if (runId !== undefined && result.selected.length === 0) {

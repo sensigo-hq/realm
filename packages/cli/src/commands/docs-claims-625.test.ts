@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -18,7 +19,6 @@ import {
   executeStep,
   loadWorkflowFromString,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  type RunStore,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { sweepExpiredGates } from './listen.js';
@@ -30,6 +30,7 @@ import { executeChain, createDefaultRegistry } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import { buildExportBundle } from './export.js';
 import { declared } from '../test-support/declared.js';
+import type { CliHome } from '../lib/home.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
@@ -98,7 +99,7 @@ describe(
   () => {
     let h: TempHome & { readonly root: string };
     let home: string;
-    let runStore: RunStore;
+    let runStore: CliHome['runStore'];
     let workflowStore: RealmWorkflowRegistrar;
 
     beforeEach(async () => {
@@ -542,14 +543,13 @@ describe(
         // `realm run purge --force` on a copy of the ended run (purge refuses a run that goes on, so it
         // is tried while the run is still ended), then `resume` on the run itself.
         const { record: ended } = await runStore.get(runId);
-        const copy = (
-          await runStore.create({ workflowId: ended.workflow_id, workflowVersion: 1, params: {} })
-        ).record;
-        await runStore.update({ ...ended, id: copy.id, version: copy.version });
-        expect((await runStore.get(copy.id)).record.run_phase, 'fixture copy').toBe(kind);
-        const purged = realm('run', 'purge', copy.id, '--force');
+        // #616 PR-2c c10a-3a: a run's id cannot change in the store; the copy is saved as given.
+        const copyId = randomUUID();
+        await runStore.save({ ...ended, id: copyId });
+        expect((await runStore.get(copyId)).record.run_phase, 'fixture copy').toBe(kind);
+        const purged = realm('run', 'purge', copyId, '--force');
         expect(purged.code, [...purged.out, ...purged.err].join('\n')).toBe(0);
-        await expect(runStore.get(copy.id)).rejects.toMatchObject({ code: 'STATE_RUN_NOT_FOUND' });
+        await expect(runStore.get(copyId)).rejects.toMatchObject({ code: 'STATE_RUN_NOT_FOUND' });
         const resumed = realm('run', 'resume', runId, '--from', step);
         // (a) red when resume takes a kind the refusal says it does not, or refuses one it offers; (b) prints it.
         // `resume` takes the run exactly when the refusal offers it: a failed step to run again.
