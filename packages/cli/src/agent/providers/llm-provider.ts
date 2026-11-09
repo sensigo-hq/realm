@@ -15,6 +15,7 @@ import { REALM_CLI_BRAND } from '../../brand.js';
 import type { ToolDefinition, ToolExecutor, StepWithToolsResult } from '../mcp/mcp-extensions.js';
 import type { LlmClock } from './agent-utils.js';
 import type { RequestAdapter } from './request-layout.js';
+import type { CacheDiagnosticsSetting } from '../prompt-cache.js';
 
 /**
  * Describes the optional feature set that an LLM provider supports.
@@ -571,6 +572,9 @@ export async function resolveProvider(options: {
    *  it — Anthropic asks for a lifetime by it; the OpenAI providers decide by it whether to send the
    *  cache key. */
   promptCache: PromptCacheRequest;
+  /** Caching 3-M (B2b): `--cache-diagnostics`, only when stated. Anthropic asks unless it is `off`;
+   *  the provider itself gates the address and the settled choice. Other providers take no option. */
+  cacheDiagnostics?: CacheDiagnosticsSetting | undefined;
 }): Promise<{
   provider: LlmProvider;
   settleAuto?: (prices: AutoPriceInput) => { choice: CacheChoice; prices?: CacheAutoPrices };
@@ -632,7 +636,11 @@ export async function resolveProvider(options: {
       undefined,
       ANTHROPIC_DEFAULT_BASE_URL,
     );
-    const anthropic = new AnthropicProvider(model, { promptCache: options.promptCache, endpoint });
+    const anthropic = new AnthropicProvider(model, {
+      promptCache: options.promptCache,
+      endpoint,
+      cacheDiagnostics: options.cacheDiagnostics !== 'off',
+    });
     return anthropic.isAutoChoicePending()
       ? { provider: anthropic, settleAuto: anthropic.settleAutoChoice.bind(anthropic) }
       : { provider: anthropic };

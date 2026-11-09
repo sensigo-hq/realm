@@ -13,7 +13,7 @@
 // (correction 1).
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -336,5 +336,88 @@ describe('#616 PR-2c c9 — realm run purge on a SQLite home', () => {
       ],
       err: [],
     });
+  });
+});
+
+describe('#616 PR-2c c10a-3b-ii — the purge says when the free pages were not all returned', () => {
+  const line = (reason: string) =>
+    `realm.db's free pages were not all returned: ${reason}. The next purge that deletes a run returns them.`;
+  const refused = (code: string, message: string) =>
+    new WorkflowError(message, {
+      code: code as 'STATE_RUN_BUSY',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+    });
+  const busy = refused(
+    'STATE_RUN_BUSY',
+    'The store was busy for 5 s: another writer held it. Nothing was written. Try again.',
+  );
+  const full = refused(
+    'STATE_STORE_FULL',
+    "The Realm store could not be written: its disk, or the database's size limit, is full. Nothing was written. Free space, then try again.",
+  );
+  const fenced = refused(
+    'STATE_STORE_WRITES_FENCED',
+    'The store cannot confirm whether its last write was saved, so it refuses new writes until it can. Read back what you wrote to see what was saved, then try again.',
+  );
+
+  it.each([
+    {
+      name: 'the store busy',
+      error: busy as unknown,
+      reason: 'another process was using the store',
+    },
+    { name: 'a full disk', error: full as unknown, reason: 'the disk is full' },
+    { name: 'another refusal', error: fenced as unknown, reason: 'STATE_STORE_WRITES_FENCED' },
+    {
+      name: "SQLite's own message",
+      error: new Error('disk I/O error (SQLite error 10).') as unknown,
+      reason: 'disk I/O error (SQLite error 10)',
+    },
+  ])(
+    '$name: one line after the force line, in the purge\u2019s own words',
+    async ({ error, reason }) => {
+      const { handle } = await sqliteHome();
+      const run = await finished(handle);
+      const stat = await statOf(handle, run.id);
+      // The report shape of a failed vacuum step (`returnFreePages`): the run purged, the error carried.
+      const purge = stubPurge((selection) => ({
+        runs: selection.map(({ runId }) => ({
+          runId,
+          outcome: 'purged' as const,
+          bytes_deleted: stat,
+        })),
+        stored_bytes_deleted: stat,
+        file_bytes_reclaimed: 0,
+        vacuum: { steps: 0, pages_returned: 0, error },
+        checkpoint: { busy: 0, log: 0, checkpointed: 0 },
+      }));
+      const result = await purgeOn(handle, false, purge);
+      const { out, err } = render(result, false);
+      // (1) red when the line is dropped, printed elsewhere than after the force line, or the raw
+      //     message is printed (the store's own sentence, its path or "Nothing was written", or a
+      //     trailing period kept); (2) prints every line.
+      expect({ out, err }).toEqual({
+        out: [
+          `Purged 1/1 run(s) (${printed(stat)} freed, store-reported; realm.db shrank by 0 B). 0 already gone, 0 blocked, 0 failed.`,
+          line(reason),
+          'Copies of the deleted runs in backups made before this purge are not touched.',
+          FORCE_TAIL,
+        ],
+        err: [],
+      });
+    },
+  );
+
+  it('the docs quote the line the purge prints', () => {
+    const page = readFileSync(
+      new URL('../../../../docs/reference/cli/realm-run-acting.md', import.meta.url),
+      'utf8',
+    );
+    const sentence = `When the store's free pages could not all be returned, one more line says so: \`${line('<reason>')}\``;
+    // (1) red when the page's sentence or the printed line changes without the other; (2) prints
+    //     whether the page holds it.
+    expect({ onThePage: page.includes(sentence) }, sentence).toEqual({ onThePage: true });
   });
 });
