@@ -29,9 +29,11 @@
 //
 // WIRE FIDELITY, and what is decoration. The provider reads `content[]` (its `type`, `id`, `name`,
 // `input`, `text`), `stop_reason`, `usage` (issue #600 PR 1a: the token counters and, PR 2, the
-// `cache_creation` lifetime split) and `model` (issue #600 PR 2: the model that answered, recorded
-// on each request). `id` is echoed because a real response carries it and a stub that omits it
-// invites someone to "simplify" the shape until it stops resembling the API — it is not read.
+// `cache_creation` lifetime split), `model` (issue #600 PR 2: the model that answered, recorded on
+// each request) and the message's own `id` (caching 3-M B1: recorded as `response_id` when it passes
+// core's check; the stub answers each request with its own, `stubAnswerId`). The message's `type`
+// and `role` are echoed because a real response carries them and a stub that omits them invites
+// someone to "simplify" the shape until it stops resembling the API — they are not read.
 //
 // ONE THING THE REAL SDK CHECKS THAT A MODULE MOCK NEVER COULD: it throws "Streaming is
 // required…" BEFORE any network call when `max_tokens` exceeds the non-streaming ceiling.
