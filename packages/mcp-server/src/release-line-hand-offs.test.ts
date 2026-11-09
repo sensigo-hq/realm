@@ -39,7 +39,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
-import { makeTempHome, type TempHome } from './test-support/temp-home.js';
+import { makeTempHome, runCount, type TempHome } from './test-support/temp-home.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
 function claimDoc625(page: string, sentence: string): void {
@@ -256,7 +256,7 @@ describe('a registry the server’s registry provider returned is named by the t
         ]);
         expect((reply['error_details'] as Record<string, unknown>)['role'], tool).toBe(role);
       }
-      expect((await runStore.listRunIds()).size).toBe(1);
+      expect(await runCount(runStore)).toBe(1);
     } finally {
       await client.close();
     }
@@ -391,7 +391,7 @@ describe('the registry rule at the six handlers that resolve a registry, the who
     expect(await refusal(handleAdvanceRun({ run_id: started.run_id }, stores))).toBe(
       mismatchText('The registry handed to handleAdvanceRun', 'class ExtensionRegistry'),
     );
-    expect((await runStore.listRunIds()).size).toBe(1);
+    expect(await runCount(runStore)).toBe(1);
   });
 });
 
@@ -436,7 +436,7 @@ describe('tool entries (called directly, without the server)', () => {
         code: 'ENGINE_RELEASE_LINE_MISMATCH',
       });
     }
-    expect((await runStore.listRunIds()).size).toBe(0);
+    expect(await runCount(runStore)).toBe(0);
   });
 });
 

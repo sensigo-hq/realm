@@ -1,34 +1,27 @@
-// temp-home.ts — test support (issue #616 PR-2a, unit ii-a; PR-2b, b3): every test that builds the MCP
-// server, or calls a tool's handler, takes its stores from the program's own opener (`home.ts`) on a
-// temp folder, never the library's defaults on the developer's real `~/.realm` and never the store
-// classes constructed by hand. The opener is the one place this package builds its stores, so unit 2c
-// swaps its body (SQLite) and every test that uses this helper follows without an edit. Not
-// published: the package's `files` leaves out `dist/**/test-support/**`. It constructs no store
-// itself, so the source scan (`packages/cli/src/lib/store-door-616.test.ts`), which reads this folder
-// as source, allows it no construction.
+// temp-home.ts — test support (issue #616 PR-2a, unit ii-a; PR-2b, b3; PR-2c c10b-2): every test that
+// builds the MCP server, or calls a tool's handler, takes its stores from the program's own door
+// (`home.ts`) on a temp folder, never the library's defaults on the developer's real `~/.realm` and
+// never the store classes constructed by hand. The door is the one place this package opens a store,
+// and a test that uses this helper runs on the SQLite home it opens. Not published: the package's
+// `files` leaves out `dist/**/test-support/**`. It constructs no store itself, so the source scan
+// (`packages/cli/src/lib/store-door-616.test.ts`), which reads this folder as source, allows it no
+// construction.
 //
-// - `makeTempHome()`: a fresh temp folder `root` of its own, and the opener on `<root>/.realm`. A child
-//   process given `HOME: root` opens the same home (core's `realmHomePath`), so a test seeds a run
-//   through the handle and drives a program that reads it.
-// - `makeTempHome({ home })`: the opener on the given folder as it is — a test location, or a second,
-//   independent handle on a folder a handle opened earlier. It removes nothing.
+// - `makeTempHome()`: a fresh temp folder `root` of its own, and the door on `<root>/.realm`: a fresh
+//   SQLite home. A child process given `HOME: root` opens the same home (core's `realmHomePath`), so a
+//   test seeds a run through the handle and drives a program that reads it.
+// - `makeTempHome({ home })`: the door on the given folder — a test home from the testing package, or a
+//   folder a handle in this process already holds open, whose stores it then returns (one handle per
+//   home per process), so a `cleanup()` of such a handle ends it for every holder. It removes nothing.
 //
-// Unlike the CLI's door, this opener builds the registry at the open, and the registry's constructor
-// creates `<path>/workflows`; nothing else is created at the open (the run store reads the folder's
-// clock file; the trace buffer and the failed-attempt store touch no disk). A test that writes into
-// the runs folder before a store's first write makes that folder first.
+// The door's open creates the home: the folder, the fence files `runs`, `workflows`, `replays` and
+// `dedup`, and `realm.db`.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import type {
-  JsonFileFailedAttemptStore,
-  JsonFileStore,
-  JsonWorkflowStore,
-  RunStore,
-} from '@sensigo/realm';
+import type { RunRecord, RunStore } from '@sensigo/realm';
 import { openMcpHome } from '../home.js';
 import type { RealmMcpServerOptions } from '../server.js';
-import type { JsonTraceBufferStore } from '../json-trace-buffer-store.js';
 
 type StoreKey = 'runStore' | 'workflowStore' | 'traceBufferStore' | 'failedAttemptStore';
 
@@ -37,29 +30,24 @@ type StoreKey = 'runStore' | 'workflowStore' | 'traceBufferStore' | 'failedAttem
 export type ServerExtras = Omit<RealmMcpServerOptions, StoreKey> &
   Partial<Pick<RealmMcpServerOptions, StoreKey>>;
 
-/** A realm home opened through the program's opener for one test. */
+/** A realm home opened through the program's door for one test. */
 export interface TempHome {
   /** The folder a child process takes as HOME: the helper's own, or the parent of a given `.realm`
-   *  path; undefined for a home opened by a path not named `.realm` (a test location). */
+   *  path; undefined for a home opened by a path not named `.realm` (a test home). */
   readonly root: string | undefined;
-  /** The folder the opener opened: `<root>/.realm`, or the given `home`. */
+  /** The folder the door opened: `<root>/.realm`, or the given `home`. */
   readonly path: string;
   /** The four stores, as `createRealmMcpServer` takes them: spread `...home.stores`. */
-  readonly stores: {
-    readonly runStore: JsonFileStore;
-    readonly workflowStore: JsonWorkflowStore;
-    readonly traceBufferStore: JsonTraceBufferStore;
-    readonly failedAttemptStore: JsonFileFailedAttemptStore;
-  };
-  /** Closes the handle, then removes the helper's own root (retrying while a child still writes:
-   *  `rmSync` recursive, force, `maxRetries: 10`, `retryDelay: 100`); on a given `home` it removes
-   *  nothing. Idempotent. */
+  readonly stores: Readonly<Pick<RealmMcpServerOptions, StoreKey>>;
+  /** Closes the handle (for every caller that shares it), then removes the helper's own root
+   *  (retrying while a child still writes: `rmSync` recursive, force, `maxRetries: 10`,
+   *  `retryDelay: 100`); on a given `home` it removes nothing. Idempotent. */
   cleanup(): Promise<void>;
 }
 
-/** A fresh temp folder of the helper's own, and the program's opener on `<root>/.realm`. */
+/** A fresh temp folder of the helper's own, and the program's door on `<root>/.realm`. */
 export function makeTempHome(): Promise<TempHome & { readonly root: string }>;
-/** The program's opener on the given folder, as given; the helper owns nothing. */
+/** The program's door on the given folder, as given; the helper owns nothing. */
 export function makeTempHome(options: { home: string }): Promise<TempHome>;
 export async function makeTempHome(options?: { home: string }): Promise<TempHome> {
   // The helper owns a root only when it made one.
@@ -83,13 +71,20 @@ export async function makeTempHome(options?: { home: string }): Promise<TempHome
       failedAttemptStore: home.failedAttemptStore,
     },
     async cleanup(): Promise<void> {
-      // The handle first: unit 2c's SQLite handle must be closed before its folder goes.
-      await home.close();
+      // The handle first: the SQLite handle is closed before its folder goes.
+      home.close();
       if (owned !== undefined) {
         rmSync(owned, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       }
     },
   };
+}
+
+/** #616 PR-2c c10b-2: writes `record` as given through the store's `save` (its phase derived): how a
+ *  test plants a shape the engine would not write, since stored evidence is append-only. `save` is not
+ *  on the `RunStore` interface; the door's run store has it. */
+export async function seedRun(store: RunStore, record: RunRecord): Promise<void> {
+  await (store as unknown as { save(r: RunRecord): Promise<unknown> }).save(record);
 }
 
 /** #616 PR-2c (c0): how many runs `store` holds, read through the store — never by counting files in

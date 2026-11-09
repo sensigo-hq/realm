@@ -49,25 +49,14 @@ describe("realm agent's runAgent calls receive a defined traceBufferStore (issue
   });
 });
 
-/** Resolves `@sensigo/realm-mcp`'s package root from a KNOWN exported entry point (`main`), so
- *  `server.ts`'s source is readable from this package without a fragile `../../../` relative path
- *  that would break silently if either package moved. */
-function mcpServerSrcPath(file: string): string {
-  const distIndex = fileURLToPath(import.meta.resolve('@sensigo/realm-mcp'));
-  // distIndex is `.../packages/mcp-server/dist/index.js` — the package root is two levels up.
-  const pkgRoot = join(dirname(distIndex), '..');
-  return join(pkgRoot, 'src', file);
-}
-
 /** One JsonTraceBufferStore construction per production host, and the run store its reader
  *  argument must name — the exact source-text pin issue #616 PR-0 D5 requires. Read on `60a21eb`
  *  and on the D2-shaped build alike: the argument POSITION changed, the NAMES did not. */
 const HOSTS: Array<{ file: string; path: string; readerName: string }> = [
   // #616 PR-2c c10a-3a: the CLI's door builds no trace buffer (the SQLite home holds it; its fence is
   // the run's row in the same store), so its row went.
-  // #616 PR-2a (ii-a): the `realm-mcp` program's opener (mcp-server's src/home.ts), its own run store
-  // as the reader.
-  { file: 'mcp-server home.ts', path: mcpServerSrcPath('home.ts'), readerName: 'runStore' },
+  // #616 PR-2c c10b-2: nor does the `realm-mcp` program's, so its row went too; no production host
+  // builds the JSON trace buffer now, and PR-3 deletes the class.
   // #616 PR-2a (ii-b): the library builds no trace buffer any more (its caller passes all four), so
   // its `server.ts` row went with the derivation.
 ];
