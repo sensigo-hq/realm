@@ -1092,6 +1092,42 @@ describe('caching 3-M A-2b1 — CostView.misses', () => {
     ]);
   });
 
+  // Caching 3-M C1, check 7: the one front door. A request whose reference came from another run
+  // reaches the cost view with that place; the counts are the real 4,019, paired by construction (no
+  // two-run capture exists). Can fail: the place left as `reference`. Prints the list.
+  it('a request against an earlier run: the carrier says earlier_run', () => {
+    const facts = {
+      provider: 'anthropic',
+      model: 'claude-sonnet-5-5',
+      endpoint: 'default',
+      cache_requested: 'lifetime',
+      cache_marked: ['system', 'prompt'],
+      prefix_chars: 900,
+      prefix_parts: TOOL_PARTS,
+    };
+    const list = [
+      {
+        request_start: '2026-11-08T05:00:00.000Z',
+        request_index: 0,
+        request_in_call: 0,
+        ...facts,
+        prompt_tokens: 4023,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 4019,
+        reference: {
+          from: 'earlier_run',
+          request_start: '2026-11-08T04:00:00.000Z',
+          ...facts,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 4019,
+        },
+      },
+    ];
+    expect(composeCostView(list)?.misses?.[0]?.derived.predecessor, show(list)).toEqual({
+      from: 'earlier_run',
+    });
+  });
+
   // 1 (d) (b)'s list where turn 2 also read only 1000 and wrote 6087 (constructed: a turn whose
   // cache lookback reached only an earlier breakpoint, as Anthropic's docs describe, #946); its
   // prompt stays 7089, so turn 3 holds as captured. Can fail: the entries reversed, or only the
@@ -1419,6 +1455,131 @@ describe('caching 3-M A-2b1 — CostView.misses', () => {
       const view = composeCostView(list, undefined, { priceSource: FILE });
       expect(list, show(list)).toEqual(before);
       expect([view?.money?.priced, view?.money?.of], show(list)).toEqual([6, 6]);
+    });
+  });
+
+  // Caching 3-M B3b: what Anthropic said about a miss, read from the missed request's own record.
+  // The answers are built from the SDK's types (`BetaCacheMiss*`): no live answer is captured.
+  describe('caching 3-M B3b — what Anthropic said', () => {
+    const ID = 'msg_01ABCDEFGHJKMNPQRSTVWXYZ';
+    /** (b)'s list: the turn that missed (position 4) carries `diagnostics`, or nothing. */
+    const answered = (diagnostics?: unknown): Record<string, unknown>[] =>
+      toolTurns(pausedTurns()).map((r, i) =>
+        i === 4 && diagnostics !== undefined ? { ...r, cache_diagnostics: diagnostics } : r,
+      );
+    const named = (result: unknown): unknown => ({ asked: true, reference_id: ID, result });
+    const missOf = (
+      list: readonly Record<string, unknown>[],
+    ): NonNullable<NonNullable<ReturnType<typeof composeCostView>>['misses']>[number] | undefined =>
+      composeCostView(list)?.misses?.find((m) => m.position === 4);
+
+    // Can fail: a reason mapped to another; `no_divergence` dropped; the count required for every
+    // reason (the rows with none); the count dropped. Prints the list and the difference.
+    it.each<[string, unknown, unknown]>([
+      // The conversation Realm sent differs from the answer it named, and Anthropic says how much.
+      [
+        'the messages changed, with a count',
+        named({ type: 'messages_changed', cache_missed_input_tokens: 1200 }),
+        { reason: 'messages_changed', cache_missed_input_tokens: 1200 },
+      ],
+      // The agent profile or the step's schema moved the system text between two turns.
+      [
+        'the system text changed, with a count',
+        named({ type: 'system_changed', cache_missed_input_tokens: 6900 }),
+        { reason: 'system_changed', cache_missed_input_tokens: 6900 },
+      ],
+      // The MCP server listed different tools between two turns.
+      [
+        'the tools changed, with a count',
+        named({ type: 'tools_changed', cache_missed_input_tokens: 900 }),
+        { reason: 'tools_changed', cache_missed_input_tokens: 900 },
+      ],
+      // A gateway's fallback model answered the earlier turn.
+      [
+        'the model changed, with a count',
+        named({ type: 'model_changed', cache_missed_input_tokens: 7181 }),
+        { reason: 'model_changed', cache_missed_input_tokens: 7181 },
+      ],
+      // Anthropic names the difference and gives no count.
+      [
+        'the messages changed, no count',
+        named({ type: 'messages_changed' }),
+        { reason: 'messages_changed' },
+      ],
+      // The named answer has aged out at Anthropic, so it has nothing to compare with.
+      [
+        'the earlier request not found',
+        named({ type: 'previous_message_not_found' }),
+        { reason: 'previous_message_not_found' },
+      ],
+      // A difference Anthropic does not compare, such as a beta header.
+      ['the comparison unavailable', named({ type: 'unavailable' }), { reason: 'unavailable' }],
+      // A reason this Realm recorded as `unknown` at the write.
+      ['a reason Realm did not know', named({ type: 'unknown' }), { reason: 'unknown' }],
+      // The same, with a count: composition keeps what Anthropic gave; the words decide what prints.
+      [
+        'a reason Realm did not know, with a count',
+        named({ type: 'unknown', cache_missed_input_tokens: 40 }),
+        { reason: 'unknown', cache_missed_input_tokens: 40 },
+      ],
+      // Anthropic compared and the requests match: the miss is not about what was sent.
+      ['no difference found', named('no_divergence'), { reason: 'no_divergence' }],
+      // `realm run import` takes a file's values as they are: a reason from a later Realm's file.
+      ['a type outside the list', named({ type: 'new' }), { reason: 'unknown' }],
+      // The same route: a count that is no counter goes alone, and the reason stays.
+      [
+        'a count that is no counter',
+        named({ type: 'messages_changed', cache_missed_input_tokens: 'many' }),
+        { reason: 'messages_changed' },
+      ],
+    ])('%s', (_name, diagnostics, provider) => {
+      const list = answered(diagnostics);
+      expect(missOf(list)?.provider, show(list)).toEqual(provider);
+    });
+
+    // Can fail: `pending` given a reason; an absent `result` read as `no_divergence` (the null
+    // reference); a `type` that is not a string kept. Prints the list and the entry.
+    it.each<[string, unknown]>([
+      // Anthropic has not finished comparing yet: it said nothing.
+      ['the comparison pending', named('pending')],
+      // The answer carried nothing Realm can read.
+      ['nothing returned', named('not_returned')],
+      // Anthropic refused the question earlier in this drive, so this request did not ask.
+      ['the question refused', { asked: false, cause: 'rejected' }],
+      // A call's first request names no earlier answer: nothing to compare with.
+      ["a call's first request", { asked: true, reference_id: null }],
+      // Asking off, a custom address, another provider.
+      ['a request that never asked', undefined],
+      // `realm run import` takes a file's values as they are.
+      ['a type that is not a string', named({ type: 5 })],
+    ])('%s: no provider key', (_name, diagnostics) => {
+      const list = answered(diagnostics);
+      const miss = missOf(list);
+      expect([miss?.position, miss !== undefined && 'provider' in miss], show(list)).toEqual([
+        4,
+        false,
+      ]);
+    });
+
+    // The record says the pause was too long; Anthropic says the messages changed. Both are
+    // evidence and both are kept. Can fail: `provider` merged into `derived`, or either rewritten.
+    // Prints the list and the difference.
+    it("Realm's cause and Anthropic's reason disagree: both kept, untouched", () => {
+      const list = answered(named({ type: 'messages_changed', cache_missed_input_tokens: 1200 }));
+      expect(missOf(list), show(list)).toEqual({
+        position: 4,
+        derived: {
+          cause: 'possibly_expired',
+          rule: 'exact',
+          expected_tokens: 7181,
+          shortfall_tokens: 7181,
+          predecessor: { from: 'list', at: 3 },
+          gap_s: 420,
+          lifetime_s: 300,
+          lifetime_from: 'written',
+        },
+        provider: { reason: 'messages_changed', cache_missed_input_tokens: 1200 },
+      });
     });
   });
 });

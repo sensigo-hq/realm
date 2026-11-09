@@ -9,6 +9,7 @@ import {
   normalizeResponseId,
   type AutoPriceInput,
   type CacheAuto,
+  type CacheDiagnostics,
   type CacheAutoPrices,
   type CacheChoice,
   type CacheMarkedPart,
@@ -181,6 +182,55 @@ function userContentWithHead(
 function responseIdFacts(response: unknown): Partial<UsageRecord> {
   const id = checkedResponseId(response);
   return id !== undefined ? { response_id: id } : {};
+}
+
+/**
+ * Caching 3-M (piece B3a): Anthropic's answer to the question, for a request that named an earlier
+ * answer: `diagnostics` null is no divergence found, `cache_miss_reason` null is still pending, a
+ * reason object is that reason, and no key or anything else in its place is not returned.
+ */
+function cacheMissAnswer(response: unknown): unknown {
+  const answer = plainRecord(response);
+  if (answer === undefined || !Object.hasOwn(answer, 'diagnostics')) return 'not_returned';
+  if (answer['diagnostics'] === null) return 'no_divergence';
+  const diagnostics = plainRecord(answer['diagnostics']);
+  if (diagnostics === undefined || !Object.hasOwn(diagnostics, 'cache_miss_reason')) {
+    return 'not_returned';
+  }
+  if (diagnostics['cache_miss_reason'] === null) return 'pending';
+  const reason = plainRecord(diagnostics['cache_miss_reason']);
+  return typeof reason?.['type'] === 'string' ? reason : 'not_returned';
+}
+
+function plainRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * Caching 3-M (piece B3a) — what a request records about asking why it missed, from what it actually
+ * sent and the answer in hand. The body's key first: a request that carried it asked, whatever the
+ * drive has learned since. With no key, the memory to read is "the re-send was made" (`probed`), not
+ * "still asking": that clears only after the tool path's record is written. The final extraction
+ * never comes here. Anthropic's reason goes on as it came: core's one normaliser closes the value
+ * where the record is written, as it does a provider module's.
+ */
+function cacheDiagnosticsFacts(ask: CacheAsk, body: Rec, response: unknown): Partial<UsageRecord> {
+  if ('diagnostics' in body) {
+    const named = (body['diagnostics'] as { previous_message_id: string | null })
+      .previous_message_id;
+    return {
+      cache_diagnostics: (named === null
+        ? { asked: true, reference_id: null }
+        : {
+            asked: true,
+            reference_id: named,
+            result: cacheMissAnswer(response),
+          }) as CacheDiagnostics,
+    };
+  }
+  return ask.probed ? { cache_diagnostics: { asked: false, cause: 'rejected' } } : {};
 }
 
 /** Caching 3-M (B1, B2a): the answer's id, when it passes core's one check; else nothing. */
@@ -986,6 +1036,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
             : {}),
           // caching 3-M (piece B1): the answer's id, checked.
           ...responseIdFacts(response),
+          // caching 3-M (piece B3a): what this send asked, and what came back.
+          ...cacheDiagnosticsFacts(this.cacheAsk, sent, response),
         }),
       );
       return {
@@ -1444,6 +1496,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           ...(this.cacheFields.rejected !== undefined
             ? { cache_controls_rejected: this.cacheFields.rejected }
             : {}),
+          // caching 3-M (piece B3a): here, not in `bounded`: the final extraction also goes through
+          // that, and it never asks.
+          ...cacheDiagnosticsFacts(this.cacheAsk, body, response),
         });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const send = async (withCache: boolean): Promise<{ response: any; key: string }> => {

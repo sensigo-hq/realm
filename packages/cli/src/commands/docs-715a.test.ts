@@ -347,8 +347,18 @@ describe('#715 (a) — the docs sentences', () => {
       claimChangelog(sentence);
   });
 
+  it('#616 PR-2c c10a-4c: the CHANGELOG entry', () => {
+    // ways-renderer.test.ts's and render-reply.test.ts's c10a-4c cells: each door's way out for a
+    // copy with no file; answer-record-627.test.ts runs the printed command on a SQLite home.
+    claimChangelog(
+      "**A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the MCP server's way out (the operator's command on `realm mcp`'s and `realm serve`'s person line), also when the copy has no file (the SQLite store's copies); only a copy that is not there says `realm workflow register <file>`. (#616)",
+    );
+  });
+
   it('the CHANGELOG entries, sentence by sentence', () => {
     for (const sentence of [
+      // #616 PR-2c c10a-4b.
+      '**No command reports "run files that could not be read" any more:** on the SQLite store a run is a row, so `realm run list`, `cleanup`, `reclaim`, `drain`, `purge` and `run migrate` print no such line, and `realm listen`\'s sweeper logs no skipped files. (#616)',
       // A1–A10, B2, B10.
       "**A run store's clock (issue #715).** `@sensigo/realm` exports `Clock`, `createSystemClock`, `systemClock`, `takeReading` and `floorAtHolder`.",
       '`JsonFileStore` and `InMemoryStore` have a `clock`, the time they stamp their writes with; `InMemoryStore` takes one: `new InMemoryStore({ clock })`.',

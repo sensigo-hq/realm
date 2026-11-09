@@ -45,7 +45,6 @@ import {
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { agentReadyReason, inFlightReasons } from './run-advance.js';
-import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
 
@@ -616,21 +615,14 @@ export async function runDrainAction(
       process.exit(1);
     }
     // issue #719 (B3): its own `try` — a listing that throws is rendered like every other failure
-    // here, never an unhandled rejection. The readable runs are acted on; a damaged run file is
-    // reported, not acted on.
+    // here, never an unhandled rejection.
     let runs: RunRecord[];
     // #715 (b) (D-26): each row is judged at its own snapshot's `at`.
     let atOf: Map<string, Date>;
     try {
-      const listing = await listRunsDiagnosed(runStore);
+      const listing = await runStore.list();
       runs = listing.snapshots.map((s) => s.record);
       atOf = new Map(listing.snapshots.map((s) => [s.record.id, s.at]));
-      for (const line of unreadableRunLines(
-        listing.unreadable,
-        '; realm run drain --all did not act on them.',
-      )) {
-        console.error(line);
-      }
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

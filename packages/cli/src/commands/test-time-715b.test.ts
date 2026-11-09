@@ -23,26 +23,13 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..
 /**
  * A file that builds a JSON-file store, takes a lock, or starts the built CLI. The store's members,
  * each with what puts a file in the set:
- * - `new JsonFileStore(` constructs the store, which takes the lock library's locks;
- * - `openMcpHome(` is the MCP server's door, which constructs the run store (a `JsonFileStore`);
- * - in `packages/mcp-server/**` only, `makeTempHome(` is that package's test helper, which opens that
- *   door (#616 PR-2b).
- * #616 PR-2c c10a-3a: the CLI's door and its helper open the SQLite home, whose write lock holds
- * against a faked `Date` (MA 3, 2026-11-06), so `openCliHome(` left this list and the CLI's
- * `makeTempHome(` does not count. The two MCP tokens leave when c10b flips that door.
+ * - `new JsonFileStore(` constructs the store, which takes the lock library's locks.
+ * #616 PR-2c c10a-3a, c10b-2: both programs' doors and their helpers open the SQLite home, whose write
+ * lock holds against a faked `Date` (MA 3, 2026-11-06), so `openCliHome(`, `openMcpHome(` and
+ * `makeTempHome(` left this list.
  */
 const TAKES_REAL_LOCKS =
-  /new JsonFileStore\(|lockfile\.lock\(|proper-lockfile|dist\/index\.js|spawnSync\(|execFileSync\(|openMcpHome\(/;
-/** The MCP package's test helper opens a door that still builds a JSON store (`makeTempHome(`). */
-const MCP_HELPER = /makeTempHome\(/;
-
-/** Whether the file at `path` (repo-relative) takes real locks: the tokens, and the helper by package. */
-function takesRealLocks(path: string, text: string): boolean {
-  return (
-    TAKES_REAL_LOCKS.test(text) ||
-    (path.startsWith('packages/mcp-server/') && MCP_HELPER.test(text))
-  );
-}
+  /new JsonFileStore\(|lockfile\.lock\(|proper-lockfile|dist\/index\.js|spawnSync\(|execFileSync\(/;
 
 /** A fake of the global `Date` (timers alone, or `performance`, are not). */
 function fakesDate(text: string): boolean {
@@ -135,7 +122,7 @@ function violations(files: ReadonlyArray<{ path: string; text: string }>): strin
     .filter(
       (f) =>
         f.path !== SELF &&
-        takesRealLocks(f.path, f.text) &&
+        TAKES_REAL_LOCKS.test(f.text) &&
         fakesDate(f.text) &&
         ALLOWED[f.path] === undefined,
     )
@@ -167,19 +154,14 @@ describe('#715 (b) 04 §B.3 — a test that takes real locks never fakes the glo
         path: 'seed/to-fake-date.test.ts',
         text: store + "vi.useFakeTimers({\n  toFake: [\n    'setTimeout',\n    'Date',\n  ],\n});",
       },
-      // The three below (#616 PR-2c c10a-3a): (a) red when the helper counts in every package (the
-      // CLI seed is flagged), the helper no longer counts in the MCP package, or `openMcpHome\(` is
-      // lost from `TAKES_REAL_LOCKS`; (b) the list printed gains or lacks that seed's name.
+      // #616 PR-2c c10b-2: (a) red when a door or helper token comes back to `TAKES_REAL_LOCKS` (these
+      // two are flagged); (b) the list printed gains that seed's name.
       {
         path: 'packages/cli/src/seed/helper.test.ts',
         text: 'const h = await makeTempHome();\nvi.useFakeTimers();',
       },
       {
-        path: 'packages/mcp-server/src/seed/helper.test.ts',
-        text: 'const h = await makeTempHome();\nvi.useFakeTimers();',
-      },
-      {
-        path: 'seed/mcp-door.test.ts',
+        path: 'packages/mcp-server/src/seed/door.test.ts',
         text: 'const h = await openMcpHome({ home: dir });\nvi.useFakeTimers();',
       },
       {
@@ -193,8 +175,6 @@ describe('#715 (b) 04 §B.3 — a test that takes real locks never fakes the glo
       'seed/system-time.test.ts',
       'seed/spy.test.ts',
       'seed/to-fake-date.test.ts',
-      'packages/mcp-server/src/seed/helper.test.ts',
-      'seed/mcp-door.test.ts',
     ]);
   });
 
@@ -202,7 +182,7 @@ describe('#715 (b) 04 §B.3 — a test that takes real locks never fakes the glo
     // (a) red when an allowed file was converted and its entry left behind; (b) prints the entries.
     const stale = Object.keys(ALLOWED).filter((p) => {
       const text = readFileSync(join(ROOT, p), 'utf8');
-      return !(takesRealLocks(p, text) && fakesDate(text));
+      return !(TAKES_REAL_LOCKS.test(text) && fakesDate(text));
     });
     expect(stale).toEqual([]);
   });

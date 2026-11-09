@@ -409,3 +409,17 @@ describe('the Go on: line repeats a stated --prompt-cache (issue #600 PR 2)', ()
     );
   });
 });
+
+describe('caching 3-M B2b — the re-attach command and --cache-diagnostics (check 6)', () => {
+  // Real case: an operator who chose `off` and follows the printed command must not start leaving
+  // fingerprints again; a stated `on` on a listen child would print a command that is refused.
+  // (a) red when `on` is repeated, or the flag is always added, or `off` is dropped; (b) prints the
+  // three flag strings.
+  it('a stated off is repeated; a stated on and an unstated flag add nothing', () => {
+    expect([
+      buildReattachFlags({ model: 'm', cacheDiagnostics: 'off' }),
+      buildReattachFlags({ model: 'm', cacheDiagnostics: 'on' }),
+      buildReattachFlags({ model: 'm' }),
+    ]).toEqual(['--model m --cache-diagnostics off', '--model m', '--model m']);
+  });
+});

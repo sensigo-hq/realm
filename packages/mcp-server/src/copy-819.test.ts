@@ -8,7 +8,6 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: codes,
 // texts — never a token.
 import { describe, it, expect, afterEach } from 'vitest';
-import { join } from 'node:path';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -49,7 +48,7 @@ async function atGate(workflowId: string, copy?: unknown) {
     };
     return JSON.parse(r.content[0]!.text) as Reply;
   };
-  return { call, runId: run.id, runStore, file: join(h.path, 'workflows', `${workflowId}.json`) };
+  return { call, runId: run.id, runStore };
 }
 
 describe('#819 U2 — a copy with no steps, over MCP', () => {
@@ -89,7 +88,7 @@ describe('#819 U2 — a copy with no steps, over MCP', () => {
     }).toEqual({
       state: {
         elsewhere: [
-          `register: Workflow 'plain-gate''s registered copy (${s.file}) cannot be used; an operator repairs it, outside this conversation.`,
+          `register: Workflow 'plain-gate''s registered copy cannot be used; an operator repairs it, outside this conversation.`,
         ],
         internal: false,
       },
