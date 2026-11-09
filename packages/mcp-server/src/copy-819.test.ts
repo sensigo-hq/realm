@@ -88,7 +88,7 @@ describe('#819 U2 — a copy with no steps, over MCP', () => {
     }).toEqual({
       state: {
         elsewhere: [
-          `register: An operator registers workflow 'plain-gate' again, outside this conversation.`,
+          `register: Workflow 'plain-gate''s registered copy cannot be used; an operator repairs it, outside this conversation.`,
         ],
         internal: false,
       },

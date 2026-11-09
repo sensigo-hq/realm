@@ -39,8 +39,8 @@ const YAML = [
 /** Names an answer way, in a reply's hint or next_actions (correction 2 adds the CLI command). */
 const ANSWER_WAY = /submit_human_response|call_with|claim_token|present_question|run respond/;
 /** The handing-off doors' sentence for a register remedy (correction 2, 3.1). */
-const WAITS_ONCE_REGISTERED =
-  'Once it is registered, the question waits for an answer outside this conversation.';
+const WAITS_ONCE_REPAIRED =
+  'Once the copy is repaired, the question waits for an answer outside this conversation.';
 /** A damaged registered copy: it has no steps, so Realm cannot use it. */
 const DAMAGED = {
   id: 'at627',
@@ -135,7 +135,7 @@ describe('#627 W correction 1 (A2) — append_trace’s error reply names no ans
     expect({
       status: parsed['status'],
       namesAnswer: ANSWER_WAY.test(hint) || ANSWER_WAY.test(next),
-      waitsOutside: hint.includes(WAITS_ONCE_REGISTERED),
+      waitsOutside: hint.includes(WAITS_ONCE_REPAIRED),
     }).toEqual({ status: 'error', namesAnswer: false, waitsOutside: true });
   });
 });
@@ -172,7 +172,7 @@ describe('#627 W correction 2 (3.1, MCP F7) — a copy Realm cannot read: the wa
       expect({
         traceNamesAnswer: ANSWER_WAY.test(trace.hint) || ANSWER_WAY.test(trace.next),
         answerNamesAnswer: ANSWER_WAY.test(answer.hint) || ANSWER_WAY.test(answer.next),
-        waitsOnceRepaired: trace.hint.includes(WAITS_ONCE_REGISTERED),
+        waitsOnceRepaired: trace.hint.includes(WAITS_ONCE_REPAIRED),
       }).toEqual({
         traceNamesAnswer: false,
         answerNamesAnswer: false,
@@ -194,7 +194,7 @@ describe('#627 W correction 2 (3.1, MCP F7) — a copy Realm cannot read: the wa
       words: register?.human_readable,
       againFrom: register?.human_readable.includes('again from') ?? true,
     }).toEqual({
-      words: `An operator registers workflow 'at627' again, outside this conversation. ${WAITS_ONCE_REGISTERED}`,
+      words: `Workflow 'at627''s registered copy cannot be used; an operator repairs it, outside this conversation. ${WAITS_ONCE_REPAIRED}`,
       againFrom: false,
     });
   });
