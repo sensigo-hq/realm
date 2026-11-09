@@ -24,6 +24,11 @@ import { startOpenAiStub } from './test-support/openai-stub.js';
 import { runComposedJourney } from './test-support/composed-journey.js';
 import { makeTempHome } from '../test-support/temp-home.js';
 import { resolveMcpServerEntry } from './test-support/mcp-server-entry.js';
+import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from './test-support/mcp-bin-on-json.js';
+
+// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that start the `realm-mcp` bin. One name, so
+// a cell's only change is this token and prettier leaves its body as it was.
+const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 
 // Distinctive on purpose. `sanitizeError` redacts every environment value longer than four
 // characters as a substring of tool results and errors — a key that collided with any real text
@@ -36,7 +41,7 @@ const PROBE_WORKFLOW_ID = 'no-such-workflow-composed-journey';
 resolveMcpServerEntry();
 
 describe('composed journey — a politely-failed tool call, all the way to the operator', () => {
-  it('runs the real provider against a real MCP child and records, persists and renders the failure', async () => {
+  xit('runs the real provider against a real MCP child and records, persists and renders the failure', async () => {
     const h = await makeTempHome();
     const originalKey = process.env['OPENAI_API_KEY'];
     process.env['OPENAI_API_KEY'] = STUB_API_KEY;

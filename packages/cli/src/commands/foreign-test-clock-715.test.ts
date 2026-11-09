@@ -167,12 +167,12 @@ const NO_MODE_BITS = process.platform === 'win32' || process.getuid?.() === 0;
 
 describe('#715 (a) correction 1 (C-10) — a ~/.realm this user cannot read, on the built CLI', () => {
   it.skipIf(NO_MODE_BITS)(
-    'realm run list: the typed line that the runs folder cannot be read, no stack, exit 1 (skipped as root or on Windows: mode bits do not bind there)',
+    'realm run list: the typed line that the home cannot be written, no stack, exit 1 (skipped as root or on Windows: mode bits do not bind there)',
     () => {
       // (a) red when only ENOENT counts as an absent clock file (the store's construction throws a
       // plain error with its stack); (b) prints the first stderr line and the exit code.
       const locked = join(scratch, 'home-locked');
-      mkdirSync(join(locked, '.realm', 'runs'), { recursive: true });
+      mkdirSync(join(locked, '.realm'), { recursive: true });
       chmodSync(join(locked, '.realm'), 0o000);
       try {
         const r = realm(['run', 'list'], locked);
@@ -180,7 +180,7 @@ describe('#715 (a) correction 1 (C-10) — a ~/.realm this user cannot read, on 
           {
             code: r.code,
             stdout: r.stdout,
-            folder: /The runs folder .* cannot be read \(EACCES\)/.test(r.stderr),
+            folder: /Realm cannot write to .*: permission denied\./.test(r.stderr),
             clockFile: r.stderr.includes('test clock file'),
             stack: STACK.test(r.stderr),
           },

@@ -10,7 +10,6 @@
 // that turns it red and (b) what it prints on failure: lines and record fields — never a token.
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -377,7 +376,7 @@ describe('#627 W — the `newer` readers on the CLI (MA 3’s W-r2 arms)', () =>
     // (a) red when the listing shows the newer copy as readable, or drops it with no sentence;
     //     (b) prints the warning lines.
     expect(r.err.split('\n').filter((l) => l.startsWith('⚠'))).toEqual([
-      '⚠ 1 file in the registry was registered by a later version of Realm: rec627.json — realm cannot audit what it cannot read.',
+      '⚠ 1 workflow in the registry was registered by a later version of Realm: rec627 — realm cannot audit what it cannot read.',
     ]);
   }, 60_000);
 });
@@ -402,10 +401,9 @@ describe('#627 W correction 2 (3.2) — the repair command inspect prints for a 
     },
   } as const;
   it.each(Object.keys(damage) as Array<keyof typeof damage>)(
-    '%s: the operator command realm mcp prints for the repair exits 1, names the copy and a way out, never "Failed to read workflow file"',
+    '%s: realm mcp tells the person an operator registers the workflow again and prints the operator command, never "Failed to read workflow file"',
     async (cause) => {
       const h = await home();
-      const copy = join(h.dir, '.realm', 'workflows', 'rec627.json');
       await damage[cause](h);
       // The command is printed by the MCP door's operator route: get_run_state's block addressed to
       // the person (its second content item, audience user) ends "The operator's command: <command>".
@@ -429,22 +427,19 @@ describe('#627 W correction 2 (3.2) — the repair command inspect prints for a 
         await client.close();
       }
       const printed = /The operator's command: (.+)$/m.exec(person)?.[1];
-      const ran = printed !== undefined ? h.realm(printed.split(' ').slice(1)) : undefined;
-      const said = `${ran?.out ?? ''}${ran?.err ?? ''}`;
-      // (a) red when the printed command registers the COPY (`realm workflow register <copy>`, which
-      //     fails: register takes a source), or the command does not say what is wrong; (b) prints the
-      //     command, its exit, and whether it names the copy, a way out, and the generic failure.
+      // #616 PR-2c c10a-3a: the store's refusals carry no copy path, so the way the CLI prints is the
+      // placeholder (a person fills in the file); it is printed, never run here.
+      // (a) red when the way out is dropped, the person line changes, or the generic failure comes
+      //     back; (b) prints the printed command and two booleans.
       expect({
         printed,
-        code: ran?.code,
-        namesCopy: said.includes(copy) || said.includes("'rec627'"),
-        wayOut: /To repair:|Re-register it|registered by a later version of Realm/.test(said),
-        generic: said.includes('Failed to read workflow file'),
+        person: person.includes(
+          "An operator registers workflow 'rec627' again, outside this conversation.",
+        ),
+        generic: person.includes('Failed to read workflow file'),
       }).toEqual({
-        printed: 'realm workflow validate --registered rec627',
-        code: 1,
-        namesCopy: true,
-        wayOut: true,
+        printed: 'realm workflow register <file>',
+        person: true,
         generic: false,
       });
     },

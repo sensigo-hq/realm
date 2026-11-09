@@ -1,23 +1,24 @@
 // temp-home.ts — test support (issue #616 PR-2b, b1): a CLI test opens its stores through the CLI's
 // own door (`openCliHome`, lib/home.ts) on a temp folder, never by constructing the store classes by
-// hand. The door is the one place the CLI builds its stores, so unit 2c swaps its body (SQLite) and
-// every test that uses this helper follows without an edit. Not published: the package's `files`
-// leaves out `dist/**/test-support/**`. It constructs no store itself, so the source scan
+// hand. The door is the one place the CLI opens its stores (#616 PR-2c c10a-3a: the SQLite home), and
+// every test that uses this helper follows it. Not published: the package's `files` leaves out
+// `dist/**/test-support/**`. It constructs no store itself, so the source scan
 // (lib/store-door-616.test.ts), which reads this folder as source, stays green.
 //
-// - `makeTempHome()`: a fresh temp folder `root` of its own, and the door on `<root>/.realm`. A child
-//   process given `HOME: root` opens the same home (core's `realmHomePath`), so a test seeds a run
-//   through the handle and drives a command that reads it.
-// - `makeTempHome({ home })`: the door on the given folder as it is — a test location, or a second,
-//   independent handle on a folder a handle opened earlier. It creates nothing and removes nothing.
+// - `makeTempHome()`: a fresh temp folder `root` of its own, and the door on `<root>/.realm`: a fresh
+//   SQLite home. A child process given `HOME: root` opens the same home (core's `realmHomePath`), so a
+//   test seeds a run through the handle and drives a command that reads it.
+// - `makeTempHome({ home })`: the door on the given folder — a test home from the testing package, or
+//   a folder a handle in this process already holds open, whose stores it then returns (one handle
+//   per home per process). It removes nothing.
+// - `clock`: passed to the door, for a test that must give the home its own clock object.
 //
-// The door creates nothing at the open (the run store reads the folder's clock file; the registry's
-// folder is made at its first use), and neither does this helper beyond its own `root`: a test that
-// writes into a folder before a store's first write makes that folder first.
+// The door's open creates the home: the folder, the fence files `runs`, `workflows`, `replays` and
+// `dedup`, and `realm.db`. `cleanup()` closes the handle first, for every caller that shares it.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import type { RunStore } from '@sensigo/realm';
+import type { Clock, RunStore } from '@sensigo/realm';
 import { openCliHome, type CliHome } from '../lib/home.js';
 
 /** A realm home opened through the CLI's door for one test. */
@@ -28,36 +29,46 @@ export interface TempHome {
   readonly root: string | undefined;
   /** The folder the door opened: `<root>/.realm`, or the given `home`. */
   readonly path: string;
-  /** The door's handle: the six stores, `dedupStoreFor`, `close()`. */
+  /** The door's handle: the stores, `dedupStoreFor`, `purge`, `close()`. */
   readonly home: CliHome;
-  /** Closes the handle, then removes the helper's own root (retrying while a child still writes:
-   *  `rmSync` recursive, force, `maxRetries: 10`, `retryDelay: 100`); on a given `home` it removes
-   *  nothing. Idempotent. */
+  /** Closes the handle (for every caller that shares it), then removes the helper's own root
+   *  (retrying while a child still writes: `rmSync` recursive, force, `maxRetries: 10`,
+   *  `retryDelay: 100`); on a given `home` it removes nothing. Idempotent. */
   cleanup(): Promise<void>;
 }
 
 /** A fresh temp folder of the helper's own, and the CLI's door on `<root>/.realm`. */
-export function makeTempHome(): Promise<TempHome & { readonly root: string }>;
+export function makeTempHome(options?: {
+  readonly clock?: Clock;
+}): Promise<TempHome & { readonly root: string }>;
 /** The CLI's door on the given folder, as given; the helper owns nothing. */
-export function makeTempHome(options: { home: string }): Promise<TempHome>;
-export async function makeTempHome(options?: { home: string }): Promise<TempHome> {
+export function makeTempHome(options: {
+  readonly home: string;
+  readonly clock?: Clock;
+}): Promise<TempHome>;
+export async function makeTempHome(
+  options: { readonly home?: string; readonly clock?: Clock } = {},
+): Promise<TempHome> {
   // The helper owns a root only when it made one.
   let owned: string | undefined;
   let path: string;
-  if (options === undefined) {
+  if (options.home === undefined) {
     owned = mkdtempSync(join(tmpdir(), 'realm-temp-home-'));
     path = join(owned, '.realm');
   } else {
     path = options.home;
   }
   const root = owned ?? (basename(path) === '.realm' ? dirname(path) : undefined);
-  const home = await openCliHome({ home: path });
+  const home = await openCliHome({
+    home: path,
+    ...(options.clock !== undefined ? { clock: options.clock } : {}),
+  });
   return {
     root,
     path,
     home,
     async cleanup(): Promise<void> {
-      // The handle first: unit 2c's SQLite handle must be closed before its folder goes.
+      // The handle first: the SQLite handle is closed before its folder goes.
       await home.close();
       if (owned !== undefined) {
         rmSync(owned, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

@@ -73,7 +73,7 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
       footer: out.includes('0 workflows registered; 1 entry in the registry could not be read.'),
       // #819 (U4): red when the ⚠ line names no way out.
       warned: stderr().includes(
-        '⚠ 1 file in the registry was registered by an older version of Realm: wleg.json; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.',
+        '⚠ 1 workflow in the registry was registered by an older version of Realm: wleg; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.',
       ),
     }).toEqual({ row: false, footer: true, warned: true });
     expect(exitSpy).not.toHaveBeenCalled();

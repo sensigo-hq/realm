@@ -635,19 +635,22 @@ Re-run with --force to actually delete.
 With `--force`:
 
 ```text
-Purged 2/3 run(s) (4.9 KB freed, store-reported). 0 already gone, 1 blocked, 0 failed.
+Purged 2/3 run(s) (4.9 KB freed, store-reported; realm.db shrank by 4.0 KB). 0 already gone, 1 blocked, 0 failed.
+Copies of the deleted runs in backups made before this purge are not touched.
   ⚠ 5ef64237-9f2d-4624-84c8-9686feb38998: drain_pending
 1 of 3 selected run(s) were resumable via 'realm run resume' — purging has destroyed that path for them.
 ```
 
-| Count          | Means                                                                                                         |
-| -------------- | ------------------------------------------------------------------------------------------------------------- |
-| `Purged`       | Runs deleted, of the runs selected.                                                                           |
-| `already gone` | Runs that something else deleted first.                                                                       |
-| `blocked`      | Runs whose run file was kept. `drain_pending` means the run still owes a cleanup step; see [`drain`](#drain). |
-| `failed`       | Runs that could not be deleted because of an error.                                                           |
+| Count          | Means                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `Purged`       | Runs deleted, of the runs selected.                                                        |
+| `already gone` | Runs that something else deleted first.                                                    |
+| `blocked`      | Runs kept. `drain_pending` means the run still owes a cleanup step; see [`drain`](#drain). |
+| `failed`       | Runs that could not be deleted because of an error.                                        |
 
-A run that changed after `purge` selected it is reported `blocked`, and its run file is kept: a run that was resumed with the sentence that it is no longer terminal, and any other change, such as a cleanup step that completed, as `changed_since_selected` (added after version 0.48.0). Files that an artifact store had already deleted stay deleted. Any `blocked` or `failed` line of a run that had files deleted ends with `(<bytes> across <n> of its artifact stores were already freed before the refusal)`. A run that owes a cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted, and a dry run lists it among the runs that would be purged.
+The bytes freed are what the store reports for the deleted runs; `realm.db shrank by` is what the file gave back on disk — a floor, since pages of a deleted run still in the write-ahead log do not show in it. When another process was using the log, one more line says `realm.db's log was not reset: another process was using it. The space is returned at a later checkpoint; the deleted text may stay readable in realm.db-wal until a later purge resets the log.`
+
+A run that changed after `purge` selected it is reported `blocked` and kept whole — a run that was resumed with the sentence that it is no longer terminal, and any other change, such as a cleanup step that completed, as `changed_since_selected` (added after version 0.48.0). A blocked run keeps every row: a run that owes a cleanup step is blocked as `drain_pending` with its trace entries and refused answers kept, and a dry run lists it among the runs that would be purged.
 
 The line about `realm run resume` counts the selected runs that had a failed step `resume` could have made runnable again: a failed cleanup step is not counted, since `resume --from` refuses it. A run whose workflow cannot be read is counted when it has any failed step: `resume` refuses it until the workflow is registered again, and only the workflow tells a cleanup step from another.
 

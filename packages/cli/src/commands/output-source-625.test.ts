@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as realmCore from '@sensigo/realm';
@@ -17,8 +18,8 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type EvidenceSnapshot,
   type WorkflowDefinition,
-  type RunStore,
 } from '@sensigo/realm';
+import type { CliHome } from '../lib/home.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -65,7 +66,7 @@ describe(
   () => {
     let h: TempHome & { readonly root: string };
     let home: string;
-    let runStore: RunStore;
+    let runStore: CliHome['runStore'];
 
     beforeEach(async () => {
       h = await makeTempHome();
@@ -153,10 +154,12 @@ describe(
     });
 
     it('an entry written before the field: `not recorded`, never a source (predates_output_source)', async () => {
-      const id = await ranAll();
-      const { record: record } = await runStore.get(id);
-      await runStore.update({
+      const { record: record } = await runStore.get(await ranAll());
+      // #616 PR-2c c10a-3a: stored evidence cannot change; the older shape is saved as a run of its own.
+      const id = randomUUID();
+      await runStore.save({
         ...record,
+        id,
         evidence: record.evidence.map(({ output_source: _old, ...rest }) => rest),
       });
       // (a) red when inspect guesses a source for an entry that carries none, or prints nothing for a
