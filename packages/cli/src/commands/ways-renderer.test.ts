@@ -328,6 +328,25 @@ describe('#627 W correction 2 (3.2) — the command for a register way with a co
       without: 'realm workflow register <file>',
     });
   });
+
+  // Real case: a copy in the SQLite registry has no file. It is damaged, so the operator is sent to
+  // the command that names the fault, not told to register a file. (1) red when the renderer reads
+  // the path alone. (2) prints the command.
+  it('#616 PR-2c c10a-4c: a register way whose copy cannot be used and has no file → `realm workflow validate --registered <id>`', () => {
+    expect(
+      CLI_COMMANDS.register(
+        {
+          verb: 'register',
+          conditions: [],
+          workflow_id: 'w1',
+          run_id: 'r1',
+          copy: 'unusable',
+        },
+        undefined,
+        NO_DRIVE_FLAGS,
+      ),
+    ).toBe('realm workflow validate --registered w1');
+  });
 });
 
 describe('framework v1.37 J-1 — the renderer law: a way table takes one carrier and the host’s own settings, never a record, view, definition, registry or clock', () => {
