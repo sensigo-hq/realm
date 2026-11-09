@@ -244,9 +244,8 @@ describe('issue #719 — a sweeper pass that fails is logged', () => {
       ...silentLogger,
       error: (msg: string, data?: unknown) => errors.push({ msg, data }),
     };
-    // #616 PR-2c, c10a-2b: a double over the handle's run store whose listing rejects — both verbs
-    // the sweep may call (`listWithDiagnostics` where the store has it, as the JSON store does;
-    // `list` otherwise), with one Realm error.
+    // #616 PR-2c, c10a-2b: a double over the handle's run store whose listing rejects, with one
+    // Realm error.
     const err = new WorkflowError('The store could not list the runs: a fake refusal.', {
       code: 'ENGINE_STORE_FAILED',
       category: 'ENGINE',
@@ -255,7 +254,7 @@ describe('issue #719 — a sweeper pass that fails is logged', () => {
     });
     const runStore = new Proxy(h.home.runStore, {
       get(target, prop) {
-        if (prop === 'listWithDiagnostics' || prop === 'list') {
+        if (prop === 'list') {
           return async (): Promise<never> => Promise.reject(err);
         }
         const v = Reflect.get(target, prop, target) as unknown;
