@@ -3,7 +3,7 @@
 // cannot ship unclassified:
 //   - GUARDED (production, `option-value-guard.ts`): takes any word without a check of its own; the
 //     guard refuses a flag-like word typed after it;
-//   - OWN_CHECK (here): already refuses such a word with its own message (20 by an `argParser`, 34 by
+//   - OWN_CHECK (here): already refuses such a word with its own message (22 by an `argParser`, 34 by
 //     a check in the action).
 // Rule for a new option: it already refuses → OWN_CHECK; otherwise → GUARDED. Prints only the
 // (leaf, flag) pairs that break the law.
@@ -19,9 +19,9 @@ import { GUARDED_OPTIONS } from './option-value-guard.js';
 
 type Pair = `${string} ${string}`;
 
-/** The 54 that already refuse a flag-like word with their own message (do NOT guard). */
+/** The 56 that already refuse a flag-like word with their own message (do NOT guard). */
 const OWN_CHECK: readonly Pair[] = [
-  // by an argParser (20)
+  // by an argParser (22)
   'validate --provider',
   'register --provider',
   'watch --provider',
@@ -29,9 +29,11 @@ const OWN_CHECK: readonly Pair[] = [
   'agent --schema-retries',
   'agent --llm-timeout',
   'agent --prompt-cache',
+  'agent --cache-diagnostics',
   'listen --provider',
   'listen --llm-timeout',
   'listen --prompt-cache',
+  'listen --cache-diagnostics',
   'listen --body-timeout-ms',
   'listen --max-body-bytes',
   'listen --max-concurrent',
@@ -100,7 +102,7 @@ function derived(): Map<Pair, Command[]> {
 }
 
 describe('#920 C-2 — every value-taking option is classified exactly once', () => {
-  it('1. the two tables and the command tree agree (24 + 54 = 78)', () => {
+  it('1. the two tables and the command tree agree (25 + 56 = 81)', () => {
     // (a) red when a guarded row is deleted, an option is added to a command, or a row is in two
     // tables; (b) prints the unclassified, extra and duplicated (leaf, flag) pairs only.
     const tree = derived();
@@ -126,8 +128,8 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
       },
       JSON.stringify({ inTwo, unclassified, notInTree, shared }),
     ).toEqual({
-      counts: { guarded: 25, ownCheck: 54 },
-      tree: 79,
+      counts: { guarded: 25, ownCheck: 56 },
+      tree: 81,
       inTwo: [],
       unclassified: [],
       notInTree: [],
