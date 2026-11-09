@@ -37,14 +37,13 @@ import {
   type DisclosureReceipt,
   type DisclosureTally,
   type FactProducers,
+  type KeysOfUnion,
   type WalkOptions,
   deriveOf,
 } from './disclosure-walk.js';
 
 type Row<T> = Record<keyof T, DisclosureClass>;
 type Element<T> = T extends readonly (infer E)[] ? E : never;
-/** Every key of every arm of a union: `keyof` over a union is only the keys all its arms share. */
-type KeysOfUnion<T> = T extends unknown ? keyof T : never;
 
 // ── The gate ──────────────────────────────────────────────────────────────────────────────────
 
@@ -99,10 +98,6 @@ const CACHE_CONTROLS_REJECTED_TABLE = {
   fields: 'fact',
 } as const satisfies Row<CacheControlsRejected>;
 
-/** A provider's per-request usage. `model` is a value (the model a provider answered with can be
- *  anything a configuration says); realm agent's own prints, where the requested model is known,
- *  show it (01 #16). Caching 3-M (piece A-1): every row but `reference`, which holds a copy of some
- *  of these rows — declared apart so the copy can take its rows from here. */
 /**
  * Caching 3-M (piece B3a): `cache_diagnostics`, flat over its three arms. `result` is a `fact`, closed
  * at the write by `normalizeCacheDiagnostics`: under a `nested` row a string would show as its shape.
@@ -115,6 +110,10 @@ const CACHE_DIAGNOSTICS_TABLE = {
   result: 'fact',
 } as const satisfies Record<KeysOfUnion<CacheDiagnostics>, DisclosureClass>;
 
+/** A provider's per-request usage. `model` is a value (the model a provider answered with can be
+ *  anything a configuration says); realm agent's own prints, where the requested model is known,
+ *  show it (01 #16). Caching 3-M (piece A-1): every row but `reference`, which holds a copy of some
+ *  of these rows — declared apart so the copy can take its rows from here. */
 const USAGE_RECORD_ROWS = {
   request_index: 'fact',
   request_start: 'fact',

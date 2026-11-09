@@ -24,6 +24,7 @@ import {
   type RunStore,
   type RunRecord,
   type LoadBearingRunRecordField,
+  type CacheDiagnostics,
   type CacheReference,
   type UsageRecord,
   type WorkflowDefinition,
@@ -225,6 +226,17 @@ const TCK_REQUEST_FACTS: Required<
     result: { type: 'messages_changed', cache_missed_input_tokens: 1200 },
   },
 };
+
+/**
+ * Caching 3-M (piece B3a): the other two states of `cache_diagnostics`, written as the second and third
+ * request beside `TCK_REQUEST_FACTS`'s reason object. The commonest state, a call's first request,
+ * holds a `null`, and the refusal's holds a `cause`: a store that drops a null key or a key inside the
+ * value fails on them, which the first request's state, with every key set, cannot show.
+ */
+const TCK_DIAGNOSTICS_STATES: readonly CacheDiagnostics[] = [
+  { asked: true, reference_id: null },
+  { asked: false, cause: 'rejected' },
+];
 
 /** The program the holder laws name — a synthetic label, never a real host or user. */
 const TCK_CLAIMANT: Attributed = { by: 'tck-program', by_source: 'stated', channel: 'tck' };
@@ -882,6 +894,16 @@ export function runStoreFidelityContract(
         prompt_tokens: 10,
         ...TCK_REQUEST_FACTS,
       };
+      // the request above, then one request per other state of `cache_diagnostics` (index 1, 2, ...)
+      const requests: UsageRecord[] = [
+        { ...request },
+        ...TCK_DIAGNOSTICS_STATES.map((cache_diagnostics, i) => ({
+          request_index: i + 1,
+          request_start: '2026-01-01T00:00:00.000Z',
+          prompt_tokens: 10,
+          cache_diagnostics,
+        })),
+      ];
       const entry: EvidenceSnapshot = {
         step_id: adapter.stepName,
         started_at: '2026-01-01T00:00:00.000Z',
@@ -894,7 +916,11 @@ export function runStoreFidelityContract(
         diagnostics: {
           input_token_estimate: 10,
           precondition_trace: [],
-          cache: { state: 'engaged', basis: 'provider_reported', requests: [{ ...request }] },
+          cache: {
+            state: 'engaged',
+            basis: 'provider_reported',
+            requests: requests.map((r) => ({ ...r })),
+          },
         },
       };
       await adapter.store.update({
@@ -911,19 +937,39 @@ export function runStoreFidelityContract(
               error_class: 'other',
               message: 'tck',
               elapsed_ms: 1,
-              usage: [{ ...request }],
+              usage: requests.map((r) => ({ ...r })),
             },
           ],
         },
       });
       const { record: reread } = await adapter.store.get(run.id);
-      const places: Array<[string, unknown]> = [
+      const lists: Array<[string, readonly unknown[] | undefined]> = [
         [
-          'evidence[0].diagnostics.cache.requests[0]',
-          reread.evidence[0]?.diagnostics?.cache?.requests?.[0],
+          'evidence[0].diagnostics.cache.requests',
+          reread.evidence[0]?.diagnostics?.cache?.requests,
         ],
-        ['drive_failures.entries[0].usage[0]', reread.drive_failures?.entries[0]?.usage?.[0]],
+        ['drive_failures.entries[0].usage', reread.drive_failures?.entries[0]?.usage],
       ];
+      const places: Array<[string, unknown]> = lists.map(([where, list]) => [
+        `${where}[0]`,
+        list?.[0],
+      ]);
+      for (const [where, list] of lists) {
+        for (const [i, state] of TCK_DIAGNOSTICS_STATES.entries()) {
+          const read = list?.[i + 1];
+          const got =
+            typeof read === 'object' && read !== null
+              ? (read as Record<string, unknown>)['cache_diagnostics']
+              : undefined;
+          if (!isDeepStrictEqual(got, state)) {
+            throw new Error(
+              `a store must round-trip a request record's cache_diagnostics in each of its states ` +
+                `(caching 3-M B3a): at ${where}[${i + 1}], wrote ${JSON.stringify(state)}, ` +
+                `read back ${JSON.stringify(got)}`,
+            );
+          }
+        }
+      }
       for (const [where, read] of places) {
         for (const [field, wrote] of Object.entries(TCK_REQUEST_FACTS)) {
           const got =
