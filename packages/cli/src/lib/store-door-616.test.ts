@@ -112,12 +112,6 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
         "`JsonTraceBufferStore`'s own cells: a stub reader, a refused non-reader, a missing folder, a broken folder; PR-3 deletes the class",
     },
     {
-      file: 'offered-baseline-627.test.ts',
-      sites: 2,
-      subject:
-        "cell 3: W's and the baseline's servers each on stores from their OWN build (the baseline exports no opener); skipped without REALM_627_BASELINE; c10b",
-    },
-    {
       file: 'release-line-hand-offs.test.ts',
       sites: 2,
       subject:
