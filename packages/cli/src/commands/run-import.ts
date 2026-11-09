@@ -20,7 +20,7 @@
 // line.
 import { readdir, stat } from 'node:fs/promises';
 import { Command } from 'commander';
-import { openRealmHome, type RealmHome } from '@sensigo/realm-store-sqlite';
+import { openCliHome, type CliHome } from '../lib/home.js';
 import {
   counted,
   importFile,
@@ -174,16 +174,16 @@ export const runImportCommand = new Command('import')
   .description('Import run records and exports from JSON files into the store')
   .argument('<path...>', 'run record or export files, or folders of them')
   .action(async (paths: string[]) => {
-    const opened: { home?: RealmHome } = {};
+    const opened: { home?: CliHome } = {};
     try {
       // `process.exitCode`, never `process.exit`: the summary and the stop's lines are the last
       // ones, and `process.exit` can drop output a pipe has not taken yet (see the module comment).
       process.exitCode = await runImport(paths, {
-        openHome: async () => (opened.home = await openRealmHome()),
+        openHome: async () => (opened.home = await openCliHome()),
         out: (line) => console.log(line),
         err: (line) => console.error(line),
       });
     } finally {
-      opened.home?.close();
+      await opened.home?.close();
     }
   });

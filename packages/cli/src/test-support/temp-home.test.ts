@@ -173,7 +173,7 @@ describe('#616 PR-2c c0 — runCount and runIds read the runs through the store'
     const ids = await runIds(store);
     // (1) red when a reader counts the files in the runs folder (`readdir`) instead of asking the
     //     store: the home holds no runs folder (`runs` is a file), so on the fresh home the read throws;
-    //     `ascending` checks this store's listing only — the JSON store's `list()` already sorts, so
+    //     `ascending` checks this store's listing only — the store's `list()` already sorts, so
     //     the order is guarded by the next cell, whose store answers out of order; (2) prints whether
     //     the folder was there first, the count
     //     and the ids before and after the two creates, and both created ids.

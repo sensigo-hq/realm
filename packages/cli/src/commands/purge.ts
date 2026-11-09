@@ -233,7 +233,8 @@ async function resumableOf(
  * its report is routed as below ({@link purgeThroughHome}); `artifactStores` then serve the preview's
  * stats only. Without it (the JSON stores), deletion is anchor-structural (issue
  * #184): every `artifactStores` entry (non-anchor stores only) must succeed BEFORE
- * `anchorStore.deleteAllForRun` — the `JsonFileStore` run file — is ever called, and only on
+ * `anchorStore.deleteAllForRun` — the `JsonFileStore` run file (the JSON arm, unreachable from the
+ * CLI since c10a-3a: every command passes `purge`; PR-3 deletes it) — is ever called, and only on
  * total success. Any throw before that point leaves the anchor (and therefore the run) intact —
  * the crash-anchor property is now structural (guaranteed by this function's control flow), not
  * merely positional (an array-ordering convention a future edit could silently break — see

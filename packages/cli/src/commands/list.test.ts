@@ -855,7 +855,7 @@ describe('renderCauseSegment (issue #219, pure helper)', () => {
 });
 
 describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () => {
-  it('records present: a --stuck run with a real JsonFileFailedAttemptStore sidecar renders "rejected: N× (...)" appended to its line, using the LATEST record', async () => {
+  it('records present: a --stuck run with records in the home\'s failed-attempt store renders "rejected: N× (...)" appended to its line, using the LATEST record', async () => {
     const h = await makeTempHome();
     try {
       const runId = 'run-cause-present';

@@ -37,12 +37,12 @@ describe('#715 (a) — the docs sentences', () => {
     // B11 (an ordinary directory stamps with the wall clock).
     claim(
       ENV,
-      "The file store stamps the times it writes, such as a run's `created_at` and `updated_at`, with this computer's clock.",
+      "The store stamps the times it writes, such as a run's `created_at` and `updated_at`, with this computer's clock.",
     );
     // D6-29(a): a statement of support, pinned by this cell alone.
     claim(
       ENV,
-      'A file store on a folder that several computers share is not supported: each computer would stamp with its own clock.',
+      'A Realm home on a folder that several computers share is not supported: each computer would stamp with its own clock.',
     );
     // C4, C14 (the file beside runs/); correction 1 (C-2): the source scan in
     // lint-test-location-715.test.ts (only the testing package creates one); C1, C2 (the store reads).
@@ -95,7 +95,7 @@ describe('#715 (a) — the docs sentences', () => {
     claim(ACTING, 'Copies of the deleted runs in backups made before this purge are not touched.');
     claim(
       ACTING,
-      "The bytes freed are what the store reports for the deleted runs; `realm.db shrank by` is what the file gave back on disk — a floor, since pages of a deleted run still in the write-ahead log do not show in it. When another process was using the log, one more line says `realm.db's log was not reset: another process was using it. The space is returned at a later checkpoint; the deleted text may stay readable in realm.db-wal until a later purge resets the log.`",
+      "The bytes freed are what the store reports for the deleted runs; `realm.db shrank by` is what the file gave back on disk — a floor: SQLite gives back whole pages, and only once nothing is left on them — a page that still holds other rows stays, and so does each table's first page, so a few small runs often give back nothing — and pages still in the write-ahead log do not show in it yet. When another process was using the log, one more line says `realm.db's log was not reset: another process was using it. The space is returned at a later checkpoint; the deleted text may stay readable in realm.db-wal until a later purge resets the log.`",
     );
     claim(
       'docs/guides/operate-runs.md',
@@ -115,7 +115,7 @@ describe('#715 (a) — the docs sentences', () => {
       "**Every `realm` command keeps its store in `realm.db`**, one SQLite file in the Realm home (`~/.realm/realm.db`): runs, the workflow registry, replays, trace buffers, failed attempts and `realm listen`'s dedup marks.",
       "The first command on a home that still holds the old JSON store's folders (`runs`, `workflows`, `replays`, `dedup`) refuses with one line — `This Realm keeps its store in realm.db and does not read the old JSON directories (…) in <home>. Move them out of the home, then import what you want to keep with save() or realm run import.` (the store's sentence; its own code spans dropped here) — and creates nothing.",
       // packages/cli/package.json's engines.
-      'The `realm` command needs Node 22 from 22.22.3, or Node 24 from 24.15.0. (#616)',
+      'The `realm` command needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later. (#616)',
       // purge-sqlite-616.test.ts.
       '**`realm run purge` deletes on the store**, in bounded batches; the force line also reports what `realm.db` gave back on disk (`realm.db shrank by <bytes>`, a floor), copies in backups made before the purge are untouched, a blocked run keeps every row, and the log is reset once at the end — when another process was using it, one line says so. (#616)',
     ])

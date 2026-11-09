@@ -13,9 +13,8 @@
 // instead (its artifacts are read at slightly different instants and may be mid-flight); a terminal
 // run needs no warning, since nothing changes post-seal.
 //
-// The bundle deliberately excludes the idempotency-key pointer (`keys/<hash>.json`): that file is a
-// hash→run INDEX derived from the run records, not run evidence, and the key it maps is
-// already present on the run record itself (`run.idempotency_key`).
+// The bundle carries no index of the idempotency key: the store derives a `key_hash` column on the
+// run's row to find a key's holder; the key itself is already on the record (`run.idempotency_key`).
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';

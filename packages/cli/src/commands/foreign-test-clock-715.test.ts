@@ -193,3 +193,40 @@ describe('#715 (a) correction 1 (C-10) — a ~/.realm this user cannot read, on 
     20_000,
   );
 });
+
+// #616 PR-2c c10a-3a correction 1: the CHANGELOG's "refuses with one line … and creates nothing", on
+// the built CLI, through the same printer as the copied test home's refusal above.
+describe('#616 PR-2c c10a-3a — a home that still holds the old JSON store, on the built CLI', () => {
+  it('realm workflow list: one Error line naming the old folder, no stack, nothing on stdout, exit 1, nothing created', () => {
+    const legacy = join(scratch, 'home-legacy');
+    mkdirSync(join(legacy, '.realm', 'runs'), { recursive: true });
+    const before = readdirSync(join(legacy, '.realm')).sort();
+    const r = realm(['workflow', 'list'], legacy);
+    const lines = r.stderr.split('\n').filter((l) => l !== '');
+    // (a) red when the refusal's code is not an expected one (index.ts rethrows it: a stack), or the
+    //     guard is bypassed (the open succeeds and `realm.db` appears); (b) prints the first stderr
+    //     line and the exit code, and the home's entries.
+    expect(
+      {
+        code: r.code,
+        stdout: r.stdout,
+        lines: lines.length,
+        starts: lines[0]?.startsWith(
+          'Error: This Realm keeps its store in realm.db and does not read the old JSON directories (runs) in ',
+        ),
+        stack: STACK.test(r.stderr),
+        before,
+        after: readdirSync(join(legacy, '.realm')).sort(),
+      },
+      r.shown,
+    ).toEqual({
+      code: 1,
+      stdout: '',
+      lines: 1,
+      starts: true,
+      stack: false,
+      before: ['runs'],
+      after: ['runs'],
+    });
+  }, 20_000);
+});

@@ -61,7 +61,10 @@ export interface CliHome {
  *   another clock rejects. `close()` ends the handle for every caller; a second `close()` does
  *   nothing.
  * - `clock` is for tests, never a flag or a setting.
- * Every refusal is a rejected promise. This door is the only place the CLI's source opens a store.
+ * Every refusal is a rejected promise. Every `realm` command opens its stores through this door; the
+ * only other opens in the CLI's source are the maintenance handle of `realm db backup` / `realm db
+ * migrate` (`openRealmHomeForMaintenance`, the verbs that act on the store file) — the opener scan in
+ * `store-door-616.test.ts` names them and no other.
  */
 export async function openCliHome(
   options: { home?: string; clock?: Clock } = {},
