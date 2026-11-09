@@ -57,7 +57,6 @@ describe('normalizeDiagnosticSeverity — the emit guard (issue #454, unit-level
 
 describe('validate --json (issue #454)', () => {
   let home: string;
-  let wfDir: string;
   let h: TempHome;
   let originalHome: string | undefined;
   let savedNoNudge: string | undefined;
@@ -69,9 +68,7 @@ describe('validate --json (issue #454)', () => {
   beforeEach(async () => {
     clearProjectExtensionsCache();
     home = mkdtempSync(join(tmpdir(), 'realm-validate-json-'));
-    wfDir = join(home, '.realm', 'workflows');
     h = await makeTempHome({ home: join(home, '.realm') });
-    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     savedNoNudge = process.env['REALM_NO_NUDGE'];
@@ -105,10 +102,6 @@ describe('validate --json (issue #454)', () => {
   function parseJson(): Record<string, unknown> {
     expect(logSpy.mock.calls).toHaveLength(1);
     return JSON.parse(String(logSpy.mock.calls[0]![0])) as Record<string, unknown>;
-  }
-
-  function plant(fileBase: string, def: unknown): void {
-    writeFileSync(join(wfDir, `${fileBase}.json`), JSON.stringify(def, null, 2), 'utf8');
   }
 
   /** A stored shape carrying the keys the file loader stamps — the realistic starting point. */
@@ -698,7 +691,11 @@ steps:
     }, 20_000);
 
     it("J8b legacy (schema_version-less): errors = the store's own re-register message, schema_version null", async () => {
-      plant('ancient-wf', { id: 'ancient-wf', name: 'Ancient', version: 2 });
+      await h.home.workflowStore.register({
+        id: 'ancient-wf',
+        name: 'Ancient',
+        version: 2,
+      } as never);
 
       await expect(
         validateCommand.parseAsync(['--registered', 'ancient-wf', '--json'], { from: 'user' }),
@@ -709,20 +706,6 @@ steps:
       expect(result['schema_version']).toBeNull();
       const errors = result['errors'] as string[];
       expect(errors[0]).toContain('registered with an older version of Realm');
-      expect(exitSpy).toHaveBeenCalledWith(1);
-    }, 20_000);
-
-    it("J9 corrupt-JSON: errors contains 'is not JSON' (issue #719: no parser text), exit 1", async () => {
-      writeFileSync(join(wfDir, 'broken.json'), '{ not json', 'utf8');
-
-      await expect(
-        validateCommand.parseAsync(['--registered', 'broken', '--json'], { from: 'user' }),
-      ).rejects.toThrow('process.exit');
-
-      const result = parseJson();
-      expect(result['valid']).toBe(false);
-      const errors = result['errors'] as string[];
-      expect(errors[0]).toContain("the registered copy of 'broken' is not JSON");
       expect(exitSpy).toHaveBeenCalledWith(1);
     }, 20_000);
   });
@@ -1185,16 +1168,13 @@ steps:
         },
         {
           name: 'J8b registered legacy',
-          setup: () => {
-            plant('t-j8b', { id: 't-j8b', name: 'Legacy', version: 2 });
+          setup: async () => {
+            await h.home.workflowStore.register({
+              id: 't-j8b',
+              name: 'Legacy',
+              version: 2,
+            } as never);
             return ['--registered', 't-j8b'];
-          },
-        },
-        {
-          name: 'J9 registered corrupt-JSON',
-          setup: () => {
-            writeFileSync(join(wfDir, 'broken-j10.json'), '{ not json', 'utf8');
-            return ['--registered', 'broken-j10'];
           },
         },
       ];

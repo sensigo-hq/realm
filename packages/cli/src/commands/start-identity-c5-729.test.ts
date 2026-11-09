@@ -280,11 +280,11 @@ describe("#729 PR-3 correction 5 (J-5), correction 6 (C6-1) — R41's marker nev
     } as RunRecord);
   };
   /** A start-only run of a project with code and no realm.yaml (the door's `start_run`), abandoned. */
-  const startOnly = async (reason: string): Promise<{ runId: string; copy: string }> => {
+  const startOnly = async (reason: string): Promise<{ runId: string; id: string }> => {
     const id = project({ manifest: false, code: true });
     const runId = runIdOf(await door((call) => call('start_run', { workflow_id: id })));
     realm(['run', 'abandon', runId, '--reason', reason]);
-    return { runId, copy: join(home, '.realm', 'workflows', `${id}.json`) };
+    return { runId, id };
   };
 
   it('C6-1 (1): created with no realm.yaml, one declaring the value added afterwards → hidden by what is declared now (round 6 F1, the executed show, closed)', async () => {
@@ -335,8 +335,8 @@ describe("#729 PR-3 correction 5 (J-5), correction 6 (C6-1) — R41's marker nev
   }, 120_000);
 
   it("C6-1 (4, correction 5's damaged-copy arm re-pinned): no realm.yaml, the copy damaged → `unknown (load failed)`, withheld, as correction 4", async () => {
-    const { runId, copy } = await startOnly('held for c5');
-    writeFileSync(copy, 'not json');
+    const { runId, id } = await startOnly('held for c5');
+    await h.home.workflowStore.register({ id, schema_version: 1 } as never);
     // (a) red when the proof speaks where nothing can be read now (`resolved (no manifest)`, the
     //     value shown); (b) prints the read (a shape, never the reason).
     expect(read(runId)).toEqual({
@@ -347,10 +347,10 @@ describe("#729 PR-3 correction 5 (J-5), correction 6 (C6-1) — R41's marker nev
   }, 120_000);
 
   it('C6-1 (5): a start entry that records a capture error adds no cause word; its damaged-copy twin withholds', async () => {
-    const { runId, copy } = await startOnly('held for c6');
+    const { runId, id } = await startOnly('held for c6');
     await seedEntries(runId, (list) => list.map((e) => ({ ...e, error: 'capture failed' })));
     const intact = read(runId);
-    writeFileSync(copy, 'not json');
+    await h.home.workflowStore.register({ id, schema_version: 1 } as never);
     const damaged = read(runId);
     // (a) red when an error identity is read as the proof (`resolved (no manifest)`); (b) prints both
     //     reads.
