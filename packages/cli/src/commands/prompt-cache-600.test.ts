@@ -285,7 +285,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     expect({ code: r.code, stderr: r.stderr.trim(), runs: await runFiles() }).toEqual({
       code: 1,
       stderr:
-        'Error: --provider-module cannot be combined with --provider, --model, --base-url, --strict-base-url, or --prompt-cache',
+        'Error: --provider-module cannot be combined with --provider, --model, --base-url, --strict-base-url, --prompt-cache, or --cache-diagnostics on',
       runs: [],
     });
   }, 30_000);
@@ -554,4 +554,257 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
     const runId = (await runFiles())[0]!;
     expect(blockedCommand(r), r.stderr).toBe(`realm agent --run-id ${runId} --model claude-x`);
   }, 30_000);
+});
+
+describe('realm agent --cache-diagnostics: a flag that cannot act is refused at load (caching 3-M B2b)', () => {
+  const KEY = () => env({ ANTHROPIC_API_KEY: 'k-600' });
+  const BOTH_KEYS = () =>
+    env({
+      ANTHROPIC_API_KEY: 'k-600',
+      OPENAI_API_KEY: 'k-600',
+      OPENAI_BASE_URL: CLOSED_PORT,
+      ANTHROPIC_BASE_URL: CLOSED_PORT,
+    });
+  const ACTS = 'has nothing to act on';
+  const COMBINED = 'cannot be combined';
+  const refused = (why: string, remedy: string): string =>
+    `Error: --cache-diagnostics on has nothing to act on: ${why} ${remedy}`;
+  const OTHER_PROVIDER = refused(
+    'only Anthropic answers this question, and this drive uses openai.',
+    'Remove --cache-diagnostics, or use --provider anthropic.',
+  );
+  const NO_CACHING = refused(
+    '--prompt-cache off asks for no caching, so no request can miss.',
+    'Remove --cache-diagnostics, or choose another --prompt-cache.',
+  );
+  const OTHER_ADDRESS = refused(
+    "only Anthropic's own address answers this question, and ANTHROPIC_BASE_URL points elsewhere.",
+    'Remove --cache-diagnostics, or unset ANTHROPIC_BASE_URL.',
+  );
+  const noAgentStep = (id: string): string =>
+    refused(
+      `workflow '${id}' has no agent step, so the flag would change nothing.`,
+      'Remove --cache-diagnostics.',
+    );
+  const STARTED = 'Nothing was started.';
+  const notChanged = (id: string): string => `If run ${id} exists, it was not changed.`;
+  const AUTO_ID = 'prompt-cache-600-auto';
+  const NO_RUN = 'run_b2b_none';
+
+  /** Registers a workflow with no agent step and returns a run of it (G19b's form). */
+  async function registeredNoAgentRun(): Promise<string> {
+    const definition = {
+      id: AUTO_ID,
+      name: 'Prompt cache 600 auto',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { publish: { description: 'Publish.', execution: 'auto', handler: 'publish_answer' } },
+    } as unknown as WorkflowDefinition;
+    await h.home.workflowStore.register(definition);
+    const { record } = await h.home.runStore.create({
+      workflowId: definition.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    return record.id;
+  }
+
+  // Check 3. Real case: an operator states `on` where nothing can answer, and believes it worked.
+  // Every drive uses a workflow that blocks before any model call, so no provider is reached.
+  // (a) red when a branch is removed (its `on` row), when the rule reads `--provider` instead of the
+  // chosen provider (the keys row), or when a refusal fires without its reason (its `off` half);
+  // (b) prints the argv, the exit code, the message and the run count.
+  it.each([
+    {
+      name: '--provider openai',
+      args: [...wf('blocked'), '--provider', 'openai', '--model', 'gpt-x'],
+      childEnv: OPENAI,
+      words: `${OTHER_PROVIDER} ${STARTED}`,
+    },
+    {
+      name: 'no --provider with both keys set: the keys choose OpenAI',
+      args: [...wf('blocked'), '--model', 'gpt-x'],
+      childEnv: BOTH_KEYS,
+      words: `${OTHER_PROVIDER} ${STARTED}`,
+    },
+    {
+      name: '--provider openai --model o1: a model that routes to openai-reasoning',
+      args: [...wf('blocked'), '--provider', 'openai', '--model', 'o1'],
+      childEnv: OPENAI,
+      words: `${OTHER_PROVIDER} ${STARTED}`,
+    },
+    {
+      name: '--prompt-cache off, no address set',
+      args: [...wf('blocked'), '--model', 'claude-x', '--prompt-cache', 'off'],
+      childEnv: KEY,
+      words: `${NO_CACHING} ${STARTED}`,
+    },
+    {
+      name: 'a workflow with no agent step, no address set',
+      args: [...wf('auto'), '--model', 'claude-x'],
+      childEnv: KEY,
+      words: `${noAgentStep(AUTO_ID)} ${STARTED}`,
+    },
+    {
+      name: '--run-id with --provider openai: the other closing sentence',
+      args: ['--run-id', NO_RUN, '--provider', 'openai', '--model', 'gpt-x'],
+      childEnv: OPENAI,
+      words: `${OTHER_PROVIDER} ${notChanged(NO_RUN)}`,
+    },
+  ])(
+    '$name: on is refused with its reason and starts nothing; off is accepted',
+    async ({ args, childEnv, words }) => {
+      const on = await runCli(['agent', ...args, '--cache-diagnostics', 'on'], childEnv());
+      const runs = (await runFiles()).length;
+      const off = await runCli(['agent', ...args, '--cache-diagnostics', 'off'], childEnv());
+      expect({
+        args,
+        code: on.code,
+        message: on.stderr.trim(),
+        runs,
+        offRefused: off.stderr.includes(ACTS) || off.stderr.includes(COMBINED),
+      }).toEqual({ args, code: 1, message: words, runs: 0, offRefused: false });
+    },
+    60_000,
+  );
+
+  // Check 3, a custom address: read from the built provider. (a) red when the address branch is
+  // removed; (b) prints the exit code, the message, the runs and the requests the stand-in received.
+  it('ANTHROPIC_BASE_URL at the stand-in: on is refused, no request and no run; off is accepted', async () => {
+    const stub = await startAnthropicStub({
+      finalContent: { summary: 'ok' },
+      answeredModel: DATED,
+      usage: {
+        input_tokens: 20,
+        output_tokens: 3,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    });
+    try {
+      const args = [...wf('blocked'), '--model', 'claude-x'];
+      const on = await runCli(
+        ['agent', ...args, '--cache-diagnostics', 'on'],
+        ANTHROPIC(stub.baseUrl),
+      );
+      const runs = (await runFiles()).length;
+      const off = await runCli(
+        ['agent', ...args, '--cache-diagnostics', 'off'],
+        ANTHROPIC(stub.baseUrl),
+      );
+      expect({
+        code: on.code,
+        message: on.stderr.trim(),
+        runs,
+        offRefused: off.stderr.includes(ACTS),
+        requests: stub.requests.length,
+      }).toEqual({
+        code: 1,
+        message: `${OTHER_ADDRESS} ${STARTED}`,
+        runs: 0,
+        offRefused: false,
+        requests: 0,
+      });
+    } finally {
+      await stub.close();
+    }
+  }, 60_000);
+
+  // Check 3, --provider-module: the sentence has no closing sentence, today or now. (a) red when
+  // `--cache-diagnostics on` is dropped from the condition, or `off` is caught by it; (b) prints the
+  // exit code and the message.
+  it('--provider-module: on is refused with the sibling sentence; off passes that check', async () => {
+    const args = [...wf('blocked'), '--provider-module', './p.mjs'];
+    const on = await runCli(['agent', ...args, '--cache-diagnostics', 'on'], env());
+    const off = await runCli(['agent', ...args, '--cache-diagnostics', 'off'], env());
+    expect({
+      code: on.code,
+      message: on.stderr.trim(),
+      runs: (await runFiles()).length,
+      offRefused: off.stderr.includes(COMBINED),
+    }).toEqual({
+      code: 1,
+      message:
+        'Error: --provider-module cannot be combined with --provider, --model, --base-url, --strict-base-url, --prompt-cache, or --cache-diagnostics on',
+      runs: 0,
+      offRefused: false,
+    });
+  }, 60_000);
+
+  // Check 3, --run-id of a registered run with no agent step: a separate site. (a) red when the
+  // --run-id guard is not widened (the drive attaches); (b) prints the exit code, the message and
+  // whether the run changed.
+  it('--run-id of a run with no agent step: on is refused and the run is unchanged; off is accepted', async () => {
+    const id = await registeredNoAgentRun();
+    const before = JSON.stringify((await h.home.runStore.get(id)).record);
+    const args = ['--run-id', id, '--model', 'claude-x'];
+    const on = await runCli(['agent', ...args, '--cache-diagnostics', 'on'], KEY());
+    const unchanged = JSON.stringify((await h.home.runStore.get(id)).record) === before;
+    const off = await runCli(['agent', ...args, '--cache-diagnostics', 'off'], KEY());
+    expect({
+      code: on.code,
+      message: on.stderr.trim(),
+      unchanged,
+      offRefused: off.stderr.includes(ACTS),
+    }).toEqual({
+      code: 1,
+      message: `${noAgentStep(AUTO_ID)} ${notChanged(id)}`,
+      unchanged: true,
+      offRefused: false,
+    });
+  }, 60_000);
+
+  // Check 3, the accepted direction. No address is set, and the workflow blocks before any model
+  // call, so accepted means one run and no refusal line; the blocked drive itself exits 1.
+  // (a) red when `on` is refused for a setting that can act; (b) prints the setting and what ran.
+  it.each([
+    [[]],
+    [['--prompt-cache', 'auto']],
+    [['--prompt-cache', 'short']],
+    [['--prompt-cache', 'long']],
+  ])(
+    "on at Anthropic's own address, with %j: accepted",
+    async (extra: string[]) => {
+      const r = await runCli(
+        ['agent', ...wf('blocked'), '--model', 'claude-x', '--cache-diagnostics', 'on', ...extra],
+        KEY(),
+      );
+      expect({
+        extra,
+        refused: r.stderr.includes(ACTS),
+        code: r.code,
+        runs: (await runFiles()).length,
+      }).toEqual({ extra, refused: false, code: 1, runs: 1 });
+    },
+    30_000,
+  );
+
+  // Check 4. Real case: listen has already answered 202, so a refusal would exit a child and leave
+  // the run undriven. (a) red when the exemption is missing on one branch; (b) prints the row, the
+  // first line of stderr and the run count.
+  it.each([
+    ['on OpenAI', [...wf('blocked'), '--provider', 'openai', '--model', 'gpt-x'], OPENAI],
+    [
+      'ANTHROPIC_BASE_URL set',
+      [...wf('blocked'), '--model', 'claude-x'],
+      () => ANTHROPIC(CLOSED_PORT),
+    ],
+    ['--prompt-cache off', [...wf('blocked'), '--model', 'claude-x', '--prompt-cache', 'off'], KEY],
+    ['a workflow with no agent step', [...wf('auto'), '--model', 'claude-x'], KEY],
+  ] as const)(
+    '--spawned-by-listen, %s: not refused',
+    async (name, args, childEnv) => {
+      const r = await runCli(
+        ['agent', ...args, '--cache-diagnostics', 'on', '--spawned-by-listen'],
+        childEnv(),
+      );
+      expect({
+        name,
+        refused: r.stderr.includes(ACTS),
+        first: r.stderr.includes(ACTS) ? r.stderr.trim().split('\n')[0] : '',
+        runs: (await runFiles()).length,
+      }).toEqual({ name, refused: false, first: '', runs: 1 });
+    },
+    30_000,
+  );
 });
