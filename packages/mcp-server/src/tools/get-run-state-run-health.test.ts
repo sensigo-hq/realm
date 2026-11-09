@@ -6,12 +6,11 @@
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   DEFAULT_IDLE_THRESHOLD_MS,
   storedCopyFaultError,
 } from '@sensigo/realm';
-import type { RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
+import type { RunRecord, RunStore, WorkflowDefinition, WorkflowRegistrar } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -78,7 +77,7 @@ const basicDef: WorkflowDefinition = {
 
 describe('get_run_state — run_health (issue #221)', () => {
   let h: TempHome;
-  let workflowStore: JsonWorkflowStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();

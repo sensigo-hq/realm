@@ -9,13 +9,12 @@
 // names, codes and booleans — never the loader's message.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   WorkflowError,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleGetRunState } from './get-run-state.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -47,8 +46,8 @@ const loadWarnings = (warnings: readonly string[] | undefined) =>
 
 describe('#729 PR-0 — A-5: get_run_state on a server whose project code failed to load', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   let runId: string;
   beforeEach(async () => {
     h = await makeTempHome();

@@ -28,7 +28,12 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deriveRunPhase, systemClock, type RunRecord } from '@sensigo/realm';
+import {
+  deriveRunPhase,
+  systemClock,
+  type RunRecord,
+  type WorkflowDefinition,
+} from '@sensigo/realm';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createSqliteLoader, openDatabase, type DatabaseLike } from './driver.js';
 import { evidenceEntrySha256 } from './evidence-hash.js';
@@ -46,6 +51,7 @@ import {
 import { filterColumns } from './store-check-records.js';
 import { openForeignConnection } from './test-support/foreign-connection.js';
 import { ladder } from './test-support/schema-versions.js';
+import { workflowVersionHash } from './workflow-store.js';
 
 const dirs: string[] = [];
 const homes: RealmHome[] = [];
@@ -396,7 +402,7 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
       findings: report.findings,
       not_run: report.not_run,
       not_checked: report.not_checked.map((n) => n.check),
-      // #616 PR-2c c8b1: the entries' words too (the narrowed data_checks sentence among them).
+      // #616 PR-2c c8b1: each not-checked entry with its words, not its id alone.
       not_checked_words: report.not_checked,
       facts: {
         sqlite_version: typeof f.sqlite_version,
@@ -414,6 +420,10 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
         wal_frames_copied: f.wal_frames_copied,
         // #616 PR-2c c8b1: the data pass's fact.
         phase_other_stamps: integer(f.phase_other_stamps),
+        // #616 PR-2c c8b2: the tombstone facts.
+        tombstones_since: typeof f.tombstones_since,
+        tombstones_through_seq: integer(f.tombstones_through_seq),
+        purged_ids: integer(f.purged_ids),
       },
     }).toEqual({
       status: 'ok',
@@ -422,7 +432,13 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
       findings: [],
       not_run: [],
       // #616 PR-2c c8b1: the two not-checked entries of the data pass.
-      not_checked: ['other_processes', 'tombstone_phase', 'purged_key_hash', 'data_checks'],
+      // #616 PR-2c c8b2: data_checks left; the finalizer entry came.
+      not_checked: [
+        'other_processes',
+        'tombstone_phase',
+        'purged_key_hash',
+        'finalizer_after_delete',
+      ],
       not_checked_words: [
         {
           check: 'other_processes',
@@ -437,8 +453,8 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
           why: "A purged run's key hash cannot be recomputed: no key is kept.",
         },
         {
-          check: 'data_checks',
-          why: 'The checks on tombstones, orphaned rows, workflow pointers and workflow version hashes are not built in this version yet.',
+          check: 'finalizer_after_delete',
+          why: 'A run deleted while a finalizer was still owed cannot be detected: the purge record keeps no finalizer field.',
         },
       ],
       facts: {
@@ -464,6 +480,9 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
         wal_frames: 0,
         wal_frames_copied: 0,
         phase_other_stamps: 'integer',
+        tombstones_since: 'string',
+        tombstones_through_seq: 'integer',
+        purged_ids: 'integer',
       },
     });
   });
@@ -576,6 +595,11 @@ const DATA_STOPPED = [
   'key_hashes',
   'filter_columns',
   'placeholders',
+  // #616 PR-2c c8b2.
+  'tombstones',
+  'orphans',
+  'workflow_pointers',
+  'workflow_version_hashes',
   'data_read',
 ];
 const metaRow = (because: string): Record<string, unknown> => ({
@@ -725,7 +749,13 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
     c.close();
     // (1) red when the missing row is not a finding, or its part of settings is not listed; (2)
     //     prints the report's parts.
-    expect(verdict(await check(home))).toEqual({
+    // #616 PR-2c c8b2, its check 4a: `tombstones` not run because of this finding, and its facts absent.
+    const report = await check(home);
+    const f = report.facts;
+    expect({
+      ...verdict(report),
+      tombstoneFacts: [f.tombstones_since, f.tombstones_through_seq, f.purged_ids],
+    }).toEqual({
       status: 'findings',
       schema_version: 1,
       findings: [
@@ -735,7 +765,8 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
           message: 'A store setting differs: meta row is absent, expected one row.',
         },
       ],
-      not_run: [metaRow('settings_differ')],
+      not_run: [metaRow('settings_differ'), { check: 'tombstones', because: 'settings_differ' }],
+      tombstoneFacts: [undefined, undefined, undefined],
     });
   });
 
@@ -1774,7 +1805,8 @@ describe("#616 PR-2c c8b1 correction 1 — check 4: each scan's stop set, with a
       'the blob-name read (its covering index)',
       'sqlite_autoindex_run_blobs_1',
       0,
-      ['placeholders'],
+      // #616 PR-2c c8b2: its orphan read scans this same covering index.
+      ['placeholders', 'orphans'],
       ['evidence_hash_mismatch', 'phase_index_wrong', 'data_unreadable'],
     ],
   ] as const)(
@@ -1794,6 +1826,445 @@ describe("#616 PR-2c c8b1 correction 1 — check 4: each scan's stop set, with a
       });
     },
   );
+});
+
+// ---- #616 PR-2c c8b2: the comparisons across tables. Real files, written by hand beside what the
+// store made; a guard lifted for a seed is put back from its exact text, or the open would refuse it. ----
+
+/** Runs `statements` with the guard `trigger` lifted, and puts it back from its exact text. */
+function pastGuard(c: DatabaseLike, trigger: string, ...statements: string[]): void {
+  const text = String(
+    c.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(trigger)?.['sql'],
+  );
+  c.exec(`DROP TRIGGER ${trigger}`);
+  for (const statement of statements) c.exec(statement);
+  c.exec(text);
+}
+
+const AT = '2026-11-08T00:00:00.000Z';
+const INSERT_VERSION = (id: string, hash: string, text: string): string =>
+  `INSERT INTO workflow_versions (hash, id, definition, first_registered_at) VALUES ('${hash}', '${id}', '${text}', '${AT}')`;
+const INSERT_REGISTRATION = (id: string, seq: number, hash: string, at = AT): string =>
+  `INSERT INTO workflow_registrations (id, seq, hash, registered_at) VALUES ('${id}', ${String(seq)}, '${hash}', '${at}')`;
+
+/** A store home with a run, and `ids` registered by the store: each a small workflow's text. */
+async function workflowHome(...ids: string[]): Promise<string> {
+  const home = await storeHome();
+  const h = await openRealmHome({ home });
+  try {
+    for (const id of ids) {
+      await h.workflowStore.register({ id, name: id, version: 1 } as unknown as WorkflowDefinition);
+    }
+  } finally {
+    h.close();
+  }
+  return home;
+}
+
+/** What a workflow's pointer row holds. */
+function pointerOf(home: string, id: string): { hash: string; at: string } {
+  const c = openDatabase(join(home, 'realm.db'), { readOnly: true });
+  try {
+    const row = c.prepare('SELECT current_hash, registered_at FROM workflows WHERE id = ?').get(id);
+    return { hash: String(row?.['current_hash']), at: String(row?.['registered_at']) };
+  } finally {
+    c.close();
+  }
+}
+
+/** `failed_attempts` rows for runs that do not exist: each pair is a run id and its row count. */
+function orphanAttempts(home: string, ...runs: ReadonlyArray<readonly [string, number]>): void {
+  const c = openDatabase(join(home, 'realm.db'));
+  try {
+    c.exec('BEGIN');
+    const row = c.prepare('INSERT INTO failed_attempts (run_id, seq, line) VALUES (?, ?, ?)');
+    for (const [run, rows] of runs) {
+      for (let seq = 0; seq < rows; seq++) row.run(run, seq, 'x');
+    }
+    c.exec('COMMIT');
+  } finally {
+    c.close();
+  }
+}
+
+describe('#616 PR-2c c8b2 — check 1: one cell per code, what is clean beside it not named', () => {
+  it('purged_count_mismatch — a purged id inserted with no delete', async () => {
+    const home = await storeHome();
+    rawly(home, `INSERT INTO purged_ids (id, purged_at) VALUES ('foreign', '${AT}')`);
+    const report = await check(home);
+    // (1) red when the counter is not compared with the ids; (2) prints the status and the findings.
+    expect({ status: report.status, findings: report.findings }).toEqual({
+      status: 'findings',
+      findings: [
+        {
+          check: 'tombstones',
+          code: 'purged_count_mismatch',
+          message: 'The purged-run count (1) differs from the purge counter (0).',
+        },
+      ],
+    });
+  });
+
+  it("orphaned_rows — a run deleted alone, its rows left in all five tables, and Realm's own unfenced append on an id never created", async () => {
+    const { home, template, clean } = await seededHome();
+    const text = '{"a":1}';
+    seedRuns(home, template, [
+      {
+        id: 'gone',
+        change: (r) => {
+          r['terminal_state'] = true;
+          r['evidence'] = { $realm_rows: 1 };
+          r['workflow_context_snapshots'] = { $realm_blob: 'workflow_context_snapshots' };
+        },
+        evidence: [[0, text, evidenceEntrySha256(text)]],
+        blob: '{}',
+      },
+    ]);
+    rawly(
+      home,
+      "INSERT INTO trace_buffer (run_id, step_id, line_seq, ts, nonce, entries, entry_count, bytes) VALUES ('gone', 's', 0, 0, NULL, '[]', 0, 2)",
+      "INSERT INTO trace_sealed (run_id, step_id, seal_seq, lines, bytes) VALUES ('gone', 's', 0, '[]', 2)",
+      "INSERT INTO failed_attempts (run_id, seq, line) VALUES ('gone', 0, 'x')",
+      "DELETE FROM runs WHERE id = 'gone'",
+    );
+    const h = await openRealmHome({ home });
+    await h.failedAttemptStore.append('never-created', '{"attempt":1}');
+    h.close();
+    const report = await check(home);
+    // (1) red when the orphans are not read; (2) prints the status, the findings and whether the
+    //     clean run is named.
+    expect({
+      status: report.status,
+      findings: report.findings,
+      cleanNamed: named(report).includes(clean),
+    }).toEqual({
+      status: 'findings',
+      findings: [
+        {
+          check: 'orphans',
+          code: 'orphaned_rows',
+          message:
+            '6 rows belong to runs that are gone: evidence 1, run_blobs 1, trace_buffer 1, trace_sealed 1, failed_attempts 2.',
+          count: 6,
+          examples: [
+            'evidence, run gone: 1 row',
+            'run_blobs, run gone: 1 row',
+            'trace_buffer, run gone: 1 row',
+            'trace_sealed, run gone: 1 row',
+            'failed_attempts, run gone: 1 row',
+            'failed_attempts, run never-created: 1 row',
+          ],
+        },
+      ],
+      cleanNamed: false,
+    });
+  });
+
+  it.each([
+    'a newer registration of another hash',
+    'the same hash registered again at another time',
+    'a version and a registration with no pointer',
+    'no copy under the pointer',
+    'a pointer with no registration (check 2b)',
+  ] as const)('workflow_pointer_mismatch — %s', async (state) => {
+    const home = await workflowHome('wf-clean', 'wf-a');
+    const { hash, at } = pointerOf(home, 'wf-a');
+    const text = '{"id":"wf-a","v":2}';
+    const other = workflowVersionHash(text);
+    const c = await openForeignConnection(home);
+    connections.push(c);
+    let id = 'wf-a';
+    let example: string;
+    if (state === 'a newer registration of another hash') {
+      c.exec(INSERT_VERSION('wf-a', other, text));
+      // The pointer's own time, so that the hash is the only difference.
+      c.exec(INSERT_REGISTRATION('wf-a', 1, other, at));
+      example = `workflow wf-a: pointer ${hash} at ${at}, newest ${other} at ${at}`;
+    } else if (state === 'the same hash registered again at another time') {
+      c.exec(INSERT_REGISTRATION('wf-a', 1, hash));
+      example = `workflow wf-a: pointer ${hash} at ${at}, newest ${hash} at ${AT}`;
+    } else if (state === 'a version and a registration with no pointer') {
+      id = 'wf-none';
+      const none = '{"id":"wf-none"}';
+      c.exec(INSERT_VERSION(id, workflowVersionHash(none), none));
+      c.exec(INSERT_REGISTRATION(id, 0, workflowVersionHash(none)));
+      example = `workflow wf-none: pointer none, newest ${workflowVersionHash(none)} at ${AT}`;
+    } else if (state === 'no copy under the pointer') {
+      pastGuard(
+        c,
+        'workflow_versions_no_delete',
+        "DELETE FROM workflow_versions WHERE id = 'wf-a'",
+      );
+      example = `workflow wf-a: pointer ${hash} at ${at}, copy none, newest ${hash} at ${at}`;
+    } else {
+      id = 'wf-lone';
+      const lone = '{"id":"wf-lone"}';
+      const loneHash = workflowVersionHash(lone);
+      c.exec(INSERT_VERSION(id, loneHash, lone));
+      pastGuard(
+        c,
+        'workflows_insert_own',
+        `INSERT INTO workflows (id, current_hash, registered_at) VALUES ('${id}', '${loneHash}', '${AT}')`,
+      );
+      example = `workflow wf-lone: pointer ${loneHash} at ${AT}, newest none`;
+    }
+    c.close();
+    connections.pop();
+    const report = await check(home);
+    // (1) red when that state passes as clean, or its example drops a side; (2) prints the status,
+    //     the findings and whether the clean workflow is named.
+    expect({
+      status: report.status,
+      findings: report.findings,
+      cleanNamed: named(report).includes('wf-clean'),
+      other: id === 'wf-a' ? undefined : named(report).includes('wf-a'),
+    }).toEqual({
+      status: 'findings',
+      findings: [
+        {
+          check: 'workflow_pointers',
+          code: 'workflow_pointer_mismatch',
+          message: "1 workflow's pointer does not match its newest registration.",
+          count: 1,
+          examples: [example],
+        },
+      ],
+      cleanNamed: false,
+      other: id === 'wf-a' ? undefined : false,
+    });
+  });
+
+  it('workflow_version_hash_mismatch — a version stored under a hash not its text', async () => {
+    const home = await workflowHome('wf-clean');
+    rawly(home, INSERT_VERSION('wf-bad', 'badhash', '{"id":"wf-bad"}'));
+    const report = await check(home);
+    // (1) red when the hash is not recomputed; (2) prints the status, the findings and whether the
+    //     clean workflow is named.
+    expect({
+      status: report.status,
+      findings: report.findings,
+      cleanNamed: named(report).includes('wf-clean'),
+    }).toEqual({
+      status: 'findings',
+      findings: [
+        {
+          check: 'workflow_version_hashes',
+          code: 'workflow_version_hash_mismatch',
+          message: '1 stored workflow version does not match its hash.',
+          count: 1,
+          examples: ['workflow wf-bad, hash badhash'],
+        },
+      ],
+      cleanNamed: false,
+    });
+  });
+});
+
+describe('#616 PR-2c c8b2 — checks 2 and 2a: the orphans by table, and examples_of', () => {
+  it.each([
+    [
+      'evidence',
+      `INSERT INTO evidence (run_id, seq, entry, entry_sha256) VALUES ('gone', 0, '{}', '${evidenceEntrySha256('{}')}')`,
+    ],
+    [
+      'run_blobs',
+      "INSERT INTO run_blobs (run_id, name, value) VALUES ('gone', 'workflow_context_snapshots', '{}')",
+    ],
+    [
+      'trace_buffer',
+      "INSERT INTO trace_buffer (run_id, step_id, line_seq, ts, nonce, entries, entry_count, bytes) VALUES ('gone', 's', 0, 0, NULL, '[]', 0, 2)",
+    ],
+    [
+      'trace_sealed',
+      "INSERT INTO trace_sealed (run_id, step_id, seal_seq, lines, bytes) VALUES ('gone', 's', 0, '[]', 2)",
+    ],
+    ['failed_attempts', "INSERT INTO failed_attempts (run_id, seq, line) VALUES ('gone', 0, 'x')"],
+  ] as const)('%s alone holds an orphan — named, and nothing else found', async (table, seed) => {
+    const home = await storeHome();
+    rawly(home, seed);
+    const report = await check(home);
+    // (1) red when the table is left out of the read, or an orphaned blob is also read as a
+    //     placeholder mismatch; (2) prints the findings.
+    expect(report.findings).toEqual([
+      {
+        check: 'orphans',
+        code: 'orphaned_rows',
+        message: `1 row belongs to a run that is gone: ${table} 1.`,
+        count: 1,
+        examples: [`${table}, run gone: 1 row`],
+      },
+    ]);
+  });
+
+  it.each([
+    ['ten rows of one run', [['gone', 10]], 10, 1, ['failed_attempts, run gone: 10 rows']],
+    [
+      '100 rows in 3 pairs',
+      [
+        ['r1', 98],
+        ['r2', 1],
+        ['r3', 1],
+      ],
+      100,
+      3,
+      [
+        'failed_attempts, run r1: 98 rows',
+        'failed_attempts, run r2: 1 row',
+        'failed_attempts, run r3: 1 row',
+      ],
+    ],
+    [
+      'one row in each of 3 pairs: examples_of absent',
+      [
+        ['r1', 1],
+        ['r2', 1],
+        ['r3', 1],
+      ],
+      3,
+      undefined,
+      [
+        'failed_attempts, run r1: 1 row',
+        'failed_attempts, run r2: 1 row',
+        'failed_attempts, run r3: 1 row',
+      ],
+    ],
+  ] as const)('%s', async (_label, runs, count, examplesOf, examples) => {
+    const home = await storeHome();
+    orphanAttempts(home, ...runs);
+    const finding = (await check(home)).findings.find((f) => f.code === 'orphaned_rows');
+    // (1) red when `examples_of` is always set, set to the rows, or a run's rows are not grouped;
+    //     (2) prints the count, whether the field is there, its value and the examples.
+    expect({
+      count: finding?.count,
+      present: finding !== undefined && 'examples_of' in finding,
+      examplesOf: finding?.examples_of,
+      examples: finding?.examples,
+    }).toEqual({ count, present: examplesOf !== undefined, examplesOf, examples });
+  });
+
+  it('more than 10 pairs — 10 examples, examples_of the pair count', async () => {
+    const home = await storeHome();
+    orphanAttempts(
+      home,
+      ...Array.from({ length: 12 }, (_, i) => [`r${String(i).padStart(2, '0')}`, 2] as const),
+    );
+    const finding = (await check(home)).findings.find((f) => f.code === 'orphaned_rows');
+    // (1) red when the examples are not capped, or `examples_of` counts what is shown; (2) prints the
+    //     three numbers.
+    expect({
+      count: finding?.count,
+      shown: finding?.examples?.length,
+      examplesOf: finding?.examples_of,
+    }).toEqual({ count: 24, shown: 10, examplesOf: 12 });
+  });
+});
+
+describe('#616 PR-2c c8b2 — check 3: the tombstone facts', () => {
+  it('two purges and a hand compaction of the first — the horizon and the counts, nothing found', async () => {
+    const home = join(tmp(), '.realm');
+    const h = await openRealmHome({ home });
+    for (let i = 0; i < 2; i++) {
+      const { record } = await h.runStore.create({
+        workflowId: 'wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const sealed = await h.runStore.update({
+        ...record,
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+        terminal_reason: 'Workflow completed.',
+      });
+      await h.purge([{ runId: record.id, version: sealed.record.version }]);
+    }
+    h.close();
+    const c = openDatabase(join(home, 'realm.db'));
+    const first = String(
+      c.prepare('SELECT purged_at FROM purged_runs WHERE seq = 1').get()?.['purged_at'],
+    );
+    c.exec(`UPDATE store_meta SET tombstones_through_seq = 1, tombstones_since = '${first}'`);
+    c.exec('DELETE FROM purged_runs WHERE seq = 1');
+    const tombSeq = Number(c.prepare('SELECT tomb_seq FROM store_meta').get()?.['tomb_seq']);
+    c.close();
+    const report = await check(home);
+    const f = report.facts;
+    // (1) red when the counter is compared with the tombstones a compaction removed (a false
+    //     mismatch), or a fact is not read from its own column; (2) prints the counter, the facts
+    //     and the codes.
+    expect({
+      tombSeq,
+      facts: [f.purged_ids, f.tombstones_through_seq, f.tombstones_since],
+      codes: report.findings.map((x) => x.code),
+    }).toEqual({ tombSeq: 2, facts: [2, 1, first], codes: [] });
+  });
+});
+
+describe('#616 PR-2c c8b2 — checks 5a and 5b: a read here that cannot finish', () => {
+  it.each([
+    ['purged_ids (its root page)', 'purged_ids', 'tombstones', true],
+    [
+      'an orphan read (the covering index of trace_buffer)',
+      'sqlite_autoindex_trace_buffer_1',
+      'orphans',
+      false,
+    ],
+    // Every read's stop set has its own pin: the workflows pointer table, and the versions table.
+    ['the pointer read (the workflows table)', 'workflows', 'workflow_pointers', false],
+    [
+      'the versions read (the workflow_versions table)',
+      'workflow_versions',
+      'workflow_version_hashes',
+      false,
+    ],
+  ] as const)(
+    '%s meets SQLite error 11 — data_unreadable, only that check not run, c8b1 keeps its findings',
+    async (_label, object, stopping, factsAbsent) => {
+      const { home, template } = await seededHome();
+      seedRuns(home, template, [{ id: 'lie', phase: 'completed' }]);
+      const report = await check(pageDamaged(home, object, 0, 0, 16));
+      const f = report.facts;
+      // (1) red when the error escapes check(), or costs another check's result; (2) prints the data
+      //     codes, not_run and whether the three facts are absent.
+      expect({
+        codes: report.findings.filter((x) => x.check !== 'integrity').map((x) => x.code),
+        not_run: report.not_run,
+        absent: [f.tombstones_since, f.tombstones_through_seq, f.purged_ids].every(
+          (v) => v === undefined,
+        ),
+      }).toEqual({
+        codes: ['phase_index_wrong', 'data_unreadable'],
+        not_run: stopped('data_unreadable', stopping),
+        absent: factsAbsent,
+      });
+    },
+  );
+
+  it('check 5b: tomb_seq of 2^60 through the foreign connection — data_unreadable in the words that claim no cause, tombstones not run, the other checks keep their findings', async () => {
+    const { home, template } = await seededHome();
+    seedRuns(home, template, [{ id: 'lie', phase: 'completed' }]);
+    orphanAttempts(home, ['gone', 1]);
+    const c = await openForeignConnection(home);
+    connections.push(c);
+    pastGuard(c, 'store_meta_update_types', 'UPDATE store_meta SET tomb_seq = 1152921504606846976');
+    c.close();
+    connections.pop();
+    const report = await check(home);
+    const f = report.facts;
+    // (1) red when the error escapes check(), or is called damage; (2) prints the codes, the
+    //     message, not_run and the three facts.
+    expect({
+      codes: report.findings.map((x) => x.code),
+      message: report.findings.find((x) => x.code === 'data_unreadable')?.message,
+      not_run: report.not_run,
+      facts: [f.tombstones_since, f.tombstones_through_seq, f.purged_ids],
+    }).toEqual({
+      codes: ['phase_index_wrong', 'orphaned_rows', 'data_unreadable'],
+      message:
+        "Realm could not read the store's data: a stored integer is too large for Realm to read.",
+      not_run: stopped('data_unreadable', 'tombstones'),
+      facts: [undefined, undefined, undefined],
+    });
+  });
 });
 
 describe("#616 PR-2c c8a1, c8a3 — the contract's laws, over every report the cells built", () => {
@@ -1821,6 +2292,14 @@ describe("#616 PR-2c c8a1, c8a3 — the contract's laws, over every report the c
             .filter((n) => n.part !== undefined)
             .filter((n) => r.not_run.some((m) => m.check === n.check && m.part === undefined))
             .map((n) => n.check),
+          // #616 PR-2c c8b2 (MA 3's R2): present, it is at least the examples shown and is not `count`.
+          examplesOfBroken: r.findings
+            .filter(
+              (f) =>
+                f.examples_of !== undefined &&
+                (f.examples_of < (f.examples?.length ?? 0) || f.examples_of === f.count),
+            )
+            .map((f) => f.code),
           status:
             r.status === (r.findings.length === 0 && r.not_run.length === 0 ? 'ok' : 'findings'),
         };
@@ -1832,6 +2311,7 @@ describe("#616 PR-2c c8a1, c8a3 — the contract's laws, over every report the c
         becauseNotFound: [],
         notRunWithoutFinding: false,
         partOnAWholeCheck: [],
+        examplesOfBroken: [],
         status: true,
       })),
     );

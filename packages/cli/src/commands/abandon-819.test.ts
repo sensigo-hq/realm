@@ -16,6 +16,7 @@ import { respondCommand } from './respond.js';
 import { inspectRun } from './inspect.js';
 import type { CliHome } from '../lib/home.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { plantRegistryRow } from '../test-support/plant-registry-row.js';
 
 /** An id the registrar's shape test reads as an agent's (`<slug>-<16 hex>`): here a person's. */
 const HEX_ID = 'ops-review-0123456789abcdef';
@@ -265,6 +266,32 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
         'answered until its workflow can be read; realm run abandon refuses a run that is waiting ' +
         'on a gate. Once re-registered, answer the gate.',
       backup: true,
+      repairIt: false,
+    });
+  });
+
+  it("#616 PR-2c c10a-4a: a stored copy that is not JSON, at a gate, on the real registry — the pointer's own words, never 'Repair it: re-register'", async () => {
+    await plantRegistryRow(h.path, { id: 'wf', text: '{ not json' });
+    const { id } = await atGate('wf');
+    const pointer =
+      "The registered copy of workflow 'wf' is missing from the store or is not JSON: something " +
+      'other than Realm changed the database. Register the workflow again from its source; if ' +
+      'this message comes back, restore the database from a backup.';
+    const r = await abandon(id);
+    // (a) red when the pointer gets a repair act, the answer line comes back, or the record is
+    //     touched; (b) prints the refusal after core's sentence, and each part.
+    expect({
+      failed: r.failed,
+      unchanged: r.unchanged,
+      tail: r.err.slice(NOT_OPEN(id).length + 1),
+      repairIt: r.err.includes('Repair it: re-register'),
+    }).toEqual({
+      failed: true,
+      unchanged: true,
+      tail:
+        `${UNANSWERABLE} ${pointer} This run is waiting on human gate 'approve', which cannot be ` +
+        'answered until its workflow can be read; realm run abandon refuses a run that is waiting ' +
+        'on a gate. Once re-registered, answer the gate.',
       repairIt: false,
     });
   });

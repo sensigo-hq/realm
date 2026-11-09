@@ -20,13 +20,8 @@ import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-  writeTestClockFile,
-} from '@sensigo/realm';
-import type { Attributed, WorkflowDefinition } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, writeTestClockFile } from '@sensigo/realm';
+import type { Attributed, WorkflowDefinition, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import type { McpEnvelope } from '../render-reply.js';
 import { handleStartRun } from './start-run.js';
 import {
@@ -71,8 +66,8 @@ const definition: WorkflowDefinition = {
 };
 
 let h: TempHome;
-let runStore: JsonFileStore;
-let workflowStore: JsonWorkflowStore;
+let runStore: RunStore;
+let workflowStore: WorkflowRegistrar;
 
 beforeEach(async () => {
   // The location first, then the handle on its root.

@@ -29,6 +29,7 @@
 // consumer of `drive_failure_costs` gets the raw figure and can decide for itself.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
+import { priceFromEconomics, type CacheEconomics } from '@sensigo/realm';
 import type {
   RunRecord,
   RunStore,
@@ -1468,5 +1469,67 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
       { runStore: makeStore(contextFourRun) },
     );
     expect('drive_failure_costs' in summary).toBe(false);
+  });
+});
+
+// Caching 3-M A-2b3: `get_run_state` carries what a miss cost through the existing walk, on a step
+// and on a failed drive. The requests are MISS_REQUESTS with the output count and the split fact a
+// GPT-5.6 request records (the fixtures above have no output count, so they are not priced). The
+// rates are example rates. Can fail: `composeCostView` no longer handing `composeMisses` its source.
+describe('caching 3-M A-2b3 — get_run_state carries what a miss cost', () => {
+  it('extra_usd sits beside `derived`, on the step and on the failed drive', async () => {
+    const requests = MISS_REQUESTS.map((r) => ({
+      ...r,
+      output_tokens: 40,
+      cache_split_offered: false,
+    }));
+    const file: CacheEconomics = {
+      version: 1,
+      currency: 'USD',
+      models: {
+        'gpt-5.6-luna': {
+          prices: [
+            { per_million_tokens: { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 } },
+          ],
+        },
+      },
+    };
+    const source: PriceSource = {
+      price: (q) => priceFromEconomics(file, q.model, q.at, q.usage),
+    };
+    const run = {
+      ...contextThreeRun,
+      id: 'r3mp',
+      evidence: [pricedAttempt('miss_step', 'success', requests)],
+      drive_failures: {
+        first_failed_at: '2026-11-08T05:01:00.000Z',
+        total: 1,
+        entries: [
+          {
+            at: '2026-11-08T05:01:00.000Z',
+            step: 'miss_step',
+            provider: 'openai',
+            error_class: 'other',
+            message: 'connection reset',
+            elapsed_ms: 1,
+            usage: requests,
+          },
+        ],
+      },
+    } as unknown as RunRecord;
+    const workflowStore = declared({
+      register: async () => {},
+      list: async () => [pricedDefinition],
+      get: async () => pricedDefinition,
+    } as unknown as JsonWorkflowStore);
+    const summary = await handleGetRunState(
+      { run_id: 'r3mp', include_steps: true },
+      { runStore: makeStore(run), workflowStore, priceSourceProvider: async () => source },
+    );
+    const onStep = summary.steps!['miss_step']!.attempts[0]!.cost!.misses!;
+    const onFailure = summary.drive_failure_costs![0]!.cost!.misses!;
+    // 4012 × (2.5 − 0.2) / 1e6, the same figure on both.
+    expect(onStep[0]?.extra_usd, JSON.stringify(onStep)).toBeCloseTo(0.0092276, 10);
+    expect(onFailure[0]?.extra_usd, JSON.stringify(onFailure)).toBeCloseTo(0.0092276, 10);
   });
 });

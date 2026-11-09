@@ -1,6 +1,6 @@
 // Integration tests for the create_workflow tool business logic.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
+import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleCreateWorkflow, type CreateWorkflowArgs } from './create-workflow.js';
 import { handleExecuteStep } from './execute-step.js';
 import { generateProtocol } from '../protocol/generator.js';
@@ -8,7 +8,7 @@ import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 describe('handleCreateWorkflow', () => {
   let h: TempHome;
-  let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
+  let stores: { runStore: RunStore; workflowStore: WorkflowRegistrar };
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -387,7 +387,7 @@ describe('handleCreateWorkflow', () => {
 
 describe('end-to-end — create_workflow + execute_step walk to completion', () => {
   let h: TempHome;
-  let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
+  let stores: { runStore: RunStore; workflowStore: WorkflowRegistrar };
 
   beforeEach(async () => {
     h = await makeTempHome();

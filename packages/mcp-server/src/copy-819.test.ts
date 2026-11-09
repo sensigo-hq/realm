@@ -8,8 +8,8 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: codes,
 // texts — never a token.
 import { describe, it, expect, afterEach } from 'vitest';
-import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { WorkflowDefinition } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
@@ -26,9 +26,7 @@ afterEach(async () => {
 async function atGate(workflowId: string, copy?: unknown) {
   const h = await makeTempHome();
   handles.push(h);
-  const wfDir = join(h.path, 'workflows');
-  await mkdir(wfDir, { recursive: true });
-  if (copy !== undefined) await writeFile(join(wfDir, `${workflowId}.json`), JSON.stringify(copy));
+  if (copy !== undefined) await h.stores.workflowStore.register(copy as WorkflowDefinition);
   const { runStore } = h.stores;
   const { record: run } = await runStore.create({ workflowId, workflowVersion: 1, params: {} });
   await runStore.update({
@@ -51,7 +49,7 @@ async function atGate(workflowId: string, copy?: unknown) {
     };
     return JSON.parse(r.content[0]!.text) as Reply;
   };
-  return { call, runId: run.id, runStore, file: join(wfDir, `${workflowId}.json`) };
+  return { call, runId: run.id, runStore, file: join(h.path, 'workflows', `${workflowId}.json`) };
 }
 
 describe('#819 U2 — a copy with no steps, over MCP', () => {

@@ -14,6 +14,7 @@ import { STUCK_DEFINITION_PARSE_CAP_BYTES, CURRENT_WORKFLOW_SCHEMA_VERSION } fro
 import type { RunStore, RunRecord, RunHealthFinding, WorkflowDefinition } from '@sensigo/realm';
 import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { plantRegistryRow } from '../test-support/plant-registry-row.js';
 
 type Kind = RunHealthFinding['kind'];
 
@@ -393,6 +394,43 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
         .split('\n')
         .find((l) => l.includes('run-ghost')),
     ).toContain('definition_unresolvable (missing) (realm run inspect run-ghost)');
+  });
+
+  // #616 PR-2c c10a-4a: a stored copy that is not JSON, planted on a foreign connection.
+  it('CAP2 an UNDER-cap corrupt copy is read and SELECTED, labelled with the corrupt class', async () => {
+    await plantRegistryRow(h.path, { id: 'wf-corrupt', text: '{ not json' });
+    await plantRun('run-corrupt', 'wf-corrupt');
+
+    await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
+
+    // (a) red when the class word changes or the run is left off the list; (b) prints the line.
+    expect(
+      out()
+        .split('\n')
+        .find((l) => l.startsWith('run-corrupt')),
+    ).toContain('definition_unresolvable (corrupt)');
+  });
+
+  it('CAP3 an over-cap entry and a corrupt one are DISTINGUISHABLE: the corrupt one is a labelled row, the over-cap one a footer and never a label', async () => {
+    const pad = 'x'.repeat(STUCK_DEFINITION_PARSE_CAP_BYTES);
+    await h.home.workflowStore.register({ id: 'wf-big', schema_version: 3, pad } as never);
+    await plantRegistryRow(h.path, { id: 'wf-corrupt', text: '{ not json' });
+    await plantRun('run-big', 'wf-big');
+    await plantRun('run-corrupt', 'wf-corrupt');
+
+    await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
+
+    const lines = out().split('\n');
+    // (a) red when the over-cap copy is read and labelled, or the corrupt one is footered; (b)
+    //     prints each run's line and whether the footer names each.
+    expect({
+      big: lines.find((l) => l.startsWith('run-big'))?.includes('definition_unresolvable'),
+      corrupt: lines
+        .find((l) => l.startsWith('run-corrupt'))
+        ?.includes('definition_unresolvable (corrupt)'),
+      footerBig: err().includes('wf-big (4.0 MiB, 1 run)'),
+      footerCorrupt: err().includes('wf-corrupt'),
+    }).toEqual({ big: false, corrupt: true, footerBig: true, footerCorrupt: false });
   });
 
   it('CAP5 a legacy copy renders WORDS in the class slot — never an error code', async () => {

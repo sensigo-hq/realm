@@ -4,8 +4,6 @@
 // call-counted variant) is ever exercised.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, afterEach } from 'vitest';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   InMemoryTraceBufferStore,
@@ -121,8 +119,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
   it("a G record (terminal, stale persisted phase) is refused at the pre-CS check — keyed on terminal_state, not run_phase, on a VIRGIN step ('c') so stepStateOf cannot mask a reverted check", async () => {
     const h = await makeTempHome();
     handles.push(h);
-    const workflowDir = join(h.path, 'workflows');
-    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    await h.stores.workflowStore.register(def);
     const workflowStore = h.stores.workflowStore;
     const runStore = makeStaticStore(makeGrandfathered());
     const traceBufferStore = new InMemoryTraceBufferStore(runStore);
@@ -148,8 +145,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
   it("a two-phase store (LIVE at the pre-CS get, G at the fence's own re-check) is ALSO refused — proving the fence's own keying, not just the pre-CS one", async () => {
     const h = await makeTempHome();
     handles.push(h);
-    const workflowDir = join(h.path, 'workflows');
-    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    await h.stores.workflowStore.register(def);
     const workflowStore = h.stores.workflowStore;
 
     const live = makeGrandfathered({
@@ -225,8 +221,7 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
   it("a run that vanishes between the pre-CS read and the fence's re-check is refused run_not_found, reporting the version the pre-CS read saw", async () => {
     const h = await makeTempHome();
     handles.push(h);
-    const workflowDir = join(h.path, 'workflows');
-    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    await h.stores.workflowStore.register(def);
     const workflowStore = h.stores.workflowStore;
 
     const live = makeGrandfathered({
@@ -296,8 +291,7 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
   it('start_run, deduped onto a G record, reports "completed" — never "gate_waiting" — in both the envelope and the context_hint', async () => {
     const h = await makeTempHome();
     handles.push(h);
-    const workflowDir = join(h.path, 'workflows');
-    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    await h.stores.workflowStore.register(def);
     const workflowStore = h.stores.workflowStore;
     const g = makeGrandfathered();
     const runStore: RunStore = declared({
@@ -333,8 +327,7 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
   it('start_run_batch, deduped onto a G record, reports "completed" in the item\'s run_phase — never "gate_waiting"', async () => {
     const h = await makeTempHome();
     handles.push(h);
-    const workflowDir = join(h.path, 'workflows');
-    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    await h.stores.workflowStore.register(def);
     const workflowStore = h.stores.workflowStore;
     const g = makeGrandfathered();
     const runStore: RunStore = declared({

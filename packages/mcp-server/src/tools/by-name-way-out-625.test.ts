@@ -10,12 +10,11 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleExecuteStep } from './execute-step.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -53,8 +52,8 @@ const INPUT: Partial<StepDefinition> = {
 
 describe('#625 PR-2a, C66 — execute_step by name on a step refused before its claim', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   beforeEach(async () => {
     h = await makeTempHome();
     runStore = h.stores.runStore;

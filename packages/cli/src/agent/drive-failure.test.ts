@@ -496,6 +496,42 @@ describe('issue #719 — the fence names why, when the store refused with a Real
       await h.cleanup();
     }
   });
+
+  it('a store refusal longer than the entry can hold: the entry keeps the first 500 characters, and the LOST line carries the whole message, once (F2)', async () => {
+    const h = await makeTempHome();
+    try {
+      const last = 'Restore the run from a backup.';
+      const message = `The store could not read run bad: ${'a long fake fault, '.repeat(40)}${last}`;
+      const refusal = new WorkflowError(message, {
+        code: 'ENGINE_STORE_FAILED',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+      });
+      const store = new Proxy(h.home.runStore, {
+        get(target, prop) {
+          if (prop === 'get') return async (): Promise<never> => Promise.reject(refusal);
+          const v = Reflect.get(target, prop, target) as unknown;
+          return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+        },
+      });
+      const entry = buildEntry(refusal, 's', 'anthropic', performance.now(), new Date());
+      await recordDriveFailure(store, 'bad', entry);
+      const line = errors.join('\n');
+      // (a) red when the line prints the entry's cut copy instead of the store's message (the last
+      //     sentence is lost) or says the fault twice; (b) prints the entry's length, the line
+      //     count, whether the line holds the message and how often the fault's opening appears.
+      expect({
+        entryCut: entry.message === message.slice(0, 500),
+        lines: errors.length,
+        lost: line.includes('drive-failure record LOST for run'),
+        whole: line.includes(message),
+        opening: line.split('The store could not read run bad').length - 1,
+      }).toEqual({ entryCut: true, lines: 1, lost: true, whole: true, opening: 1 });
+    } finally {
+      await h.cleanup();
+    }
+  });
 });
 
 // issue #715 (a) (D6-23): a recorded `elapsed_ms` is a DURATION, measured on the monotonic clock
