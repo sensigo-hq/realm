@@ -30,14 +30,18 @@ describe('caching 3-M B3a — the one normaliser, through boundRequestFacts', ()
       named({ type: 'messages_changed', cache_missed_input_tokens: 1200 }),
     ],
     ['a reason with no count', named({ type: 'unavailable' })],
+    [
+      'the reason of a message Anthropic cannot find',
+      named({ type: 'previous_message_not_found' }),
+    ],
     ['a count of 0', named({ type: 'tools_changed', cache_missed_input_tokens: 0 })],
   ])('kept: %s', (_name, value) => {
     expect(bound(value)).toEqual(value);
   });
 
   // A value that is partly good loses only what is not. (1) red when the type is stored verbatim, the
-  // count is unchecked, or the value is spread in place of rebuilt (the `note` rows). (2) prints what
-  // came back.
+  // count is unchecked, or the value is spread in place of rebuilt on any of its three arms (the
+  // `note` rows, one per arm). (2) prints what came back.
   it.each([
     ['a reason Realm does not know', named({ type: 'new_reason' }), named({ type: 'unknown' })],
     [
@@ -56,9 +60,19 @@ describe('caching 3-M B3a — the one normaliser, through boundRequestFacts', ()
       named({ type: 'system_changed' }),
     ],
     [
-      'an extra key on the value',
+      'an extra key on the value of a first request',
       { asked: true, reference_id: null, note: 'provider text' },
       { asked: true, reference_id: null },
+    ],
+    [
+      'an extra key on the value of a named id',
+      { ...(named('pending') as object), note: 'provider text' },
+      named('pending'),
+    ],
+    [
+      'an extra key on the value of a refusal',
+      { asked: false, cause: 'rejected', note: 'provider text' },
+      { asked: false, cause: 'rejected' },
     ],
   ])('closed: %s', (_name, value, kept) => {
     expect(bound(value)).toEqual(kept);
