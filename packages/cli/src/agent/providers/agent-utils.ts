@@ -870,18 +870,26 @@ const REFERENCE_FIELDS = {
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
+/** Caching 3-M (piece C2): a step's predecessor found outside the arriving list, and where it was
+ *  found. The source travels with the request, so no site that attaches a copy names it. */
+export interface RecordedPredecessor {
+  readonly request: UsageRecord;
+  readonly from: CacheReference['from'];
+}
+
 /**
  * Caching 3-M (piece A-1) — gives a step's first request in a drive the copy of its predecessor when
- * that predecessor is on the run's record (`recorded`, the first request of the step's last call
- * there, piece A-1b): `arrived[0]` gains `reference`, `{ from: 'run' }` plus each of
- * `CacheReference`'s fields `recorded` has (never its `request_index` or `request_in_call`). Every
+ * one was found (`recorded`: the first request of the step's last call on the run's record, piece
+ * A-1b, or the same step's request in an earlier run, piece C2): `arrived[0]` gains `reference`,
+ * `recorded.from` plus each of `CacheReference`'s fields its request has (never its `request_index`
+ * or `request_in_call`). Every
  * other request's predecessor is an earlier entry of the same stored list, so nothing is copied for
  * it. Called on each arriving array after its mint, with `prior` the requests the step
  * already holds in this drive (`usageForStep`), at the points where a provider's usage enters the
  * record: the three success returns and the tools and single-shot catches in `run-agent.ts`.
  *
  * When `prior` is non-empty, `recorded` is absent, or `arrived` is empty, no entry gains one. A
- * `recorded` that is not a plain object with a string `request_start` counts as absent; if
+ * `recorded.request` that is not a plain object with a string `request_start` counts as absent; if
  * `arrived[0]` is not a plain object, no entry gains one. A `reference` key an arriving entry
  * carried is always removed or replaced (as `mintRequestIds` replaces `request_id`). Pure and total:
  * returns new objects, never mutates its inputs, and never throws — at the catches it runs outside
@@ -891,22 +899,23 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
 export function attachRecordedReference(
   prior: readonly UsageRecord[] | undefined,
   arrived: readonly UsageRecord[],
-  recorded: UsageRecord | undefined,
+  recorded: RecordedPredecessor | undefined,
 ): UsageRecord[] {
   const predecessor =
     (prior === undefined || prior.length === 0) &&
-    isPlainRecord(recorded) &&
-    typeof recorded['request_start'] === 'string'
+    recorded !== undefined &&
+    isPlainRecord(recorded.request) &&
+    typeof recorded.request['request_start'] === 'string'
       ? recorded
       : undefined;
   return arrived.map((entry, index) => {
     if (!isPlainRecord(entry)) return entry;
     const { reference: _carried, ...rest } = entry as UsageRecord;
     if (index !== 0 || predecessor === undefined) return rest;
-    const reference: Record<string, unknown> = { from: 'run' };
+    const reference: Record<string, unknown> = { from: predecessor.from };
     for (const field of Object.keys(REFERENCE_FIELDS) as (keyof typeof REFERENCE_FIELDS)[]) {
-      if (Object.hasOwn(predecessor, field) && predecessor[field] !== undefined) {
-        reference[field] = predecessor[field];
+      if (Object.hasOwn(predecessor.request, field) && predecessor.request[field] !== undefined) {
+        reference[field] = predecessor.request[field];
       }
     }
     return { ...rest, reference: reference as CacheReference };

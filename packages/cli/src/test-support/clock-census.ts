@@ -24,6 +24,11 @@ export const CENSUS: Record<string, Entry> = {
   ],
   'cli/src/agent/drive-failure.ts#buildEntry#performance.now()': [1, 'duration', MONOTONIC],
   'cli/src/agent/drive-failure.ts#buildEntryUnsafe#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/agent/earlier-runs.ts#readEarlierRuns#clock.now()': [
+    1,
+    'read',
+    "the start of the read's window, compared with updated_at, the store's own stamp",
+  ],
   'cli/src/agent/gate/slack-gate-server.ts#startSlackGateServer#Date.now()': [
     1,
     'outside',

@@ -109,7 +109,7 @@ describe('caching 3-M A-2b — get_run_state documents `cost.misses`', () => {
     // A-2b1's 1 (b) (`exact`, `from: list`) and 1 (c) (`tolerance`, `from: reference`).
     claim(
       STATE,
-      '`derived` has `cause`, `rule` (`exact` on Anthropic, `tolerance` elsewhere), `expected_tokens`, `shortfall_tokens` and `predecessor` (`{ "from": "list", "at": <position> }` or `{ "from": "reference" }`).',
+      '`derived` has `cause`, `rule` (`exact` on Anthropic, `tolerance` elsewhere), `expected_tokens`, `shortfall_tokens` and `predecessor` (`{ "from": "list", "at": <position> }`, `{ "from": "reference" }` for an earlier drive of this run, or `{ "from": "earlier_run" }`).',
     );
     // A-2b1's 1 (b) (`written`) and 1 (c) (a gap and no lifetime); `cache-misses.test.ts`, A-2a3's
     // cells (`asked`: "a reference that only read").
