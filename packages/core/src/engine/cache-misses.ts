@@ -431,9 +431,10 @@ function missGap(now: Entry, before: Entry): CacheMissGap | undefined {
 }
 
 /**
- * Behaviour 3 for the missed request at `i`, whose predecessor came `from` the list or its
- * reference. Both sides asked (A-2a1's predecessor rule returns only a request that asked), so
- * tools, system and format lie inside what both asked to be cached; the prompt is checked per side.
+ * Behaviour 3 for the missed request at `i`, whose predecessor came `from` the list, the run's own
+ * reference or another run's (`earlier_run`). Both sides asked (A-2a1's predecessor rule returns
+ * only a request that asked), so tools, system and format lie inside what both asked to be cached;
+ * the prompt is checked per side.
  */
 function causeAt(
   list: readonly unknown[],
