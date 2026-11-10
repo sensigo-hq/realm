@@ -223,6 +223,7 @@ const CLOCK_OUTSIDE_SITES = [
   'cli/src/agent/providers/openai-provider.ts#timedCreate',
   'cli/src/agent/providers/openai-reasoning-provider.ts#makeRequest',
   'cli/src/agent/run-agent.ts#sidecarStamp',
+  'cli/src/agent/step-cache-choices.ts#chooseStepCaches',
   'cli/src/commands/export.ts#<module>',
   'cli/src/commands/export.ts#buildExportBundle',
   'cli/src/commands/watch.ts#registerFile',

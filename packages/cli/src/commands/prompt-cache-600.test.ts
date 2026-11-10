@@ -198,7 +198,7 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
   // G15. (a) red when an operator's drive resolves as a listen child (its long prior, realm listen),
   // or `auto`'s basis is not recorded; (b) prints the system field sent, the stored request facts
   // and the start line.
-  it('G15 no flag: auto asks for the short lifetime (no ttl), and the record holds lifetime, 300, false, runner_default, realm agent, cache_auto no_measurement, the answered model, anthropic', async () => {
+  it('G15 no flag: auto asks for the short lifetime (no ttl), and the record holds lifetime, 300, false, runner_default, realm agent, cache_auto step_gaps with no gap (no earlier run), the answered model, anthropic', async () => {
     const { r, stub, text, request, port } = await driveAgainstStandIn([]);
     expect(
       (stub.requests[0]!['system'] as Array<{ cache_control: unknown }>)[0]!.cache_control,
@@ -223,7 +223,7 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
       cache_ttl_sent: false,
       cache_requested_source: 'runner_default',
       cache_requested_by: 'realm agent',
-      cache_auto: { basis: 'no_measurement' },
+      cache_auto: { basis: 'step_gaps', gaps_s: [] },
       provider: 'anthropic',
       endpoint: 'custom',
       cache_split_offered: true,

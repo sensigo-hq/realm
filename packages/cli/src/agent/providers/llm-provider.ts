@@ -110,6 +110,20 @@ export interface CallCacheChoice {
 }
 
 /**
+ * Caching 3-M (D-2) — a built-in provider's `auto` rule, for one agent step at a time: `choose` is the
+ * provider's own rule over one step's gaps (`chooseAutoLifetime` or `chooseAutoOneLifetime`, with its
+ * prior), callable any number of times and changing no state; `toolStep` is what a step with tools
+ * asks for, absent where a tool step is not part of the provider's choice (OpenAI).
+ */
+export interface AutoStepRule {
+  choose(
+    gapsS: readonly number[],
+    prices: AutoPriceInput,
+  ): { choice: CacheChoice; prices?: CacheAutoPrices };
+  toolStep?: CacheChoice;
+}
+
+/**
  * Issue #600 PR 2 (B4) — which kind of endpoint a request went to, from the SDK client it went
  * through: `custom` when the client's `baseURL` is a string other than the SDK's own default
  * address, `default` when it is that address, nothing when the client has no string `baseURL`. So
@@ -576,6 +590,8 @@ export async function resolveOpenAiEndpoint(): Promise<RequestEndpoint> {
  * choice is pending (measured gaps), `settleAuto` — that provider's `settleAutoChoice`, bound. The
  * caller settles it from the runner's price file before the provider serves a request. #896 unit B:
  * so too an `openai` provider in the explicit set (GPT-5.6 and later at OpenAI's own address).
+ * Caching 3-M (D-2): and, under `auto`, `autoRule` for a provider that takes a lifetime (Anthropic;
+ * OpenAI in the explicit set), so `realm agent` can choose for each step.
  */
 export async function resolveProvider(options: {
   provider: ProviderName | undefined;
@@ -594,6 +610,7 @@ export async function resolveProvider(options: {
 }): Promise<{
   provider: LlmProvider;
   settleAuto?: (prices: AutoPriceInput) => { choice: CacheChoice; prices?: CacheAutoPrices };
+  autoRule?: AutoStepRule;
 }> {
   const providerFlag = options.provider;
   const modelFlag = options.model;
@@ -641,9 +658,12 @@ export async function resolveProvider(options: {
       promptCache: options.promptCache,
     });
     // #896 unit B: in the explicit set, `auto` with measured gaps waits for the price file too.
-    return openai.isAutoChoicePending()
-      ? { provider: openai, settleAuto: openai.settleAutoChoice.bind(openai) }
-      : { provider: openai };
+    const openaiRule = openai.autoStepRule();
+    return {
+      provider: openai,
+      ...(openai.isAutoChoicePending() ? { settleAuto: openai.settleAutoChoice.bind(openai) } : {}),
+      ...(openaiRule !== undefined ? { autoRule: openaiRule } : {}),
+    };
   } else {
     const { AnthropicProvider, ANTHROPIC_DEFAULT_BASE_URL } =
       await import('./anthropic-provider.js');
@@ -657,8 +677,13 @@ export async function resolveProvider(options: {
       endpoint,
       cacheDiagnostics: options.cacheDiagnostics !== 'off',
     });
-    return anthropic.isAutoChoicePending()
-      ? { provider: anthropic, settleAuto: anthropic.settleAutoChoice.bind(anthropic) }
-      : { provider: anthropic };
+    const anthropicRule = anthropic.autoStepRule();
+    return {
+      provider: anthropic,
+      ...(anthropic.isAutoChoicePending()
+        ? { settleAuto: anthropic.settleAutoChoice.bind(anthropic) }
+        : {}),
+      ...(anthropicRule !== undefined ? { autoRule: anthropicRule } : {}),
+    };
   }
 }

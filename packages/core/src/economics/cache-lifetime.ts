@@ -32,6 +32,7 @@ import {
   type CacheAutoRate,
 } from '../types/run-record.js';
 import type { CacheEconomicsRates } from './cache-economics.js';
+import { parseStamp } from '../engine/instants.js';
 
 /** The most recent gaps one choice reads. */
 export const AUTO_GAPS_KEPT = 5;
@@ -92,6 +93,27 @@ function readableGap(gap: unknown): gap is number {
  */
 export function keptCacheGaps(gapsS: readonly number[] | undefined): number[] {
   return (gapsS ?? []).filter(readableGap).slice(-AUTO_GAPS_KEPT);
+}
+
+/**
+ * Caching 3-M (D-2) — the gaps one agent step's choice reads, from the moments its requests started
+ * in the workflow's earlier runs (`requestStarts`: the found requests' `request_start`s; one that does
+ * not parse is dropped) and `endMs`, one reading of the host's clock that stands for the start of the
+ * step's next request. The moments are sorted oldest first; each gap is the difference between two
+ * neighbours, then the last gap is `endMs` minus the newest, each in whole seconds, rounded down.
+ * {@link keptCacheGaps} then keeps what it keeps (a gap below 0, from a reading behind a stamp, is
+ * dropped). No moment: no gap. Pure.
+ */
+export function stepCacheGaps(requestStarts: readonly unknown[], endMs: number): number[] {
+  const moments = requestStarts
+    .map((start) => (typeof start === 'string' ? parseStamp(start) : undefined))
+    .filter((ms): ms is number => ms !== undefined)
+    .sort((a, b) => a - b);
+  const newest = moments.at(-1);
+  if (newest === undefined) return [];
+  const gaps = moments.slice(1).map((ms, i) => Math.floor((ms - moments[i]!) / 1000));
+  gaps.push(Math.floor((endMs - newest) / 1000));
+  return keptCacheGaps(gaps);
 }
 
 /**
@@ -306,7 +328,7 @@ function normalizeCacheAutoPrices(value: unknown): CacheAutoPrices | undefined {
  * A stored or passed `cache_auto` as the record keeps it: a NEW object `{ basis }`,
  * `{ basis, gaps_s }` or (#898) `{ basis, gaps_s, prices }` (keys in that order) when the value is a
  * plain object whose `basis` is one of {@link CACHE_AUTO_BASES} and `gaps_s` is present exactly
- * when `basis` is `listen_trigger_gaps` — an array of at most {@link AUTO_GAPS_KEPT} whole numbers
+ * when `basis` is `listen_trigger_gaps` or (caching 3-M D-2) `step_gaps` — an array of at most {@link AUTO_GAPS_KEPT} whole numbers
  * from 0 to {@link CACHE_GAP_MAX_S}; `prices` only with a non-empty `gaps_s`, and only in one of
  * its five shapes ({@link normalizeCacheAutoPrices}; a `prices` of `undefined` counts as absent);
  * otherwise `undefined`. Other keys are dropped. Total: never throws.
@@ -320,7 +342,7 @@ export function normalizeCacheAuto(value: unknown): CacheAuto | undefined {
   }
   const gaps = v['gaps_s'];
   const prices = v['prices'];
-  if (basis !== 'listen_trigger_gaps') {
+  if (basis !== 'listen_trigger_gaps' && basis !== 'step_gaps') {
     return gaps === undefined && prices === undefined
       ? { basis: basis as CacheAutoBasis }
       : undefined;
@@ -328,7 +350,7 @@ export function normalizeCacheAuto(value: unknown): CacheAuto | undefined {
   if (!Array.isArray(gaps) || gaps.length > AUTO_GAPS_KEPT || !gaps.every(readableGap)) {
     return undefined;
   }
-  const kept: CacheAuto = { basis: 'listen_trigger_gaps', gaps_s: [...(gaps as number[])] };
+  const kept: CacheAuto = { basis, gaps_s: [...(gaps as number[])] };
   if (prices === undefined) return kept;
   if (gaps.length === 0) return undefined;
   const normalized = normalizeCacheAutoPrices(prices);

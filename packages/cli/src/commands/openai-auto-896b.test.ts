@@ -25,6 +25,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type CacheAuto,
+  type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { OpenAIProvider } from '../agent/providers/openai-provider.js';
@@ -276,33 +277,28 @@ const listenGaps = (gaps: string) => ['--spawned-by-listen', '--cache-gaps', gap
 
 describe('#896 unit B — `auto` on a drive realm listen starts, GPT-5.6 and later at OpenAI’s own address', () => {
   // (a) red when `auto` keeps unit A's 30 minutes; (b) prints the bodies, the ask, the start line,
-  //     the inspect line, the warning and the read count.
-  it('check 1: gaps 40 min, 2 h, 3 h, priced (write 1.25, read 0.1) → no caching: unit A’s real off, recorded off, priced from the file', async () => {
+  //     the inspect line, the warning and the read count. Caching 3-M (D-2): the request follows its
+  //     step, which has no earlier run, so it asks OpenAI's 30 minutes; the start line is the drive's.
+  it('check 1: gaps 40 min, 2 h, 3 h, priced (write 1.25, read 0.1) → the start line says no caching, priced from the file; the step with no earlier run asks 30 minutes', async () => {
     const d = await deployment('c1', { realmYaml: NAMES_PRICES, prices: PRICED });
     const r = await drive('c1', d, listenGaps('2400,7200,10800'));
-    const auto = {
-      basis: 'listen_trigger_gaps',
-      gaps_s: [2400, 7200, 10800],
-      prices: { from: 'economics' },
-    };
     const evidence =
       "the last 3 gaps between this workflow's triggers were about 40 minutes, 2 hours and 3 hours";
     expect(r).toEqual({
       code: 0,
       startLine: `${OFF} (auto: ${evidence}; priced from your price file; ${LISTEN_DEFAULT}).`,
       warning: undefined,
-      bodies: [OFF_BODY],
-      ask: offAsk(auto),
+      bodies: [UNIT_A_BODY],
+      ask: lifetimeAsk({ basis: 'step_gaps', gaps_s: [] }),
       priceFileReads: 1,
-      // Check 9, inspect's priced words.
       inspect: expect.stringContaining(
-        `asked for no caching (realm listen's default; auto: ${evidence}; priced from your price file)`,
+        "asked for 30 minutes (sent as 30 minutes; realm listen's default; auto: Realm found no earlier request of this step from the last 7 days)",
       ),
     });
   }, 90_000);
 
   // (a) red when the cost comparison is inverted (it chooses no caching); (b) as check 1.
-  it('check 2: gaps 5 min and 7 min, priced → 30 minutes, with unit A’s body', async () => {
+  it('check 2: gaps 5 min and 7 min, priced → the start line says 30 minutes; the step asks 30 minutes, with unit A’s body', async () => {
     const d = await deployment('c2', { realmYaml: NAMES_PRICES, prices: PRICED });
     const r = await drive('c2', d, listenGaps('300,420'));
     const evidence =
@@ -312,35 +308,33 @@ describe('#896 unit B — `auto` on a drive realm listen starts, GPT-5.6 and lat
       startLine: `${ASK_30} (auto: ${evidence}; priced from your price file; ${LISTEN_DEFAULT}).`,
       warning: undefined,
       bodies: [UNIT_A_BODY],
-      ask: lifetimeAsk({
-        basis: 'listen_trigger_gaps',
-        gaps_s: [300, 420],
-        prices: { from: 'economics' },
-      }),
+      ask: lifetimeAsk({ basis: 'step_gaps', gaps_s: [] }),
       priceFileReads: 1,
       inspect: expect.stringContaining(
-        `asked for 30 minutes (sent as 30 minutes; realm listen's default; auto: ${evidence}; priced from your price file)`,
+        "asked for 30 minutes (sent as 30 minutes; realm listen's default; auto: Realm found no earlier request of this step from the last 7 days)",
       ),
     });
   }, 90_000);
 
   // (a) red when either surface takes the window from Anthropic's lifetime (54 minutes) — the start
   //     line's provider, inspect's entry provider, or the view's provider; (b) prints both lines.
-  it('check 3: no price file, gaps 40 min and 2 h → no caching; the start line and inspect of the same run both name 27 minutes', async () => {
+  it('check 3: no price file, gaps 40 min and 2 h → the start line says no caching and names 27 minutes; the step with no earlier run asks 30 minutes', async () => {
     const d = await deployment('c3', { realmYaml: 'version: 1\n', prices: PRICED });
     const r = await drive('c3', d, listenGaps('2400,7200'));
     const words =
       "auto: the last 2 gaps between this workflow's triggers were about 40 minutes and 2 hours; no price file (runner.cache.economics is not set), and no gap was under 27 minutes, so no caching";
     expect({ startLine: r.startLine, inspect: r.inspect, bodies: r.bodies }).toEqual({
       startLine: `${OFF} (${words}; ${LISTEN_DEFAULT}).`,
-      inspect: expect.stringContaining(`asked for no caching (realm listen's default; ${words})`),
-      bodies: [OFF_BODY],
+      inspect: expect.stringContaining(
+        "asked for 30 minutes (sent as 30 minutes; realm listen's default; auto: Realm found no earlier request of this step from the last 7 days)",
+      ),
+      bodies: [UNIT_A_BODY],
     });
   }, 90_000);
 
   // (a) red when the 30-minute tail is left out (`, so 30 minutes without prices`); (b) prints the
   //     start line, the inspect line and the bodies.
-  it('check 4: no price file, a gap of 20 minutes → 30 minutes without prices', async () => {
+  it('check 4: no price file, a gap of 20 minutes → the start line says 30 minutes without prices; the step asks 30 minutes', async () => {
     const d = await deployment('c4', {});
     const r = await drive('c4', d, listenGaps('1200'));
     const words =
@@ -348,7 +342,7 @@ describe('#896 unit B — `auto` on a drive realm listen starts, GPT-5.6 and lat
     expect({ startLine: r.startLine, inspect: r.inspect, bodies: r.bodies }).toEqual({
       startLine: `${ASK_30} (${words}; ${LISTEN_DEFAULT}).`,
       inspect: expect.stringContaining(
-        `asked for 30 minutes (sent as 30 minutes; realm listen's default; ${words})`,
+        "asked for 30 minutes (sent as 30 minutes; realm listen's default; auto: Realm found no earlier request of this step from the last 7 days)",
       ),
       bodies: [UNIT_A_BODY],
     });
@@ -356,7 +350,7 @@ describe('#896 unit B — `auto` on a drive realm listen starts, GPT-5.6 and lat
 
   // (a) red when `cache_write_5m` is read as OpenAI's write (the choice is then priced); (b) prints
   //     the ask, the start line and the inspect line.
-  it('check 5: a row with input, cache_read and cache_write_5m but no cache_write, gaps 40 min and 2 h → the fallback, no caching, rate_missing [cache_write]', async () => {
+  it('check 5: a row with input, cache_read and cache_write_5m but no cache_write, gaps 40 min and 2 h → the start line says the fallback, no caching, no cache_write rate; the step asks 30 minutes', async () => {
     const d = await deployment('c5', {
       realmYaml: NAMES_PRICES,
       prices: row({ cache_read: 0.4, cache_write_5m: 5 }),
@@ -365,19 +359,17 @@ describe('#896 unit B — `auto` on a drive realm listen starts, GPT-5.6 and lat
     const words =
       "auto: the last 2 gaps between this workflow's triggers were about 40 minutes and 2 hours; the price file has no cache_write rate for this model, and no gap was under 27 minutes, so no caching";
     expect({ ask: r.ask, startLine: r.startLine, inspect: r.inspect }).toEqual({
-      ask: offAsk({
-        basis: 'listen_trigger_gaps',
-        gaps_s: [2400, 7200],
-        prices: { from: 'none', cause: 'rate_missing', missing: ['cache_write'] },
-      }),
+      ask: lifetimeAsk({ basis: 'step_gaps', gaps_s: [] }),
       startLine: `${OFF} (${words}; ${LISTEN_DEFAULT}).`,
-      inspect: expect.stringContaining(`asked for no caching (realm listen's default; ${words})`),
+      inspect: expect.stringContaining(
+        "asked for 30 minutes (sent as 30 minutes; realm listen's default; auto: Realm found no earlier request of this step from the last 7 days)",
+      ),
     });
   }, 90_000);
 
   // (a) red when the price file is read with no choice pending; (b) prints the read count, the
   //     warning, the ask and the start line.
-  it('check 6: realm agent alone (no gap), an unreadable price file named → 30 minutes; no_measurement with no prices; no price error', async () => {
+  it('check 6: realm agent alone (no gap), an unreadable price file named → 30 minutes; a step with no earlier run and no prices; no price error', async () => {
     const d = await deployment('c6', {
       realmYaml: NAMES_PRICES,
       prices: 'version: 1\n\tcurrency: USD\n',
@@ -394,11 +386,90 @@ describe('#896 unit B — `auto` on a drive realm listen starts, GPT-5.6 and lat
       code: 0,
       reads: 0,
       warning: undefined,
-      cacheAuto: { basis: 'no_measurement' },
+      cacheAuto: { basis: 'step_gaps', gaps_s: [] },
       bodies: [UNIT_A_BODY],
       startLine: `${ASK_30} (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).`,
     });
   }, 90_000);
+});
+
+/** An earlier run of the deployment's workflow, its step's request started `ago_s` seconds ago. */
+async function seedEarlier(d: Deployment, agoS: number): Promise<void> {
+  const store = d.h.home.runStore;
+  const { record: current } = await store.get(d.runId);
+  const { record } = await store.create({
+    workflowId: current.workflow_id,
+    workflowVersion: 1,
+    params: { ticket: TICKET },
+  });
+  const start = new Date(Date.now() - agoS * 1000).toISOString();
+  await store.update({
+    ...record,
+    completed_steps: ['ask'],
+    evidence: [
+      {
+        step_id: 'ask',
+        started_at: record.created_at,
+        completed_at: record.created_at,
+        duration_ms: 1,
+        input_summary: {},
+        output_summary: {},
+        status: 'success',
+        evidence_hash: 'a'.repeat(40),
+        diagnostics: {
+          input_token_estimate: 1,
+          precondition_trace: [],
+          cache: {
+            state: 'engaged',
+            basis: 'provider_reported',
+            requests: [{ request_index: 0, request_in_call: 0, request_start: start }],
+          },
+        },
+      },
+    ],
+  } as unknown as RunRecord);
+}
+
+describe('caching 3-M D-2 — check 6: OpenAI in the explicit set chooses for each step', () => {
+  // The real case: a step without tools on a drive `realm listen` started, its earlier runs every 2
+  // hours (constructed), or every 5 minutes; the price file's rates (write 1.25, read 0.1).
+  it.each<[string, number, 'off' | 1800]>([
+    ['earlier runs every 2 hours → no caching', 7200, 'off'],
+    ['earlier runs every 5 minutes → 30 minutes', 300, 1800],
+  ])(
+    '%s, recorded step_gaps',
+    async (_case, every, chosen) => {
+      const d = await deployment(`d2-${String(every)}`, {
+        realmYaml: NAMES_PRICES,
+        prices: PRICED,
+      });
+      for (const k of [3, 2, 1]) await seedEarlier(d, k * every);
+      const r = await drive(`d2-${String(every)}`, d, ['--spawned-by-listen']);
+      const auto = r.ask?.['cache_auto'] as CacheAuto | undefined;
+      const last = auto?.gaps_s?.at(-1) ?? -1;
+      // (a) red when the rule is not asked for OpenAI (the step then asks the instance's 30 minutes,
+      //     recorded on listen's basis); (b) prints the bodies, the ask, the read count and whether the
+      //     last gap is the host's reading within 5 seconds.
+      expect({
+        code: r.code,
+        bodies: r.bodies,
+        ask: r.ask,
+        reads: r.priceFileReads,
+        lastGap: last >= every && last <= every + 5,
+      }).toEqual({
+        code: 0,
+        bodies: [chosen === 'off' ? OFF_BODY : UNIT_A_BODY],
+        ask: (chosen === 'off' ? offAsk : lifetimeAsk)({
+          basis: 'step_gaps',
+          gaps_s: [every, every, expect.any(Number)],
+          prices: { from: 'economics' },
+        }),
+        reads: 1,
+        lastGap: true,
+      });
+    },
+    90_000,
+  );
 });
 
 // In process: the real `openai` package with the global `fetch` stubbed, as unit A's checks are.
