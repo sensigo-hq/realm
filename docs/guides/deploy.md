@@ -251,7 +251,7 @@ realm mcp --project /srv/shop
 
 ## Who can change what
 
-Anyone who can write to the project folder can change which service an adapter talks to, which secret it sends, and which code runs. Give write access to the project folder, and to `~/.realm/workflows/`, only to people you would let change the code.
+Anyone who can write to the project folder can change which service an adapter talks to, which secret it sends, and which code runs. Give write access to the project folder, and to the Realm home (`~/.realm`; its store file holds the registered workflows), only to people you would let change the code.
 
 ## If you see something else
 

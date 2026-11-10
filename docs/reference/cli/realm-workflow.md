@@ -2,7 +2,7 @@
 
 <!-- description: Reference for the realm workflow subcommands, which work on workflow files and registered workflows: their arguments, flags, output and exit codes. -->
 
-`realm workflow` has seven subcommands that work on workflow files and on the workflows registered in `~/.realm/workflows/`. This page gives the arguments, flags, output and exit code of each. Every output shown came from a run of the command.
+`realm workflow` has seven subcommands that work on workflow files and on the workflows registered in the Realm home's store. This page gives the arguments, flags, output and exit code of each. Every output shown came from a run of the command.
 
 | Subcommand              | What it does                                           |
 | ----------------------- | ------------------------------------------------------ |
@@ -208,7 +208,7 @@ Did you forget to specify the option argument for '--model'? To specify an optio
 realm workflow register <path> [flags]
 ```
 
-Checks the file as `validate` does and, if it is accepted, stores a copy as `~/.realm/workflows/<id>.json`. Runs are started from the stored copy. Registering a workflow that is already registered replaces the copy.
+Checks the file as `validate` does and, if it is accepted, stores a copy in the Realm home's store (`~/.realm/realm.db`), under the workflow's `id`. Runs are started from the stored copy. Registering a workflow that is already registered replaces the copy.
 
 | Flag                        | What it does                                                                                                                            |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -324,13 +324,14 @@ With `--json`:
 The text output counts the copies it cannot list on its last line, and names them on standard error, one ⚠ line per kind, each ending ` — realm cannot audit what it cannot read.`:
 
 ```text
-⚠ 1 file in the registry was registered by a later version of Realm: rec627.json — realm cannot audit what it cannot read.
-⚠ 1 file in the registry was registered by an older version of Realm: ancient.json; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.
+⚠ 1 workflow in the registry has a damaged stored copy: bad — realm cannot audit what it cannot read.
+⚠ 1 workflow in the registry was registered by a later version of Realm: new — realm cannot audit what it cannot read.
+⚠ 1 workflow in the registry was registered by an older version of Realm: old; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.
 ```
 
-The other kinds read `could not be read (<errno>)`, `could not be parsed`, `is empty`, `is a directory, not a workflow file` and `is gone`. Added after version 0.47.0 for the later and the older version.
+The store reports these three kinds: a damaged stored copy, a copy a later version of Realm registered, and a copy an older version registered (added after version 0.48.0, which named the stored files instead).
 
-`unreadable` lists stored files that could not be read, each with the reason. `mismatched` lists stored files whose name differs from the `id` inside them. With no workflows registered, the table is empty and the last line reads `0 workflows registered.`
+`unreadable` lists the registered copies that could not be read, each with its `workflow_id`, its `class` (`parse`, `newer` or `legacy`) and the `reason`. `mismatched` is always empty: the store keeps each copy under the `id` inside it. With no workflows registered, the table is empty and the last line reads `0 workflows registered.`
 
 **Exit code:** 0.
 

@@ -92,7 +92,7 @@ Check `Failed:` as well as `Phase:` when you need to know whether everything wen
 
 The record shows what Realm accepted and when. For each step, the hash ties the entry to the output the step produced at that moment.
 
-It does not prove that the record is unchanged. Run records are plain files under `~/.realm/runs/`. If a file is edited by hand and stays a valid run record, `realm run inspect` prints the edited text and shows no warning; the hash is not checked again when the record is read. An edit that breaks the record (not JSON, a required field missing or of the wrong type, another run's `id`) is refused, naming the file, by every command that reads the run. If you need to show a record to someone else, keep a copy somewhere the people involved cannot change, for example by exporting it with `realm run export` at the end of the run.
+It does not prove that the record is unchanged. Run records are rows in the store file `~/.realm/realm.db`. A connection that leaves triggers on cannot change a run's identity (its id, workflow, idempotency key, creation time and the run it reruns) or rewrite an evidence entry; a change made by SQL outside Realm that leaves a valid record is not detected: `realm run inspect` prints the edited text and shows no warning, and the hash is not checked again when the record is read (`realm db check` recomputes it). If you need to show a record to someone else, keep a copy somewhere the people involved cannot change, for example by exporting it with `realm run export` at the end of the run.
 
 It also does not prove that an output is correct. Realm checks that an answer has the right shape. Whether the answer is right is for the workflow's own checks and for the people at its gates.
 

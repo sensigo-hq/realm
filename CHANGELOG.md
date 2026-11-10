@@ -6,6 +6,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Upgrading
+
+**1. Your runs move into one SQLite file (issue #616).** Every `realm` command and the `realm-mcp` server now keep runs, the workflow registry, replays, failed attempts, trace buffers and `realm listen`'s duplicate-webhook marks in `realm.db` in the Realm home. The first command on a home that still holds the old JSON folders (`runs`, `workflows`, `replays`, `dedup`) refuses with one line — `This Realm keeps its store in realm.db and does not read the old JSON directories (…) in <home>. Move them out of the home, then import what you want to keep with save() or realm run import.` — and creates nothing. Stop every Realm process, move the four folders out of the home, register your workflows again from their source files, then `realm run import <moved>/runs`. The procedure, with what is not carried over, is [Move your runs into the SQLite store](docs/guides/upgrade.md#move-your-runs-into-the-sqlite-store).
+
+**2. Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.** The store uses Node's built-in SQLite at those versions; on an older Node the first command stops with one `Error:` line that ends with the floor's words, `Realm's store needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.`
+
+**3. Five packages at one version.** `@sensigo/realm-store-sqlite` is published with the others and installed for you by `@sensigo/realm-cli` and `@sensigo/realm-mcp`; `npm ls @sensigo/realm` must still show one version.
+
+**4. The former `gc` and `reconcile` subcommands of `realm run`, and the former `migrate` subcommand of `realm workflow`, are removed.** A script that calls one now stops with `error: unknown command '<name>'` on stderr and exit code 1; what they did is done by the store (one transaction per write) and by `realm db migrate`.
+
 ### Added
 
 - **`realm agent` caches the stable start of each agent step's prompt on Anthropic.** The start runs up to the prompt's first placeholder whose value can differ between runs; Realm sends it as a text block of its own, marked with the drive's one lifetime, and the rest after it. A blank start or a blank rest is never sent as a marked block. The JSON retry and a repair attempt send the same start. Put fixed text first in a prompt to cache more of it. (#600)
@@ -290,10 +300,10 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   none, a `from_now` stays as written.
 - **One function in core names realm's home (`~/.realm`, read when a command opens its stores) (issue #616).** A command run with `HOME` empty or not absolute now stops with one line instead of keeping its runs under the current folder; one run on an account with no home stops with the same line instead of a stack.
 - **Every `realm` command opens its stores through one place, once per command; `realm serve` shares that one home across every request it serves (issue #616).** Nothing a command prints, creates or refuses changes, with one exception: on a copy of a test location, the commands that only read workflows or replays (`realm workflow list`, `realm workflow register`, `realm workflow watch`, `realm workflow validate --registered`, and `realm run diff` of two replays) now stop with the same clock refusal the run commands always gave there, because every command opens its home through the one door.
-- **The `realm-mcp` command runs from its own file and opens `~/.realm` itself. It now keeps its store in `realm.db` there, as every `realm` command does; it needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later, to start, and a home that still holds the old JSON folders is refused with `STATE_HOME_HOLDS_LEGACY_STORE` until they are moved aside (issue #616).**
+- **The `realm-mcp` command runs from its own file and opens `~/.realm` itself. It now keeps its store in `realm.db` there, as every `realm` command does; it needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later, to start, and a home that still holds the old JSON folders is refused with the store's legacy-store line (`realm-mcp: This Realm keeps its store in realm.db …`) until they are moved aside (issue #616).**
 - **BREAKING — `createRealmMcpServer` takes its stores (issue #616).** The library has no default store: pass `runStore`, `workflowStore`, `traceBufferStore` and `failedAttemptStore`, opened once per process; a JavaScript caller that omits one is refused at construction, before anything is opened. The published tool handlers require the stores their server passes them; a direct caller that omits one is refused by name.
 - **An `'in-transaction'` adapter of `fencedTraceBufferContract` gives `fenceRuns` as `{ put, remove }`, without `readCount`.** Such a store reads its runs inside its own transaction, so the contract does not count them. (#616)
-- **A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the MCP server's way out (the operator's command on `realm mcp`'s and `realm serve`'s person line), also when the copy has no file (the SQLite store's copies); only a copy that is not there says `realm workflow register <file>`. (#616)
+- **A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the MCP server's way out (the operator's command on `realm mcp`'s and `realm serve`'s person line), also when the copy has no file (the SQLite store's copies); a copy that is not there says `realm workflow register <file>`, and so does a readable copy whose step a trust, precondition or input_schema check refused. (#616)
 - **`realm run attempts`' ceiling note and `realm run export`'s help no longer name a "sidecar":** the store keeps a run's failed attempts as rows with a size ceiling; the export bundle's artifact labels and its `WAL steps` summary label are unchanged. (#616)
 
 ### Removed

@@ -170,8 +170,8 @@ const TABLE: ReadonlyArray<readonly [Page, string, string, string, Cell]> = [
   ['packages/cli/README.md', 'OPENAI_API_KEY=<your-key> realm agent \\', 'bash', 'EXCLUDED: a model provider and its key; the flags are checked', 'provider'],
   ['packages/cli/README.md', '// my-ollama-provider.mjs', 'javascript', 'program: written under the name its first line gives; Ollama is a stub', 'provider'],
   ['packages/cli/README.md', 'realm agent --workflow ./my-workflow --provider-module ./my-', 'bash', 'run with the module above', 'provider'],
-  ['packages/core/README.md', 'npm install @sensigo/realm', '-', 'EXCLUDED: the npm registry; the package is checked', 'installs'],
-  ['packages/core/README.md', 'import { loadWorkflowFromFile, JsonFileStore, executeStep }', 'ts', 'program: run with my-workflow/workflow.yaml and its step my_step', 'coreQuickStart'],
+  ['packages/core/README.md', 'npm install @sensigo/realm @sensigo/realm-store-sqlite', '-', 'EXCLUDED: the npm registry; the packages are checked', 'installs'],
+  ['packages/core/README.md', "import { loadWorkflowFromFile, executeStep } from '@sensigo/", 'ts', 'program: run with my-workflow/workflow.yaml and its step my_step', 'coreQuickStart'],
   ['packages/core/README.md', 'import {', 'ts', 'fragment: supplies callMyApi; then serves a step through executeStep', 'coreAdapter'],
   ['packages/mcp-server/README.md', '# Standalone binary (for AI agent MCP config)', '-', 'EXCLUDED: the npm registry; the package is checked', 'installs'],
   ['packages/mcp-server/README.md', '{', 'json', 'client config: command started, listTools', 'clients'],
@@ -383,20 +383,22 @@ describe(
     }
 
     /** A temporary project that sees the repository's node_modules, as an ES module package. */
-    /** A HOME of its own for a README program that builds a `JsonFileStore`: the CLI's home is the
-     *  SQLite store, whose `runs` is a fence file (#616 PR-2c c10a-3a). */
+    /** A HOME of its own for a README program, which opens the Realm home under it with
+     *  `openRealmHome` as every `realm` command does (#616 PR-2c c12; was a `JsonFileStore`). */
     function programHome(): string {
       const folder = join(project, 'program-home');
       mkdirSync(folder);
       return folder;
     }
 
-    /** The runs such a program left: the JSON store keeps one `<uuid>.json` per run. */
-    function jsonRunsIn(folder: string): RunRecord[] {
-      const runs = join(folder, '.realm', 'runs');
-      return readdirSync(runs)
-        .filter((f) => /^[0-9a-f-]{36}\.json$/.test(f))
-        .map((f) => JSON.parse(readFileSync(join(runs, f), 'utf8')) as RunRecord);
+    /** The runs such a program left, read from that home's store, `realm.db` (#616 PR-2c c12). */
+    async function storeRunsIn(folder: string): Promise<RunRecord[]> {
+      const home = await openRealmHome({ home: join(folder, '.realm') });
+      try {
+        return (await runsOf(home.runStore)).map((s) => s.record);
+      } finally {
+        home.close();
+      }
     }
 
     function nodeProject(): string {
@@ -428,13 +430,17 @@ describe(
       const byName = new Map(
         readdirSync(join(ROOT, 'packages')).map((d) => [pkg(d)['name'] as string, pkg(d)]),
       );
+      // #616 PR-2c c12: a line may install more than one package (the core README names the store
+      // package beside the engine); each one it names is checked.
       const checked = lines.map((line) => {
-        const name = line.split(' ').at(-1)!;
-        const p = byName.get(name);
+        const found = line
+          .split(' ')
+          .filter((w) => w.startsWith('@'))
+          .map((name) => byName.get(name));
         return [
           line,
-          p !== undefined && p['private'] !== true,
-          Object.keys((p?.['bin'] as object) ?? {}),
+          found.every((p) => p !== undefined && p['private'] !== true),
+          found.flatMap((p) => Object.keys((p?.['bin'] as object) ?? {})),
         ];
       });
       // (a) red when a page installs a package the repository does not publish, or a bin the pages
@@ -445,7 +451,7 @@ describe(
         ['npm install @sensigo/realm', true, []],
         ['npm install --save-dev @sensigo/realm-testing', true, []],
         ['npm install -g @sensigo/realm-cli', true, ['realm']],
-        ['npm install @sensigo/realm', true, []],
+        ['npm install @sensigo/realm @sensigo/realm-store-sqlite', true, []],
         ['npm install -g @sensigo/realm-mcp', true, ['realm-mcp']],
         ['npm install @sensigo/realm-mcp', true, ['realm-mcp']],
       ]);
@@ -1115,7 +1121,7 @@ describe(
       );
       writeFileSync(
         join(dir, 'main.ts'),
-        `${fence('packages/core/README.md', 'loadWorkflowFromFile, JsonFileStore')}\n`,
+        `${fence('packages/core/README.md', 'loadWorkflowFromFile, executeStep')}\n`,
       );
       const own = programHome();
       const r = spawnSync(process.execPath, ['main.ts'], {
@@ -1123,9 +1129,11 @@ describe(
         env: env({ HOME: own }),
         encoding: 'utf8',
       });
-      const runs = jsonRunsIn(own);
+      const runs = await storeRunsIn(own);
       // (a) red when the program does not run as written (e.g. `const run = await store.create(…)`,
-      //     whose reply is `{ run, created }`), or does not take my_step; (b) prints its stderr.
+      //     whose reply is `{ run, created }`), or does not take my_step, or keeps its run anywhere
+      //     but the Realm home's store (#616 PR-2c c12: a `JsonFileStore` there leaves a `runs`
+      //     folder, which the open refuses); (b) prints its stderr.
       expect(
         { code: r.status, out: r.stdout, runs: runs.map((x) => [x.run_phase, x.completed_steps]) },
         r.stderr,
@@ -1154,14 +1162,19 @@ describe(
           '',
         ].join('\n'),
       );
-      const quickStart = fence('packages/core/README.md', 'loadWorkflowFromFile, JsonFileStore');
+      const quickStart = fence('packages/core/README.md', 'loadWorkflowFromFile, executeStep');
       const call = /advanceRun\(.*?\}\)/.exec(quickStart)?.[0];
       // (a) red when the comment no longer gives the call; (b) prints the block.
       expect(call, quickStart).toBe('advanceRun(store, definition, { runId: run.id })');
+      // #616 PR-2c c12: the block ends by closing the home it opened; what the comment says goes
+      // before that line, as a program that follows it runs before it closes the store.
+      const closing = 'home.close();';
+      // (a) red when the block no longer ends by closing its home; (b) prints the block.
+      expect(quickStart.trimEnd().endsWith(closing), quickStart).toBe(true);
       writeFileSync(
         join(dir, 'main.ts'),
         [
-          quickStart,
+          quickStart.trimEnd().slice(0, -closing.length),
           // what the comment says: import it beside executeStep, and call it when an advance way is
           // offered; then neither a run_step nor an advance way is left
           "import { advanceRun } from '@sensigo/realm';",
@@ -1169,6 +1182,7 @@ describe(
           `  const next = await ${call};`,
           "  console.log(next.status, next.run_phase, next.ways.filter((w) => w.verb === 'run_step' || w.verb === 'advance').length);",
           '}',
+          closing,
           '',
         ].join('\n'),
       );
@@ -1178,7 +1192,7 @@ describe(
         env: env({ HOME: own }),
         encoding: 'utf8',
       });
-      const runs = jsonRunsIn(own);
+      const runs = await storeRunsIn(own);
       // (a) red when the comment's call does not run as written (a wrong argument, a missing one), or
       //     does not run the step the run owes; (b) prints its stderr.
       expect(
@@ -1201,15 +1215,19 @@ describe(
         '  return { operation, params };',
         '}',
         '// Then what its last comment says: pass registry to executeStep.',
-        "import { JsonFileStore, loadWorkflowFromString } from '@sensigo/realm';",
+        "import { loadWorkflowFromString } from '@sensigo/realm';",
+        "import { openRealmHome } from '@sensigo/realm-store-sqlite';",
         'const definition = loadWorkflowFromString(',
         "  'id: api\\nname: api\\nversion: 1\\nservices:\\n  api:\\n    adapter: my-adapter\\n    trust: engine_delivered\\n' +",
         "    'steps:\\n  get:\\n    description: Get.\\n    execution: auto\\n    uses_service: api\\n    operation: things\\n    input_map:\\n      q: run.params.q\\n',",
         ');',
-        'const store = new JsonFileStore();',
+        '// The store the quick start opens (#616 PR-2c c12; was a JsonFileStore).',
+        'const home = await openRealmHome();',
+        'const store = home.runStore;',
         "const { record: run } = await store.create({ workflowId: 'api', workflowVersion: 1, params: { q: 'x' } });",
         "const response = await executeStep(store, definition, { runId: run.id, command: 'get', input: {}, registry });",
         'console.log(JSON.stringify([response.status, response.data]));',
+        'home.close();',
         '',
       ].join('\n');
       writeFileSync(join(dir, 'adapter.ts'), program);

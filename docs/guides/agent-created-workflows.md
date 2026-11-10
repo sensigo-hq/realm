@@ -197,7 +197,7 @@ In these cases the workflow is created and the run starts. The reply lists what 
 
 ## Keep the list tidy
 
-Created workflows add up, one for each different plan. No command removes a workflow. Each is one file in `~/.realm/workflows/`, named after its ID, and deleting the file removes it from the list. Runs of it stay in the store, and `realm run inspect` still shows their record.
+Created workflows add up, one for each different plan. No command removes a registered workflow. Runs of it stay in the store, and `realm run inspect` still shows their record.
 
 ## See also
 

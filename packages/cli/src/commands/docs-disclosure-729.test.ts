@@ -1010,7 +1010,8 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
   it("what a drive records, a log's line on an error, a pipe as a log, CI's workspace, an MCP client's environment, the program label (corrections 1 and 2)", async () => {
     claim(
       OPERATE_PAGE,
-      "A run's file keeps every value as it was given, except what `realm agent` records of what it sent the model (its drive failures and its tools' errors), which is kept as the model saw it, and the error of a project that failed to load, which is masked where it is caught.",
+      // #616 PR-2c c12: a run is a record in the store, no longer a file.
+      "A run's record keeps every value as it was given, except what `realm agent` records of what it sent the model (its drive failures and its tools' errors), which is kept as the model saw it, and the error of a project that failed to load, which is masked where it is caught.",
     );
     claim(
       OPERATE_PAGE,

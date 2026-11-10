@@ -1,10 +1,10 @@
 # @sensigo/realm-store-sqlite
 
-SQLite-backed stores for Realm: runs, duplicate-webhook ids, workflow definitions, failed attempts, replays and trace buffers, in one `realm.db` file in the Realm home. Realm's own store package, published so that `@sensigo/realm-cli` can depend on it; you do not need to install it yourself.
+SQLite-backed stores for Realm: runs, duplicate-webhook ids, workflow definitions, failed attempts, replays and trace buffers, in one `realm.db` file in the Realm home. Realm's own store package: `@sensigo/realm-cli` and `@sensigo/realm-mcp` install it for you; a program that opens the Realm home's store itself, as the `@sensigo/realm` quick start does, installs it beside `@sensigo/realm`.
 
 ## Opening a home
 
-`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore`, `dedupStoreFor`, `workflowStore`, `failedAttemptStore`, `replayStore`, `traceBufferStore`, `purge` and `close()`. Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all.
+`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore`, `dedupStoreFor`, `workflowStore`, `failedAttemptStore`, `replayStore`, `traceBufferStore`, `purge` and `close()`. Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all. A home that cannot be opened — the old JSON folders still there, a folder Realm cannot write to, a Node below the floor — rejects the promise with the store's typed error (`WorkflowError`): catch it; the `realm-mcp` command prints one masked line for it.
 
 ## The store file
 

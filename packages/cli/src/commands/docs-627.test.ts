@@ -613,9 +613,12 @@ describe('#627 W — the other pages W changed', () => {
     // #616 PR-2a (ii-a): the CHANGELOG's line — "its own file" executed by docs-examples-625's cell
     // (the package's `bin` is the entry the CLI's tests resolve) and every spawn through
     // `resolveMcpServerEntry()`; "opens `~/.realm` itself" by the two journey cells named above.
+    // #616 PR-2c c12 (LEFTOVERS-2c 56): the refusal is the store's line, as `realm-mcp` prints it
+    // (mcp-server foreign-test-clock-715.test.ts: `realm-mcp: This Realm keeps its store …`), never
+    // the code, which the line does not carry.
     claim(
       'CHANGELOG.md',
-      '**The `realm-mcp` command runs from its own file and opens `~/.realm` itself. It now keeps its store in `realm.db` there, as every `realm` command does; it needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later, to start, and a home that still holds the old JSON folders is refused with `STATE_HOME_HOLDS_LEGACY_STORE` until they are moved aside (issue #616).**',
+      "**The `realm-mcp` command runs from its own file and opens `~/.realm` itself. It now keeps its store in `realm.db` there, as every `realm` command does; it needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later, to start, and a home that still holds the old JSON folders is refused with the store's legacy-store line (`realm-mcp: This Realm keeps its store in realm.db …`) until they are moved aside (issue #616).**",
     );
     // #616 PR-2c c10b-3a: home-server.test.ts (mcp-server): the entry, what it returns, and that
     // `index.ts` reaches neither it nor the store package; foreign-test-clock-715's bin cells.
@@ -998,7 +1001,10 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
   it('6.8: realm-workflow.md — the ⚠ lines for copies the table cannot list, and the SCHEMA column', () => {
     const WF = 'docs/reference/cli/realm-workflow.md';
     // Executed by answer-record-627 :: "`realm workflow list` names a newer copy by its class …" (the
-    // later version) and workflow-list.test's legacy cell (the older version).
+    // later version) and workflow-list.test's legacy cell (the older version). #616 PR-2c c12: the
+    // store's three kinds by workflow id — workflow-list-classes.test (the damaged copy, planted with
+    // the store's `plantRegistryRow`; the older cohort's shape, K8) and docs-616-c12.test.ts C8 (all
+    // three on the built CLI).
     claim(
       WF,
       '| `SCHEMA` | The format of the stored copy, and whether it is the format this version of Realm writes. A copy a later or an older version of Realm registered is never in the table: it is counted under the ⚠ lines. |',
@@ -1009,17 +1015,17 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
     );
     claim(
       WF,
-      '⚠ 1 file in the registry was registered by a later version of Realm: rec627.json — realm cannot audit what it cannot read.',
+      '⚠ 1 workflow in the registry was registered by a later version of Realm: new — realm cannot audit what it cannot read.',
     );
     // #819 (U4): the way out — workflow-list.test :: "L2 …" and workflow-list-classes :: "K8 …".
     claim(
       WF,
-      '⚠ 1 file in the registry was registered by an older version of Realm: ancient.json; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.',
+      '⚠ 1 workflow in the registry was registered by an older version of Realm: old; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.',
     );
-    // The other kinds: workflow-list-classes.test (one cell per class).
+    // The third kind: workflow-list-classes.test (the pointer arm, K3).
     claim(
       WF,
-      'The other kinds read `could not be read (<errno>)`, `could not be parsed`, `is empty`, `is a directory, not a workflow file` and `is gone`.',
+      '⚠ 1 workflow in the registry has a damaged stored copy: bad — realm cannot audit what it cannot read.',
     );
   });
 

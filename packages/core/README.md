@@ -5,15 +5,16 @@
 ## Installation
 
 ```
-npm install @sensigo/realm
+npm install @sensigo/realm @sensigo/realm-store-sqlite
 ```
 
 ## Usage — Execute a Workflow
 
-Load a workflow definition and drive it step by step. Each `executeStep` call advances the run and returns an `EngineReply`: the run's state, and in `ways` what can be done next (in `unavailable`, what cannot, and why).
+Load a workflow definition and drive it step by step, on the store every `realm` command uses. Each `executeStep` call advances the run and returns an `EngineReply`: the run's state, and in `ways` what can be done next (in `unavailable`, what cannot, and why).
 
 ```ts
-import { loadWorkflowFromFile, JsonFileStore, executeStep } from '@sensigo/realm';
+import { loadWorkflowFromFile, executeStep } from '@sensigo/realm';
+import { openRealmHome } from '@sensigo/realm-store-sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,7 +22,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const definition = loadWorkflowFromFile(path.join(__dirname, 'my-workflow/workflow.yaml'));
 
-const store = new JsonFileStore(); // defaults to ~/.realm/runs/
+const home = await openRealmHome(); // the Realm home, ~/.realm, and its store file realm.db
+const store = home.runStore;
 const { record: run } = await store.create({
   workflowId: definition.id,
   workflowVersion: definition.version,
@@ -40,6 +42,8 @@ console.log(response.status);
 // advance way is offered, call advanceRun(store, definition, { runId: run.id }) (import it beside
 // executeStep). Repeat until neither is offered: the run has ended, or response.unavailable says
 // why nothing can run.
+
+home.close();
 ```
 
 ## Usage — Custom Service Adapter
@@ -91,10 +95,10 @@ registry.register('adapter', 'my-adapter', myAdapter);
 
 ### Store
 
-| Symbol              | Notes                                                  |
-| ------------------- | ------------------------------------------------------ |
-| `JsonFileStore`     | File-backed `RunStore`. Defaults to `~/.realm/runs/`.  |
-| `JsonWorkflowStore` | File-backed store for registered workflow definitions. |
+| Symbol              | Notes                                                                                        |
+| ------------------- | -------------------------------------------------------------------------------------------- |
+| `openRealmHome`     | From `@sensigo/realm-store-sqlite`: the store every `realm` command uses, in the Realm home. |
+| `JsonWorkflowStore` | File-backed store for registered workflow definitions.                                       |
 
 ### Workflow
 

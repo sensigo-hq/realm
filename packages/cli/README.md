@@ -52,7 +52,7 @@ npm install -g @sensigo/realm-cli
 | `--base-url <url>`  | Base URL for OpenAI-compatible endpoints                                                                                                                                  |
 | `--run-id <id>`     | Attach to an existing run                                                                                                                                                 |
 | `--params <json>`   | Initial run parameters as JSON                                                                                                                                            |
-| `--register`        | Persist the workflow definition to `~/.realm/workflows/`                                                                                                                  |
+| `--register`        | Store the workflow definition in the Realm home's store, as `realm workflow register` does                                                                                |
 
 **DeepSeek / Qwen / other OpenAI-compatible providers:**
 

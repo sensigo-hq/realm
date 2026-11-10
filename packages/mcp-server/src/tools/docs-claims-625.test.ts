@@ -2543,10 +2543,12 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     ]);
   });
 
+  // #616 PR-2c c12 (LEFTOVERS-2c 34, 35, 40): the SQLite store's case — a stored run that cannot be
+  // read back (its record and its rows disagree: store-sqlite run-rows.ts throws a plain Error, which
+  // core's runReadError answers as ENGINE_STORE_FAILED naming its cause). The cells below run that
+  // route with a store whose read throws a plain Error.
   const CANNOT_READ_MCP =
-    'A run whose file the JSON store cannot read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) is refused by every tool that reads it with that file\'s code: `RESOURCE_FORMAT_INVALID` or `ENGINE_STORE_FAILED` with `agent_action: "stop"`, or `STATE_LEGACY_FORMAT` with `report_to_user`.';
-  const UNTYPED_MCP =
-    'Any other failure is refused by `execute_step`, `submit_human_response`, `advance_run` and `get_run_state` with `ENGINE_STORE_FAILED`, naming the cause (`Failed to load run from store: <its message>`), as the library answers it;';
+    'A run whose stored record the store cannot read back (its record and its rows disagree, after a change made outside Realm) is refused by `execute_step`, `submit_human_response`, `advance_run` and `get_run_state` with `ENGINE_STORE_FAILED`, naming the cause (`Failed to load run from store: <its message>`), as the library answers it;';
   it.each([
     ['execute_step', { command: 'a', params: {} }],
     ['submit_human_response', { gate_id: 'g', choice: 'x' }],
@@ -2556,11 +2558,6 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     'C172: %s on an untyped failure — ENGINE_STORE_FAILED naming the cause',
     async (tool, args) => {
       claim('mcp/tools.md', CANNOT_READ_MCP);
-      claim(
-        'mcp/tools.md',
-        'The message names the file and its way out, and never quotes the file.',
-      );
-      claim('mcp/tools.md', UNTYPED_MCP);
       const { call, runStore } = await connect();
       runStore.get = async () => {
         throw new Error('the disk is gone');

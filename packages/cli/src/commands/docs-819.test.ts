@@ -38,10 +38,9 @@ describe('#819 — the docs sentences this unit adds, each by the cell that exec
       CLI,
       "| … and its copy is damaged or not a workflow | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Its question cannot be answered until its workflow can be read. Repair it: re-register the workflow from its source (realm workflow register <path-to-workflow>)` |",
     );
-    claim(
-      CLI,
-      "| … and its copy cannot be read | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Its question cannot be answered until its workflow can be read. Repair it: make /home/ops/.realm/workflows/deploy.json readable (chmod u+r /home/ops/.realm/workflows/deploy.json)` |",
-    );
+    // #616 PR-2c c12: the row "… and its copy cannot be read" (`chmod u+r` on a stored copy's file) is
+    // gone from the page with its claim — a stored copy is a row of the store, which no mode makes
+    // unreadable short of the store refusing to open; the damaged row above is the store's case.
     claim(
       CLI,
       "| … and an older Realm registered its copy | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Its question cannot be answered until its workflow can be read. Re-register it with: realm workflow register <path-to-workflow>` |",

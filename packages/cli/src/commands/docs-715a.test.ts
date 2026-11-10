@@ -239,12 +239,12 @@ describe('#715 (a) — the docs sentences', () => {
       '`set` to an earlier time runs nothing and moves the clock back. A function given to `at` sees the clock at its own time, never earlier. An `advance` runs every due function even when some throw, then rejects with their errors.',
     );
     // Correction 1 (C-2) and 2 (R-3c): the source scan (lint-test-location-715.test.ts: its
-    // PACKAGES, NEEDLES and ALLOWED are the sentence's four packages, names and exceptions; its file
+    // PACKAGES, NEEDLES and ALLOWED are the sentence's five packages, names and exceptions; its file
     // set cell: `.ts` and `.mjs`, no test file — #715 (b), #913's R2-4); C1, C2 (the store reads the
     // file beside runs/, and none elsewhere).
     claim(
       TESTING,
-      "A test of Realm's own source keeps `createTestLocation` and `createTestHome`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `.ts` and `.mjs` files in the `src` folders of Realm's four packages, except test files (`*.test.ts`, which create test locations), the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file.",
+      "A test of Realm's own source keeps `createTestLocation` and `createTestHome`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `.ts` and `.mjs` files in the `src` folders of Realm's five packages, except test files (`*.test.ts`, which create test locations), the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file.",
     );
     claim(TESTING, 'The file store reads a clock file, only when it sits beside `runs/`.');
     // The type count cell below.
@@ -350,8 +350,12 @@ describe('#715 (a) — the docs sentences', () => {
   it('#616 PR-2c c10a-4c: the CHANGELOG entry', () => {
     // ways-renderer.test.ts's and render-reply.test.ts's c10a-4c cells: each door's way out for a
     // copy with no file; answer-record-627.test.ts runs the printed command on a SQLite home.
+    // #616 PR-2c c12 (LEFTOVERS-2c 49): a refused trust / precondition / input_schema check builds its
+    // register way with no path and no `copy` (core ways.ts, the refused-check remedy), which the
+    // renderer's register arm (ways-renderer.ts) prints as `realm workflow register <file>` — the
+    // route `realm mcp`'s person line takes (`cliOperatorRoute`).
     claimChangelog(
-      "**A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the MCP server's way out (the operator's command on `realm mcp`'s and `realm serve`'s person line), also when the copy has no file (the SQLite store's copies); only a copy that is not there says `realm workflow register <file>`. (#616)",
+      "**A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the MCP server's way out (the operator's command on `realm mcp`'s and `realm serve`'s person line), also when the copy has no file (the SQLite store's copies); a copy that is not there says `realm workflow register <file>`, and so does a readable copy whose step a trust, precondition or input_schema check refused. (#616)",
     );
   });
 

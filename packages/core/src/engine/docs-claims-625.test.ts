@@ -40,7 +40,6 @@ import { describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { jsonAsRunStore } from '../test-support/json-as-run-store.js';
 import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
-import { unreadableRunFileError } from '../store/run-file.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
@@ -722,28 +721,21 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     ]);
   });
 
-  it('issue #719 (C2), error-codes.md: which ENGINE_STORE_FAILED reads are worth retrying — EBUSY and EIO; not another errno, nor the untyped wrap', () => {
+  // #616 PR-2c c12: the row now describes the SQLite store — the JSON store's EBUSY / EIO clause is gone
+  // from the page with that store; the untyped wrap is still not worth retrying, and a store that stays
+  // busy is the SQLite store's own refusal (`STATE_RUN_BUSY`, store-sqlite connection.ts and its busy cells).
+  it('issue #719 (C2), #616 PR-2c c12, error-codes.md: `Failed to load run from store: …` is not worth retrying', () => {
     const sentence =
-      'A JSON-store read that failed with `EBUSY` or `EIO` is worth retrying; any other read is not, nor is `Failed to load run from store: …`.';
+      '`Failed to load run from store: …` is not worth retrying; a store that stays busy past its wait is reported by the SQLite store with its own line, not with this code.';
     const page = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference/error-codes.md'),
       'utf8',
     );
     expect(flat(page), `error-codes.md no longer says: ${sentence}`).toContain(flat(sentence));
-    const read = (errno: string) =>
-      unreadableRunFileError({
-        resource: 'run_file',
-        class: 'unreadable',
-        path: '/r/x.json',
-        errno,
-      }).retryable;
-    // (a) red when the retry rule the sentence states changes for any of them; (b) prints the four.
-    expect({
-      EBUSY: read('EBUSY'),
-      EIO: read('EIO'),
-      EACCES: read('EACCES'),
-      untyped: runReadError(new Error('the disk is gone')).retryable,
-    }).toEqual({ EBUSY: true, EIO: true, EACCES: false, untyped: false });
+    // (a) red when the untyped wrap becomes worth retrying; (b) prints it.
+    expect({ untyped: runReadError(new Error('the disk is gone')).retryable }).toEqual({
+      untyped: false,
+    });
   });
 
   const STEP_CANNOT_READ =

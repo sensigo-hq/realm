@@ -6,9 +6,9 @@ A run's record is one JSON object that holds everything Realm knows about the ru
 
 ## Where the record is
 
-With the file store, the record is the file `~/.realm/runs/<run-id>.json`. `realm run inspect` prints a view of it. `get_run_state` returns part of it. `realm run export` writes all of it, with the run's other files, into one bundle.
+In the `realm` command's store, the record is one row of `~/.realm/realm.db`. `realm run inspect` prints a view of it. `get_run_state` returns part of it. `realm run export` writes all of it, with the run's refused answers, trace lines and sealed lines, into one bundle.
 
-Realm rewrites the file each time the run changes, and adds 1 to `version` each time.
+Realm rewrites the record each time the run changes, and adds 1 to `version` each time.
 
 ## The record's fields
 
@@ -61,7 +61,7 @@ A step that has not started is in none of the four lists.
 | `abandoned_at`     | text    | No           | When the run was abandoned.                                                                               |
 | `finalizer_ledger` | object  | No           | For each cleanup step chosen when the run ended, [its state](#finalizer_ledger).                          |
 
-`run_phase` is stored for display. Realm works the phase out from the rest of the record each time it needs it, and a program that reads the file should do the same with `deriveRunPhase` from `@sensigo/realm`.
+`run_phase` is stored for display. Realm works the phase out from the rest of the record each time it needs it, and a program that reads the record should do the same with `deriveRunPhase` from `@sensigo/realm`.
 
 ### What happened
 
@@ -307,28 +307,7 @@ Each of `attempts` has `run_id`, `workflow_id`, `step_id`, `ts`, `error_code`, `
 
 ### An export that is not complete
 
-With the file of refused answers made unreadable:
-
-```text
-⚠ INCOMPLETE export: 1 artifact(s) could not be read
-  ✗ failed-attempt sidecar (EISDIR): readFile failed for '/home/dana/.realm/runs/b9836b8a-17c8-445d-aca1-09c567d570cf.attempts.jsonl' (EISDIR): EISDIR: illegal operation on a directory, read
-The bundle was still written to '/srv/shop/broken.json' — inspect it for what could be recovered.
-```
-
-```json
-{
-  "complete": false,
-  "attempts": [],
-  "attempts_capped": false,
-  "artifact_errors": [
-    {
-      "artifact": "failed-attempt sidecar",
-      "code": "EISDIR",
-      "message": "readFile failed for '/home/dana/.realm/runs/b9836b8a-17c8-445d-aca1-09c567d570cf.attempts.jsonl' (EISDIR): EISDIR: illegal operation on a directory, read"
-    }
-  ]
-}
-```
+When the store cannot read one of a run's artifacts — its refused answers (`failed-attempt sidecar`), its trace buffer (`trace-buffer WAL`) or its sealed traces (`sealed trace artifacts`) — the bundle is still written: `complete` is `false` and `artifact_errors` lists each artifact with the failure's `code` and `message`. The command prints `⚠ INCOMPLETE export: <n> artifact(s) could not be read`, one `  ✗ <artifact> (<code>): <message>` line each (indented two spaces), and `The bundle was still written to '<path>' — inspect it for what could be recovered.`, all on standard error.
 
 An empty `attempts` or `wal` means "none" only when `complete` is `true`.
 
