@@ -279,9 +279,15 @@ export const CACHE_MISS_CAUSES = [
    *  attempts; against an earlier drive's or run's request also a workflow edit (on Anthropic a schema edit
    *  changes the submit tool). */
   'tools',
-  /** The system text differs: against an earlier drive's or run's request, an edit of the agent profile or
-   *  of the step's schema, or another Realm version's base text (a step's `instructions:` never
-   *  reach the model); Realm never changes it within a drive. */
+  /** The system text differs and the request's reference records that the step's agent profile
+   *  differs from the earlier request's, both being known (piece C3); a profile is part of the
+   *  system text, so an edited one always moves it. Only against an earlier drive's or run's
+   *  request. */
+  'agent_profile',
+  /** The system text differs with no recorded change of the agent profile: against an earlier drive's
+   *  or run's request, an edit of the step's schema, another Realm version's base text, or an edit of
+   *  the agent profile where one of the two requests' profiles is not known (a step's `instructions:`
+   *  never reach the model); Realm never changes it within a drive. */
   'system',
   /** Inside one list, a later call's first request carries Realm's own repair feedback after the
    *  prompt, where that moves what was cached: the prompt or the conversation is marked on both, or
@@ -425,9 +431,10 @@ function missGap(now: Entry, before: Entry): CacheMissGap | undefined {
 }
 
 /**
- * Behaviour 3 for the missed request at `i`, whose predecessor came `from` the list or its
- * reference. Both sides asked (A-2a1's predecessor rule returns only a request that asked), so
- * tools, system and format lie inside what both asked to be cached; the prompt is checked per side.
+ * Behaviour 3 for the missed request at `i`, whose predecessor came `from` the list, the run's own
+ * reference or another run's (`earlier_run`). Both sides asked (A-2a1's predecessor rule returns
+ * only a request that asked), so tools, system and format lie inside what both asked to be cached;
+ * the prompt is checked per side.
  */
 function causeAt(
   list: readonly unknown[],
@@ -474,7 +481,9 @@ function causeAt(
   if (from === 'list' && strictDiffers) return 'strict_ladder';
   if (from !== 'list' && strictDiffers) return 'strict_changed';
   if (differs('tools')) return 'tools';
-  if (differs('system')) return 'system';
+  if (differs('system')) {
+    return from !== 'list' && before['agent_profile_changed'] === true ? 'agent_profile' : 'system';
+  }
   const promptCompared = promptInside(now) && promptInside(before) && split(now) === split(before);
   // Inside one list a prompt difference is Realm's repair feedback, named where it moves what was
   // cached; any other prompt difference there names nothing.
