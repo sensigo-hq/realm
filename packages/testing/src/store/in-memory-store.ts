@@ -16,9 +16,15 @@ import {
   floorAtHolder,
   parseStamp,
   writtenSnapshot,
+  SCAN_MAX_PAGE_SIZE,
   type Clock,
   type CreateResult,
+  type KeyAnswer,
   type Listing,
+  type RunRow,
+  type ScanFilter,
+  type ScanOptions,
+  type ScanPage,
   type Snapshot,
   type StoreSettlement,
   type RunStore,
@@ -32,6 +38,45 @@ import {
   type Attributed,
 } from '@sensigo/realm';
 import { REALM_TESTING_BRAND } from '../brand.js';
+
+/**
+ * The tombstone horizon of a store that never deletes a run (#616 PR-2c c4-i; the design owner,
+ * 2026-11-10): it has forgotten nothing, so its `since` is the epoch, a constant that reads no clock.
+ */
+const NOTHING_FORGOTTEN_SINCE = '1970-01-01T00:00:00.000Z';
+
+/** Whether `record` holds every field `filter` gives (a `phase` is the one derived from the record). */
+function matchesScan(record: RunRecord, filter: ScanFilter): boolean {
+  return (
+    (filter.workflow === undefined || record.workflow_id === filter.workflow) &&
+    (filter.key === undefined || record.idempotency_key === filter.key) &&
+    (filter.terminal === undefined || record.terminal_state === filter.terminal) &&
+    (filter.created_since === undefined || record.created_at >= filter.created_since) &&
+    (filter.updated_since === undefined || record.updated_at >= filter.updated_since) &&
+    (filter.phase === undefined || deriveRunPhase(record) === filter.phase)
+  );
+}
+
+/** A run as a scan's `'row'` projection gives it: its facts, with the phase derived from it. */
+function rowOf(record: RunRecord): RunRow {
+  // eslint-disable-next-line no-restricted-syntax -- a read of the record's field for a scan's row; it reaches no store and carries no seal
+  return {
+    id: record.id,
+    workflow_id: record.workflow_id,
+    run_phase: deriveRunPhase(record),
+    terminal_state: record.terminal_state === true,
+    sealed_by_arm: record.sealed_by?.arm ?? null,
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+    idempotency_key: record.idempotency_key ?? null,
+    rerun_of: record.rerun_of ?? null,
+    run_version: record.version,
+    pending_gate: record.pending_gate?.gate_id ?? null,
+    completed_steps: [...record.completed_steps],
+    in_progress_steps: [...record.in_progress_steps],
+    failed_steps: [...record.failed_steps],
+  };
+}
 
 /** In-memory implementation of RunStore. Uses a Map keyed by run ID. No I/O, no locking. */
 export class InMemoryStore implements RunStore {
@@ -60,8 +105,9 @@ export class InMemoryStore implements RunStore {
    * The clock this store reads the time from (issue #715; rule 10: an in-memory store may use any
    * clock). What it governs (#715 (b), D-16): every call that returns spends ONE reading and returns
    * it — `create`, `update`, `claimStep` and `settleStep` at the write, `get` and `list` BEFORE they
-   * read. `stampSeal`, the `seed` fixture and this store's own internal reads spend none. What it
-   * does not govern: instants minted outside a store, and durations.
+   * read, and `scan` once per page. `stampSeal`, `resolveKey`, `tombstonesSince`, the `seed` fixture
+   * and this store's own internal reads spend none. What it does not govern: instants minted outside
+   * a store, and durations.
    */
   readonly clock: Clock;
 
@@ -440,6 +486,91 @@ export class InMemoryStore implements RunStore {
       read_at: r,
       consistent_snapshot: true,
     };
+  }
+
+  /**
+   * Pages this store's runs (#616 PR-2c c4-i), as the SQLite store's `scan` does: an async iterator,
+   * one raw reading per page (`read_at`), each run as `get()` returns it at that reading (`'record'`,
+   * the default) or as its facts row (`'row'`). `filter` narrows it: `workflow`, `terminal`, `key`
+   * (with `workflow`), `created_since`/`updated_since` (text, inclusive) and `phase` (derived from the
+   * record); `include_purged` adds nothing, as this store keeps no tombstones. Ids come in UTF-8 byte
+   * order, SQLite's BINARY order. A page that is full carries `next_after`, its last id, and the next
+   * page starts after it; the iterator ends after a page that is not full. `derived_at_read` counts
+   * the page's records whose stored phase is not the one derived from them. A page size that is not a
+   * whole number from 1 to `SCAN_MAX_PAGE_SIZE`, or a `key` with no `workflow`, is refused before any
+   * read: the first `next()` rejects with a plain error.
+   */
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection: 'row' },
+  ): AsyncGenerator<ScanPage<'row'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection?: 'record' },
+  ): AsyncGenerator<ScanPage<'record'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions,
+  ): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
+  async *scan(
+    filter: ScanFilter,
+    options: ScanOptions,
+  ): AsyncGenerator<ScanPage<'record' | 'row'>, void, undefined> {
+    const { pageSize } = options;
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > SCAN_MAX_PAGE_SIZE) {
+      throw new Error(
+        `A scan's page size must be a whole number from 1 to ${SCAN_MAX_PAGE_SIZE}; it was ${String(pageSize)}.`,
+      );
+    }
+    if (filter.key !== undefined && filter.workflow === undefined) {
+      throw new Error(
+        "A scan's key filter needs a workflow: an idempotency key belongs to one workflow, so give `workflow` with `key`.",
+      );
+    }
+    // The caller's filter is copied, so a change to it mid-scan does not change the pages.
+    const scanned: ScanFilter = { ...filter };
+    const rows = options.projection === 'row';
+    let after = Buffer.from(options.after ?? '', 'utf8');
+    for (;;) {
+      const r = takeRawReading(this.clock);
+      const cut = [...this.runs.values()]
+        .filter((record) => matchesScan(record, scanned))
+        .map((record) => ({ record, id: Buffer.from(record.id, 'utf8') }))
+        .filter(({ id }) => Buffer.compare(id, after) > 0)
+        .sort((a, b) => Buffer.compare(a.id, b.id))
+        .slice(0, pageSize)
+        .map(({ record }) => record);
+      const page: ScanPage<'record' | 'row'> = {
+        items: cut.map((record) => ({
+          kind: 'run',
+          run: rows ? rowOf(record) : writtenSnapshot(record, floorAtRecord(r, record)),
+        })),
+        read_at: r,
+        consistent_snapshot: true,
+        derived_at_read: cut.filter((record) => record.run_phase !== deriveRunPhase(record)).length,
+      };
+      if (cut.length === pageSize) page.next_after = cut[cut.length - 1]!.id;
+      yield page;
+      if (page.next_after === undefined) return;
+      after = Buffer.from(page.next_after, 'utf8');
+    }
+  }
+
+  /**
+   * Who holds `workflowId`'s idempotency key `key` (#616 PR-2c c4-i): `held`, with the run's id, when
+   * the key's pointer names a run this store holds; otherwise `unseen`. Never `purged`: this store
+   * deletes no run. `since` is the epoch: a store that never deletes a run has forgotten nothing.
+   * Reads no clock.
+   */
+  async resolveKey(workflowId: string, key: string): Promise<KeyAnswer> {
+    const runId = this.keyIndex.get(`${workflowId}\0${key}`);
+    if (runId !== undefined && this.runs.has(runId)) return { state: 'held', run_id: runId };
+    return { state: 'unseen', since: NOTHING_FORGOTTEN_SINCE };
+  }
+
+  /** The tombstone horizon (#616 PR-2c c4-i): the epoch, a constant; reads no clock. */
+  async tombstonesSince(): Promise<string> {
+    return NOTHING_FORGOTTEN_SINCE;
   }
 }
 

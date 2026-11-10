@@ -19,7 +19,6 @@ import {
   type CreateRunOptions,
   type LoadBearingRunRecordField,
   type RunRecord,
-  type RunStore,
   type Snapshot,
   type StepHandler,
   type WorkflowDefinition,
@@ -30,6 +29,7 @@ import {
   runFixtureTests,
   runStoreFidelityContract,
 } from './index.js';
+import type { FidelityContractStore } from './store/run-store-fidelity-contract.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
@@ -420,7 +420,7 @@ class ListsNoFieldsKeepsNone extends ListsNoFields {
 /** Every case of the fidelity contract, each on a fresh store `make` builds (as the testing page
  *  says to): how many there are, and each failure's law and message. */
 async function fidelityRun(
-  make: () => RunStore,
+  make: () => FidelityContractStore,
 ): Promise<{ cases: number; failures: Array<{ law: string; message: string }> }> {
   const all = () =>
     runStoreFidelityContract({ store: make(), definition: FIDELITY_DEFINITION, stepName: 'work' });
@@ -527,7 +527,7 @@ describe('#616 PR-1a unit 16a — testing-package.md: the fidelity contract', ()
   it('the law table names CREATE_REPORTS_CREATED, with its four cases', () => {
     // The behaviour: in-memory-store.test.ts, "#616 PR-1a unit 16a — CREATE_REPORTS_CREATED fails
     // the store that misreports created" (each branch, each conjunct), and every wiring's
-    // `conforms to CREATE_REPORTS_CREATED` (InMemoryStore; JsonFileStore in the cli).
+    // `conforms to CREATE_REPORTS_CREATED` (InMemoryStore; SqliteRunStore in store-sqlite).
     claim(
       PAGE,
       "| `CREATE_REPORTS_CREATED` | A create says whether it made a new run. One with no idempotency key, one with a key no run holds, and one with `onTerminalMatch: 'rerun'` over an ended run report `created: true`; the last one makes a new run, with a different id, whose `rerun_of` names the run it replaces, both in the create's result and when `get` reads the new run back. A second create with the same key while the first run is live reports `created: false` and returns that run. A create resolves `{ record, at, created }`: a store that resolves another shape fails the case. One case for each of the four. Added after version 0.48.0. |",
@@ -573,5 +573,20 @@ describe('#616 PR-1a unit 16a — testing-package.md: the fidelity contract', ()
       PAGE,
       'A store that lists no fields gets one `FIDELITY_HONESTY` case: an identity entry a run is created with (`extension_identity`) must not come back, since the store does not list that field.',
     );
+  });
+});
+
+describe('#616 PR-2c c4-i — testing-package.md: the scan laws, and the in-memory store’s since', () => {
+  it('the law table names SCAN_PAGES_EVERY_RECORD_ONCE and SCAN_FILTERS_HOLD, and the InMemoryStore section says its since is the epoch', () => {
+    // The behaviour: each law's `conforms to` cell (in-memory-store.test.ts; store-sqlite's
+    // contract-fidelity-616.test.ts) and in-memory-store.test.ts's "#616 PR-2c c4-i" cells (the
+    // epoch since, read without the clock). (a) red when a row or the sentence is reworded or
+    // removed; (b) prints the sentence.
+    for (const sentence of [
+      '| `SCAN_PAGES_EVERY_RECORD_ONCE` | Across the pages of one scan, every record present for the whole scan comes back exactly once, in the order of the ids Realm mints; only a full page carries `next_after`; a `pageSize` of 0, more than 1,000 or not a whole number is refused. |',
+      '| `SCAN_FILTERS_HOLD` | Each filter field selects exactly the records it matches — `workflow`, `phase`, `terminal`, `key` (with `workflow`), `created_since`, `updated_since` — and `key` without `workflow` is refused. |',
+      'Its `resolveKey` and `tombstonesSince` answer `since` as `1970-01-01T00:00:00.000Z`: a store that never deletes a run has forgotten nothing.',
+    ])
+      claim(PAGE, sentence);
   });
 });

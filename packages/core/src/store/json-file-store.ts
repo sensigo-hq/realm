@@ -12,7 +12,6 @@ import type { SettlementDelta } from '../types/settlement.js';
 import type { Attributed } from '../engine/holder.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type {
-  RunStore,
   CreateRunOptions,
   CreateResult,
   Listing,
@@ -181,8 +180,11 @@ export interface RunListing extends Listing {
  * meaningfully — no run-file lock is held during `create()`). Violating this order (acquiring a
  * key lock and THEN a run-file lock while still holding the key lock) is the classic two-lock
  * deadlock shape and must never be introduced.
+ *
+ * #616 PR-2c c4-i: the class no longer declares `RunStore`, and no run-store contract runs on it; PR-3
+ * deletes it.
  */
-export class JsonFileStore implements RunStore, PerRunArtifactStore {
+export class JsonFileStore implements PerRunArtifactStore {
   private readonly runsDir: string;
 
   /** This store round-trips the per-claim `claims` liveness clock (issue #101). */
