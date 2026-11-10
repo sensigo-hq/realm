@@ -58,7 +58,7 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
     },
     {
       file: 'multi-copy/multi-copy.test.ts',
-      sites: 10,
+      sites: 9,
       subject:
         "two copies of core on one home: the release-line law; its constructions through each copy's namespace ARE the subject; PR-3",
     },
@@ -87,16 +87,6 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
       file: 'store-contracts/json-trace-buffer-store.contract.test.ts',
       sites: 2,
       subject: 'TCK conformance of `JsonTraceBufferStore`; PR-3',
-    },
-    {
-      file: 'store-contracts/run-store-fidelity.contract.test.ts',
-      sites: 2,
-      subject: 'field fidelity and claim ownership of `JsonFileStore`; PR-3',
-    },
-    {
-      file: 'store-contracts/store-clock.contract.test.ts',
-      sites: 1,
-      subject: 'the store-clock contract on `JsonFileStore` through a test location; PR-3',
     },
     {
       file: 'store/replay-store.test.ts',

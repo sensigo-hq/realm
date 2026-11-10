@@ -18,14 +18,19 @@ import { crossCopyNote } from './cross-copy-note.js';
 import { storeReleaseLineLaw } from './store-release-line-law.js';
 import {
   WorkflowError,
+  SCAN_MAX_PAGE_SIZE,
   type Attributed,
   type EvidenceSnapshot,
   type CreateResult,
+  type KeyAnswer,
   type RunStore,
   type RunRecord,
   type LoadBearingRunRecordField,
   type CacheDiagnostics,
   type CacheReference,
+  type ScanFilter,
+  type ScanOptions,
+  type ScanPage,
   type UsageRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -57,6 +62,9 @@ import {
  * finished run, which makes a new run, with a different id, whose `rerun_of` names the run it
  * replaces, in the create's result and as `get` returns it; `created: false`, with the live run's
  * id, for a keyed create that reuses that run; and a create resolves `{ record, at, created }`).
+ * #616 PR-2c c4-i adds `SCAN_PAGES_EVERY_RECORD_ONCE` (a scan's pages hold every run once, in id
+ * order; a page size out of range is refused) and `SCAN_FILTERS_HOLD` (each filter selects exactly the
+ * runs it matches; a key without a workflow is refused).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -71,6 +79,8 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'EVIDENCE_WRITE_ORDER',
   'DRIVE_FAILURE_KEEPS_ITS_FENCE',
   'CREATE_REPORTS_CREATED',
+  'SCAN_PAGES_EVERY_RECORD_ONCE',
+  'SCAN_FILTERS_HOLD',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -89,10 +99,33 @@ export interface RunStoreFidelityContractCase {
   skipped?: true;
 }
 
+/**
+ * The store {@link runStoreFidelityContract} runs on (#616 PR-2c c4-i): a `RunStore` that also pages
+ * its runs (`scan`), says who holds a key (`resolveKey`) and gives its tombstone horizon
+ * (`tombstonesSince`), with the SQLite store's signatures. c4-ii folds these onto `RunStore` and
+ * deletes this type.
+ */
+export interface FidelityContractStore extends RunStore {
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection: 'row' },
+  ): AsyncGenerator<ScanPage<'row'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection?: 'record' },
+  ): AsyncGenerator<ScanPage<'record'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions,
+  ): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
+  resolveKey(workflowId: string, key: string): Promise<KeyAnswer>;
+  tombstonesSince(): Promise<string>;
+}
+
 /** Adapter a calling test file supplies to parameterize the contract against one concrete store. */
 export interface RunStoreFidelityContractAdapter {
   /** The store under test. */
-  store: RunStore;
+  store: FidelityContractStore;
   /**
    * A workflow definition carrying exactly one step, named `stepName`, that is immediately
    * eligible on a freshly-created run (no unmet `depends_on`) — used by CLAIM_SINGLE_OWNER to
@@ -311,6 +344,51 @@ function reportedLink(rerunOf: string | undefined): string {
 /** A workflow id and idempotency key no other case, and no earlier run of this case, uses. */
 function mintCreatedTag(): string {
   return `tck-created-${Math.random().toString(36).slice(2)}`;
+}
+
+/** A workflow id for one case of the scan laws: no other case uses it. */
+function mintTag(what: string): string {
+  return `tck-${what}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Whether `call` is refused: it throws, or the promise it returns rejects. */
+async function refuses(call: () => Promise<unknown>): Promise<boolean> {
+  try {
+    await call();
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** A whole scan, page by page: each page's run ids and `next_after`, and all the run ids. */
+async function scanAll(
+  store: FidelityContractStore,
+  filter: ScanFilter,
+  options: ScanOptions,
+  law: RunStoreFidelityLaw,
+) {
+  const pages: Array<{ runs: string[]; next_after?: string }> = [];
+  for await (const page of store.scan(filter, options)) {
+    if (pages.length === 1000) throw new Error(`${law}: the scan did not end after 1,000 pages`);
+    const runs: string[] = [];
+    for (const item of page.items) {
+      if (item.kind === 'run') runs.push('record' in item.run ? item.run.record.id : item.run.id);
+    }
+    pages.push({ runs, ...(page.next_after !== undefined ? { next_after: page.next_after } : {}) });
+  }
+  return { pages, runs: pages.flatMap((p) => p.runs) };
+}
+
+/** Ends `run` with the contract's own terminal write (`SEALED_BY_ROUNDTRIP`'s). */
+async function endRun(store: FidelityContractStore, run: RunRecord): Promise<void> {
+  await store.update({
+    ...run,
+    completed_steps: ['tck-step'],
+    terminal_state: true,
+    sealed_by: { arm: 'complete', step: 'tck-step' },
+    terminal_reason: 'Workflow completed.',
+  });
 }
 
 /** The four branches of `CREATE_REPORTS_CREATED`, as each failure message names its own. */
@@ -1171,6 +1249,116 @@ export function runStoreFidelityContract(
             `CREATE_REPORTS_CREATED (${CREATED_RERUN}): the new run's rerun_of, read back by get, ` +
               `must name the run it replaces (${first.id}); get returned ` +
               reportedLink(stored.rerun_of),
+          );
+        }
+      },
+    },
+  );
+
+  // #616 PR-2c c4-i — the scan laws. Each case keeps to a workflow of its own: a wiring may share
+  // one store across laws.
+  const { store } = adapter;
+  const create = async (workflowId: string, idempotencyKey?: string) =>
+    (
+      await store.create({
+        workflowId,
+        workflowVersion: 1,
+        params: {},
+        ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+      })
+    ).record;
+  cases.push(
+    {
+      law: 'SCAN_PAGES_EVERY_RECORD_ONCE',
+      name: 'a scan of 20 runs in pages of 7 returns each run once, in id order, in pages of 7, 7 and 6; only a full page carries next_after',
+      run: async () => {
+        const tag = mintTag('scan-pages');
+        const ids: string[] = [];
+        for (let i = 0; i < 20; i++) ids.push((await create(tag)).id);
+        const got = await scanAll(
+          store,
+          { workflow: tag },
+          { pageSize: 7 },
+          'SCAN_PAGES_EVERY_RECORD_ONCE',
+        );
+        const sizes = got.pages.map((p) => p.runs.length).join(', ');
+        // Realm mints ASCII UUIDs, so `sort()` is their byte order; no order is pinned for other ids.
+        if (got.runs.join() !== [...ids].sort().join() || sizes !== '7, 7, 6') {
+          const missing = ids.filter((id) => !got.runs.includes(id)).length;
+          throw new Error(
+            `SCAN_PAGES_EVERY_RECORD_ONCE: a scan of 20 runs in pages of 7 must return each once, in id order, in pages of 7, 7 and 6; it returned pages of ${sizes}: ${got.runs.length} runs, ${new Set(got.runs).size} of them distinct, ${missing} missing`,
+          );
+        }
+        const short = got.pages.find((p) => p.runs.length < 7 && p.next_after !== undefined);
+        if (short !== undefined) {
+          throw new Error(
+            `SCAN_PAGES_EVERY_RECORD_ONCE: only a full page carries next_after; a page of ${short.runs.length} carried ${short.next_after}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'SCAN_PAGES_EVERY_RECORD_ONCE',
+      name: `a scan with a page size of 0, ${SCAN_MAX_PAGE_SIZE + 1} or 2.5 is refused`,
+      run: async () => {
+        for (const pageSize of [0, SCAN_MAX_PAGE_SIZE + 1, 2.5]) {
+          if (
+            !(await refuses(() =>
+              store.scan({ workflow: mintTag('scan-refused') }, { pageSize }).next(),
+            ))
+          ) {
+            throw new Error(
+              `SCAN_PAGES_EVERY_RECORD_ONCE: a page size must be a whole number from 1 to ${SCAN_MAX_PAGE_SIZE}; the store accepted ${pageSize}`,
+            );
+          }
+        }
+      },
+    },
+    {
+      law: 'SCAN_FILTERS_HOLD',
+      name: 'each scan filter selects exactly the runs it matches, and a key filter without a workflow is refused',
+      run: async () => {
+        const a = mintTag('scan-filters');
+        const live = await create(a);
+        const ended = await create(a, 'k1');
+        await endRun(store, ended);
+        const keyed = await create(a, 'k2');
+        const other = await create(`${a}-other`, 'k1');
+        const stored = await Promise.all(
+          [live, ended, keyed].map(async (r) => (await store.get(r.id)).record),
+        );
+        const since = (field: 'created_at' | 'updated_at', at: string) =>
+          stored.filter((r) => r[field] >= at).map((r) => r.id);
+        const late = '9999-12-31T23:59:59.999Z';
+        const table: Array<[ScanFilter, string[]]> = [
+          [{ workflow: a }, [live.id, ended.id, keyed.id]],
+          [{ workflow: `${a}-other` }, [other.id]],
+          [{ workflow: a, terminal: true }, [ended.id]],
+          [{ workflow: a, terminal: false }, [live.id, keyed.id]],
+          [{ workflow: a, phase: 'completed' }, [ended.id]],
+          [{ workflow: a, phase: 'running' }, [live.id, keyed.id]],
+          [{ workflow: a, key: 'k1' }, [ended.id]],
+          [{ workflow: a, created_since: keyed.created_at }, since('created_at', keyed.created_at)],
+          [{ workflow: a, created_since: late }, []],
+          [
+            { workflow: a, updated_since: stored[1]!.updated_at },
+            since('updated_at', stored[1]!.updated_at),
+          ],
+          [{ workflow: a, updated_since: late }, []],
+        ];
+        for (const [filter, want] of table) {
+          const got = (
+            await scanAll(store, filter, { pageSize: 100, projection: 'row' }, 'SCAN_FILTERS_HOLD')
+          ).runs;
+          if ([...got].sort().join() !== [...want].sort().join()) {
+            throw new Error(
+              `SCAN_FILTERS_HOLD: the filter ${JSON.stringify(filter)} must select ${want.length} run(s) (${want.join(', ') || 'none'}); the store returned ${got.length} (${got.join(', ') || 'none'})`,
+            );
+          }
+        }
+        if (!(await refuses(() => store.scan({ key: 'k1' }, { pageSize: 100 }).next()))) {
+          throw new Error(
+            'SCAN_FILTERS_HOLD: a key filter without a workflow must be refused (a key belongs to one workflow); the store accepted it',
           );
         }
       },

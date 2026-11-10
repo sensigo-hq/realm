@@ -1,8 +1,8 @@
 // usage-record-law-600.test.ts — issue #600 PR 2 (A6, G27): the store TCK's USAGE_RECORD_ROUNDTRIP
 // law requires a store to round-trip each request fact PR 2 adds, in a step's evidence and in a
-// failed drive's usage. Green against the two stores Realm ships (InMemoryStore, JsonFileStore); red,
-// for EACH of its fields, against a store written here that drops that one field (the
-// `output-source-law-625.test.ts` pattern). The lifetime unit adds the tenth, `cache_auto`, an
+// failed drive's usage. Green against InMemoryStore (the SQLite store runs the law in store-sqlite's
+// contract-fidelity-616.test.ts); red, for EACH of its fields, against a store written here that
+// drops that one field (the `output-source-law-625.test.ts` pattern). The lifetime unit adds the tenth, `cache_auto`, an
 // object: the law compares it by deep equality, so a store that keeps its keys in another order
 // passes. Issue #715 (R) adds the eleventh, `request_id`, the request's identity realm mints. Issue
 // #898: `cache_auto` carries a nested `prices`; a store that drops it fails (S6), and one that keeps
@@ -18,13 +18,12 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // law's message, which names the field, where it was, and the test values written and read back.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '@sensigo/realm';
-import type { RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
+import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
-import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
+import {
+  runStoreFidelityContract,
+  type FidelityContractStore,
+} from './run-store-fidelity-contract.js';
 import type { Snapshot } from '@sensigo/realm';
 
 const agentWf: WorkflowDefinition = {
@@ -63,7 +62,7 @@ const FIELDS = [
 ] as const;
 
 /** The USAGE_RECORD_ROUNDTRIP case of the TCK, against `store`. */
-function lawOf(store: RunStore) {
+function lawOf(store: FidelityContractStore) {
   const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 's' }).filter(
     (c) => c.law === 'USAGE_RECORD_ROUNDTRIP',
   );
@@ -180,10 +179,9 @@ function changing(change: (r: Record<string, unknown>) => Record<string, unknown
 }
 
 describe('issue #600 PR 2 — USAGE_RECORD_ROUNDTRIP', () => {
-  it('passes for InMemoryStore and JsonFileStore, which round-trip every request fact', async () => {
+  it('passes for InMemoryStore, which round-trips every request fact', async () => {
     // (a) red when a shipped store drops a request fact; (b) prints the law's message.
     await lawOf(new InMemoryStore()).run();
-    await lawOf(new JsonFileStore(await mkdtemp(join(tmpdir(), 'tck-usage-600-')))).run();
   });
 
   for (const field of FIELDS) {

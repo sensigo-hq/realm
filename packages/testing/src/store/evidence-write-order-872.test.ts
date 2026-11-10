@@ -1,18 +1,18 @@
 // evidence-write-order-872.test.ts — #872 (b1) A6: the store TCK's EVIDENCE_WRITE_ORDER law requires a
 // store to read a run's evidence back in the order it was written — `get_run_state` pages a run's
-// steps in first-attempt order, its cursor a step's place in it. Green against the two stores Realm
-// ships (InMemoryStore, JsonFileStore); red against a store written here that reads evidence back
-// reversed.
+// steps in first-attempt order, its cursor a step's place in it. Green against InMemoryStore (the
+// SQLite store runs the law in store-sqlite's contract-fidelity-616.test.ts); red against a store
+// written here that reads evidence back reversed.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore, writtenSnapshot } from '@sensigo/realm';
-import type { RunStore, Snapshot, WorkflowDefinition } from '@sensigo/realm';
+import { writtenSnapshot } from '@sensigo/realm';
+import type { Snapshot, WorkflowDefinition } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
-import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
+import {
+  runStoreFidelityContract,
+  type FidelityContractStore,
+} from './run-store-fidelity-contract.js';
 
 const agentWf: WorkflowDefinition = {
   id: 'tck-write-order',
@@ -22,7 +22,7 @@ const agentWf: WorkflowDefinition = {
 };
 
 /** The EVIDENCE_WRITE_ORDER case of the TCK, against `store`. */
-function lawOf(store: RunStore) {
+function lawOf(store: FidelityContractStore) {
   const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 's' }).filter(
     (c) => c.law === 'EVIDENCE_WRITE_ORDER',
   );
@@ -31,10 +31,9 @@ function lawOf(store: RunStore) {
 }
 
 describe('#872 (b1) B9 — EVIDENCE_WRITE_ORDER', () => {
-  it('passes for InMemoryStore and JsonFileStore, which read evidence back in write order', async () => {
+  it('passes for InMemoryStore, which reads evidence back in write order', async () => {
     // (a) red when a shipped store reorders evidence; (b) prints the law's message (step ids only).
     await lawOf(new InMemoryStore()).run();
-    await lawOf(new JsonFileStore(await mkdtemp(join(tmpdir(), 'tck-order-872-')))).run();
   });
 
   it('REJECTS a store that reads evidence back reversed', async () => {

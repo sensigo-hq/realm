@@ -6,24 +6,17 @@ import { countingClock, settableClock } from '../clock/settable-clock.js';
 import {
   runStoreFidelityContract,
   RUN_STORE_FIDELITY_LAWS,
+  type FidelityContractStore,
   type RunStoreFidelityLaw,
 } from './run-store-fidelity-contract.js';
-import {
-  WorkflowError,
-  floorAtRecord,
-  systemClock,
-  takeRawReading,
-  takeReading,
-  writtenSnapshot,
-} from '@sensigo/realm';
 import type {
   WorkflowDefinition,
-  RunStore,
   RunRecord,
   CreateRunOptions,
   LoadBearingRunRecordField,
+  ScanPage,
 } from '@sensigo/realm';
-import type { Snapshot, Listing, CreateResult, StoreSettlement } from '@sensigo/realm';
+import type { Snapshot, CreateResult } from '@sensigo/realm';
 
 const autoFree: WorkflowDefinition = {
   id: 'p',
@@ -132,87 +125,19 @@ describe('InMemoryStore RunStore fidelity wiring — the run list is derived fro
 /**
  * A deliberately DISHONEST RunStore (issue #188): declares it persists `extension_identity` in
  * `persistedRunRecordFields`, but silently drops the field on every `update` — proves the TCK's
- * FIDELITY_HONESTY law actually catches a lying store, rather than passing vacuously. Mirrors
- * InMemoryStore's own logic for everything else (a faithful store in every OTHER respect), so the
- * ONLY thing under test is the one deliberate lie.
+ * FIDELITY_HONESTY law actually catches a lying store, rather than passing vacuously. InMemoryStore
+ * in every other respect (#616 PR-2c c4-i: a subclass, so it has the scan verbs the contract's store
+ * type requires), so the ONLY thing under test is the one deliberate lie.
  */
-class FieldDroppingFakeStore implements RunStore {
-  private readonly runs = new Map<string, RunRecord>();
-  readonly persistsClaims = true;
-  readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set([
+class FieldDroppingFakeStore extends InMemoryStore {
+  override readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set([
     'extension_identity',
   ]);
-  /** #715 (b): every store reads the time only through its clock. */
-  readonly clock = systemClock;
 
-  async create(options: CreateRunOptions): Promise<CreateResult> {
-    const at = takeReading(this.clock);
-    const now = at.toISOString();
-    const record: RunRecord = {
-      id: crypto.randomUUID(),
-      workflow_id: options.workflowId,
-      workflow_version: options.workflowVersion,
-      completed_steps: [],
-      in_progress_steps: [],
-      failed_steps: [],
-      skipped_steps: [],
-      run_phase: 'running',
-      version: 0,
-      params: options.params,
-      evidence: [],
-      created_at: now,
-      updated_at: now,
-      terminal_state: false,
-    };
-    this.runs.set(record.id, record);
-    return { ...writtenSnapshot(record, at), created: true };
-  }
-
-  async get(runId: string): Promise<Snapshot> {
-    const r = takeRawReading(this.clock);
-    const record = this.runs.get(runId);
-    if (record === undefined) {
-      throw new WorkflowError(`Run '${runId}' not found`, {
-        code: 'STATE_RUN_NOT_FOUND',
-        category: 'STATE',
-        agentAction: 'report_to_user',
-        retryable: false,
-      });
-    }
-    return writtenSnapshot(record, floorAtRecord(r, record));
-  }
-
-  async update(record: RunRecord): Promise<Snapshot> {
-    const at = takeReading(this.clock, this.runs.get(record.id));
+  override async update(record: RunRecord): Promise<Snapshot> {
     // THE LIE: extension_identity is stripped here despite being declared persisted above.
     const { extension_identity: _dropped, ...rest } = record;
-    const updated: RunRecord = {
-      ...rest,
-      version: record.version + 1,
-      updated_at: at.toISOString(),
-    };
-    this.runs.set(updated.id, updated);
-    return writtenSnapshot(updated, at);
-  }
-
-  async claimStep(): Promise<Snapshot> {
-    throw new Error('not exercised by the fidelity-honesty law');
-  }
-
-  async settleStep(): Promise<StoreSettlement> {
-    throw new Error('not exercised by the fidelity-honesty law');
-  }
-
-  async list(workflowId?: string): Promise<Listing> {
-    const r = takeRawReading(this.clock);
-    const all = [...this.runs.values()];
-    const kept =
-      workflowId !== undefined ? all.filter((rec) => rec.workflow_id === workflowId) : all;
-    return {
-      snapshots: kept.map((rec) => writtenSnapshot(rec, floorAtRecord(r, rec))),
-      read_at: r,
-      consistent_snapshot: true,
-    };
+    return super.update(rest);
   }
 }
 
@@ -359,7 +284,7 @@ class CreatedMisreportingStore extends InMemoryStore {
 
 /** Each CREATE_REPORTS_CREATED case run in order on ONE store (as the wirings run a law's cases):
  *  `passed`, or its failure message. */
-async function createdOutcomes(store: RunStore): Promise<string[]> {
+async function createdOutcomes(store: FidelityContractStore): Promise<string[]> {
   const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 'work' }).filter(
     (c) => c.law === 'CREATE_REPORTS_CREATED',
   );
@@ -693,5 +618,67 @@ describe('#616 PR-2c c1a — InMemoryStore.seed plants a run record as given, re
     const before = clock.reads;
     store.seed({ ...run, terminal_reason: 'planted' });
     expect(clock.reads - before).toBe(0);
+  });
+});
+
+// #616 PR-2c c4-i: what the published contract does not pin about this store's scan and key reads.
+describe('#616 PR-2c c4-i — InMemoryStore’s scan, resolveKey and tombstonesSince', () => {
+  const open = async (store: InMemoryStore): Promise<RunRecord> =>
+    (await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} })).record;
+  /** Every page of one scan of the workflow `wf`. */
+  async function pagesOf(store: InMemoryStore, pageSize: number): Promise<ScanPage<'record'>[]> {
+    const pages: ScanPage<'record'>[] = [];
+    for await (const page of store.scan({ workflow: 'wf' }, { pageSize })) pages.push(page);
+    return pages;
+  }
+
+  it('orders ids by their UTF-8 bytes, as SQLite’s BINARY does: U+FFFD before U+1F600', async () => {
+    // (1) red when the store sorts with JS `<` (UTF-16 puts U+1F600's first unit, 0xD83D, before
+    //     0xFFFD); (2) prints the seeded ids in the order the scan returned them.
+    const store = new InMemoryStore();
+    const run = await open(store);
+    store.seed({ ...run, id: '\u{1F600}-run' });
+    store.seed({ ...run, id: '�-run' });
+    const ids = (await pagesOf(store, 10))
+      .flatMap((page) => page.items)
+      .map((item) => (item.kind === 'run' ? item.run.record.id : item.run_id));
+    expect(ids.filter((id) => id !== run.id)).toEqual(['�-run', '\u{1F600}-run']);
+  });
+
+  it('resolveKey and tombstonesSince answer since as the epoch, a constant, and read no clock for it', async () => {
+    // (1) red when either reads the clock or answers another instant; (2) prints both answers and
+    //     the readings they spent.
+    const clock = countingClock(settableClock('2026-11-10T12:00:00.000Z'));
+    const store = new InMemoryStore({ clock });
+    const before = clock.reads;
+    const key = await store.resolveKey('wf', 'never-used');
+    const horizon = await store.tombstonesSince();
+    expect({ key, horizon, reads: clock.reads - before }).toEqual({
+      key: { state: 'unseen', since: '1970-01-01T00:00:00.000Z' },
+      horizon: '1970-01-01T00:00:00.000Z',
+      reads: 0,
+    });
+  });
+
+  it('a scan of an exact multiple of its page size ends with an empty page, as SQLite’s does, one reading a page', async () => {
+    // (1) red when the last full page carries no next_after (a store that looks ahead), or a page
+    //     reads the clock other than once; (2) prints each page's size, whether it carried
+    //     next_after, and the readings the scan spent.
+    const clock = countingClock(settableClock('2026-11-10T12:00:00.000Z'));
+    const store = new InMemoryStore({ clock });
+    for (let i = 0; i < 14; i++) await open(store);
+    const before = clock.reads;
+    const pages = (await pagesOf(store, 7)).map((p) => [
+      p.items.length,
+      p.next_after !== undefined,
+    ]);
+    expect({ pages, reads: clock.reads - before }).toEqual({
+      pages: [
+        [7, true],
+        [7, true],
+        [0, false],
+      ],
+      reads: 3,
+    });
   });
 });
