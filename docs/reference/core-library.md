@@ -6,19 +6,20 @@
 
 The package exports more than 200 values. This page covers the ones named above. Most of the rest are the parts the `realm` command is built from.
 
-| Package                  | Holds                                                            |
-| ------------------------ | ---------------------------------------------------------------- |
-| `@sensigo/realm`         | The engine, the loader, the file stores, the built-in adapters.  |
-| `@sensigo/realm-mcp`     | The MCP server, as a function you can call with your own stores. |
-| `@sensigo/realm-testing` | An in-memory run store, and the tests for a store of your own.   |
+| Package                       | Holds                                                            |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `@sensigo/realm`              | The engine, the loader, the file stores, the built-in adapters.  |
+| `@sensigo/realm-mcp`          | The MCP server, as a function you can call with your own stores. |
+| `@sensigo/realm-testing`      | An in-memory run store, and the tests for a store of your own.   |
+| `@sensigo/realm-store-sqlite` | The Realm home: the SQLite store every `realm` command uses.     |
 
-All three are ES modules and need Node 22 or later.
+All four are ES modules and need Node 22 or later; `@sensigo/realm-store-sqlite` needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.
 
 ## Run a workflow from your own program
 
 ```js
+import { openRealmHome } from '@sensigo/realm-store-sqlite';
 import {
-  JsonFileStore,
   loadWorkflowFromFile,
   createDefaultRegistry,
   executeChain,
@@ -26,7 +27,7 @@ import {
   deriveRunPhase,
 } from '@sensigo/realm';
 
-const store = new JsonFileStore('./data/runs');
+const { runStore: store } = await openRealmHome();
 const definition = loadWorkflowFromFile('flow/workflow.yaml');
 
 const registry = createDefaultRegistry();
@@ -183,7 +184,7 @@ await server.connect(transport);
 A JavaScript program that passes no store is refused before anything is opened:
 
 ```text
-createRealmMcpServer: no runStore was given. The library has no default store, so no server was built and nothing was opened. Pass runStore, workflowStore, traceBufferStore and failedAttemptStore, opened once per process — the file stores are new JsonFileStore(), new JsonWorkflowStore(), new JsonTraceBufferStore(runStore.runsDirPath, runStore) and new JsonFileFailedAttemptStore(runStore.runsDirPath) — or run the realm-mcp command, which opens ~/.realm itself.
+createRealmMcpServer: no runStore was given. The library has no default store, so no server was built and nothing was opened. Pass runStore, workflowStore, traceBufferStore and failedAttemptStore, opened once per process (a test may use InMemoryStore from @sensigo/realm-testing and InMemoryTraceBufferStore from @sensigo/realm for the run and trace stores), or open a Realm home with createRealmMcpServerOnHome from @sensigo/realm-mcp/home.
 ```
 
 A handler called without a store it needs is refused by name before anything is read.
@@ -194,14 +195,13 @@ With an in-memory run store and both other stores given, `start_run` over this s
 
 ## The stores Realm ships
 
-| Class                        | Package                  | Keeps                                  | Built with                                                          |
-| ---------------------------- | ------------------------ | -------------------------------------- | ------------------------------------------------------------------- |
-| `JsonFileStore`              | `@sensigo/realm`         | Runs, one JSON file each.              | `new JsonFileStore(dir?)`. The default is `~/.realm/runs`.          |
-| `JsonWorkflowStore`          | `@sensigo/realm`         | Registered workflows.                  | `new JsonWorkflowStore(dir?)`. The default is `~/.realm/workflows`. |
-| `JsonFileFailedAttemptStore` | `@sensigo/realm`         | Refused attempts, a file for each run. | `new JsonFileFailedAttemptStore(dir)`.                              |
-| `JsonTraceBufferStore`       | `@sensigo/realm-mcp`     | Trace entries, in files.               | `new JsonTraceBufferStore(runStore.runsDirPath, runStore)`.         |
-| `InMemoryTraceBufferStore`   | `@sensigo/realm`         | Trace entries, in memory.              | `new InMemoryTraceBufferStore(runStore)`.                           |
-| `InMemoryStore`              | `@sensigo/realm-testing` | Runs, in memory.                       | `new InMemoryStore()`.                                              |
+| Class                      | Package                       | Keeps                                                                                       | Built with                                                                                               |
+| -------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| The Realm home             | `@sensigo/realm-store-sqlite` | Runs, workflows, failed attempts, trace entries, replays and dedup marks, in one `realm.db` | `openRealmHome({ home? })`; for an MCP host, `createRealmMcpServerOnHome` from `@sensigo/realm-mcp/home` |
+| `InMemoryTraceBufferStore` | `@sensigo/realm`              | Trace entries, in memory.                                                                   | `new InMemoryTraceBufferStore(runStore)`.                                                                |
+| `InMemoryStore`            | `@sensigo/realm-testing`      | Runs, in memory.                                                                            | `new InMemoryStore()`.                                                                                   |
+
+The JSON file stores (`JsonFileStore`, `JsonWorkflowStore`, `JsonFileFailedAttemptStore`, `JsonTraceBufferStore`) are not how Realm keeps its data: a Realm home's fences refuse them.
 
 `JsonFileStore` and `InMemoryStore` each have a `clock`: the time they stamp their writes with (added after version 0.48.0). `JsonFileStore` takes no clock: its clock is this computer's, or the clock file of a [test location](environment-and-files.md#the-clock-a-runs-times-come-from) when its folder is one. `InMemoryStore` takes one, `new InMemoryStore({ clock })`, and uses `systemClock` when none is given. Each `create`, `update` and `claimStep` reads the clock once and stamps everything it records with that reading: `created_at`, `updated_at`, and a claim's `since` and deadline. The clock does not stamp times taken outside the store, or durations. `settleStep` reads it once too, inside its write, and every time it records comes from that reading: `updated_at`, a gate's `opened_at` and `expires_at`, an ended run's `abandoned_at`. A read takes one reading before it loads: `get` returns `{ record, at }`, and `list` returns `{ snapshots, read_at, consistent_snapshot }`, each record with the reading it is judged at. `stampSeal` does not read the clock.
 
