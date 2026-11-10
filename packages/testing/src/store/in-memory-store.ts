@@ -87,6 +87,9 @@ export class InMemoryStore implements RunStore {
   /** Parity with JsonFileStore: round-trips the per-claim `claims` liveness clock (issue #101). */
   readonly persistsClaims = true;
 
+  /** This store never deletes a run, so it keeps no tombstones (#616 PR-2c c4-i). */
+  readonly purgesRuns = false;
+
   /** Parity with JsonFileStore (issue #188): every `create`/`update` stores the whole `RunRecord`
    *  object as-is (no field-by-field mapping), so nothing is ever dropped — declares the full set. */
   readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set([

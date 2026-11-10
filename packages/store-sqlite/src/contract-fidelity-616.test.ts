@@ -41,6 +41,10 @@ describe('#616 unit 16b — SqliteRunStore runs the run-store fidelity contract'
         store,
         definition: AGENT_WORKFLOW,
         stepName: 'work',
+        // #616 PR-2c c4-i: the store deletes an ended run through its own verb, leaving a tombstone.
+        purge: async (id) => {
+          await store.deleteAllForRun(id);
+        },
       }).filter((c) => c.law === law);
       // (1) red when the contract stops registering a case for a law this file runs, or when the
       //     store declares no field a law reads (it would then run zero cases and pass); (2) prints

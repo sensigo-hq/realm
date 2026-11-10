@@ -23,6 +23,7 @@ import {
   type EvidenceSnapshot,
   type CreateResult,
   type KeyAnswer,
+  type PurgedItem,
   type RunStore,
   type RunRecord,
   type LoadBearingRunRecordField,
@@ -62,9 +63,11 @@ import {
  * finished run, which makes a new run, with a different id, whose `rerun_of` names the run it
  * replaces, in the create's result and as `get` returns it; `created: false`, with the live run's
  * id, for a keyed create that reuses that run; and a create resolves `{ record, at, created }`).
- * #616 PR-2c c4-i adds `SCAN_PAGES_EVERY_RECORD_ONCE` (a scan's pages hold every run once, in id
- * order; a page size out of range is refused) and `SCAN_FILTERS_HOLD` (each filter selects exactly the
- * runs it matches; a key without a workflow is refused).
+ * #616 PR-2c c4-i adds six: `SCAN_PAGES_EVERY_RECORD_ONCE` and `SCAN_FILTERS_HOLD` (a scan's pages
+ * and filters), `KEY_RESOLVES_THREE_WAYS` (who holds a key: held, purged or unseen),
+ * `PURGED_RUNS_SCAN_AS_TOMBSTONES` and `HORIZON_BELOW_TOMBSTONES` (a deleted run's tombstone and the
+ * horizon below it), and `PURGE_CAPABILITY_WIRED` (the store's `purgesRuns` agrees with the adapter's
+ * `purge`); the three purge laws' cases are skipped for a store that never deletes a run.
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -81,6 +84,10 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'CREATE_REPORTS_CREATED',
   'SCAN_PAGES_EVERY_RECORD_ONCE',
   'SCAN_FILTERS_HOLD',
+  'KEY_RESOLVES_THREE_WAYS',
+  'PURGED_RUNS_SCAN_AS_TOMBSTONES',
+  'HORIZON_BELOW_TOMBSTONES',
+  'PURGE_CAPABILITY_WIRED',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -101,11 +108,12 @@ export interface RunStoreFidelityContractCase {
 
 /**
  * The store {@link runStoreFidelityContract} runs on (#616 PR-2c c4-i): a `RunStore` that also pages
- * its runs (`scan`), says who holds a key (`resolveKey`) and gives its tombstone horizon
- * (`tombstonesSince`), with the SQLite store's signatures. c4-ii folds these onto `RunStore` and
- * deletes this type.
+ * its runs (`scan`), says who holds a key (`resolveKey`), gives its tombstone horizon
+ * (`tombstonesSince`) and says whether it deletes runs (`purgesRuns`), with the SQLite store's
+ * signatures. c4-ii folds these onto `RunStore` and deletes this type.
  */
 export interface FidelityContractStore extends RunStore {
+  readonly purgesRuns: boolean;
   scan(
     filter: ScanFilter,
     options: ScanOptions & { projection: 'row' },
@@ -126,6 +134,12 @@ export interface FidelityContractStore extends RunStore {
 export interface RunStoreFidelityContractAdapter {
   /** The store under test. */
   store: FidelityContractStore;
+  /**
+   * Deletes one ENDED run by id and leaves its tombstone (#616 PR-2c c4-i): supply it for a store
+   * with `purgesRuns: true`, whose purge laws then run; leave it out for a store that never deletes
+   * a run, whose purge laws' cases are then skipped. The contract ends the run before it calls it.
+   */
+  purge?: (runId: string) => Promise<void>;
   /**
    * A workflow definition carrying exactly one step, named `stepName`, that is immediately
    * eligible on a freshly-created run (no unmet `depends_on`) — used by CLAIM_SINGLE_OWNER to
@@ -347,10 +361,13 @@ function mintCreatedTag(): string {
   return `tck-created-${Math.random().toString(36).slice(2)}`;
 }
 
-/** A workflow id for one case of the scan laws: no other case uses it. */
+/** A workflow id (and key) for one case of the scan, key and purge laws: no other case uses it. */
 function mintTag(what: string): string {
   return `tck-${what}-${Math.random().toString(36).slice(2)}`;
 }
+
+/** The one shape a store's stamps take, `toISOString()`'s. */
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 /** Whether `call` is refused: it throws, or the promise it returns rejects. */
 async function refuses(call: () => Promise<unknown>): Promise<boolean> {
@@ -362,23 +379,29 @@ async function refuses(call: () => Promise<unknown>): Promise<boolean> {
   }
 }
 
-/** A whole scan, page by page: each page's run ids and `next_after`, and all the run ids. */
+/** A whole scan, page by page: each page's run ids, tombstones and `next_after`, and all of them. */
 async function scanAll(
   store: FidelityContractStore,
   filter: ScanFilter,
   options: ScanOptions,
   law: RunStoreFidelityLaw,
 ) {
-  const pages: Array<{ runs: string[]; next_after?: string }> = [];
+  const pages: Array<{ runs: string[]; purged: PurgedItem[]; next_after?: string }> = [];
   for await (const page of store.scan(filter, options)) {
     if (pages.length === 1000) throw new Error(`${law}: the scan did not end after 1,000 pages`);
     const runs: string[] = [];
+    const purged: PurgedItem[] = [];
     for (const item of page.items) {
-      if (item.kind === 'run') runs.push('record' in item.run ? item.run.record.id : item.run.id);
+      if (item.kind === 'purged') purged.push(item);
+      else runs.push('record' in item.run ? item.run.record.id : item.run.id);
     }
-    pages.push({ runs, ...(page.next_after !== undefined ? { next_after: page.next_after } : {}) });
+    pages.push({
+      runs,
+      purged,
+      ...(page.next_after !== undefined ? { next_after: page.next_after } : {}),
+    });
   }
-  return { pages, runs: pages.flatMap((p) => p.runs) };
+  return { pages, runs: pages.flatMap((p) => p.runs), purged: pages.flatMap((p) => p.purged) };
 }
 
 /** Ends `run` with the contract's own terminal write (`SEALED_BY_ROUNDTRIP`'s). */
@@ -390,6 +413,84 @@ async function endRun(store: FidelityContractStore, run: RunRecord): Promise<voi
     sealed_by: { arm: 'complete', step: 'tck-step' },
     terminal_reason: 'Workflow completed.',
   });
+}
+
+/**
+ * The purge laws' wiring check (#616 PR-2c c4-i), which `PURGE_CAPABILITY_WIRED` and every purge case
+ * run first: the store's `purgesRuns` is a boolean, the adapter's `purge` is a function or left out,
+ * and the two agree. A disagreement throws, its message beginning `ADAPTER_WIRING:`.
+ */
+function checkPurgeWiring(adapter: RunStoreFidelityContractAdapter): void {
+  const flag: unknown = adapter.store.purgesRuns;
+  const purge: unknown = adapter.purge;
+  const wiring = (why: string) => new Error(`ADAPTER_WIRING: ${why}`);
+  if (typeof flag !== 'boolean') {
+    throw wiring(
+      `a store says whether it deletes runs with \`purgesRuns: true\` or \`false\`; this store's is ${String(flag)}`,
+    );
+  }
+  if (purge !== undefined && typeof purge !== 'function') {
+    throw wiring(
+      `the adapter's \`purge\` must be a function that deletes one ended run; it is a ${typeof purge}`,
+    );
+  }
+  if (flag && purge === undefined) {
+    throw wiring(
+      'the store says it deletes runs (`purgesRuns: true`), but the adapter supplies no `purge`: supply one, or set `purgesRuns: false`',
+    );
+  }
+  if (!flag && purge !== undefined) {
+    throw wiring(
+      'the adapter supplies `purge`, but the store says it never deletes a run (`purgesRuns: false`): set `purgesRuns: true`, or leave `purge` out',
+    );
+  }
+}
+
+/**
+ * A purge law's case: skipped, by name, for a store with `purgesRuns: false` and no `purge` (it
+ * deletes no run, so it has no tombstone to show); otherwise `run`, after the wiring check.
+ */
+function purgeCase(
+  adapter: RunStoreFidelityContractAdapter,
+  law: RunStoreFidelityLaw,
+  name: string,
+  run: () => Promise<void>,
+): RunStoreFidelityContractCase {
+  if (adapter.store.purgesRuns === false && adapter.purge === undefined) {
+    return {
+      law,
+      name: `SKIPPED — store does not delete runs (purgesRuns: false): ${name}`,
+      skipped: true,
+      run: async () => {
+        // Intentional no-op — see the case name for why.
+      },
+    };
+  }
+  return {
+    law,
+    name,
+    run: async () => {
+      checkPurgeWiring(adapter);
+      await run();
+    },
+  };
+}
+
+/**
+ * The purge laws' fixture: a keyed run of a workflow of its own, ended by {@link endRun}, then deleted
+ * by the adapter's `purge` (the wiring check has passed, so it is a function).
+ */
+async function purgedRun(adapter: RunStoreFidelityContractAdapter, what: string) {
+  const tag = mintTag(what);
+  const { record: run } = await adapter.store.create({
+    workflowId: tag,
+    workflowVersion: 1,
+    params: {},
+    idempotencyKey: tag,
+  });
+  await endRun(adapter.store, run);
+  await adapter.purge!(run.id);
+  return { tag, runId: run.id };
 }
 
 /** The four branches of `CREATE_REPORTS_CREATED`, as each failure message names its own. */
@@ -1256,8 +1357,8 @@ export function runStoreFidelityContract(
     },
   );
 
-  // #616 PR-2c c4-i — the scan laws. Each case keeps to a workflow of its own: a wiring may share
-  // one store across laws.
+  // #616 PR-2c c4-i — the scan, key and purge laws. Each case keeps to a workflow of its own: a
+  // wiring may share one store across laws.
   const { store } = adapter;
   const create = async (workflowId: string, idempotencyKey?: string) =>
     (
@@ -1302,6 +1403,8 @@ export function runStoreFidelityContract(
       law: 'SCAN_PAGES_EVERY_RECORD_ONCE',
       name: `a scan with a page size of 0, ${SCAN_MAX_PAGE_SIZE + 1} or 2.5 is refused`,
       run: async () => {
+        // A store that throws on a bad argument passes this case however it throws; the law pins
+        // that the bad input is never served, not how it is refused.
         for (const pageSize of [0, SCAN_MAX_PAGE_SIZE + 1, 2.5]) {
           if (
             !(await refuses(() =>
@@ -1363,6 +1466,106 @@ export function runStoreFidelityContract(
           );
         }
       },
+    },
+    {
+      law: 'KEY_RESOLVES_THREE_WAYS',
+      name: 'a key no run has carried is unseen, with an ISO since; a keyed run holds its key',
+      run: async () => {
+        const tag = mintTag('key');
+        const unseen = await store.resolveKey(tag, tag);
+        if (unseen.state !== 'unseen' || !ISO_INSTANT.test(unseen.since)) {
+          throw new Error(
+            `KEY_RESOLVES_THREE_WAYS: a key no run has carried resolves { state: 'unseen', since: <an ISO instant> }; the store answered ${JSON.stringify(unseen)}`,
+          );
+        }
+        const run = await create(tag, tag);
+        const held = await store.resolveKey(tag, tag);
+        if (held.state !== 'held' || held.run_id !== run.id) {
+          throw new Error(
+            `KEY_RESOLVES_THREE_WAYS: a keyed run holds its key, { state: 'held', run_id: '${run.id}' }; the store answered ${JSON.stringify(held)}`,
+          );
+        }
+      },
+    },
+    purgeCase(
+      adapter,
+      'KEY_RESOLVES_THREE_WAYS',
+      'after the only run carrying a key ended and was purged, the key resolves purged, listing that run and when it was deleted, with since at or before it',
+      async () => {
+        const { tag, runId } = await purgedRun(adapter, 'key-purged');
+        const answer = await store.resolveKey(tag, tag);
+        const listed = answer.state === 'purged' ? answer.runs : [];
+        const at = listed[0]?.purged_at ?? '';
+        if (
+          answer.state !== 'purged' ||
+          listed.length !== 1 ||
+          listed[0]!.run_id !== runId ||
+          !ISO_INSTANT.test(at) ||
+          !(Date.parse(answer.since) <= Date.parse(at))
+        ) {
+          throw new Error(
+            `KEY_RESOLVES_THREE_WAYS: after its only run (${runId}) ended and was purged, a key resolves { state: 'purged', runs: [{ run_id, purged_at }], since } with since at or before purged_at; the store answered ${JSON.stringify(answer)}`,
+          );
+        }
+      },
+    ),
+    purgeCase(
+      adapter,
+      'PURGED_RUNS_SCAN_AS_TOMBSTONES',
+      "a purged run scans as { kind: 'purged' } with include_purged, never as { kind: 'run' }, and not at all without it",
+      async () => {
+        const { tag, runId } = await purgedRun(adapter, 'scan-purged');
+        const law = 'PURGED_RUNS_SCAN_AS_TOMBSTONES';
+        const kept = await scanAll(
+          store,
+          { workflow: tag, include_purged: true },
+          { pageSize: 100 },
+          law,
+        );
+        const tomb = kept.purged.filter((p) => p.run_id === runId);
+        if (
+          tomb.length !== 1 ||
+          !ISO_INSTANT.test(tomb[0]!.purged_at) ||
+          kept.runs.includes(runId)
+        ) {
+          throw new Error(
+            `${law}: a scan with include_purged yields the purged run ${runId} once as { kind: 'purged', run_id, purged_at }, never as a run; it yielded ${tomb.length} tombstone(s) ${JSON.stringify(tomb)} and ${kept.runs.includes(runId) ? 'the run' : 'no run'}`,
+          );
+        }
+        const plain = await scanAll(store, { workflow: tag }, { pageSize: 100 }, law);
+        if (plain.runs.includes(runId) || plain.purged.some((p) => p.run_id === runId)) {
+          throw new Error(
+            `${law}: a scan without include_purged does not yield the purged run ${runId}; it did`,
+          );
+        }
+      },
+    ),
+    purgeCase(
+      adapter,
+      'HORIZON_BELOW_TOMBSTONES',
+      'tombstonesSince is an ISO instant at or before every purged_at a scan or resolveKey lists',
+      async () => {
+        const { tag } = await purgedRun(adapter, 'horizon');
+        const horizon = await store.tombstonesSince();
+        const law = 'HORIZON_BELOW_TOMBSTONES';
+        const key = await store.resolveKey(tag, tag);
+        const listed = [
+          ...(await scanAll(store, { workflow: tag, include_purged: true }, { pageSize: 100 }, law))
+            .purged,
+          ...(key.state === 'purged' ? key.runs : []),
+        ].map((p) => p.purged_at);
+        const later = listed.filter((at) => !(Date.parse(horizon) <= Date.parse(at)));
+        if (!ISO_INSTANT.test(horizon) || listed.length === 0 || later.length > 0) {
+          throw new Error(
+            `${law}: tombstonesSince() is an ISO instant at or before every purged_at listed; it returned ${horizon}, and the scan and resolveKey listed ${listed.length === 0 ? 'no tombstone' : listed.join(', ')}`,
+          );
+        }
+      },
+    ),
+    {
+      law: 'PURGE_CAPABILITY_WIRED',
+      name: "the store's purgesRuns is true or false and agrees with the adapter: true with a purge, false without one",
+      run: async () => checkPurgeWiring(adapter),
     },
   );
 
