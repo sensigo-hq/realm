@@ -19,7 +19,7 @@ import {
 import { CONTEXT_DEPENDENT_CHECKS } from '../lib/admission-context.js';
 import type { CliHome } from '../lib/home.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
-import { plantRegistryRow } from '../test-support/plant-registry-row.js';
+import { plantRegistryRow } from '@sensigo/realm-store-sqlite/test-support';
 
 describe('validate --registered (issue #427)', () => {
   let home: string;
