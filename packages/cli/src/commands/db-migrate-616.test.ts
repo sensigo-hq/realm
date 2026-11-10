@@ -303,7 +303,7 @@ describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_
 describe('#616 PR-2c c7 — the page says what realm db migrate does', () => {
   it('the flags, the order of the work, and the lines it prints', () => {
     // I: both usage lines; J: the already-at and re-stamp lines; the step line: the next cell.
-    claim(PAGE, 'It has two subcommands.');
+    claim(PAGE, 'It has three subcommands.');
     claim(
       PAGE,
       'neither flag: `Provide --backup <path> (a copy of the store file, made before anything changes) or --no-backup.`; both: `Cannot combine --backup with --no-backup. Use one or the other.` Nothing is opened.',

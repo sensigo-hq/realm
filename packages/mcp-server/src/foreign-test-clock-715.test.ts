@@ -13,6 +13,8 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from '
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { REALM_STORE_SCHEMA_VERSION, writeTestClockFile } from '@sensigo/realm';
 import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';
 import { openMcpHome } from './home.js';
@@ -207,6 +209,32 @@ describe('#616 PR-2c c10b-2 — realm-mcp on the SQLite home', () => {
       stack: false,
       firstIsStart: true,
       entries: ['dedup', 'realm.db', 'replays', 'runs', 'workflows'],
+    });
+  }, 20_000);
+
+  // #616 PR-2c c10b-3b, packaging law (B): the program serves a tool over a home it has just made.
+  it('a good fresh home serves get_run_state: an unknown run id is the reply that says so', async () => {
+    const fresh = join(scratch, 'fresh-serving');
+    mkdirSync(fresh);
+    const runId = '00000000-0000-4000-8000-000000000000';
+    const client = new Client({ name: 'foreign-test-clock-715', version: '0' });
+    await client.connect(
+      new StdioClientTransport({
+        command: process.execPath,
+        args: [DIST_SERVER],
+        env: { PATH: process.env['PATH'] ?? '', HOME: fresh },
+        stderr: 'pipe',
+      }),
+    );
+    const raw = (await client
+      .callTool({ name: 'get_run_state', arguments: { run_id: runId } })
+      .finally(() => client.close())) as { content: Array<{ text: string }> };
+    const reply = JSON.parse(raw.content[0]!.text) as Record<string, unknown>;
+    // (1) red when the program stops serving get_run_state over the home it opened (an unknown-tool
+    //     error has no such hint); (2) prints the reply's status and hint.
+    expect({ status: reply['status'], hint: reply['context_hint'] }).toEqual({
+      status: 'error',
+      hint: `Run '${runId}' not found.`,
     });
   }, 20_000);
 });
