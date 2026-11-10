@@ -161,9 +161,11 @@ export function chooseCacheLifetime(
  *    named as excluded;
  * 6. every rate present — the rule over all three, `{ from: 'economics' }`.
  * Each multiple is the row's rate ÷ its `input`. A single `cache_write` is never read as either
- * lifetime's write, and no rate is filled from another. FALLBACK is the owner's rule: the prior,
- * unless no kept gap is below {@link AUTO_LIFETIME_MARGIN} × the prior's lifetime — then `off`. It
- * reads the provider's lifetimes, never a price. Pure.
+ * lifetime's write, and no rate is filled from another. FALLBACK is the owner's rule (uuid
+ * 1d6132e2, "the honest 1-hour fallback"): the long lifetime when any kept gap is below
+ * {@link AUTO_LIFETIME_MARGIN} × the long lifetime, else `off`, whichever runner's `prior` it is
+ * given (the prior answers only when no gap is kept). It reads the provider's lifetimes, never a
+ * price. Pure.
  */
 export function chooseAutoLifetime(input: {
   gapsS: readonly number[] | undefined;
@@ -174,9 +176,8 @@ export function chooseAutoLifetime(input: {
   const kept = keptCacheGaps(input.gapsS);
   if (kept.length === 0) return { choice: input.prior };
   const fallback = (prices: CacheAutoPrices): { choice: CacheChoice; prices: CacheAutoPrices } => {
-    const lifetime = input.prior === 'long' ? input.lifetimes.long_s : input.lifetimes.short_s;
-    const fits = kept.some((gap) => gap < AUTO_LIFETIME_MARGIN * lifetime);
-    return { choice: fits ? input.prior : 'off', prices };
+    const fits = kept.some((gap) => gap < AUTO_LIFETIME_MARGIN * input.lifetimes.long_s);
+    return { choice: fits ? 'long' : 'off', prices };
   };
   if ('cause' in input.prices) return fallback({ from: 'none', cause: input.prices.cause });
   const rates = input.prices.rates;

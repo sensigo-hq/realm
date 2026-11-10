@@ -435,3 +435,29 @@ describe('#898 S5 — normalizeCacheAuto keeps prices in its five shapes, and dr
     ]);
   });
 });
+
+// Caching 3-M D-2r check 1: with no usable prices, the owner's 1-hour fallback (uuid 1d6132e2) is the
+// same for a drive `realm agent` starts, whose prior is 5 minutes. The real case: the owner's runner
+// starts every drive as `realm agent --run-id …` on Anthropic with no price file. The gaps are
+// constructed (no real measured gaps exist, C3M7-21).
+describe('caching 3-M D-2r — the fallback with the short prior: 1 hour when a kept gap is under 54 minutes, else no caching', () => {
+  // (a) red when the fallback reads the prior's lifetime ([1200], [3239] and [10800, 1200] go off, and
+  //     [120] goes to 5 minutes), or `<` becomes `<=` ([3240] then asks 1 hour); (b) prints the gaps,
+  //     the cause and each choice.
+  it.each<[number[], 'long' | 'off']>([
+    [[1200], 'long'],
+    [[120], 'long'],
+    [[3239], 'long'],
+    [[3240], 'off'],
+    [[10800, 1200], 'long'],
+  ])('gaps %j, prior short, no price file → %s', (gapsS, choice) => {
+    expect(
+      chooseAutoLifetime({
+        gapsS,
+        lifetimes: LIFETIMES,
+        prior: 'short',
+        prices: { cause: 'no_file' },
+      }),
+    ).toEqual({ choice, prices: { from: 'none', cause: 'no_file' } });
+  });
+});

@@ -477,24 +477,6 @@ describe('caching 3-M D-2 — check 11: the words', () => {
       ask('realm listen', 300, { basis: 'tool_step' }),
       `asked for 5 minutes (the provider's default lifetime; ${LISTEN}; auto: a step that calls tools reuses its own turns, so auto does not choose for it)`,
     ],
-    [
-      'realm agent, no price file, a gap of 20 minutes',
-      ask('realm agent', 'off', {
-        basis: 'step_gaps',
-        gaps_s: [1200],
-        prices: { from: 'none', cause: 'no_file' },
-      }),
-      `asked for no caching (${AGENT}; auto: the last gap between this step's runs was about 20 minutes; no price file (runner.cache.economics is not set), and no gap was under 270 seconds, so no caching)`,
-    ],
-    [
-      'realm agent, no price file, a gap of 2 minutes',
-      ask('realm agent', 300, {
-        basis: 'step_gaps',
-        gaps_s: [120],
-        prices: { from: 'none', cause: 'no_file' },
-      }),
-      `asked for 5 minutes (the provider's default lifetime; ${AGENT}; auto: the last gap between this step's runs was about 2 minutes; no price file (runner.cache.economics is not set), so 5 minutes without prices)`,
-    ],
   ])('%s', async (_case, request, words) => {
     const def = workflow('d2-words', { ask: step() });
     const h = await homeFor(def);
@@ -525,9 +507,7 @@ describe('caching 3-M D-2 — check 11: the words', () => {
       ],
     } as unknown as RunRecord);
     const out = await inspectRun(record.id, h.home.runStore, registrarOf(def) as never);
-    // (a) red when two of the switch's arms are swapped, or when the fallback's words do not read the
-    //     drive's prior from `by` (a drive realm agent started then says 54 minutes, or leaves out the
-    //     5-minute tail); (b) prints the inspect line.
+    // (a) red when two of the switch's arms are swapped; (b) prints the inspect line.
     const line = out.split('\n').find((l) => l.includes('asked for')) ?? '';
     expect(line.slice(line.indexOf('asked for'))).toBe(words);
   });
