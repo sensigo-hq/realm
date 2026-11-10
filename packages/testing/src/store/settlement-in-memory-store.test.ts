@@ -9,6 +9,7 @@ import {
   settlementContract,
   defaultSettlementFixture,
   SETTLEMENT_LAWS,
+  type SettlementContractCase,
   type SettlementLaw,
 } from './settlement-contract.js';
 
@@ -25,6 +26,36 @@ const NOT_RUN: Partial<Record<SettlementLaw, string>> = {
 /** The laws this file runs: every exported law, minus the ones named in NOT_RUN above. */
 const LAWS: readonly SettlementLaw[] = SETTLEMENT_LAWS.filter((law) => !(law in NOT_RUN));
 
+/** The contract's cases for `store`, wired as every cell of this file runs them. */
+function contractCases(store: InMemoryStore): SettlementContractCase[] {
+  return settlementContract({
+    store,
+    storeName: 'InMemoryStore',
+    settlementFixture: defaultSettlementFixture,
+    // #715 (b): the time-moving families build a fresh store on a clock they set.
+    route: { kind: 'clock', makeStore: ({ clock }) => new InMemoryStore({ clock }) },
+    // issue #367 (part 3): this store's own sanctioned channel — a direct map insert, which
+    // is the in-memory equivalent of writing the file behind the boundary's back.
+    seedLegacyTerminal: async (id) => {
+      const { record: run } = await store.create({
+        workflowId: `tck-seed-${id}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const legacy = {
+        ...run,
+        id,
+        completed_steps: ['a'],
+        terminal_state: true,
+        terminal_reason: 'Workflow completed.',
+        run_phase: 'completed' as const,
+      };
+      (store as unknown as { runs: Map<string, typeof legacy> }).runs.set(id, legacy);
+      return legacy;
+    },
+  });
+}
+
 describe('InMemoryStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {
   it('declares settleStep and the two new LoadBearingRunRecordFields (settled/finalizer_ledger)', () => {
     const store = new InMemoryStore();
@@ -35,33 +66,7 @@ describe('InMemoryStore — settlement TCK conformance (issue #279, increment 1 
 
   for (const law of LAWS) {
     it(`conforms to ${law}`, async () => {
-      const store = new InMemoryStore();
-      const cases = settlementContract({
-        store,
-        storeName: 'InMemoryStore',
-        settlementFixture: defaultSettlementFixture,
-        // #715 (b): the time-moving families build a fresh store on a clock they set.
-        route: { kind: 'clock', makeStore: ({ clock }) => new InMemoryStore({ clock }) },
-        // issue #367 (part 3): this store's own sanctioned channel — a direct map insert, which
-        // is the in-memory equivalent of writing the file behind the boundary's back.
-        seedLegacyTerminal: async (id) => {
-          const { record: run } = await store.create({
-            workflowId: `tck-seed-${id}`,
-            workflowVersion: 1,
-            params: {},
-          });
-          const legacy = {
-            ...run,
-            id,
-            completed_steps: ['a'],
-            terminal_state: true,
-            terminal_reason: 'Workflow completed.',
-            run_phase: 'completed' as const,
-          };
-          (store as unknown as { runs: Map<string, typeof legacy> }).runs.set(id, legacy);
-          return legacy;
-        },
-      });
+      const cases = contractCases(new InMemoryStore());
       const matching = cases.filter((c) => c.law === law);
       expect(matching.length).toBeGreaterThan(0);
       for (const c of matching) {
@@ -69,6 +74,19 @@ describe('InMemoryStore — settlement TCK conformance (issue #279, increment 1 
       }
     });
   }
+
+  // #616 PR-2c c4-i (B5's cell, which left with the JSON store's wiring in c4-i-a): this store keeps
+  // claims, so the contract builds exactly one skip for it.
+  it('its one skipped case, found by the field, is the store_keeps_no_claims case it cannot run', () => {
+    const skipped = contractCases(new InMemoryStore())
+      .filter((c) => c.skipped === true)
+      .map((c) => c.name);
+    // (1) red when the skip case loses `skipped: true` (it is then run as a pass inside its law)
+    //     or another case gains it; (2) prints the skipped cases' names.
+    expect(skipped).toEqual([
+      'SKIPPED — store keeps claims (store_keeps_no_claims is minted for a store declaring persistsClaims: false): [InMemoryStore] unverifiable / store_keeps_no_claims',
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -487,6 +487,9 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
   /** Claims round-trip: the stored record is the record written, `claims` included. */
   readonly persistsClaims = true;
 
+  /** This store deletes runs (`deleteAllForRun`), and each deletion leaves a tombstone (#616 PR-2c c4-i). */
+  readonly purgesRuns = true;
+
   /** The fields this store round-trips: all eight, as the JSON store declares them. */
   readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set([
     'capability_blocks',
