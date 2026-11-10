@@ -26,7 +26,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { makeTempHome } from '../test-support/temp-home.js';
+import { makeTempHome, runsOf } from '../test-support/temp-home.js';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
@@ -414,7 +414,7 @@ describe('#627 W correction 1 (A3) — the replies after an accepted form and af
             const choice = schema.requestedSchema?.properties?.choice?.enum?.[0] ?? '';
             if (session === 'forms-settle') {
               // The person answers in the CLI while the form is open; the form then comes back.
-              const runs = (await h.home.runStore.list()).snapshots.map((s) => s.record);
+              const runs = (await runsOf(h.home.runStore)).map((s) => s.record);
               const open = runs.find((r) => r.pending_gate !== undefined);
               if (open !== undefined) {
                 await realm(home, proj, [

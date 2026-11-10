@@ -13,6 +13,7 @@ import { ExtensionRegistry } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import { OpenAIProvider } from './providers/openai-provider.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 vi.mock('openai', () => {
   throw new Error('simulated: the openai package is not installed');
@@ -64,7 +65,7 @@ describe('#401 — a missing SDK is recorded rather than fatal', () => {
       // why the step name is known here and would not have been at the last-resort catch.
       expect(result).toBe('failed');
 
-      const runs = (await store.list()).snapshots.map((s) => s.record);
+      const runs = (await runsOf(store)).map((s) => s.record);
       const { record: run } = await store.get(runs[0]!.id);
       expect(run.drive_failures?.entries).toHaveLength(1);
       const entry = run.drive_failures!.entries[0]!;

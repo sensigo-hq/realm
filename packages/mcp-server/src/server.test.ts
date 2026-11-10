@@ -20,16 +20,17 @@ import {
   takeReading,
   writtenSnapshot,
 } from '@sensigo/realm';
-import type { RunStore, RunRecord, CreateRunOptions, WorkflowDefinition } from '@sensigo/realm';
+import type {
+  RunStore,
+  RunRecord,
+  CreateRunOptions,
+  KeyAnswer,
+  WorkflowDefinition,
+} from '@sensigo/realm';
+import { notScanned } from './test-support/snapshot-double.js';
 import { createRealmMcpServer } from './server.js';
 import type { FailedAttemptStoreLike } from './tools/start-run.js';
-import type {
-  Snapshot,
-  Listing,
-  CreateResult,
-  SettlementDelta,
-  StoreSettlement,
-} from '@sensigo/realm';
+import type { Snapshot, CreateResult, SettlementDelta, StoreSettlement } from '@sensigo/realm';
 import { makeTempHome } from './test-support/temp-home.js';
 
 /**
@@ -170,16 +171,14 @@ class MinimalRunStore implements RunStore {
     return { ...outcome, run: updated, at };
   }
 
-  async list(workflowId?: string): Promise<Listing> {
-    const r = takeRawReading(this.clock);
-    const all = [...this.runs.values()];
-    const kept =
-      workflowId !== undefined ? all.filter((rec) => rec.workflow_id === workflowId) : all;
-    return {
-      snapshots: kept.map((rec) => writtenSnapshot(rec, floorAtRecord(r, rec))),
-      read_at: r,
-      consistent_snapshot: true,
-    };
+  // #616 PR-2c c4: this double deletes no run, and no cell of this file reads its runs by scan.
+  readonly purgesRuns = false;
+  readonly scan = notScanned;
+  async resolveKey(): Promise<KeyAnswer> {
+    throw new Error('resolveKey is not exercised by this double');
+  }
+  async tombstonesSince(): Promise<string> {
+    throw new Error('tombstonesSince is not exercised by this double');
   }
 }
 

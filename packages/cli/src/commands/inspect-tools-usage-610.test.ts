@@ -14,7 +14,13 @@ import type {
   WorkflowDefinition,
   WorkflowRegistrar,
 } from '@sensigo/realm';
-import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import {
+  snap,
+  doubleClock,
+  noSettle,
+  neverPurges,
+  scanning,
+} from '../test-support/snapshot-double.js';
 
 const def: WorkflowDefinition = {
   id: 'wf-610',
@@ -79,7 +85,8 @@ async function render(e: EvidenceSnapshot): Promise<string> {
     get: async () => snap(run),
     create: async () => ({ ...snap(run), created: true }),
     update: async () => snap(run),
-    list: async () => listing([run]),
+    scan: scanning(() => [run]),
+    ...neverPurges,
     claimStep: async () => {
       throw new Error('not used by inspect');
     },

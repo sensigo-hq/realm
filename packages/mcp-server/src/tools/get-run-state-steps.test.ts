@@ -19,7 +19,13 @@ import type {
 import { handleGetRunState } from './get-run-state.js';
 import { loadPriceSource } from '../price-source.js';
 import { createRealmMcpServer } from '../server.js';
-import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import {
+  snap,
+  doubleClock,
+  noSettle,
+  neverPurges,
+  notScanned,
+} from '../test-support/snapshot-double.js';
 import { makeTempHome, seedRun } from '../test-support/temp-home.js';
 
 function makeStore(run: RunRecord): RunStore {
@@ -34,9 +40,8 @@ function makeStore(run: RunRecord): RunStore {
     update: async () => {
       throw new Error('not exercised');
     },
-    list: async () => {
-      throw new Error('not exercised');
-    },
+    scan: notScanned,
+    ...neverPurges,
     claimStep: async () => {
       throw new Error('not exercised');
     },

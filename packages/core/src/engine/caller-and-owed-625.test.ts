@@ -94,7 +94,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
     const before = JSON.stringify((await store.get(runId)).record);
     const calls: string[] = [];
     const watched = Object.create(store) as InMemoryStore;
-    for (const m of ['get', 'update', 'settleStep', 'claimStep', 'create', 'list'] as const) {
+    for (const m of ['get', 'update', 'settleStep', 'claimStep', 'create', 'scan'] as const) {
       const own = (store[m] as (...a: unknown[]) => unknown).bind(store);
       Object.assign(watched, { [m]: (...a: unknown[]) => (calls.push(m), own(...a)) });
     }

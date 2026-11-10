@@ -15,7 +15,7 @@ import { LlmProvider } from './providers/llm-provider.js';
 import { renderDetachMap } from '../commands/run.js';
 import { resumeCommand } from '../commands/resume.js';
 import { buildReattachFlags } from '../commands/agent.js';
-import { makeTempHome } from '../test-support/temp-home.js';
+import { makeTempHome, runsOf } from '../test-support/temp-home.js';
 
 const PLACEHOLDER = '--provider <provider> --model <model>';
 
@@ -170,7 +170,7 @@ describe('a drive blocked by a missing handler repeats its own model flags (issu
     } as unknown as AgentDeps;
     await runAgent(deps, { definition: BLOCKED_WF, params: {} });
     vi.restoreAllMocks();
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const line = errors
       .join('\n')
       .split('\n')

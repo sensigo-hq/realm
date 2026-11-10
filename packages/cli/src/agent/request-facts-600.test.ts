@@ -19,6 +19,7 @@ import {
   type CallStepWithMetaResult,
   type ProviderCapabilities,
 } from './providers/llm-provider.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 const DEF: WorkflowDefinition = {
   id: 'request-facts-600',
@@ -91,7 +92,7 @@ async function drive(opts: {
   } finally {
     vi.restoreAllMocks();
   }
-  return (await store.get((await store.list()).snapshots.map((s) => s.record)[0]!.id)).record;
+  return (await store.get((await runsOf(store)).map((s) => s.record)[0]!.id)).record;
 }
 
 const stepRequests = (run: RunRecord) =>

@@ -16,6 +16,7 @@ import type {
   SettlementResult,
   Attributed,
   ComposedWays,
+  Snapshot,
 } from '@sensigo/realm';
 import { CLI_COMMANDS, advanceNeedsWords, cannotGoOnLines, writerHost } from './ways-renderer.js';
 import {
@@ -619,9 +620,13 @@ export async function runDrainAction(
     // #715 (b) (D-26): each row is judged at its own snapshot's `at`.
     let atOf: Map<string, Date>;
     try {
-      const listing = await runStore.list();
-      runs = listing.snapshots.map((s) => s.record);
-      atOf = new Map(listing.snapshots.map((s) => [s.record.id, s.at]));
+      // #616 PR-2c c4: every page of the store's scan.
+      const snapshots: Snapshot[] = [];
+      for await (const page of runStore.scan({}, { pageSize: 1000, projection: 'record' })) {
+        for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
+      }
+      runs = snapshots.map((s) => s.record);
+      atOf = new Map(snapshots.map((s) => [s.record.id, s.at]));
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

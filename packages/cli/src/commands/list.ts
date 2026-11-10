@@ -22,6 +22,7 @@ import type {
   RunHealthFinding,
   FailedAttemptReadResult,
   WorkflowDefinition,
+  Snapshot,
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
@@ -259,7 +260,12 @@ export async function listRuns(
   failedAttemptStore?: FailedAttemptStore,
   workflowProbe?: (workflowId: string) => Promise<StuckDefinitionProbe | undefined>,
 ): Promise<string> {
-  const snapshots = (await store.list(workflowId)).snapshots;
+  // #616 PR-2c c4: every page of the store's scan, of one workflow when one is given.
+  const snapshots: Snapshot[] = [];
+  const filter = workflowId === undefined ? {} : { workflow: workflowId };
+  for await (const page of store.scan(filter, { pageSize: 1000, projection: 'record' })) {
+    for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
+  }
   const runs = snapshots.map((s) => s.record);
   // #715 (b) (D6-17, D-26): each row is judged at its own snapshot's `at`.
   const atOf = new Map(snapshots.map((s) => [s.record.id, s.at]));

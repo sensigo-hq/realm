@@ -145,7 +145,11 @@ describe('InMemoryStore', () => {
       workflowVersion: 1,
       params: {},
     });
-    const result = (await store.list('wf-a')).snapshots.map((s) => s.record);
+    // #616 PR-2c c4: one page of the store's scan holds every run of this cell.
+    const page1 = await store.scan({ workflow: 'wf-a' }, { pageSize: 1000 }).next();
+    const result = (page1.done === true ? [] : page1.value.items).flatMap((i) =>
+      i.kind === 'run' ? [i.run.record] : [],
+    );
     expect(result).toHaveLength(1);
     expect(result[0]!.workflow_id).toBe('wf-a');
   });
@@ -162,7 +166,11 @@ describe('InMemoryStore', () => {
       workflowVersion: 1,
       params: {},
     });
-    const all = (await store.list()).snapshots.map((s) => s.record);
+    // #616 PR-2c c4: one page of the store's scan holds every run of this cell.
+    const page1 = await store.scan({}, { pageSize: 1000 }).next();
+    const all = (page1.done === true ? [] : page1.value.items).flatMap((i) =>
+      i.kind === 'run' ? [i.run.record] : [],
+    );
     expect(all).toHaveLength(2);
   });
 
@@ -184,7 +192,11 @@ describe('InMemoryStore', () => {
     expect(second.created).toBe(false);
     expect(second.record.id).toBe(first.record.id);
     // Only one run exists for the key.
-    const all = (await store.list('wf-1')).snapshots.map((s) => s.record);
+    // #616 PR-2c c4: one page of the store's scan holds every run of this cell.
+    const page1 = await store.scan({ workflow: 'wf-1' }, { pageSize: 1000 }).next();
+    const all = (page1.done === true ? [] : page1.value.items).flatMap((i) =>
+      i.kind === 'run' ? [i.run.record] : [],
+    );
     expect(all).toHaveLength(1);
   });
 

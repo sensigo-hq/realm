@@ -18,7 +18,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import type { Clock, RunStore } from '@sensigo/realm';
+import type { Clock, RunStore, Snapshot } from '@sensigo/realm';
 import { openCliHome, type CliHome } from '../lib/home.js';
 
 /** A realm home opened through the CLI's door for one test. */
@@ -77,18 +77,24 @@ export async function makeTempHome(
   };
 }
 
+/** #616 PR-2c (c4): every run `store` holds, each as `get()` returns it, read through every page of
+ *  its scan — the one helper a test reads all of a store's runs through. */
+export async function runsOf(store: Pick<RunStore, 'scan'>): Promise<Snapshot[]> {
+  const snapshots: Snapshot[] = [];
+  for await (const page of store.scan({}, { pageSize: 1000, projection: 'record' })) {
+    for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
+  }
+  return snapshots;
+}
+
 /** #616 PR-2c (c0): how many runs `store` holds, read through the store — never by counting files in
- *  its folder. The one place a test counts runs: c4 rewrites this body to `scan()`, and c10a's SQLite
- *  handle answers it the same way. */
-export async function runCount(store: Pick<RunStore, 'list'>): Promise<number> {
-  return (await store.list()).snapshots.length;
+ *  its folder. The one place a test counts runs; since c4 it reads every page of `scan()`. */
+export async function runCount(store: Pick<RunStore, 'scan'>): Promise<number> {
+  return (await runsOf(store)).length;
 }
 
 /** #616 PR-2c (c0): the ids of the runs `store` holds, ascending, read through the store. Sorted here,
- *  so a store whose listing comes back in another order (c4's `scan()`, the SQLite rows) changes no
- *  caller. */
-export async function runIds(store: Pick<RunStore, 'list'>): Promise<string[]> {
-  return (await store.list()).snapshots
-    .map((s) => s.record.id)
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+ *  so a store whose listing comes back in another order changes no caller. */
+export async function runIds(store: Pick<RunStore, 'scan'>): Promise<string[]> {
+  return (await runsOf(store)).map((s) => s.record.id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }

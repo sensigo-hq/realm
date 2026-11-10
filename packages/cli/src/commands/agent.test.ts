@@ -24,6 +24,7 @@ import {
   serializeToolResult,
   setAdditionalRedactionValues,
 } from '../agent/providers/agent-utils.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 // issue #600 PR 2: resolveProvider takes an options object; the caching setting is required.
 const TEST_PROMPT_CACHE = { value: 'short', source: 'runner_default', by: 'realm agent' } as const;
@@ -184,7 +185,7 @@ describe('runAgent', () => {
       expect(provider.callCount.value).toBe(1);
 
       // The failure is RECORDED, which is the whole reason the retry could be retired.
-      const runs = (await deps.store.list()).snapshots.map((s) => s.record);
+      const runs = (await runsOf(deps.store)).map((s) => s.record);
       const { record: run } = await deps.store.get(runs[0]!.id);
       expect(run.drive_failures?.entries).toHaveLength(1);
       expect(run.drive_failures?.total).toBe(1);
@@ -622,7 +623,7 @@ describe('manifest-secret redaction threading (fix holder)', () => {
     });
     const result = await runAgent(deps, { definition: agentOnlyWorkflow, params: {} });
     expect(result).toBe('completed');
-    const runs = (await deps.store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(deps.store)).map((s) => s.record);
     const evidence = runs[0]!.evidence.find((e) => e.step_id === 'summarize')!;
     const persisted = JSON.stringify(evidence.output_summary);
     expect(persisted).toContain('[REDACTED]');

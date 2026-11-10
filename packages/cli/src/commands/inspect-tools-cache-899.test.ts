@@ -17,6 +17,7 @@ import { AnthropicProvider } from '../agent/providers/anthropic-provider.js';
 import { OpenAIProvider } from '../agent/providers/openai-provider.js';
 import type { LlmProvider } from '../agent/providers/llm-provider.js';
 import { inspectRun } from './inspect.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 const anthropicCreate = vi.fn();
 const openaiCreate = vi.fn();
@@ -140,7 +141,7 @@ async function cacheLineAfter(provider: LlmProvider): Promise<{ requests: number
   } finally {
     vi.restoreAllMocks();
   }
-  const run = (await store.list()).snapshots[0]!.record as RunRecord;
+  const run = (await runsOf(store))[0]!.record as RunRecord;
   const entry = run.evidence.filter((e) => e.step_id === 'classify').at(-1);
   const requests = entry?.diagnostics?.cache?.requests?.length ?? 0;
   const out = await inspectRun(run.id, store, workflowStore);

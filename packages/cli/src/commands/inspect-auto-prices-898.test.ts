@@ -20,7 +20,13 @@ import type {
 import { declared } from '../test-support/declared.js';
 import { inspectRun } from './inspect.js';
 import { autoPricesText } from '../agent/prompt-cache.js';
-import { doubleClock, listing, noSettle, snap } from '../test-support/snapshot-double.js';
+import {
+  doubleClock,
+  noSettle,
+  snap,
+  neverPurges,
+  scanning,
+} from '../test-support/snapshot-double.js';
 
 const DEF: WorkflowDefinition = {
   id: 'wf-898',
@@ -89,7 +95,8 @@ const stores = (run: RunRecord): { runStore: RunStore; workflowStore: WorkflowRe
     get: async () => snap(run),
     create: async () => ({ ...snap(run), created: true }),
     update: async () => snap(run),
-    list: async () => listing([run]),
+    scan: scanning(() => [run]),
+    ...neverPurges,
     claimStep: async () => {
       throw new Error('claimStep is not used here');
     },

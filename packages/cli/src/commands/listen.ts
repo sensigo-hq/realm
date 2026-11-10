@@ -78,6 +78,7 @@ import type {
   ExtensionIdentityEntry,
   PendingGate,
   RunRecord,
+  Snapshot,
 } from '@sensigo/realm';
 import {
   verifyGithub,
@@ -125,7 +126,7 @@ export interface ListenDeps {
   // expiry waits of the sweeper are the store's.
   runStore: Pick<
     RunStore,
-    'create' | 'get' | 'update' | 'list' | 'settleStep' | 'persistedRunRecordFields' | 'clock'
+    'create' | 'get' | 'update' | 'scan' | 'settleStep' | 'persistedRunRecordFields' | 'clock'
   >;
   dedupStoreFor: (workflowId: string) => DedupStore;
   // issue #744: settles once Node has said whether the agent started (`'spawn'`) or not
@@ -1067,7 +1068,11 @@ export async function sweepExpiredGates(
     errors: 0,
   };
 
-  const { snapshots } = await deps.runStore.list();
+  // #616 PR-2c c4: every page of the store's scan.
+  const snapshots: Snapshot[] = [];
+  for await (const page of deps.runStore.scan({}, { pageSize: 1000, projection: 'record' })) {
+    for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
+  }
   const open = new Set<string>();
   for (const { record: run, at } of snapshots) {
     if (run.terminal_state || run.pending_gate === undefined) continue;

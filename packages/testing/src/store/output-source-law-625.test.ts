@@ -5,12 +5,9 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import type { RunRecord, WorkflowDefinition, RunStore } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
-import {
-  runStoreFidelityContract,
-  type FidelityContractStore,
-} from './run-store-fidelity-contract.js';
+import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
 import type { Snapshot } from '@sensigo/realm';
 
 const agentWf: WorkflowDefinition = {
@@ -21,7 +18,7 @@ const agentWf: WorkflowDefinition = {
 };
 
 /** The EVIDENCE_KEEPS_DRIVER_AND_PROOF case of the TCK, against `store`. */
-function lawOf(store: FidelityContractStore) {
+function lawOf(store: RunStore) {
   const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 's' }).filter(
     (c) => c.law === 'EVIDENCE_KEEPS_DRIVER_AND_PROOF',
   );

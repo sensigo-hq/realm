@@ -239,7 +239,7 @@ async function resumableOf(
  */
 export async function purgeRuns(
   options: PurgeRunsOptions,
-  anchorStore: Pick<RunStore, 'get' | 'list'> &
+  anchorStore: Pick<RunStore, 'get' | 'scan'> &
     PerRunArtifactStore & { readonly runsDirPath?: string },
   artifactStores: PerRunArtifactStore[],
   purge?: HomePurge,
@@ -263,7 +263,12 @@ export async function purgeRuns(
     }
   } else {
     const thresholdMs = options.olderThan !== undefined ? parseDuration(options.olderThan) : 0;
-    const { snapshots } = await anchorStore.list(options.workflow);
+    // #616 PR-2c c4: every page of the store's scan, of one workflow when one is given.
+    const snapshots: Snapshot[] = [];
+    const filter = options.workflow === undefined ? {} : { workflow: options.workflow };
+    for await (const page of anchorStore.scan(filter, { pageSize: 1000, projection: 'record' })) {
+      for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
+    }
     // #715 (b) (D-26): each row judged at its own snapshot's `at`.
     for (const snapshot of snapshots) {
       const run = snapshot.record;

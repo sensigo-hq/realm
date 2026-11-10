@@ -12,6 +12,7 @@ import { LlmProvider } from './providers/llm-provider.js';
 import { appendRequests } from './providers/agent-utils.js';
 import { inspectRun } from '../commands/inspect.js';
 import type { Snapshot } from '@sensigo/realm';
+import { runsOf } from '../test-support/temp-home.js';
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -118,7 +119,7 @@ async function drive(
 }
 
 async function onlyRun(store: InMemoryStore): Promise<RunRecord> {
-  const runs = (await store.list()).snapshots.map((s) => s.record);
+  const runs = (await runsOf(store)).map((s) => s.record);
   expect(runs).toHaveLength(1);
   return runs[0]!;
 }

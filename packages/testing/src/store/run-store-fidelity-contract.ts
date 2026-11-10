@@ -22,7 +22,6 @@ import {
   type Attributed,
   type EvidenceSnapshot,
   type CreateResult,
-  type KeyAnswer,
   type PurgedItem,
   type RunStore,
   type RunRecord,
@@ -31,7 +30,6 @@ import {
   type CacheReference,
   type ScanFilter,
   type ScanOptions,
-  type ScanPage,
   type UsageRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -106,34 +104,10 @@ export interface RunStoreFidelityContractCase {
   skipped?: true;
 }
 
-/**
- * The store {@link runStoreFidelityContract} runs on (#616 PR-2c c4-i): a `RunStore` that also pages
- * its runs (`scan`), says who holds a key (`resolveKey`), gives its tombstone horizon
- * (`tombstonesSince`) and says whether it deletes runs (`purgesRuns`), with the SQLite store's
- * signatures. c4-ii folds these onto `RunStore` and deletes this type.
- */
-export interface FidelityContractStore extends RunStore {
-  readonly purgesRuns: boolean;
-  scan(
-    filter: ScanFilter,
-    options: ScanOptions & { projection: 'row' },
-  ): AsyncGenerator<ScanPage<'row'>, void, undefined>;
-  scan(
-    filter: ScanFilter,
-    options: ScanOptions & { projection?: 'record' },
-  ): AsyncGenerator<ScanPage<'record'>, void, undefined>;
-  scan(
-    filter: ScanFilter,
-    options: ScanOptions,
-  ): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
-  resolveKey(workflowId: string, key: string): Promise<KeyAnswer>;
-  tombstonesSince(): Promise<string>;
-}
-
 /** Adapter a calling test file supplies to parameterize the contract against one concrete store. */
 export interface RunStoreFidelityContractAdapter {
   /** The store under test. */
-  store: FidelityContractStore;
+  store: RunStore;
   /**
    * Deletes one ENDED run by id and leaves its tombstone (#616 PR-2c c4-i): supply it for a store
    * with `purgesRuns: true`, whose purge laws then run; leave it out for a store that never deletes
@@ -381,7 +355,7 @@ async function refuses(call: () => Promise<unknown>): Promise<boolean> {
 
 /** A whole scan, page by page: each page's run ids, tombstones and `next_after`, and all of them. */
 async function scanAll(
-  store: FidelityContractStore,
+  store: RunStore,
   filter: ScanFilter,
   options: ScanOptions,
   law: RunStoreFidelityLaw,
@@ -405,7 +379,7 @@ async function scanAll(
 }
 
 /** Ends `run` with the contract's own terminal write (`SEALED_BY_ROUNDTRIP`'s). */
-async function endRun(store: FidelityContractStore, run: RunRecord): Promise<void> {
+async function endRun(store: RunStore, run: RunRecord): Promise<void> {
   await store.update({
     ...run,
     completed_steps: ['tck-step'],

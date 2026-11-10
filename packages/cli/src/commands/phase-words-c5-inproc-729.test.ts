@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { makeTempHome } from '../test-support/temp-home.js';
+import { makeTempHome, runsOf } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -474,7 +474,7 @@ describe('#729 PR-3 correction 5 (J-2) — `realm workflow run` prints the phase
     } finally {
       // J-5: each run's identity entries, `<origin>:<manifest file name or none>`, read before
       // the scratch folder goes.
-      entries = (await h.home.runStore.list()).snapshots.map((s) =>
+      entries = (await runsOf(h.home.runStore)).map((s) =>
         (s.record.extension_identity ?? []).map(
           (e) => `${e.origin ?? 'execution'}:${e.manifest?.path.split('/').at(-1) ?? 'none'}`,
         ),

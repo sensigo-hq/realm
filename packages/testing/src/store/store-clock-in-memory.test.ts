@@ -13,6 +13,7 @@ import type {
   SealedBy,
   StampSealResult,
   WorkflowDefinition,
+  KeyAnswer,
 } from '@sensigo/realm';
 import { WorkflowError, writtenSnapshot } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
@@ -21,7 +22,7 @@ import {
   storeClockContract,
   type StoreClockLaw,
 } from './store-clock-contract.js';
-import type { Snapshot, Listing, CreateResult, SettlementDelta } from '@sensigo/realm';
+import type { Snapshot, CreateResult, SettlementDelta } from '@sensigo/realm';
 
 /** None: the clock route runs every law of the family. */
 const NOT_RUN: Partial<Record<StoreClockLaw, string>> = {};
@@ -151,8 +152,18 @@ class LossyClockStore implements RunStore {
     return writtenSnapshot(res, written);
   }
 
-  list(workflowId?: string): Promise<Listing> {
-    return this.inner.list(workflowId);
+  // #616 PR-2c c4: the scan verbs, delegated to the inner store as `list` was.
+  get purgesRuns(): boolean {
+    return this.inner.purgesRuns;
+  }
+  get scan(): RunStore['scan'] {
+    return this.inner.scan.bind(this.inner);
+  }
+  resolveKey(workflowId: string, key: string): Promise<KeyAnswer> {
+    return this.inner.resolveKey(workflowId, key);
+  }
+  tombstonesSince(): Promise<string> {
+    return this.inner.tombstonesSince();
   }
 
   async claimStep(

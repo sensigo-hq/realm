@@ -19,7 +19,7 @@ import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepHandler } from '../extensions/step-handler.js';
 import { describeClaimHolder } from './holder.js';
 import type { Attributed } from './holder.js';
-import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
+import type { RunStore, CreateRunOptions, KeyAnswer } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 import type { Clock } from '../utils/clock.js';
@@ -344,8 +344,18 @@ class ThreeArgForwarderStore implements RunStore {
   update(record: RunRecord) {
     return this.inner.update(record);
   }
-  list(workflowId?: string) {
-    return this.inner.list(workflowId);
+  // #616 PR-2c c4: the scan verbs, delegated to the inner store as `list` was.
+  get purgesRuns(): boolean {
+    return this.inner.purgesRuns;
+  }
+  get scan(): RunStore['scan'] {
+    return this.inner.scan.bind(this.inner);
+  }
+  resolveKey(workflowId: string, key: string): Promise<KeyAnswer> {
+    return this.inner.resolveKey(workflowId, key);
+  }
+  tombstonesSince(): Promise<string> {
+    return this.inner.tombstonesSince();
   }
   claimStep(runId: string, stepName: string, definition: WorkflowDefinition) {
     return this.inner.claimStep(runId, stepName, definition);
@@ -409,7 +419,10 @@ describe('VALIDATION_ACTOR_INVALID — a malformed driver is refused at every ex
       create: trap('create'),
       get: trap('get'),
       update: trap('update'),
-      list: trap('list'),
+      // #616 PR-2c c4: the store's reads of its runs.
+      scan: trap('scan'),
+      resolveKey: trap('resolveKey'),
+      tombstonesSince: trap('tombstonesSince'),
       claimStep: trap('claimStep'),
       settleStep: trap('settleStep'),
       // #715 (b): every store holds a clock (admission checks its functions exist; a call is a use).

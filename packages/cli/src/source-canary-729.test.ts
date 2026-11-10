@@ -39,7 +39,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startAnthropicStub } from './agent/test-support/anthropic-stub.js';
 import { postGateViaApi } from './agent/gate/slack-gate-notifier.js';
 import { addDeclaredDisclosure, installWriter, writerTestSeams } from './output/writer.js';
-import { makeTempHome, type TempHome } from './test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from './test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 const FIELDS = ['PARAMS', 'OUTPUT', 'ERROR', 'PREVIEW', 'PROMPT', 'WEBHOOK'] as const;
@@ -1079,7 +1079,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
       ) {
         await new Promise((r) => setTimeout(r, 200));
       }
-      const stored = (await h.home.runStore.list()).snapshots
+      const stored = (await runsOf(h.home.runStore))
         .map((s) => s.record)
         .find((r) => r.workflow_id === 'canary-listen');
       // (a) red when the drive's result line loses both its walk (the output shown as its shapes,

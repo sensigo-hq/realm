@@ -7,7 +7,13 @@ import { declared } from '../test-support/declared.js';
 import { describe, it, expect, afterEach } from 'vitest';
 import type { RunRecord, RunStore, LoadBearingRunRecordField } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
-import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import {
+  snap,
+  doubleClock,
+  noSettle,
+  neverPurges,
+  notScanned,
+} from '../test-support/snapshot-double.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function makeRun(over: Partial<RunRecord> = {}): RunRecord {
@@ -52,9 +58,8 @@ function makeGetOnlyStore(
     async update() {
       throw new Error('not exercised by get_run_state');
     },
-    async list() {
-      throw new Error('not exercised by get_run_state');
-    },
+    scan: notScanned,
+    ...neverPurges,
     async claimStep() {
       throw new Error('not exercised by get_run_state');
     },

@@ -5,7 +5,13 @@
 import { describe, it, expect } from 'vitest';
 import { listRuns } from './list.js';
 import type { RunStore, RunRecord, PendingGate } from '@sensigo/realm';
-import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import {
+  snap,
+  doubleClock,
+  noSettle,
+  neverPurges,
+  scanning,
+} from '../test-support/snapshot-double.js';
 import { zOf } from '../test-support/instant.js';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
@@ -48,7 +54,8 @@ function makeStore(runs: RunRecord[]): RunStore {
     get: async () => snap(runs[0]!),
     create: async () => ({ ...snap(runs[0]!), created: true }),
     update: async () => snap(runs[0]!),
-    list: async () => listing(runs),
+    scan: scanning(() => runs),
+    ...neverPurges,
     // listRuns (the sole consumer under test here) never claims a step — this mock never needs
     // a real implementation, only a type-complete stub.
     claimStep: async () => {

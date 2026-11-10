@@ -21,7 +21,13 @@ import type {
   DriveFailureRecord,
   PriceSource,
 } from '@sensigo/realm';
-import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import {
+  snap,
+  doubleClock,
+  noSettle,
+  neverPurges,
+  scanning,
+} from '../test-support/snapshot-double.js';
 
 function makeSnapshot(stepId: string, overrides: Partial<EvidenceSnapshot> = {}): EvidenceSnapshot {
   return {
@@ -66,7 +72,8 @@ function makeRunStore(run: RunRecord): RunStore {
     get: async () => snap(run),
     create: async () => ({ ...snap(run), created: true }),
     update: async () => snap(run),
-    list: async () => listing([run]),
+    scan: scanning(() => [run]),
+    ...neverPurges,
     claimStep: async () => {
       throw new Error('claimStep is not used by inspect');
     },

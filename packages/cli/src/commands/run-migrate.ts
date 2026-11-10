@@ -134,7 +134,11 @@ export async function migrateStampSeals(
     );
   }
   const buckets = emptyBuckets();
-  const all = (await runStore.list()).snapshots.map((s) => s.record);
+  // #616 PR-2c c4: every page of the store's scan.
+  const all: RunRecord[] = [];
+  for await (const page of runStore.scan({}, { pageSize: 1000, projection: 'record' })) {
+    for (const item of page.items) if (item.kind === 'run') all.push(item.run.record);
+  }
 
   for (const run of all) {
     if (!run.terminal_state) continue;

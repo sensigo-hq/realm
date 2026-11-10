@@ -17,8 +17,9 @@ export function testClockNoticeLine(at: Date): string {
 
 /**
  * Returns `store` as it is, or — when its clock is a test location's — the same store whose first
- * `get`, `list` or `listWithDiagnostics` in this process hands `sink` the notice line with that
- * read's reading (a snapshot's `at`, a listing's `read_at`). Every other member passes through to the store, bound to it.
+ * `get`, page of `scan` or `listWithDiagnostics` in this process hands `sink` the notice line with
+ * that read's reading (a snapshot's `at`, a page's or a listing's `read_at`). Every other member
+ * passes through to the store, bound to it.
  */
 export function withTestClockNotice<S extends RunStore>(store: S, sink: (line: string) => void): S {
   if (!isTestLocationClock(store.clock)) return store;
@@ -40,11 +41,13 @@ export function withTestClockNotice<S extends RunStore>(store: S, sink: (line: s
           return snap;
         };
       }
-      if (prop === 'list') {
-        return async (...args: Parameters<RunStore['list']>) => {
-          const listing = await target.list(...args);
-          once(listing.read_at);
-          return listing;
+      // #616 PR-2c c4: each page of a scan is a read, its one reading its `read_at`.
+      if (prop === 'scan') {
+        return async function* (...args: Parameters<RunStore['scan']>) {
+          for await (const page of target.scan(...args)) {
+            once(page.read_at);
+            yield page;
+          }
         };
       }
       // A store's diagnostic listing (the file store's `listWithDiagnostics`, `realm run list`'s

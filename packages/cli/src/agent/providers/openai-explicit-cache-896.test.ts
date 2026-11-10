@@ -20,7 +20,7 @@ import type { ToolDefinition } from '../mcp/mcp-extensions.js';
 import { promptCacheStartLine, type ResolvedPromptCache } from '../prompt-cache.js';
 import { listenCachingFacts } from '../../commands/listen.js';
 import { inspectRun } from '../../commands/inspect.js';
-import { listing, snap } from '../../test-support/snapshot-double.js';
+import { snap, scanning } from '../../test-support/snapshot-double.js';
 
 type Body = Record<string, unknown>;
 type Message = { role: string; content: unknown };
@@ -203,7 +203,7 @@ async function inspectLine(requests: UsageRecord[]): Promise<string> {
   } as never;
   const out = await inspectRun(
     'run_896',
-    { get: async () => snap(run), list: async () => listing([run]) } as never,
+    { get: async () => snap(run), scan: scanning(() => [run]) } as never,
     workflowStore,
   );
   return out.split('\n').find((l) => l.includes('cache:')) ?? '(no cache line)';

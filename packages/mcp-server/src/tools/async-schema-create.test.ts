@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { SCHEMA_KEY_CONSEQUENCE, asyncSchemaValidity } from '@sensigo/realm';
 import { createRealmMcpServer } from '../server.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -59,7 +59,7 @@ describe('create_workflow refuses a step input_schema whose root carries a truth
       remedy: first.includes('remove `$async` from the schema'),
       generic: GENERIC.filter((g) => first.includes(g)),
       workflowsAdded: (after?.length ?? 0) - (before?.length ?? 0),
-      runs: (await runStore.list()).snapshots.map((s) => s.record).length,
+      runs: (await runsOf(runStore)).map((s) => s.record).length,
     }).toEqual({
       status: 'error',
       agentAction: 'provide_input',

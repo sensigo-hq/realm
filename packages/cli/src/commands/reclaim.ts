@@ -7,7 +7,13 @@
 // carrying a concrete past-deadline (`claim_stale`), non-gated. Everything else stays per-step-only.
 import { Command } from 'commander';
 import { cliCommandOf, writerHost } from './ways-renderer.js';
-import type { RunRecord, StepDefinition, InProgressClaimInfo, ReclaimResult } from '@sensigo/realm';
+import type {
+  RunRecord,
+  StepDefinition,
+  InProgressClaimInfo,
+  ReclaimResult,
+  Snapshot,
+} from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { formatInstantWords, overdueOf } from '@sensigo/realm';
@@ -158,7 +164,12 @@ export const reclaimCommand = new Command('reclaim')
         // #715 (b) (D-26): no clock read here — each row is judged at its own snapshot's `at`.
         const selected: Array<{ runId: string; claim: InProgressClaimInfo; at: Date }> = [];
         try {
-          const { snapshots } = await store.list(opts.workflow);
+          // #616 PR-2c c4: every page of the store's scan, of one workflow when one is given.
+          const snapshots: Snapshot[] = [];
+          const filter = opts.workflow === undefined ? {} : { workflow: opts.workflow };
+          for await (const page of store.scan(filter, { pageSize: 1000, projection: 'record' })) {
+            for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
+          }
           for (const { record: run, at } of snapshots) {
             if (run.terminal_state) continue;
             const claims = classifyInProgressClaims(writtenSnapshot(run, at));
