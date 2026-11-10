@@ -138,6 +138,7 @@ All notable changes to this project are documented here.
 - **`realm db check [--json]` reports on the store file without writing it**: SQLite's integrity check; the file's settings, version and schema, and whether Realm can write to it; every run's stored record (evidence hashes, phase stamp, key hash, filter columns, placeholders); and the tables against each other (the purge counter, rows whose run is gone, workflow pointers, workflow version hashes). Each problem comes with its reason, along with each check it stopped and what this version does not check; exit 0 only when every check ran and found nothing (#616).
 - **One error code for it: `STATE_STORE_CHECK_REFUSED`** (a home with no store file, or an empty one; nothing is created) (#616).
 - **`realm run import <path…>` brings Realm's JSON run records and exports into the SQLite store:** one line per file (`imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run`), a run already stored is never overwritten, and the exit code is 1 when any file was not imported (#616).
+- `@sensigo/realm-mcp/home` exports `createRealmMcpServerOnHome({ home?, … })`: it opens the Realm home's SQLite store once for the process and serves the MCP tools over it, returning `{ server, close }`; the `realm-mcp` command uses it. `createRealmMcpServer` with four injected stores is unchanged and loads no SQLite.
 
 ### Changed
 
@@ -275,6 +276,7 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 - **BREAKING — `createRealmMcpServer` takes its stores (issue #616).** The library has no default store: pass `runStore`, `workflowStore`, `traceBufferStore` and `failedAttemptStore`, opened once per process; a JavaScript caller that omits one is refused at construction, before anything is opened. The published tool handlers require the stores their server passes them; a direct caller that omits one is refused by name.
 - **An `'in-transaction'` adapter of `fencedTraceBufferContract` gives `fenceRuns` as `{ put, remove }`, without `readCount`.** Such a store reads its runs inside its own transaction, so the contract does not count them. (#616)
 - **A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the MCP server's way out (the operator's command on `realm mcp`'s and `realm serve`'s person line), also when the copy has no file (the SQLite store's copies); only a copy that is not there says `realm workflow register <file>`. (#616)
+- **`realm run attempts`' ceiling note and `realm run export`'s help no longer name a "sidecar":** the store keeps a run's failed attempts as rows with a size ceiling; the export bundle's artifact labels and its `WAL steps` summary label are unchanged. (#616)
 
 ### Removed
 

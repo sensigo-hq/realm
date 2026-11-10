@@ -1,6 +1,6 @@
 // db-backup.ts — issue #616 PR-2c, unit c6 (design d4-frozen-r3 §8): `realm db backup <path>`. It
 // opens the home through the store package's maintenance entry (`openRealmHomeForMaintenance`; not
-// the CLI's own door, which is the JSON store's until unit c10a), copies the store file to <path> and
+// the CLI's own door), copies the store file to <path> and
 // prints one line. The copy is made by SQLite's `VACUUM INTO` into an owner-only temporary file beside
 // <path>, switched to WAL, checked with SQLite's quick check and flushed, then published under <path>
 // without replacing anything; a path inside the home or where anything exists is refused, and a run

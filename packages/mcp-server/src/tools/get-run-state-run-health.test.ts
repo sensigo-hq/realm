@@ -11,6 +11,7 @@ import {
   storedCopyFaultError,
 } from '@sensigo/realm';
 import type { RunRecord, RunStore, WorkflowDefinition, WorkflowRegistrar } from '@sensigo/realm';
+import { plantRegistryRow } from '@sensigo/realm-store-sqlite/test-support';
 import { handleGetRunState } from './get-run-state.js';
 import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -282,6 +283,39 @@ describe('get_run_state — definition_unresolvable carries the composed sentenc
       });
     } finally {
       vi.restoreAllMocks();
+      await h.cleanup();
+    }
+  });
+
+  // The real case: a run is under way when something other than Realm damages its workflow's stored
+  // copy. The agent polling the run must be told what happened and how to end the run, and must not be
+  // told to repair a copy the store cannot say how to repair.
+  it("#616 PR-2c c10b-2b: the pointer arm on the real store (a run's copy planted as not JSON after the run began) — the finding is the store's pointer sentence and the way to end the run, with no repair clause", async () => {
+    const h = await makeTempHome();
+    try {
+      await h.stores.workflowStore.register(basicDef);
+      const { record: run } = await h.stores.runStore.create({
+        workflowId: 'wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      await plantRegistryRow(h.path, { id: 'wf', text: '{ not json' });
+
+      const summary = await handleGetRunState(
+        { run_id: run.id },
+        { runStore: h.stores.runStore, workflowStore: h.stores.workflowStore },
+      );
+      const f = summary.run_health?.find((x) => x.kind === 'definition_unresolvable');
+      // (1) red when the pointer arm is rendered with a repair act (a "To repair:" clause, `repairActFor`),
+      //     when the store's pointer sentence changes, or when the way to end the run goes; (2) prints the
+      //     status and the finding's reason.
+      expect({ status: summary.next_actions_status, reason: f?.reason }).toEqual({
+        status: 'workflow_unresolved',
+        reason:
+          "The registered copy of workflow 'wf' is missing from the store or is not JSON: something other than Realm changed the database. Register the workflow again from its source; if this message comes back, restore the database from a backup. " +
+          `To end the run: realm run abandon ${run.id}.`,
+      });
+    } finally {
       await h.cleanup();
     }
   });

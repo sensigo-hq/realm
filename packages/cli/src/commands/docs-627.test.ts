@@ -617,6 +617,12 @@ describe('#627 W — the other pages W changed', () => {
       'CHANGELOG.md',
       '**The `realm-mcp` command runs from its own file and opens `~/.realm` itself. It now keeps its store in `realm.db` there, as every `realm` command does; it needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later, to start, and a home that still holds the old JSON folders is refused with `STATE_HOME_HOLDS_LEGACY_STORE` until they are moved aside (issue #616).**',
     );
+    // #616 PR-2c c10b-3a: home-server.test.ts (mcp-server): the entry, what it returns, and that
+    // `index.ts` reaches neither it nor the store package; foreign-test-clock-715's bin cells.
+    claim(
+      'CHANGELOG.md',
+      "`@sensigo/realm-mcp/home` exports `createRealmMcpServerOnHome({ home?, … })`: it opens the Realm home's SQLite store once for the process and serves the MCP tools over it, returning `{ server, close }`; the `realm-mcp` command uses it. `createRealmMcpServer` with four injected stores is unchanged and loads no SQLite.",
+    );
     // #616 PR-2c c10b-2: foreign-test-clock-715.test.ts (mcp-server): the bin's refusals and its start line.
     claim(
       'CHANGELOG.md',

@@ -229,7 +229,7 @@ describe('#616 unit 1: the SQLite store package', () => {
   });
 
   it(
-    "the pack ships the built entry and, of the test support, exactly the ./test-support subpath's eight files (c9a); none of the tests or the build info",
+    "the pack ships the built entry and, of the test support, exactly the ./test-support subpath's twelve files (c9a, c10b-2b); none of the tests or the build info",
     { timeout: 60_000 },
     () => {
       const pkg = join(PACKAGES, 'store-sqlite');
@@ -239,7 +239,7 @@ describe('#616 unit 1: the SQLite store package', () => {
         cpSync(join(pkg, 'README.md'), join(dir, 'README.md'));
         cpSync(join(pkg, 'dist'), join(dir, 'dist'), { recursive: true });
         // `dist/test-support/` already holds the package's real test support (the ./test-support
-        // entry, its helper and the modules that stay unpublished); a probe beside them, where a later
+        // entry, its two helpers and the modules that stay unpublished); a probe beside them, where a later
         // unit's module would sit, and a test source and a test where later units put them.
         mkdirSync(join(dir, 'dist', 'test-support'), { recursive: true });
         writeFileSync(join(dir, 'dist', 'test-support', 'probe.js'), 'export {};\n');
@@ -257,7 +257,7 @@ describe('#616 unit 1: the SQLite store package', () => {
             ? (JSON.parse(r.stdout) as [{ files: { path: string }[] }])[0].files.map((f) => f.path)
             : [];
         // (1) Can it fail: red when `files` in packages/store-sqlite/package.json drops the
-        //     ./test-support subpath's re-include (its eight files missing; #616 PR-2c c9a), widens it
+        //     ./test-support subpath's re-include (its twelve files missing; #616 PR-2c c9a, c10b-2b), widens it
         //     or drops "!dist/**/test-support/**" (the probe, or the unpublished modules, then ship),
         //     ships the build info or the source, or stops shipping `dist` (then `dist/index.js` is
         //     absent); red too when npm fails. (2) Prints: npm's exit status, the test-support paths it
@@ -282,6 +282,10 @@ describe('#616 unit 1: the SQLite store package', () => {
             'dist/test-support/index.d.ts.map',
             'dist/test-support/index.js',
             'dist/test-support/index.js.map',
+            'dist/test-support/plant-registry-row.d.ts',
+            'dist/test-support/plant-registry-row.d.ts.map',
+            'dist/test-support/plant-registry-row.js',
+            'dist/test-support/plant-registry-row.js.map',
           ],
           tests: [],
           buildInfo: [],

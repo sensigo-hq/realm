@@ -51,11 +51,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
-import { MCP_README_EMBEDDING_UNTIL_C10B3 } from '../agent/test-support/mcp-readme-embedding.js';
-
-// DELTAS 58c and 58e (#616 PR-2c c10b-2; closed by c10b-3): the cell that runs the package README's
-// program. One name, so the cell's only change is this token and prettier leaves its body as it was.
-const xit = it.skipIf(MCP_README_EMBEDDING_UNTIL_C10B3);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The exit of a `realm workflow run` whose run ends failed (measured; the page shows no code). */
@@ -180,7 +175,7 @@ const TABLE: ReadonlyArray<readonly [Page, string, string, string, Cell]> = [
   ['packages/core/README.md', 'import {', 'ts', 'fragment: supplies callMyApi; then serves a step through executeStep', 'coreAdapter'],
   ['packages/mcp-server/README.md', '# Standalone binary (for AI agent MCP config)', '-', 'EXCLUDED: the npm registry; the package is checked', 'installs'],
   ['packages/mcp-server/README.md', '{', 'json', 'client config: command started, listTools', 'clients'],
-  ['packages/mcp-server/README.md', "import { createRealmMcpServer } from '@sensigo/realm-mcp';", 'ts', 'program: run as a stdio server, listTools', 'embedded'],
+  ['packages/mcp-server/README.md', "import { createRealmMcpServerOnHome } from '@sensigo/realm-m", 'ts', 'program: run as a stdio server, listTools', 'embedded'],
 ];
 
 interface Fence {
@@ -356,9 +351,14 @@ describe(
       });
     }
 
-    async function client(command: string, args: string[] = [], cwd = project): Promise<Client> {
+    async function client(
+      command: string,
+      args: string[] = [],
+      cwd = project,
+      childEnv = env(),
+    ): Promise<Client> {
       const c = new Client({ name: 'docs-examples-625', version: '0' });
-      await c.connect(new StdioClientTransport({ command, args, env: env(), cwd }));
+      await c.connect(new StdioClientTransport({ command, args, env: childEnv, cwd }));
       return c;
     }
 
@@ -1226,15 +1226,22 @@ describe(
       ]);
     });
 
-    xit(CELLS.embedded, async () => {
+    it(CELLS.embedded, async () => {
       const dir = nodeProject();
       writeFileSync(
         join(dir, 'server.ts'),
-        // #616 PR-2a (ii-b): the example passes the four stores (the library has no default).
-        `${fence('packages/mcp-server/README.md', 'createRealmMcpServer({')}\n`,
+        // #616 PR-2c c10b-3a: the example opens the Realm home through the library's home entry.
+        `${fence('packages/mcp-server/README.md', 'createRealmMcpServerOnHome(')}\n`,
       );
+      const own = programHome();
       // (a) red when the program does not start a server that serves the 11 tools; (b) prints the count.
-      expect(await toolCount(await client(process.execPath, ['server.ts'], dir))).toBe(11);
+      expect(
+        await toolCount(await client(process.execPath, ['server.ts'], dir, env({ HOME: own }))),
+      ).toBe(11);
+      // (a) red when the program does not open the home the README says it opens; (b) prints the path.
+      expect(existsSync(join(own, '.realm', 'realm.db')), join(own, '.realm', 'realm.db')).toBe(
+        true,
+      );
       // (a) red when the `realm-mcp` command the configurations start is not the server the package
       //     builds; (b) prints both paths.
       expect(binOf('mcp-server', 'realm-mcp')).toBe(resolveMcpServerEntry());
