@@ -225,14 +225,28 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 
 - **BREAKING — every run store call returns the time it was judged at (issue #715).** `get`,
   `update` and `claimStep` return `{ record, at }`; `create` returns `{ record, at, created }`;
-  `list` returns `{ snapshots, read_at, consistent_snapshot }`; `settleStep` returns its result with
-  `at`. A store must have `clock` and `settleStep`: Realm refuses one without either with
-  `VALIDATION_OPTION_INVALID`. `settleStep` takes no options, and a `seal_run` change takes no
-  workflow. **Upgrading:** a store of your own reads its clock once per call; `InMemoryStore` and the
-  store contracts show how. Its `settlementContract` adapter must supply `route`, which builds a
-  store on a clock the case sets; the contract gains the laws `SEAL_RUN_NEEDS_NO_DEFINITION` and
-  `ROUTE_CLOCK_IS_STORE_CLOCK`, and a store with neither `settleStep` nor `stampSeal` no longer
-  passes with no cases.
+  `list` returned `{ snapshots, read_at, consistent_snapshot }` until `scan` replaced it in this
+  release (below); `settleStep` returns its result with `at`. A store must have `clock` and
+  `settleStep`: Realm refuses one without either with `VALIDATION_OPTION_INVALID`. `settleStep`
+  takes no options, and a `seal_run` change takes no workflow. **Upgrading:** a store of your own
+  reads its clock once per call; `InMemoryStore` and the store contracts show how. Its
+  `settlementContract` adapter must supply `route`, which builds a store on a clock the case sets;
+  the contract gains the laws `SEAL_RUN_NEEDS_NO_DEFINITION` and `ROUTE_CLOCK_IS_STORE_CLOCK`, and a
+  store with neither `settleStep` nor `stampSeal` no longer passes with no cases.
+- **BREAKING — the run store interface changes once (issue #616).** `RunStore.list()` is gone: it
+  read the whole store in one call. In its place every store has
+  `scan(filter, { pageSize, projection, after })`, pages of at most 1,000 records in id order;
+  `resolveKey(workflowId, key)`, which says whether a run holds an idempotency key, only deleted
+  runs did, or none has; `tombstonesSince()`, the horizon those answers reach back to; and
+  `purgesRuns`, `true` for a store that deletes runs and keeps tombstones. Every store outside this
+  repository that implements `RunStore` must add the four members. `InMemoryStore` has all four
+  (`purgesRuns: false`; its horizon is the start of time, since it never purges).
+  `runStoreFidelityContract` holds every store to the laws of paging, of the key's three-way answer,
+  of the tombstones and of the horizon — the purge laws run only against a store with
+  `purgesRuns: true`, which supplies the contract's `purge` adapter hook; a store whose `purgesRuns`
+  disagrees with that hook fails the contract. `JsonFileStore` no longer implements `RunStore`.
+  `realm run list`, `realm run reclaim`, `realm run cleanup`, `realm run drain`, `realm run purge`,
+  `realm run migrate` and `realm listen` print what they printed.
 - **BREAKING — Realm's functions that judge a run take the run as read (issue #715).** The engine
   reads time only through the store's clock. The functions that judge a run (`describePending`,
   `classifyRunHealth`, `classifyInProgressClaims` and the others `@sensigo/realm` exports) take what

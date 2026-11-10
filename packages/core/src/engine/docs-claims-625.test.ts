@@ -38,6 +38,7 @@ import {
 } from './execution-loop.js';
 import { describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { jsonAsRunStore } from '../test-support/json-as-run-store.js';
 import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { unreadableRunFileError } from '../store/run-file.js';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -60,8 +61,12 @@ async function testLocationRuns(prefix: string): Promise<string> {
   await mkdir(join(root, 'runs'), { recursive: true });
   return join(root, 'runs');
 }
-async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
-  return new JsonFileStore(await testLocationRuns(prefix));
+/** #616 PR-2c c4: the JSON store wrapped as a `RunStore` (it lacks the scan verbs), with its folder;
+ *  PR-3 deletes it. */
+async function clockedJsonStore(
+  prefix: string,
+): Promise<RunStore & { readonly runsDirPath: string }> {
+  return jsonAsRunStore(new JsonFileStore(await testLocationRuns(prefix)));
 }
 
 const PAGE = join(

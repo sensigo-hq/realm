@@ -27,12 +27,16 @@ import {
   takeRawReading,
   floorAtRecord,
   writtenSnapshot,
+  SCAN_MAX_PAGE_SIZE,
   type Clock,
   type CreateResult,
-  type Listing,
+  type KeyAnswer,
   type OpeningGate,
   type RunStore,
   type RunRecord,
+  type ScanFilter,
+  type ScanOptions,
+  type ScanPage,
   type SealRunDelta,
   type Snapshot,
   type StoreSettlement,
@@ -2071,13 +2075,79 @@ class LossyFixtureStore implements RunStore {
     return writtenSnapshot(updated, at);
   }
 
-  async list(): Promise<Listing> {
-    const r = takeRawReading(this.clock);
-    return {
-      snapshots: [...this.runs.values()].map((rec) => writtenSnapshot(rec, floorAtRecord(r, rec))),
-      read_at: r,
-      consistent_snapshot: true,
-    };
+  /** #616 PR-2c c4: this fixture deletes no run, so it keeps no tombstones. */
+  readonly purgesRuns = false;
+
+  /**
+   * #616 PR-2c c4: its runs by id, `pageSize` at a time, one reading a page, each as lossy as `get()`.
+   * It filters by `workflow` only and refuses every other filter and the `'row'` projection.
+   */
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection: 'row' },
+  ): AsyncGenerator<ScanPage<'row'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection?: 'record' },
+  ): AsyncGenerator<ScanPage<'record'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions,
+  ): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
+  async *scan(
+    filter: ScanFilter,
+    options: ScanOptions,
+  ): AsyncGenerator<ScanPage<'record' | 'row'>, void, undefined> {
+    const { pageSize } = options;
+    const others = [
+      filter.phase,
+      filter.terminal,
+      filter.key,
+      filter.created_since,
+      filter.updated_since,
+    ];
+    if (others.some((v) => v !== undefined) || options.projection === 'row') {
+      throw new Error("lossy fixture store: it scans by 'workflow' only, as records");
+    }
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > SCAN_MAX_PAGE_SIZE) {
+      throw new Error(
+        `lossy fixture store: a page size is 1 to ${SCAN_MAX_PAGE_SIZE}, not ${pageSize}`,
+      );
+    }
+    let after = Buffer.from(options.after ?? '', 'utf8');
+    for (;;) {
+      const r = takeRawReading(this.clock);
+      const cut = [...this.runs.values()]
+        .filter((run) => filter.workflow === undefined || run.workflow_id === filter.workflow)
+        .map((run) => ({ run, id: Buffer.from(run.id, 'utf8') }))
+        .filter(({ id }) => Buffer.compare(id, after) > 0)
+        .sort((a, b) => Buffer.compare(a.id, b.id))
+        .slice(0, pageSize)
+        .map(({ run }) => run);
+      const page: ScanPage<'record'> = {
+        items: cut.map((run) => {
+          const { defaulted_steps: _dropped, ...rest } = run;
+          return { kind: 'run', run: writtenSnapshot(rest as RunRecord, floorAtRecord(r, run)) };
+        }),
+        read_at: r,
+        consistent_snapshot: true,
+        derived_at_read: 0,
+      };
+      if (cut.length === pageSize) page.next_after = cut[cut.length - 1]!.id;
+      yield page;
+      if (page.next_after === undefined) return;
+      after = Buffer.from(page.next_after, 'utf8');
+    }
+  }
+
+  /** #616 PR-2c c4: its creates carry no key, and it deletes no run: every key is unseen. */
+  async resolveKey(): Promise<KeyAnswer> {
+    return { state: 'unseen', since: '1970-01-01T00:00:00.000Z' };
+  }
+
+  /** #616 PR-2c c4: the start of time, as for every store that never deletes a run. */
+  async tombstonesSince(): Promise<string> {
+    return '1970-01-01T00:00:00.000Z';
   }
 
   async claimStep(

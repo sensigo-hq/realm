@@ -44,7 +44,11 @@ function delegating(inner: RunStore, over: Partial<RunStore>): RunStore {
     create: (o: Parameters<RunStore['create']>[0]) => inner.create(o),
     get: (id: string) => inner.get(id),
     update: (r: Parameters<RunStore['update']>[0]) => inner.update(r),
-    list: (w?: string) => inner.list(w),
+    // #616 PR-2c c4: the scan verbs, the inner store's.
+    purgesRuns: inner.purgesRuns,
+    scan: inner.scan.bind(inner),
+    resolveKey: inner.resolveKey.bind(inner),
+    tombstonesSince: inner.tombstonesSince.bind(inner),
     claimStep: (...a: Parameters<RunStore['claimStep']>) => inner.claimStep(...a),
     settleStep: ((...a: unknown[]) =>
       (inner.settleStep as (...x: unknown[]) => unknown)(...a)) as RunStore['settleStep'],

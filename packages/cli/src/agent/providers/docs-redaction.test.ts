@@ -35,7 +35,7 @@ import {
   loadProjectExtensions,
 } from '../../extensions/load-project-extensions.js';
 import { startAnthropicStub } from '../test-support/anthropic-stub.js';
-import { makeTempHome } from '../../test-support/temp-home.js';
+import { makeTempHome, runsOf } from '../../test-support/temp-home.js';
 import { resolveMcpServerEntry } from '../test-support/mcp-server-entry.js';
 import { leakedForms } from '../test-support/redaction-oracle.js';
 
@@ -324,7 +324,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
         },
         { definition, params: { key: SECRET }, pollIntervalMs: 50 },
       );
-      const runId = (await store.list()).snapshots.map((s) => s.record)[0]?.id ?? '';
+      const runId = (await runsOf(store)).map((s) => s.record)[0]?.id ?? '';
       // What the model is SHOWN for the tool result: the tool_result block of the second request
       // (the tool_use arguments echo the secret by design, so the block, not the whole request).
       const second = (stub.requests[1] ?? {}) as { messages?: Array<{ content?: unknown }> };

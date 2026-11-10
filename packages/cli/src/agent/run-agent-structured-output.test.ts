@@ -19,6 +19,7 @@ import { InMemoryStore } from '@sensigo/realm-testing';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { McpClient, McpTool } from './mcp/mcp-extensions.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 const mockCreate = vi.fn();
 vi.mock('@anthropic-ai/sdk', () => ({
@@ -118,7 +119,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     expect(result).toBe('completed');
     expect(mockCreate.mock.calls[0]![0].tools[0]).toMatchObject({ strict: true });
 
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const meta = lastEvidenceMeta(runs[0]!);
     expect(meta).toMatchObject({ requested: true, sent: true });
   });
@@ -139,7 +140,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     expect(result).toBe('completed');
     expect(mockCreate.mock.calls[0]![0].tools[0]).not.toHaveProperty('strict');
 
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const meta = lastEvidenceMeta(runs[0]!);
     expect(meta).toEqual({
       requested: true,
@@ -168,7 +169,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     expect(result).toBe('completed');
     expect(thirdPartyProvider.callStep).toHaveBeenCalledTimes(1);
 
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const meta = lastEvidenceMeta(runs[0]!);
     expect(meta).toEqual({
       requested: true,
@@ -219,7 +220,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     // The provider's OWN internal ladder retry (2 raw SDK calls) never burns a SECOND outer
     // run-agent attempt — the step completed on the FIRST outer callStepWithMeta invocation.
     expect(mockCreate).toHaveBeenCalledTimes(2);
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const meta = lastEvidenceMeta(runs[0]!);
     expect(meta).toMatchObject({
       requested: true,
@@ -264,7 +265,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     expect(mockCreate).toHaveBeenCalledTimes(3);
     expect(mockCreate.mock.calls[2]![0].tools[0]).not.toHaveProperty('strict');
 
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const meta = lastEvidenceMeta(runs[0]!);
     expect(meta).toEqual({
       requested: true,
@@ -302,7 +303,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     );
     expect(result).toBe('completed');
     expect(mockCreate.mock.calls[0]![0]).not.toHaveProperty('tools');
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const meta = lastEvidenceMeta(runs[0]!);
     expect(meta).toEqual({
       requested: true,
@@ -348,7 +349,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     expect(result).toBe('completed');
     expect(mockCreate.mock.calls[0]![0].tools[0]).toMatchObject({ strict: true });
 
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const meta = lastEvidenceMeta(runs[0]!);
     expect(meta?.sent).toBe(true);
     expect(meta?.caveats).toEqual(['optional_emission']);
@@ -400,7 +401,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     );
 
     expect(result).toBe('completed');
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const meta = lastEvidenceMeta(runs[0]!);
     // VERIFY-FIRST note: the retry response is ALSO run through the provider's own
     // submission-channel disclosure (anthropic-provider.ts's withChannel — the standing dodge
@@ -482,7 +483,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
 
     expect(result).toBe('completed');
     expect(provider.callStepWithTools).toHaveBeenCalledOnce();
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const meta = lastEvidenceMeta(runs[0]!);
     // issue #311 COEXIST: the OUTPUT-dimension trio is unchanged and still asserted exactly — the
     // step's own answer is still not grammar-constrained, so #332's disclosure stays true

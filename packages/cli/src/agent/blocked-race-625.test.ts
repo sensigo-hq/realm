@@ -29,6 +29,7 @@ import {
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import type { Snapshot } from '@sensigo/realm';
+import { runsOf } from '../test-support/temp-home.js';
 
 const agent = (extra: Partial<StepDefinition> = {}, depends_on: string[] = []): StepDefinition =>
   ({ description: 'An agent step.', execution: 'agent', depends_on, ...extra }) as StepDefinition;
@@ -120,7 +121,7 @@ async function drive(
   } finally {
     vi.restoreAllMocks();
   }
-  const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+  const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
   return {
     result,
     lines: lines.map((l) => l.split(runId).join('<run>')),
@@ -143,7 +144,7 @@ describe('#625 PR-2a, C85 — a blocked reply on a run another process moved to 
       def,
       async (store, call) => {
         if (call !== 1) return;
-        const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+        const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
         const r = await executeStep(store, def, {
           runId,
           command: 'review',

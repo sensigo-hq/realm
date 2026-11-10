@@ -6,7 +6,6 @@ import { countingClock, settableClock } from '../clock/settable-clock.js';
 import {
   runStoreFidelityContract,
   RUN_STORE_FIDELITY_LAWS,
-  type FidelityContractStore,
   type RunStoreFidelityLaw,
 } from './run-store-fidelity-contract.js';
 import type {
@@ -15,6 +14,7 @@ import type {
   CreateRunOptions,
   LoadBearingRunRecordField,
   ScanPage,
+  RunStore,
 } from '@sensigo/realm';
 import type { Snapshot, CreateResult } from '@sensigo/realm';
 
@@ -367,7 +367,7 @@ class CreatedMisreportingStore extends InMemoryStore {
 
 /** Each CREATE_REPORTS_CREATED case run in order on ONE store (as the wirings run a law's cases):
  *  `passed`, or its failure message. */
-async function createdOutcomes(store: FidelityContractStore): Promise<string[]> {
+async function createdOutcomes(store: RunStore): Promise<string[]> {
   const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 'work' }).filter(
     (c) => c.law === 'CREATE_REPORTS_CREATED',
   );

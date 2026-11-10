@@ -25,7 +25,7 @@ import {
   checkArgsNumbersJoined,
   walkNumbers,
 } from './args-numbers.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -284,9 +284,9 @@ describe('the zod 4 final pass, R2: the numbers', () => {
   it('O2: a non-finite number in `params` is refused in the door’s own shape, and no run is stored', async () => {
     const { call, runStore, oneStep } = await connect();
     const { wid } = await oneStep();
-    const n0 = (await runStore.list()).snapshots.map((s) => s.record).length;
+    const n0 = (await runsOf(runStore)).map((s) => s.record).length;
     const r = await call('start_run', { workflow_id: wid, params: { n: Infinity } });
-    const n1 = (await runStore.list()).snapshots.map((s) => s.record).length;
+    const n1 = (await runsOf(runStore)).map((s) => s.record).length;
     // (a) red when the walk is not called before the run is created (a run stored with `n: null`)
     //     or the refusal leaves the door's argument-refusal shape; (b) prints the reply's fields
     //     and the run count.
@@ -559,9 +559,9 @@ describe('correction 1: the walk’s lists bounded — the first ten named, then
   it('cell 1: 40,000 non-finite numbers in `params` — ten lines, then the count; no run stored', async () => {
     const { call, runStore, oneStep } = await connect();
     const { wid } = await oneStep();
-    const n0 = (await runStore.list()).snapshots.map((s) => s.record).length;
+    const n0 = (await runsOf(runStore)).map((s) => s.record).length;
     const r = await call('start_run', { workflow_id: wid, params: many(40_000, Infinity) });
-    const n1 = (await runStore.list()).snapshots.map((s) => s.record).length;
+    const n1 = (await runsOf(runStore)).map((s) => s.record).length;
     // (a) red when the refusal's bound is removed (40,000 lines, 5 MB); (b) prints the list's
     //     count, first and last lines, two booleans, the status and the run count.
     expect({ status: r['status'], errors: shape(r['errors']), newRuns: n1 - n0 }).toEqual({
@@ -580,9 +580,9 @@ describe('correction 1: the walk’s lists bounded — the first ten named, then
   it('cell 2: 40,000 integers beyond 2^53−1 in `params` — the run starts, ten warnings, then the count', async () => {
     const { call, runStore, oneStep } = await connect();
     const { wid } = await oneStep();
-    const n0 = (await runStore.list()).snapshots.map((s) => s.record).length;
+    const n0 = (await runsOf(runStore)).map((s) => s.record).length;
     const r = await call('start_run', { workflow_id: wid, params: many(40_000, BIG) });
-    const n1 = (await runStore.list()).snapshots.map((s) => s.record).length;
+    const n1 = (await runsOf(runStore)).map((s) => s.record).length;
     // (a) red when the warnings' bound is removed (40,000 lines); (b) prints the list's shape, the
     //     status and the run count.
     expect({ status: r['status'], warnings: shape(r['warnings']), newRuns: n1 - n0 }).toEqual({
@@ -754,12 +754,12 @@ describe('correction 1: the walk’s lists bounded — the first ten named, then
   it('cell 8c: `start_run_batch` refuses a non-finite number in any item, before any run', async () => {
     const { call, runStore, oneStep } = await connect();
     const { wid } = await oneStep();
-    const n0 = (await runStore.list()).snapshots.map((s) => s.record).length;
+    const n0 = (await runsOf(runStore)).map((s) => s.record).length;
     const r = await call('start_run_batch', {
       workflow_id: wid,
       items: [{ params: { n: Infinity } }, { params: {} }],
     });
-    const n1 = (await runStore.list()).snapshots.map((s) => s.record).length;
+    const n1 = (await runsOf(runStore)).map((s) => s.record).length;
     // (a) red when the batch's walk is not called (the runs created); (b) prints the status, the
     //     errors and the run count.
     expect({ status: r['status'], errors: r['errors'], newRuns: n1 - n0 }).toEqual({

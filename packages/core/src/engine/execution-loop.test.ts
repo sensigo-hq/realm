@@ -14,6 +14,7 @@ import { buildDisclosureSet } from '../utils/redaction.js';
 import { endsWithCutSentence } from './question-view.js';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { jsonAsRunStore } from '../test-support/json-as-run-store.js';
 import { classifyRunHealth } from './run-health.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -223,7 +224,8 @@ describe('executeStep', () => {
     // found"); the in-memory store's are "Run '<id>' not found", so on it the assertion would change.
     const dir = await mkdtemp(join(tmpdir(), 'realm-exec-test-'));
     onTestFinished(() => rm(dir, { recursive: true, force: true }));
-    const store = new JsonFileStore(dir);
+    // #616 PR-2c c4: wrapped as a `RunStore` (the JSON store lacks the scan verbs); PR-3 deletes it.
+    const store = jsonAsRunStore(new JsonFileStore(dir));
     const envelope = await executeStep(store, definition, {
       runId: 'does-not-exist',
       command: 'step-one',
@@ -4061,7 +4063,11 @@ describe('retry_after on ResponseEnvelope', () => {
         });
       },
       update: store.update.bind(store),
-      list: store.list.bind(store),
+      // #616 PR-2c c4: the scan verbs, the inner store's.
+      purgesRuns: store.purgesRuns,
+      scan: store.scan.bind(store),
+      resolveKey: store.resolveKey.bind(store),
+      tombstonesSince: store.tombstonesSince.bind(store),
       claimStep: store.claimStep.bind(store),
       settleStep: store.settleStep.bind(store),
       clock: store.clock,

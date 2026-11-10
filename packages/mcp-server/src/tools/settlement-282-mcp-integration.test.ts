@@ -14,7 +14,13 @@ import { handleAppendTrace } from './append-trace.js';
 import { handleGetRunState } from './get-run-state.js';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
-import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import {
+  snap,
+  doubleClock,
+  noSettle,
+  neverPurges,
+  scanning,
+} from '../test-support/snapshot-double.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const def: WorkflowDefinition = {
@@ -101,9 +107,8 @@ function makeStaticStore(run: RunRecord): RunStore {
     async update(r) {
       return snap(r);
     },
-    async list() {
-      return listing([run]);
-    },
+    scan: scanning(() => [run]),
+    ...neverPurges,
     async claimStep() {
       return snap(run);
     },
@@ -181,9 +186,8 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
       async update(r) {
         return snap(r);
       },
-      async list() {
-        return listing([live]);
-      },
+      scan: scanning(() => [live]),
+      ...neverPurges,
       async claimStep() {
         return snap(live);
       },
@@ -255,9 +259,8 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
       async update(r) {
         return snap(r);
       },
-      async list() {
-        return listing([live]);
-      },
+      scan: scanning(() => [live]),
+      ...neverPurges,
       async claimStep() {
         return snap(live);
       },
@@ -307,9 +310,8 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
       async update(r) {
         return snap(r);
       },
-      async list() {
-        return listing([g]);
-      },
+      scan: scanning(() => [g]),
+      ...neverPurges,
       async claimStep() {
         return snap(g);
       },
@@ -343,9 +345,8 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
       async update(r) {
         return snap(r);
       },
-      async list() {
-        return listing([g]);
-      },
+      scan: scanning(() => [g]),
+      ...neverPurges,
       async claimStep() {
         return snap(g);
       },

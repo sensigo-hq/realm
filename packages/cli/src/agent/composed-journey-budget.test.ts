@@ -21,7 +21,7 @@ import { ExtensionRegistry, classifyRunHealth } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
 import { startAnthropicStub } from './test-support/anthropic-stub.js';
-import { makeTempHome } from '../test-support/temp-home.js';
+import { makeTempHome, runsOf } from '../test-support/temp-home.js';
 import { runAgent } from './run-agent.js';
 import { inspectRun } from '../commands/inspect.js';
 import { writtenSnapshot } from '@sensigo/realm';
@@ -93,7 +93,7 @@ describe('composed journey (budget) — a server-directed Retry-After is observe
       // still excluding the two-hour (7,200,000ms) Retry-After by a 480× margin.
       expect(elapsed).toBeLessThan(15_000);
 
-      const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+      const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
       const { record: run } = await store.get(runId);
       const entry = run.drive_failures!.entries[0]!;
 

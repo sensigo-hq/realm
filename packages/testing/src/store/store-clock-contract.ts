@@ -11,6 +11,7 @@
 // a workflow with a finalizer step) and the deadline check cannot pass vacuously.
 import {
   CLOCK_SKEW_EPSILON_MS,
+  SCAN_MAX_PAGE_SIZE,
   computeClaimDeadline,
   type Clock,
   type ExtensionIdentityEntry,
@@ -31,14 +32,14 @@ import { createTestLocation, type TestLocation } from '../clock/test-location.js
  *   is stamped `min(updated_at, clock + ε)`; behind the clock, the clock.
  * - `READ_AT_CAPPED` (#715 (b), D6-34, Amendment 7) — a read judges its record at
  *   `max(r, min(updated_at, r + ε))`: a record stamped more than ε ahead of the clock is read at
- *   `clock + ε`, one up to ε ahead at its own stamp, one behind at the clock (`get` and `list`; both
- *   routes: the reading is judged, never counted). Core's `record_stamped_ahead` finding reads the raw reading back from that `at`: a
+ *   `clock + ε`, one up to ε ahead at its own stamp, one behind at the clock (`get` and a page of
+ *   `scan`; both routes: the reading is judged, never counted). Core's `record_stamped_ahead` finding reads the raw reading back from that `at`: a
  *   store whose reads do not cap is not supported by that finding.
  * - `KEYED_CREATE_ORDERS_AFTER_HOLDER` — a superseding keyed create after a backward step below ε, or
  *   at a frozen instant, is stamped at least 1 ms after the run it supersedes.
  * - `KEYED_CREATE_FLOOR_CAPPED` — that floor lifts the stamp by at most ε.
- * - `READS_ONE_READING` (#715 (b), D-16; it REVERSES (a)'s `READS_SPEND_NO_READING`) — `get`, `list`
- *   and, when the store has it, `listWithDiagnostics` spend EXACTLY one reading each (taken before
+ * - `READS_ONE_READING` (#715 (b), D-16; it REVERSES (a)'s `READS_SPEND_NO_READING`) — `get`, a page
+ *   of `scan` and, when the store has it, `listWithDiagnostics` spend EXACTLY one reading each (taken before
  *   the load); `stampSeal`, `listRunIds` and `statAllForRun` spend none; `deleteAllForRun`, counted
  *   on its own, spends ONE when the adapter declares `recordsDeletionTime` (the store stamps the time
  *   of the deletion; #616 PR-1a unit 16a) and none when it does not (clock route only). The
@@ -352,14 +353,18 @@ export function storeClockContract(adapter: StoreClockContractAdapter): StoreClo
           const { record: run } = await c.store.create(plain);
           await c.clock.set(new Date(T));
           const viaGet = (await c.store.get(run.id)).at.toISOString();
-          const row = (await c.store.list()).snapshots.find((x) => x.record.id === run.id);
+          // #616 PR-2c c4: the store's first page of a scan holds every record of this case.
+          const first = await c.store.scan({}, { pageSize: SCAN_MAX_PAGE_SIZE }).next();
+          const row = (first.done === true ? [] : first.value.items)
+            .flatMap((x) => (x.kind === 'run' ? [x.run] : []))
+            .find((x) => x.record.id === run.id);
           got.push(`${viaGet}|${row?.at.toISOString() ?? 'no row'}`);
         }
         const want = [T + EPS, T + EPS, T + 3_000, T].map((ms) => `${iso(ms)}|${iso(ms)}`);
         check(
           'READ_AT_CAPPED',
           got.join() === want.join(),
-          `reads (get|list) of records stamped +1 h, +ε, +3 s, −1 h were judged at ${got.join(', ')}, not ${want.join(', ')}`,
+          `reads (get|a page of scan) of records stamped +1 h, +ε, +3 s, −1 h were judged at ${got.join(', ')}, not ${want.join(', ')}`,
         );
       },
     ),
@@ -441,7 +446,7 @@ export function storeClockContract(adapter: StoreClockContractAdapter): StoreClo
     }),
     L(
       'READS_ONE_READING',
-      'get, list and listWithDiagnostics spend one reading each; stampSeal (a real stamp of a seeded terminal unsealed run), listRunIds and statAllForRun spend none; deleteAllForRun spends one when the adapter says the store records the time of a deletion, and none when it does not',
+      'get, a page of scan and listWithDiagnostics spend one reading each; stampSeal (a real stamp of a seeded terminal unsealed run), listRunIds and statAllForRun spend none; deleteAllForRun spends one when the adapter says the store records the time of a deletion, and none when it does not',
       T,
       async (c) => {
         const law = 'READS_ONE_READING';
@@ -479,7 +484,9 @@ export function storeClockContract(adapter: StoreClockContractAdapter): StoreClo
           check(law, r.reads === 1, `${what} spent ${String(r.reads)} readings, not 1`);
         };
         await one('a get', () => c.store.get(run.id));
-        await one('a list', () => c.store.list());
+        await one('a page of scan', () =>
+          c.store.scan({}, { pageSize: SCAN_MAX_PAGE_SIZE }).next(),
+        );
         if (typeof extra.listWithDiagnostics === 'function') {
           await one('a listWithDiagnostics', () => extra.listWithDiagnostics!());
         }

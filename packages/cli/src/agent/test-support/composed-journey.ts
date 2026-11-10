@@ -27,7 +27,7 @@ import type { LlmProvider } from '../providers/llm-provider.js';
 import { runAgent, type AgentRunResult } from '../run-agent.js';
 import { inspectRun } from '../../commands/inspect.js';
 import { resolveMcpServerEntry } from './mcp-server-entry.js';
-import type { TempHome } from '../../test-support/temp-home.js';
+import { runsOf, type TempHome } from '../../test-support/temp-home.js';
 
 export interface ComposedJourneyOptions {
   /** The real provider under test, already pointed at its own stub seam. */
@@ -135,7 +135,7 @@ export async function runComposedJourney(
     { definition, params: {}, pollIntervalMs: 50 },
   );
 
-  const runs = (await store.list()).snapshots.map((s) => s.record);
+  const runs = (await runsOf(store)).map((s) => s.record);
   const runId = runs[0]?.id ?? '';
   const { record: run } = await store.get(runId);
 

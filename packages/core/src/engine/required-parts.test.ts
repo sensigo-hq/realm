@@ -36,7 +36,10 @@ function trapStore(): { s: RunStore; calls: string[] } {
     create: trap('create'),
     get: trap('get'),
     update: trap('update'),
-    list: trap('list'),
+    // #616 PR-2c c4: the store's reads of its runs.
+    scan: trap('scan'),
+    resolveKey: trap('resolveKey'),
+    tombstonesSince: trap('tombstonesSince'),
     claimStep: trap('claimStep'),
     settleStep: trap('settleStep'),
     // #715 (b): every store holds a clock (admission checks its functions exist; a call is a use).

@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import type { DriveFailureRecord, RunRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
-import { listing, snap } from '../test-support/snapshot-double.js';
+import { snap, scanning } from '../test-support/snapshot-double.js';
 
 function runWith(entry: DriveFailureRecord, total = 1): RunRecord {
   return {
@@ -39,7 +39,7 @@ const BASE: DriveFailureRecord = {
 const render = (run: RunRecord): Promise<string> =>
   inspectRun(
     'run_test1',
-    { get: async () => snap(run), list: async () => listing([run]) } as never,
+    { get: async () => snap(run), scan: scanning(() => [run]) } as never,
     {
       get: async () => {
         throw new Error('not registered');

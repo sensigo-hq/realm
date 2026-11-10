@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { executeStep } from './execution-loop.js';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { jsonAsRunStore } from '../test-support/json-as-run-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { StructuredOutputMeta } from '../types/run-record.js';
@@ -116,7 +117,8 @@ describe('structured_output evidence disclosure (issue #236, Deliverable 6)', ()
     // subject; the describe's store is in memory.
     const dir = await mkdtemp(join(tmpdir(), 'realm-so-evidence-'));
     onTestFinished(() => rm(dir, { recursive: true, force: true }));
-    const store = new JsonFileStore(dir);
+    // #616 PR-2c c4: wrapped as a `RunStore` (the JSON store lacks the scan verbs); PR-3 deletes it.
+    const store = jsonAsRunStore(new JsonFileStore(dir));
     const { record: run } = await store.create({
       workflowId: declaredDef.id,
       workflowVersion: 1,

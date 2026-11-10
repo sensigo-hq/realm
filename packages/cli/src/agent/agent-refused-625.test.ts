@@ -22,6 +22,7 @@ import {
 } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 const agent = (extra: Partial<StepDefinition> = {}, depends_on: string[] = []): StepDefinition =>
   ({ description: 'An agent step.', execution: 'agent', depends_on, ...extra }) as StepDefinition;
@@ -108,7 +109,7 @@ async function drive(
   } finally {
     vi.restoreAllMocks();
   }
-  const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+  const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
   return { result, lines: lines.map((l) => l.split(runId).join('<run>')), calls, runId, store };
 }
 
@@ -278,7 +279,7 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
       // Another process completes `ask` while this drive's model answers (the first call only).
       if (once) return;
       once = true;
-      const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+      const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
       const r = await executeStep(store, def, {
         runId,
         command: 'ask',
@@ -306,7 +307,7 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
     const d = await drive(def, {}, async (store) => {
       if (once) return;
       once = true;
-      const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+      const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
       await store.claimStep(runId, 'ask', def);
     });
     // (a) red when the in-flight member is dropped (the reply then prints its hint and stops);
@@ -331,7 +332,7 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
     const d = await drive(def, {}, async (store) => {
       if (once) return;
       once = true;
-      const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+      const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
       const r = await executeStep(store, def, {
         runId,
         command: 'ask',

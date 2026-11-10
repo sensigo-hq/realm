@@ -15,6 +15,7 @@ import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { renderStepFailureLine } from '../commands/run.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -96,7 +97,7 @@ async function drive(
   } as unknown as AgentDeps;
   await runAgent(deps, { definition, params: {} });
   vi.restoreAllMocks();
-  const runs = (await store.list()).snapshots.map((s) => s.record);
+  const runs = (await runsOf(store)).map((s) => s.record);
   return {
     store,
     runId: runs[0]!.id,

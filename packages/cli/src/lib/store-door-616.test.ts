@@ -93,6 +93,12 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
       sites: 1,
       subject: "`JsonFileReplayStore`'s own test; PR-3",
     },
+    {
+      file: 'test-support/json-as-run-store.test.ts',
+      sites: 1,
+      subject:
+        "#616 PR-2c c4: the `jsonAsRunStore` adapter's own cell (the JSON store seen as a `RunStore`); PR-3 deletes both",
+    },
   ],
   'mcp-server': [
     {
@@ -177,6 +183,12 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
       file: 'store/json-file-store.test.ts',
       sites: 6,
       subject: "the JSON store's own cells; PR-3",
+    },
+    {
+      file: 'test-support/json-as-run-store.test.ts',
+      sites: 1,
+      subject:
+        "#616 PR-2c c4: the `jsonAsRunStore` adapter's own cell (the JSON store seen as a `RunStore`); PR-3 deletes both",
     },
     {
       file: 'store/lazy-home-resolution-285.test.ts',

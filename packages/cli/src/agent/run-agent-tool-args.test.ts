@@ -23,6 +23,7 @@ import {
   CONVERTER_DERIVED_WITH_CAVEATS_SCHEMA,
   eligibleWithOptionals,
 } from './test-support/tool-schemas.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 type ToolArgs = NonNullable<StructuredOutputMeta['tool_args']>;
 
@@ -137,7 +138,7 @@ async function drive(
     },
     { definition: def, params: {} },
   );
-  const runs = (await store.list()).snapshots.map((s) => s.record);
+  const runs = (await runsOf(store)).map((s) => s.record);
   const evidence = runs[0]!.evidence;
   return { meta: evidence.at(-1)?.diagnostics?.structured_output, result };
 }
@@ -560,7 +561,7 @@ describe('runAgent — strict tool-call arguments (issue #311)', () => {
     );
 
     expect(provider.callStepWithTools).not.toHaveBeenCalled();
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const meta = runs[0]!.evidence.at(-1)?.diagnostics?.structured_output;
     expect(meta?.tool_args).toBeUndefined();
   });

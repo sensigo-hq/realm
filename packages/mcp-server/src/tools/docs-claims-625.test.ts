@@ -30,7 +30,7 @@ import { createRealmMcpServer } from '../server.js';
 import { renderReply } from '../render-reply.js';
 import { zOf } from '../test-support/instant.js';
 import { createTestHome, type TestHome } from '@sensigo/realm-testing';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -332,7 +332,7 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
     });
     if (owner !== undefined) {
       expect(String((r['errors'] as string[])[0])).toContain(owner);
-      expect((await runStore.list()).snapshots.map((s) => s.record).length).toBe(1);
+      expect((await runsOf(runStore)).map((s) => s.record).length).toBe(1);
     }
   });
 

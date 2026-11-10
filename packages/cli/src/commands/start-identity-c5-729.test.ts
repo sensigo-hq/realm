@@ -27,7 +27,7 @@ import { runAgent } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 /** The manifest's one declared secret: a fake canary. */
@@ -118,7 +118,7 @@ function project(opts: {
 
 /** Every run record in HOME's store, read through the handle (#616 PR-2c, c0). */
 async function records(): Promise<RunRecord[]> {
-  return (await h.home.runStore.list()).snapshots.map((s) => s.record);
+  return (await runsOf(h.home.runStore)).map((s) => s.record);
 }
 
 /** A record's identity entries, as `<origin>:<manifest path, relative to the project, or none>`. */
@@ -485,7 +485,7 @@ describe('#729 PR-3 correction 5 (J-5) — the in-process creators', () => {
     await handler(req, res as unknown as ServerResponse);
     // (a) red when the route keeps no start entry or the create is given none; (b) prints the
     //     run's entries.
-    expect((await runStore.list()).snapshots.map((s) => s.record).map(entriesOf)).toEqual([
+    expect((await runsOf(runStore)).map((s) => s.record).map(entriesOf)).toEqual([
       ['start:<proj>/realm.yaml'],
     ]);
   }, 60_000);
@@ -554,7 +554,7 @@ describe('#729 PR-3 correction 5 (J-5) — the in-process creators', () => {
     //     whether the create was given an entry and how many runs exist.
     expect({
       given: create.mock.calls.some(([options]) => options.extensionIdentity !== undefined),
-      runs: (await store.list()).snapshots.map((s) => s.record).length,
+      runs: (await runsOf(store)).map((s) => s.record).length,
     }).toEqual({ given: false, runs: 1 });
   });
 });

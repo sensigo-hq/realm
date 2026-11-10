@@ -81,7 +81,11 @@ describe('#282 class closure — idempotency call-site derive (issue #279, incre
     expect(created).toBe(false);
     expect(matched.id).toBe(original.id);
 
-    const all = (await store.list()).snapshots.map((s) => s.record);
+    // #616 PR-2c c4: one page of the store's scan holds every run of this cell.
+    const page1 = await store.scan({}, { pageSize: 1000 }).next();
+    const all = (page1.done === true ? [] : page1.value.items).flatMap((i) =>
+      i.kind === 'run' ? [i.run.record] : [],
+    );
     expect(all).toHaveLength(1); // no duplicate run minted
   });
 });

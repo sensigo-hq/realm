@@ -3,7 +3,7 @@
 // orchestration) — no HTTP server needed. #715 (b): the store's clock decides (a settable clock at NOW).
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
-import { listing } from '../test-support/snapshot-double.js';
+import { scanning } from '../test-support/snapshot-double.js';
 import { WorkflowError, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition, PendingGate, WorkflowRegistrar } from '@sensigo/realm';
 import {
@@ -201,26 +201,26 @@ describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
       .fn()
       .mockRejectedValueOnce(busyErr)
       .mockResolvedValueOnce({ applied: true, transitioned: true, run: {}, pendingFinalizers: [] });
-    const runStore: Pick<ListenDeps['runStore'], 'list' | 'settleStep'> = {
-      // #715 (b): a listing is snapshots (each row judged at its own reading — here the host's).
-      list: async () =>
-        listing(
-          [runA, runB].map((r) => ({
-            ...r,
-            workflow_version: 1,
-            completed_steps: [],
-            in_progress_steps: ['approve'],
-            failed_steps: [],
-            skipped_steps: [],
-            run_phase: 'gate_waiting' as const,
-            version: 1,
-            params: {},
-            evidence: [],
-            created_at: '2020-01-01T00:00:00.000Z',
-            updated_at: '2020-01-01T00:00:00.000Z',
-            terminal_state: false,
-          })),
-        ),
+    const runStore: Pick<ListenDeps['runStore'], 'scan' | 'settleStep'> = {
+      // #715 (b): a listing is snapshots (each row judged at its own reading — here the host's);
+      // #616 PR-2c c4: the pages of a scan.
+      scan: scanning(() =>
+        [runA, runB].map((r) => ({
+          ...r,
+          workflow_version: 1,
+          completed_steps: [],
+          in_progress_steps: ['approve'],
+          failed_steps: [],
+          skipped_steps: [],
+          run_phase: 'gate_waiting' as const,
+          version: 1,
+          params: {},
+          evidence: [],
+          created_at: '2020-01-01T00:00:00.000Z',
+          updated_at: '2020-01-01T00:00:00.000Z',
+          terminal_state: false,
+        })),
+      ),
       settleStep,
     };
 
@@ -254,8 +254,12 @@ describe('issue #719 — a sweeper pass that fails is logged', () => {
     });
     const runStore = new Proxy(h.home.runStore, {
       get(target, prop) {
-        if (prop === 'list') {
-          return async (): Promise<never> => Promise.reject(err);
+        // #616 PR-2c c4: the sweep reads the store through `scan`; its first page rejects.
+        if (prop === 'scan') {
+          // eslint-disable-next-line require-yield -- a scan that fails on its first page
+          return async function* (): AsyncGenerator<never, void, undefined> {
+            throw err;
+          };
         }
         const v = Reflect.get(target, prop, target) as unknown;
         return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;

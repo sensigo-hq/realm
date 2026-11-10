@@ -11,6 +11,7 @@ import retry from 'retry';
 import { JsonFileStore, LOCK_RETRIES } from './json-file-store.js';
 import { unreadableFactsOf, unreadableRunFilesOf } from './run-file.js';
 import { abandonRun } from '../engine/abandon-run.js';
+import { jsonAsRunStore } from '../test-support/json-as-run-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -1887,7 +1888,11 @@ describe('JsonFileStore — rerun_of, the supersede link (issue #558 PR-C)', () 
     const first = await store.create({ ...opts });
     expect(first.created).toBe(true);
     expect(first.record.rerun_of).toBeUndefined();
-    const abandoned = await abandonRun(store, first.record.id, 'Abandoned via realm run abandon');
+    const abandoned = await abandonRun(
+      jsonAsRunStore(store),
+      first.record.id,
+      'Abandoned via realm run abandon',
+    );
     const versionAfterAbandon = abandoned.version;
 
     const second = await store.create({ ...opts, onTerminalMatch: 'rerun' });
@@ -1904,7 +1909,7 @@ describe('JsonFileStore — rerun_of, the supersede link (issue #558 PR-C)', () 
 
   it('a `reuse` re-encounter returns the SAME run and stamps nothing', async () => {
     const first = await store.create({ ...opts });
-    await abandonRun(store, first.record.id, 'Abandoned via realm run abandon');
+    await abandonRun(jsonAsRunStore(store), first.record.id, 'Abandoned via realm run abandon');
 
     const second = await store.create({ ...opts, onTerminalMatch: 'reuse' });
 
@@ -1922,7 +1927,7 @@ describe('JsonFileStore — rerun_of, the supersede link (issue #558 PR-C)', () 
 
   it('the LEGACY-CANONICAL path (pointer gone, run adopted by scan) stamps it too', async () => {
     const first = await store.create({ ...opts });
-    await abandonRun(store, first.record.id, 'Abandoned via realm run abandon');
+    await abandonRun(jsonAsRunStore(store), first.record.id, 'Abandoned via realm run abandon');
     // Delete the pointer: the next create falls through to the canonical scan (`:339`), the second
     // supersede call site. Without its own `supersededId` argument this path stamped nothing.
     await unlink(keyPointerPath(dir, 'wf-1', 'k4'));

@@ -34,7 +34,7 @@ import {
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds, runsOf } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -831,7 +831,7 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     } finally {
       writerTestSeams.reset();
     }
-    const runs = (await h.home.runStore.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(h.home.runStore)).map((s) => s.record);
     const plainHash = runs
       .flatMap((r) => r.evidence)
       .find((e) => (e.output_summary as Record<string, unknown>)['pin'] === 'open')
@@ -857,7 +857,7 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     );
     mocks.question.mockImplementation(async () => '{"k":"[REDACTED]"}');
     await runCommand.parseAsync([dir], { from: 'user' });
-    const [run] = (await h.home.runStore.list()).snapshots.map((s) => s.record);
+    const [run] = (await runsOf(h.home.runStore)).map((s) => s.record);
     // (a) red when the typed answer's warning gains `Warning:`, loses its indent or its words, or
     //     the answer is changed before it is recorded; (b) prints the warning (fixed) and a boolean.
     expect({
@@ -877,7 +877,7 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     );
     mocks.question.mockImplementation(async () => '{}');
     await runCommand.parseAsync([dir, '--params', '{"k":"[REDACTED]"}'], { from: 'user' });
-    const [run] = (await h.home.runStore.list()).snapshots.map((s) => s.record);
+    const [run] = (await runsOf(h.home.runStore)).map((s) => s.record);
     // (a) red when the warning's words change or the params are changed before they are recorded;
     //     (b) prints the warning text (fixed) and a boolean.
     expect({

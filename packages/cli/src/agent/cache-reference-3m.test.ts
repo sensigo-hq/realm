@@ -20,6 +20,7 @@ import { InMemoryStore } from '@sensigo/realm-testing';
 import { runAgent } from './run-agent.js';
 import { ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { McpClient, McpTool, StepWithToolsResult } from './mcp/mcp-extensions.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 /**
  * The request a drive bills and the record keeps — the shape Anthropic's adapter returns for a
@@ -218,7 +219,7 @@ async function drive(
   } finally {
     vi.restoreAllMocks();
   }
-  const id = runId ?? (await store.list()).snapshots[0]!.record.id;
+  const id = runId ?? (await runsOf(store))[0]!.record.id;
   return { run: (await store.get(id)).record, calls: made() };
 }
 

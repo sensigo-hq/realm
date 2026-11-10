@@ -18,7 +18,13 @@ import type {
   StepDiagnostics,
   ExtensionIdentityEntry,
 } from '@sensigo/realm';
-import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import {
+  snap,
+  doubleClock,
+  noSettle,
+  neverPurges,
+  scanning,
+} from '../test-support/snapshot-double.js';
 import { zOf } from '../test-support/instant.js';
 
 function makeSnapshot(stepId: string, overrides: Partial<EvidenceSnapshot> = {}): EvidenceSnapshot {
@@ -67,7 +73,8 @@ function makeRunStore(run: RunRecord): RunStore {
     get: async () => snap(run),
     create: async () => ({ ...snap(run), created: true }),
     update: async () => snap(run),
-    list: async () => listing([run]),
+    scan: scanning(() => [run]),
+    ...neverPurges,
     // inspect.ts (the sole consumer under test here) never claims a step — this mock never needs
     // a real implementation, only a type-complete stub.
     claimStep: async () => {

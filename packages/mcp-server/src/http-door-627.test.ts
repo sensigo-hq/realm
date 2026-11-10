@@ -20,7 +20,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createRealmMcpServer } from './server.js';
-import { makeTempHome, type TempHome } from './test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from './test-support/temp-home.js';
 
 const YAML = [
   'id: http627',
@@ -217,7 +217,7 @@ describe('#627 W correction 2 (1.7) — the form rides the tool call’s own str
         call.then(() => true),
         new Promise<false>((r) => setTimeout(() => r(false), 5_000)),
       ]);
-      const runs = (await d.runStore.list()).snapshots.map((s) => s.record);
+      const runs = (await runsOf(d.runStore)).map((s) => s.record);
       const entry = runs[0]?.evidence.find((e) => e.kind === 'gate_response');
       // (a) red when the elicitation is sent without the tool call's request id (it then needs the
       //     GET stream this host refuses); (b) prints whether the call settled, the forms sent and

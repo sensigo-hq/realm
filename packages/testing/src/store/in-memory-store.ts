@@ -20,7 +20,6 @@ import {
   type Clock,
   type CreateResult,
   type KeyAnswer,
-  type Listing,
   type RunRow,
   type ScanFilter,
   type ScanOptions,
@@ -107,8 +106,8 @@ export class InMemoryStore implements RunStore {
   /**
    * The clock this store reads the time from (issue #715; rule 10: an in-memory store may use any
    * clock). What it governs (#715 (b), D-16): every call that returns spends ONE reading and returns
-   * it — `create`, `update`, `claimStep` and `settleStep` at the write, `get` and `list` BEFORE they
-   * read, and `scan` once per page. `stampSeal`, `resolveKey`, `tombstonesSince`, the `seed` fixture
+   * it — `create`, `update`, `claimStep` and `settleStep` at the write, `get` BEFORE it reads, and
+   * `scan` once per page. `stampSeal`, `resolveKey`, `tombstonesSince`, the `seed` fixture
    * and this store's own internal reads spend none. What it does not govern: instants minted outside
    * a store, and durations.
    */
@@ -473,22 +472,6 @@ export class InMemoryStore implements RunStore {
     if (planted.idempotency_key !== undefined) {
       this.keyIndex.set(`${planted.workflow_id}\0${planted.idempotency_key}`, planted.id);
     }
-  }
-
-  /**
-   * #715 (b) (D-15, D-16): ONE raw reading `read_at` before the read; each snapshot's `at` is
-   * `read_at` floored by its own record. `consistent_snapshot: true` — one synchronous pass, one cut.
-   */
-  async list(workflowId?: string): Promise<Listing> {
-    const r = takeRawReading(this.clock);
-    const all = [...this.runs.values()];
-    const kept =
-      workflowId !== undefined ? all.filter((rec) => rec.workflow_id === workflowId) : all;
-    return {
-      snapshots: kept.map((rec) => writtenSnapshot(rec, floorAtRecord(r, rec))),
-      read_at: r,
-      consistent_snapshot: true,
-    };
   }
 
   /**

@@ -1,6 +1,6 @@
 // cleanup command — marks idle non-terminal runs as abandoned.
 import { Command } from 'commander';
-import type { RunStore, RunRecord } from '@sensigo/realm';
+import type { RunStore, RunRecord, Snapshot } from '@sensigo/realm';
 import { isIdleForCleanup } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { openCliHome } from '../lib/home.js';
@@ -17,7 +17,11 @@ export async function cleanupRuns(
 ): Promise<{ affected: RunRecord[] }> {
   const threshold = parseDuration(options.olderThan);
   // #715 (b) (D-26, D6-41): each run is judged at its OWN snapshot's reading.
-  const { snapshots: all } = await runStore.list();
+  // #616 PR-2c c4: every page of the store's scan.
+  const all: Snapshot[] = [];
+  for await (const page of runStore.scan({}, { pageSize: 1000, projection: 'record' })) {
+    for (const item of page.items) if (item.kind === 'run') all.push(item.run);
+  }
 
   const affected: RunRecord[] = [];
   for (const snapshot of all) {

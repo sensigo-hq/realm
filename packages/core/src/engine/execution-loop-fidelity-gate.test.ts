@@ -9,12 +9,13 @@ import type {
   RunStore,
   CreateRunOptions,
   LoadBearingRunRecordField,
+  KeyAnswer,
 } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 import type { Snapshot } from './snapshot.js';
-import type { Listing, CreateResult } from '../store/store-interface.js';
+import type { CreateResult } from '../store/store-interface.js';
 import type { Clock } from '../utils/clock.js';
 import type { SettlementDelta } from '../types/settlement.js';
 
@@ -53,8 +54,18 @@ class DeclaredFieldsOverrideStore implements RunStore {
   update(record: RunRecord): Promise<Snapshot> {
     return this.inner.update(record);
   }
-  list(workflowId?: string): Promise<Listing> {
-    return this.inner.list(workflowId);
+  // #616 PR-2c c4: the scan verbs, delegated to the inner store as `list` was.
+  get purgesRuns(): boolean {
+    return this.inner.purgesRuns;
+  }
+  get scan(): RunStore['scan'] {
+    return this.inner.scan.bind(this.inner);
+  }
+  resolveKey(workflowId: string, key: string): Promise<KeyAnswer> {
+    return this.inner.resolveKey(workflowId, key);
+  }
+  tombstonesSince(): Promise<string> {
+    return this.inner.tombstonesSince();
   }
   /** #715 (b): `settleStep` is required — this double delegates it. */
   settleStep(runId: string, delta: SettlementDelta, definition?: WorkflowDefinition) {

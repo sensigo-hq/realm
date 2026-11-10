@@ -31,6 +31,7 @@ import { LlmProvider } from './providers/llm-provider.js';
 import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
+import { runsOf } from '../test-support/temp-home.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
 function claimDoc625(page: string, sentence: string): void {
@@ -215,7 +216,7 @@ async function drive(member: Member, otherBranch: boolean): Promise<Drive> {
     },
   );
   vi.restoreAllMocks();
-  const runId = attachId ?? (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+  const runId = attachId ?? (await runsOf(store)).map((s) => s.record)[0]!.id;
   return {
     result,
     lines: lines.map((l) => l.split(runId).join('<run>')),
@@ -357,7 +358,7 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
       { definition: def, params: {}, inFlightPollMs: 5, inFlightWatchMs: 20 },
     );
     vi.restoreAllMocks();
-    const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+    const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
     expect(result).toBe('failed');
     // F15: `alpha` beside it is refused for its input — each step's own way out, in the workflow's
     // order, then the run's once.

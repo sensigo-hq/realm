@@ -19,7 +19,7 @@ import { runAgent, type AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { snap } from '../test-support/snapshot-double.js';
 import type { Snapshot } from '@sensigo/realm';
-import { makeTempHome } from '../test-support/temp-home.js';
+import { makeTempHome, runsOf } from '../test-support/temp-home.js';
 
 function makeRun(over: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -620,7 +620,7 @@ describe('#715 (a) — elapsed_ms is measured on the monotonic clock', () => {
         schemaRetries: 0,
       } as unknown as AgentDeps;
       await runAgent(deps, { definition: wf, params: {} });
-      const [run] = (await store.list()).snapshots.map((s) => s.record);
+      const [run] = (await runsOf(store)).map((s) => s.record);
       const entry = (await store.get(run!.id)).record.drive_failures?.entries[0];
       expect(entry?.error_class, 'the wedge').toBe('validation_rejected');
       expect(entry?.elapsed_ms, 'elapsed_ms').toBe(750);

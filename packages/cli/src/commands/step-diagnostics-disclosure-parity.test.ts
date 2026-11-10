@@ -20,7 +20,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PriceSource, RunRecord, StepDiagnostics, UsageRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
-import { listing, snap } from '../test-support/snapshot-double.js';
+import { snap, neverPurges, scanning } from '../test-support/snapshot-double.js';
 
 type DisclosureRoute =
   | {
@@ -156,7 +156,7 @@ const run = {
   terminal_state: true,
 } as unknown as RunRecord;
 
-const store = { get: async () => snap(run), list: async () => listing([run]) } as never;
+const store = { get: async () => snap(run), scan: scanning(() => [run]) } as never;
 
 // The NON-CONFORMING shape, and the only fixture that can discriminate three of the rows below: a
 // record with no total at all (so the uncached fallback arm is the one that fires) whose single
@@ -189,7 +189,8 @@ const partialRun = {
 } as unknown as RunRecord;
 const partialStore = {
   get: async () => snap(partialRun),
-  list: async () => listing([partialRun]),
+  scan: scanning(() => [partialRun]),
+  ...neverPurges,
 } as never;
 
 // issue #600 PR 2 — the MISMATCH shape: one request that asked for 1 hour (sent as `ttl`, stated on
@@ -238,7 +239,8 @@ const mismatchRun = {
 } as unknown as RunRecord;
 const mismatchStore = {
   get: async () => snap(mismatchRun),
-  list: async () => listing([mismatchRun]),
+  scan: scanning(() => [mismatchRun]),
+  ...neverPurges,
 } as never;
 // caching 3-B (A6) — the SPLIT shape: an OpenAI drive to a custom endpoint whose setting was stated.
 // Its first request carried the cache key; a later one was answered 400 naming `prompt_cache_key`,
@@ -295,7 +297,8 @@ const splitRun = {
 } as unknown as RunRecord;
 const splitStore = {
   get: async () => snap(splitRun),
-  list: async () => listing([splitRun]),
+  scan: scanning(() => [splitRun]),
+  ...neverPurges,
 } as never;
 
 const workflowStore = {

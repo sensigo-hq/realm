@@ -35,7 +35,7 @@ import { LlmProvider } from './providers/llm-provider.js';
 import { buildReattachFlags } from '../commands/agent.js';
 import { lagless } from '../test-support/lag.js';
 import type { Snapshot } from '@sensigo/realm';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -168,7 +168,7 @@ async function drive(def: WorkflowDefinition, o: DriveOptions = {}): Promise<Dri
   } finally {
     vi.restoreAllMocks();
   }
-  const runId = o.existingRunId ?? (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+  const runId = o.existingRunId ?? (await runsOf(store)).map((s) => s.record)[0]!.id;
   return { result, lines: lines.map((l) => l.split(runId).join('<run>')), calls, runId, store };
 }
 
@@ -535,7 +535,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       const d = await drive(def, {
         during: async (store, call) => {
           if (call !== 1) return;
-          const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+          const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
           const r = await executeStep(store, def, {
             runId,
             command: 'ask',
@@ -562,7 +562,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       const d = await drive(def, {
         during: async (store, call) => {
           if (call !== 1) return;
-          const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+          const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
           const r = await executeStep(store, def, {
             runId,
             command: 'review',
@@ -1063,7 +1063,7 @@ describe(
       ).toBe(true);
       expect(order.slice().sort((a, b) => a - b)).toEqual(order);
       expect(lines.slice(order[0]! + 1, order[1]!).filter((l) => l.includes('→'))).toEqual([]);
-      expect((await runStore.list()).snapshots.map((s) => s.record)[0]!.completed_steps).toEqual([
+      expect((await runsOf(runStore)).map((s) => s.record)[0]!.completed_steps).toEqual([
         'confirm',
         'check',
         'after',
@@ -1093,7 +1093,8 @@ describe(
           '    calls += 1;',
           '    if (calls === 1) return { ok: true };',
           "    const { runStore: store } = await openRealmHome({ home: join(process.env.HOME, '.realm') });",
-          '    const { snapshots } = await store.list();',
+          '    const snapshots = [];',
+          "    for await (const page of store.scan({}, { pageSize: 1000 })) for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);",
           '    const { record: fresh } = await store.get(snapshots[0].record.id);',
           "    const first = fresh.evidence.find((e) => e.step_id === 'first');",
           '    const later = { ...first, output_summary: { ...first.output_summary, ok: false } };',

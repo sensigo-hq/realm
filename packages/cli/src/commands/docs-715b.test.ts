@@ -439,7 +439,7 @@ describe('#715 (b) 04 §E — testing-package.md: the store contracts', () => {
     // DRIVE_FAILURE_KEEPS_ITS_FENCE case (run-store-fidelity.contract.test).
     claim(
       TESTING,
-      "| `READ_AT_CAPPED` | a `get` or `list` of a record stamped more than 5 seconds after the clock does not judge it at the clock's time plus 5 seconds, of one up to 5 seconds after the clock at its own time, or of one behind the clock at the clock's time |",
+      "| `READ_AT_CAPPED` | a `get` or a page of `scan` of a record stamped more than 5 seconds after the clock does not judge it at the clock's time plus 5 seconds, of one up to 5 seconds after the clock at its own time, or of one behind the clock at the clock's time |",
     );
     claim(
       TESTING,
@@ -650,7 +650,7 @@ describe('#715 (b) 04 §E — the CHANGELOG', () => {
     // The store contracts (WRITE_ONE_READING, READS_ONE_READING, SETTLE_ONE_READING); the admission
     // cells of commit 1 (a store with no clock or no settleStep).
     claimChangelog(
-      '**BREAKING — every run store call returns the time it was judged at (issue #715).** `get`, `update` and `claimStep` return `{ record, at }`; `create` returns `{ record, at, created }`; `list` returns `{ snapshots, read_at, consistent_snapshot }`; `settleStep` returns its result with `at`. A store must have `clock` and `settleStep`: Realm refuses one without either with `VALIDATION_OPTION_INVALID`.',
+      '**BREAKING — every run store call returns the time it was judged at (issue #715).** `get`, `update` and `claimStep` return `{ record, at }`; `create` returns `{ record, at, created }`; `list` returned `{ snapshots, read_at, consistent_snapshot }` until `scan` replaced it in this release (below); `settleStep` returns its result with `at`. A store must have `clock` and `settleStep`: Realm refuses one without either with `VALIDATION_OPTION_INVALID`.',
     );
     // Correction 1, C-3: this file's settlementContract cells (the `route` failures, the two laws in
     // the generated list); the empty pass is gone with the store without settleStep (D-19).
@@ -688,5 +688,53 @@ describe('#715 (b) 04 §E — the CHANGELOG', () => {
     // expiry-receipt-729 (re-pinned in commit 2); the late-answer cells (LATE_ANSWER_ONE_WRITE).
     claimChangelog('**BREAKING — `ExpiryReceipt.by_this_call` (issue #715).**');
     claimChangelog('**The refusal reason `gate_expired_pending` (issue #715).**');
+  });
+});
+
+describe('#616 PR-2c c4 — the run store interface changes once: the words', () => {
+  it("core-library.md's member count is the interface's, its rows name the four members and no `list`, and testing-package.md and the CHANGELOG say the same", () => {
+    // The behaviour: store-interface-616-c4.test.ts (the interface's members, type-level); the
+    // fidelity contract's laws on both stores; the seven commands' C1 walk. (a) red when the count
+    // sentence drifts from the built interface (a member added or removed without it), a row or a
+    // sentence is reworded or removed, or `RunStore` has `list` again; (b) prints the counts and
+    // the sentence.
+    const { checker, core } = publicSurface();
+    const runStore = resolved(
+      checker,
+      core.find((s) => s.getName() === 'RunStore')!,
+    );
+    const members = checker.getDeclaredTypeOfSymbol(runStore).getProperties();
+    const isFunction = (m: ts.Symbol) => (m.declarations ?? []).some(ts.isMethodSignature);
+    const isOptional = (m: ts.Symbol) => (m.flags & ts.SymbolFlags.Optional) !== 0;
+    const counts = {
+      properties: members.filter((m) => !isFunction(m)).length,
+      required: members.filter((m) => isFunction(m) && !isOptional(m)).length,
+      optional: members.filter((m) => isFunction(m) && isOptional(m)).length,
+      list: members.some((m) => m.getName() === 'list'),
+    };
+    expect(counts.list).toBe(false);
+    claim(
+      CORE,
+      `A run store implements \`RunStore\`. It has ${counts.properties} properties, ${counts.required} functions every store must have, and ${counts.optional} optional function.`,
+    );
+    for (const sentence of [
+      "| `scan(filter, { pageSize, projection?, after? })` | Yes | Read the clock once per page, then the records the filter selects, in id order, `pageSize` at a time (1 to 1,000), and return each page as `{ items, read_at, consistent_snapshot, derived_at_read, next_after? }`; with `include_purged` the deleted runs' tombstones come as `{ kind: 'purged', … }` items beside the `{ kind: 'run', run }` items. |",
+      "| `resolveKey(workflowId, key)` | Yes | Say who holds an idempotency key: `{ state: 'held', run_id }` when a run carries it; `{ state: 'purged', runs, since }` when only deleted runs did; `{ state: 'unseen', since }` when none has, as far as the store's tombstones reach. |",
+      '| `tombstonesSince()` | Yes | The tombstone horizon: the instant before which a deleted run may no longer be on record. |',
+      '| `purgesRuns` | Yes | `true` when the store can delete a run and keeps a tombstone for each deleted run, so `resolveKey` can answer `purged` and `scan` with `include_purged` can list them; `false` for a store that never deletes a run. |',
+      '`listWithDiagnostics` lists such a file apart (`copies`), and `reconcileKeys` and a keyed create pass over it.',
+      'every readable run, each record as `get` returns it,',
+      '| `takeRawReading`, `floorAtRecord` | `get`, a page of `scan` |',
+      'as `get` and `scan` do for each record',
+    ])
+      claim(CORE, sentence);
+    expect(read(CORE)).not.toContain('`list(workflowId?)`');
+    claim(
+      TESTING,
+      "A run store that keeps runs in memory. It has the 9 functions of a run store: `create`, `get`, `update`, `claimStep`, `settleStep`, `stampSeal`, `scan`, `resolveKey` and `tombstonesSince`, and it purges nothing: `purgesRuns` is `false`, so `resolveKey` answers `held` or `unseen`, never `purged`. It keeps every field of a run's record.",
+    );
+    claimChangelog(
+      "**BREAKING — the run store interface changes once (issue #616).** `RunStore.list()` is gone: it read the whole store in one call. In its place every store has `scan(filter, { pageSize, projection, after })`, pages of at most 1,000 records in id order; `resolveKey(workflowId, key)`, which says whether a run holds an idempotency key, only deleted runs did, or none has; `tombstonesSince()`, the horizon those answers reach back to; and `purgesRuns`, `true` for a store that deletes runs and keeps tombstones. Every store outside this repository that implements `RunStore` must add the four members. `InMemoryStore` has all four (`purgesRuns: false`; its horizon is the start of time, since it never purges). `runStoreFidelityContract` holds every store to the laws of paging, of the key's three-way answer, of the tombstones and of the horizon — the purge laws run only against a store with `purgesRuns: true`, which supplies the contract's `purge` adapter hook; a store whose `purgesRuns` disagrees with that hook fails the contract. `JsonFileStore` no longer implements `RunStore`. `realm run list`, `realm run reclaim`, `realm run cleanup`, `realm run drain`, `realm run purge`, `realm run migrate` and `realm listen` print what they printed.",
+    );
   });
 });

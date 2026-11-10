@@ -19,7 +19,7 @@ import {
   type TraceBufferStore,
 } from '@sensigo/realm';
 import { composeRunCost, deriveRunPhase, type PriceSource, type RunRecord } from '@sensigo/realm';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
 
 async function makeStores(): Promise<{
   runStore: TempHome['home']['runStore'];
@@ -559,7 +559,7 @@ describe('buildExportBundle', () => {
       // What the stores hold, through their own verbs (#616 PR-2c, c10a-2b): every run's id,
       // version and updated_at, and each store's byte count for this run.
       const held = async (): Promise<unknown> => ({
-        runs: (await runStore.list()).snapshots.map((s) => ({
+        runs: (await runsOf(runStore)).map((s) => ({
           id: s.record.id,
           version: s.record.version,
           updated_at: s.record.updated_at,
