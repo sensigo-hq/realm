@@ -17,7 +17,7 @@ import {
 import type { UnreadableIdEntry, WorkflowDefinition } from '@sensigo/realm';
 import type { CliHome } from '../lib/home.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
-import { plantRegistryRow } from '../test-support/plant-registry-row.js';
+import { plantRegistryRow } from '@sensigo/realm-store-sqlite/test-support';
 
 const TAIL = ' — realm cannot audit what it cannot read.';
 

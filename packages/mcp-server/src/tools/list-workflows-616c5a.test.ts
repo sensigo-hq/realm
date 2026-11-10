@@ -1,9 +1,9 @@
 // list-workflows-616c5a.test.ts — #616 PR-2c c5a on the MCP door: `list_workflows` through the real
 // server (`createRealmMcpServer`, an in-memory client) with a registrar that is not the JSON registry.
-// The server neither depends on store-sqlite nor reaches it, so its SQLite arm is a double whose
-// entries are core's own (`unreadableById` over core's refusal builders); the real SQLite listing is
-// pinned in store-sqlite's `workflow-store-616.test.ts` (c5a). The file arm's whole entry is LW2's
-// (`list-workflows.test.ts`).
+// The id-arm cells use a double whose entries are core's own (`unreadableById` over core's refusal
+// builders); the registry's pointer arm, which no double can reach, is pinned on the real store with a
+// row planted beside it (c10b-2b, DELTAS 58e). The real SQLite listing is pinned in store-sqlite's
+// `workflow-store-616.test.ts` (c5a). The file arm's whole entry is LW2's (`list-workflows.test.ts`).
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { afterEach, describe, expect, it } from 'vitest';
@@ -19,6 +19,7 @@ import {
   type WorkflowDefinition,
   type WorkflowRegistrar,
 } from '@sensigo/realm';
+import { plantRegistryRow } from '@sensigo/realm-store-sqlite/test-support';
 import { createRealmMcpServer } from '../server.js';
 import { declared } from '../test-support/declared.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -63,6 +64,54 @@ async function listWorkflows(workflowStore: WorkflowRegistrar): Promise<Record<s
   };
   return JSON.parse(raw.content[0]!.text) as Record<string, unknown>;
 }
+
+/** `list_workflows`, called through a server built on the home's own four stores. */
+async function listOnHome(h: TempHome): Promise<Record<string, unknown>> {
+  const server = createRealmMcpServer({ ...h.stores });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'c10b-2b', version: '0' });
+  await Promise.all([server.connect(st), client.connect(ct)]);
+  const raw = (await client.callTool({ name: 'list_workflows', arguments: {} })) as {
+    content: Array<{ text: string }>;
+  };
+  return JSON.parse(raw.content[0]!.text) as Record<string, unknown>;
+}
+
+describe('#616 PR-2c c10b-2b — list_workflows on the real registry', () => {
+  // The real case: something other than Realm wrote a registered copy's row, so it no longer holds
+  // JSON. The agent listing workflows must still see the good ones and be told what happened to this one.
+  it("the pointer arm (a current copy that is not JSON, planted beside a good registration): the entry by `workflow_id` carries the store's pointer sentence and no repair, the warnings line counts it, the good workflow is listed", async () => {
+    const h = await makeTempHome();
+    handles.push(h);
+    await h.stores.workflowStore.register(DEF);
+    await plantRegistryRow(h.path, { id: 'damaged', text: '{ not json' });
+
+    const reply = await listOnHome(h);
+    const unreadable = reply['unreadable'] as Array<Record<string, unknown>>;
+    // (1) red when the store's pointer sentence changes, when the entry's class or keys change, when the
+    //     pointer arm is given a repair act (`repairActFor`), when the warnings line stops counting it,
+    //     or when the damaged copy takes the good workflow out of the list; (2) prints the listed
+    //     workflows, the entries, their keys and the warnings.
+    expect({
+      workflows: reply['workflows'],
+      unreadable,
+      keys: unreadable.map((u) => Object.keys(u).sort()),
+      warnings: reply['warnings'],
+    }).toEqual({
+      workflows: [{ id: 'wf', name: 'WF', version: 1 }],
+      unreadable: [
+        {
+          workflow_id: 'damaged',
+          class: 'parse',
+          reason:
+            "The registered copy of workflow 'damaged' is missing from the store or is not JSON: something other than Realm changed the database. Register the workflow again from its source; if this message comes back, restore the database from a backup.",
+        },
+      ],
+      keys: [['class', 'reason', 'workflow_id']],
+      warnings: ["1 registered workflow copy could not be read — see 'unreadable'."],
+    });
+  });
+});
 
 describe('#616 PR-2c c5a — list_workflows over a registrar that is not the JSON registry', () => {
   it("the id arm (the SQLite registry's entries): each entry by `workflow_id` with no `file`, the id-arm hint, the warnings line as before", async () => {
