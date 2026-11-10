@@ -9,7 +9,7 @@
 | `realm mcp`   | Over the standard input and output of the process. | The assistant's client, on your machine. | The client that started it. |
 | `realm serve` | Over HTTP.                                         | You.                                     | Anyone who has the token.   |
 
-Both serve the 11 tools listed in [MCP tools](../mcp/tools.md) (`advance_run` was added after version 0.46.0, which serves 10), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`. Which answer tool is among them follows the server's gate-answers value and the client: `submit_human_response` under `offered` and under `asked` with a client that shows no forms, `present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms), and neither under `withheld`, which serves 10. See [Gate answers over MCP](../mcp/gate-answers.md). Added after version 0.47.0. For setting up a client, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
+Both serve the 11 tools listed in [MCP tools](../mcp/tools.md) (`advance_run` was added after version 0.46.0, which serves 10), for every workflow registered in the Realm home's store, and both keep runs there (`~/.realm/realm.db`). Which answer tool is among them follows the server's gate-answers value and the client: `submit_human_response` under `offered` and under `asked` with a client that shows no forms, `present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms), and neither under `withheld`, which serves 10. See [Gate answers over MCP](../mcp/gate-answers.md). Added after version 0.47.0. For setting up a client, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
 
 ## `realm mcp`
 
@@ -144,7 +144,7 @@ realm serve: this realm command's own packages disagree: its realm-mcp runs @sen
 
 ## What both read when a tool is called
 
-- **Workflows** are read from `~/.realm/workflows/` at each call. A workflow registered while the server runs is available at once.
+- **Workflows** are read from the store at each call. A workflow registered while the server runs is available at once.
 - **Project code** is loaded the first time a workflow needs it and kept for the life of the process. After you change a handler or an adapter, restart `realm serve`, or reconnect the client so that it starts `realm mcp` again.
 
 ## The `realm` command itself

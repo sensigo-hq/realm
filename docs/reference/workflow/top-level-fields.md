@@ -31,7 +31,7 @@ The examples below are parts of one file, shown whole in [A file that uses every
 ## `id`
 
 - **Type:** string. **Required.**
-- The name the workflow is registered under. `start_run` takes it as `workflow_id`, and CLI commands take it wherever they ask for a workflow ID. The registered copy is stored as `~/.realm/workflows/<id>.json`.
+- The name the workflow is registered under. `start_run` takes it as `workflow_id`, and CLI commands take it wherever they ask for a workflow ID. The registered copy is stored in the Realm home's store under this `id`.
 - The loader does not check which characters the ID contains. An ID that contains `/` passes `realm workflow validate` and then fails at `realm workflow register`, because the ID is used as a file name.
 
 ```yaml

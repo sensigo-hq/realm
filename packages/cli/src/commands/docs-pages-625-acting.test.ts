@@ -2671,7 +2671,9 @@ describe(
       );
       claim(
         PAGE,
-        '| `diverged`  | The store holds the run at another version, or with other content at its version, or a live run already holds its idempotency key. The stored run is kept.',
+        // #616 PR-2c c12 (the c11 amendment): the line names the live run that holds the key —
+        // run-import-core-616.test.ts, "… the live run <id> already holds this run's idempotency key".
+        '| `diverged`  | The store holds the run at another version, or with other content at its version, or a live run already holds its idempotency key; the line names that run. The stored run is kept.',
       );
       claim(
         PAGE,

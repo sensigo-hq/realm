@@ -135,10 +135,11 @@ describe(
       return run.id;
     }
 
-    it('realm-mcp-and-serve.md: realm mcp and realm serve both serve the 11 tools, for the workflows in ~/.realm/workflows/, and keep runs in ~/.realm/runs/', async () => {
+    it("realm-mcp-and-serve.md: realm mcp and realm serve both serve the 11 tools, for the workflows in the Realm home's store, and keep runs there", async () => {
       claim(
         'docs/reference/cli/realm-mcp-and-serve.md',
-        'Both serve the 11 tools listed in [MCP tools](../mcp/tools.md) (`advance_run` was added after version 0.46.0, which serves 10), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`.',
+        // #616 PR-2c c12: the home's store, `realm.db` (LEFTOVERS-2c 43).
+        "Both serve the 11 tools listed in [MCP tools](../mcp/tools.md) (`advance_run` was added after version 0.46.0, which serves 10), for every workflow registered in the Realm home's store, and both keep runs there (`~/.realm/realm.db`).",
       );
       // #627 W correction 2 (6.1): the answer tool by value — present_question only on `realm mcp`;
       // `realm serve` sends no forms (executed by realm-mcp's http-door-627 :: "a server built per

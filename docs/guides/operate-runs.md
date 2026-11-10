@@ -167,7 +167,7 @@ Without `--dry-run`, the same command abandons them. It leaves runs that are wai
 
 ## Keep the store tidy
 
-Run records stay on disk until you remove them.
+Run records stay on disk until you remove them. `realm db backup <path>` copies the whole store — every run, the registered workflows, replays, failed attempts, trace buffers and `realm listen`'s duplicate-webhook marks — to a new file outside the home and checks the copy; `realm run export` writes one run. See [`realm db`](../reference/cli/realm-db.md#backup).
 
 ### Keep a copy first
 
@@ -215,7 +215,7 @@ Purge never touches a run that is still open. To purge one run, give its ID in p
 
 ## What the output hides
 
-A run's file keeps every value as it was given, except what `realm agent` records of what it sent the model (its drive failures and its tools' errors), which is kept as the model saw it, and the error of a project that failed to load, which is masked where it is caught. A message about the text of your own deployment manifest, such as a malformed `${secret:…}` reference, is masked wherever it is printed, so on your own terminal it shows as you typed it. What Realm prints hides secrets, depending on who reads it (added after version 0.47.1):
+A run's record keeps every value as it was given, except what `realm agent` records of what it sent the model (its drive failures and its tools' errors), which is kept as the model saw it, and the error of a project that failed to load, which is masked where it is caught. A message about the text of your own deployment manifest, such as a malformed `${secret:…}` reference, is masked wherever it is printed, so on your own terminal it shows as you typed it. What Realm prints hides secrets, depending on who reads it (added after version 0.47.1):
 
 | Where it is shown                                             | What is hidden                                                                                                                                                                                                           |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

@@ -2,15 +2,56 @@
 
 <!-- description: Upgrade Realm without surprises: read what changed, upgrade every Realm package together, and check your workflows and runs against the new version. -->
 
-This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.43.0 to 0.45.0, except the two lines in step 2 that the 0.46.0 `realm` command printed for a project still on 0.43.0.
+This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.43.0 to 0.45.0, except the two lines in step 2 that the 0.46.0 `realm` command printed for a project still on 0.43.0, and the outputs of the first section, which the version after 0.48.0 printed.
 
 ## What an upgrade can change
 
 Realm's version starts with 0, and a release such as 0.44.0 may change behaviour that 0.43.0 had. Three things are worth knowing before you start:
 
 - **Workflows you registered keep working as they were.** A new version often checks workflow files more strictly. Those checks apply when a workflow is loaded from its file. A copy that is already registered is not checked again until you register it again.
-- **Runs carry over.** Runs started on the old version can be listed, inspected and continued on the new one.
-- **All Realm packages must be the same version.** There are four: `@sensigo/realm`, `@sensigo/realm-cli`, `@sensigo/realm-mcp` and `@sensigo/realm-testing`.
+- **Runs carry over, with one exception.** Runs started on the old version can be listed, inspected and continued on the new one. The exception is the version after 0.48.0, which keeps runs in one SQLite file instead of JSON files: its first command on an old home refuses to run until you move the old folders out and import the runs. Do [the first section](#move-your-runs-into-the-sqlite-store) before anything else.
+- **All Realm packages must be the same version.** There are five: `@sensigo/realm`, `@sensigo/realm-cli`, `@sensigo/realm-mcp`, `@sensigo/realm-testing` and, from the version after 0.48.0, `@sensigo/realm-store-sqlite`, which `@sensigo/realm-cli` and `@sensigo/realm-mcp` install for you.
+
+## Move your runs into the SQLite store
+
+From the version after 0.48.0, every `realm` command and the `realm-mcp` server keep their data in one SQLite file, `realm.db`, in the Realm home (`~/.realm`), and need Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later. Earlier versions kept JSON files in four folders there: `runs`, `workflows`, `replays` and `dedup`. The new version does not read them. Its first command on such a home prints one line, creates nothing and exits with code 1:
+
+```text
+Error: This Realm keeps its store in realm.db and does not read the old JSON directories (runs, workflows) in /home/dana/.realm. Move them out of the home, then import what you want to keep with `save()` or `realm run import`.
+```
+
+The names in the parentheses are the folders it found.
+
+Do this, in this order:
+
+1. **Stop every Realm process that uses the home**: `realm listen`, `realm serve`, `realm mcp` or `realm-mcp` (restart the assistant's client afterwards) and any `realm agent` that is running.
+2. **Upgrade the packages** (step 2 below).
+3. **Move the four folders out of the home — do not delete them yet.** For example `mkdir ~/realm-old && mv ~/.realm/runs ~/.realm/workflows ~/.realm/replays ~/.realm/dedup ~/realm-old/`, for those that exist.
+4. **Register your workflows again from their source files**, `realm workflow register <path>` for each. The registry is not carried over: the new store registers a workflow from its file. Do it before importing, so that a run you then inspect or continue finds its workflow.
+5. **Import the runs**: `realm run import ~/realm-old/runs`. One line per file, then one line that counts them, then one that counts the folder's other entries (the `keys` folder, the `.attempts.jsonl` and trace files) as ignored:
+
+   ```text
+   imported  /home/dana/realm-old/runs/8372be7d-ef0f-489b-98cf-cb87faa5efac.json
+   imported  /home/dana/realm-old/runs/e8e798ce-144e-4c8a-ae98-92ca9585bc14.json
+   2 files: 2 imported.
+   Ignored 2 entries that are not .json files.
+   ```
+
+6. **Check** with `realm run list`: the imported runs are listed with any new ones.
+
+   ```text
+   8372be7d-ef0f-489b-98cf-cb87faa5efac  tidy-notes v1  running  2026-10-20T09:01:00.000Z  0 step(s)
+   e8e798ce-144e-4c8a-ae98-92ca9585bc14  tidy-notes v1  running  2026-10-20T09:00:00.000Z  0 step(s)
+   ```
+
+7. Once every line read `imported` or `unchanged`, you may delete the moved folders. Running the import again is safe: the runs it imported read `unchanged`.
+
+**What is not carried over** stays in the moved folders:
+
+- A run's refused answers — the old `<id>.attempts.jsonl` files are not imported — and, from an export bundle, its failed attempts, trace buffer and sealed traces (the line's notes `attempts_not_imported`, `wal_not_imported`, `sealed_not_imported`).
+- The registered workflows (`workflows/`): register each again from its source (step 4).
+- Saved replays (`replays/`), and `realm listen`'s duplicate-webhook marks (`dedup/`). A delivery whose event id belongs to an imported run still starts nothing: the id is that run's idempotency key.
+- A run whose idempotency key a live run already holds reads `diverged`, and its line names that run; the stored run is kept.
 
 ## 1. Read what changed
 
@@ -171,7 +212,7 @@ Registering again replaces the stored copy. Runs that are still open use the new
 realm run list
 ```
 
-Runs from before the upgrade are listed with the others. A run that was open on the old version can be continued on the new one in the usual way. See [Operate runs](operate-runs.md).
+Runs from before the upgrade are listed with the others. Runs from a home of 0.48.0 or earlier appear here once you have imported them (the first section). A run that was open on the old version can be continued on the new one in the usual way. See [Operate runs](operate-runs.md).
 
 If your store holds runs that finished on a version before 0.39.0, give each its recorded ending. First see what would change:
 

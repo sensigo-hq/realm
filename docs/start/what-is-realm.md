@@ -72,7 +72,7 @@ To weigh Realm against other workflow tools, [How Realm compares](https://realme
 
 ## What you install
 
-Realm is open source under the Apache-2.0 licence and runs on your own machine. The `realm` command-line tool is one npm package, `@sensigo/realm-cli`. Workflows and run records are stored as files under `~/.realm/`. There is nothing to sign up for.
+Realm is open source under the Apache-2.0 licence and runs on your own machine. The `realm` command-line tool is one npm package, `@sensigo/realm-cli`. Workflows and run records are kept in one SQLite file in your home folder, `~/.realm/realm.db`. There is nothing to sign up for.
 
 ## See also
 

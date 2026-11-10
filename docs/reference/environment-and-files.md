@@ -2,7 +2,7 @@
 
 <!-- description: Every environment variable Realm reads, and every file and folder it reads or writes, both under ~/.realm and in a project. -->
 
-This page lists every environment variable Realm reads, and every file and folder it reads or writes: under `~/.realm`, and in a project. The variable list comes from a search of Realm's code for each place it reads the environment. The file list comes from the code and from the folders left by the runs made for these docs.
+This page lists every environment variable Realm reads, and every file and folder it reads or writes: under `~/.realm`, and in a project. The variable list comes from a search of Realm's code for each place it reads the environment. The file list comes from the code and from a listing of a home after one command.
 
 ## Environment variables
 
@@ -56,41 +56,16 @@ This is separate from the `.env` beside `realm.yaml`, which holds a project's se
 
 ## Files under `~/.realm`
 
-| Path                                          | Holds                                                                                                | Written by                                                                                      |
-| --------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `workflows/<workflow-id>.json`                | A registered workflow.                                                                               | `realm workflow register`, `watch`, `realm agent --register`, `realm listen`, `create_workflow` |
-| `runs/<run-id>.json`                          | A run's [record](run-record-and-export.md).                                                          | Every command and tool that changes a run                                                       |
-| `runs/<run-id>.attempts.jsonl`                | The run's refused answers, one a line.                                                               | `execute_step`, `realm agent`                                                                   |
-| `runs/trace-buffer-<run-id>-<step>.jsonl`     | Trace entries sent for a step that has not completed. `<step>` is the step's name in base64.         | `append_trace`                                                                                  |
-| `runs/sealed-trace-<run-id>-<step>.<n>.jsonl` | Trace entries set aside when a step was taken over from another caller.                              | `execute_step`, `realm run reclaim`                                                             |
-| `runs/keys/<hash>.json`                       | For one idempotency key: the run it belongs to. `<hash>` is made from the workflow's ID and the key. | `start_run`, `start_run_batch`, `realm listen`                                                  |
-| `replays/rpl_<id>.json`                       | A saved replay.                                                                                      | `realm run replay --save`                                                                       |
-| `dedup/<workflow-id>/<hour>/<hash>`           | One webhook event already seen. `<hour>` is the hour it arrived, as `YYYYMMDDHH`.                    | `realm listen` with `--dedup-store file`                                                        |
+Every `realm` command and the `realm-mcp` server keep their data in one SQLite file in the Realm home. The first command on a new home creates the home folder, the store file and four fence files:
 
-A key file looks like this:
+| Path                                     | Holds                                                                                                                                                                                                                                                                                      | Written by                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| `realm.db`                               | The store: runs with their evidence, refused answers, trace lines and sealed lines; the registered workflows; saved replays; `realm listen`'s duplicate-webhook marks. Created owner-only (mode 0600).                                                                                     | Every command and tool that opens its stores |
+| `realm.db-wal`, `realm.db-shm`           | SQLite's write-ahead log and its index, beside the file while a process has the store open. A Realm that exits normally leaves none behind; after a crash, the next Realm that opens the store replays the log, and the files go when it exits.                                            | SQLite                                       |
+| `runs`, `workflows`, `replays`, `dedup`  | Four read-only fence files (mode 0444), a few lines of text each, at the names the old JSON store's folders had. A Realm from before the SQLite store that is pointed at this home fails on them at once instead of starting a second store. Do not delete them while Realm uses the home. | The first open of the home                   |
+| `.realm-fence-<name>-<pid>-<random>.tmp` | A fence file being placed; it exists for the length of one write. One left behind by a process that was killed can be deleted when no Realm process is running.                                                                                                                            | The first open of the home                   |
 
-```json
-{
-  "run_id": "cdb126b5-3386-4194-b43c-f14c88dd6bd0",
-  "workflow_id": "sync",
-  "key": "order-22",
-  "params_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-  "updated_at": "2026-10-01T21:34:14.118Z"
-}
-```
-
-Two more kinds of entry exist only while a file is being written:
-
-| Path                             | Is                                                                                |
-| -------------------------------- | --------------------------------------------------------------------------------- |
-| `runs/<file>.lock`               | A folder that marks the file as being written. It is removed when the write ends. |
-| `runs/<file>.<pid>.<random>.tmp` | The new contents of a file, before it replaces the old one.                       |
-
-A temp file left behind under `runs/` by a process that was killed is not removed by Realm. A `.lock` folder left behind is taken over by the next write to that file once the folder is older than 10 seconds.
-
-On version 0.45.0 the temp file's name has a counter where the random part is: `runs/<file>.<pid>.<n>.tmp`.
-
-A workflow is registered the same way: while `workflows/<workflow-id>.json` is being written, `workflows/<workflow-id>.json.<pid>.<random>.tmp` holds the new contents. One left behind by a process that was killed is not removed by Realm; delete it by hand when no `realm` command is running.
+Never delete, move or replace `realm.db` or its side files while a Realm process is running. `realm db backup <path>` writes its copy outside the home; a backup that was killed may leave files whose names begin `<path>.part-` beside its target, which you can delete.
 
 ### The clock a run's times come from
 
@@ -100,13 +75,13 @@ A folder with a `.realm-test-clock` file is a test home. Only `@sensigo/realm-te
 
 The `realm` command and the `realm-mcp` server say once, on standard error, that they opened a store at a test location, on their first read of it: `this store runs on a test clock, now 2030-01-01T00:00:00.000Z`, with that read's time. An MCP reply judged on a test clock says so in its `basis`: `as_of_basis: "test_clock"` (added after version 0.48.0).
 
-### Which commands remove files
+### Which commands remove data
 
-| Command           | Removes                                                           |
-| ----------------- | ----------------------------------------------------------------- |
-| `realm run purge` | An ended run's record, refused answers, trace files and key file. |
+| Command           | Removes                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `realm run purge` | An ended run: its record and evidence, its refused answers, trace lines and sealed lines — rows in `realm.db`. The space goes back to the file (the force line says by how much). Text of a deleted run may stay readable in the file's free pages and in `realm.db-wal` until the file is vacuumed and checkpointed, which the purge does when no other process is using the file. |
 
-`realm listen` removes a `dedup` hour folder once it is older than the workflow's `ttl_minutes`. Nothing removes a registered workflow or a saved replay. Realm keeps runs until `realm run purge` removes them.
+A duplicate-webhook mark expires at the end of its window; `realm listen` removes up to 100 expired marks of a workflow each time it records a new one. Nothing removes a registered workflow or a saved replay. Realm keeps runs until `realm run purge` removes them.
 
 ## Files in a project
 
@@ -130,13 +105,14 @@ Realm writes into a project in two cases:
 | `realm workflow init <name>` | A folder `<name>` with `workflow.yaml`, `schema.json`, `.env.example`, `README.md`, `registry.sample.js` and `realm.yaml`; inside a project, without `.env.example` and `realm.yaml`. |
 | `realm run export <run-id>`  | `<run-id>.realm.json` in the current folder, or the file given with `--out`.                                                                                                          |
 
-## A store other than files
+## A store other than `realm.db`
 
-The paths under `~/.realm/runs` are those of the file store, which every `realm` command uses. A program that calls Realm as a library can keep runs elsewhere. See [Core library](core-library.md).
+Every `realm` command and the `realm-mcp` server use the SQLite store in the Realm home. A program that calls Realm as a library can keep runs in a store of its own. See [Core library](core-library.md).
 
 ## See also
 
 - [Deployment manifest](deployment-manifest.md) covers `realm.yaml` and secrets.
 - [`realm mcp` and `realm serve`](cli/realm-mcp-and-serve.md), [`realm agent`](cli/realm-agent.md), [`realm listen`](cli/realm-listen.md)
 - [`realm run`: commands that act](cli/realm-run-acting.md) covers `purge`.
+- [`realm db`](cli/realm-db.md) covers `backup`, `migrate` and `check`.
 - [Run record and export bundle format](run-record-and-export.md)

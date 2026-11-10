@@ -44,7 +44,7 @@ A step is one unit of work. Its name is the key under `steps`. Three fields matt
 
 ## The registered copy
 
-`realm workflow register` reads your file, checks it, and stores a copy under `~/.realm/workflows/`, named after the workflow's `id`. Commands that take a workflow by name, and AI clients, read this copy, not your file.
+`realm workflow register` reads your file, checks it, and stores a copy in the Realm home's store (`~/.realm/realm.db`), under the workflow's `id`. Commands that take a workflow by name, and AI clients, read this copy, not your file.
 
 Two things follow from that.
 
@@ -78,7 +78,7 @@ One workflow can have many runs at the same time. They do not share anything exc
 
 ## The run record
 
-Every run has one file under `~/.realm/runs/`, named after the run ID. This is the run record. It holds:
+Every run has one record in the Realm home's store, under the run ID. This is the run record. It holds:
 
 - the parameters the run started with;
 - which steps completed, failed or were skipped, and why a step was skipped;
@@ -87,7 +87,7 @@ Every run has one file under `~/.realm/runs/`, named after the run ID. This is t
 
 `realm run inspect <run-id>` prints the record. `realm run list` lists the runs.
 
-The record is a plain file. Realm does not detect a change made to it by hand that leaves a valid run record; an edit that breaks the record (not JSON, a required field missing or of the wrong type, another run's `id`) is refused, naming the file, by every command that reads the run. See [Evidence](evidence.md).
+The record is a row in the store file. A connection that leaves triggers on cannot change a run's identity or rewrite an evidence entry; a change made by SQL outside Realm that leaves a valid record is not detected. See [Evidence](evidence.md).
 
 ## Running without registering
 

@@ -2,7 +2,7 @@
 
 <!-- description: Reference for @sensigo/realm-testing, the package for testing workflows, handlers, adapters and stores: every value and type it exports. -->
 
-`@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 30 values and 23 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
+`@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 37 values and 31 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
 
 ```bash
 npm install --save-dev @sensigo/realm-testing
@@ -386,7 +386,7 @@ Clocks a test moves itself, for a store's `clock` (added after version 0.48.0). 
 
 `set` to an earlier time runs nothing and moves the clock back. A function given to `at` sees the clock at its own time, never earlier. An `advance` runs every due function even when some throw, then rejects with their errors.
 
-A test of Realm's own source keeps `createTestLocation` and `createTestHome`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `.ts` and `.mjs` files in the `src` folders of Realm's four packages, except test files (`*.test.ts`, which create test locations), the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file. The file store reads a clock file, only when it sits beside `runs/`.
+A test of Realm's own source keeps `createTestLocation` and `createTestHome`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `.ts` and `.mjs` files in the `src` folders of Realm's five packages, except test files (`*.test.ts`, which create test locations), the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file. The file store reads a clock file, only when it sits beside `runs/`.
 
 Types: `SettableClock`, `SettableClockOptions`, `TestLocation`, `TestHome`.
 

@@ -82,6 +82,8 @@ The key now points at the new run. The old run stays in the store, and the new r
 Rerun of: 6c48086c-cb0f-47ea-9c33-6279fe42ffdc
 ```
 
+Which run holds a key is worked out from the runs themselves: the newest live run that carries it, or, with no live run, the newest finished run that no other run of the key reruns. So after a run that failed or was abandoned is rerun and the rerun has finished, resuming the first run (`realm run resume`) makes it the key's holder again; and after the newest run of a key is deleted (`realm run purge <id> --force`), an older finished run of that key, even a failed one, holds it again, and a repeat with the default `reuse` returns that run.
+
 `rerun_if_failed` is the usual choice for work that should be tried again after a failure but never done twice. After a run that failed, it started a new one; after a run that completed, it returned the completed run.
 
 ## Start many runs at once

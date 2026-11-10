@@ -567,7 +567,7 @@ Takes the outputs the run's steps recorded, changes the ones you name, and check
 | Flag                            | What it does                                                          |
 | ------------------------------- | --------------------------------------------------------------------- |
 | `--with <step>.<field>=<value>` | Replaces one field of one step's output. Can be given more than once. |
-| `--save`                        | Stores the result in `~/.realm/replays/` and prints its ID.           |
+| `--save`                        | Stores the result in the Realm home's store and prints its ID.        |
 
 A value of `true` or `false` is read as a boolean, a number as a number, and anything else as text. `<field>` can be a path with dots, such as `result.score`.
 
