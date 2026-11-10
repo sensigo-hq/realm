@@ -336,7 +336,7 @@ describe(
         '7. Once every line read `imported` or `unchanged`, you may delete the moved folders. Running the import again is safe: the runs it imported read `unchanged`.',
         '**What is not carried over** stays in the moved folders:',
         // run-import-core-616.test.ts (the three notes); run-import-616.test.ts (`.attempts.jsonl` not read).
-        "- A run's refused answers — the old `<id>.attempts.jsonl` files are not imported — and, from an export bundle, its failed attempts, trace buffer and sealed traces (the line's notes `attempts_not_imported`, `wal_not_imported`, `sealed_not_imported`).",
+        "- The import copies and moves nothing: the records stay in the moved folder until you delete it. Not imported from it: a run's refused answers (the old `<id>.attempts.jsonl` files), its trace buffer and sealed traces (the old `trace-buffer-…` and `sealed-trace-…` `.jsonl` files) and the `keys` folder (the store works out which run holds a key from the runs themselves). From an export bundle, its failed attempts, trace buffer and sealed traces are not imported either (the line's notes `attempts_not_imported`, `wal_not_imported`, `sealed_not_imported`).",
         '- The registered workflows (`workflows/`): register each again from its source (step 4).',
         // listen.ts: a delivery whose id matches an existing run (`created: false`) spawns nothing.
         "- Saved replays (`replays/`), and `realm listen`'s duplicate-webhook marks (`dedup/`). A delivery whose event id belongs to an imported run still starts nothing: the id is that run's idempotency key.",
@@ -355,6 +355,77 @@ describe(
       expect(read('packages/cli/src/commands/run-import-core-616.test.ts')).toContain(
         "the live run run-holder already holds this run's idempotency key",
       );
+    });
+  },
+);
+
+describe(
+  '#616 PR-2c c12, review fixes (#1120) — an ID with a `/`; the home hidden in piped output',
+  { timeout: 60_000 },
+  () => {
+    it('top-level-fields.md: an ID with a `/` validates, registers and lists like any other, on the built CLI', () => {
+      claim(
+        'docs/reference/workflow/top-level-fields.md',
+        'The loader does not check which characters the ID contains: the store keeps the copy under the `id` as written, so an ID with a `/` passes `realm workflow validate` and registers and lists like any other.',
+      );
+      const home = freshHome('slash-id');
+      const source = join(scratch, 'slash-id.yaml');
+      writeFileSync(
+        source,
+        'id: team/notes\nname: Team notes\nversion: 1\nsteps:\n  work:\n    description: Work.\n    execution: auto\n    handler: noop\n',
+      );
+      const validated = realm(['workflow', 'validate', source], home);
+      const registered = realm(['workflow', 'register', source], home);
+      const listed = realm(['workflow', 'list'], home);
+      // (a) red when an ID with a `/` is refused at validate or register, or is not listed; (b) prints
+      //     the three outputs.
+      expect({
+        validated: [validated.code, validated.out.trimEnd()],
+        registered: [registered.code, registered.out.trimEnd()],
+        listed: [listed.code, listed.out.split('\n').some((l) => l.startsWith('team/notes '))],
+      }).toEqual({
+        validated: [0, 'Valid: team/notes v1 (1 step)'],
+        registered: [0, 'Registered: team/notes v1 (1 step)'],
+        listed: [0, true],
+      });
+    });
+
+    it('upgrade.md: piped, the refusal and the import lines hide the home folder; the page says so', () => {
+      claim(
+        UPGRADE,
+        "When the output goes to a file or a pipe, the home folder's name in this line and in the import's lines is hidden, as in every other output; a terminal shows it.",
+      );
+      const home = freshHome('piped');
+      mkdirSync(join(home, '.realm'));
+      cpSync(join(FIXTURE, 'runs'), join(home, '.realm', 'runs'), { recursive: true });
+      // No REALM_NOT_SECRET here: the outputs go to pipes, which are a log.
+      const piped = (args: string[]) =>
+        spawnSync(process.execPath, [CLI, ...args], {
+          cwd: scratch,
+          env: { PATH: process.env['PATH'] ?? '', HOME: home },
+          encoding: 'utf8',
+        });
+      const refused = piped(['run', 'list']);
+      mkdirSync(join(home, 'realm-old'));
+      renameSync(join(home, '.realm', 'runs'), join(home, 'realm-old', 'runs'));
+      const imported = piped(['run', 'import', join(home, 'realm-old', 'runs')]);
+      const lines = imported.stdout.split('\n').filter((l) => l.startsWith('imported  '));
+      // (a) red when a piped line shows the home folder's name, or stops hiding it as `[REDACTED]`;
+      //     (b) prints both outputs.
+      expect(
+        {
+          refusal: [
+            refused.stderr.includes(home),
+            refused.stderr.includes(' in [REDACTED]/.realm. '),
+          ],
+          imports: [
+            lines.length,
+            lines.every((l) => l.startsWith('imported  [REDACTED]/realm-old/runs/')),
+          ],
+          homeShown: imported.stdout.includes(home),
+        },
+        `${refused.stderr}\n${imported.stdout}`,
+      ).toEqual({ refusal: [false, true], imports: [2, true], homeShown: false });
     });
   },
 );
@@ -426,7 +497,7 @@ describe('#616 PR-2c c12 — the CHANGELOG’s Upgrading section', { timeout: 60
     for (const sentence of [
       "**1. Your runs move into one SQLite file (issue #616).** Every `realm` command and the `realm-mcp` server now keep runs, the workflow registry, replays, failed attempts, trace buffers and `realm listen`'s duplicate-webhook marks in `realm.db` in the Realm home.",
       'The first command on a home that still holds the old JSON folders (`runs`, `workflows`, `replays`, `dedup`) refuses with one line — `This Realm keeps its store in realm.db and does not read the old JSON directories (…) in <home>. Move them out of the home, then import what you want to keep with save() or realm run import.` — and creates nothing. Stop every Realm process, move the four folders out of the home, register your workflows again from their source files, then `realm run import <moved>/runs`. The procedure, with what is not carried over, is [Move your runs into the SQLite store](docs/guides/upgrade.md#move-your-runs-into-the-sqlite-store).',
-      "**2. Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.** The store uses Node's built-in SQLite at those versions; on an older Node the first command stops with one line naming the floor (`STATE_STORE_DRIVER_UNAVAILABLE`).",
+      "**2. Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.** The store uses Node's built-in SQLite at those versions; on an older Node the first command stops with one `Error:` line that ends with the floor's words, `Realm's store needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.`",
       '**3. Five packages at one version.** `@sensigo/realm-store-sqlite` is published with the others and installed for you by `@sensigo/realm-cli` and `@sensigo/realm-mcp`; `npm ls @sensigo/realm` must still show one version.',
       "**4. The former `gc` and `reconcile` subcommands of `realm run`, and the former `migrate` subcommand of `realm workflow`, are removed.** A script that calls one now stops with `error: unknown command '<name>'` on stderr and exit code 1; what they did is done by the store (one transaction per write) and by `realm db migrate`.",
     ])
@@ -475,7 +546,7 @@ describe('#616 PR-2c c12 — no JSON-era sentence is left (C6)', () => {
     },
     {
       page: UPGRADE,
-      words: 'the old `<id>.attempts.jsonl` files are not imported',
+      words: "a run's refused answers (the old `<id>.attempts.jsonl` files)",
       why: "H: the c11 amendment's must-say, what is not carried over",
     },
     {

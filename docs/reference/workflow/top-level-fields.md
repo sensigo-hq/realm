@@ -32,7 +32,7 @@ The examples below are parts of one file, shown whole in [A file that uses every
 
 - **Type:** string. **Required.**
 - The name the workflow is registered under. `start_run` takes it as `workflow_id`, and CLI commands take it wherever they ask for a workflow ID. The registered copy is stored in the Realm home's store under this `id`.
-- The loader does not check which characters the ID contains. An ID that contains `/` passes `realm workflow validate` and then fails at `realm workflow register`, because the ID is used as a file name.
+- The loader does not check which characters the ID contains: the store keeps the copy under the `id` as written, so an ID with a `/` passes `realm workflow validate` and registers and lists like any other.
 
 ```yaml
 id: review-note

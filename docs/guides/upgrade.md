@@ -20,7 +20,7 @@ From the version after 0.48.0, every `realm` command and the `realm-mcp` server 
 Error: This Realm keeps its store in realm.db and does not read the old JSON directories (runs, workflows) in /home/dana/.realm. Move them out of the home, then import what you want to keep with `save()` or `realm run import`.
 ```
 
-The names in the parentheses are the folders it found.
+The names in the parentheses are the folders it found. When the output goes to a file or a pipe, the home folder's name in this line and in the import's lines is hidden, as in every other output; a terminal shows it.
 
 Do this, in this order:
 
@@ -48,7 +48,7 @@ Do this, in this order:
 
 **What is not carried over** stays in the moved folders:
 
-- A run's refused answers — the old `<id>.attempts.jsonl` files are not imported — and, from an export bundle, its failed attempts, trace buffer and sealed traces (the line's notes `attempts_not_imported`, `wal_not_imported`, `sealed_not_imported`).
+- The import copies and moves nothing: the records stay in the moved folder until you delete it. Not imported from it: a run's refused answers (the old `<id>.attempts.jsonl` files), its trace buffer and sealed traces (the old `trace-buffer-…` and `sealed-trace-…` `.jsonl` files) and the `keys` folder (the store works out which run holds a key from the runs themselves). From an export bundle, its failed attempts, trace buffer and sealed traces are not imported either (the line's notes `attempts_not_imported`, `wal_not_imported`, `sealed_not_imported`).
 - The registered workflows (`workflows/`): register each again from its source (step 4).
 - Saved replays (`replays/`), and `realm listen`'s duplicate-webhook marks (`dedup/`). A delivery whose event id belongs to an imported run still starts nothing: the id is that run's idempotency key.
 - A run whose idempotency key a live run already holds reads `diverged`, and its line names that run; the stored run is kept.

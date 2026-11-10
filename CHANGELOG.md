@@ -10,7 +10,7 @@ All notable changes to this project are documented here.
 
 **1. Your runs move into one SQLite file (issue #616).** Every `realm` command and the `realm-mcp` server now keep runs, the workflow registry, replays, failed attempts, trace buffers and `realm listen`'s duplicate-webhook marks in `realm.db` in the Realm home. The first command on a home that still holds the old JSON folders (`runs`, `workflows`, `replays`, `dedup`) refuses with one line — `This Realm keeps its store in realm.db and does not read the old JSON directories (…) in <home>. Move them out of the home, then import what you want to keep with save() or realm run import.` — and creates nothing. Stop every Realm process, move the four folders out of the home, register your workflows again from their source files, then `realm run import <moved>/runs`. The procedure, with what is not carried over, is [Move your runs into the SQLite store](docs/guides/upgrade.md#move-your-runs-into-the-sqlite-store).
 
-**2. Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.** The store uses Node's built-in SQLite at those versions; on an older Node the first command stops with one line naming the floor (`STATE_STORE_DRIVER_UNAVAILABLE`).
+**2. Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.** The store uses Node's built-in SQLite at those versions; on an older Node the first command stops with one `Error:` line that ends with the floor's words, `Realm's store needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.`
 
 **3. Five packages at one version.** `@sensigo/realm-store-sqlite` is published with the others and installed for you by `@sensigo/realm-cli` and `@sensigo/realm-mcp`; `npm ls @sensigo/realm` must still show one version.
 
