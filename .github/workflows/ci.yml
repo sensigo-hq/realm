@@ -98,7 +98,7 @@ jobs:
           node-version: '22.22.3'
           cache: 'npm'
       - run: npm ci
-      # `npm run test` builds the four packages first (turbo.json), so no separate build step.
+      # `npm run test` builds the five packages first (turbo.json), so no separate build step.
       - run: npm run test
 
   # issue #616 PR-1a unit 11 — the SQLite store's floors, each in a job of its own (not a matrix entry
@@ -145,6 +145,26 @@ jobs:
       # The store package and core, which it imports.
       - run: npx turbo run build --filter=@sensigo/realm-store-sqlite
       - run: node packages/store-sqlite/ci/below-floor.mjs
+
+  # issue #616 PR-2c c10b-3b, design-d4's packaging law (A): a host that injects its own stores can use
+  # the library on a Node with no SQLite at all. The script checks that this Node has none (so the leg
+  # checks something), loads the built library and serves one tool call over in-memory stores
+  # (packages/mcp-server/ci/library-on-node20.mjs). Only the script runs here, never the suite. Not a
+  # required check.
+  node20-library:
+    runs-on: ubuntu-latest
+    env:
+      TURBO_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.20.2'
+          cache: 'npm'
+      - run: npm ci
+      # The library and the testing package, with core and the store package by dependency.
+      - run: npx turbo run build --filter=@sensigo/realm-mcp --filter=@sensigo/realm-testing
+      - run: node packages/mcp-server/ci/library-on-node20.mjs
 
   # macOS: only the store package's tests, on a real runner (its mount table, `fullfsync`, the
   # filesystem gate), on Node 24.15.0, the Node the owner's Mac runs. The wider suite has never run
