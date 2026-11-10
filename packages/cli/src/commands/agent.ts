@@ -40,6 +40,7 @@ import {
 import type { ProviderName } from '../agent/providers/llm-provider.js';
 import { runAgent } from '../agent/run-agent.js';
 import { settleAutoFromPriceFile } from '../agent/auto-prices.js';
+import { readEarlierRuns, type EarlierRuns } from '../agent/earlier-runs.js';
 import {
   autoFallbackWindowText,
   cacheableStepCounts,
@@ -596,6 +597,17 @@ export const agentCommand = new Command('agent')
           if (outcome.warning !== undefined) console.error(outcome.warning);
           return outcome.prices;
         };
+        // Caching 3-M (piece C2): the one read of the workflow's earlier runs, here because the
+        // driver's store has no `scan`. No read when nothing can use it: a stated `off` asks for no
+        // caching, and a provider module's requests are not this comparison's.
+        const earlierRunsFor = async (
+          definition: WorkflowDefinition,
+          ownRunId: string | undefined,
+        ): Promise<{ earlierRuns?: EarlierRuns }> => {
+          if (opts.promptCache === 'off' || moduleProviderId !== undefined) return {};
+          const earlierRuns = await readEarlierRuns(store, definition, ownRunId);
+          return earlierRuns !== undefined ? { earlierRuns } : {};
+        };
         // `realm agent` is operator-launched: cwd is a legitimate deployment-root default.
         const projectDir = resolve(opts.project ?? process.cwd());
         const extensionOpts = {
@@ -667,6 +679,7 @@ export const agentCommand = new Command('agent')
             { store, workflowStore, ctx: writerCtx() },
             extensionOpts,
           );
+          const earlierRuns = await earlierRunsFor(definition, opts.runId);
           const autoPrices = await settleFromPriceFile(loaded.cacheEconomicsPath);
 
           const gateHandler = buildManifestGateHandler(loaded.notifiers, {
@@ -695,6 +708,7 @@ export const agentCommand = new Command('agent')
               llmTimeoutSeconds: opts.llmTimeout,
               reattachFlags,
               ...promptCacheFor(autoPrices),
+              ...earlierRuns,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
@@ -746,6 +760,7 @@ export const agentCommand = new Command('agent')
             printDriveReceipt();
             process.exit(1);
           }
+          const earlierRuns = await earlierRunsFor(definition, undefined);
           const autoPrices = await settleFromPriceFile(loaded.cacheEconomicsPath);
 
           const gateHandler = buildManifestGateHandler(loaded.notifiers, {
@@ -774,6 +789,7 @@ export const agentCommand = new Command('agent')
               llmTimeoutSeconds: opts.llmTimeout,
               reattachFlags,
               ...promptCacheFor(autoPrices),
+              ...earlierRuns,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }

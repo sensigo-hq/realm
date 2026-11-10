@@ -5,7 +5,7 @@
 // holds prompt text or a digest.
 import { describe, expect, it } from 'vitest';
 import type { CostMiss } from '@sensigo/realm';
-import { gapWords, missSentence } from './inspect.js';
+import { anthropicClause, gapWords, missSentence } from './inspect.js';
 
 type Derived = CostMiss['derived'];
 const REFERENCE = { from: 'reference' } as const;
@@ -258,5 +258,71 @@ describe("caching 3-M A-2b2 — the gap's words", () => {
     [172800, 'about 2 days'],
   ])('%s seconds read "%s"', (seconds, words) => {
     expect(gapWords(seconds), `seconds=${String(seconds)}`).toBe(words);
+  });
+});
+
+describe('caching 3-M B3b — what Anthropic said, in words', () => {
+  type Said = NonNullable<CostMiss['provider']>;
+  const said = (provider: Said): CostMiss => ({
+    ...miss({ cause: 'possibly_expired', predecessor: list(3), gap_s: 420, ...ANTHROPIC_5M }),
+    provider,
+  });
+  const COUNT = ' (about 1200 tokens it could not reuse)';
+
+  // Can fail: two map entries swapped; the count printed when Anthropic gave none; one shared count
+  // suffix for every reason (the `unknown` row with a count). Prints the CostMiss and the clause.
+  it.each<[string, Said, string]>([
+    // The real cases of each reason are in step-view.test.ts; here, what each says to the operator.
+    [
+      'messages_changed, with a count',
+      { reason: 'messages_changed', cache_missed_input_tokens: 1200 },
+      `the messages changed${COUNT}`,
+    ],
+    ['messages_changed, no count', { reason: 'messages_changed' }, 'the messages changed'],
+    [
+      'system_changed, with a count',
+      { reason: 'system_changed', cache_missed_input_tokens: 1200 },
+      `the system text changed${COUNT}`,
+    ],
+    ['system_changed, no count', { reason: 'system_changed' }, 'the system text changed'],
+    [
+      'tools_changed, with a count',
+      { reason: 'tools_changed', cache_missed_input_tokens: 1200 },
+      `the tools changed${COUNT}`,
+    ],
+    ['tools_changed, no count', { reason: 'tools_changed' }, 'the tools changed'],
+    [
+      'model_changed, with a count',
+      { reason: 'model_changed', cache_missed_input_tokens: 1200 },
+      `the model changed${COUNT}`,
+    ],
+    ['model_changed, no count', { reason: 'model_changed' }, 'the model changed'],
+    [
+      'previous_message_not_found',
+      { reason: 'previous_message_not_found' },
+      'it could not find the earlier request',
+    ],
+    ['unavailable', { reason: 'unavailable' }, 'it could not compare the two requests'],
+    [
+      'no_divergence',
+      { reason: 'no_divergence' },
+      'it found no difference between the two requests',
+    ],
+    ['unknown', { reason: 'unknown' }, 'something Realm does not recognise yet'],
+    [
+      'unknown, with a count: its words alone',
+      { reason: 'unknown', cache_missed_input_tokens: 1200 },
+      'something Realm does not recognise yet',
+    ],
+  ])('%s', (_name, provider, words) => {
+    const value = said(provider);
+    expect(anthropicClause(value), JSON.stringify(value)).toBe(`; Anthropic says ${words}`);
+  });
+
+  // A miss with no answer from Anthropic: every line printed before this piece. Can fail: the clause
+  // printed with empty words. Prints the clause.
+  it('a miss Anthropic said nothing about has no clause', () => {
+    const value = miss({ cause: 'unexplained', predecessor: list(3) });
+    expect(anthropicClause(value), JSON.stringify(value)).toBe('');
   });
 });

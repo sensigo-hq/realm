@@ -61,7 +61,7 @@ describe('caching 3-M A-2b — the reading page says what the miss line is', () 
     // `MISS_SENTENCES` in `inspect.ts` (a cause with no sentence does not compile).
     claim(
       READING,
-      'The line ends in a sentence: the first difference the record holds between the two requests and what could have made it, or that the entry possibly expired (the pause was longer than its lifetime), or that the record cannot compare what the two requests sent, or that nothing the cache covers differs on the record.',
+      'After the dash the line gives a sentence: the first difference the record holds between the two requests and what could have made it, or that the entry possibly expired (the pause was longer than its lifetime), or that the record cannot compare what the two requests sent, or that nothing the cache covers differs on the record.',
     );
     // `inspect-miss-words-3m.test.ts` holds every sentence word for word; none says the difference
     // caused the miss.
@@ -78,6 +78,16 @@ describe('caching 3-M A-2b — the reading page says what the miss line is', () 
     // `step-view.test.ts`, A-2b3's (g) rows: no figure from a list price, a file with no
     // `cache_read` rate, or a full read that would exceed the prompt.
     claim(READING, 'The last clause appears only when your economics file prices the request.');
+  });
+
+  it('what Anthropic said (B3b)', () => {
+    // `step-view.test.ts`, B3b's table of answers; `inspect-misses-3m.test.ts`, B3b's rendered lines.
+    claim(
+      READING,
+      'When a request asked Anthropic to compare it with the request before it in the same call and Anthropic answered, the line adds what Anthropic said (added after version 0.48.0).',
+    );
+    // `step-view.test.ts`, B3b's "a call's first request: no provider key" row.
+    claim(READING, "A call's first request has no such comparison, so its line never does.");
   });
 });
 
@@ -99,7 +109,7 @@ describe('caching 3-M A-2b — get_run_state documents `cost.misses`', () => {
     // A-2b1's 1 (b) (`exact`, `from: list`) and 1 (c) (`tolerance`, `from: reference`).
     claim(
       STATE,
-      '`derived` has `cause`, `rule` (`exact` on Anthropic, `tolerance` elsewhere), `expected_tokens`, `shortfall_tokens` and `predecessor` (`{ "from": "list", "at": <position> }` or `{ "from": "reference" }`).',
+      '`derived` has `cause`, `rule` (`exact` on Anthropic, `tolerance` elsewhere), `expected_tokens`, `shortfall_tokens` and `predecessor` (`{ "from": "list", "at": <position> }`, `{ "from": "reference" }` for an earlier drive of this run, or `{ "from": "earlier_run" }`).',
     );
     // A-2b1's 1 (b) (`written`) and 1 (c) (a gap and no lifetime); `cache-misses.test.ts`, A-2a3's
     // cells (`asked`: "a reference that only read").
@@ -124,6 +134,12 @@ describe('caching 3-M A-2b — get_run_state documents `cost.misses`', () => {
     claim(
       STATE,
       "`extra_usd`, beside `derived`, is what the miss cost more than a full read, in US dollars, when the runner's economics file prices both the request and that full read (it needs a `cache_read` rate, and the expected tokens must fit in the prompt).",
+    );
+    // `step-view.test.ts`, B3b's table of answers (each reason, and a count only where one was
+    // given) and "Realm's cause and Anthropic's reason disagree" (`provider` beside `derived`).
+    claim(
+      STATE,
+      '`provider`, beside `derived`, is what Anthropic itself said, when the request asked it to compare with the request before it in the same call and Anthropic answered (added after version 0.48.0): `reason` (`messages_changed`, `model_changed`, `system_changed`, `tools_changed`, `previous_message_not_found`, `unavailable`, `no_divergence` or `unknown`) and, when Anthropic gives one, `cache_missed_input_tokens`, its approximate count of the tokens that would have been read from the cache had the request matched.',
     );
     // `step-view.test.ts`: A-2b1's 1 (a) (every request held: no key) and A-2b3's "a list none of
     // whose requests could be compared has no misses key".
@@ -159,6 +175,10 @@ describe('caching 3-M A-2b — the economics page and the CHANGELOG', () => {
     // `step-view.test.ts`, A-2b1's cells; the CLI and MCP parity registries' `misses` routes.
     claimChangelog(
       '**The composed cost view gains `CostView.misses`.** Numbers and closed words only. (#600)',
+    );
+    // `step-view.test.ts`, B3b's table of answers; `inspect-misses-3m.test.ts`, B3b's rendered lines.
+    claimChangelog(
+      "**`cost.misses` gains `provider`:** what Anthropic itself said about a cache miss, beside Realm's own reason; `realm run inspect` prints it on the miss line. (#600)",
     );
   });
 });

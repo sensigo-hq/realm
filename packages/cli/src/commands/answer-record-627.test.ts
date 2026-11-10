@@ -23,7 +23,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { answererPhrase, renderAnswerLine } from '../lib/holder-render.js';
 import { answererClause } from './respond.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
-import { plantRegistryRow } from '../test-support/plant-registry-row.js';
+import { plantRegistryRow } from '@sensigo/realm-store-sqlite/test-support';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 

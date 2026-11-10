@@ -2,7 +2,7 @@
 // `@sensigo/realm-store-sqlite/test-support`, for tests in other workspace packages that need a second,
 // raw connection on a home's `realm.db` (the one-loader law refuses any other file that loads the
 // built-in, so such a test has no other lawful way to open one). The real cases: a CLI test imports
-// the helper by the package's name; a later unit adds a second export to the entry, or a wildcard
+// the helper by the package's name; a later unit adds a third export to the entry, or a wildcard
 // subpath that makes the rest of the package's test support reachable; the README's section changes
 // without its cell. The tarball's test-support contents are pinned once, by the CLI's pack cell
 // (`packages/cli/src/store-sqlite-package-616.test.ts`, unit 1); a CLI test that uses the helper is
@@ -27,7 +27,7 @@ const says = (sentence: string): boolean => README.includes(sentence);
 /** The README's sentence for the entry, with the cell below that pins what it says. */
 const SENTENCES = {
   testSupport:
-    "`@sensigo/realm-store-sqlite/test-support` exports one function, `openForeignConnection(home)`: a second, raw connection on a home's `realm.db`, opened through the package's one loader, for tests that need a hostile writer or reader beside the store (a held lock, a foreign write, a raised schema version). It is test support, not a production API, and it may change with any release.",
+    "`@sensigo/realm-store-sqlite/test-support` exports two functions, `openForeignConnection(home)` — a second, raw connection on a home's `realm.db`, opened through the package's one loader, for tests that need a hostile writer or reader beside the store (a held lock, a foreign write, a raised schema version) — and `plantRegistryRow(home, { id, text })` — a registered copy written as raw text under its hash, the version guard dropped and put back around the write, so a test can give the store a copy it must refuse. Both are test support, not a production API, and may change with any release.",
 } as const;
 
 /** Where a specifier resolves, as a path in the package, or the error code that refused it. */
@@ -43,18 +43,18 @@ function resolution(specifier: string): string {
 }
 
 describe('#616 PR-2c c9a — the ./test-support entry', () => {
-  it('check A: the entry resolves to the built module and exports exactly openForeignConnection; a deep path into the test support is refused by the exports map; the README says what the entry is', async () => {
+  it('check A: the entry resolves to the built module and exports exactly openForeignConnection and plantRegistryRow; a deep path into the test support is refused by the exports map; the README says what the entry is', async () => {
     const entry = resolution('@sensigo/realm-store-sqlite/test-support');
     const deep = resolution('@sensigo/realm-store-sqlite/test-support/schema-versions.js');
     const keys = Object.keys(await import('@sensigo/realm-store-sqlite/test-support'));
-    // (1) red when the entry exports a second name (a type has no runtime key; Constraints keep types
+    // (1) red when the entry exports a third name or loses one (a type has no runtime key; Constraints keep types
     //     out too), when a wildcard subpath (`./test-support/*`) makes the rest of the test support
     //     reachable, when the entry's target moves off the built module, and when the README's
     //     sentence changes or goes; (2) prints where each specifier resolved or the code that refused
     //     it, the module's export names, and whether the README carries the sentence.
     expect({ entry, keys, deep, says: says(SENTENCES.testSupport) }).toEqual({
       entry: 'resolves to dist/test-support/index.js',
-      keys: ['openForeignConnection'],
+      keys: ['openForeignConnection', 'plantRegistryRow'],
       deep: 'refused ERR_PACKAGE_PATH_NOT_EXPORTED',
       says: true,
     });

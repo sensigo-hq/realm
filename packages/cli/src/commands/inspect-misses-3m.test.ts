@@ -354,4 +354,63 @@ describe('caching 3-M A-2b3 — the miss line says what the miss cost', () => {
     const near = around(lines, `  ${at}  classify  anthropic`);
     expect(near[2], near.join('\n')).toBe(`      ${LINE}`);
   });
+
+  // Caching 3-M B3b: position 4, shown as request 5 and compared with request 4, asked Anthropic to
+  // compare with request 4's answer and Anthropic said the messages changed. The answer is built
+  // from the SDK's types: no live answer is captured.
+  const ANSWERED = REQUESTS.map((request, i) =>
+    i === 4
+      ? {
+          ...request,
+          cache_diagnostics: {
+            asked: true,
+            reference_id: 'msg_01ABCDEFGHJKMNPQRSTVWXYZ',
+            result: { type: 'messages_changed', cache_missed_input_tokens: 1200 },
+          },
+        }
+      : request,
+  );
+  const SAID = '; Anthropic says the messages changed (about 1200 tokens it could not reuse)';
+  const ANSWERED_LINE = LINE.replace('; this miss cost', `${SAID}; this miss cost`);
+
+  // A completed step Anthropic answered about, priced. Can fail: the clause after the money, or not
+  // printed. Prints the lines around it.
+  it("a step: Realm's sentence, then what Anthropic said, then what the miss cost", async () => {
+    const lines = await renderPriced({
+      completed_steps: ['classify'],
+      run_phase: 'completed',
+      terminal_state: true,
+      evidence: [attempt('classify', 'success', '2026-10-29T16:07:28.000Z', ANSWERED)],
+    });
+    const near = around(lines, '     Diagnostics: ');
+    expect(near[1], near.join('\n')).toBe(`       ${ANSWERED_LINE}`);
+  });
+
+  // A drive that failed after the miss: the failure block's own print site. Can fail: the clause
+  // composed on the step line only. Prints the lines around it.
+  it('a failed drive: the line beneath its usage line says what Anthropic said', async () => {
+    const at = '2026-10-29T16:15:00.000Z';
+    const lines = await renderPriced({
+      run_phase: 'running',
+      terminal_state: false,
+      evidence: [],
+      drive_failures: {
+        first_failed_at: at,
+        total: 1,
+        entries: [
+          {
+            at,
+            step: 'classify',
+            provider: 'anthropic',
+            error_class: 'api_status',
+            message: 'rate limited by upstream',
+            elapsed_ms: 1200,
+            usage: ANSWERED,
+          },
+        ],
+      },
+    });
+    const near = around(lines, `  ${at}  classify  anthropic`);
+    expect(near[2], near.join('\n')).toBe(`      ${ANSWERED_LINE}`);
+  });
 });

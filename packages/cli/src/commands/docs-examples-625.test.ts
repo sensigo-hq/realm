@@ -49,13 +49,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
-import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from '../agent/test-support/mcp-bin-on-json.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
-
-// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that start the `realm-mcp` bin. One name, so
-// a cell's only change is this token and prettier leaves its body as it was.
-const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The exit of a `realm workflow run` whose run ends failed (measured; the page shows no code). */
@@ -102,7 +97,7 @@ const CELLS = {
   coreAdapter: 'core README: the adapter fragment serves a step through executeStep',
   embedded: 'mcp-server README: the embedded server program serves 11 tools over stdio',
   provider: 'cli README: the custom provider module drives realm agent',
-  db: 'realm-db: realm db backup, then realm db migrate --backup, on a home with a store, each make their copy',
+  db: 'realm-db: realm db backup, then realm db migrate --backup, on a home with a store, each make their copy; then realm db check finds nothing',
 } as const;
 type Cell = keyof typeof CELLS;
 
@@ -170,6 +165,7 @@ const TABLE: ReadonlyArray<readonly [Page, string, string, string, Cell]> = [
   ['docs/guides/step-handlers.md', 'realm workflow register ./', 'bash', 'run; then start_run over stdio', 'handlers'],
   ['docs/reference/cli/realm-db.md', 'realm db backup ./realm-backup.db', 'bash', 'run on a home with a store', 'db'],
   ['docs/reference/cli/realm-db.md', 'realm db migrate --backup ./realm-before-upgrade.db', 'bash', 'run on the same home, after the backup', 'db'],
+  ['docs/reference/cli/realm-db.md', 'realm db check', 'bash', 'run on the same home, after the backup and the migrate', 'db'],
   ['packages/cli/README.md', 'npm install -g @sensigo/realm-cli', '-', 'EXCLUDED: the npm registry; the package is checked', 'installs'],
   ['packages/cli/README.md', 'OPENAI_API_KEY=<your-key> realm agent \\', 'bash', 'EXCLUDED: a model provider and its key; the flags are checked', 'provider'],
   ['packages/cli/README.md', '// my-ollama-provider.mjs', 'javascript', 'program: written under the name its first line gives; Ollama is a stub', 'provider'],
@@ -179,7 +175,7 @@ const TABLE: ReadonlyArray<readonly [Page, string, string, string, Cell]> = [
   ['packages/core/README.md', 'import {', 'ts', 'fragment: supplies callMyApi; then serves a step through executeStep', 'coreAdapter'],
   ['packages/mcp-server/README.md', '# Standalone binary (for AI agent MCP config)', '-', 'EXCLUDED: the npm registry; the package is checked', 'installs'],
   ['packages/mcp-server/README.md', '{', 'json', 'client config: command started, listTools', 'clients'],
-  ['packages/mcp-server/README.md', "import { createRealmMcpServer } from '@sensigo/realm-mcp';", 'ts', 'program: run as a stdio server, listTools', 'embedded'],
+  ['packages/mcp-server/README.md', "import { createRealmMcpServerOnHome } from '@sensigo/realm-m", 'ts', 'program: run as a stdio server, listTools', 'embedded'],
 ];
 
 interface Fence {
@@ -355,9 +351,14 @@ describe(
       });
     }
 
-    async function client(command: string, args: string[] = [], cwd = project): Promise<Client> {
+    async function client(
+      command: string,
+      args: string[] = [],
+      cwd = project,
+      childEnv = env(),
+    ): Promise<Client> {
       const c = new Client({ name: 'docs-examples-625', version: '0' });
-      await c.connect(new StdioClientTransport({ command, args, env: env(), cwd }));
+      await c.connect(new StdioClientTransport({ command, args, env: childEnv, cwd }));
       return c;
     }
 
@@ -491,7 +492,7 @@ describe(
       });
     });
 
-    xit(CELLS.clients, async () => {
+    it(CELLS.clients, async () => {
       const configs = [
         fence('README.md', '"mcpServers"', 0),
         fence('README.md', '"mcpServers"', 1),
@@ -1061,9 +1062,13 @@ describe(
       // #616 PR-2c c7: the page's second line, in the same folder, after the first.
       const migrateLine = fence('docs/reference/cli/realm-db.md', 'realm db migrate').trim();
       const m = sh(migrateLine);
+      // #616 PR-2c c8a2: the page's third line, on the same home.
+      const checkLine = fence('docs/reference/cli/realm-db.md', 'realm db check').trim();
+      const c = sh(checkLine);
       // (a) red when a command is not on the CLI, refuses its path, or makes no file there (the
-      //     second example naming the first's file meets "a file already exists there"); (b) prints
-      //     each line, its exit code and its first line on stderr.
+      //     second example naming the first's file meets "a file already exists there"), or the check
+      //     reports anything on that home; (b) prints each line, its exit code and its first line on
+      //     stderr.
       expect({
         line,
         code: r.code,
@@ -1073,6 +1078,9 @@ describe(
         migrateCode: m.code,
         migrateErr: m.err.split('\n')[0],
         migrateMade: existsSync(join(project, 'realm-before-upgrade.db')),
+        checkLine,
+        checkCode: c.code,
+        checkErr: c.err.split('\n')[0],
       }).toEqual({
         line,
         code: 0,
@@ -1082,6 +1090,9 @@ describe(
         migrateCode: 0,
         migrateErr: '',
         migrateMade: true,
+        checkLine,
+        checkCode: 0,
+        checkErr: '',
       });
     });
 
@@ -1215,15 +1226,22 @@ describe(
       ]);
     });
 
-    xit(CELLS.embedded, async () => {
+    it(CELLS.embedded, async () => {
       const dir = nodeProject();
       writeFileSync(
         join(dir, 'server.ts'),
-        // #616 PR-2a (ii-b): the example passes the four stores (the library has no default).
-        `${fence('packages/mcp-server/README.md', 'createRealmMcpServer({')}\n`,
+        // #616 PR-2c c10b-3a: the example opens the Realm home through the library's home entry.
+        `${fence('packages/mcp-server/README.md', 'createRealmMcpServerOnHome(')}\n`,
       );
+      const own = programHome();
       // (a) red when the program does not start a server that serves the 11 tools; (b) prints the count.
-      expect(await toolCount(await client(process.execPath, ['server.ts'], dir))).toBe(11);
+      expect(
+        await toolCount(await client(process.execPath, ['server.ts'], dir, env({ HOME: own }))),
+      ).toBe(11);
+      // (a) red when the program does not open the home the README says it opens; (b) prints the path.
+      expect(existsSync(join(own, '.realm', 'realm.db')), join(own, '.realm', 'realm.db')).toBe(
+        true,
+      );
       // (a) red when the `realm-mcp` command the configurations start is not the server the package
       //     builds; (b) prints both paths.
       expect(binOf('mcp-server', 'realm-mcp')).toBe(resolveMcpServerEntry());

@@ -15,7 +15,7 @@ import { handleStartRun } from './tools/start-run.js';
 import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const REMEDY =
-  'The library has no default store, so no server was built and nothing was opened. Pass runStore, workflowStore, traceBufferStore and failedAttemptStore, opened once per process — the file stores are new JsonFileStore(), new JsonWorkflowStore(), new JsonTraceBufferStore(runStore.runsDirPath, runStore) and new JsonFileFailedAttemptStore(runStore.runsDirPath) — or run the realm-mcp command, which opens ~/.realm itself.';
+  'The library has no default store, so no server was built and nothing was opened. Pass runStore, workflowStore, traceBufferStore and failedAttemptStore, opened once per process (a test may use InMemoryStore from @sensigo/realm-testing and InMemoryTraceBufferStore from @sensigo/realm for the run and trace stores), or open a Realm home with createRealmMcpServerOnHome from @sensigo/realm-mcp/home.';
 
 let home: string;
 let stores: TempHome;
@@ -197,11 +197,41 @@ describe('#616 PR-2a (ii-b) — the docs', () => {
     );
     claim(
       'packages/mcp-server/README.md',
-      'The library has no default store: a JavaScript caller that omits one of the four is refused by name, before anything is opened.',
+      '`createRealmMcpServer` has no default store: a JavaScript caller that omits one of the four is refused by name, before anything is opened.',
     );
     claim(
       'packages/mcp-server/README.md',
       'Type — the four stores, required: `runStore`, `workflowStore`, `traceBufferStore`, `failedAttemptStore`; optional config:',
+    );
+  });
+
+  it('#616 PR-2c c10b-3a — the texts that teach the home entry', () => {
+    // Executed: home-server.test.ts (the entry, its `{ server, close }`, the home it opens);
+    // docs-examples-625's `embedded` cell (the README's program, on a fresh HOME).
+    claim(
+      'packages/mcp-server/README.md',
+      "This opens Realm's home (`~/.realm`, or the `home` you pass) and its SQLite store once for this process — the same store every `realm` command uses — and needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later. To supply your own stores instead, call `createRealmMcpServer` with the four stores: the library then loads no SQLite and runs on any Node 22.",
+    );
+    claim(
+      'packages/mcp-server/README.md',
+      "From `@sensigo/realm-mcp/home`; opens the Realm home's store and returns `{ server, close }`.",
+    );
+    claim(
+      'docs/reference/core-library.md',
+      "The JSON file stores (`JsonFileStore`, `JsonWorkflowStore`, `JsonFileFailedAttemptStore`, `JsonTraceBufferStore`) are not how Realm keeps its data: a Realm home's fences refuse them.",
+    );
+    claim(
+      'docs/reference/core-library.md',
+      'Runs, workflows, failed attempts, trace entries, replays and dedup marks, in one `realm.db`',
+    );
+    claim('docs/reference/core-library.md', 'const { runStore: store } = await openRealmHome();');
+    claim(
+      'docs/reference/core-library.md',
+      'The Realm home: the SQLite store every `realm` command uses.',
+    );
+    claim(
+      'docs/reference/core-library.md',
+      'All four are ES modules and need Node 22 or later; `@sensigo/realm-store-sqlite` needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.',
     );
   });
 
@@ -213,7 +243,7 @@ describe('#616 PR-2a (ii-b) — the docs', () => {
     );
     claim(
       'CHANGELOG.md',
-      '**BREAKING — `createRealmMcpServer` takes its stores (issue #616).** The library has no default store: pass `runStore`, `workflowStore`, `traceBufferStore` and `failedAttemptStore`, opened once per process; a JavaScript caller that omits one is refused at construction, before anything is opened. The published tool handlers require the stores their server passes them; a direct caller that omits one is refused by name. The `realm-mcp` command is unchanged for its users.',
+      '**BREAKING — `createRealmMcpServer` takes its stores (issue #616).** The library has no default store: pass `runStore`, `workflowStore`, `traceBufferStore` and `failedAttemptStore`, opened once per process; a JavaScript caller that omits one is refused at construction, before anything is opened. The published tool handlers require the stores their server passes them; a direct caller that omits one is refused by name.',
     );
   });
 });

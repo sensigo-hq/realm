@@ -615,7 +615,18 @@ describe('#627 W — the other pages W changed', () => {
     // `resolveMcpServerEntry()`; "opens `~/.realm` itself" by the two journey cells named above.
     claim(
       'CHANGELOG.md',
-      '**The `realm-mcp` command runs from its own file (`dist/bin.js`) and opens `~/.realm` itself; nothing changes for its users (issue #616).**',
+      '**The `realm-mcp` command runs from its own file and opens `~/.realm` itself. It now keeps its store in `realm.db` there, as every `realm` command does; it needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later, to start, and a home that still holds the old JSON folders is refused with `STATE_HOME_HOLDS_LEGACY_STORE` until they are moved aside (issue #616).**',
+    );
+    // #616 PR-2c c10b-3a: home-server.test.ts (mcp-server): the entry, what it returns, and that
+    // `index.ts` reaches neither it nor the store package; foreign-test-clock-715's bin cells.
+    claim(
+      'CHANGELOG.md',
+      "`@sensigo/realm-mcp/home` exports `createRealmMcpServerOnHome({ home?, … })`: it opens the Realm home's SQLite store once for the process and serves the MCP tools over it, returning `{ server, close }`; the `realm-mcp` command uses it. `createRealmMcpServer` with four injected stores is unchanged and loads no SQLite.",
+    );
+    // #616 PR-2c c10b-2: foreign-test-clock-715.test.ts (mcp-server): the bin's refusals and its start line.
+    claim(
+      'CHANGELOG.md',
+      '`realm-mcp` prints its start line only after its store opened; a store that cannot be opened is one line, `realm-mcp: <reason>`, and exit 1, never a stack trace.',
     );
     // Correction 2 (6.1): executed by http-door-627 :: "a server built per request — realm serve’s
     // shape …" (no form, the answer tool stays) and door-627's tool list per session.
