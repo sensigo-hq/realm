@@ -29,7 +29,11 @@ function claim(page: string, text: string): void {
 /** The CHANGELOG's `[Unreleased]` section (#871's form). */
 function unreleased(): string {
   const text = read('CHANGELOG.md');
-  return text.slice(text.indexOf('## [Unreleased]'), text.indexOf('\n## [0.48.0]'));
+  // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+  const start = text.includes('## [Unreleased]')
+    ? text.indexOf('## [Unreleased]')
+    : text.indexOf('\n## [') + 1;
+  return text.slice(start, text.indexOf('\n## [0.48.0]'));
 }
 
 let h: TempHome & { readonly root: string };

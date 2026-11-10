@@ -669,7 +669,11 @@ describe('#872 (b1) B11 — tools.md and the CHANGELOG: the reply ceiling', () =
   });
   it('CHANGELOG.md: the #872 (b1) entry, as written', () => {
     const text = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const section = text.slice(text.indexOf('## [Unreleased]'), text.indexOf('\n## [0.48.0]'));
+    // #871's form, as the helper above: the first section once a release renames `[Unreleased]`.
+    const start = text.includes('## [Unreleased]')
+      ? text.indexOf('## [Unreleased]')
+      : text.indexOf('\n## [') + 1;
+    const section = text.slice(start, text.indexOf('\n## [0.48.0]'));
     // (a) red when the entry is changed or moved out of the unreleased section; (b) prints it. Each
     //     sentence is pinned by the cells named above, B7 and AC4 (create_workflow), B9 (the store
     //     law), HC2–HC7 (the bounds by construction).

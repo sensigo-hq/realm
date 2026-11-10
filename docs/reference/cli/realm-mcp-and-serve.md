@@ -153,7 +153,7 @@ realm serve: this realm command's own packages disagree: its realm-mcp runs @sen
 realm [--version] [--help] <command>
 ```
 
-`realm --version` prints the installed version, such as `0.46.0`. `realm --help`, and `--help` after any command, print that command's flags. `realm` has six commands: `workflow`, `run`, `agent`, `listen`, `mcp` and `serve`. A seventh name, `webhook`, is kept only to say that it was removed:
+`realm --version` prints the installed version, such as `0.46.0`. `realm --help`, and `--help` after any command, print that command's flags. `realm` has seven commands: `workflow`, `run`, `db`, `agent`, `listen`, `mcp` and `serve`. A seventh name, `webhook`, is kept only to say that it was removed:
 
 ```text
 `realm webhook` has been removed. Use `realm listen` with a `trigger:` block (auth.mode: github + a params_map for the PR fields) in your workflow instead. See `realm listen --help`.
