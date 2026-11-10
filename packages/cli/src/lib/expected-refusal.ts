@@ -6,8 +6,8 @@
 // The list: a run store opened on a copy of a test location; a home that cannot be used (#616 PR-2a
 // (i): HOME empty or not an absolute path, or no home at all); the refusals of `realm db backup`
 // (#616 PR-2c c6) — its own two and those of the store's open that its maintenance entry can meet —
-// and of `realm db migrate` (c7): its own two, and the store busy beyond its budget, which every
-// command that meets it now prints as one line too.
+// of `realm db migrate` (c7): its own two, and the store busy beyond its budget, which every
+// command that meets it now prints as one line too; and of `realm db check` (c8a2): its one.
 // Every other error keeps escaping loud, a `WorkflowError` included — "bugs stay loud" (`validate.ts`,
 // #123); the writer's fatal handler prints those with their stack. The code is read from the error's
 // fields, never by `instanceof`: the CLI and the library it loads can be separate copies.
@@ -25,6 +25,8 @@ const EXPECTED_CODES: ReadonlySet<string> = new Set([
   'STATE_STORE_MIGRATE_REFUSED',
   // `realm db migrate`: a schema step failed; the line names the version the file is at.
   'STATE_STORE_MIGRATE_FAILED',
+  // `realm db check`: a home with no store file, or an empty one.
+  'STATE_STORE_CHECK_REFUSED',
   // The store busy beyond its budget: `realm db migrate`'s re-stamp met it (the batches committed
   // stay). Every command whose busy refusal reaches the entry prints it as one line.
   'STATE_RUN_BUSY',

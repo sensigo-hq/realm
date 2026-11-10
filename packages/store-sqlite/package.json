@@ -47,6 +47,7 @@
     "!dist/**/test-support/**",
     "dist/test-support/index.*",
     "dist/test-support/foreign-connection.*",
+    "dist/test-support/plant-registry-row.*",
     "README.md"
   ]
 }
