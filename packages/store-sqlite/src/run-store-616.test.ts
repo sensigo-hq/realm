@@ -107,6 +107,24 @@ const text = (snapshot: Snapshot): string => JSON.stringify(snapshot.record);
 const byId = (a: Snapshot, b: Snapshot): number =>
   a.record.id < b.record.id ? -1 : a.record.id > b.record.id ? 1 : 0;
 
+/**
+ * #616 PR-2c c4: the store's first page of a scan, in the shape `list` returned (the read these cells
+ * pinned on `list` before c4 removed it): every cell here holds fewer runs than a page.
+ */
+async function firstPage(
+  store: RealmHome['runStore'],
+  workflowId?: string,
+): Promise<{ snapshots: Snapshot[]; read_at: Date; consistent_snapshot: boolean }> {
+  const filter = workflowId === undefined ? {} : { workflow: workflowId };
+  const page = await store.scan(filter, { pageSize: 1000 }).next();
+  if (page.done === true) throw new Error('the scan yielded no page');
+  return {
+    snapshots: page.value.items.flatMap((i) => (i.kind === 'run' ? [i.run] : [])),
+    read_at: page.value.read_at,
+    consistent_snapshot: page.value.consistent_snapshot,
+  };
+}
+
 /** A creator's start entry, as the engine passes it to `create`. */
 const ENTRY: ExtensionIdentityEntry = {
   captured_at: '2030-05-06T07:00:00.000Z',
@@ -140,13 +158,13 @@ const BARE: CreateRunOptions = {
   extensionIdentity: [],
 };
 
-describe('#616 unit 12a — create, get and list', () => {
-  it("check 1: an unkeyed create is stamped with the clock's instant, in the JSON store's key order, and reads back equal through get and list", async () => {
+describe('#616 unit 12a — create, get and a page of scan', () => {
+  it("check 1: an unkeyed create is stamped with the clock's instant, in the JSON store's key order, and reads back equal through get and a page of scan", async () => {
     const { runStore } = await open(testClock(T).clock);
     const json = new JsonFileStore(join(tmp(), 'runs'));
     const full = await runStore.create(FULL);
     const bare = await runStore.create(BARE);
-    const listed = await runStore.list();
+    const listed = await firstPage(runStore);
     expect({
       keys: [Object.keys(full.record), Object.keys(bare.record)],
       stamps: [full, bare].map((c) => [
@@ -178,10 +196,10 @@ describe('#616 unit 12a — create, get and list', () => {
     });
   });
 
-  it('check 1: list filters by workflow (an empty id is given), orders by id, is one snapshot, and is empty for an empty store', async () => {
+  it('check 1: a page of scan filters by workflow (an empty id is given), orders by id, is one snapshot, and is empty for an empty store', async () => {
     const t = testClock(T);
     const { runStore } = await open(t.clock);
-    const empty = await runStore.list();
+    const empty = await firstPage(runStore);
     // Eight runs, each a millisecond later than the one before: their creation order is not their
     // id order (it is one chance in 8! that it is), so an order the store does not ask for shows.
     const triage: Snapshot[] = [];
@@ -191,9 +209,9 @@ describe('#616 unit 12a — create, get and list', () => {
     }
     const support = await runStore.create(FULL);
     t.set(T);
-    const all = await runStore.list();
-    const one = await runStore.list('triage');
-    const none = await runStore.list('');
+    const all = await firstPage(runStore);
+    const one = await firstPage(runStore, 'triage');
+    const none = await firstPage(runStore, '');
     const ids = (snapshots: readonly Snapshot[]): string[] => snapshots.map((s) => s.record.id);
     expect({
       empty: {
@@ -219,7 +237,7 @@ describe('#616 unit 12a — create, get and list', () => {
     });
   });
 
-  it('check 2: create, get and list each spend one reading, a get of a missing run and a list of an empty store included', async () => {
+  it('check 2: create, get and a page of scan each spend one reading, a get of a missing run and a page of an empty store included', async () => {
     const t = testClock(T);
     const { runStore } = await open(t.clock);
     const spent = async (call: () => Promise<unknown>): Promise<[number, string]> => {
@@ -227,7 +245,7 @@ describe('#616 unit 12a — create, get and list', () => {
       const outcome = await call().then(() => 'ok', describeError);
       return [t.reads() - before, outcome];
     };
-    const emptyList = await spent(() => runStore.list());
+    const emptyList = await spent(() => firstPage(runStore));
     let id = '';
     const create = await spent(async () => {
       id = (await runStore.create(BARE)).record.id;
@@ -239,7 +257,7 @@ describe('#616 unit 12a — create, get and list', () => {
       create,
       get: await spent(() => runStore.get(id)),
       missing: await spent(() => runStore.get('no-such-run')),
-      list: await spent(() => runStore.list()),
+      list: await spent(() => firstPage(runStore)),
     }).toEqual({
       emptyList: [1, 'ok'],
       create: [1, 'ok'],
@@ -249,7 +267,7 @@ describe('#616 unit 12a — create, get and list', () => {
     });
   });
 
-  it('check 3: get and list judge a run stamped ahead of the clock at its stamp capped at the reading plus five seconds, and never before the reading', async () => {
+  it('check 3: get and a page of scan judge a run stamped ahead of the clock at its stamp capped at the reading plus five seconds, and never before the reading', async () => {
     const t = testClock(T);
     const { runStore } = await open(t.clock);
     const at = async (instant: string): Promise<string> => {
@@ -263,7 +281,7 @@ describe('#616 unit 12a — create, get and list', () => {
       hourBehind: await at('2030-05-06T06:08:09.000Z'),
     };
     t.set(T);
-    const listing = await runStore.list();
+    const listing = await firstPage(runStore);
     const listedAt = (id: string): string | undefined =>
       listing.snapshots.find((s) => s.record.id === id)?.at.toISOString();
     const judged = async (id: string): Promise<[string, string | undefined]> => [
@@ -321,7 +339,7 @@ describe('#616 unit 12a — create, get and list', () => {
     expect({
       outcome,
       sent: atRefusal,
-      runs: (await runStore.list()).snapshots.length,
+      runs: (await firstPage(runStore)).snapshots.length,
     }).toEqual({
       outcome: ['STATE_STORE_LIMIT_EXCEEDED', 'nesting depth'],
       sent: [],
@@ -368,7 +386,7 @@ describe('#616 unit 12a — create, get and list', () => {
     //     the runs stored and the fault's firings.
     expect({
       outcome,
-      runs: (await runStore.list()).snapshots.length,
+      runs: (await firstPage(runStore)).snapshots.length,
       fired: connection.hits(),
     }).toEqual({
       outcome: ['disk I/O error (SQLite error 10)', { outcome: 'not_landed', errcode: 10 }],
@@ -398,7 +416,7 @@ describe('#616 unit 12a — create, get and list', () => {
     });
   });
   // ---- the review of #1003 (MA 3, 2026-11-07): two cells the unit's own cells left unpinned ----
-  it('review of #1003 — list reads every run in ONE snapshot: a write that lands between two of its run reads shows in none of them', async () => {
+  it('review of #1003 — a page of scan reads every run in ONE snapshot: a write that lands between two of its run reads shows in none of them', async () => {
     const home = join(tmp(), '.realm');
     let runReads = 0;
     let strike: (() => void) | undefined;
@@ -439,7 +457,7 @@ describe('#616 unit 12a — create, get and list', () => {
       );
     };
     runReads = 0;
-    const listed = await runStore.list();
+    const listed = await firstPage(runStore);
     strike = undefined;
     const versions = (snapshots: readonly Snapshot[]): number[] =>
       snapshots.map((s) => s.record.version);
@@ -460,7 +478,7 @@ describe('#616 unit 12a — create, get and list', () => {
     });
   });
 
-  it('review of #1003 — a stored run that cannot be read back makes get and list throw, naming it; no run is skipped, and the other workflows still list', async () => {
+  it('review of #1003 — a stored run that cannot be read back makes get and a page of scan throw, naming it; no run is skipped, and the other workflows still scan', async () => {
     const home = join(tmp(), '.realm');
     const handle = await openRealmHome({ home, clock: testClock(T).clock });
     handles.push(handle);
@@ -501,9 +519,9 @@ describe('#616 unit 12a — create, get and list', () => {
     //     or `get` returns a record short of an entry; (2) prints each call's outcome.
     expect({
       get: await failure(() => runStore.get('broken-run')),
-      list: await failure(() => runStore.list()),
-      sameWorkflow: await failure(() => runStore.list('triage')),
-      otherWorkflow: (await runStore.list('other')).snapshots.map((s) => s.record.id),
+      list: await failure(() => firstPage(runStore)),
+      sameWorkflow: await failure(() => firstPage(runStore, 'triage')),
+      otherWorkflow: (await firstPage(runStore, 'other')).snapshots.map((s) => s.record.id),
       healthy: (await runStore.get(good.record.id)).record.id === good.record.id,
     }).toEqual({
       get: 'The stored run broken-run cannot be read back: its record holds 3 evidence entries and the store has 2 evidence rows.',

@@ -1,12 +1,15 @@
 // issue #620 PR-C — U6: what a contract says when a store's refusal is not this copy's class, per kind.
 import { describe, it, expect } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { REALM_BRAND, WorkflowError, brandClass, createRealmBrand } from '@sensigo/realm';
-import { crossCopyNote } from './cross-copy-note.js';
 import {
-  runStoreFidelityContract,
-  type FidelityContractStore,
-} from './run-store-fidelity-contract.js';
+  REALM_BRAND,
+  WorkflowError,
+  brandClass,
+  createRealmBrand,
+  type RunStore,
+} from '@sensigo/realm';
+import { crossCopyNote } from './cross-copy-note.js';
+import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
 import { InMemoryStore } from './in-memory-store.js';
 
 const OTHER = createRealmBrand('@sensigo/realm', '9.9.9', 'file:///tmp/other-realm/');
@@ -39,7 +42,7 @@ describe('crossCopyNote (U6), per kind', () => {
   it('a contract’s failure text carries the note (CLAIM_SINGLE_OWNER with a store refusing in another copy’s class)', async () => {
     const real = new InMemoryStore();
     let claims = 0;
-    const store = Object.create(real) as FidelityContractStore;
+    const store = Object.create(real) as RunStore;
     store.claimStep = async (runId, step, def) => {
       claims += 1;
       if (claims === 1) return real.claimStep(runId, step, def);

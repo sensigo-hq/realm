@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { WorkflowError } from '@sensigo/realm';
 import type { RunStore } from '@sensigo/realm';
 import { handleStartRunBatch } from './start-run-batch.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, runsOf, type TempHome } from '../test-support/temp-home.js';
 
 function mockWorkflow(id: string, paramsSchema?: Record<string, unknown>) {
   return {
@@ -231,7 +231,9 @@ describe('handleStartRunBatch', () => {
     } catch {
       // expected
     }
-    const runs = (await runStore.list('wf-schema')).snapshots.map((s) => s.record);
+    const runs = (await runsOf(runStore))
+      .filter((s) => s.record.workflow_id === 'wf-schema')
+      .map((s) => s.record);
     expect(runs).toHaveLength(0);
   });
 });

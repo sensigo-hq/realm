@@ -20,6 +20,7 @@ import { handleGetRunState } from '@sensigo/realm-mcp/dist/tools/get-run-state.j
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { inspectRun } from '../commands/inspect.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 // agent `draft` → auto `finish` (a handler) → bare auto `wrap`.
 const def = {
@@ -76,7 +77,7 @@ it('one model call is counted once: on the agent step, on both inspect and get_r
     { definition: def, params: {} },
   );
   expect(result).toBe('completed');
-  const run = (await store.list()).snapshots.map((s) => s.record)[0]!;
+  const run = (await runsOf(store)).map((s) => s.record)[0]!;
   expect(run.completed_steps).toEqual(['draft', 'finish', 'wrap']);
 
   const screen = await inspectRun(run.id, store, workflowStore);
@@ -170,7 +171,7 @@ it("a chained step's REJECTED input does not re-attach the agent step's calls (c
     { definition: rejectDef, params: {} },
   );
   expect(result).toBe('failed');
-  const run = (await store.list()).snapshots.map((s) => s.record)[0]!;
+  const run = (await runsOf(store)).map((s) => s.record)[0]!;
   expect(run.completed_steps).toEqual(['draft']);
   // The wedge is still recorded — it just does not carry calls that are already on draft's record.
   const entry = run.drive_failures!.entries[0]!;
@@ -311,7 +312,7 @@ async function driveContext(store: RunStore) {
       { definition: contextDef, params: {} },
     ),
   ).rejects.toThrow('snapshot write failed');
-  return (await store.list()).snapshots.map((s) => s.record)[0]!;
+  return (await runsOf(store)).map((s) => s.record)[0]!;
 }
 
 it('a throw from a step run AFTER the agent step saved does not re-attach its calls (chokepoint 3)', async () => {

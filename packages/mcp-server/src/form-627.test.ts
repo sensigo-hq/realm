@@ -38,7 +38,12 @@ import {
 } from './form-path.js';
 import { McpDoor } from './door.js';
 import { createTestHome, type TestHome } from '@sensigo/realm-testing';
-import { makeTempHome, type ServerExtras, type TempHome } from './test-support/temp-home.js';
+import {
+  makeTempHome,
+  type ServerExtras,
+  type TempHome,
+  runsOf,
+} from './test-support/temp-home.js';
 
 /** #616 PR-2c (c0, R10): a run store that forwards every verb to `inner`, the ones in `over` replaced —
  *  a double that intercepts a verb without a second store on the home's folder. It declares this
@@ -53,7 +58,11 @@ function delegating(inner: RunStore, over: Partial<RunStore>): RunStore {
     create: (o: Parameters<RunStore['create']>[0]) => inner.create(o),
     get: (id: string) => inner.get(id),
     update: (r: Parameters<RunStore['update']>[0]) => inner.update(r),
-    list: (w?: string) => inner.list(w),
+    // #616 PR-2c c4: the scan verbs, the inner store's.
+    purgesRuns: inner.purgesRuns,
+    scan: inner.scan.bind(inner),
+    resolveKey: inner.resolveKey.bind(inner),
+    tombstonesSince: inner.tombstonesSince.bind(inner),
     claimStep: (...a: Parameters<RunStore['claimStep']>) => inner.claimStep(...a),
     settleStep: ((...a: unknown[]) =>
       (inner.settleStep as (...x: unknown[]) => unknown)(...a)) as RunStore['settleStep'],
@@ -662,7 +671,7 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
       () =>
         new Promise<ElicitReply>(() => {
           void (async () => {
-            const run = await box.s!.runStore.list().then((l) => l.snapshots[0]!.record);
+            const run = await runsOf(box.s!.runStore).then((l) => l[0]!.record);
             const def = loadWorkflowFromString(WORKFLOW());
             await submitHumanResponse(box.s!.runStore, def, {
               runId: run.id,
@@ -697,7 +706,7 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
   it('a form accepted after another route settled the question records nothing: W-f3 opens "Not recorded:", with the winner', async () => {
     const box: { s?: Session } = {};
     const s = await session({}, async () => {
-      const run = await box.s!.runStore.list().then((l) => l.snapshots[0]!.record);
+      const run = await runsOf(box.s!.runStore).then((l) => l[0]!.record);
       await submitHumanResponse(box.s!.runStore, loadWorkflowFromString(WORKFLOW()), {
         runId: run.id,
         gateId: run.pending_gate!.gate_id,
@@ -997,7 +1006,7 @@ describe('#627 W correction 1 — the form path', () => {
       WITHDRAWN.settled,
       undefined as number | undefined,
       async (s: Session) => {
-        const run = (await s.runStore.list()).snapshots.map((s) => s.record)[0]!;
+        const run = (await runsOf(s.runStore)).map((s) => s.record)[0]!;
         await submitHumanResponse(s.runStore, loadWorkflowFromString(WORKFLOW()), {
           runId: run.id,
           gateId: run.pending_gate!.gate_id,
@@ -1114,7 +1123,7 @@ describe('#627 W correction 1 — the form path', () => {
     const s = await session(
       {},
       async () => {
-        const run = (await box.s!.runStore.list()).snapshots.map((s) => s.record)[0]!;
+        const run = (await runsOf(box.s!.runStore)).map((s) => s.record)[0]!;
         const def = loadWorkflowFromString(yaml);
         await submitHumanResponse(box.s!.runStore, def, {
           runId: run.id,
@@ -1198,7 +1207,7 @@ describe('#627 W correction 1 — the form path', () => {
     const s = await session(
       {},
       async () => {
-        const run = (await box.s!.runStore.list()).snapshots.map((s) => s.record)[0]!;
+        const run = (await runsOf(box.s!.runStore)).map((s) => s.record)[0]!;
         const def = loadWorkflowFromString(yaml);
         const registry = new ExtensionRegistry();
         registry.register('handler', 'fails_627', {
@@ -1523,7 +1532,7 @@ describe('#627 W correction 2 — the form path', () => {
   it('1.4b (a): an accepted answer another route beat is never worded as the caller’s refusal ("your choice")', async () => {
     const box: { s?: Session } = {};
     const s = await session({}, async () => {
-      const run = (await box.s!.runStore.list()).snapshots.map((s) => s.record)[0]!;
+      const run = (await runsOf(box.s!.runStore)).map((s) => s.record)[0]!;
       await submitHumanResponse(box.s!.runStore, loadWorkflowFromString(WORKFLOW()), {
         runId: run.id,
         gateId: run.pending_gate!.gate_id,
@@ -1562,7 +1571,7 @@ describe('#627 W correction 2 — the form path', () => {
     const s = await session(
       {},
       async () => {
-        const run = (await box.s!.runStore.list()).snapshots.map((s) => s.record)[0]!;
+        const run = (await runsOf(box.s!.runStore)).map((s) => s.record)[0]!;
         box.firstGate = run.pending_gate!.gate_id;
         await submitHumanResponse(box.s!.runStore, def, {
           runId: run.id,
@@ -1611,7 +1620,7 @@ describe('#627 W correction 2 — the form path', () => {
     const s = await session(
       {},
       async () => {
-        const run = (await box.s!.runStore.list()).snapshots.map((s) => s.record)[0]!;
+        const run = (await runsOf(box.s!.runStore)).map((s) => s.record)[0]!;
         await submitHumanResponse(box.s!.runStore, loadWorkflowFromString(yaml), {
           runId: run.id,
           gateId: run.pending_gate!.gate_id,

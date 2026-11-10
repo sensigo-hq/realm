@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, type WorkflowDefinition } from '@sensigo/realm';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -104,7 +104,7 @@ describe('#729 PR-3 — the rerun refers to the run, and runs as printed', () =>
     await runCommand.parseAsync([command![1]!, '--params-from-run', command![2]!], {
       from: 'user',
     });
-    const runs = (await h.home.runStore.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(h.home.runStore)).map((s) => s.record);
     const fresh = runs.find((r) => r.id !== id)!;
     // (a) red when the flag is ignored or reads a masked copy; (b) prints the new run's params
     //     (fake values).
@@ -138,7 +138,7 @@ describe('#729 PR-3 — an answer that sends a marker back (D1 D5)', () => {
   it('realm workflow run records it as sent and warns', async () => {
     mocks.question.mockImplementation(async () => '{"answer":"sent back [REDACTED] here"}');
     await runCommand.parseAsync([dir], { from: 'user' });
-    const [run] = (await h.home.runStore.list()).snapshots.map((s) => s.record);
+    const [run] = (await runsOf(h.home.runStore)).map((s) => s.record);
     // (a) red when the warning is dropped or the answer is changed before it is recorded; (b)
     //     prints booleans.
     expect({

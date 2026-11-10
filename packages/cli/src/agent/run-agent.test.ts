@@ -23,6 +23,7 @@ import { AnthropicProvider } from './providers/anthropic-provider.js';
 import { startAnthropicStub } from './test-support/anthropic-stub.js';
 import { leakedForms } from './test-support/redaction-oracle.js';
 import type { Snapshot } from '@sensigo/realm';
+import { runsOf } from '../test-support/temp-home.js';
 
 // ---------------------------------------------------------------------------
 // MCP tools integration tests
@@ -196,7 +197,7 @@ describe('runAgent — MCP tools integration', () => {
 
     await runAgent(deps, { definition: mcpWorkflow, params: {} });
 
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     const run = runs[0]!;
     const snap = run.evidence.find((e) => e.step_id === 'research');
     expect(snap).toBeDefined();

@@ -29,7 +29,13 @@ describe('#715 (b) §B.2 — a listing judges each row at its own reading', () =
       plainB: await make(T - 30_000, 'c'),
     };
     await clock.set(new Date(T));
-    const listing = await store.list();
+    // #616 PR-2c c4: a page of the store's scan is the listing: its one reading, and the rows.
+    const page1 = await store.scan({}, { pageSize: 1000 }).next();
+    if (page1.done === true) throw new Error('the scan yielded no page');
+    const listing = {
+      read_at: page1.value.read_at,
+      snapshots: page1.value.items.flatMap((i) => (i.kind === 'run' ? [i.run] : [])),
+    };
     const rows = Object.fromEntries(
       Object.entries(ids).map(([name, id]) => {
         const row = listing.snapshots.find((s) => s.record.id === id)!;

@@ -12,7 +12,13 @@ import { join } from 'node:path';
 import { listRuns, listCommand } from './list.js';
 import { STUCK_DEFINITION_PARSE_CAP_BYTES, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { RunStore, RunRecord, RunHealthFinding, WorkflowDefinition } from '@sensigo/realm';
-import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import {
+  snap,
+  doubleClock,
+  noSettle,
+  neverPurges,
+  scanning,
+} from '../test-support/snapshot-double.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { plantRegistryRow } from '@sensigo/realm-store-sqlite/test-support';
 
@@ -46,7 +52,8 @@ function makeStore(runs: RunRecord[]): RunStore {
     get: async () => snap(runs[0]!),
     create: async () => ({ ...snap(runs[0]!), created: true }),
     update: async () => snap(runs[0]!),
-    list: async () => listing(runs),
+    scan: scanning(() => runs),
+    ...neverPurges,
     claimStep: async () => {
       throw new Error('unused');
     },

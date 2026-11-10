@@ -14,6 +14,7 @@ import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { recordDriveFailure } from './drive-failure.js';
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 const T = '2026-10-30T10:00:00.000Z';
 
@@ -101,7 +102,7 @@ describe('#715 (b) §D.2 — a drive failure’s instant is the store’s clock 
     } finally {
       vi.restoreAllMocks();
     }
-    const runs = (await store.list()).snapshots.map((s) => s.record as RunRecord);
+    const runs = (await runsOf(store)).map((s) => s.record as RunRecord);
     const field = runs[0]?.drive_failures;
     expect({ at: field?.entries[0]?.at, first: field?.first_failed_at }).toEqual({
       at: '2030-01-01T00:00:00.000Z',

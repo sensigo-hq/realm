@@ -7,7 +7,13 @@ import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { RunRecord, RunStore, PendingGate } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
-import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import {
+  snap,
+  doubleClock,
+  noSettle,
+  neverPurges,
+  notScanned,
+} from '../test-support/snapshot-double.js';
 
 function makeGate(overrides: Partial<PendingGate> = {}): PendingGate {
   return {
@@ -55,9 +61,8 @@ function makeStore(run: RunRecord): RunStore {
     async update() {
       throw new Error('not exercised');
     },
-    async list() {
-      throw new Error('not exercised');
-    },
+    scan: notScanned,
+    ...neverPurges,
     async claimStep() {
       throw new Error('not exercised');
     },

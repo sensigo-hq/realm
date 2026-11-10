@@ -18,12 +18,9 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // law's message, which names the field, where it was, and the test values written and read back.
 import { describe, it, expect } from 'vitest';
-import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import type { RunRecord, WorkflowDefinition, RunStore } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
-import {
-  runStoreFidelityContract,
-  type FidelityContractStore,
-} from './run-store-fidelity-contract.js';
+import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
 import type { Snapshot } from '@sensigo/realm';
 
 const agentWf: WorkflowDefinition = {
@@ -62,7 +59,7 @@ const FIELDS = [
 ] as const;
 
 /** The USAGE_RECORD_ROUNDTRIP case of the TCK, against `store`. */
-function lawOf(store: FidelityContractStore) {
+function lawOf(store: RunStore) {
   const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 's' }).filter(
     (c) => c.law === 'USAGE_RECORD_ROUNDTRIP',
   );
@@ -201,7 +198,11 @@ describe('issue #600 PR 2 — USAGE_RECORD_ROUNDTRIP', () => {
     // the law's message.
     await lawOf(store).run();
     // The double did reverse the keys: the law ran against a reordered `cache_auto`.
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    // #616 PR-2c c4: one page of the store's scan holds every run of this cell.
+    const page1 = await store.scan({}, { pageSize: 1000 }).next();
+    const runs = (page1.done === true ? [] : page1.value.items).flatMap((i) =>
+      i.kind === 'run' ? [i.run.record] : [],
+    );
     const stored = runs
       .flatMap((r) => r.evidence)
       .flatMap((e) => e.diagnostics?.cache?.requests ?? [])

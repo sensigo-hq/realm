@@ -17,9 +17,8 @@
 //   - `create`: the reading `immediate` takes right after `BEGIN IMMEDIATE`; the run's id is minted
 //     after it. An unkeyed create, or a keyed one whose key no run holds, is stamped with it
 //     unfloored; a keyed create that finds the key's holder floors it by that run (unit 15a);
-//   - `get` and `list`: the reading `snapshot` takes BEFORE its transaction begins, so a missing run
-//     and an empty store have spent theirs too; each record is judged at that reading floored by its
-//     own `updated_at`;
+//   - `get`: the reading `snapshot` takes BEFORE its transaction begins, so a missing run has spent
+//     its reading too; the record is judged at that reading floored by its own `updated_at`;
 //   - `update`, `claimStep` and `settleStep`: the raw reading their write takes itself, under the
 //     write lock, once it has found the run (a missing run spends none), folded with the STORED
 //     record's `updated_at` (a settle's also with its delta's event instants) before any check, so a
@@ -30,8 +29,8 @@
 //     instants;
 //   - `scan` (unit c3): one per page, the reading that page's `snapshot` takes; `tombstonesSince` and
 //     `resolveKey`: the one their `snapshot` takes.
-// A list is ONE read transaction (n8n's way: a consistent snapshot without the write lock), so it never
-// tears across a concurrent write. An update, a claim or a settle reads the run and writes it in ONE
+// A page of `scan` is ONE read transaction (n8n's way: a consistent snapshot without the write lock),
+// so it never tears across a concurrent write. An update, a claim or a settle reads the run and writes it in ONE
 // write transaction, so two of them never both act on one version: of two claims of one step, exactly
 // one wins and the other is refused as already claimed. An import, too, looks for the run and writes
 // it in one write transaction: of two imports of one new run, one writes it and the other finds it.
@@ -62,7 +61,6 @@ import {
   type CreateResult,
   type CreateRunOptions,
   type KeyAnswer,
-  type Listing,
   type LoadBearingRunRecordField,
   type PerRunArtifactStore,
   type RunRecord,
@@ -476,12 +474,11 @@ function purgedAtOf(db: DatabaseLike, runId: string): string | undefined {
 }
 
 /**
- * Core's run store on a SQLite home: create (keyed or not), get, list, update, claimStep,
- * settleStep and stampSeal (see the module comment), and `save`, the import verb, which is not on
- * the interface. It implements core's `RunStore`, its optional `stampSeal` included. It is a per-run
- * artifact store (unit 14): purge deletes a run's rows through it, as the anchor, once PR-2c wires
- * purge. It also pages its runs (`scan`) and answers who holds a key (`resolveKey`), which core's
- * interface gains in unit c4.
+ * Core's run store on a SQLite home: create (keyed or not), get, update, claimStep, settleStep,
+ * stampSeal, scan, resolveKey and tombstonesSince (see the module comment), and `save`, the import
+ * verb, which is not on the interface. It implements core's `RunStore`, its optional `stampSeal`
+ * included. It is a per-run artifact store (unit 14): purge deletes a run's rows through it, as the
+ * anchor, once PR-2c wires purge.
  */
 export class SqliteRunStore implements RunStore, PerRunArtifactStore {
   /** Claims round-trip: the stored record is the record written, `claims` included. */
@@ -541,23 +538,6 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
    */
   async get(runId: string): Promise<Snapshot> {
     return this.#db.snapshot((db, reading) => readSnapshot(db, runId, reading));
-  }
-
-  /**
-   * Lists every run, or the runs of `workflowId` (an empty id is given), by id, in ONE read
-   * transaction (`consistent_snapshot: true`): the call's one reading is `read_at`, taken before the
-   * first read, and each run is judged at it floored by its own `updated_at`. A run that cannot be
-   * read back throws; none is skipped.
-   */
-  async list(workflowId?: string): Promise<Listing> {
-    return this.#db.snapshot((db, reading) => {
-      const rows =
-        workflowId === undefined
-          ? db.prepare('SELECT id FROM runs ORDER BY id').all()
-          : db.prepare('SELECT id FROM runs WHERE workflow_id = ? ORDER BY id').all(workflowId);
-      const snapshots = rows.map((row) => readSnapshot(db, String(row['id']), reading));
-      return { snapshots, read_at: reading, consistent_snapshot: true };
-    });
   }
 
   /**

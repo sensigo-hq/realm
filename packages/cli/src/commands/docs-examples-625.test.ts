@@ -49,7 +49,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -472,7 +472,7 @@ describe(
       const r = sh(register!);
       // The run asks for gather_input's answer, then for the gate's choice.
       const ran = await interactive(run!, ['{"summary":"A short summary."}', 'approve']);
-      const runs = (await runStore.list()).snapshots.map((s) => s.record);
+      const runs = (await runsOf(runStore)).map((s) => s.record);
       // (a) red when init fails or makes other files, the page's workflow does not load, validate or
       //     register fails, or the run does not end completed; (b) prints each exit and stderr.
       expect({
@@ -645,7 +645,7 @@ describe(
       expect(
         {
           status: reply['status'],
-          run: (await runStore.list()).snapshots.map((s) => s.record).length,
+          run: (await runsOf(runStore)).map((s) => s.record).length,
           list: [list.code, row?.split(/\s+/).slice(1, 4)],
         },
         JSON.stringify(reply) + list.out + list.err,
@@ -1301,7 +1301,7 @@ describe(
           ].join('\n'),
         );
         const r = await shAsync(fence(page, '--provider-module ./').trim(), dir);
-        const runs = (await runStore.list()).snapshots.map((s) => s.record);
+        const runs = (await runsOf(runStore)).map((s) => s.record);
         // (a) red when the module does not load under the name the command gives, or does not drive
         //     the step through Ollama's generate endpoint; (b) prints the exit and stderr.
         expect(

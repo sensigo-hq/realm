@@ -7,12 +7,9 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import type { EvidenceSnapshot, RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import type { EvidenceSnapshot, RunRecord, WorkflowDefinition, RunStore } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
-import {
-  runStoreFidelityContract,
-  type FidelityContractStore,
-} from './run-store-fidelity-contract.js';
+import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
 import type { Snapshot } from '@sensigo/realm';
 
 const agentWf: WorkflowDefinition = {
@@ -23,7 +20,7 @@ const agentWf: WorkflowDefinition = {
 };
 
 /** The EVIDENCE_KEEPS_ANSWER_FACTS case of the TCK, against `store`. */
-function lawOf(store: FidelityContractStore) {
+function lawOf(store: RunStore) {
   const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 's' }).filter(
     (c) => c.law === 'EVIDENCE_KEEPS_ANSWER_FACTS',
   );
@@ -32,7 +29,7 @@ function lawOf(store: FidelityContractStore) {
 }
 
 /** A store that drops one evidence field on every write — the lossy store the law must refuse. */
-function dropping(field: keyof EvidenceSnapshot): FidelityContractStore {
+function dropping(field: keyof EvidenceSnapshot): RunStore {
   class Drops extends InMemoryStore {
     override update(record: RunRecord): Promise<Snapshot> {
       return super.update({

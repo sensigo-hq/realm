@@ -30,6 +30,7 @@ import {
   type Layout,
 } from './layout.js';
 import { snap } from '../test-support/snapshot-double.js';
+import { jsonAsRunStore } from '../test-support/json-as-run-store.js';
 
 type Core = typeof import('@sensigo/realm');
 type Mcp = typeof import('@sensigo/realm-mcp');
@@ -121,7 +122,7 @@ async function purgeResumedRun(
   await injectRun(dir, makeRun({ id }));
 
   let getCalls = 0;
-  const anchorStub: Pick<RunStore, 'get' | 'list'> & PerRunArtifactStore & { runsDirPath: string } =
+  const anchorStub: Pick<RunStore, 'get' | 'scan'> & PerRunArtifactStore & { runsDirPath: string } =
     {
       runsDirPath: runStore.runsDirPath,
       get: async (runId: string) => {
@@ -139,7 +140,8 @@ async function purgeResumedRun(
           terminal_state: false,
         });
       },
-      list: (workflowId?: string) => runStore.list(workflowId),
+      // #616 PR-2c c4: the JSON store's runs, paged (it lacks `scan`; PR-3 deletes the wrapper).
+      scan: jsonAsRunStore(runStore).scan,
       statAllForRun: (runId: string, dirEntries?: readonly string[]) =>
         runStore.statAllForRun(runId, dirEntries),
       deleteAllForRun: (runId: string, dirEntries?: readonly string[]) =>
@@ -210,7 +212,9 @@ async function reclaimWith(
 
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   try {
-    const result = await cliCore.reclaimStep(store, id, 'work', { traceBufferStore: trace });
+    const result = await cliCore.reclaimStep(jsonAsRunStore(store), id, 'work', {
+      traceBufferStore: trace,
+    });
     const { record: after } = await store.get(id);
     return {
       outcome: result.outcome,
@@ -309,7 +313,7 @@ async function runRetryingStep(handlerSource: 'own' | { dir: string }): Promise<
     workflowVersion: 1,
     params: {},
   });
-  const envelope = await cliCore.executeStep(store, retryDefinition, {
+  const envelope = await cliCore.executeStep(jsonAsRunStore(store), retryDefinition, {
     runId: run.id,
     command: 'only',
     input: {},
@@ -581,7 +585,7 @@ async function drainWithBusyStore(
   });
   let thrown: string | undefined;
   try {
-    await engine.executeChain(store, drainDefinition, {
+    await engine.executeChain(jsonAsRunStore(store), drainDefinition, {
       runId: run.id,
       command: 'work',
       input: {},
@@ -1067,7 +1071,7 @@ describe('13 — realm mcp / serve hand realm-mcp’s engine a registry built by
       } as unknown as WorkflowDefinition;
       let code: string | undefined;
       try {
-        await mcpCore.executeChain(store, def, {
+        await mcpCore.executeChain(jsonAsRunStore(store), def, {
           runId: run.id,
           command: 'a',
           input: {},

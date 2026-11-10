@@ -23,6 +23,7 @@ import {
 import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 const workflowStore = (def: WorkflowDefinition) => ({
   async register() {},
@@ -142,9 +143,9 @@ describe('#715 (b) §B.1-B.2 — realm agent judges what it prints on the reply�
       lines.push(line);
       if (!fired && line.includes("✗ Step 'boom' failed")) {
         fired = true;
-        landed = store
-          .list()
-          .then((l) => store.update(applyResume(l.snapshots[0]!.record, 'boom', def).run));
+        landed = runsOf(store).then((l) =>
+          store.update(applyResume(l[0]!.record, 'boom', def).run),
+        );
       }
     });
     const provider = new (class extends LlmProvider {
@@ -156,7 +157,7 @@ describe('#715 (b) §B.1-B.2 — realm agent judges what it prints on the reply�
     );
     vi.restoreAllMocks();
     await landed;
-    const { record: now } = await store.list().then((l) => l.snapshots[0]!);
+    const { record: now } = await runsOf(store).then((l) => l[0]!);
     const out = lines.join('\n');
     expect(
       {
@@ -220,7 +221,7 @@ describe('#715 (b) §B.1-B.2 — realm agent judges what it prints on the reply�
       (_a, out) =>
         (out as { record: { completed_steps: string[] } }).record.completed_steps.includes('s'),
       async (target) => {
-        const { record } = await target.list().then((l) => l.snapshots[0]!);
+        const { record } = await runsOf(target).then((l) => l[0]!);
         await target.settleStep(record.id, {
           kind: 'seal_run',
           arm: 'abandon_requested',

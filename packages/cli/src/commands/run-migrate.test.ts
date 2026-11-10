@@ -319,7 +319,11 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
       create: store.create.bind(store),
       get: store.get.bind(store),
       update: store.update.bind(store),
-      list: store.list.bind(store),
+      // #616 PR-2c c4: the scan verbs, the inner store's.
+      purgesRuns: store.purgesRuns,
+      scan: store.scan.bind(store),
+      resolveKey: store.resolveKey.bind(store),
+      tombstonesSince: store.tombstonesSince.bind(store),
       claimStep: store.claimStep.bind(store),
     } as unknown as RunStore;
     await expect(migrateStampSeals(nonDeclaring, { force: true })).rejects.toThrow(
@@ -448,7 +452,11 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
     const shifting = {
       ...store,
       persistsClaims: store.persistsClaims,
-      list: store.list.bind(store),
+      // #616 PR-2c c4: the scan verbs, the inner store's.
+      purgesRuns: store.purgesRuns,
+      scan: store.scan.bind(store),
+      resolveKey: store.resolveKey.bind(store),
+      tombstonesSince: store.tombstonesSince.bind(store),
       get: store.get.bind(store),
       create: store.create.bind(store),
       update: store.update.bind(store),

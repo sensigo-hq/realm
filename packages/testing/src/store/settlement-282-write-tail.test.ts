@@ -12,10 +12,21 @@ import { join } from 'node:path';
 import { JsonFileStore } from '@sensigo/realm';
 import type { RunStore } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
+import { jsonAsRunStore } from '../test-support/json-as-run-store.js';
 
 describe.each([
-  ['JsonFileStore', async () => new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-282-wt-')))],
-  ['InMemoryStore', async () => new InMemoryStore()],
+  // #616 PR-2c c4: the JSON store wrapped as a `RunStore` (it lacks the scan verbs); PR-3 deletes it.
+  [
+    'JsonFileStore',
+    async (): Promise<{ store: RunStore; dir?: string }> => {
+      const dir = await mkdtemp(join(tmpdir(), 'realm-282-wt-'));
+      return { store: jsonAsRunStore(new JsonFileStore(dir)), dir };
+    },
+  ],
+  [
+    'InMemoryStore',
+    async (): Promise<{ store: RunStore; dir?: string }> => ({ store: new InMemoryStore() }),
+  ],
 ] as const)(
   '%s — write-tail derives a hand-built failed ∧ pending_gate record (issue #279, increment 2, PR-C)',
   (_name, makeStore) => {
@@ -26,8 +37,9 @@ describe.each([
     });
 
     it('store.update() on a hand-built failed ∧ pending_gate record persists the DERIVED phase (never the hand-set stale one)', async () => {
-      const store: RunStore = await makeStore();
-      if (store instanceof JsonFileStore) dir = store.runsDirPath;
+      const made = await makeStore();
+      const { store } = made;
+      dir = made.dir;
 
       const { record: run } = await store.create({
         workflowId: 'wf',

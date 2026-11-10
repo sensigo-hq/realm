@@ -14,8 +14,9 @@ import { agentCommand } from '../commands/agent.js';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { AgentDeps } from './run-agent.js';
 import { driveCreate, type LlmClock, type WireCounters } from './providers/agent-utils.js';
-import { listing, snap } from '../test-support/snapshot-double.js';
+import { snap, scanning } from '../test-support/snapshot-double.js';
 import { writtenSnapshot } from '@sensigo/realm';
+import { runsOf } from '../test-support/temp-home.js';
 
 /**
  * Extends the real base class rather than shaping an object literal: the base supplies
@@ -68,7 +69,7 @@ const UNDECLARED_SERVER_WF = {
 } as unknown as WorkflowDefinition;
 
 async function onlyRun(store: InMemoryStore): Promise<RunRecord> {
-  const runs = (await store.list()).snapshots.map((s) => s.record);
+  const runs = (await runsOf(store)).map((s) => s.record);
   return (await store.get(runs[0]!.id)).record;
 }
 
@@ -243,7 +244,7 @@ describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive
 
     const out = await inspectRun(
       run.id,
-      { get: async () => snap(run), list: async () => listing([run]) } as never,
+      { get: async () => snap(run), scan: scanning(() => [run]) } as never,
       {
         get: async () => {
           throw new Error('not registered');
@@ -290,7 +291,7 @@ describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive
 
     const out = await inspectRun(
       run.id,
-      { get: async () => snap(run), list: async () => listing([run]) } as never,
+      { get: async () => snap(run), scan: scanning(() => [run]) } as never,
       {
         get: async () => {
           throw new Error('not registered');

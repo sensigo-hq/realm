@@ -7,12 +7,9 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
 import { writtenSnapshot } from '@sensigo/realm';
-import type { Snapshot, WorkflowDefinition } from '@sensigo/realm';
+import type { Snapshot, WorkflowDefinition, RunStore } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
-import {
-  runStoreFidelityContract,
-  type FidelityContractStore,
-} from './run-store-fidelity-contract.js';
+import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
 
 const agentWf: WorkflowDefinition = {
   id: 'tck-write-order',
@@ -22,7 +19,7 @@ const agentWf: WorkflowDefinition = {
 };
 
 /** The EVIDENCE_WRITE_ORDER case of the TCK, against `store`. */
-function lawOf(store: FidelityContractStore) {
+function lawOf(store: RunStore) {
   const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 's' }).filter(
     (c) => c.law === 'EVIDENCE_WRITE_ORDER',
   );

@@ -12,6 +12,7 @@ import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import type { CallStepWithMetaResult } from './providers/llm-provider.js';
 import type { AgentDeps } from './run-agent.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 function makeDeps(over: Partial<AgentDeps> = {}): AgentDeps {
   return {
@@ -45,7 +46,7 @@ const CS1_SHAPED_WF = {
 } as unknown as WorkflowDefinition;
 
 async function onlyRun(store: InMemoryStore): Promise<RunRecord> {
-  const runs = (await store.list()).snapshots.map((s) => s.record);
+  const runs = (await runsOf(store)).map((s) => s.record);
   return (await store.get(runs[0]!.id)).record;
 }
 

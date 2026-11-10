@@ -13,6 +13,7 @@ import type { WorkflowDefinition } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
 import { ToolCapableLlmProvider } from './providers/llm-provider.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 /** The real 404 Anthropic answers for a model it does not offer (captured 2026-10-04). */
 function notFound(): Error {
@@ -118,7 +119,7 @@ async function drive(site: Site, provider: FailingProvider) {
   } as unknown as AgentDeps;
   const result = await runAgent(deps, { definition: site.wf, params: {} });
   vi.restoreAllMocks();
-  const runs = (await store.list()).snapshots.map((s) => s.record);
+  const runs = (await runsOf(store)).map((s) => s.record);
   const { record: run } = await store.get(runs[0]!.id);
   const entry = run.drive_failures!.entries[0]!;
   return {

@@ -23,11 +23,12 @@ import type { RunRecord, RunStore, PerRunArtifactStore } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { snap } from '../test-support/snapshot-double.js';
 import { writtenSnapshot } from '@sensigo/realm';
+import { jsonAsRunStore } from '../test-support/json-as-run-store.js';
 
 /** Save a RunRecord verbatim through the store's `save` (#616 PR-2c, c0), bypassing create/update
  *  (full field control: update() always stamps updated_at=now, which would defeat the batch
  *  age-gate tests); its phase is derived, as purge derives it. */
-async function injectRun(store: JsonFileStore, run: RunRecord): Promise<void> {
+async function injectRun(store: { save: JsonFileStore['save'] }, run: RunRecord): Promise<void> {
   await store.save(run);
 }
 
@@ -55,7 +56,9 @@ function makeRun(overrides: Partial<RunRecord> & { id?: string }): RunRecord {
 
 interface Stores {
   dir: string;
-  runStore: JsonFileStore;
+  // #616 PR-2c c4: the JSON store wrapped as a `RunStore` (it lacks the scan verbs), with its import
+  // verb for the cells that plant a run; PR-3 deletes it.
+  runStore: ReturnType<typeof jsonAsRunStore> & { save: JsonFileStore['save'] };
   failedAttemptStore: JsonFileFailedAttemptStore;
   traceBufferStore: JsonTraceBufferStore;
   artifactStores: PerRunArtifactStore[];
@@ -67,10 +70,11 @@ async function makeStores(): Promise<Stores> {
   // cells keep covering the JSON per-store path once the door opens the SQLite home (until PR-3).
   const scratch = await mkdtemp(join(tmpdir(), 'realm-purge-'));
   const dir = join(scratch, 'runs');
-  const runStore = new JsonFileStore(dir);
+  const json = new JsonFileStore(dir);
+  const runStore = Object.assign(jsonAsRunStore(json), { save: json.save.bind(json) });
   const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
   // issue #616 PR-0: the trace buffer evaluates fences against the anchor run store.
-  const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
+  const traceBufferStore = new JsonTraceBufferStore(dir, json);
   return {
     dir,
     runStore,
@@ -525,12 +529,12 @@ describe('purgeRuns — batch mode (--older-than)', () => {
       // STATE_RUN_NOT_FOUND on its own (no actual timing race needed). issue #184: anchorStore
       // must now also satisfy PerRunArtifactStore — deleteAllForRun delegates to the real
       // runStore so the anchor-last delete still genuinely happens for 'ok'.
-      const wrappedRunStore: Pick<RunStore, 'get' | 'list'> &
+      const wrappedRunStore: Pick<RunStore, 'get' | 'scan'> &
         PerRunArtifactStore & {
           runsDirPath: string;
         } = {
         runsDirPath: runStore.runsDirPath,
-        list: (wf?: string) => runStore.list(wf),
+        scan: runStore.scan,
         get: async (id: string) => {
           if (id === 'vanishing') {
             await runStore.deleteAllForRun('vanishing');
@@ -664,11 +668,11 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
       });
       await injectRun(runStore, run);
 
-      const anchorWithResurrectRace: Pick<RunStore, 'get' | 'list'> &
+      const anchorWithResurrectRace: Pick<RunStore, 'get' | 'scan'> &
         PerRunArtifactStore & { runsDirPath: string } = declared({
         runsDirPath: runStore.runsDirPath,
         get: (id: string) => runStore.get(id),
-        list: (wf?: string) => runStore.list(wf),
+        scan: runStore.scan,
         statAllForRun: (id: string, dirEntries?: readonly string[]) =>
           runStore.statAllForRun(id, dirEntries),
         deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
@@ -710,11 +714,11 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
       const run = makeRun({ id: 'held-by-writer', run_phase: 'completed', terminal_state: true });
       await injectRun(runStore, run);
 
-      const anchorWithElocked: Pick<RunStore, 'get' | 'list'> &
+      const anchorWithElocked: Pick<RunStore, 'get' | 'scan'> &
         PerRunArtifactStore & { runsDirPath: string } = declared({
         runsDirPath: runStore.runsDirPath,
         get: (id: string) => runStore.get(id),
-        list: (wf?: string) => runStore.list(wf),
+        scan: runStore.scan,
         statAllForRun: (id: string, dirEntries?: readonly string[]) =>
           runStore.statAllForRun(id, dirEntries),
         deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
@@ -754,11 +758,11 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
       await injectRun(runStore, run);
 
       let anchorCalls = 0;
-      const spyingAnchor: Pick<RunStore, 'get' | 'list'> &
+      const spyingAnchor: Pick<RunStore, 'get' | 'scan'> &
         PerRunArtifactStore & { runsDirPath: string } = declared({
         runsDirPath: runStore.runsDirPath,
         get: (id: string) => runStore.get(id),
-        list: (wf?: string) => runStore.list(wf),
+        scan: runStore.scan,
         deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
           anchorCalls++;
           return runStore.deleteAllForRun(id, dirEntries);
@@ -868,7 +872,7 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
 
       let getCalls = 0;
       let anchorDeleteCalls = 0;
-      const anchorStub: Pick<RunStore, 'get' | 'list'> &
+      const anchorStub: Pick<RunStore, 'get' | 'scan'> &
         PerRunArtifactStore & { runsDirPath: string } = declared({
         runsDirPath: runStore.runsDirPath,
         get: async (id: string) => {
@@ -888,7 +892,7 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
             terminal_state: false,
           });
         },
-        list: (wf?: string) => runStore.list(wf),
+        scan: runStore.scan,
         statAllForRun: (id: string, dirEntries?: readonly string[]) =>
           runStore.statAllForRun(id, dirEntries),
         deleteAllForRun: async (id: string, dirEntries?: readonly string[]) => {
@@ -1279,7 +1283,7 @@ describe('purge — disposal coherence (issue #558 PR-C)', () => {
 // (b) what it prints: the outcome buckets, the reason, the WAL's existence.
 // =================================================================================================
 describe('purgeRuns — a run that changed after it was selected (issue #715 (a))', () => {
-  type Anchor = Pick<RunStore, 'get' | 'list'> & PerRunArtifactStore & { runsDirPath: string };
+  type Anchor = Pick<RunStore, 'get' | 'scan'> & PerRunArtifactStore & { runsDirPath: string };
   type Order = string[];
 
   /**
@@ -1287,7 +1291,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
    * selection) it runs `move` — a real write that bumps the version. Later reads go through `after`.
    */
   function anchorOver(
-    runStore: JsonFileStore,
+    runStore: Stores['runStore'],
     move: (id: string) => Promise<void>,
     after: (id: string) => Promise<RunRecord> = (id) => runStore.get(id).then((s) => s.record),
     order?: Order,
@@ -1300,7 +1304,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
         if (gets === 2) await move(id);
         return gets <= 2 ? runStore.get(id) : snap(await after(id));
       },
-      list: (wf?: string) => runStore.list(wf),
+      scan: runStore.scan,
       statAllForRun: (id: string, dirEntries?: readonly string[]) =>
         runStore.statAllForRun(id, dirEntries),
       deleteAllForRun: async (
@@ -1315,7 +1319,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
   }
 
   /** A real write that bumps the version and leaves the run terminal. */
-  const bump = (runStore: JsonFileStore) => async (id: string) => {
+  const bump = (runStore: Stores['runStore']) => async (id: string) => {
     await runStore.update((await runStore.get(id)).record);
   };
 

@@ -122,8 +122,9 @@ describe('#715 (a) B10 — readings per member (in-memory store)', () => {
     await store.get(run.id);
     expect(d(), 'M7 get').toBe(1);
     d = delta();
-    await store.list();
-    expect(d(), 'M7 list').toBe(1);
+    // #616 PR-2c c4: a page of `scan` is the read `list` was.
+    await store.scan({}, { pageSize: 1000 }).next();
+    expect(d(), 'M7 a page of scan').toBe(1);
     // Correction 1 (C-4): stampSeal stamps a terminal UNSEALED run at its real version, seeded by a
     // direct map insert (the store refuses to write a terminal run without a seal); a stale version
     // or a sealed run would be refused before any stamping code runs.

@@ -18,6 +18,7 @@ import { LlmProvider } from './providers/llm-provider.js';
 import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
+import { runsOf } from '../test-support/temp-home.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
 function claimDoc625(page: string, sentence: string): void {
@@ -86,7 +87,7 @@ async function drive(secondAgentStep: boolean) {
     { definition: def, params: {}, inFlightPollMs: 5, inFlightWatchMs: 20 },
   );
   vi.restoreAllMocks();
-  const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+  const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
   return {
     result,
     lines: lines.map((l) => l.split(runId).join('<run>')),
@@ -164,7 +165,7 @@ describe('#625 PR-2a, C174 — realm-agent.md: when a drive attempts a step whos
     vi.restoreAllMocks();
     // An agent step's line begins with a blank line (`\n→ [agent] …`).
     const order = lines.filter((l) => /^log: \n?→ \[/.test(l)).map((l) => l.replace('\n', ''));
-    const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+    const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
     // (a) red when the first drive runs the ready agent step before attempting the blocked step;
     //     (b) prints the step lines.
     expect(order.slice(0, 2)).toEqual(['log: → [auto] fetch', 'log: → [agent] classify']);

@@ -152,7 +152,7 @@ describe('#715 (a) — the docs sentences', () => {
     );
     claim(
       CORE,
-      'A read takes one reading before it loads: `get` returns `{ record, at }`, and `list` returns `{ snapshots, read_at, consistent_snapshot }`, each record with the reading it is judged at.',
+      'A read takes one reading before it loads: `get` returns `{ record, at }`, and each page of `scan` returns `{ items, read_at, consistent_snapshot, derived_at_read }`, each record with the reading it is judged at.',
     );
     claim(CORE, '`stampSeal` does not read the clock.');
     // A1, A3.
@@ -301,7 +301,7 @@ describe('#715 (a) — the docs sentences', () => {
     // own" (a) to (f), and C16.
     claim(
       TESTING,
-      '`get`, `list` or `listWithDiagnostics` reads the clock other than once; `stampSeal`, `listRunIds` or `statAllForRun` reads it; `deleteAllForRun` fails, or reads the clock other than once when the adapter sets `recordsDeletionTime`, or at all when it does not (on the `clock` route only)',
+      '`get`, a page of `scan` or `listWithDiagnostics` reads the clock other than once; `stampSeal`, `listRunIds` or `statAllForRun` reads it; `deleteAllForRun` fails, or reads the clock other than once when the adapter sets `recordsDeletionTime`, or at all when it does not (on the `clock` route only)',
     );
     // Correction 1 (C-4): store-clock-in-memory.test.ts (C16 with the hook; the wiring cell without it).
     claim(

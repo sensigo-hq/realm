@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { priceFromEconomics, type PriceSource } from '@sensigo/realm';
 import type { RunRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
-import { listing, snap } from '../test-support/snapshot-double.js';
+import { snap, scanning } from '../test-support/snapshot-double.js';
 
 const workflowStore = {
   get: async () => {
@@ -89,7 +89,7 @@ async function render(evidence: Record<string, unknown>[]): Promise<string[]> {
   } as unknown as RunRecord;
   const out = await inspectRun(
     'run_miss',
-    { get: async () => snap(run), list: async () => listing([run]) } as never,
+    { get: async () => snap(run), scan: scanning(() => [run]) } as never,
     workflowStore,
   );
   return out.split('\n');
@@ -308,7 +308,7 @@ describe('caching 3-M A-2b3 — the miss line says what the miss cost', () => {
     } as unknown as RunRecord;
     const out = await inspectRun(
       'run_miss',
-      { get: async () => snap(record), list: async () => listing([record]) } as never,
+      { get: async () => snap(record), scan: scanning(() => [record]) } as never,
       workflowStore,
       { priceSource: SOURCE },
     );

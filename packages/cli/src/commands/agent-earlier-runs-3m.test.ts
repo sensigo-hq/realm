@@ -227,10 +227,13 @@ describe('caching 3-M C2 — check 7: no read when nothing can use it', () => {
       (globalThis as Record<string, unknown>)[PROVIDER_KEY] = new ModuleProvider();
       const scan = vi.spyOn(h.home.runStore, 'scan');
       await agentInProcess(['--workflow', workflowFile, ...flags()]);
+      // The drive's scans, counted before `runIds` reads the store (#616 PR-2c c4: it reads through
+      // `scan` too).
+      const scans = scan.mock.calls.length;
       const [runId] = await runIds(h.home.runStore);
       // (a) red when that condition is removed from the read's guard; (b) prints the count and
       //     whether the drive reached a run at all, so a command that stopped early cannot pass.
-      expect({ scans: scan.mock.calls.length, drove: runId !== undefined }).toEqual({
+      expect({ scans, drove: runId !== undefined }).toEqual({
         scans: 0,
         drove: true,
       });

@@ -10,8 +10,14 @@ import {
   serializeFailedAttemptLine,
 } from '@sensigo/realm';
 import type { RunStore, RunRecord, FailedAttemptRecord, WorkflowDefinition } from '@sensigo/realm';
-import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
-import { makeTempHome } from '../test-support/temp-home.js';
+import {
+  snap,
+  scanning,
+  neverPurges,
+  doubleClock,
+  noSettle,
+} from '../test-support/snapshot-double.js';
+import { makeTempHome, runsOf } from '../test-support/temp-home.js';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -45,8 +51,9 @@ function makeStore(runs: RunRecord[]): RunStore {
     get: async () => snap(runs[0]!),
     create: async () => ({ ...snap(runs[0]!), created: true }),
     update: async () => snap(runs[0]!),
-    list: async (workflowId?: string) =>
-      listing(workflowId !== undefined ? runs.filter((r) => r.workflow_id === workflowId) : runs),
+    // #616 PR-2c c4: the store's scan over `runs` (it applies the workflow filter itself).
+    scan: scanning(runs),
+    ...neverPurges,
     // listRuns (the sole consumer under test here) never claims a step — this mock never needs
     // a real implementation, only a type-complete stub.
     claimStep: async () => {
@@ -998,8 +1005,9 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
         params: {},
         trace_entry_count: 0,
       });
-      // The JSON `list()` makes `runs/`, which the JSON attempt store's `append` does not (nothing on SQLite).
-      await h.home.runStore.list();
+      // The JSON `list()` made `runs/`, which the JSON attempt store's `append` does not (a scan makes
+      // nothing on SQLite).
+      await runsOf(h.home.runStore);
       await real.append(okRunId, serializeFailedAttemptLine({ ...rec }).line); // a normal, readable record
 
       const store = makeStore([brokenRun, okRun]);

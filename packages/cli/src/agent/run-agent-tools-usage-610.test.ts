@@ -14,6 +14,7 @@ import { ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { McpClient, McpTool, StepWithToolsResult } from './mcp/mcp-extensions.js';
 import { inspectRun } from '../commands/inspect.js';
 import type { PriceSource } from '@sensigo/realm';
+import { runsOf } from '../test-support/temp-home.js';
 
 /** One request record, distinct by its start and its counts (the driver's double-count key). */
 const rec = (i: number, prompt: number): UsageRecord => ({
@@ -135,7 +136,7 @@ async function drive(def: WorkflowDefinition, turns: Turn[]) {
   } finally {
     vi.restoreAllMocks();
   }
-  const run = (await store.list()).snapshots.map((s) => s.record)[0]! as RunRecord;
+  const run = (await runsOf(store)).map((s) => s.record)[0]! as RunRecord;
   const stepEntry = run.evidence.filter((e) => e.step_id === 'classify').at(-1);
   return { store, workflowStore, run, stepEntry };
 }

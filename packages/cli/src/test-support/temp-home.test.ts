@@ -8,8 +8,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } fro
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { realmHomePath, type RunStore } from '@sensigo/realm';
-import { createTestHome, type TestHome } from '@sensigo/realm-testing';
-import { makeTempHome, runCount, runIds, type TempHome } from './temp-home.js';
+import { createTestHome, InMemoryStore, type TestHome } from '@sensigo/realm-testing';
+import { makeTempHome, runCount, runIds, runsOf, type TempHome } from './temp-home.js';
 
 const handles: TempHome[] = [];
 const scratches: string[] = [];
@@ -195,22 +195,45 @@ describe('#616 PR-2c c0 — runCount and runIds read the runs through the store'
     expect(ids).toHaveLength(2);
   });
 
-  it('a store with no folder whose list() answers b then a: runCount 2, runIds [a, b]', async () => {
-    // A store with no runs folder at all (no `runsDirPath`) whose listing answers `b` then `a`: the
-    // readers can answer only through `list()`, and only their sort puts the ids in order.
+  it('a store with no folder whose scan() answers b then a: runCount 2, runIds [a, b]', async () => {
+    // A store with no runs folder at all (no `runsDirPath`) whose one page of a scan answers `b` then
+    // `a`: the readers can answer only through `scan()` (#616 PR-2c c4), and only their sort puts the
+    // ids in order.
     const store = {
-      list: async () => ({
-        snapshots: [{ record: { id: 'b' } }, { record: { id: 'a' } }],
-        read_at: new Date('2026-11-08T00:00:00.000Z'),
-        consistent_snapshot: true,
-      }),
-    } as unknown as Pick<RunStore, 'list'>;
+      async *scan() {
+        yield {
+          items: [
+            { kind: 'run', run: { record: { id: 'b' } } },
+            { kind: 'run', run: { record: { id: 'a' } } },
+          ],
+          read_at: new Date('2026-11-08T00:00:00.000Z'),
+          consistent_snapshot: true,
+          derived_at_read: 0,
+        };
+      },
+    } as unknown as Pick<RunStore, 'scan'>;
     // (1) red when a reader counts the files of a runs folder, even behind an `existsSync` guard (this
     //     store has none, so a guarded read answers 0 and []), or when runIds drops its sort (it then
     //     answers [b, a]); (2) prints the count and the ids, expected against got.
     expect({ count: await runCount(store), ids: await runIds(store) }).toEqual({
       count: 2,
       ids: ['a', 'b'],
+    });
+  });
+});
+
+describe('#616 PR-2c c4 — runsOf reads every page of a scan', () => {
+  it('1,001 runs come back, not one page of 1,000', async () => {
+    const store = new InMemoryStore();
+    for (let i = 0; i < 1001; i++) {
+      await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    }
+    // (1) red when runsOf stops after the first page (it then answers 1,000) or reads a page twice;
+    //     (2) prints the count and the distinct ids.
+    const runs = await runsOf(store);
+    expect({ runs: runs.length, distinct: new Set(runs.map((s) => s.record.id)).size }).toEqual({
+      runs: 1001,
+      distinct: 1001,
     });
   });
 });

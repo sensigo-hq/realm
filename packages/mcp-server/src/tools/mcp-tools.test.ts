@@ -3,7 +3,7 @@ import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { JsonFileStore, WorkflowError, ExtensionRegistry } from '@sensigo/realm';
+import { WorkflowError, ExtensionRegistry, type RunStore } from '@sensigo/realm';
 import type { WorkflowDefinition, ServiceAdapter } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import { handleListWorkflows } from './list-workflows.js';
@@ -18,6 +18,7 @@ import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client';
+import { notScanned } from '../test-support/snapshot-double.js';
 
 /** Minimal 2-step workflow: auto → completed */
 function makeSimpleDef(): WorkflowDefinition {
@@ -332,8 +333,8 @@ describe('mcp tool handlers', () => {
         update: async () => {
           throw new Error('unexpected failure');
         },
-        list: async () => [],
-      } as unknown as JsonFileStore),
+        scan: notScanned,
+      } as unknown as RunStore),
       // #616 PR-2a (ii-b): the registry the handler needs (it built one on the real home before).
       workflowStore: h.stores.workflowStore,
     };
@@ -374,8 +375,8 @@ describe('mcp tool handlers', () => {
         update: async () => {
           throw new Error('should not be called');
         },
-        list: async () => [],
-      } as unknown as JsonFileStore),
+        scan: notScanned,
+      } as unknown as RunStore),
       // #616 PR-2a (ii-b): the registry the handler needs (it built one on the real home before).
       workflowStore: h.stores.workflowStore,
     };

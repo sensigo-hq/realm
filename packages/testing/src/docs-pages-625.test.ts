@@ -22,6 +22,7 @@ import {
   type Snapshot,
   type StepHandler,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import {
   InMemoryStore,
@@ -29,7 +30,6 @@ import {
   runFixtureTests,
   runStoreFidelityContract,
 } from './index.js';
-import type { FidelityContractStore } from './store/run-store-fidelity-contract.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
@@ -420,7 +420,7 @@ class ListsNoFieldsKeepsNone extends ListsNoFields {
 /** Every case of the fidelity contract, each on a fresh store `make` builds (as the testing page
  *  says to): how many there are, and each failure's law and message. */
 async function fidelityRun(
-  make: () => FidelityContractStore,
+  make: () => RunStore,
 ): Promise<{ cases: number; failures: Array<{ law: string; message: string }> }> {
   const all = () =>
     runStoreFidelityContract({ store: make(), definition: FIDELITY_DEFINITION, stepName: 'work' });

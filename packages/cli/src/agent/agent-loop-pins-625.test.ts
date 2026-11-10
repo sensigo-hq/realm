@@ -10,6 +10,7 @@ import {
 } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 const workflowStore = (def: WorkflowDefinition) => ({
   async register() {},
@@ -108,7 +109,7 @@ describe('#625 PR-2a — realm agent loop words', () => {
     expect(out.split(line).length - 1).toBe(1);
     // The agent step on the other branch ran; the drive ends failed only because nothing else can run.
     expect(provider.callStep).toHaveBeenCalledTimes(1);
-    const runs = (await store.list()).snapshots.map((s) => s.record);
+    const runs = (await runsOf(store)).map((s) => s.record);
     expect(runs[0]!.completed_steps).toEqual(['review']);
     expect(result).toBe('failed');
     // decision C31: the stop's own line — the run did not end, so no `Run ended in phase:` line.

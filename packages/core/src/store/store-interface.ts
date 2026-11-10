@@ -95,8 +95,8 @@ export interface CreateRunOptions {
 }
 
 /**
- * What a run store's `list` returns (#715 (b), D-15): every record with the reading it is judged at,
- * and the listing's own reading.
+ * What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics (the shape `list` returned
+ * until #616 c4): every record with the reading it is judged at, and the listing's own reading.
  *
  * - `read_at` is the RAW reading, taken ONCE before the first record was read (D6-16).
  * - each snapshot's `at` is `read_at` floored by that record's own `updated_at` (`floorAtRecord`):
@@ -131,12 +131,15 @@ export interface RunStore {
    *
    * What it governs (B5′, D6-32): every instant a store call reads or mints — the WRITE class (a
    * write's `created_at`, `updated_at`, `opened_at`, `abandoned_at`, a claim's `since` and every
-   * deadline minted from a frozen duration), the READ class (the reading a `get` or `list` judges its
-   * records at, returned as `at` / `read_at`) and the EVENT class (a step's `completed_at`, folded
-   * into the settle that records it). What it does NOT govern: instants minted outside a store (the
-   * OUTSIDE class — a log line, a signature window, an export stamp) and durations (monotonic). Each
-   * call that returns spends exactly one reading: the four writes after their lock, the reads BEFORE
-   * they load; `stampSeal`, `save`, `reconcileKeys` and the store's own internal reads spend none.
+   * deadline minted from a frozen duration), the READ class (the reading a `get` or a page of `scan`
+   * judges its records at, returned as `at` / `read_at`) and the EVENT class (a step's `completed_at`,
+   * folded into the settle that records it). What it does NOT govern: instants minted outside a store
+   * (the OUTSIDE class — a log line, a signature window, an export stamp) and durations (monotonic).
+   * Each call that returns spends exactly one reading: the four writes after their lock, the reads
+   * BEFORE they load; `stampSeal`, `save`, `reconcileKeys` and the store's own internal reads spend
+   * none. `scan` spends one reading per page; `resolveKey` and `tombstonesSince` spend what their
+   * store's one read spends — one on the SQLite store, none on a store that never purges, whose
+   * horizon is a constant.
    *
    * A JSON-file or SQLite store holds no clock of its own but the authority its LOCATION has: it
    * takes no clock option and resolves its clock itself (the host's system clock, or a test
@@ -154,6 +157,13 @@ export interface RunStore {
    * `claim_unknown_age` claim on a claims-persisting store.
    */
   persistsClaims: boolean;
+
+  /**
+   * `true` when the store can delete a run and keeps a tombstone for each deleted run, so
+   * `resolveKey` can answer `purged` and `scan` with `include_purged` can list them; `false` for a
+   * store that never deletes a run (#616 PR-2c c4).
+   */
+  readonly purgesRuns: boolean;
 
   /**
    * Which {@link LoadBearingRunRecordField}s this store guarantees to round-trip through
@@ -205,11 +215,37 @@ export interface RunStore {
   update(record: RunRecord): Promise<Snapshot>;
 
   /**
-   * List every run, optionally of one workflow, as a {@link Listing}: ONE raw reading `read_at`
-   * taken before the first record is read; each snapshot's `at` is `read_at` floored by its own
-   * record; `consistent_snapshot` says whether the rows are one cut.
+   * Read the clock once per page, then the records the filter selects, in id order, `pageSize` at a
+   * time (1 to 1,000), and return each page as `{ items, read_at, consistent_snapshot,
+   * derived_at_read, next_after? }`; with `include_purged` the deleted runs' tombstones come as
+   * `{ kind: 'purged', … }` items beside the `{ kind: 'run', run }` items (#616 PR-2c c4; it replaces
+   * `list`).
    */
-  list(workflowId?: string): Promise<Listing>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection: 'row' },
+  ): AsyncGenerator<ScanPage<'row'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection?: 'record' },
+  ): AsyncGenerator<ScanPage<'record'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions,
+  ): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
+
+  /**
+   * Say who holds an idempotency key: `{ state: 'held', run_id }` when a run carries it;
+   * `{ state: 'purged', runs, since }` when only deleted runs did; `{ state: 'unseen', since }` when
+   * none has, as far as the store's tombstones reach (#616 PR-2c c4).
+   */
+  resolveKey(workflowId: string, key: string): Promise<KeyAnswer>;
+
+  /**
+   * The tombstone horizon: the instant before which a deleted run may no longer be on record (#616
+   * PR-2c c4).
+   */
+  tombstonesSince(): Promise<string>;
 
   /**
    * Atomically marks a step as in_progress. Under file lock:

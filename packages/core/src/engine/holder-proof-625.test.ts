@@ -17,7 +17,7 @@ import type { SettlementDelta } from '../types/settlement.js';
 import { applySettlement } from './settlement.js';
 import { classifyRunHealth } from './run-health.js';
 import type { Attributed } from './holder.js';
-import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
+import type { RunStore, CreateRunOptions, KeyAnswer } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
@@ -143,8 +143,18 @@ class TokenlessStore implements RunStore {
   update(r: RunRecord) {
     return this.inner.update(r);
   }
-  list(w?: string) {
-    return this.inner.list(w);
+  // #616 PR-2c c4: the scan verbs, delegated to the inner store as `list` was.
+  get purgesRuns(): boolean {
+    return this.inner.purgesRuns;
+  }
+  get scan(): RunStore['scan'] {
+    return this.inner.scan.bind(this.inner);
+  }
+  resolveKey(workflowId: string, key: string): Promise<KeyAnswer> {
+    return this.inner.resolveKey(workflowId, key);
+  }
+  tombstonesSince(): Promise<string> {
+    return this.inner.tombstonesSince();
   }
   async claimStep(
     runId: string,

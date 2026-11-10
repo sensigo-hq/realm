@@ -15,6 +15,7 @@ import {
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 const workflowStore = (def: WorkflowDefinition) => ({
   async register() {},
@@ -363,7 +364,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
     const err = errorSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
     expect(result).toBe('failed');
-    const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+    const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
     expect(err).toContain(
       `⚠ Step 'x' is blocked: handler 'missing_h' is not registered in this runner. The run is NOT failed — add handler 'missing_h' and re-attach (\`realm agent --run-id ${runId} --provider <provider> --model <model>\`).`,
     );
@@ -531,7 +532,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
       expect(err).not.toContain('Run ended in phase: running');
       expect(result).toBe('completed');
       expect(out).toContain('→ [auto] after');
-      const done = (await store.list()).snapshots.map((s) => s.record)[0]!;
+      const done = (await runsOf(store)).map((s) => s.record)[0]!;
       expect(done.completed_steps).toEqual(
         guard ? ['confirm', 'check', 'after', 'finish'] : ['confirm', 'after', 'finish'],
       );

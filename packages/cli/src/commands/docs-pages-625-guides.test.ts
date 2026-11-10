@@ -17,7 +17,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -387,7 +387,7 @@ describe(
       const shown = /`realm agent` prints `(⚠ [^`]*) \(…\)`/.exec(page)![1]!;
       // The pre-flight warning (`⚠ Step 'total' needs handler …`) comes first; the block line follows.
       const line = r.err.find((l) => l.startsWith("⚠ Step 'total' is blocked: "));
-      const runs = (await runStore.list()).snapshots
+      const runs = (await runsOf(runStore))
         .map((s) => s.record)
         .map((x) => [x.run_phase, x.failed_steps]);
       // (a) red when the line is not the guide's (up to its `(…)`), or the run is failed;
