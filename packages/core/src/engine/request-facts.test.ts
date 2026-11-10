@@ -313,6 +313,48 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
     ]);
   });
 
+  // Caching 3-M (piece C3), check 3: `agent_profile_changed` on a reference from another writer,
+  // through the engine's write normaliser, read on the stored record. (a) red when the field is left
+  // out of the reference's keys (the `true` row loses it), or has no value rule (the other rows are
+  // stored as written); (b) prints the stored source, its start and the field (test values only).
+  it.each<[string, unknown, true | 'absent']>([
+    ['`true` is kept', true, true],
+    ['`false` drops that field alone', false, 'absent'],
+    ['the string "true" drops that field alone', 'true', 'absent'],
+  ])('agent_profile_changed on the stored reference: %s', async (_name, value, kept) => {
+    const { record: run } = await store.create({
+      workflowId: DEF.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const usage = {
+      request_index: 0,
+      request_start: '2026-11-08T00:00:01.000Z',
+      prompt_tokens: 10,
+      reference: {
+        from: 'earlier_run',
+        request_start: '2026-11-08T00:00:00.000Z',
+        agent_profile_changed: value,
+      },
+    } as unknown as UsageRecord;
+    await executeStep(store, DEF, {
+      runId: run.id,
+      command: 'work',
+      input: {},
+      dispatcher: echo,
+      stepMeta: { usage: [usage] },
+    });
+    const reference = (await store.get(run.id)).record.evidence[0]!.diagnostics!.cache!.requests[0]!
+      .reference!;
+    expect({
+      from: reference.from,
+      request_start: reference.request_start,
+      fact: Object.hasOwn(reference, 'agent_profile_changed')
+        ? reference.agent_profile_changed
+        : 'absent',
+    }).toEqual({ from: 'earlier_run', request_start: '2026-11-08T00:00:00.000Z', fact: kept });
+  });
+
   // Caching 3-M (piece A-1b), check 4: a request's `request_in_call` from another writer (a provider
   // module's usage, an older Realm's record) through the engine's write normaliser, read on the
   // stored record. (a) red when `request_in_call` is not in the normaliser (the four malformed ones

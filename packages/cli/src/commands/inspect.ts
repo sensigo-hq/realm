@@ -917,6 +917,7 @@ const MISS_SENTENCES = {
       "changed: the step's tools, or on Anthropic its schema, which Realm sends as its answer tool)"
     );
   },
+  agent_profile: (prev) => `the step's agent profile changed since ${prev}`,
   system: (prev) =>
     `the system text differs from ${prev} (the agent profile, the step's schema, or another Realm version)`,
   repair_feedback: (prev) =>
