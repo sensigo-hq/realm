@@ -8,13 +8,15 @@ All notable changes to this project are documented here.
 
 ### Upgrading
 
-**1. Your runs move into one SQLite file (issue #616).** Every `realm` command and the `realm-mcp` server now keep runs, the workflow registry, replays, failed attempts, trace buffers and `realm listen`'s duplicate-webhook marks in `realm.db` in the Realm home. The first command on a home that still holds the old JSON folders (`runs`, `workflows`, `replays`, `dedup`) refuses with one line — `This Realm keeps its store in realm.db and does not read the old JSON directories (…) in <home>. Move them out of the home, then import what you want to keep with save() or realm run import.` — and creates nothing. Stop every Realm process, move the four folders out of the home, register your workflows again from their source files, then `realm run import <moved>/runs`. The procedure, with what is not carried over, is [Move your runs into the SQLite store](docs/guides/upgrade.md#move-your-runs-into-the-sqlite-store).
+**1. Your runs move into one SQLite file (issue #616).** Every `realm` command and the `realm-mcp` server now keep runs, the workflow registry, replays, failed attempts, trace buffers and `realm listen`'s duplicate-webhook marks in `realm.db` in the Realm home. The first command on a home that still holds the old JSON folders (`runs`, `workflows`, `replays`, `dedup`) refuses with one line — `This Realm keeps its store in realm.db and does not read the old JSON directories (…) in <home>. Move them out of the home, then import what you want to keep with save() or realm run import.` (the store's sentence; its own code spans dropped here) — and creates nothing. Stop every Realm process, move the four folders out of the home, register your workflows again from their source files, then `realm run import <moved>/runs`. The procedure, with what is not carried over, is [Move your runs into the SQLite store](docs/guides/upgrade.md#move-your-runs-into-the-sqlite-store).
 
 **2. Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.** The store uses Node's built-in SQLite at those versions; on an older Node the first command stops with one `Error:` line that ends with the floor's words, `Realm's store needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later.`
 
 **3. Five packages at one version.** `@sensigo/realm-store-sqlite` is published with the others and installed for you by `@sensigo/realm-cli` and `@sensigo/realm-mcp`; `npm ls @sensigo/realm` must still show one version.
 
 **4. The former `gc` and `reconcile` subcommands of `realm run`, and the former `migrate` subcommand of `realm workflow`, are removed.** A script that calls one now stops with `error: unknown command '<name>'` on stderr and exit code 1; what they did is done by the store (one transaction per write) and by `realm db migrate`.
+
+**5. Restart a `realm listen` that is already running when you upgrade (issue #600).** A `realm listen` from before this version, on `auto` (its default), still passes `--cache-gaps` to the `realm agent` it starts for each delivery, which this version's `realm agent` refuses as an unknown option, so its drives stop until it is restarted. The upgrade guide's last step, restart what is running, covers it.
 
 ### Added
 
@@ -149,11 +151,11 @@ All notable changes to this project are documented here.
 - **Two error codes for it: `STATE_STORE_MIGRATE_REFUSED`** (a home with no store file, or an empty one; nothing is created or copied) **and `STATE_STORE_MIGRATE_FAILED`** (a schema step failed; the line names the version the file is at, and the backup's path when one was made) (#616).
 - **`realm db check [--json]` reports on the store file without writing it**: SQLite's integrity check; the file's settings, version and schema, and whether Realm can write to it; every run's stored record (evidence hashes, phase stamp, key hash, filter columns, placeholders); and the tables against each other (the purge counter, rows whose run is gone, workflow pointers, workflow version hashes). Each problem comes with its reason, along with each check it stopped and what this version does not check; exit 0 only when every check ran and found nothing (#616).
 - **One error code for it: `STATE_STORE_CHECK_REFUSED`** (a home with no store file, or an empty one; nothing is created) (#616).
-- **`realm run import <path…>` brings Realm's JSON run records and exports into the SQLite store:** one line per file (`imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run`), a run already stored is never overwritten, and the exit code is 1 when any file was not imported (#616).
+- **`realm run import <path…>` brings Realm's JSON run records and exports into the SQLite store:** one line per file (`imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run`), a run already stored is never overwritten, and the exit code is 1 when any file read `diverged`, `purged`, `legacy` or `not_a_run` (#616).
 - `@sensigo/realm-mcp/home` exports `createRealmMcpServerOnHome({ home?, … })`: it opens the Realm home's SQLite store once for the process and serves the MCP tools over it, returning `{ server, close }`; the `realm-mcp` command uses it. `createRealmMcpServer` with four injected stores is unchanged and loads no SQLite.
 - **`--prompt-cache auto` chooses per step.** Each step without tools takes the lifetime its own earlier runs pay for, read from the store when the drive starts, so a drive you start yourself gets a measured choice too. A step that calls tools asks Anthropic for 5 minutes. `realm listen` no longer measures gaps of its own. (#600)
 - **`callStepWithMeta` and `callStepWithTools` take `cacheChoice`,** a cache lifetime chosen for that call; a provider module that ignores it sends what it always sent. (#600)
-- **Upgrading:** a drive you start yourself asked for 5 minutes every time; a step without tools that has earlier runs now asks for what its gaps pay for, and with no price file for 1 hour when a recent gap is under 54 minutes, else for no caching. `cache_auto.basis` no longer has `listen_trigger_gaps` or `listen_gaps_unreadable`. Restart a `realm listen` that is already running when you upgrade: if it is on `auto` (its default), it still passes `--cache-gaps` to its agents, which `realm agent` now refuses. (#600)
+- **BREAKING — restart a `realm listen` that is already running when you upgrade; a drive you start yourself asked for 5 minutes every time; a step without tools that has earlier runs now asks for what its gaps pay for, and with no price file for 1 hour when a recent gap is under 54 minutes, else for no caching. `cache_auto.basis` no longer has `listen_trigger_gaps` or `listen_gaps_unreadable`. Restart a `realm listen` that is already running when you upgrade: if it is on `auto` (its default), it still passes `--cache-gaps` to its agents, which `realm agent` now refuses. (#600)
 
 ### Changed
 
@@ -161,7 +163,7 @@ All notable changes to this project are documented here.
 - **`realm run purge` deletes on the store**, in bounded batches; the force line also reports what `realm.db` gave back on disk (`realm.db shrank by <bytes>`, a floor), copies in backups made before the purge are untouched, a blocked run keeps every row, and the log is reset once at the end — when another process was using it, one line says so. (#616)
 - `realm-mcp` prints its start line only after its store opened; a store that cannot be opened is one line, `realm-mcp: <reason>`, and exit 1, never a stack trace.
 - **Every `realm` command that meets the store busy beyond its budget prints one line** — `The store was busy for 5 s: another writer held it. Nothing was written. Try again.` — and exits 1. (#616)
-- **BREAKING: on those models the record and `capabilities()` state the ask:** `cache_requested: 'lifetime'` with `cache_lifetime_s: 1800`, `cache_marked` with `system` and `prompt`, and `promptCache: { lifetime_s: 1800 }`. (#896)
+- **BREAKING: on OpenAI GPT-5.6 and later at OpenAI's own address, the record and `capabilities()` state the ask:** `cache_requested: 'lifetime'` with `cache_lifetime_s: 1800`, `cache_marked` with `system` and `prompt`, and `promptCache: { lifetime_s: 1800 }`. (#896)
 - **BREAKING: `--prompt-cache` with `--provider openai` is accepted** by `realm agent` and `realm listen`: the setting decides whether the cache key is sent. The start line says what OpenAI is sent, per endpoint and setting, and `realm listen`'s caching line names the key. (#600)
 - **`realm workflow validate`, `register` and `watch` count the stable start of each step's prompt in its fixed part**, so their sizes grow. Two steps share a whole fixed part only when their prompts also start the same way. (#600)
 - **`--prompt-cache auto` now chooses from the prices in the runner's price file
@@ -373,11 +375,11 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   `realm listen`, `realm workflow validate`, `register` and `watch` now refuse a value that starts
   with `-` (a lone `-` is accepted) as the value of `--model`; `--model --strict` used to take
   `--strict` as the model id and drop the flag, so a CI gate passed. Write `--model=<id>` for a
-  value that starts with `-`. The same now holds for 19 other options that took any word:
+  value that starts with `-`. The same now holds for 20 other options that took any word:
   `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and
   `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`,
   `reclaim`, `purge`), `run export --out`, `run abandon --reason`, `run respond --by`,
-  `run reclaim --step`, and `agent --params` and `--base-url`.
+  `run reclaim --step`, and `agent --params` and `--base-url`, and `db migrate --backup`.
 - `realm run inspect`, `realm run drain` and `realm run resume` no longer list a step as something
   `realm run advance` runs without saying what it needs: when an owed step needs a handler or
   adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm
