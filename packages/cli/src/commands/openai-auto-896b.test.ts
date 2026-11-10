@@ -316,8 +316,10 @@ describe('#896 unit B — `auto` on a drive realm listen starts, GPT-5.6 and lat
     });
   }, 90_000);
 
-  // (a) red when either surface takes the window from Anthropic's lifetime (54 minutes) — the start
-  //     line's provider, inspect's entry provider, or the view's provider; (b) prints both lines.
+  // (a) red when the start line takes the window from Anthropic's lifetime (54 minutes) — the start
+  //     line's provider; (b) prints both lines. Caching 3-M D-2: inspect's line for the request is
+  //     now the step's own sentence, which has no window; the OpenAI 27-minute inspect text is pinned
+  //     on seeded records in `cost-view-disclosure-parity`.
   it('check 3: no price file, gaps 40 min and 2 h → the start line says no caching and names 27 minutes; the step with no earlier run asks 30 minutes', async () => {
     const d = await deployment('c3', { realmYaml: 'version: 1\n', prices: PRICED });
     const r = await drive('c3', d, listenGaps('2400,7200'));
