@@ -516,3 +516,68 @@ describe('caching 3-M D-2 — check 7: the read of the earlier runs failed', () 
     60_000,
   );
 });
+
+/** `realm run inspect` on the deployment's home, the built CLI: the step's `asked for` clause. */
+function inspectAsk(d: Deployment, runId: string): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [CLI, 'run', 'inspect', runId], {
+      cwd: d.proj,
+      env: { PATH: process.env['PATH'] ?? '', HOME: d.h.root, REALM_NO_NUDGE: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (c: Buffer) => (out += c.toString()));
+    child.on('close', () => {
+      const line = out.split('\n').find((l) => l.includes('asked for')) ?? '';
+      // The ask's words, up to the line's next field (` | not priced …`).
+      resolve(line.slice(line.indexOf('asked for')).split(' | ')[0]!);
+    });
+  });
+}
+
+describe('caching 3-M D-2r — check 2: with no price file, the 1-hour fallback through the command', () => {
+  const EVIDENCE = "realm agent's default; auto: the last gap between this step's runs was about";
+  const NO_FILE = 'no price file (runner.cache.economics is not set)';
+  // The real case: the owner's runner — `realm agent --run-id …` on Anthropic, no price file named —
+  // on a step whose one earlier run was 20 minutes back, or 3 hours back. (a) red when the fallback
+  // still follows `realm agent`'s 5-minute prior (the 20-minute row then asks nothing); red when the
+  // words are still keyed on the runner (the 3-hour row then says 270 seconds); (b) prints the code,
+  // the markers sent, the inspect words and the reads.
+  it.each<[string, number, unknown, string]>([
+    [
+      '20 minutes back → 1 hour',
+      1200,
+      [{ type: 'ephemeral', ttl: '1h' }],
+      `asked for 1 hour (sent as 1 hour; ${EVIDENCE} 20 minutes; ${NO_FILE}, so 1 hour without prices)`,
+    ],
+    [
+      '3 hours back → no caching',
+      10800,
+      'plain',
+      `asked for no caching (${EVIDENCE} 3 hours; ${NO_FILE}, and no gap was under 54 minutes, so no caching)`,
+    ],
+  ])(
+    'an earlier request %s',
+    async (_case, agoS, marks, words) => {
+      const d = await deployment(`d2r-${String(agoS)}`, {
+        prices: PRICES_FULL,
+        realmYaml: 'version: 1\n',
+      });
+      await seedEarlier(d, ['ask'], agoS);
+      const runId = await newRun(d);
+      const r = await drive(
+        `d2r-${String(agoS)}`,
+        d,
+        ['--run-id', runId, '--model', 'claude-x'],
+        runId,
+      );
+      expect({
+        code: r.code,
+        bodies: r.bodies,
+        words: await inspectAsk(d, runId),
+        reads: r.reads,
+      }).toEqual({ code: 0, bodies: [marks], words, reads: 0 });
+    },
+    60_000,
+  );
+});

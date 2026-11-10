@@ -599,7 +599,7 @@ function askEntryText(entry: CacheRequestedEntry): string {
       ? ''
       : `; auto: ${autoEvidence(entry.auto)}` +
         (entry.auto.prices !== undefined
-          ? `; ${autoPricesText(entry.auto.prices, asked, entry.provider, entry.by)}`
+          ? `; ${autoPricesText(entry.auto.prices, asked, entry.provider)}`
           : '');
   if (entry.value === 'off')
     return `asked for no caching (${askSourceText(entry)}${autoFor('off')})`;
