@@ -83,6 +83,11 @@ export const CENSUS: Record<string, Entry> = {
     "the failed-attempt sidecar line's own stamp (a log), compared with nothing on the run",
   ],
   'cli/src/agent/run-agent.ts#validationWedgeEntry#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/agent/step-cache-choices.ts#chooseStepCaches#Date.now()': [
+    1,
+    'outside',
+    "the end of a step's last gap, standing for the next request's start; compared only with an earlier request's start",
+  ],
   'cli/src/commands/drain.ts#runDrainAction#clock.now()': [
     1,
     'event',

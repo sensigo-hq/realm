@@ -323,12 +323,13 @@ describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () =
 });
 
 // Guardrail 7(b)'s CROSS cell (the lifetime unit, cell 8): where `auto`'s prior and its choice differ
-// — a listen child (prior: long) whose gaps choose short — the start line's duration words are the
-// recorded lifetime's own. The built CLI against the in-test Anthropic stand-in (local, answers 200),
+// — a listen child (prior: long) whose gaps choose short. Caching 3-M D-2 (MA 2's ruling, registry
+// MA2-3MD2-03): until D-3 the start line says the drive's choice, while the request follows its
+// step, which on the workflow's first run has no gap and asks the listen prior. The built CLI against the in-test Anthropic stand-in (local, answers 200),
 // with a scratch HOME and only a dummy key; on a failing host it prints the start line and the
 // recorded seconds — never an environment, a header or a key.
-describe('the start line and the record agree when auto chooses against its prior (issue #600, cell 8)', () => {
-  it('a listen child given gaps 10,10,10,7200,7200 asks for 5 minutes, says 5 minutes, and records 300 (red: the start line from the prior, or the record from the prior)', async () => {
+describe('until D-3, the start line says the drive’s choice and the record the step’s (issue #600, cell 8; caching 3-M D-2)', () => {
+  it('until D-3, a listen child given gaps 10,10,10,7200,7200 says the drive’s 5 minutes and records the step’s own prior, 3600 (red: the step’s choice not passed — the record goes back to 300 — or the start line from the prior)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'realm-600-cross-'));
     const h = await makeTempHome();
     const stub = await startAnthropicStub({
@@ -426,14 +427,10 @@ describe('the start line and the record agree when auto chooses against its prio
         // #898: the start line says where the choice took its prices.
         priced: startLine.includes('; priced from your price file; '),
       }).toEqual({
-        recorded: 300,
-        auto: {
-          basis: 'listen_trigger_gaps',
-          gaps_s: [10, 10, 10, 7200, 7200],
-          prices: { from: 'economics' },
-        },
+        recorded: 3600,
+        auto: { basis: 'step_gaps', gaps_s: [] },
         words: '5 minutes',
-        wordsOfRecord: '5 minutes',
+        wordsOfRecord: '1 hour',
         priced: true,
       });
     } finally {

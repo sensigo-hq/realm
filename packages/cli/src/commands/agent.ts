@@ -37,9 +37,9 @@ import {
   readProviderKeys,
   resolveProvider,
 } from '../agent/providers/llm-provider.js';
-import type { ProviderName } from '../agent/providers/llm-provider.js';
+import type { AutoStepRule, ProviderName } from '../agent/providers/llm-provider.js';
 import { runAgent } from '../agent/run-agent.js';
-import { settleAutoFromPriceFile } from '../agent/auto-prices.js';
+import { chooseStepCaches, type StepCacheChoices } from '../agent/step-cache-choices.js';
 import { readEarlierRuns, type EarlierRuns } from '../agent/earlier-runs.js';
 import {
   autoFallbackWindowText,
@@ -449,6 +449,8 @@ export const agentCommand = new Command('agent')
         let settleAuto:
           | ((prices: AutoPriceInput) => { choice: CacheChoice; prices?: CacheAutoPrices })
           | undefined;
+        // Caching 3-M (D-2): under `auto`, the provider's rule for each step's choice.
+        let autoRule: AutoStepRule | undefined;
         let requestedModel: string | undefined;
         // issue #898 (C.1): whether the provider applies --prompt-cache, never by reading a pending
         // choice: a provider with one pending (Anthropic; #896 unit B: OpenAI on GPT-5.6 and later at
@@ -528,7 +530,7 @@ export const agentCommand = new Command('agent')
                 'COMPAT endpoint enforces strict, and native OpenAI endpoints already do.',
             );
           }
-          ({ provider, settleAuto } = await resolveProvider({
+          ({ provider, settleAuto, autoRule } = await resolveProvider({
             provider: opts.provider,
             model: opts.model,
             baseUrl: opts.baseUrl,
@@ -587,15 +589,29 @@ export const agentCommand = new Command('agent')
                     : promptCache,
               };
         // issue #898 (C.2): a pending `auto` choice is settled from the runner's price file, read once
-        // after the definition and `realm.yaml` load and before the drive. Without a pending choice no
-        // file is opened.
-        const settleFromPriceFile = async (
+        // after the definition and `realm.yaml` load and before the drive. Caching 3-M (D-2): under
+        // `auto`, for a provider that takes a lifetime, the same one read also chooses each agent
+        // step's lifetime from its gaps in the earlier runs; nothing needing a price, no file is
+        // opened. A stated setting and any other provider choose nothing here.
+        const chooseFromPriceFile = async (
+          definition: WorkflowDefinition,
+          earlier: { earlierRuns?: EarlierRuns },
           economicsPath: string | undefined,
-        ): Promise<CacheAutoPrices | undefined> => {
-          if (settleAuto === undefined || requestedModel === undefined) return undefined;
-          const outcome = await settleAutoFromPriceFile(settleAuto, economicsPath, requestedModel);
+        ): Promise<{ autoPrices?: CacheAutoPrices; stepCacheChoices?: StepCacheChoices }> => {
+          if (autoRule === undefined || requestedModel === undefined) return {};
+          const outcome = await chooseStepCaches({
+            definition,
+            earlierRuns: earlier.earlierRuns,
+            rule: autoRule,
+            settleAuto,
+            economicsPath,
+            model: requestedModel,
+          });
           if (outcome.warning !== undefined) console.error(outcome.warning);
-          return outcome.prices;
+          return {
+            ...(outcome.prices !== undefined ? { autoPrices: outcome.prices } : {}),
+            stepCacheChoices: outcome.choices,
+          };
         };
         // Caching 3-M (piece C2): the one read of the workflow's earlier runs, here because the
         // driver's store has no `scan`. No read when nothing can use it: a stated `off` asks for no
@@ -680,7 +696,11 @@ export const agentCommand = new Command('agent')
             extensionOpts,
           );
           const earlierRuns = await earlierRunsFor(definition, opts.runId);
-          const autoPrices = await settleFromPriceFile(loaded.cacheEconomicsPath);
+          const { autoPrices, stepCacheChoices } = await chooseFromPriceFile(
+            definition,
+            earlierRuns,
+            loaded.cacheEconomicsPath,
+          );
 
           const gateHandler = buildManifestGateHandler(loaded.notifiers, {
             store,
@@ -709,6 +729,7 @@ export const agentCommand = new Command('agent')
               reattachFlags,
               ...promptCacheFor(autoPrices),
               ...earlierRuns,
+              ...(stepCacheChoices !== undefined ? { stepCacheChoices } : {}),
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
@@ -761,7 +782,11 @@ export const agentCommand = new Command('agent')
             process.exit(1);
           }
           const earlierRuns = await earlierRunsFor(definition, undefined);
-          const autoPrices = await settleFromPriceFile(loaded.cacheEconomicsPath);
+          const { autoPrices, stepCacheChoices } = await chooseFromPriceFile(
+            definition,
+            earlierRuns,
+            loaded.cacheEconomicsPath,
+          );
 
           const gateHandler = buildManifestGateHandler(loaded.notifiers, {
             store,
@@ -790,6 +815,7 @@ export const agentCommand = new Command('agent')
               reattachFlags,
               ...promptCacheFor(autoPrices),
               ...earlierRuns,
+              ...(stepCacheChoices !== undefined ? { stepCacheChoices } : {}),
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }

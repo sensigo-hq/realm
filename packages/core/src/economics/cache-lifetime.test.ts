@@ -9,6 +9,7 @@ import {
   CACHE_GAP_MAX_S,
   chooseCacheLifetime,
   normalizeCacheAuto,
+  stepCacheGaps,
   type CacheTiers,
 } from './cache-lifetime.js';
 
@@ -114,5 +115,78 @@ describe('normalizeCacheAuto (issue #600, the lifetime unit)', () => {
   it("an input with its keys reversed and an extra key → the keys ['basis', 'gaps_s']", () => {
     const out = normalizeCacheAuto({ extra: 1, gaps_s: [420], basis: 'listen_trigger_gaps' });
     expect(Object.keys(out ?? {})).toEqual(['basis', 'gaps_s']);
+  });
+});
+
+// Caching 3-M (D-2) check 1: a step's gaps, from the moments its requests started in the workflow's
+// earlier runs and one reading of the host's clock. No real measured gaps exist on record (C3M7-21):
+// the moments are constructed, in the shape the record keeps (`request_start`, ISO text).
+describe('caching 3-M D-2 — stepCacheGaps', () => {
+  const T0 = Date.parse('2026-11-10T08:00:00.000Z');
+  const at = (s: number): string => new Date(T0 + s * 1000).toISOString();
+  // (a) red when the moments are not sorted (the out-of-order row: overlapping runs end out of their
+  //     start order), when the reading's gap is left out (the one-moment row), when a gap is rounded
+  //     up or to the nearest second, or when `keptCacheGaps` is not applied (six gaps, and the skewed
+  //     reading's negative gap); (b) prints the moments, the reading and the gaps.
+  it.each<[string, unknown[], number, number[]]>([
+    ['two moments and a reading: two gaps', [at(0), at(1200)], 2400, [1200, 1200]],
+    ['one moment and a reading: one gap', [at(0)], 1200, [1200]],
+    ['no moment: no gap', [], 1200, []],
+    [
+      'moments out of order (overlapping runs): sorted first',
+      [at(3600), at(0), at(1200)],
+      4800,
+      [1200, 2400, 1200],
+    ],
+    ['an unparsable stamp is dropped', [at(0), 'not a time', 7, at(600)], 1200, [600, 600]],
+    ['rounded down to whole seconds', [at(0), new Date(T0 + 1999).toISOString()], 2.5, [1, 0]],
+    [
+      'six moments: six gaps, the last five kept',
+      [at(0), at(60), at(180), at(360), at(600), at(900)],
+      1260,
+      [120, 180, 240, 300, 360],
+    ],
+    [
+      'a reading before the newest moment (clock skew): that gap dropped',
+      [at(0), at(1200)],
+      1100,
+      [1200],
+    ],
+  ])('%s', (_case, starts, endS, gaps) => {
+    expect(stepCacheGaps(starts, T0 + endS * 1000)).toEqual(gaps);
+  });
+});
+
+// Caching 3-M (D-2) check 10: the record keeps the three step words, each in its own shape.
+describe('caching 3-M D-2 — normalizeCacheAuto keeps the step words', () => {
+  // (a) red when `step_gaps` is not added to the gaps rule (its rows come back undefined, or its gaps
+  //     are dropped), or a step word is kept with fields it never has; (b) prints each result.
+  it.each<[string, unknown, unknown]>([
+    [
+      'step_gaps with gaps and prices',
+      { basis: 'step_gaps', gaps_s: [1200, 1200], prices: { from: 'economics' } },
+      { basis: 'step_gaps', gaps_s: [1200, 1200], prices: { from: 'economics' } },
+    ],
+    [
+      'step_gaps with no gap',
+      { basis: 'step_gaps', gaps_s: [] },
+      { basis: 'step_gaps', gaps_s: [] },
+    ],
+    ['step_gaps_unreadable', { basis: 'step_gaps_unreadable' }, { basis: 'step_gaps_unreadable' }],
+    ['tool_step', { basis: 'tool_step' }, { basis: 'tool_step' }],
+    ['step_gaps with no gaps_s: dropped whole', { basis: 'step_gaps' }, undefined],
+    ['gaps_s on tool_step: dropped whole', { basis: 'tool_step', gaps_s: [] }, undefined],
+    [
+      'gaps_s on step_gaps_unreadable: dropped whole',
+      { basis: 'step_gaps_unreadable', gaps_s: [300] },
+      undefined,
+    ],
+    [
+      'prices with an empty gaps_s: dropped whole',
+      { basis: 'step_gaps', gaps_s: [], prices: { from: 'economics' } },
+      undefined,
+    ],
+  ])('%s', (_case, value, kept) => {
+    expect(normalizeCacheAuto(value)).toEqual(kept);
   });
 });

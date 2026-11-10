@@ -369,7 +369,7 @@ export type CacheBasis = (typeof CACHE_BASES)[number];
 
 /**
  * Issue #600 — the words `--prompt-cache` takes (`realm agent`, `realm listen`): `auto` (the default:
- * realm chooses per drive — {@link CACHE_AUTO_BASES}), `short` and `long` (the provider's own
+ * realm chooses per step, caching 3-M D-2 — {@link CACHE_AUTO_BASES}), `short` and `long` (the provider's own
  * shortest and longest lifetimes), `off`. Produced by the CLI's `parsePromptCache`; never stored —
  * the record stores the class it resolves to ({@link CACHE_REQUESTS}) and the seconds asked for
  * (`UsageRecord.cache_lifetime_s`).
@@ -399,19 +399,31 @@ export type CacheRequestSource = (typeof CACHE_REQUEST_SOURCES)[number];
 
 /**
  * Issue #600 (the lifetime unit) — on what `--prompt-cache auto` chose a request's lifetime
- * (`UsageRecord.cache_auto.basis`). Each member's producer is the CLI's `resolvePromptCache`, and the
- * Anthropic adapter writes it:
+ * (`UsageRecord.cache_auto.basis`). The first three are produced by the CLI's `resolvePromptCache`, for
+ * the drive's own choice, which the adapter writes on a request that carries no choice of its own:
  * - `no_measurement` — the setting was `auto` and the drive was not started by `realm listen`: no
  *   gaps exist, so the short lifetime (the runner's prior) is asked for;
  * - `listen_trigger_gaps` — `realm listen` started the drive and passed the gaps it measured between
  *   that workflow's recent triggers (possibly none yet — the long lifetime is then the prior);
  * - `listen_gaps_unreadable` — `realm listen` started the drive and passed a value the agent could
  *   not read; the long lifetime (the prior) is asked for and the drive goes on.
+ * Caching 3-M (D-2): the last three are produced by the CLI's `chooseStepCaches`, one choice per agent
+ * step, which `realm agent` passes on each of the step's calls:
+ * - `step_gaps` — a step without tools, chosen by the provider's rule over the gaps between the
+ *   step's requests in the workflow's earlier runs (`stepCacheGaps`; possibly none — the runner's
+ *   prior is then asked for);
+ * - `step_gaps_unreadable` — the read of the earlier runs failed; the runner's prior is asked for and
+ *   the drive goes on;
+ * - `tool_step` — a step that calls tools, on Anthropic: its own turns reuse the entry, so the short
+ *   lifetime is asked for whatever its gaps.
  */
 export const CACHE_AUTO_BASES = [
   'no_measurement',
   'listen_trigger_gaps',
   'listen_gaps_unreadable',
+  'step_gaps',
+  'step_gaps_unreadable',
+  'tool_step',
 ] as const;
 export type CacheAutoBasis = (typeof CACHE_AUTO_BASES)[number];
 
@@ -704,8 +716,8 @@ export interface UsageRecord {
   cache_requested_by?: string;
   /**
    * Issue #600 (the lifetime unit) — present iff the setting was `auto`: the basis of the choice,
-   * and the gaps it read. `gaps_s` is present iff `basis` is `listen_trigger_gaps`: 0 to 5 whole
-   * seconds, each from 0 to 604 800, oldest first. Issue #898: `prices` says where the choice took
+   * and the gaps it read. `gaps_s` is present iff `basis` is `listen_trigger_gaps` or (caching 3-M
+   * D-2) `step_gaps`: 0 to 5 whole seconds, each from 0 to 604 800, oldest first. Issue #898: `prices` says where the choice took
    * its prices, present only when gaps were kept. Normalised where it enters the record
    * (`boundRequestFacts` → `normalizeCacheAuto`).
    */

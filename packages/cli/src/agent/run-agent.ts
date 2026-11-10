@@ -65,6 +65,7 @@ import type {
   Snapshot,
 } from '@sensigo/realm';
 import type { EarlierRuns } from './earlier-runs.js';
+import type { StepCacheChoices } from './step-cache-choices.js';
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
   sanitizeError,
@@ -263,6 +264,12 @@ export interface AgentDeps {
    * Absent: no read was made or it failed, and no step's first request gets a copy from another run.
    */
   earlierRuns?: EarlierRuns;
+  /**
+   * Caching 3-M (piece D-2): under `auto`, each agent step's cache choice for this drive, chosen by
+   * `realm agent` before it (`chooseStepCaches`). Every call of a step passes its choice, repair
+   * attempts included. Absent, or a step it does not name: the call carries none (`CallCacheChoice`).
+   */
+  stepCacheChoices?: StepCacheChoices;
   workflowStore: WorkflowRegistrar;
   provider: LlmProvider;
   /**
@@ -1359,6 +1366,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 ? discloseForAgentSplit(rawForAttempt, nextAction.stable_prefix.chars)
                 : undefined;
             const cachePrefix = split !== undefined ? { cachePrefixChars: split.head.length } : {};
+            // Caching 3-M (D-2): the step's cache choice for this drive, on each of its calls.
+            const stepCacheChoice = deps.stepCacheChoices?.get(stepName);
+            const stepCache = stepCacheChoice !== undefined ? { cacheChoice: stepCacheChoice } : {};
             // #robust-anthropic-provider Part 1: route the schema the ENGINE validates output against
             // (output_schema, execution-loop.ts validateOutputSchema) ahead of the execute_step-param
             // schema (input_schema / nextAction.input_schema) the provider was fed until now. Both-
@@ -1743,6 +1753,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     toolTimeoutMs: (stepDef.tool_timeout ?? 30) * 1000,
                     ...(agentProfileInstructions !== undefined ? { agentProfileInstructions } : {}),
                     ...cachePrefix,
+                    ...stepCache,
                   },
                 );
               } catch (err) {
@@ -1876,7 +1887,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
-                    { structuredOutputStrict: structuredOutputPlan.send, llmClock, ...cachePrefix },
+                    {
+                      structuredOutputStrict: structuredOutputPlan.send,
+                      llmClock,
+                      ...cachePrefix,
+                      ...stepCache,
+                    },
                   );
                   stepInput = output;
                   // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the
@@ -1940,7 +1956,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
-                    { llmClock, ...cachePrefix },
+                    { llmClock, ...cachePrefix, ...stepCache },
                   );
                   stepInput = output;
                   // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the

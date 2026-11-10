@@ -826,7 +826,7 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
 
   // Cell 9. (a) red when a malformed `--cache-gaps` stops the drive, or is read as gaps; (b) prints
   // the exit code, the start line and the recorded request facts.
-  it('--spawned-by-listen --cache-gaps 7,abc drives: unreadable, the listen prior (1 hour), said on the start line', async () => {
+  it('--spawned-by-listen --cache-gaps 7,abc drives: the start line says unreadable; the step, with no earlier run, asks the listen prior (1 hour)', async () => {
     await withRoot(ONE_STEP, async (root, baseUrl) => {
       const r = await run(
         root,
@@ -862,7 +862,7 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
         recorded: {
           lifetime: 3600,
           by: 'realm listen',
-          auto: { basis: 'listen_gaps_unreadable' },
+          auto: { basis: 'step_gaps', gaps_s: [] },
         },
       });
     });

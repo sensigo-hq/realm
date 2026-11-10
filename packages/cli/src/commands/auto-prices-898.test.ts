@@ -185,8 +185,9 @@ const LISTEN_DEFAULT = "realm listen's default; change it with realm listen --pr
 describe('#898 S9 — realm agent end to end: the price file decides what auto asks for', () => {
   // (a) red when the settle runs before the load (no path yet: no_file, 1 hour), or the file's rates
   //     are not read; (b) prints the stub's cache_control fields, the record's cache_auto, the start
-  //     line and the count of price-file reads.
-  it('(a) gaps 10,10,10,7200,7200 with a full price file → asks 5 minutes; the record says economics; the start line says so; the file is read once', async () => {
+  //     line and the count of price-file reads. Caching 3-M (D-2): the request follows its step,
+  //     which has no earlier run, so it asks the listen prior; the start line is the drive's (D-3).
+  it('(a) gaps 10,10,10,7200,7200 with a full price file → the start line says 5 minutes, priced from the file read once; the step with no earlier run asks 1 hour', async () => {
     const d = await deployment('a', { realmYaml: NAMES_PRICES, prices: PRICES_FULL });
     const r = await drive('a', d, [
       '--run-id',
@@ -201,19 +202,15 @@ describe('#898 S9 — realm agent end to end: the price file decides what auto a
       code: 0,
       startLine: `${FIX} 5 minutes (auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours; priced from your price file; ${LISTEN_DEFAULT}).`,
       warning: undefined,
-      cacheControl: [[{ type: 'ephemeral' }]],
-      cacheAuto: {
-        basis: 'listen_trigger_gaps',
-        gaps_s: [10, 10, 10, 7200, 7200],
-        prices: { from: 'economics' },
-      },
+      cacheControl: [[{ type: 'ephemeral', ttl: '1h' }]],
+      cacheAuto: { basis: 'step_gaps', gaps_s: [] },
       priceFileReads: 1,
     });
   }, 60_000);
 
   // (a) red when the fallback ignores the missing file, or the file is read though not named; (b)
   //     as (a). Together with (a): the file changes what is sent (5 minutes there, 1 hour here).
-  it('(b) the same gaps with no runner.cache.economics → asks 1 hour without prices; the record says no_file; the price file on disk is never read', async () => {
+  it('(b) the same gaps with no runner.cache.economics → the start line says 1 hour without prices; the price file on disk is never read; the step asks 1 hour', async () => {
     const d = await deployment('b', { realmYaml: 'version: 1\n', prices: PRICES_FULL });
     const r = await drive('b', d, [
       '--run-id',
@@ -229,17 +226,14 @@ describe('#898 S9 — realm agent end to end: the price file decides what auto a
       startLine: `${FIX} 1 hour (auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours; no price file (runner.cache.economics is not set), so 1 hour without prices; ${LISTEN_DEFAULT}).`,
       warning: undefined,
       cacheControl: [[{ type: 'ephemeral', ttl: '1h' }]],
-      cacheAuto: {
-        basis: 'listen_trigger_gaps',
-        gaps_s: [10, 10, 10, 7200, 7200],
-        prices: { from: 'none', cause: 'no_file' },
-      },
+      cacheAuto: { basis: 'step_gaps', gaps_s: [] },
       priceFileReads: 0,
     });
   }, 60_000);
 
-  // (a) red when the fallback's guard is dropped (the plain prior asks 1 hour); (b) as (a).
-  it('(c) gaps 7200,7200,7200 with no price file → no caching, and the start line says why', async () => {
+  // (a) red when the fallback's guard is dropped (the plain prior asks 1 hour); (b) as (a). Caching
+  //     3-M (D-2): the start line pins the drive's choice; the step, with no earlier run, asks 1 hour.
+  it('(c) gaps 7200,7200,7200 with no price file → the start line says no caching and why; the step asks 1 hour', async () => {
     const d = await deployment('c', { prices: PRICES_FULL });
     const r = await drive('c', d, [
       '--run-id',
@@ -254,12 +248,8 @@ describe('#898 S9 — realm agent end to end: the price file decides what auto a
       code: 0,
       startLine: `Caching: off; Anthropic is asked to cache nothing (auto: the last 3 gaps between this workflow's triggers were about 2 hours, 2 hours and 2 hours; no price file (runner.cache.economics is not set), and no gap was under 54 minutes, so no caching; ${LISTEN_DEFAULT}).`,
       warning: undefined,
-      cacheControl: ['plain'],
-      cacheAuto: {
-        basis: 'listen_trigger_gaps',
-        gaps_s: [7200, 7200, 7200],
-        prices: { from: 'none', cause: 'no_file' },
-      },
+      cacheControl: [[{ type: 'ephemeral', ttl: '1h' }]],
+      cacheAuto: { basis: 'step_gaps', gaps_s: [] },
       priceFileReads: 0,
     });
   }, 60_000);
@@ -285,23 +275,19 @@ describe('#898 S9 — realm agent end to end: the price file decides what auto a
       startLine: `${FIX} 1 hour (auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes; the price file is not a valid price file, so 1 hour without prices; ${LISTEN_DEFAULT}).`,
       warning: `  ⚠ the price file could not be used: '${d.pricesPath}' (line 2, column 1): tab characters must not be used in indentation. auto chose without prices.`,
       cacheControl: [[{ type: 'ephemeral', ttl: '1h' }]],
-      cacheAuto: {
-        basis: 'listen_trigger_gaps',
-        gaps_s: [420, 720],
-        prices: { from: 'none', cause: 'economics_unreadable' },
-      },
+      cacheAuto: { basis: 'step_gaps', gaps_s: [] },
       priceFileReads: 1,
     });
   }, 60_000);
 
   // (a) red when the file is read unconditionally; (b) prints the read count and cache_auto.
-  it('(e) a lone realm agent drive (no gaps) never opens the price file, and its cache_auto has no prices', async () => {
+  it('(e) a lone realm agent drive (no gaps) never opens the price file, and its cache_auto has no prices (its step has no earlier run)', async () => {
     const d = await deployment('e', { realmYaml: NAMES_PRICES, prices: PRICES_FULL });
     const r = await drive('e', d, ['--run-id', d.runId, '--model', 'claude-x']);
     expect({ code: r.code, reads: r.priceFileReads, cacheAuto: r.cacheAuto }).toEqual({
       code: 0,
       reads: 0,
-      cacheAuto: { basis: 'no_measurement' },
+      cacheAuto: { basis: 'step_gaps', gaps_s: [] },
     });
   }, 60_000);
 
