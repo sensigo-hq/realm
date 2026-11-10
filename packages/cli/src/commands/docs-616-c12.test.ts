@@ -12,6 +12,9 @@
 // refused answer in its `.attempts.jsonl`), formatted by prettier (a final newline, nothing else). It is
 // written once rather than by each run, so the guide's captures are exact, and it outlives the JSON
 // classes, which PR-3 deletes.
+//
+// Every describe whose cells start the built CLI, the server or a node child carries a budget of its own
+// (60 s; spawn-budget-guard.test.ts, #371).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
@@ -115,236 +118,246 @@ function freshHome(name: string): string {
   return home;
 }
 
-describe('#616 PR-2c c12 — the files on disk (environment-and-files.md)', () => {
-  it('C1: a fresh home after one command holds exactly the names the table gives, at their modes', () => {
-    const home = freshHome('c1');
-    const r = realm(['workflow', 'list'], home);
-    const listing = readdirSync(join(home, '.realm')).sort();
-    const text = read(ENV);
-    const table = text.slice(
-      text.indexOf('## Files under `~/.realm`'),
-      text.indexOf('### The clock'),
-    );
-    const named = table
-      .split('\n')
-      .filter((l) => l.startsWith('| `'))
-      .flatMap((l) => [...l.split('|')[1]!.matchAll(/`([^`]+)`/g)].map((m) => m[1]!));
-    const mode = (n: string): string =>
-      (statSync(join(home, '.realm', n)).mode & 0o777).toString(8);
-    // (a) red when a command leaves another entry (a side file, a folder) or the page's table drops a
-    //     name the home holds, or a mode moves; (b) prints the listing, the table's names, the stderr.
-    expect(
-      {
-        code: r.code,
-        listing,
-        notOnThePage: listing.filter((n) => !named.includes(n)),
-        modes: listing.map((n) => `${n} ${mode(n)}`),
-      },
-      `the page's table names: ${named.join(', ')}\n${r.err}`,
-    ).toEqual({
-      code: 0,
-      listing: ['dedup', 'realm.db', 'replays', 'runs', 'workflows'],
-      notOnThePage: [],
-      modes: ['dedup 444', 'realm.db 600', 'replays 444', 'runs 444', 'workflows 444'],
+describe(
+  '#616 PR-2c c12 — the files on disk (environment-and-files.md)',
+  { timeout: 60_000 },
+  () => {
+    it('C1: a fresh home after one command holds exactly the names the table gives, at their modes', () => {
+      const home = freshHome('c1');
+      const r = realm(['workflow', 'list'], home);
+      const listing = readdirSync(join(home, '.realm')).sort();
+      const text = read(ENV);
+      const table = text.slice(
+        text.indexOf('## Files under `~/.realm`'),
+        text.indexOf('### The clock'),
+      );
+      const named = table
+        .split('\n')
+        .filter((l) => l.startsWith('| `'))
+        .flatMap((l) => [...l.split('|')[1]!.matchAll(/`([^`]+)`/g)].map((m) => m[1]!));
+      const mode = (n: string): string =>
+        (statSync(join(home, '.realm', n)).mode & 0o777).toString(8);
+      // (a) red when a command leaves another entry (a side file, a folder) or the page's table drops a
+      //     name the home holds, or a mode moves; (b) prints the listing, the table's names, the stderr.
+      expect(
+        {
+          code: r.code,
+          listing,
+          notOnThePage: listing.filter((n) => !named.includes(n)),
+          modes: listing.map((n) => `${n} ${mode(n)}`),
+        },
+        `the page's table names: ${named.join(', ')}\n${r.err}`,
+      ).toEqual({
+        code: 0,
+        listing: ['dedup', 'realm.db', 'replays', 'runs', 'workflows'],
+        notOnThePage: [],
+        modes: ['dedup 444', 'realm.db 600', 'replays 444', 'runs 444', 'workflows 444'],
+      });
     });
-  });
 
-  it('C1 (the side files): a killed process leaves realm.db-wal and realm.db-shm; the next command reads the run, and they go when it exits', () => {
-    const home = freshHome('c1-crash');
-    const store = pathToFileURL(join(ROOT, 'packages', 'store-sqlite', 'dist', 'index.js')).href;
-    const killed = spawnSync(
-      process.execPath,
-      [
-        '--input-type=module',
-        '-e',
-        `const { openRealmHome } = await import(${JSON.stringify(store)});
+    it('C1 (the side files): a killed process leaves realm.db-wal and realm.db-shm; the next command reads the run, and they go when it exits', () => {
+      const home = freshHome('c1-crash');
+      const store = pathToFileURL(join(ROOT, 'packages', 'store-sqlite', 'dist', 'index.js')).href;
+      const killed = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `const { openRealmHome } = await import(${JSON.stringify(store)});
 const h = await openRealmHome({ home: ${JSON.stringify(join(home, '.realm'))} });
 await h.runStore.create({ workflowId: 'crash', workflowVersion: 1, params: {} });
 process.kill(process.pid, 'SIGKILL');`,
-      ],
-      { encoding: 'utf8' },
-    );
-    const afterKill = readdirSync(join(home, '.realm')).sort();
-    const r = realm(['run', 'list'], home);
-    // (a) red when the killed process leaves no log (the sentence's crash case is then not one), the
-    //     next command does not read the run the killed one wrote, or a side file stays after it
-    //     exits; (b) prints both listings and the command's output.
-    expect(
-      {
-        signal: killed.signal,
-        afterKill,
-        listed: r.out.includes(' crash v1 '),
-        code: r.code,
-        afterNext: readdirSync(join(home, '.realm')).sort(),
-      },
-      `${killed.stderr}\n${r.out}${r.err}`,
-    ).toEqual({
-      signal: 'SIGKILL',
-      afterKill: [
-        'dedup',
-        'realm.db',
-        'realm.db-shm',
-        'realm.db-wal',
-        'replays',
-        'runs',
-        'workflows',
-      ],
-      listed: true,
-      code: 0,
-      afterNext: ['dedup', 'realm.db', 'replays', 'runs', 'workflows'],
+        ],
+        { encoding: 'utf8' },
+      );
+      const afterKill = readdirSync(join(home, '.realm')).sort();
+      const r = realm(['run', 'list'], home);
+      // (a) red when the killed process leaves no log (the sentence's crash case is then not one), the
+      //     next command does not read the run the killed one wrote, or a side file stays after it
+      //     exits; (b) prints both listings and the command's output.
+      expect(
+        {
+          signal: killed.signal,
+          afterKill,
+          listed: r.out.includes(' crash v1 '),
+          code: r.code,
+          afterNext: readdirSync(join(home, '.realm')).sort(),
+        },
+        `${killed.stderr}\n${r.out}${r.err}`,
+      ).toEqual({
+        signal: 'SIGKILL',
+        afterKill: [
+          'dedup',
+          'realm.db',
+          'realm.db-shm',
+          'realm.db-wal',
+          'replays',
+          'runs',
+          'workflows',
+        ],
+        listed: true,
+        code: 0,
+        afterNext: ['dedup', 'realm.db', 'replays', 'runs', 'workflows'],
+      });
     });
-  });
 
-  it('the page’s new sentences', () => {
-    // C1 (the listing after one command, the modes, the side files after a crash).
-    for (const sentence of [
-      'The file list comes from the code and from a listing of a home after one command.',
-      'Every `realm` command and the `realm-mcp` server keep their data in one SQLite file in the Realm home. The first command on a new home creates the home folder, the store file and four fence files:',
-      "| `realm.db` | The store: runs with their evidence, refused answers, trace lines and sealed lines; the registered workflows; saved replays; `realm listen`'s duplicate-webhook marks. Created owner-only (mode 0600). | Every command and tool that opens its stores |",
-      "| `realm.db-wal`, `realm.db-shm` | SQLite's write-ahead log and its index, beside the file while a process has the store open. A Realm that exits normally leaves none behind; after a crash, the next Realm that opens the store replays the log, and the files go when it exits. | SQLite |",
-      // The fence's own text says so (store-sqlite home.ts, FENCE_MARKER and the placed file's words).
-      "| `runs`, `workflows`, `replays`, `dedup` | Four read-only fence files (mode 0444), a few lines of text each, at the names the old JSON store's folders had. A Realm from before the SQLite store that is pointed at this home fails on them at once instead of starting a second store. Do not delete them while Realm uses the home. | The first open of the home |",
-      '| `.realm-fence-<name>-<pid>-<random>.tmp` | A fence file being placed; it exists for the length of one write. One left behind by a process that was killed can be deleted when no Realm process is running. | The first open of the home |',
-      // realm-db.md's backup section (db-backup-616.test.ts): outside the home, `<path>.part-`.
-      'Never delete, move or replace `realm.db` or its side files while a Realm process is running. `realm db backup <path>` writes its copy outside the home; a backup that was killed may leave files whose names begin `<path>.part-` beside its target, which you can delete.',
-      '### Which commands remove data',
-      // purge-sqlite-616.test.ts (the force line's `realm.db shrank by`); store-sqlite home-purge (the
-      // run's rows and its artifact stores' rows, then vacuum and checkpoint when no other process holds it).
-      "| `realm run purge` | An ended run: its record and evidence, its refused answers, trace lines and sealed lines — rows in `realm.db`. The space goes back to the file (the force line says by how much). Text of a deleted run may stay readable in the file's free pages and in `realm.db-wal` until the file is vacuumed and checkpointed, which the purge does when no other process is using the file. |",
-      // store-sqlite dedup-store.ts (EXPIRED_PER_RECORD, below).
-      'A duplicate-webhook mark expires at the end of its window; `realm listen` removes up to 100 expired marks of a workflow each time it records a new one. Nothing removes a registered workflow or a saved replay.',
-      '## A store other than `realm.db`',
-      'Every `realm` command and the `realm-mcp` server use the SQLite store in the Realm home. A program that calls Realm as a library can keep runs in a store of its own.',
-      '- [`realm db`](cli/realm-db.md) covers `backup`, `migrate` and `check`.',
-    ])
-      claim(ENV, sentence);
-    // C13: the names the page gives, in the store's code.
-    inSource(
-      'store-sqlite/src/home.ts',
-      "`.realm-fence-${name}-${process.pid}-${randomBytes(6).toString('hex')}.tmp`",
-    );
-    inSource('store-sqlite/src/maintenance.ts', '`${target}.part-${process.pid}-');
-    inSource('store-sqlite/src/dedup-store.ts', 'export const EXPIRED_PER_RECORD = 100;');
-  });
-});
-
-describe('#616 PR-2c c12 — the move procedure (upgrade.md), on the built CLI', () => {
-  it('C2: an old-format home is refused as the page shows; moved, registered, imported, listed, imported again', () => {
-    const home = freshHome('c2');
-    const realmHome = join(home, '.realm');
-    mkdirSync(join(realmHome, 'workflows'), { recursive: true });
-    cpSync(join(FIXTURE, 'runs'), join(realmHome, 'runs'), { recursive: true });
-    const ids = readdirSync(join(FIXTURE, 'runs'))
-      .filter((n) => /^[0-9a-f-]{36}\.json$/.test(n))
-      .map((n) => n.slice(0, -'.json'.length))
-      .sort();
-    const [refusalBlock, importBlock, listBlock] = blocksOf(UPGRADE, MOVE);
-    const before = readdirSync(realmHome).sort();
-    // (i) The first command.
-    const first = realm(['run', 'list'], home);
-    // (a) red when the refusal is not the page's line (a word changed on the page or in the store's
-    //     sentence), goes to stdout, exits otherwise, or the open creates anything; (b) prints it.
-    expect({
-      code: first.code,
-      out: first.out,
-      err: first.err.trimEnd(),
-      before,
-      after: readdirSync(realmHome).sort(),
-    }).toEqual({
-      code: 1,
-      out: '',
-      err: refusalBlock,
-      before: ['runs', 'workflows'],
-      after: before,
+    it('the page’s new sentences', () => {
+      // C1 (the listing after one command, the modes, the side files after a crash).
+      for (const sentence of [
+        'The file list comes from the code and from a listing of a home after one command.',
+        'Every `realm` command and the `realm-mcp` server keep their data in one SQLite file in the Realm home. The first command on a new home creates the home folder, the store file and four fence files:',
+        "| `realm.db` | The store: runs with their evidence, refused answers, trace lines and sealed lines; the registered workflows; saved replays; `realm listen`'s duplicate-webhook marks. Created owner-only (mode 0600). | Every command and tool that opens its stores |",
+        "| `realm.db-wal`, `realm.db-shm` | SQLite's write-ahead log and its index, beside the file while a process has the store open. A Realm that exits normally leaves none behind; after a crash, the next Realm that opens the store replays the log, and the files go when it exits. | SQLite |",
+        // The fence's own text says so (store-sqlite home.ts, FENCE_MARKER and the placed file's words).
+        "| `runs`, `workflows`, `replays`, `dedup` | Four read-only fence files (mode 0444), a few lines of text each, at the names the old JSON store's folders had. A Realm from before the SQLite store that is pointed at this home fails on them at once instead of starting a second store. Do not delete them while Realm uses the home. | The first open of the home |",
+        '| `.realm-fence-<name>-<pid>-<random>.tmp` | A fence file being placed; it exists for the length of one write. One left behind by a process that was killed can be deleted when no Realm process is running. | The first open of the home |',
+        // realm-db.md's backup section (db-backup-616.test.ts): outside the home, `<path>.part-`.
+        'Never delete, move or replace `realm.db` or its side files while a Realm process is running. `realm db backup <path>` writes its copy outside the home; a backup that was killed may leave files whose names begin `<path>.part-` beside its target, which you can delete.',
+        '### Which commands remove data',
+        // purge-sqlite-616.test.ts (the force line's `realm.db shrank by`); store-sqlite home-purge (the
+        // run's rows and its artifact stores' rows, then vacuum and checkpoint when no other process holds it).
+        "| `realm run purge` | An ended run: its record and evidence, its refused answers, trace lines and sealed lines — rows in `realm.db`. The space goes back to the file (the force line says by how much). Text of a deleted run may stay readable in the file's free pages and in `realm.db-wal` until the file is vacuumed and checkpointed, which the purge does when no other process is using the file. |",
+        // store-sqlite dedup-store.ts (EXPIRED_PER_RECORD, below).
+        'A duplicate-webhook mark expires at the end of its window; `realm listen` removes up to 100 expired marks of a workflow each time it records a new one. Nothing removes a registered workflow or a saved replay.',
+        '## A store other than `realm.db`',
+        'Every `realm` command and the `realm-mcp` server use the SQLite store in the Realm home. A program that calls Realm as a library can keep runs in a store of its own.',
+        '- [`realm db`](cli/realm-db.md) covers `backup`, `migrate` and `check`.',
+      ])
+        claim(ENV, sentence);
+      // C13: the names the page gives, in the store's code.
+      inSource(
+        'store-sqlite/src/home.ts',
+        "`.realm-fence-${name}-${process.pid}-${randomBytes(6).toString('hex')}.tmp`",
+      );
+      inSource('store-sqlite/src/maintenance.ts', '`${target}.part-${process.pid}-');
+      inSource('store-sqlite/src/dedup-store.ts', 'export const EXPIRED_PER_RECORD = 100;');
     });
-    // (ii) Step 3: the folders that exist, moved out; step 4: the workflow registered; step 5.
-    mkdirSync(join(home, 'realm-old'));
-    for (const name of ['runs', 'workflows', 'replays', 'dedup']) {
-      try {
-        renameSync(join(realmHome, name), join(home, 'realm-old', name));
-      } catch {
-        // `for those that exist`
+  },
+);
+
+describe(
+  '#616 PR-2c c12 — the move procedure (upgrade.md), on the built CLI',
+  { timeout: 60_000 },
+  () => {
+    it('C2: an old-format home is refused as the page shows; moved, registered, imported, listed, imported again', () => {
+      const home = freshHome('c2');
+      const realmHome = join(home, '.realm');
+      mkdirSync(join(realmHome, 'workflows'), { recursive: true });
+      cpSync(join(FIXTURE, 'runs'), join(realmHome, 'runs'), { recursive: true });
+      const ids = readdirSync(join(FIXTURE, 'runs'))
+        .filter((n) => /^[0-9a-f-]{36}\.json$/.test(n))
+        .map((n) => n.slice(0, -'.json'.length))
+        .sort();
+      const [refusalBlock, importBlock, listBlock] = blocksOf(UPGRADE, MOVE);
+      const before = readdirSync(realmHome).sort();
+      // (i) The first command.
+      const first = realm(['run', 'list'], home);
+      // (a) red when the refusal is not the page's line (a word changed on the page or in the store's
+      //     sentence), goes to stdout, exits otherwise, or the open creates anything; (b) prints it.
+      expect({
+        code: first.code,
+        out: first.out,
+        err: first.err.trimEnd(),
+        before,
+        after: readdirSync(realmHome).sort(),
+      }).toEqual({
+        code: 1,
+        out: '',
+        err: refusalBlock,
+        before: ['runs', 'workflows'],
+        after: before,
+      });
+      // (ii) Step 3: the folders that exist, moved out; step 4: the workflow registered; step 5.
+      mkdirSync(join(home, 'realm-old'));
+      for (const name of ['runs', 'workflows', 'replays', 'dedup']) {
+        try {
+          renameSync(join(realmHome, name), join(home, 'realm-old', name));
+        } catch {
+          // `for those that exist`
+        }
       }
-    }
-    const source = join(scratch, 'c2-workflow.yaml');
-    writeFileSync(
-      source,
-      'id: tidy-notes\nname: Tidy notes\nversion: 1\nsteps:\n  work:\n    description: Tidy the notes.\n    execution: auto\n    handler: noop\n',
-    );
-    const registered = realm(['workflow', 'register', source], home);
-    const imported = realm(['run', 'import', join(home, 'realm-old', 'runs')], home);
-    // (iii) Step 6.
-    const listed = realm(['run', 'list'], home);
-    // Step 7: again.
-    const again = realm(['run', 'import', join(home, 'realm-old', 'runs')], home);
-    // (a) red when the import's lines are not the page's (one line per record, the count line, the
-    //     ignored-entries line), the list does not show the imported runs as the page does (the
-    //     import did not land), a second import is not `unchanged`, or the attempts file and the key
-    //     folder do not stay behind; (b) prints every output.
-    expect({
-      registered: registered.code,
-      imported: [imported.code, imported.out.trimEnd(), imported.err],
-      listed: [listed.code, listed.out.trimEnd(), ids.every((id) => listed.out.includes(id))],
-      again: [again.code, again.out.trimEnd()],
-      leftBehind: readdirSync(join(home, 'realm-old', 'runs')).filter((n) => !n.endsWith('.json')),
-    }).toEqual({
-      registered: 0,
-      imported: [0, importBlock, ''],
-      listed: [0, listBlock, true],
-      again: [
-        0,
-        [
-          ...ids.map((id) => `unchanged  /home/dana/realm-old/runs/${id}.json`),
-          '2 files: 2 unchanged.',
-          'Ignored 2 entries that are not .json files.',
-        ].join('\n'),
-      ],
-      leftBehind: [`${ids.find((id) => id.startsWith('8372be7d'))}.attempts.jsonl`, 'keys'],
+      const source = join(scratch, 'c2-workflow.yaml');
+      writeFileSync(
+        source,
+        'id: tidy-notes\nname: Tidy notes\nversion: 1\nsteps:\n  work:\n    description: Tidy the notes.\n    execution: auto\n    handler: noop\n',
+      );
+      const registered = realm(['workflow', 'register', source], home);
+      const imported = realm(['run', 'import', join(home, 'realm-old', 'runs')], home);
+      // (iii) Step 6.
+      const listed = realm(['run', 'list'], home);
+      // Step 7: again.
+      const again = realm(['run', 'import', join(home, 'realm-old', 'runs')], home);
+      // (a) red when the import's lines are not the page's (one line per record, the count line, the
+      //     ignored-entries line), the list does not show the imported runs as the page does (the
+      //     import did not land), a second import is not `unchanged`, or the attempts file and the key
+      //     folder do not stay behind; (b) prints every output.
+      expect({
+        registered: registered.code,
+        imported: [imported.code, imported.out.trimEnd(), imported.err],
+        listed: [listed.code, listed.out.trimEnd(), ids.every((id) => listed.out.includes(id))],
+        again: [again.code, again.out.trimEnd()],
+        leftBehind: readdirSync(join(home, 'realm-old', 'runs')).filter(
+          (n) => !n.endsWith('.json'),
+        ),
+      }).toEqual({
+        registered: 0,
+        imported: [0, importBlock, ''],
+        listed: [0, listBlock, true],
+        again: [
+          0,
+          [
+            ...ids.map((id) => `unchanged  /home/dana/realm-old/runs/${id}.json`),
+            '2 files: 2 unchanged.',
+            'Ignored 2 entries that are not .json files.',
+          ].join('\n'),
+        ],
+        leftBehind: [`${ids.find((id) => id.startsWith('8372be7d'))}.attempts.jsonl`, 'keys'],
+      });
     });
-  });
 
-  it('the page’s words: the exception, the five packages, the procedure and what stays behind', () => {
-    // C2 above (the refusal, the steps, the import's lines, the list, the second import).
-    for (const sentence of [
-      'and the outputs of the first section, which the version after 0.48.0 printed.',
-      '**Runs carry over, with one exception.** Runs started on the old version can be listed, inspected and continued on the new one. The exception is the version after 0.48.0, which keeps runs in one SQLite file instead of JSON files: its first command on an old home refuses to run until you move the old folders out and import the runs. Do [the first section](#move-your-runs-into-the-sqlite-store) before anything else.',
-      // store-sqlite-package-616.test.ts (the published set); the cli and mcp-server package.json "*".
-      'There are five: `@sensigo/realm`, `@sensigo/realm-cli`, `@sensigo/realm-mcp`, `@sensigo/realm-testing` and, from the version after 0.48.0, `@sensigo/realm-store-sqlite`, which `@sensigo/realm-cli` and `@sensigo/realm-mcp` install for you.',
-      'Runs from a home of 0.48.0 or earlier appear here once you have imported them (the first section).',
-      MOVE,
-      'From the version after 0.48.0, every `realm` command and the `realm-mcp` server keep their data in one SQLite file, `realm.db`, in the Realm home (`~/.realm`), and need Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later. Earlier versions kept JSON files in four folders there: `runs`, `workflows`, `replays` and `dedup`. The new version does not read them. Its first command on such a home prints one line, creates nothing and exits with code 1:',
-      'The names in the parentheses are the folders it found.',
-      "1. **Stop every Realm process that uses the home**: `realm listen`, `realm serve`, `realm mcp` or `realm-mcp` (restart the assistant's client afterwards) and any `realm agent` that is running.",
-      '2. **Upgrade the packages** (step 2 below).',
-      '3. **Move the four folders out of the home — do not delete them yet.** For example `mkdir ~/realm-old && mv ~/.realm/runs ~/.realm/workflows ~/.realm/replays ~/.realm/dedup ~/realm-old/`, for those that exist.',
-      // run-store.ts's save() reads no registry (the two import tests register none).
-      '4. **Register your workflows again from their source files**, `realm workflow register <path>` for each. The registry is not carried over: the new store registers a workflow from its file. Do it before importing, so that a run you then inspect or continue finds its workflow.',
-      "5. **Import the runs**: `realm run import ~/realm-old/runs`. One line per file, then one line that counts them, then one that counts the folder's other entries (the `keys` folder, the `.attempts.jsonl` and trace files) as ignored:",
-      '6. **Check** with `realm run list`: the imported runs are listed with any new ones.',
-      '7. Once every line read `imported` or `unchanged`, you may delete the moved folders. Running the import again is safe: the runs it imported read `unchanged`.',
-      '**What is not carried over** stays in the moved folders:',
-      // run-import-core-616.test.ts (the three notes); run-import-616.test.ts (`.attempts.jsonl` not read).
-      "- A run's refused answers — the old `<id>.attempts.jsonl` files are not imported — and, from an export bundle, its failed attempts, trace buffer and sealed traces (the line's notes `attempts_not_imported`, `wal_not_imported`, `sealed_not_imported`).",
-      '- The registered workflows (`workflows/`): register each again from its source (step 4).',
-      // listen.ts: a delivery whose id matches an existing run (`created: false`) spawns nothing.
-      "- Saved replays (`replays/`), and `realm listen`'s duplicate-webhook marks (`dedup/`). A delivery whose event id belongs to an imported run still starts nothing: the id is that run's idempotency key.",
-    ])
-      claim(UPGRADE, sentence);
-  });
+    it('the page’s words: the exception, the five packages, the procedure and what stays behind', () => {
+      // C2 above (the refusal, the steps, the import's lines, the list, the second import).
+      for (const sentence of [
+        'and the outputs of the first section, which the version after 0.48.0 printed.',
+        '**Runs carry over, with one exception.** Runs started on the old version can be listed, inspected and continued on the new one. The exception is the version after 0.48.0, which keeps runs in one SQLite file instead of JSON files: its first command on an old home refuses to run until you move the old folders out and import the runs. Do [the first section](#move-your-runs-into-the-sqlite-store) before anything else.',
+        // store-sqlite-package-616.test.ts (the published set); the cli and mcp-server package.json "*".
+        'There are five: `@sensigo/realm`, `@sensigo/realm-cli`, `@sensigo/realm-mcp`, `@sensigo/realm-testing` and, from the version after 0.48.0, `@sensigo/realm-store-sqlite`, which `@sensigo/realm-cli` and `@sensigo/realm-mcp` install for you.',
+        'Runs from a home of 0.48.0 or earlier appear here once you have imported them (the first section).',
+        MOVE,
+        'From the version after 0.48.0, every `realm` command and the `realm-mcp` server keep their data in one SQLite file, `realm.db`, in the Realm home (`~/.realm`), and need Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later. Earlier versions kept JSON files in four folders there: `runs`, `workflows`, `replays` and `dedup`. The new version does not read them. Its first command on such a home prints one line, creates nothing and exits with code 1:',
+        'The names in the parentheses are the folders it found.',
+        "1. **Stop every Realm process that uses the home**: `realm listen`, `realm serve`, `realm mcp` or `realm-mcp` (restart the assistant's client afterwards) and any `realm agent` that is running.",
+        '2. **Upgrade the packages** (step 2 below).',
+        '3. **Move the four folders out of the home — do not delete them yet.** For example `mkdir ~/realm-old && mv ~/.realm/runs ~/.realm/workflows ~/.realm/replays ~/.realm/dedup ~/realm-old/`, for those that exist.',
+        // run-store.ts's save() reads no registry (the two import tests register none).
+        '4. **Register your workflows again from their source files**, `realm workflow register <path>` for each. The registry is not carried over: the new store registers a workflow from its file. Do it before importing, so that a run you then inspect or continue finds its workflow.',
+        "5. **Import the runs**: `realm run import ~/realm-old/runs`. One line per file, then one line that counts them, then one that counts the folder's other entries (the `keys` folder, the `.attempts.jsonl` and trace files) as ignored:",
+        '6. **Check** with `realm run list`: the imported runs are listed with any new ones.',
+        '7. Once every line read `imported` or `unchanged`, you may delete the moved folders. Running the import again is safe: the runs it imported read `unchanged`.',
+        '**What is not carried over** stays in the moved folders:',
+        // run-import-core-616.test.ts (the three notes); run-import-616.test.ts (`.attempts.jsonl` not read).
+        "- A run's refused answers — the old `<id>.attempts.jsonl` files are not imported — and, from an export bundle, its failed attempts, trace buffer and sealed traces (the line's notes `attempts_not_imported`, `wal_not_imported`, `sealed_not_imported`).",
+        '- The registered workflows (`workflows/`): register each again from its source (step 4).',
+        // listen.ts: a delivery whose id matches an existing run (`created: false`) spawns nothing.
+        "- Saved replays (`replays/`), and `realm listen`'s duplicate-webhook marks (`dedup/`). A delivery whose event id belongs to an imported run still starts nothing: the id is that run's idempotency key.",
+      ])
+        claim(UPGRADE, sentence);
+    });
 
-  it('C3: a diverged line names the live run that holds the key (the c11 amendment), on both pages', () => {
-    claim(
-      UPGRADE,
-      '- A run whose idempotency key a live run already holds reads `diverged`, and its line names that run; the stored run is kept.',
-    );
-    // The row's own claim is docs-pages-625-acting.test.ts's; the line is executed by
-    // run-import-core-616.test.ts's `run-holder` cell. (a) red when that cell no longer pins the
-    // holder's name; (b) prints the cell's file.
-    expect(read('packages/cli/src/commands/run-import-core-616.test.ts')).toContain(
-      "the live run run-holder already holds this run's idempotency key",
-    );
-  });
-});
+    it('C3: a diverged line names the live run that holds the key (the c11 amendment), on both pages', () => {
+      claim(
+        UPGRADE,
+        '- A run whose idempotency key a live run already holds reads `diverged`, and its line names that run; the stored run is kept.',
+      );
+      // The row's own claim is docs-pages-625-acting.test.ts's; the line is executed by
+      // run-import-core-616.test.ts's `run-holder` cell. (a) red when that cell no longer pins the
+      // holder's name; (b) prints the cell's file.
+      expect(read('packages/cli/src/commands/run-import-core-616.test.ts')).toContain(
+        "the live run run-holder already holds this run's idempotency key",
+      );
+    });
+  },
+);
 
 describe('#616 PR-2c c12 — the duplicate window (webhooks.md, realm-listen.md, webhook-trigger.md)', () => {
   it('C4: a mark is counted from its record; a match, and a second record inside it, do not move it; a purge leaves it', async () => {
@@ -406,7 +419,7 @@ describe('#616 PR-2c c12 — the duplicate window (webhooks.md, realm-listen.md,
   });
 });
 
-describe('#616 PR-2c c12 — the CHANGELOG’s Upgrading section', () => {
+describe('#616 PR-2c c12 — the CHANGELOG’s Upgrading section', { timeout: 60_000 }, () => {
   it('C5: four numbered items, first in [Unreleased]', () => {
     // Item 1: C2 (the refusal, the procedure); item 2: the floor's words (driver.ts, below); item 3:
     // the packages (store-sqlite-package-616.test.ts); item 4: the cell below.
@@ -613,57 +626,61 @@ describe('#616 PR-2c c12 — no JSON-era sentence is left (C6)', () => {
   });
 });
 
-describe('#616 PR-2c c12 — realm workflow list on the store (realm-workflow.md)', () => {
-  it('C8: the three ⚠ lines are the page’s, on the built CLI; --json names each copy by id and its class, and mismatched is empty', async () => {
-    const home = freshHome('c8');
-    const realmHome = join(home, '.realm');
-    const opened = await openCliHome({ home: realmHome });
-    await opened.workflowStore.register({
-      id: 'good',
-      name: 'good',
-      version: 1,
-      schema_version: 1,
-      steps: { work: { description: 'Work.', execution: 'auto', handler: 'noop' } },
-    } as never);
-    // The older cohort's shape (workflow-list-classes.test.ts K8).
-    await opened.workflowStore.register({ id: 'old', name: 'old', version: 1 } as never);
-    await opened.close();
-    // A copy that is not JSON, and one a later Realm wrote: only from outside Realm.
-    await plantRegistryRow(realmHome, { id: 'bad', text: '{ not json' });
-    await plantRegistryRow(realmHome, {
-      id: 'new',
-      text: JSON.stringify({ id: 'new', name: 'new', version: 1, schema_version: 2, steps: {} }),
+describe(
+  '#616 PR-2c c12 — realm workflow list on the store (realm-workflow.md)',
+  { timeout: 60_000 },
+  () => {
+    it('C8: the three ⚠ lines are the page’s, on the built CLI; --json names each copy by id and its class, and mismatched is empty', async () => {
+      const home = freshHome('c8');
+      const realmHome = join(home, '.realm');
+      const opened = await openCliHome({ home: realmHome });
+      await opened.workflowStore.register({
+        id: 'good',
+        name: 'good',
+        version: 1,
+        schema_version: 1,
+        steps: { work: { description: 'Work.', execution: 'auto', handler: 'noop' } },
+      } as never);
+      // The older cohort's shape (workflow-list-classes.test.ts K8).
+      await opened.workflowStore.register({ id: 'old', name: 'old', version: 1 } as never);
+      await opened.close();
+      // A copy that is not JSON, and one a later Realm wrote: only from outside Realm.
+      await plantRegistryRow(realmHome, { id: 'bad', text: '{ not json' });
+      await plantRegistryRow(realmHome, {
+        id: 'new',
+        text: JSON.stringify({ id: 'new', name: 'new', version: 1, schema_version: 2, steps: {} }),
+      });
+      const text = realm(['workflow', 'list'], home);
+      const json = realm(['workflow', 'list', '--json'], home);
+      const listing = JSON.parse(json.out) as {
+        unreadable: Array<{ workflow_id: string; class: string }>;
+        mismatched: unknown[];
+      };
+      const block = blocksOf(WORKFLOW, '## `list`').find((b) => b.includes('⚠ 1 workflow'));
+      // (a) red when the page's ⚠ lines are not what the command prints (the page keeps `rec627.json`),
+      //     or --json loses an id or class, or `mismatched` is not empty; (b) prints both outputs.
+      expect({
+        code: [text.code, json.code],
+        warned: text.err.trimEnd(),
+        unreadable: listing.unreadable.map((u) => `${u.workflow_id} ${u.class}`),
+        mismatched: listing.mismatched,
+      }).toEqual({
+        code: [0, 0],
+        warned: block,
+        unreadable: ['bad parse', 'new newer', 'old legacy'],
+        mismatched: [],
+      });
+      claim(
+        WORKFLOW,
+        'The store reports these three kinds: a damaged stored copy, a copy a later version of Realm registered, and a copy an older version registered (added after version 0.48.0, which named the stored files instead).',
+      );
+      claim(
+        WORKFLOW,
+        '`unreadable` lists the registered copies that could not be read, each with its `workflow_id`, its `class` (`parse`, `newer` or `legacy`) and the `reason`. `mismatched` is always empty: the store keeps each copy under the `id` inside it.',
+      );
     });
-    const text = realm(['workflow', 'list'], home);
-    const json = realm(['workflow', 'list', '--json'], home);
-    const listing = JSON.parse(json.out) as {
-      unreadable: Array<{ workflow_id: string; class: string }>;
-      mismatched: unknown[];
-    };
-    const block = blocksOf(WORKFLOW, '## `list`').find((b) => b.includes('⚠ 1 workflow'));
-    // (a) red when the page's ⚠ lines are not what the command prints (the page keeps `rec627.json`),
-    //     or --json loses an id or class, or `mismatched` is not empty; (b) prints both outputs.
-    expect({
-      code: [text.code, json.code],
-      warned: text.err.trimEnd(),
-      unreadable: listing.unreadable.map((u) => `${u.workflow_id} ${u.class}`),
-      mismatched: listing.mismatched,
-    }).toEqual({
-      code: [0, 0],
-      warned: block,
-      unreadable: ['bad parse', 'new newer', 'old legacy'],
-      mismatched: [],
-    });
-    claim(
-      WORKFLOW,
-      'The store reports these three kinds: a damaged stored copy, a copy a later version of Realm registered, and a copy an older version registered (added after version 0.48.0, which named the stored files instead).',
-    );
-    claim(
-      WORKFLOW,
-      '`unreadable` lists the registered copies that could not be read, each with its `workflow_id`, its `class` (`parse`, `newer` or `legacy`) and the `reason`. `mismatched` is always empty: the store keeps each copy under the `id` inside it.',
-    );
-  });
-});
+  },
+);
 
 describe('#616 PR-2c c12 — the testing package’s counts (testing-package.md)', () => {
   it('C10: the page’s numbers are the built index.js’s values and index.d.ts’s types', async () => {
@@ -686,110 +703,114 @@ describe('#616 PR-2c c12 — the testing package’s counts (testing-package.md)
   });
 });
 
-describe('#616 PR-2c c12 — which run holds a key (idempotency-and-batches.md, DELTAS rows 27 and 28)', () => {
-  const RULE =
-    'Which run holds a key is worked out from the runs themselves: the newest live run that carries it, or, with no live run, the newest finished run that no other run of the key reruns.';
-  const keyed = (key: string, extra: object = {}) => ({
-    workflowId: 'sync',
-    workflowVersion: 1,
-    params: {},
-    idempotencyKey: key,
-    ...extra,
-  });
-  async function ended(home: CliHome, run: RunRecord, arm: string): Promise<RunRecord> {
-    const reason = arm === 'complete' ? 'Workflow completed.' : "Step 'fetch' failed.";
-    return (
-      await home.runStore.update({
-        ...run,
-        ...(arm === 'complete' ? {} : { failed_steps: ['fetch'] }),
-        terminal_state: true,
-        sealed_by: { arm } as NonNullable<RunRecord['sealed_by']>,
-        terminal_reason: reason,
-      })
-    ).record;
-  }
-
-  it('C11 (row 28): after the newest run of a key is purged, an older failed one holds it, and a default repeat returns it', async () => {
-    claim(IDEMPOTENCY, RULE);
-    claim(
-      IDEMPOTENCY,
-      'and after the newest run of a key is deleted (`realm run purge <id> --force`), an older finished run of that key, even a failed one, holds it again, and a repeat with the default `reuse` returns that run.',
-    );
-    const home = freshHome('c11-28');
-    const realmHome = join(home, '.realm');
-    let h = await openCliHome({ home: realmHome });
-    const a = await ended(h, (await h.runStore.create(keyed('K'))).record, 'step_failure');
-    const b = await ended(
-      h,
-      (await h.runStore.create(keyed('K', { onTerminalMatch: 'rerun' }))).record,
-      'complete',
-    );
-    await h.close();
-    const purged = realm(['run', 'purge', b.id, '--force'], home);
-    h = await openCliHome({ home: realmHome });
-    try {
-      const repeat = await h.runStore.create(keyed('K'));
-      // (a) red when the purged run's key answers no holder (a fresh run), or the rerun that was
-      //     deleted (B) still holds it; (b) prints the three ids, the purge's output and the answer.
-      expect(
-        {
-          rerunOf: b.rerun_of === a.id,
-          purge: purged.code,
-          holder: repeat.record.id === a.id,
-          created: repeat.created,
-        },
-        `A ${a.id}, B ${b.id}, the repeat ${repeat.record.id}\n${purged.out}${purged.err}`,
-      ).toEqual({ rerunOf: true, purge: 0, holder: true, created: false });
-    } finally {
-      await h.close();
+describe(
+  '#616 PR-2c c12 — which run holds a key (idempotency-and-batches.md, DELTAS rows 27 and 28)',
+  { timeout: 60_000 },
+  () => {
+    const RULE =
+      'Which run holds a key is worked out from the runs themselves: the newest live run that carries it, or, with no live run, the newest finished run that no other run of the key reruns.';
+    const keyed = (key: string, extra: object = {}) => ({
+      workflowId: 'sync',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: key,
+      ...extra,
+    });
+    async function ended(home: CliHome, run: RunRecord, arm: string): Promise<RunRecord> {
+      const reason = arm === 'complete' ? 'Workflow completed.' : "Step 'fetch' failed.";
+      return (
+        await home.runStore.update({
+          ...run,
+          ...(arm === 'complete' ? {} : { failed_steps: ['fetch'] }),
+          terminal_state: true,
+          sealed_by: { arm } as NonNullable<RunRecord['sealed_by']>,
+          terminal_reason: reason,
+        })
+      ).record;
     }
-  });
 
-  it('C11 (row 27): a failed run that was rerun, resumed, holds its key again', async () => {
-    // The store's own cell: store-sqlite run-store-keyed-616.test.ts, "check 2b (iv): a LIVE run that a
-    // finished run names in rerun_of still holds the key"; here the page's command makes it live.
-    claim(
-      IDEMPOTENCY,
-      "So after a run that failed or was abandoned is rerun and the rerun has finished, resuming the first run (`realm run resume`) makes it the key's holder again;",
-    );
-    const home = freshHome('c11-27');
-    const realmHome = join(home, '.realm');
-    let h = await openCliHome({ home: realmHome });
-    await h.workflowStore.register({
-      id: 'sync',
-      name: 'sync',
-      version: 1,
-      schema_version: 1,
-      steps: { fetch: { description: 'Fetch.', execution: 'auto', handler: 'noop' } },
-    } as never);
-    const a = await ended(h, (await h.runStore.create(keyed('K2'))).record, 'step_failure');
-    const b = await ended(
-      h,
-      (await h.runStore.create(keyed('K2', { onTerminalMatch: 'rerun' }))).record,
-      'complete',
-    );
-    const before = (await h.runStore.create(keyed('K2'))).record.id;
-    await h.close();
-    const resumed = realm(['run', 'resume', a.id, '--from', 'fetch'], home);
-    h = await openCliHome({ home: realmHome });
-    try {
-      const after = await h.runStore.create(keyed('K2'));
-      // (a) red when the rerun B keeps the key after A is live again; (b) prints the ids and the
-      //     resume's output.
-      expect(
-        {
-          before: before === b.id,
-          resume: resumed.code,
-          holder: after.record.id === a.id,
-          created: after.created,
-        },
-        `A ${a.id}, B ${b.id}\n${resumed.out}${resumed.err}`,
-      ).toEqual({ before: true, resume: 0, holder: true, created: false });
-    } finally {
+    it('C11 (row 28): after the newest run of a key is purged, an older failed one holds it, and a default repeat returns it', async () => {
+      claim(IDEMPOTENCY, RULE);
+      claim(
+        IDEMPOTENCY,
+        'and after the newest run of a key is deleted (`realm run purge <id> --force`), an older finished run of that key, even a failed one, holds it again, and a repeat with the default `reuse` returns that run.',
+      );
+      const home = freshHome('c11-28');
+      const realmHome = join(home, '.realm');
+      let h = await openCliHome({ home: realmHome });
+      const a = await ended(h, (await h.runStore.create(keyed('K'))).record, 'step_failure');
+      const b = await ended(
+        h,
+        (await h.runStore.create(keyed('K', { onTerminalMatch: 'rerun' }))).record,
+        'complete',
+      );
       await h.close();
-    }
-  });
-});
+      const purged = realm(['run', 'purge', b.id, '--force'], home);
+      h = await openCliHome({ home: realmHome });
+      try {
+        const repeat = await h.runStore.create(keyed('K'));
+        // (a) red when the purged run's key answers no holder (a fresh run), or the rerun that was
+        //     deleted (B) still holds it; (b) prints the three ids, the purge's output and the answer.
+        expect(
+          {
+            rerunOf: b.rerun_of === a.id,
+            purge: purged.code,
+            holder: repeat.record.id === a.id,
+            created: repeat.created,
+          },
+          `A ${a.id}, B ${b.id}, the repeat ${repeat.record.id}\n${purged.out}${purged.err}`,
+        ).toEqual({ rerunOf: true, purge: 0, holder: true, created: false });
+      } finally {
+        await h.close();
+      }
+    });
+
+    it('C11 (row 27): a failed run that was rerun, resumed, holds its key again', async () => {
+      // The store's own cell: store-sqlite run-store-keyed-616.test.ts, "check 2b (iv): a LIVE run that a
+      // finished run names in rerun_of still holds the key"; here the page's command makes it live.
+      claim(
+        IDEMPOTENCY,
+        "So after a run that failed or was abandoned is rerun and the rerun has finished, resuming the first run (`realm run resume`) makes it the key's holder again;",
+      );
+      const home = freshHome('c11-27');
+      const realmHome = join(home, '.realm');
+      let h = await openCliHome({ home: realmHome });
+      await h.workflowStore.register({
+        id: 'sync',
+        name: 'sync',
+        version: 1,
+        schema_version: 1,
+        steps: { fetch: { description: 'Fetch.', execution: 'auto', handler: 'noop' } },
+      } as never);
+      const a = await ended(h, (await h.runStore.create(keyed('K2'))).record, 'step_failure');
+      const b = await ended(
+        h,
+        (await h.runStore.create(keyed('K2', { onTerminalMatch: 'rerun' }))).record,
+        'complete',
+      );
+      const before = (await h.runStore.create(keyed('K2'))).record.id;
+      await h.close();
+      const resumed = realm(['run', 'resume', a.id, '--from', 'fetch'], home);
+      h = await openCliHome({ home: realmHome });
+      try {
+        const after = await h.runStore.create(keyed('K2'));
+        // (a) red when the rerun B keeps the key after A is live again; (b) prints the ids and the
+        //     resume's output.
+        expect(
+          {
+            before: before === b.id,
+            resume: resumed.code,
+            holder: after.record.id === a.id,
+            created: after.created,
+          },
+          `A ${a.id}, B ${b.id}\n${resumed.out}${resumed.err}`,
+        ).toEqual({ before: true, resume: 0, holder: true, created: false });
+      } finally {
+        await h.close();
+      }
+    });
+  },
+);
 
 describe('#616 PR-2c c12 — the other pages’ sentences, each with what pins it', () => {
   it('concepts, guides, references and READMEs', () => {
