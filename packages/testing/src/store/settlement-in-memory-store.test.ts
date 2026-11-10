@@ -1,7 +1,8 @@
 // settlement-in-memory-store.test.ts — settlement-law TCK conformance for InMemoryStore (issue
-// #279, increment 1, PR-A). See settlement-json-file-store.test.ts's own header for why both
-// stores' settlement conformance lives here rather than @sensigo/realm-cli (the #183/#188
-// precedent location) — that constraint doesn't apply to this package.
+// #279, increment 1, PR-A). It lives here rather than in @sensigo/realm-cli (the #183/#188
+// precedent location): that package's constraint, core's suite cannot depend on this one, does not
+// apply to this package. (Its JSON store sibling left with #616 PR-2c c4-i; the SQLite store's is
+// store-sqlite's contract-settlement-616.test.ts.)
 import { describe, it, expect } from 'vitest';
 import { InMemoryStore } from './in-memory-store.js';
 import {

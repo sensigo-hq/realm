@@ -24,6 +24,7 @@ import { readEarlierRuns, type EarlierRuns } from './earlier-runs.js';
 import { runAgent } from './run-agent.js';
 import { chooseStepCaches, type StepCacheChoices } from './step-cache-choices.js';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
+import { OpenAIProvider } from './providers/openai-provider.js';
 import { LlmProvider, type CallCacheChoice } from './providers/llm-provider.js';
 import { startAnthropicStub, type AnthropicStub } from './test-support/anthropic-stub.js';
 import type { McpClient, McpTool } from './mcp/mcp-extensions.js';
@@ -510,5 +511,69 @@ describe('caching 3-M D-2 — check 11: the words', () => {
     // (a) red when two of the switch's arms are swapped; (b) prints the inspect line.
     const line = out.split('\n').find((l) => l.includes('asked for')) ?? '';
     expect(line.slice(line.indexOf('asked for'))).toBe(words);
+  });
+});
+
+describe('caching 3-M D-2 follow-up — the guards the first cells did not hold', () => {
+  // Real case: an operator states `--prompt-cache off` (or short, or long) on OpenAI in the explicit
+  // set (GPT-5.6 or later at OpenAI's own address). Nothing may be chosen for a stated setting; the
+  // provider's refusal to offer a rule is what keeps `chooseFromPriceFile` from choosing. Can fail:
+  // the `value !== 'auto'` half of OpenAI's `autoStepRule` removed (a stated `off` is then given a
+  // 30-minute choice and asks OpenAI to cache against the operator's word). Prints the setting.
+  const openai = (value: 'auto' | 'off' | 'short' | 'long'): OpenAIProvider =>
+    new OpenAIProvider('gpt-5.6-luna', undefined, false, {
+      endpoint: 'default',
+      promptCache: {
+        value,
+        source: value === 'auto' ? 'runner_default' : 'stated',
+        by: 'realm agent',
+        ...(value === 'auto' ? { auto: { basis: 'no_measurement' as const } } : {}),
+      },
+    });
+  it.each(['off', 'short', 'long'] as const)(
+    'OpenAI in the explicit set, stated %s: the provider offers no rule',
+    (value) => {
+      expect({ value, rule: openai(value).autoStepRule() }).toEqual({ value, rule: undefined });
+    },
+  );
+  it('OpenAI in the explicit set under auto offers its rule (the control: the cells above can see a rule)', () => {
+    expect(openai('auto').autoStepRule()).toBeDefined();
+  });
+
+  // Real case: a workflow author writes `tools: []` on a step (the loader accepts it, A3MD2-14): the
+  // step runs single-shot, so it is chosen by its gaps. Can fail: the test `tools.length > 0` read as
+  // `tools !== undefined` (the step is recorded `tool_step` and asks five minutes whatever its gaps).
+  // Prints the choice.
+  it('a step declared with an empty tools list is a step without tools: chosen by its gaps', async () => {
+    const def = workflow('d2-empty-tools', { a: step({ tools: [] }) });
+    const { choices } = await chooseStepCaches({
+      definition: def,
+      earlierRuns: rhythm('a', 1200),
+      rule: anthropic('realm agent').autoStepRule()!,
+      settleAuto: undefined,
+      economicsPath: pricesFile,
+      model: 'claude-x',
+    });
+    expect(choices.get('a')).toMatchObject({ choice: 'long', auto: { basis: 'step_gaps' } });
+  });
+
+  // Real case: every agent step of the workflow calls tools, an earlier run exists and the price file
+  // named is broken. Nothing needs a price, so the file is not read and nothing warns of it. Can fail:
+  // `needsPrice` counting a tool step (the file is read and "the price file could not be used" prints
+  // about a step that needs no price). The control row: a step without tools on the same broken file
+  // does warn, so a silent file would be seen. Prints the warning.
+  it.each([
+    ['only tool steps: no read, no warning', TOOLS, 'classify', undefined],
+    ['a step without tools on the same file: the warning (the control)', RHYTHMS, 'a', 'string'],
+  ] as const)('a broken price file, %s', async (_name, def, stepName, expected) => {
+    const out = await chooseStepCaches({
+      definition: def,
+      earlierRuns: rhythm(stepName, 1200),
+      rule: anthropic('realm agent').autoStepRule()!,
+      settleAuto: undefined,
+      economicsPath: join(root, 'no-such-prices.json'),
+      model: 'claude-x',
+    });
+    expect(out.warning === undefined ? undefined : typeof out.warning).toBe(expected);
   });
 });

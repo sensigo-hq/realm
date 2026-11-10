@@ -5,7 +5,9 @@
 //
 // This file proves what a copy does with an object another copy made, on a layout built from the
 // BUILT packages (`layout.ts`): rows 2–9 are the crossings that went wrong (row 1, gc's, left with
-// the command, #616), row 10 is the control (a copy of ANOTHER release is never recognised), row 11
+// the command, #616; row 7, realm-testing's store checks on a JSON store built with another copy's
+// core, and its control cell left with the JSON store's run-store contracts, #616 PR-2c c4-i, until a
+// store-sqlite copy joins the layout), row 10 is the control (a copy of ANOTHER release is never recognised), row 11
 // is the non-vacuity guard (the copies are distinct, and none silently resolved the repository's own
 // workspace).
 //
@@ -436,31 +438,6 @@ async function raceTwoWriters(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Row 7 — realm-testing's store checks, run on realm-testing's own nested core.
-// ---------------------------------------------------------------------------------------------
-
-const claimWorkflow: WorkflowDefinition = {
-  id: 'run-store-fidelity-tck-wf',
-  name: 'RunStore Fidelity TCK WF',
-  version: 1,
-  steps: {
-    work: { description: 'Agent step, immediately eligible', execution: 'agent', depends_on: [] },
-  },
-};
-
-async function runSingleOwnerLaw(testingCopy: Copy, storeCore: Copy): Promise<void> {
-  const dir = await tempDir('contract');
-  const testing = await layout.load<Testing>(testingCopy);
-  const storeCoreModule = await core(storeCore);
-  const store = new storeCoreModule.JsonFileStore(dir);
-  const cases = testing
-    .runStoreFidelityContract({ store, definition: claimWorkflow, stepName: 'work' })
-    .filter((c) => c.law === 'CLAIM_SINGLE_OWNER');
-  expect(cases).toHaveLength(1);
-  await cases[0]!.run();
-}
-
-// ---------------------------------------------------------------------------------------------
 // Row 8 — `realm workflow test` (the CLI copy, spawned) on a project whose handler throws a
 // retryable WorkflowError of the project's own copy.
 // ---------------------------------------------------------------------------------------------
@@ -712,16 +689,6 @@ describe('6 — two copies write one file at the same time', () => {
   );
 });
 
-describe('7 — realm-testing’s store checks on a store built with another copy’s core', () => {
-  it(
-    'CLAIM_SINGLE_OWNER passes',
-    async () => {
-      await runSingleOwnerLaw(layout.cli.testing, layout.project.core);
-    },
-    TEST_TIMEOUT,
-  );
-});
-
 describe('8 — `realm workflow test` on a project whose handler throws a retryable error of the project’s copy', () => {
   it(
     'the handler is retried: PASS, exit 0, three calls',
@@ -827,16 +794,6 @@ describe('10 — control: a copy of another release is not recognised (issue #62
       );
       const mod = (await import(pathToFileURL(toolCapable).href)) as { default: object };
       expect(llm.isToolCapable(mod.default as never)).toBe(false);
-    },
-    TEST_TIMEOUT,
-  );
-
-  it(
-    '7: a store built with another release’s core fails the single-owner law',
-    async () => {
-      await expect(runSingleOwnerLaw(layout.cli.testing, layout.other.core)).rejects.toThrow(
-        /expected the losing claimStep call to reject with a WorkflowError carrying code STATE_STEP_ALREADY_CLAIMED, got: WorkflowError/,
-      );
     },
     TEST_TIMEOUT,
   );

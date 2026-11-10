@@ -1,18 +1,18 @@
 // answer-facts-law-627.test.ts — issue #627 W (§5.8): the store TCK's EVIDENCE_KEEPS_ANSWER_FACTS law
 // requires a store to round-trip how an answer arrived — `answer` (route and what showed it, or the
 // typed absence), `driven_by`, `client_prompt_requested` and `principal` (a kind, or the typed
-// absence). Green against the two stores Realm ships (InMemoryStore, JsonFileStore); red against a
-// store written here that drops one field, once per field.
+// absence). Green against InMemoryStore (the SQLite store runs the law in store-sqlite's
+// contract-fidelity-616.test.ts); red against a store written here that drops one field, once per
+// field.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '@sensigo/realm';
-import type { EvidenceSnapshot, RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
+import type { EvidenceSnapshot, RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
-import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
+import {
+  runStoreFidelityContract,
+  type FidelityContractStore,
+} from './run-store-fidelity-contract.js';
 import type { Snapshot } from '@sensigo/realm';
 
 const agentWf: WorkflowDefinition = {
@@ -23,7 +23,7 @@ const agentWf: WorkflowDefinition = {
 };
 
 /** The EVIDENCE_KEEPS_ANSWER_FACTS case of the TCK, against `store`. */
-function lawOf(store: RunStore) {
+function lawOf(store: FidelityContractStore) {
   const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 's' }).filter(
     (c) => c.law === 'EVIDENCE_KEEPS_ANSWER_FACTS',
   );
@@ -32,7 +32,7 @@ function lawOf(store: RunStore) {
 }
 
 /** A store that drops one evidence field on every write — the lossy store the law must refuse. */
-function dropping(field: keyof EvidenceSnapshot): RunStore {
+function dropping(field: keyof EvidenceSnapshot): FidelityContractStore {
   class Drops extends InMemoryStore {
     override update(record: RunRecord): Promise<Snapshot> {
       return super.update({
@@ -49,11 +49,10 @@ function dropping(field: keyof EvidenceSnapshot): RunStore {
 }
 
 describe('#627 W — EVIDENCE_KEEPS_ANSWER_FACTS', () => {
-  it('passes for InMemoryStore and JsonFileStore, which round-trip every answer fact', async () => {
+  it('passes for InMemoryStore, which round-trips every answer fact', async () => {
     // (a) red when a shipped store drops an answer fact; (b) prints the law's message, naming the
     // field and what was written and read (synthetic values only — no token, no real principal).
     await lawOf(new InMemoryStore()).run();
-    await lawOf(new JsonFileStore(await mkdtemp(join(tmpdir(), 'tck-answer-627-')))).run();
   });
 
   it.each(['answer', 'driven_by', 'client_prompt_requested', 'principal'] as const)(

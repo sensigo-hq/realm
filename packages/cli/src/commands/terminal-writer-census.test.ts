@@ -235,9 +235,12 @@ const EXPECTED: Record<string, CensusEntry> = {
     reason: 'The simulated resume in the fixture runner strips the seal as it goes live.',
   },
   'packages/testing/src/store/in-memory-store.ts': {
-    count: 1,
-    classes: ['writer-stamped'],
-    reason: 'The create branch mints a fresh, non-terminal run record.',
+    count: 2,
+    classes: ['writer-stamped', 'echo'],
+    reason:
+      "The create branch mints a fresh, non-terminal run record; `rowOf` (#616 PR-2c c4-i) maps the record's terminal_state to a scan's facts row, which reaches no store.",
+    suppression:
+      "A read of the record's field for a scan's row; it reaches no store and carries no seal.",
   },
   // #616 PR-1a unit 12a: the SQLite run store's create, like the two stores above.
   'packages/store-sqlite/src/run-store.ts': {
@@ -264,11 +267,12 @@ const EXPECTED: Record<string, CensusEntry> = {
       "A read of the stored column for a scan's row; it reaches no store and carries no seal.",
   },
   'packages/testing/src/store/run-store-fidelity-contract.ts': {
-    count: 2,
+    count: 3,
     classes: ['fixture-input'],
     reason:
       'SEALED_BY_ROUNDTRIP seals a run properly to prove the arm survives a round trip; ' +
-      "CREATE_REPORTS_CREATED (#616 PR-1a unit 16a) ends a holder run (the #558 PR-C supersede journey), so a keyed 'rerun' has a run to supersede.",
+      "CREATE_REPORTS_CREATED (#616 PR-1a unit 16a) ends a holder run (the #558 PR-C supersede journey), so a keyed 'rerun' has a run to supersede; " +
+      "`endRun` (#616 PR-2c c4-i) ends a run with SEALED_BY_ROUNDTRIP's write, so SCAN_FILTERS_HOLD's terminal and phase filters have an ended run to select.",
   },
   'packages/testing/src/store/store-clock-contract.ts': {
     count: 1,
@@ -433,8 +437,8 @@ describe('#367 — the terminal-writer census', () => {
     // PLAIN.cmd disable. Correction 3 (H-8''): +1, agent.ts's context disable. #715 (b): -1, the
     // buildFinalizedSeal disable in execution-loop.ts (the function was deleted with the legacy path).
     // #616 PR-1a unit 15a: +1, run-rows.ts's key-holder read.
-    // #616 PR-2c c3: +1, run-scan.ts's facts-row read.
-    expect(claimed).toHaveLength(12);
+    // #616 PR-2c c3: +1, run-scan.ts's facts-row read. c4-i: +1, in-memory-store.ts's facts-row read.
+    expect(claimed).toHaveLength(13);
   });
 
   it("turbo.json globalDependencies matches the sweep table's join-list", () => {
@@ -464,10 +468,12 @@ describe('#367 — the terminal-writer census', () => {
   // a mapped file.
   // #616 PR-2c c3: +3 (store-interface.ts, the facts row's field; run-scan.ts, the row's read and the
   // filter's SQL term), in two new files.
-  it('the post-strip total is 83 across 20 files — the figure the map is built from', () => {
+  // #616 PR-2c c4-i: +2 (in-memory-store.ts, the facts row's read; run-store-fidelity-contract.ts,
+  // `endRun`), in two mapped files.
+  it('the post-strip total is 85 across 20 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(83);
+    expect(total).toBe(85);
     expect(Object.keys(scan.hits)).toHaveLength(20);
   });
 });

@@ -6,10 +6,12 @@ import {
   createRealmBrand,
   declareReleaseLine,
   runNotFoundError,
-  type RunStore,
 } from '@sensigo/realm';
 import { storeReleaseLineLaw } from './store-release-line-law.js';
-import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
+import {
+  runStoreFidelityContract,
+  type FidelityContractStore,
+} from './run-store-fidelity-contract.js';
 import { InMemoryStore } from './in-memory-store.js';
 
 const OTHER = createRealmBrand('@sensigo/realm', '9.9.9', 'file:///tmp/other-realm/');
@@ -29,7 +31,7 @@ describe('storeReleaseLineLaw', () => {
   });
   it('the fidelity contract’s STORE_RELEASE_LINE_TRUE case fails for a store that lies', async () => {
     const real = new InMemoryStore();
-    const liar = Object.create(real) as RunStore;
+    const liar = Object.create(real) as FidelityContractStore;
     Object.defineProperty(liar, RELEASE_LINE_KEY, { value: OTHER });
     const cases = runStoreFidelityContract({
       store: liar,

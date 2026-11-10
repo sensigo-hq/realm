@@ -107,7 +107,6 @@ describe('release-line witnesses', () => {
       'packages/cli/src/store-contracts/json-file-store.contract.test.ts',
       'packages/cli/src/store-contracts/json-trace-buffer-store-fenced.contract.test.ts',
       'packages/cli/src/store-contracts/json-trace-buffer-store.contract.test.ts',
-      'packages/cli/src/store-contracts/run-store-fidelity.contract.test.ts',
       'packages/store-sqlite/src/contract-artifact-616.test.ts',
       'packages/store-sqlite/src/contract-fidelity-616.test.ts',
       'packages/store-sqlite/src/contract-settlement-616.test.ts',
@@ -116,7 +115,6 @@ describe('release-line witnesses', () => {
       'packages/store-sqlite/src/trace-buffer-store-fenced.contract.test.ts',
       'packages/testing/src/store/in-memory-store.test.ts',
       'packages/testing/src/store/settlement-in-memory-store.test.ts',
-      'packages/testing/src/store/settlement-json-file-store.test.ts',
     ]);
   });
   it('brand.ts still imports only ./version.js', () => {
