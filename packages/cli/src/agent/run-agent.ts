@@ -1741,7 +1741,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   deps.store.clock.now(),
                 );
                 // Caching 3-M (piece A-1): the throwing call's first request, when it is the step's
-                // first in the drive, takes the copy of its predecessor on the run's record.
+                // first in the drive, takes the copy of its predecessor (`recordedBefore`).
                 if (Array.isArray(entry.usage)) {
                   entry.usage = attachRecordedReference(
                     usageForStep,
@@ -1762,7 +1762,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // #217 repair pass appends its requests, so a repaired step records every call it
               // paid for, in wire order.
               // Caching 3-M (piece A-1): after the mint, the step's first request in the drive takes
-              // the copy of its predecessor when that is on the run's record.
+              // the copy of its predecessor, when one was found (`recordedBefore`).
               usageForStep = appendRequests(
                 usageForStep,
                 attachRecordedReference(
@@ -1957,7 +1957,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   deps.store.clock.now(),
                 );
                 // Caching 3-M (piece A-1): the throwing call's first request, when it is the step's
-                // first in the drive, takes the copy of its predecessor on the run's record.
+                // first in the drive, takes the copy of its predecessor (`recordedBefore`).
                 if (Array.isArray(entry.usage)) {
                   entry.usage = attachRecordedReference(
                     usageForStep,

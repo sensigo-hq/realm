@@ -633,6 +633,100 @@ describe('caching 3-M C2 — check 6: a read that fails never stops a drive', ()
   });
 });
 
+/**
+ * A read store whose every row has `list` damaged: real pages, with the step lists replaced. The other
+ * two are empty so the read reaches the damaged one: a row an earlier list already names the step in
+ * never reads the later lists, so nothing there can throw.
+ */
+function withDamagedRows(h: TempHome, list: string, value: unknown): ReadStore {
+  const store = h.home.runStore;
+  return {
+    clock: store.clock,
+    get: (id: string) => store.get(id),
+    scan: async function* (filter: never, options: never) {
+      for await (const page of store.scan(filter, options) as AsyncIterable<{
+        items: { kind: string; run?: object }[];
+      }>) {
+        yield {
+          ...page,
+          items: page.items.map((item) =>
+            item.kind === 'run'
+              ? {
+                  ...item,
+                  run: {
+                    ...item.run,
+                    completed_steps: [],
+                    failed_steps: [],
+                    in_progress_steps: [],
+                    [list]: value,
+                  },
+                }
+              : item,
+          ),
+        };
+      }
+    },
+  } as unknown as ReadStore;
+}
+
+const DAMAGED_ROWS = ['completed_steps', 'failed_steps', 'in_progress_steps'].flatMap(
+  (list): [string, string, unknown][] => [
+    [list, 'a number', 7],
+    [list, 'an object', { draft: true }],
+  ],
+);
+
+describe('caching 3-M C2 correction 1 — a damaged row never stops a drive', () => {
+  // A row of the workflow whose step list is not an array: only a hand-edited store file makes one,
+  // and it would otherwise stop every drive of the workflow for as long as it sits in the window.
+  it.each(DAMAGED_ROWS)(
+    'check 1: `%s` is %s → no data, and the drive completes with no copy',
+    async (list, _shape, value) => {
+      const t = await open();
+      await drive(t, SINGLE, [ok(billed(START(0)))]);
+      await t.tick();
+      const damaged = withDamagedRows(t.h, list, value);
+      const data = await readEarlierRuns(damaged, SINGLE, undefined);
+      const final = await drive(t, SINGLE, [ok(billed(START(10)))], { readStore: damaged });
+      // (a) red when the guard is back around the scan alone (the read throws in the step filter, or
+      //     the sort); (b) prints the data, the steps completed and the copy's source.
+      expect({
+        data,
+        completed: final.completed_steps,
+        copy: copyOf(requestsOf(final, 'draft')[0]),
+      }).toEqual({ data: undefined, completed: ['draft'], copy: copied(undefined) });
+    },
+  );
+});
+
+describe('caching 3-M C2 correction 1 — the six rows are those that name the step', () => {
+  // A conditional step: reached by few runs, so the workflow's newest rows do not name it.
+  it('check 2: a step named only by the 7th and 8th newest rows is found from them', async () => {
+    const t = await open();
+    const reached: string[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      const run = await drive(t, TWO_STEPS, [
+        ok(billed(START(i * 2))),
+        ok(billed(START(i * 2 + 1))),
+      ]);
+      reached.unshift(run.id);
+      await t.tick();
+    }
+    for (let i = 0; i < 6; i += 1) {
+      // `second`'s model call throws before any claim, so these six rows name only `first`.
+      await drive(t, TWO_STEPS, [
+        ok(billed(START(10 + i * 2))),
+        { throw: true, usage: [billed(START(11 + i * 2))] },
+      ]);
+      await t.tick();
+    }
+    const found = await readEarlierRuns(t.h.home.runStore, TWO_STEPS, undefined);
+    // (a) red when the six are taken before the filter (the step gets no copy); (b) prints the run
+    //     ids found for the step, latest start first.
+    expect(found?.get('second')?.map((r) => r.run_id)).toEqual(reached);
+  });
+});
+
 describe('caching 3-M C2 — what the operator sees', () => {
   // Check 1's two drives, forty minutes apart, the first writing 4,019 tokens for 5 minutes.
   it('check 8: `realm run inspect` names the earlier run, and `get_run_state` says where the predecessor was', async () => {

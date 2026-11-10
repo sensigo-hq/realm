@@ -238,3 +238,53 @@ describe('caching 3-M C2 — check 7: no read when nothing can use it', () => {
     60_000,
   );
 });
+
+describe('caching 3-M C2 correction 1 — check 3: the own id on `--run-id`, through the command', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // A multi-step run re-attached for its next step: its own row is the newest naming the first step.
+  // Six other runs name it too, so a row taken by the own run would leave one of them unread.
+  it('the read opens the six other runs, and never the drive’s own', async () => {
+    const definition = {
+      id: ID,
+      name: 'Earlier runs 3-M',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        ask: { description: 'Answer with a short summary.', execution: 'agent' },
+        next: { description: 'Then this.', execution: 'agent', depends_on: ['ask'] },
+      },
+    } as unknown as WorkflowDefinition;
+    const store = h.home.runStore;
+    await h.home.workflowStore.register(definition);
+    const seed = async (completed: string[]): Promise<string> => {
+      const { record } = await store.create({ workflowId: ID, workflowVersion: 1, params: {} });
+      await store.update({ ...record, completed_steps: completed } as RunRecord);
+      return record.id;
+    };
+    const others: string[] = [];
+    for (let i = 0; i < 6; i += 1) others.push(await seed(['ask', 'next']));
+    const own = await seed(['ask']);
+
+    const calls: string[] = [];
+    const realScan = store.scan.bind(store) as (...args: never[]) => unknown;
+    const realGet = store.get.bind(store);
+    vi.spyOn(store, 'scan').mockImplementation(((...args: never[]) => {
+      calls.push('scan');
+      return realScan(...args);
+    }) as never);
+    vi.spyOn(store, 'get').mockImplementation((id: string) => {
+      calls.push(id);
+      return realGet(id);
+    });
+    await agentInProcess(['--run-id', own, '--model', 'claude-x']);
+
+    // The driver reads its own run after the read, so the read's own `get`s are those right after the
+    // scan. (a) red when the caller passes `undefined` for `opts.runId` (the own row, the newest,
+    // comes first and one other run is left unread); (b) prints the ids read right after the scan.
+    const afterScan = calls.slice(calls.indexOf('scan') + 1, calls.indexOf('scan') + 7);
+    expect([...afterScan].sort()).toEqual([...others].sort());
+  }, 60_000);
+});

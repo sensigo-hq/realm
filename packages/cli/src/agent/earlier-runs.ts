@@ -50,10 +50,11 @@ function latestStartFirst(a: EarlierRequest, b: EarlierRequest): number {
  * finds (`lastRecordedRequest`). A row carries no `drive_failures`, so a run whose drive stopped on
  * the step before claiming it is never opened. `ownRunId`, a re-attached run, is never a candidate.
  *
- * It only feeds a diagnostic, so it never stops a drive and says nothing: a failed scan answers
- * `undefined`, as when no read is made (never an empty result, which would mean "no earlier runs"),
- * and a failed `get` (a run purged between the two) skips that run. A workflow with no agent step
- * makes no read.
+ * It only feeds a diagnostic, so it never stops a drive and says nothing: anything in the read that
+ * throws (a failed scan, or a damaged row a step list of which is not an array) answers `undefined`,
+ * as when no read is made (never an empty result, which would mean "no earlier runs"), and a failed
+ * `get` (a run purged between the two) skips only that run. A workflow with no agent step makes no
+ * read.
  */
 export async function readEarlierRuns(
   store: Pick<SqliteRunStore, 'scan' | 'get' | 'clock'>,
@@ -65,8 +66,8 @@ export async function readEarlierRuns(
   );
   if (steps.length === 0) return undefined;
 
-  const rows: RunRow[] = [];
   try {
+    const rows: RunRow[] = [];
     // The start of the window, compared with `updated_at`: the store's own stamp, so the store's clock.
     const since = new Date(store.clock.now().getTime() - CACHE_GAP_MAX_S * 1000).toISOString();
     for await (const page of store.scan(
@@ -77,33 +78,36 @@ export async function readEarlierRuns(
         if (item.kind === 'run' && item.run.id !== ownRunId) rows.push(item.run);
       }
     }
+    // Scan order is by id, unrelated to time. The sort is stable, so equal stamps keep that order.
+    rows.sort((a, b) => (a.updated_at === b.updated_at ? 0 : a.updated_at > b.updated_at ? -1 : 1));
+
+    const rowsByStep = new Map(
+      steps.map((step) => [
+        step,
+        rows.filter((row) => namesStep(row, step)).slice(0, ROWS_PER_STEP),
+      ]),
+    );
+    const records = new Map<string, RunRecord>();
+    for (const id of new Set([...rowsByStep.values()].flat().map((row) => row.id))) {
+      try {
+        records.set(id, (await store.get(id)).record);
+      } catch {
+        // A run purged between the scan and this read: it holds nothing to compare with.
+      }
+    }
+
+    const found = new Map<string, EarlierRequest[]>();
+    for (const [step, named] of rowsByStep) {
+      const requests: EarlierRequest[] = [];
+      for (const row of named) {
+        const request = lastRecordedRequest(records.get(row.id), step);
+        if (request !== undefined) requests.push({ run_id: row.id, request });
+      }
+      // Stable, and `named` is newest-updated first: on equal starts the run updated last stays first.
+      found.set(step, requests.sort(latestStartFirst));
+    }
+    return found;
   } catch {
     return undefined;
   }
-  // Scan order is by id, unrelated to time. The sort is stable, so equal stamps keep that order.
-  rows.sort((a, b) => (a.updated_at === b.updated_at ? 0 : a.updated_at > b.updated_at ? -1 : 1));
-
-  const rowsByStep = new Map(
-    steps.map((step) => [step, rows.filter((row) => namesStep(row, step)).slice(0, ROWS_PER_STEP)]),
-  );
-  const records = new Map<string, RunRecord>();
-  for (const id of new Set([...rowsByStep.values()].flat().map((row) => row.id))) {
-    try {
-      records.set(id, (await store.get(id)).record);
-    } catch {
-      // A run purged between the scan and this read: it holds nothing to compare with.
-    }
-  }
-
-  const found = new Map<string, EarlierRequest[]>();
-  for (const [step, named] of rowsByStep) {
-    const requests: EarlierRequest[] = [];
-    for (const row of named) {
-      const request = lastRecordedRequest(records.get(row.id), step);
-      if (request !== undefined) requests.push({ run_id: row.id, request });
-    }
-    // Stable, and `named` is newest-updated first: on equal starts the run updated last stays first.
-    found.set(step, requests.sort(latestStartFirst));
-  }
-  return found;
 }
