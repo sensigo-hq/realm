@@ -64,6 +64,7 @@ import type {
   EngineReply,
   Snapshot,
 } from '@sensigo/realm';
+import type { EarlierRuns } from './earlier-runs.js';
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
   sanitizeError,
@@ -75,6 +76,7 @@ import {
   safeExplainFailure,
   appendRequests,
   attachRecordedReference,
+  type RecordedPredecessor,
   mintRequestIds,
   type LlmClock,
 } from './providers/agent-utils.js';
@@ -185,9 +187,10 @@ function lastCallOpenerIn(requests: unknown): UsageRecord | undefined {
 }
 
 /**
- * Caching 3-M (piece A-1) — the first request of `step`'s last call on the run's record (piece
- * A-1b), read from the record as the drive holds it (no store read): the predecessor of the step's
- * first request in a drive (`attachRecordedReference`). Two candidates: the last call's first
+ * Caching 3-M (piece A-1) — the first request of `step`'s last call on the record it is given (piece
+ * A-1b; no store read): the predecessor of the step's first request in a drive
+ * (`attachRecordedReference`), on this run's record or, piece C2, on an earlier run's. Two candidates:
+ * the last call's first
  * request in the step's latest evidence entry whose `diagnostics.cache.requests` holds one (a plain
  * object with a string `request_start` and `request_in_call` 0; index `e` in `evidence`), and the
  * same for the step's latest drive-failure entry and its `usage`. An entry whose list holds none
@@ -197,7 +200,10 @@ function lastCallOpenerIn(requests: unknown): UsageRecord | undefined {
  * without `evidence_count` (written before #715 (b)) is not a candidate. Entries that are not plain
  * objects are skipped; it never throws.
  */
-function lastRecordedRequest(run: RunRecord | undefined, step: string): UsageRecord | undefined {
+export function lastRecordedRequest(
+  run: RunRecord | undefined,
+  step: string,
+): UsageRecord | undefined {
   if (!isRecordObject(run)) return undefined;
   let fromEvidence: UsageRecord | undefined;
   let evidenceIndex = -1;
@@ -240,6 +246,11 @@ function lastRecordedRequest(run: RunRecord | undefined, step: string): UsageRec
 
 export interface AgentDeps {
   store: RunStore;
+  /**
+   * Caching 3-M (piece C2): what `realm agent` read of the workflow's earlier runs before the drive.
+   * Absent: no read was made or it failed, and no step's first request gets a copy from another run.
+   */
+  earlierRuns?: EarlierRuns;
   workflowStore: WorkflowRegistrar;
   provider: LlmProvider;
   /**
@@ -704,15 +715,19 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       () => false,
     );
   };
-  // Caching 3-M (piece A-1): the predecessor of the driven step's first request in this drive — the
-  // first request of the step's last call on the run's record (piece A-1b), read from `currentRun`
-  // as held at that moment (no store read; at a step's first call it is the snapshot the engine
-  // judged its last reply on) — consulted only while the step holds no request of this drive
-  // (`usageForStep` empty).
-  const recordedBefore = (step: string): UsageRecord | undefined =>
-    usageForStep === undefined || usageForStep.length === 0
-      ? lastRecordedRequest(currentRun, step)
-      : undefined;
+  // Caching 3-M (piece A-1): the predecessor of the driven step's first request in this drive, with
+  // where it was found — the first request of the step's last call on the run's record (piece A-1b),
+  // read from `currentRun` as held at that moment (no store read; at a step's first call it is the
+  // snapshot the engine judged its last reply on); when the record holds none, piece C2, the latest
+  // of the step's requests read from the workflow's earlier runs before the drive. Consulted only
+  // while the step holds no request of this drive (`usageForStep` empty).
+  const recordedBefore = (step: string): RecordedPredecessor | undefined => {
+    if (usageForStep !== undefined && usageForStep.length > 0) return undefined;
+    const own = lastRecordedRequest(currentRun, step);
+    if (own !== undefined) return { request: own, from: 'run' };
+    const earlier = deps.earlierRuns?.get(step)?.[0];
+    return earlier !== undefined ? { request: earlier.request, from: 'earlier_run' } : undefined;
+  };
   // decision C205: a drive that stops on a run that ended with a failed step `realm run resume`
   // takes gives the way back in — the line `realm workflow run` gives (`  Resume:    …`).
   // decision C211 (walk c14 W3-4's class): and cleanup steps the ending left pending — the command
@@ -1726,7 +1741,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   deps.store.clock.now(),
                 );
                 // Caching 3-M (piece A-1): the throwing call's first request, when it is the step's
-                // first in the drive, takes the copy of its predecessor on the run's record.
+                // first in the drive, takes the copy of its predecessor (`recordedBefore`).
                 if (Array.isArray(entry.usage)) {
                   entry.usage = attachRecordedReference(
                     usageForStep,
@@ -1747,7 +1762,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // #217 repair pass appends its requests, so a repaired step records every call it
               // paid for, in wire order.
               // Caching 3-M (piece A-1): after the mint, the step's first request in the drive takes
-              // the copy of its predecessor when that is on the run's record.
+              // the copy of its predecessor, when one was found (`recordedBefore`).
               usageForStep = appendRequests(
                 usageForStep,
                 attachRecordedReference(
@@ -1942,7 +1957,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   deps.store.clock.now(),
                 );
                 // Caching 3-M (piece A-1): the throwing call's first request, when it is the step's
-                // first in the drive, takes the copy of its predecessor on the run's record.
+                // first in the drive, takes the copy of its predecessor (`recordedBefore`).
                 if (Array.isArray(entry.usage)) {
                   entry.usage = attachRecordedReference(
                     usageForStep,

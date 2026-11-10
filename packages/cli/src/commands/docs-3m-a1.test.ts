@@ -51,7 +51,7 @@ describe('caching 3-M A-1 — the record page says what `reference` holds and wh
     // core `request-facts.test.ts` check 6 (every field kept as written).
     claim(
       RECORD_PAGE,
-      'The copy holds `from` (`run`) and that request’s `request_start`, and each of its `request_id`, `provider`, `model`, `endpoint`, `cache_requested`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cache_write_tokens`, `cache_creation`, `cache_lifetime_s`, `cache_ttl_sent`, `cache_auto`, `prefix_chars`, `prefix_parts`, `cache_marked` and `request_strict_sent` that it had.'.replace(
+      'The copy holds `from` (`run`, or `earlier_run` for a copy from an earlier run) and that request’s `request_start`, and each of its `request_id`, `provider`, `model`, `endpoint`, `cache_requested`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cache_write_tokens`, `cache_creation`, `cache_lifetime_s`, `cache_ttl_sent`, `cache_auto`, `prefix_chars`, `prefix_parts`, `cache_marked` and `request_strict_sent` that it had.'.replace(
         '’',
         "'",
       ),
@@ -66,15 +66,8 @@ describe('caching 3-M A-1 — the record page says what `reference` holds and wh
       RECORD_PAGE,
       'No other request carries one: its predecessor is an earlier entry of the same list.',
     );
-    // A fresh run: `drive-failure-chokepoints.test.ts` D9's exact pin over a fresh drive's stored
-    // usage (check 5); a nested reference dropped: core `request-facts.test.ts` check 6.
-    claim(
-      RECORD_PAGE,
-      'A fresh run’s requests have none, and a `reference` never holds a reference of its own.'.replace(
-        '’',
-        "'",
-      ),
-    );
+    // A nested reference dropped: core `request-facts.test.ts` check 6.
+    claim(RECORD_PAGE, 'A `reference` never holds a reference of its own.');
   });
 });
 
@@ -93,7 +86,7 @@ describe('caching 3-M A-1 — the store contract and the CHANGELOG', () => {
     // check 3; the fresh run: check 5's witness; the contract: `usage-record-law-600.test.ts`
     // (check 7).
     claimChangelog(
-      "- **`UsageRecord` gains `reference`:** a step's first request in a drive carries a copy of the first request of the same step's last call on the run's record, when an earlier drive made that request on this version or later, with `from: 'run'`. A fresh run's requests have none, and the store contract (`USAGE_RECORD_ROUNDTRIP`) holds it. (#600)",
+      "- **`UsageRecord` gains `reference`:** a step's first request in a drive carries a copy of the first request of the same step's last call on the run's record, when an earlier drive made that request on this version or later, with `from: 'run'`; when the run's record holds none, a copy from an earlier run of the workflow, with `from: 'earlier_run'`. The store contract (`USAGE_RECORD_ROUNDTRIP`) holds it. (#600)",
     );
   });
 });
