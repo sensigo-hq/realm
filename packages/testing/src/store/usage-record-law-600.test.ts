@@ -118,6 +118,30 @@ function droppingReferenceId() {
   });
 }
 
+/** Caching 3-M (piece B3a): strips every `null` inside `cache_diagnostics`, in both places — a call's
+ *  first request, `{ asked: true, reference_id: null }`, comes back as `{ asked: true }`. */
+function strippingNullInDiagnostics() {
+  return changing((r) => {
+    const d = r['cache_diagnostics'];
+    if (d === null || typeof d !== 'object') return r;
+    return {
+      ...r,
+      cache_diagnostics: Object.fromEntries(Object.entries(d).filter(([, v]) => v !== null)),
+    };
+  });
+}
+
+/** Caching 3-M (piece B3a): keeps `cache_diagnostics` but drops its `cause`, in both places — the
+ *  refused state, `{ asked: false, cause: 'rejected' }`, comes back as `{ asked: false }`. */
+function droppingDiagnosticsCause() {
+  return changing((r) => {
+    const d = r['cache_diagnostics'];
+    if (d === null || typeof d !== 'object') return r;
+    const { cause: _gone, ...rest } = d as Record<string, unknown>;
+    return { ...r, cache_diagnostics: rest };
+  });
+}
+
 /** A store that applies `change` to every request record it is handed, in both places. */
 function changing(change: (r: Record<string, unknown>) => Record<string, unknown>) {
   const strip = (requests: unknown): unknown =>
@@ -206,6 +230,23 @@ describe('issue #600 PR 2 — USAGE_RECORD_ROUNDTRIP', () => {
     const Lossy = droppingReferenceId();
     await expect(lawOf(new Lossy()).run()).rejects.toThrow(
       /round-trip a request record's reference /,
+    );
+  });
+
+  // Caching 3-M (piece B3a, follow-up). Real cases: a store keeps every key of a request's value but
+  // not a `null` inside it (a call's first request, the commonest state); a store keeps the refusal
+  // but not its `cause`. (a) red when the law writes only the reason object's state (neither store
+  // is then caught); (b) prints the law's own failure line, naming the state written and read back.
+  it.each([
+    [
+      'strips the null inside cache_diagnostics (a call’s first request)',
+      strippingNullInDiagnostics,
+    ],
+    ['drops the cause of a refused request’s cache_diagnostics', droppingDiagnosticsCause],
+  ])('fails for a store that %s (caching 3-M B3a)', async (_name, lossy) => {
+    const Lossy = lossy();
+    await expect(lawOf(new Lossy()).run()).rejects.toThrow(
+      /round-trip a request record's cache_diagnostics in each of its states /,
     );
   });
 });
