@@ -75,7 +75,7 @@ Follow this checklist in order before merging any branch into `main`.
 
 > Run Part B after the Part A PR has been merged and your local `main` is up to date (`git switch main && git pull`).
 >
-> This repository uses a two-part release process. The release script (`scripts/release.mjs`) bumps every package to one version, creates the release commit and tag, and then moves the tree to the next development version. Publishing to npm is handled by `.github/workflows/publish.yml`, which is triggered automatically when the tag is pushed after the release PR is merged. Do not attempt manual per-package publishes; the workflow is the authoritative publish mechanism.
+> This repository uses a two-part release process. The release script (`scripts/release.mjs`) bumps every package to one version, creates the release commit and tag, and then moves the tree to the next development version. Publishing to npm is handled by `.github/workflows/publish.yml`, which is triggered automatically when the tag is pushed after the release PR is merged. Do not attempt manual per-package publishes (the one exception: a package's first release, 0a below); the workflow is the authoritative publish mechanism.
 >
 > A package with `"private": true` in its manifest is not published. The release script still sets its version when its `package.json` has `exports` or `main`, like every package it sets.
 
@@ -97,6 +97,14 @@ git diff <prev-tag>..main -- ':(glob)packages/*/src/**' | grep -cE '^\+'
 **No accepted risk at tag time.** `audit-ci.jsonc` and `audit-ci.tier2.jsonc` must hold no entry
 recorded under SECURITY.md's triage item 4 (an accepted risk). If one is present, the tag waits for
 the change that removes it.
+
+**0a. A package's first release** (once per new package; this release: `@sensigo/realm-store-sqlite`)
+
+A package that has never been published cannot go through trusted publishing on its first version: the trusted-publisher setting lives on the package's settings page on npmjs.com, so the package has to exist on the registry first — and a new trusted-publisher configuration must complete its first successful publish within two days of being created. Check first whether the package is already there: `npm view @sensigo/realm-store-sqlite version` answers an `E404` error for a package that has never been published; if it answers a version, skip item 1.
+
+1. **Publish a bootstrap version by hand, from your own machine.** `npm login`; at the repository root `npm run build`; then in `packages/store-sqlite`: `npm publish --tag bootstrap`. This publishes the tree's development version (`0.48.1-dev.0` today) under the `bootstrap` tag (`npm dist-tag ls @sensigo/realm-store-sqlite` shows the tags; the release's own publish sets `latest`), and never the release's version: the publish guard refuses a version already published from another commit, and the release would stop at the store's step after core's.
+2. **Add the trusted publisher** on the package's settings page on npmjs.com: repository `sensigo-hq/realm`, workflow `publish.yml`. Do this at most two days before step 5 pushes the tag, so the tag's publish is the configuration's first.
+3. **After step 6 shows the Publish workflow green,** retire the bootstrap: `npm deprecate @sensigo/realm-store-sqlite@<bootstrap version> "bootstrap version; install the release"`.
 
 **1. Create a release branch**
 
@@ -236,6 +244,15 @@ npm init -y
 npm install @sensigo/realm@<version>
 node --input-type=module -e "import { VERSION } from '@sensigo/realm'; console.log(VERSION);"
 ```
+
+The store package needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later (Node's built-in SQLite at those versions); run this part on such a Node:
+
+```bash
+npm install @sensigo/realm-store-sqlite@<version>
+node --input-type=module -e "import { openRealmHome } from '@sensigo/realm-store-sqlite'; console.log(typeof openRealmHome);"
+```
+
+It prints `function`.
 
 **8. Create the GitHub Release**
 
