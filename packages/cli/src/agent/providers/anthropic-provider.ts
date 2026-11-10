@@ -25,6 +25,7 @@ import {
   ANTHROPIC_MODELS_URL,
   endpointOf,
   responseModel,
+  type AutoStepRule,
   type CallCacheChoice,
   type ProviderCapabilities,
   type CallStepWithMetaResult,
@@ -756,8 +757,19 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         'AnthropicProvider: no auto cache choice is pending; settleAutoChoice runs once, for an auto choice with measured gaps',
       );
     }
-    const outcome = chooseAutoLifetime({
-      gapsS: this.promptCache.auto?.gaps_s,
+    const outcome = this.chooseAuto(this.promptCache.auto?.gaps_s, prices);
+    this.cacheChoice = outcome.choice;
+    this.autoPrices = outcome.prices;
+    return outcome;
+  }
+
+  /** Issue #898 — `chooseAutoLifetime` over Anthropic's two lifetimes, with this drive's prior. */
+  private chooseAuto(
+    gapsS: readonly number[] | undefined,
+    prices: AutoPriceInput,
+  ): { choice: CacheChoice; prices?: CacheAutoPrices } {
+    return chooseAutoLifetime({
+      gapsS,
       lifetimes: {
         short_s: ANTHROPIC_CACHE_TIERS.short.lifetime_s,
         long_s: ANTHROPIC_CACHE_TIERS.long.lifetime_s,
@@ -765,9 +777,16 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       prior: this.autoPrior(),
       prices,
     });
-    this.cacheChoice = outcome.choice;
-    this.autoPrices = outcome.prices;
-    return outcome;
+  }
+
+  /**
+   * Caching 3-M (D-2) — under `auto`, the rule a drive chooses each step's lifetime by: the settle's own
+   * rule over one step's gaps, and the short lifetime for a step with tools (its own turns reuse the
+   * entry). Changes no state. Absent under any other setting.
+   */
+  autoStepRule(): AutoStepRule | undefined {
+    if (this.promptCache.value !== 'auto') return undefined;
+    return { choose: (gapsS, prices) => this.chooseAuto(gapsS, prices), toolStep: 'short' };
   }
 
   /**

@@ -65,6 +65,7 @@ import type {
   Snapshot,
 } from '@sensigo/realm';
 import type { EarlierRuns } from './earlier-runs.js';
+import type { StepCacheChoices } from './step-cache-choices.js';
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
   sanitizeError,
@@ -186,6 +187,13 @@ function lastCallOpenerIn(requests: unknown): UsageRecord | undefined {
   return undefined;
 }
 
+/** Caching 3-M (piece C3): a step's recorded request, and the agent profile's hash on the evidence
+ *  entry that held it. A request found on a `drive_failures` entry has no hash: that entry holds none. */
+export interface RecordedRequest {
+  readonly request: UsageRecord;
+  readonly agent_profile_hash?: string;
+}
+
 /**
  * Caching 3-M (piece A-1) — the first request of `step`'s last call on the record it is given (piece
  * A-1b; no store read): the predecessor of the step's first request in a drive
@@ -198,14 +206,15 @@ function lastCallOpenerIn(requests: unknown): UsageRecord | undefined {
  * own order, never by clocks: the failure is the later one when its `evidence_count` (the run's
  * evidence count, read in the write that appended it) is greater than `e`. A drive-failure entry
  * without `evidence_count` (written before #715 (b)) is not a candidate. Entries that are not plain
- * objects are skipped; it never throws.
+ * objects are skipped; it never throws. Piece C3: the answer also holds the `agent_profile_hash` of
+ * the evidence entry that held the request, read off that entry and no other.
  */
 export function lastRecordedRequest(
   run: RunRecord | undefined,
   step: string,
-): UsageRecord | undefined {
+): RecordedRequest | undefined {
   if (!isRecordObject(run)) return undefined;
-  let fromEvidence: UsageRecord | undefined;
+  let fromEvidence: RecordedRequest | undefined;
   let evidenceIndex = -1;
   const evidence: unknown = run.evidence;
   if (Array.isArray(evidence)) {
@@ -216,12 +225,16 @@ export function lastRecordedRequest(
       const cache = isRecordObject(diagnostics) ? diagnostics['cache'] : undefined;
       const opener = lastCallOpenerIn(isRecordObject(cache) ? cache['requests'] : undefined);
       if (opener === undefined) continue;
-      fromEvidence = opener;
+      const hash = entry['agent_profile_hash'];
+      fromEvidence = {
+        request: opener,
+        ...(typeof hash === 'string' ? { agent_profile_hash: hash } : {}),
+      };
       evidenceIndex = i;
       break;
     }
   }
-  let fromFailure: UsageRecord | undefined;
+  let fromFailure: RecordedRequest | undefined;
   let failureCount = -1;
   const failures: unknown = isRecordObject(run.drive_failures)
     ? run.drive_failures.entries
@@ -234,7 +247,7 @@ export function lastRecordedRequest(
       if (typeof count !== 'number') continue;
       const opener = lastCallOpenerIn(entry['usage']);
       if (opener === undefined) continue;
-      fromFailure = opener;
+      fromFailure = { request: opener };
       failureCount = count;
       break;
     }
@@ -251,6 +264,12 @@ export interface AgentDeps {
    * Absent: no read was made or it failed, and no step's first request gets a copy from another run.
    */
   earlierRuns?: EarlierRuns;
+  /**
+   * Caching 3-M (piece D-2): under `auto`, each agent step's cache choice for this drive, chosen by
+   * `realm agent` before it (`chooseStepCaches`). Every call of a step passes its choice, repair
+   * attempts included. Absent, or a step it does not name: the call carries none (`CallCacheChoice`).
+   */
+  stepCacheChoices?: StepCacheChoices;
   workflowStore: WorkflowRegistrar;
   provider: LlmProvider;
   /**
@@ -720,13 +739,24 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // read from `currentRun` as held at that moment (no store read; at a step's first call it is the
   // snapshot the engine judged its last reply on); when the record holds none, piece C2, the latest
   // of the step's requests read from the workflow's earlier runs before the drive. Consulted only
-  // while the step holds no request of this drive (`usageForStep` empty).
+  // while the step holds no request of this drive (`usageForStep` empty). Piece C3: with the two
+  // agent-profile hashes the copy compares, the earlier one from the entry that held the request.
   const recordedBefore = (step: string): RecordedPredecessor | undefined => {
     if (usageForStep !== undefined && usageForStep.length > 0) return undefined;
     const own = lastRecordedRequest(currentRun, step);
-    if (own !== undefined) return { request: own, from: 'run' };
-    const earlier = deps.earlierRuns?.get(step)?.[0];
-    return earlier !== undefined ? { request: earlier.request, from: 'earlier_run' } : undefined;
+    const found = own ?? deps.earlierRuns?.get(step)?.[0];
+    if (found === undefined) return undefined;
+    const profile = definition.steps[step]?.agent_profile;
+    const current =
+      profile !== undefined ? definition.resolved_profiles?.[profile]?.content_hash : undefined;
+    return {
+      request: found.request,
+      from: own !== undefined ? 'run' : 'earlier_run',
+      ...(found.agent_profile_hash !== undefined
+        ? { earlier_profile_hash: found.agent_profile_hash }
+        : {}),
+      ...(current !== undefined ? { current_profile_hash: current } : {}),
+    };
   };
   // decision C205: a drive that stops on a run that ended with a failed step `realm run resume`
   // takes gives the way back in — the line `realm workflow run` gives (`  Resume:    …`).
@@ -1336,6 +1366,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 ? discloseForAgentSplit(rawForAttempt, nextAction.stable_prefix.chars)
                 : undefined;
             const cachePrefix = split !== undefined ? { cachePrefixChars: split.head.length } : {};
+            // Caching 3-M (D-2): the step's cache choice for this drive, on each of its calls.
+            const stepCacheChoice = deps.stepCacheChoices?.get(stepName);
+            const stepCache = stepCacheChoice !== undefined ? { cacheChoice: stepCacheChoice } : {};
             // #robust-anthropic-provider Part 1: route the schema the ENGINE validates output against
             // (output_schema, execution-loop.ts validateOutputSchema) ahead of the execute_step-param
             // schema (input_schema / nextAction.input_schema) the provider was fed until now. Both-
@@ -1720,6 +1753,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     toolTimeoutMs: (stepDef.tool_timeout ?? 30) * 1000,
                     ...(agentProfileInstructions !== undefined ? { agentProfileInstructions } : {}),
                     ...cachePrefix,
+                    ...stepCache,
                   },
                 );
               } catch (err) {
@@ -1853,7 +1887,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
-                    { structuredOutputStrict: structuredOutputPlan.send, llmClock, ...cachePrefix },
+                    {
+                      structuredOutputStrict: structuredOutputPlan.send,
+                      llmClock,
+                      ...cachePrefix,
+                      ...stepCache,
+                    },
                   );
                   stepInput = output;
                   // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the
@@ -1917,7 +1956,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
-                    { llmClock, ...cachePrefix },
+                    { llmClock, ...cachePrefix, ...stepCache },
                   );
                   stepInput = output;
                   // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the

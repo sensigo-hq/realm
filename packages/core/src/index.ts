@@ -678,6 +678,7 @@ export {
   chooseAutoOneLifetime,
   keptCacheGaps,
   normalizeCacheAuto,
+  stepCacheGaps,
 } from './economics/cache-lifetime.js';
 export type {
   CacheTier,

@@ -19,6 +19,7 @@ import {
   endpointOf,
   openAiExplicitCacheModel,
   responseModel,
+  type AutoStepRule,
   type CallCacheChoice,
   type PromptCacheRequest,
   type ProviderCapabilities,
@@ -391,6 +392,20 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     this.explicitChoice = outcome.choice;
     this.autoPrices = outcome.prices;
     return outcome;
+  }
+
+  /**
+   * Caching 3-M (D-2) — under `auto`, in the explicit set, the rule a drive chooses each step's
+   * lifetime by: the settle's own (`chooseAutoOneLifetime`) over one step's gaps. No `toolStep`: a
+   * tool step is not part of the choice. Changes no state. Absent outside the set or under any other
+   * setting.
+   */
+  autoStepRule(): AutoStepRule | undefined {
+    if (this.promptCache?.value !== 'auto' || !this.explicitCache()) return undefined;
+    return {
+      choose: (gapsS, prices) =>
+        chooseAutoOneLifetime({ gapsS, lifetime_s: OPENAI_EXPLICIT_LIFETIME_S, prices }),
+    };
   }
 
   /**

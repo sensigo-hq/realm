@@ -240,6 +240,26 @@ describe('caching 3-M C1 — the sentence against an earlier run', () => {
   });
 });
 
+describe('caching 3-M C3 — the sentence when the agent profile changed', () => {
+  // The real case, both rows: a profile edited between two drives of a run, or two runs of a
+  // workflow. Can fail: the sentence naming `an earlier drive's request` for an `earlier_run` place
+  // (that row), or another cause's words (both). Prints the CostMiss and the sentence.
+  it.each<[string, CostMiss, string]>([
+    [
+      'against an earlier drive of this run',
+      miss({ cause: 'agent_profile', predecessor: REFERENCE, gap_s: 1200, ...ANTHROPIC_5M }),
+      "the step's agent profile changed since an earlier drive's request",
+    ],
+    [
+      'against an earlier run',
+      miss({ cause: 'agent_profile', predecessor: EARLIER_RUN, gap_s: 180 }),
+      "the step's agent profile changed since an earlier run's request",
+    ],
+  ])('%s', (_label, value, sentence) => {
+    expect(missSentence(value), JSON.stringify(value)).toBe(sentence);
+  });
+});
+
 describe("caching 3-M A-2b2 — the gap's words", () => {
   // Can fail: the seconds rounded down (the 1.386 and 420.25 rows), no carry of 60 seconds (the
   // 179.5 row reads "2 minutes 60 seconds"), no day unit (the 172800 row). 1.386 is live-899's

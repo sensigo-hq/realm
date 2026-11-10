@@ -142,6 +142,18 @@ export function gapsText(gaps: readonly number[]): string {
 /** What `auto` chose on, in words (the start line, `realm run inspect`). */
 export function autoEvidence(auto: Pick<CacheAuto, 'basis' | 'gaps_s'>): string {
   switch (auto.basis) {
+    // Caching 3-M (D-2): a choice made for one step.
+    case 'step_gaps': {
+      const gaps = auto.gaps_s ?? [];
+      if (gaps.length === 0)
+        return 'Realm found no earlier request of this step from the last 7 days';
+      const n = gaps.length;
+      return `the last ${n === 1 ? 'gap' : `${n} gaps`} between this step's runs ${n === 1 ? 'was' : 'were'} ${gapsText(gaps)}`;
+    }
+    case 'step_gaps_unreadable':
+      return "Realm could not read this workflow's earlier runs";
+    case 'tool_step':
+      return 'a step that calls tools reuses its own turns, so auto does not choose for it';
     case 'no_measurement':
       return 'a drive realm agent starts on its own has no trigger history';
     case 'listen_gaps_unreadable':
@@ -172,25 +184,32 @@ export function autoFallbackWindowText(): string {
 /**
  * #896 unit B — the lifetime an `auto` fallback asks for, by the provider that answered: OpenAI's one
  * lifetime (30 minutes) for `openai`, else Anthropic's long one (1 hour; also when none is known).
+ * Caching 3-M (D-2): on Anthropic, the drive's prior, from the runner that chose (`by`): the short
+ * lifetime for a drive `realm agent` started.
  */
-function fallbackLifetimeS(provider: string | undefined): number {
-  return provider === 'openai' ? OPENAI_EXPLICIT_LIFETIME_S : ANTHROPIC_CACHE_TIERS.long.lifetime_s;
+function fallbackLifetimeS(provider: string | undefined, by: string | undefined): number {
+  if (provider === 'openai') return OPENAI_EXPLICIT_LIFETIME_S;
+  return by === 'realm agent'
+    ? ANTHROPIC_CACHE_TIERS.short.lifetime_s
+    : ANTHROPIC_CACHE_TIERS.long.lifetime_s;
 }
 
 /**
  * Issue #898 — where `auto`'s choice took its prices, in words: the start line, `realm run inspect`
  * and every other render. `asked` is the lifetime asked, in seconds, or `'off'`; a fallback's words
  * end by what that ask was, and (#896 unit B) by the window of the provider that answered
- * (`provider`: 27 minutes for `openai`, else 54). Total: never throws, for any `asked` a stored
+ * (`provider`: 27 minutes for `openai`, else 54; caching 3-M D-2: 270 seconds on Anthropic when `by`
+ * is `realm agent`, whose prior is the short lifetime). Total: never throws, for any `asked` a stored
  * record can hold.
  */
 export function autoPricesText(
   prices: CacheAutoPricesView,
   asked: number | 'off',
   provider?: string,
+  by?: string,
 ): string {
   const short = lifetimeText(ANTHROPIC_CACHE_TIERS.short.lifetime_s);
-  const fallbackS = fallbackLifetimeS(provider);
+  const fallbackS = fallbackLifetimeS(provider, by);
   const tail =
     asked === fallbackS
       ? `, so ${lifetimeText(fallbackS)} without prices`

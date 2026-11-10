@@ -599,7 +599,7 @@ function askEntryText(entry: CacheRequestedEntry): string {
       ? ''
       : `; auto: ${autoEvidence(entry.auto)}` +
         (entry.auto.prices !== undefined
-          ? `; ${autoPricesText(entry.auto.prices, asked, entry.provider)}`
+          ? `; ${autoPricesText(entry.auto.prices, asked, entry.provider, entry.by)}`
           : '');
   if (entry.value === 'off')
     return `asked for no caching (${askSourceText(entry)}${autoFor('off')})`;
@@ -917,6 +917,7 @@ const MISS_SENTENCES = {
       "changed: the step's tools, or on Anthropic its schema, which Realm sends as its answer tool)"
     );
   },
+  agent_profile: (prev) => `the step's agent profile changed since ${prev}`,
   system: (prev) =>
     `the system text differs from ${prev} (the agent profile, the step's schema, or another Realm version)`,
   repair_feedback: (prev) =>

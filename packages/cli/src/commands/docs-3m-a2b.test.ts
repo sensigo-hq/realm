@@ -119,13 +119,13 @@ describe('caching 3-M A-2b — get_run_state documents `cost.misses`', () => {
     );
   });
 
-  it('the fifteen causes', () => {
+  it('the sixteen causes', () => {
     // Red when a word is added to or dropped from the vocabulary and the page is not changed.
     claim(STATE, CACHE_MISS_CAUSES.map((cause) => `\`${cause}\``).join(', '));
-    // `cache-misses.test.ts`, A-2a2's and A-2a3's cells, one per cause.
+    // `cache-misses.test.ts`, A-2a2's and A-2a3's cells, one per cause; C3's for `agent_profile`.
     claim(
       STATE,
-      "`cause` is one of `provider_changed`, `endpoint_changed`, `model_changed`, `parts_not_recorded`, `final_request`, `strict_ladder`, `strict_changed`, `tools`, `system`, `repair_feedback`, `prompt`, `format`, `cache_settings`, `possibly_expired`, `unexplained`: the first difference the record holds, or a pause longer than the entry's lifetime, or none on the record; never a proven cause.",
+      "`cause` is one of `provider_changed`, `endpoint_changed`, `model_changed`, `parts_not_recorded`, `final_request`, `strict_ladder`, `strict_changed`, `tools`, `agent_profile`, `system`, `repair_feedback`, `prompt`, `format`, `cache_settings`, `possibly_expired`, `unexplained`: the first difference the record holds, or a pause longer than the entry's lifetime, or none on the record; never a proven cause.",
     );
   });
 
