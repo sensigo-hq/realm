@@ -48,7 +48,7 @@ Do this, in this order:
 
 **What is not carried over** stays in the moved folders:
 
-- The import copies and moves nothing: the records stay in the moved folder until you delete it. Not imported from it: a run's refused answers (the old `<id>.attempts.jsonl` files), its trace buffer and sealed traces (the old `trace-buffer-…` and `sealed-trace-…` `.jsonl` files) and the `keys` folder (the store works out which run holds a key from the runs themselves). From an export bundle, its failed attempts, trace buffer and sealed traces are not imported either (the line's notes `attempts_not_imported`, `wal_not_imported`, `sealed_not_imported`).
+- The import reads the files and moves none of them: the records stay in the moved folder until you delete it. Not imported from it: a run's refused answers (the old `<id>.attempts.jsonl` files), its trace buffer and sealed traces (the old `trace-buffer-…` and `sealed-trace-…` `.jsonl` files) and the `keys` folder (the store works out which run holds a key from the runs themselves). From an export bundle, its failed attempts, trace buffer and sealed traces are not imported either (the line's notes `attempts_not_imported`, `wal_not_imported`, `sealed_not_imported`).
 - The registered workflows (`workflows/`): register each again from its source (step 4).
 - Saved replays (`replays/`), and `realm listen`'s duplicate-webhook marks (`dedup/`). A delivery whose event id belongs to an imported run still starts nothing: the id is that run's idempotency key.
 - A run whose idempotency key a live run already holds reads `diverged`, and its line names that run; the stored run is kept.
