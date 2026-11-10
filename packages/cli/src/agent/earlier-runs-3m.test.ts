@@ -4,10 +4,15 @@
 // scratch home), with a scripted provider double returning the capture's shape. No two-run capture
 // exists: each cell pairs real shapes by construction. Every value is a fake. Each assertion names
 // (a) the change that turns it red and (b) what it prints when it fails: ids, steps, `from` and
-// instants, never a prompt's text.
+// instants, never a prompt's text. Piece C3's cells are at the end: the reference says when the
+// step's agent profile changed.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunRecord, UsageRecord, WorkflowDefinition } from '@sensigo/realm';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
+import {
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  applyResume,
+  createDefaultRegistry,
+} from '@sensigo/realm';
 import { settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { handleGetRunState } from '@sensigo/realm-mcp/dist/tools/get-run-state.js';
 import { inspectRun } from '../commands/inspect.js';
@@ -768,5 +773,281 @@ describe('caching 3-M C2 — what the operator sees', () => {
       from: requestsOf(second, 'classify')[0]?.reference?.from,
       missLines: out.split('\n').filter((l) => l.includes('cache miss:')),
     }).toEqual({ from: 'earlier_run', missLines: [] });
+  });
+});
+
+const PROFILE_BEFORE = 'e'.repeat(64);
+const PROFILE_AFTER = 'f'.repeat(64);
+const SETTLES_FAILED = { validation_exhaustion: { threshold: 1, mode: 'fail' } };
+
+/** The single-shot step under a profile of this hash, as the loader stamps it; none: no profile. */
+const profiled = (
+  hash: string | undefined,
+  extra: Record<string, unknown> = {},
+): WorkflowDefinition =>
+  workflow(
+    'earlier-3m-single',
+    { draft: agentStep({ ...extra, ...(hash !== undefined ? { agent_profile: 'writer' } : {}) }) },
+    hash !== undefined
+      ? { resolved_profiles: { writer: { content: 'Write plainly.', content_hash: hash } } }
+      : {},
+  );
+
+/** The hash on the step's latest evidence entry. */
+const evidenceHash = (run: RunRecord): string | undefined =>
+  run.evidence.filter((e) => e.step_id === 'draft').at(-1)?.agent_profile_hash;
+
+/** The two hashes' equality, in words: what a failing row prints, never a digest. */
+function compared(earlier: string | undefined, current: string | undefined): string {
+  if (earlier === undefined && current === undefined) return 'neither known';
+  if (earlier === undefined) return 'earlier not known';
+  if (current === undefined) return 'this side not known';
+  return earlier === current ? 'equal' : 'different';
+}
+
+/** What a row's drives left: the final run, the request it must have copied and the two hashes. */
+interface ProfileCase {
+  final: RunRecord;
+  copied: UsageRecord;
+  earlier: string | undefined;
+  current: string | undefined;
+}
+
+/** Two runs of the workflow, the first under `before` and the second under `after`. */
+async function twoRuns(
+  t: Harness,
+  before: string | undefined,
+  after: string | undefined,
+): Promise<ProfileCase> {
+  const first = await drive(t, profiled(before), [ok(billed(START(0)))]);
+  await t.tick();
+  const final = await drive(t, profiled(after), [ok(billed(START(10)))]);
+  return {
+    final,
+    copied: requestsOf(first, 'draft')[0]!,
+    earlier: evidenceHash(first),
+    current: after,
+  };
+}
+
+/** A run whose step settled failed under `hash`, its request on the evidence entry, then resumed. */
+async function settledAndResumed(t: Harness, hash: string): Promise<RunRecord> {
+  const def = profiled(hash, SETTLES_FAILED);
+  const run = await drive(t, def, [{ output: { status: 'BAD' }, usage: [billed(START(0))] }]);
+  const store = t.h.home.runStore;
+  await store.update(applyResume((await store.get(run.id)).record, 'draft', def).run);
+  await t.tick();
+  return run;
+}
+
+const PROFILE_ROWS: [
+  string,
+  (t: Harness) => Promise<ProfileCase>,
+  { from: string; hashes: string; fact: true | 'absent' },
+][] = [
+  [
+    // The real case. Break: only a re-drive is handled, or the fact is never written.
+    'the profile edited between two runs → true',
+    (t) => twoRuns(t, PROFILE_BEFORE, PROFILE_AFTER),
+    { from: 'earlier_run', hashes: 'different', fact: true },
+  ],
+  [
+    // Break: the comparison dropped, so the fact is always written.
+    'the same profile in both runs → no field',
+    (t) => twoRuns(t, PROFILE_BEFORE, PROFILE_BEFORE),
+    { from: 'earlier_run', hashes: 'equal', fact: 'absent' },
+  ],
+  [
+    // Break: the comparison dropped.
+    'a step with no profile → no field',
+    (t) => twoRuns(t, undefined, undefined),
+    { from: 'earlier_run', hashes: 'neither known', fact: 'absent' },
+  ],
+  [
+    // Break: a missing earlier hash treated as a difference.
+    'a step that gained a profile → no field',
+    (t) => twoRuns(t, undefined, PROFILE_AFTER),
+    { from: 'earlier_run', hashes: 'earlier not known', fact: 'absent' },
+  ],
+  [
+    // Break: a missing hash on this side treated as a difference.
+    'a step that lost its profile → no field',
+    (t) => twoRuns(t, PROFILE_BEFORE, undefined),
+    { from: 'earlier_run', hashes: 'this side not known', fact: 'absent' },
+  ],
+  [
+    // The run holds an evidence entry under the old profile, but the copy comes from the later
+    // drive failure, which holds no hash. Breaks: a missing hash treated as a difference; the hash
+    // read from the step's latest evidence entry instead of the entry that held the copied request.
+    'settled failed under one profile, resumed, its next drive failed under an edited one, driven again under that → no field',
+    async (t) => {
+      const settled = await settledAndResumed(t, PROFILE_BEFORE);
+      const edited = profiled(PROFILE_AFTER, SETTLES_FAILED);
+      const failed = await drive(t, edited, [{ throw: true, usage: [billed(START(5))] }], {
+        runId: settled.id,
+      });
+      await t.tick();
+      const entry = failed.drive_failures!.entries.at(-1)!;
+      return {
+        final: await drive(t, edited, [ok(billed(START(10)))], { runId: settled.id }),
+        copied: entry.usage![0]!,
+        earlier: (entry as unknown as { agent_profile_hash?: string }).agent_profile_hash,
+        current: PROFILE_AFTER,
+      };
+    },
+    { from: 'run', hashes: 'earlier not known', fact: 'absent' },
+  ],
+  [
+    // The run's latest evidence entry is under the edited profile but holds no request (that drive
+    // made none), so the copy is the older entry's request, made under the old profile. Break: the
+    // earlier hash read from the step's latest evidence entry instead of the entry that held the
+    // copied request (the two hashes read equal, so the fact is absent).
+    'a later evidence entry under an edited profile holds no request; the copy is the older entry’s → true',
+    async (t) => {
+      const settled = await settledAndResumed(t, PROFILE_BEFORE);
+      const edited = profiled(PROFILE_AFTER, SETTLES_FAILED);
+      const noRequest = await drive(t, edited, [{ output: { status: 'BAD' } }], {
+        runId: settled.id,
+      });
+      await t.tick();
+      const store = t.h.home.runStore;
+      await store.update(applyResume((await store.get(noRequest.id)).record, 'draft', edited).run);
+      await t.tick();
+      return {
+        final: await drive(t, edited, [ok(billed(START(10)))], { runId: settled.id }),
+        copied: requestsOf(settled, 'draft')[0]!,
+        earlier: evidenceHash(settled),
+        current: PROFILE_AFTER,
+      };
+    },
+    { from: 'run', hashes: 'different', fact: true },
+  ],
+  [
+    // A re-drive under an edited profile. Break: only `earlier_run` handled.
+    'a re-drive of one run whose earlier evidence entry has a different hash → true',
+    async (t) => {
+      const settled = await settledAndResumed(t, PROFILE_BEFORE);
+      return {
+        final: await drive(t, profiled(PROFILE_AFTER, SETTLES_FAILED), [ok(billed(START(10)))], {
+          runId: settled.id,
+        }),
+        copied: requestsOf(settled, 'draft')[0]!,
+        earlier: evidenceHash(settled),
+        current: PROFILE_AFTER,
+      };
+    },
+    { from: 'run', hashes: 'different', fact: true },
+  ],
+];
+
+describe('caching 3-M C3 — check 1: the reference says when the agent profile changed', () => {
+  it.each(PROFILE_ROWS)('%s', async (_name, row, expected) => {
+    const t = await open();
+    const { final, copied: source, earlier, current } = await row(t);
+    const reference = requestsOf(final, 'draft')[0]?.reference;
+    // (a) red on the break named beside the row; (b) prints the step, the source, whether the copy
+    //     is the expected request, the hashes' equality in words and the fact, never a digest.
+    expect({
+      step: 'draft',
+      from: reference?.from,
+      copiedTheRequest: reference?.request_id === source.request_id,
+      hashes: compared(earlier, current),
+      fact:
+        reference !== undefined && Object.hasOwn(reference, 'agent_profile_changed')
+          ? reference.agent_profile_changed
+          : 'absent',
+    }).toEqual({ step: 'draft', copiedTheRequest: true, ...expected });
+  });
+});
+
+/** Two steps, each under its own profile; `critic` is listed before `writer` in `resolved_profiles`. */
+const twoProfiled = (writer: string, critic: string): WorkflowDefinition =>
+  workflow(
+    'earlier-3m-two-profiles',
+    {
+      draft: agentStep({ agent_profile: 'writer' }),
+      review: agentStep({ agent_profile: 'critic', depends_on: ['draft'] }),
+    },
+    {
+      resolved_profiles: {
+        critic: { content: 'Check it.', content_hash: critic },
+        writer: { content: 'Write plainly.', content_hash: writer },
+      },
+    },
+  );
+
+const CRITIC_BEFORE = 'a'.repeat(64);
+const CRITIC_AFTER = 'b'.repeat(64);
+
+describe('caching 3-M C3 — check 1, two profiles in one workflow: each step compares its own', () => {
+  // Real case: a workflow with several profiles, one of them edited between two runs. Can fail: a
+  // step's profile looked up from another step's entry of `resolved_profiles` (the first listed, the
+  // last, or the wrong name): the edited step reads equal and the unchanged one reads different. Prints
+  // the fact of each step.
+  it.each([
+    [
+      'the first step’s profile edited',
+      twoProfiled(PROFILE_AFTER, CRITIC_BEFORE),
+      { draft: true, review: 'absent' },
+    ],
+    [
+      'the second step’s profile edited',
+      twoProfiled(PROFILE_BEFORE, CRITIC_AFTER),
+      { draft: 'absent', review: true },
+    ],
+  ])('%s', async (_name, after, expected) => {
+    const t = await open();
+    await drive(t, twoProfiled(PROFILE_BEFORE, CRITIC_BEFORE), [
+      ok(billed(START(0))),
+      ok(billed(START(1))),
+    ]);
+    await t.tick();
+    const final = await drive(t, after, [ok(billed(START(10))), ok(billed(START(11)))]);
+    const factOf = (step: string): true | 'absent' => {
+      const reference = requestsOf(final, step)[0]?.reference;
+      return reference !== undefined && Object.hasOwn(reference, 'agent_profile_changed')
+        ? (reference.agent_profile_changed as true)
+        : 'absent';
+    };
+    expect({ draft: factOf('draft'), review: factOf('review') }).toEqual(expected);
+  });
+});
+
+describe('caching 3-M C3 — check 5: what the operator sees', () => {
+  // Two runs of one workflow, the profile edited between them, the second reading less.
+  it('`realm run inspect` says the profile changed, and `get_run_state` carries the cause', async () => {
+    const t = await open();
+    await drive(t, profiled(PROFILE_BEFORE), [ok(billed(START(0), 0, 4019))]);
+    await t.tick();
+    const edited = profiled(PROFILE_AFTER);
+    const second = await drive(t, edited, [
+      ok({
+        ...billed(START(1), 0, 4019),
+        // The double's parts are fixed, so an edited profile moves no digest here; a real provider's
+        // `system` digest covers the profile (`buildSystemPrompt`), so it is set to differ.
+        prefix_parts: { system: 'd'.repeat(64), prompt: PROMPT_HEAD },
+      }),
+    ]);
+    const { workflowStore } = t.h.home;
+    await workflowStore.register(edited);
+    const out = await inspectRun(second.id, t.h.home.runStore, workflowStore);
+    const summary = await handleGetRunState(
+      { run_id: second.id, include_steps: true },
+      { runStore: t.h.home.runStore, workflowStore },
+    );
+    // (a) red when the fact is not written (the line and the cause say `system`); (b) prints the step,
+    //     the line and the cause, never a digest.
+    expect({
+      step: 'draft',
+      line: out
+        .split('\n')
+        .find((l) => l.includes('cache miss:'))
+        ?.trim(),
+      cause: summary.steps!['draft']!.attempts[0]!.cost!.misses![0]!.derived.cause,
+    }).toEqual({
+      step: 'draft',
+      line: "cache miss: request 1 of 1 read 0 of 4019 expected tokens — the step's agent profile changed since an earlier run's request",
+      cause: 'agent_profile',
+    });
   });
 });

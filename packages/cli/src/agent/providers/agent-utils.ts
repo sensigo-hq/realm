@@ -846,7 +846,8 @@ export function appendRequests(
 }
 
 /** Caching 3-M (piece A-1): the predecessor's fields a reference copies — compile-forced to be
- *  exactly `CacheReference`'s, `from` aside. */
+ *  exactly `CacheReference`'s, aside from `from` and `agent_profile_changed` (piece C3), which no
+ *  request holds: `attachRecordedReference` writes those two itself. */
 const REFERENCE_FIELDS = {
   request_start: true,
   request_id: true,
@@ -865,7 +866,7 @@ const REFERENCE_FIELDS = {
   prefix_parts: true,
   cache_marked: true,
   request_strict_sent: true,
-} as const satisfies Record<Exclude<keyof CacheReference, 'from'>, true>;
+} as const satisfies Record<Exclude<keyof CacheReference, 'from' | 'agent_profile_changed'>, true>;
 
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -875,14 +876,22 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
 export interface RecordedPredecessor {
   readonly request: UsageRecord;
   readonly from: CacheReference['from'];
+  /** Caching 3-M (piece C3): the agent profile's hash on the evidence entry that held `request`.
+   *  Absent when that entry has none, and for a request found on a `drive_failures` entry, which
+   *  records no hash. */
+  readonly earlier_profile_hash?: string;
+  /** Caching 3-M (piece C3): the hash of the step's agent profile in the running definition. Absent
+   *  for a step with no profile. */
+  readonly current_profile_hash?: string;
 }
 
 /**
  * Caching 3-M (piece A-1) — gives a step's first request in a drive the copy of its predecessor when
  * one was found (`recorded`: the first request of the step's last call on the run's record, piece
  * A-1b, or the same step's request in an earlier run, piece C2): `arrived[0]` gains `reference`,
- * `recorded.from` plus each of `CacheReference`'s fields its request has (never its `request_index`
- * or `request_in_call`). Every
+ * `recorded.from` plus each of `CacheReference`'s copied fields its request has (never its
+ * `request_index` or `request_in_call`), and, piece C3, `agent_profile_changed: true` when both
+ * profile hashes `recorded` holds are present and differ (no field otherwise). Every
  * other request's predecessor is an earlier entry of the same stored list, so nothing is copied for
  * it. Called on each arriving array after its mint, with `prior` the requests the step
  * already holds in this drive (`usageForStep`), at the points where a provider's usage enters the
@@ -917,6 +926,10 @@ export function attachRecordedReference(
       if (Object.hasOwn(predecessor.request, field) && predecessor.request[field] !== undefined) {
         reference[field] = predecessor.request[field];
       }
+    }
+    const { earlier_profile_hash: earlier, current_profile_hash: current } = predecessor;
+    if (earlier !== undefined && current !== undefined && earlier !== current) {
+      reference['agent_profile_changed'] = true;
     }
     return { ...rest, reference: reference as CacheReference };
   });

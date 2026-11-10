@@ -55,7 +55,8 @@ const NAME_FIELDS = [
  * is, or deleted. Caching 3-M (piece A-1): `reference` is kept only when its `from` is a word of
  * `CACHE_REFERENCE_SOURCES` and its `request_start` a string, or deleted whole; inside it, each
  * copied field passes the rule it passes here and is dropped alone when it fails, and any other key
- * (a `reference`, a `request_index`, a `request_in_call`) is dropped. Caching 3-M (piece B1):
+ * (a `reference`, a `request_index`, a `request_in_call`) is dropped; its `agent_profile_changed`
+ * (piece C3) is kept only as `true`. Caching 3-M (piece B1):
  * `response_id` is kept only when it passes `normalizeResponseId`, or deleted. Piece B3a:
  * `cache_diagnostics` is rebuilt by `normalizeCacheDiagnostics`, or deleted. Every other field, and every entry that is not an object (a `null`, a number), passes through
  * unchanged. Total: it never throws, because it runs inside `recordDriveFailure`'s fence, where a
@@ -220,13 +221,16 @@ const REFERENCE_KEYS = {
   prefix_parts: true,
   cache_marked: true,
   request_strict_sent: true,
+  agent_profile_changed: true,
 } as const satisfies Record<keyof CacheReference, true>;
 
 /**
  * Caching 3-M (piece A-1): `reference` in its one shape — a plain object whose `from` is a word of
  * `CACHE_REFERENCE_SOURCES` and whose `request_start` is a string — or `undefined` (dropped whole).
  * Its other keys of `CacheReference` each pass the rule they pass on a request (`boundFields`), and
- * one that fails is dropped alone; every other key is dropped. Key order is kept.
+ * one that fails is dropped alone; `agent_profile_changed` (piece C3), which no request holds, is
+ * kept only as `true`, as `cache_key_sent` is, and dropped alone otherwise; every other key is
+ * dropped. Key order is kept.
  */
 function normalizeReference(value: unknown): CacheReference | undefined {
   if (!plainObject(value)) return undefined;
@@ -235,6 +239,9 @@ function normalizeReference(value: unknown): CacheReference | undefined {
   const kept: Record<string, unknown> = {};
   for (const key of Object.keys(value)) {
     if (Object.hasOwn(REFERENCE_KEYS, key)) kept[key] = value[key];
+  }
+  if (Object.hasOwn(kept, 'agent_profile_changed') && kept['agent_profile_changed'] !== true) {
+    delete kept['agent_profile_changed'];
   }
   return boundFields(kept) as CacheReference;
 }

@@ -37,14 +37,13 @@ import {
   type DisclosureReceipt,
   type DisclosureTally,
   type FactProducers,
+  type KeysOfUnion,
   type WalkOptions,
   deriveOf,
 } from './disclosure-walk.js';
 
 type Row<T> = Record<keyof T, DisclosureClass>;
 type Element<T> = T extends readonly (infer E)[] ? E : never;
-/** Every key of every arm of a union: `keyof` over a union is only the keys all its arms share. */
-type KeysOfUnion<T> = T extends unknown ? keyof T : never;
 
 // ── The gate ──────────────────────────────────────────────────────────────────────────────────
 
@@ -99,10 +98,6 @@ const CACHE_CONTROLS_REJECTED_TABLE = {
   fields: 'fact',
 } as const satisfies Row<CacheControlsRejected>;
 
-/** A provider's per-request usage. `model` is a value (the model a provider answered with can be
- *  anything a configuration says); realm agent's own prints, where the requested model is known,
- *  show it (01 #16). Caching 3-M (piece A-1): every row but `reference`, which holds a copy of some
- *  of these rows — declared apart so the copy can take its rows from here. */
 /**
  * Caching 3-M (piece B3a): `cache_diagnostics`, flat over its three arms. `result` is a `fact`, closed
  * at the write by `normalizeCacheDiagnostics`: under a `nested` row a string would show as its shape.
@@ -115,6 +110,10 @@ const CACHE_DIAGNOSTICS_TABLE = {
   result: 'fact',
 } as const satisfies Record<KeysOfUnion<CacheDiagnostics>, DisclosureClass>;
 
+/** A provider's per-request usage. `model` is a value (the model a provider answered with can be
+ *  anything a configuration says); realm agent's own prints, where the requested model is known,
+ *  show it (01 #16). Caching 3-M (piece A-1): every row but `reference`, which holds a copy of some
+ *  of these rows — declared apart so the copy can take its rows from here. */
 const USAGE_RECORD_ROWS = {
   request_index: 'fact',
   request_start: 'fact',
@@ -157,9 +156,10 @@ const USAGE_RECORD_ROWS = {
   cache_key_sent: 'fact',
 } as const satisfies Row<Omit<UsageRecord, 'reference'>>;
 
-/** Caching 3-M (piece A-1): a request's copied predecessor. `from` is Realm's closed word; every
- *  other row is the request's own row for that field, taken by key, never retyped. `request_id`
- *  stays `fact`, as on the request: it is Realm's own id (#715 (R)), not a provider's. */
+/** Caching 3-M (piece A-1): a request's copied predecessor. `from` is Realm's closed word, and
+ *  `agent_profile_changed` (piece C3) Realm's own `true`; every other row is the request's own row
+ *  for that field, taken by key, never retyped. `request_id` stays `fact`, as on the request: it is
+ *  Realm's own id (#715 (R)), not a provider's. */
 const REFERENCE_TABLE = {
   from: 'fact',
   request_start: USAGE_RECORD_ROWS.request_start,
@@ -179,6 +179,7 @@ const REFERENCE_TABLE = {
   prefix_parts: USAGE_RECORD_ROWS.prefix_parts,
   cache_marked: USAGE_RECORD_ROWS.cache_marked,
   request_strict_sent: USAGE_RECORD_ROWS.request_strict_sent,
+  agent_profile_changed: 'fact',
 } as const satisfies Row<CacheReference>;
 
 /** A provider's per-request usage: its rows, and (caching 3-M, piece A-1) its copied predecessor. */

@@ -1662,6 +1662,11 @@ describe('caching 3-M C1 — a request judged against another run', () => {
       { ...CONVERSATION, read: 0, write: 6897 },
     ],
     [
+      'only this side conversation: a workflow edit gave the step tools',
+      { ...CONVERSATION, read: 0, write: 6897 },
+      { ...SINGLE_SHOT, read: 0, write: 4019 },
+    ],
+    [
       'this side provider_rules: an OpenAI request',
       { ...OPENAI_RULES, read: 0, write: 4012 },
       { ...OPENAI_EXPLICIT, read: 0, write: 4012 },
@@ -1719,6 +1724,33 @@ describe('caching 3-M C1 — a request judged against another run', () => {
     ]);
   });
 
+  // Check 1's else-arm. Real case: a stored list from another writer or an older version (`realm run
+  // import` keeps a file's values as they are, and the write gate only closes what it writes) holds a
+  // reference whose `from` is missing or is no word Realm writes; it is placed as any copy of this
+  // run's own record, never as another run's. Can fail: the place decided by anything but the word
+  // `earlier_run` (such a reference placed `earlier_run`, or its tool-step turn declined). Prints the
+  // entry and its reference, then the verdict.
+  it.each<[string, unknown]>([
+    ['no from at all', undefined],
+    ['a word Realm does not write', 'bogus'],
+    ['the right word in capitals', 'EARLIER_RUN'],
+    ['a number', 5],
+  ])('a reference with %s is placed reference, not earlier_run', (_label, from) => {
+    const reference: Record<string, unknown> = { ...referenceOf(WROTE) };
+    if (from === undefined) delete reference['from'];
+    else reference['from'] = from;
+    const list = stored({ ...SINGLE_SHOT, read: 0, write: 4019, in_call: 0, reference });
+    expect(cacheReadVerdicts(list), show(list)).toEqual([
+      {
+        outcome: 'missed',
+        predecessor: { from: 'reference' },
+        expected_tokens: 4019,
+        shortfall_tokens: 4019,
+        rule: 'exact',
+      },
+    ]);
+  });
+
   // Check 5. Real cases: a workflow edit that turned strict output on, and one that changed the
   // prompt's fixed start. Can fail: a scope test left reading `from === 'reference'` (the row reads
   // `unexplained`), or the list-only cause named instead. Prints the facts and the cause.
@@ -1729,5 +1761,58 @@ describe('caching 3-M C1 — a request judged against another run', () => {
   it('against another run the fixed start differing is prompt, never repair_feedback', () => {
     const list = against({ ...WROTE, parts: { system: 'profile', prompt: 'another head' } }, WROTE);
     expect(cacheMissCauses(list), explain(list)).toEqual(['prompt']);
+  });
+});
+
+// Piece C3: a reference that records that the step's agent profile changed. No two-run capture exists
+// (C3M6-30): the counts are C1's real ones, paired by construction.
+describe('caching 3-M C3 — a changed agent profile is named', () => {
+  const SINGLE_SHOT: Spec = {
+    provider: A,
+    asked: 'lifetime',
+    marked: ['system', 'prompt'],
+    prefix_chars: 900,
+    read: 0,
+    write: 4019,
+    parts: { system: 'profile', prompt: 'head' },
+  };
+  /** The step's request against the copy of `before`, `from` the given source, with the fact. */
+  const withFact = (from: string, now: Spec, before: Spec): Record<string, unknown>[] =>
+    stored({
+      ...now,
+      in_call: 0,
+      reference: { ...referenceOf(before), from, agent_profile_changed: true },
+    });
+  /** The fact, then each part's equality and the cause's facts; never a digest or a prompt. */
+  const printed = (list: readonly Record<string, unknown>[]): string =>
+    `agent_profile_changed=${String((list[0]!['reference'] as Record<string, unknown>)['agent_profile_changed'])}\n${explain(list)}`;
+
+  // Real case: the workflow's profile was edited between two drives of a run, or two runs. Can fail:
+  // the fact ignored (both rows read `system`), or read for one source only (the other row does).
+  // Prints the fact, each part's equality and the facts a cause reads.
+  it.each(['run', 'earlier_run'])(
+    'the system text differs and a `from: %s` reference records the change: agent_profile',
+    (from) => {
+      const list = withFact(
+        from,
+        { ...SINGLE_SHOT, parts: { system: 'profile after the edit', prompt: 'head' } },
+        SINGLE_SHOT,
+      );
+      expect(cacheMissCauses(list), printed(list)).toEqual(['agent_profile']);
+    },
+  );
+
+  // Real case: one edit of a step's schema and its profile on Anthropic; the schema is the answer
+  // tool, so `tools` moves too. Can fail: `agent_profile` checked before `tools`. Prints the same.
+  it('the tools and the system text both differ, with the fact: tools', () => {
+    const list = withFact(
+      'earlier_run',
+      {
+        ...SINGLE_SHOT,
+        parts: { tools: 'answer tool after', system: 'profile after', prompt: 'head' },
+      },
+      { ...SINGLE_SHOT, parts: { tools: 'answer tool before', system: 'profile', prompt: 'head' } },
+    );
+    expect(cacheMissCauses(list), printed(list)).toEqual(['tools']);
   });
 });
