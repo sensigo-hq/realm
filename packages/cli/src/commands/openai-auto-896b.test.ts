@@ -276,7 +276,7 @@ const offAsk = (cacheAuto: unknown) => ({
   cache_marked: undefined,
 });
 
-describe('#896 unit B — `auto` on a drive realm listen starts, GPT-5.6 and later at OpenAI’s own address', () => {
+describe('#896 unit B — `auto` with no kept gap, GPT-5.6 and later at OpenAI’s own address', () => {
   // (a) red when the price file is read with no kept gap; (b) prints the read count, the
   //     warning, the ask and the start line.
   it('check 6: realm agent alone (no gap), an unreadable price file named → 30 minutes; a step with no earlier run and no prices; no price error', async () => {
@@ -375,6 +375,81 @@ describe('caching 3-M D-2 — check 6: OpenAI in the explicit set chooses for ea
           prices: { from: 'economics' },
         }),
         reads: 1,
+        lastGap: true,
+      });
+    },
+    90_000,
+  );
+
+  // Caching 3-M D-3 correction 1: what decides without usable prices (D-3 deleted #896 unit B's checks
+  // 3–5, whose purpose no other cell held). The real cases: a runner that names no price file, with a
+  // step that runs every 2 hours, every 20 minutes, or every 28 minutes (under OpenAI's 30 minutes,
+  // over the fallback's 27); and a price file whose row gives `cache_write_5m` (Anthropic's word) but
+  // no `cache_write`. Earlier runs are constructed. (a) red when the fallback's margin is 1.0 (the
+  // 28-minute row asks 30 minutes), when the fallback always asks 30 minutes (the 2-hour and 28-minute
+  // rows), or when `cache_write_5m` is read as OpenAI's write rate (the last row records priced); (b)
+  // prints the bodies, the ask, the read count and whether the last gap is the host's reading.
+  it.each<[string, number, string, string, 'off' | 1800, unknown, number]>([
+    [
+      'no price file named, earlier runs every 2 hours → no caching',
+      7200,
+      'version: 1\n',
+      PRICED,
+      'off',
+      { from: 'none', cause: 'no_file' },
+      0,
+    ],
+    [
+      'no price file named, earlier runs every 20 minutes → 30 minutes',
+      1200,
+      'version: 1\n',
+      PRICED,
+      1800,
+      { from: 'none', cause: 'no_file' },
+      0,
+    ],
+    [
+      'no price file named, earlier runs every 28 minutes → no caching',
+      1680,
+      'version: 1\n',
+      PRICED,
+      'off',
+      { from: 'none', cause: 'no_file' },
+      0,
+    ],
+    [
+      'a row with cache_read and cache_write_5m but no cache_write, earlier runs every 2 hours → no caching',
+      7200,
+      NAMES_PRICES,
+      row({ cache_read: 0.4, cache_write_5m: 5 }),
+      'off',
+      { from: 'none', cause: 'rate_missing', missing: ['cache_write'] },
+      1,
+    ],
+  ])(
+    'correction 1: %s, recorded step_gaps',
+    async (name, every, realmYaml, prices, chosen, recorded, reads) => {
+      const slug = `c1-${String(every)}-${String(name.length)}`;
+      const d = await deployment(slug, { realmYaml, prices });
+      for (const k of [3, 2, 1]) await seedEarlier(d, k * every);
+      const r = await drive(slug, d, ['--spawned-by-listen']);
+      const auto = r.ask?.['cache_auto'] as CacheAuto | undefined;
+      const last = auto?.gaps_s?.at(-1) ?? -1;
+      expect({
+        code: r.code,
+        bodies: r.bodies,
+        ask: r.ask,
+        reads: r.priceFileReads,
+        lastGap: last >= every && last <= every + 5,
+      }).toEqual({
+        code: 0,
+        bodies: [chosen === 'off' ? OFF_BODY : UNIT_A_BODY],
+        ask: (chosen === 'off' ? offAsk : lifetimeAsk)({
+          basis: 'step_gaps',
+          gaps_s: [every, every, expect.any(Number)],
+          prices: recorded,
+        }),
+        reads,
         lastGap: true,
       });
     },

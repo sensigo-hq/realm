@@ -418,6 +418,9 @@ describe('#898 S5 — normalizeCacheAuto keeps prices in its five shapes, and dr
         withPrices({ from: 'none', cause: 'no_file', missing: ['cache_read'] }),
       ],
       ['prices on another basis', { basis: 'no_measurement', prices: { from: 'economics' } }],
+      // A record written by another version, whose `from` is a word this one does not know: dropped
+      // whole, never read as `none` (caching 3-M D-3 correction 1; MA2-3MD3-03).
+      ['a from another version wrote', withPrices({ from: 'guessed', cause: 'no_file' })],
       ['a model id key', withPrices({ from: 'economics', model: 'claude-x' })],
       ['prices not an object', withPrices('economics')],
     ];

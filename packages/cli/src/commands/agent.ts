@@ -317,9 +317,8 @@ export const agentCommand = new Command('agent')
   // must not repeat the release-line advisory. Hidden because it is listen's, not an operator's.
   .addOption(new Option('--no-release-line-advisory').hideHelp())
   // issue #600 PR 2: listen's own, never an operator's. `realm listen` appends it to every child it
-  // spawns (buildAgentArgv), so the child's `auto` reads listen's measurement (its prior is the long
-  // lifetime), its runner is recorded as `realm listen`, and a setting it cannot apply is disclosed,
-  // not refused.
+  // spawns (buildAgentArgv), so a step with no earlier run asks for the long lifetime, its runner is
+  // recorded as `realm listen`, and a setting it cannot apply is disclosed, not refused.
   .addOption(new Option('--spawned-by-listen').hideHelp())
   // #729 PR-3 (L-1): this drive's output is a shared log — the broadcast audience, as under
   // listen: a run's values print as their shapes, secrets are hidden as on a log (a gate's

@@ -74,8 +74,7 @@ export interface ProviderCapabilities {
    * means Realm asks this provider for nothing. The Anthropic provider declares `'off'` or a
    * lifetime; the OpenAI providers declare `'provider'`, except (#896) the `openai` provider on a
    * GPT-5.6-or-later model at OpenAI's own address ({@link openAiExplicitCacheModel}), which declares
-   * `{ lifetime_s: 1800 }`, or `'off'` under `off` or when `auto` chose it (unit B: a pending choice
-   * throws, as Anthropic's does); a provider module may declare any of the three
+   * `{ lifetime_s: 1800 }`, or `'off'` under `off`; a provider module may declare any of the three
    * (the start line says what it reads, and that `--prompt-cache` does not reach a module).
    */
   promptCache?: 'off' | 'provider' | { lifetime_s: number };
@@ -91,7 +90,8 @@ export interface ProviderCapabilities {
 /**
  * Issue #600 PR 2 — the cache setting a runner hands the Anthropic provider: the value, where it came
  * from, which runner chose it (`realm agent`, `realm listen`) and — the lifetime unit — when the value
- * is `auto`, on what basis the provider chooses (the gaps `realm listen` measured, when it did).
+ * is `auto`, on what basis the provider chooses for a call that carries no choice of its own
+ * (`no_measurement`).
  */
 export interface PromptCacheRequest {
   value: PromptCacheSetting;

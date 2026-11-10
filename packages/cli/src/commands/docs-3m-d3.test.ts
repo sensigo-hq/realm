@@ -110,7 +110,7 @@ describe('caching 3-M D-3 check 8 — the docs say auto chooses per step, from i
   });
 
   it('run-record-and-export.md and run-state-and-health.md: the four bases, and an older record', () => {
-    // The list: D-3 check 6's break (`commands/inspect-auto-prices-898.test.ts`); the producers:
+    // The list: D-3 check 6's break (`commands/inspect-auto-bases-3m-d3.test.ts`); the producers:
     // D-2 checks 2, 5 and 7; `no_measurement`'s words: D-3 check 7. The older record: D-3 check 6.
     claim(
       'docs/reference/run-record-and-export.md',
@@ -135,7 +135,9 @@ describe('caching 3-M D-3 check 8 — the docs say auto chooses per step, from i
   it('the CHANGELOG entries', () => {
     // Per step: D-2 checks 2, 4, 5 and 12; listen measures nothing: D-3 check 4. The option: D-1's
     // checks (`agent/providers/cache-choice-per-call-3m.test.ts`). Upgrading: D-2r check 2, D-2
-    // check 4, and D-3 check 6 (the two words read as no `auto`).
+    // check 4, and D-3 check 6 (the two words read as no `auto`); its restart sentence (correction
+    // 1): the earlier listen's `buildAgentArgv` and `process.argv[1]`, read on be67eb3f, and
+    // commander's unknown-option refusal, run on the built CLI (registry 3MD3C1-IA-04).
     const text = read('CHANGELOG.md');
     const start = text.includes('## [Unreleased]')
       ? text.indexOf('## [Unreleased]')
@@ -144,7 +146,7 @@ describe('caching 3-M D-3 check 8 — the docs say auto chooses per step, from i
     for (const sentence of [
       '- **`--prompt-cache auto` chooses per step.** Each step without tools takes the lifetime its own earlier runs pay for, read from the store when the drive starts, so a drive you start yourself gets a measured choice too. A step that calls tools asks Anthropic for 5 minutes. `realm listen` no longer measures gaps of its own. (#600)',
       '- **`callStepWithMeta` and `callStepWithTools` take `cacheChoice`,** a cache lifetime chosen for that call; a provider module that ignores it sends what it always sent. (#600)',
-      '- **Upgrading:** a drive you start yourself asked for 5 minutes every time; a step without tools that has earlier runs now asks for what its gaps pay for, and with no price file for 1 hour when a recent gap is under 54 minutes, else for no caching. `cache_auto.basis` no longer has `listen_trigger_gaps` or `listen_gaps_unreadable`. (#600)',
+      '- **Upgrading:** a drive you start yourself asked for 5 minutes every time; a step without tools that has earlier runs now asks for what its gaps pay for, and with no price file for 1 hour when a recent gap is under 54 minutes, else for no caching. `cache_auto.basis` no longer has `listen_trigger_gaps` or `listen_gaps_unreadable`. Restart a `realm listen` that is already running when you upgrade: it still passes `--cache-gaps` to its agents, which `realm agent` now refuses. (#600)',
     ]) {
       // (a) red when the entry is gone or reworded; (b) prints the sentence.
       expect(section, `the CHANGELOG no longer says: ${sentence}`).toContain(flat(sentence));

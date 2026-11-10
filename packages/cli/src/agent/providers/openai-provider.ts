@@ -506,7 +506,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
 
     const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
     // #896: OpenAI's explicit cache controls, in the set (GPT-5.6+, OpenAI's own address); unit B:
-    // `off` is stated or chosen by `auto` (a pending choice throws).
+    // `off` is stated, or is the call's own choice.
     const explicit = this.explicitCache();
     const off = explicit && this.choiceFor(callOpts?.cacheChoice) === 'off';
     // caching 3-B (D2, site 1): the cache key, on this request and on its JSON retry.
