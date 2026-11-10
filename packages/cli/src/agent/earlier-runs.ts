@@ -10,16 +10,15 @@ import {
   parseStamp,
   type RunRecord,
   type RunRow,
-  type UsageRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import type { SqliteRunStore } from '@sensigo/realm-store-sqlite';
-import { lastRecordedRequest } from './run-agent.js';
+import { lastRecordedRequest, type RecordedRequest } from './run-agent.js';
 
-/** One request found for a step in an earlier run, and the run it was found on. */
-export interface EarlierRequest {
+/** One request found for a step in an earlier run, the run it was found on and (piece C3) the agent
+ *  profile's hash on the evidence entry that held it. */
+export interface EarlierRequest extends RecordedRequest {
   readonly run_id: string;
-  readonly request: UsageRecord;
 }
 
 /**
@@ -100,8 +99,8 @@ export async function readEarlierRuns(
     for (const [step, named] of rowsByStep) {
       const requests: EarlierRequest[] = [];
       for (const row of named) {
-        const request = lastRecordedRequest(records.get(row.id), step);
-        if (request !== undefined) requests.push({ run_id: row.id, request });
+        const recorded = lastRecordedRequest(records.get(row.id), step);
+        if (recorded !== undefined) requests.push({ run_id: row.id, ...recorded });
       }
       // Stable, and `named` is newest-updated first: on equal starts the run updated last stays first.
       found.set(step, requests.sort(latestStartFirst));

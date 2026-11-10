@@ -1731,3 +1731,56 @@ describe('caching 3-M C1 — a request judged against another run', () => {
     expect(cacheMissCauses(list), explain(list)).toEqual(['prompt']);
   });
 });
+
+// Piece C3: a reference that records that the step's agent profile changed. No two-run capture exists
+// (C3M6-30): the counts are C1's real ones, paired by construction.
+describe('caching 3-M C3 — a changed agent profile is named', () => {
+  const SINGLE_SHOT: Spec = {
+    provider: A,
+    asked: 'lifetime',
+    marked: ['system', 'prompt'],
+    prefix_chars: 900,
+    read: 0,
+    write: 4019,
+    parts: { system: 'profile', prompt: 'head' },
+  };
+  /** The step's request against the copy of `before`, `from` the given source, with the fact. */
+  const withFact = (from: string, now: Spec, before: Spec): Record<string, unknown>[] =>
+    stored({
+      ...now,
+      in_call: 0,
+      reference: { ...referenceOf(before), from, agent_profile_changed: true },
+    });
+  /** The fact, then each part's equality and the cause's facts; never a digest or a prompt. */
+  const printed = (list: readonly Record<string, unknown>[]): string =>
+    `agent_profile_changed=${String((list[0]!['reference'] as Record<string, unknown>)['agent_profile_changed'])}\n${explain(list)}`;
+
+  // Real case: the workflow's profile was edited between two drives of a run, or two runs. Can fail:
+  // the fact ignored (both rows read `system`), or read for one source only (the other row does).
+  // Prints the fact, each part's equality and the facts a cause reads.
+  it.each(['run', 'earlier_run'])(
+    'the system text differs and a `from: %s` reference records the change: agent_profile',
+    (from) => {
+      const list = withFact(
+        from,
+        { ...SINGLE_SHOT, parts: { system: 'profile after the edit', prompt: 'head' } },
+        SINGLE_SHOT,
+      );
+      expect(cacheMissCauses(list), printed(list)).toEqual(['agent_profile']);
+    },
+  );
+
+  // Real case: one edit of a step's schema and its profile on Anthropic; the schema is the answer
+  // tool, so `tools` moves too. Can fail: `agent_profile` checked before `tools`. Prints the same.
+  it('the tools and the system text both differ, with the fact: tools', () => {
+    const list = withFact(
+      'earlier_run',
+      {
+        ...SINGLE_SHOT,
+        parts: { tools: 'answer tool after', system: 'profile after', prompt: 'head' },
+      },
+      { ...SINGLE_SHOT, parts: { tools: 'answer tool before', system: 'profile', prompt: 'head' } },
+    );
+    expect(cacheMissCauses(list), printed(list)).toEqual(['tools']);
+  });
+});

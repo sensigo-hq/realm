@@ -596,11 +596,14 @@ export type CacheReferenceSource = (typeof CACHE_REFERENCE_SOURCES)[number];
  * made where the predecessor is not an earlier entry of the same stored list: the first request of
  * the step's last call on the run's record (piece A-1b), or the same step's first request in another
  * run (`earlier_run`, piece C2). `from` says where it was found,
- * `request_start` is required, and each other field is the predecessor's own, copied when it had
- * one; `cache_requested` says whether it asked the provider to cache (piece A-1b). `prefix_sha256`
- * is not copied (it equals `prefix_parts.prompt` on both providers). Never a `reference` of its own,
- * never a `request_index` (an index is not identity, #715 (R)), never a `request_in_call` (the copy
- * is always a call's first request).
+ * `request_start` is required, and each other field but one is the predecessor's own, copied when it
+ * had one; `cache_requested` says whether it asked the provider to cache (piece A-1b). The one
+ * exception is `agent_profile_changed` (piece C3), which is no field of the predecessor: `true` when
+ * the step's agent profile differs between the two requests and both are known, worked out where the
+ * copy is made, and absent otherwise. `prefix_sha256` is not copied (it equals
+ * `prefix_parts.prompt` on both providers). Never a `reference` of its own, never a `request_index`
+ * (an index is not identity, #715 (R)), never a `request_in_call` (the copy is always a call's first
+ * request).
  */
 export type CacheReference = { from: CacheReferenceSource } & Pick<UsageRecord, 'request_start'> &
   Partial<
@@ -623,7 +626,7 @@ export type CacheReference = { from: CacheReferenceSource } & Pick<UsageRecord, 
       | 'cache_marked'
       | 'request_strict_sent'
     >
-  >;
+  > & { agent_profile_changed?: true };
 
 /**
  * Caching 3-B (A6, E3, HB7): a custom endpoint answered 400 naming a cache field Realm added, and a

@@ -157,9 +157,10 @@ const USAGE_RECORD_ROWS = {
   cache_key_sent: 'fact',
 } as const satisfies Row<Omit<UsageRecord, 'reference'>>;
 
-/** Caching 3-M (piece A-1): a request's copied predecessor. `from` is Realm's closed word; every
- *  other row is the request's own row for that field, taken by key, never retyped. `request_id`
- *  stays `fact`, as on the request: it is Realm's own id (#715 (R)), not a provider's. */
+/** Caching 3-M (piece A-1): a request's copied predecessor. `from` is Realm's closed word, and
+ *  `agent_profile_changed` (piece C3) Realm's own `true`; every other row is the request's own row
+ *  for that field, taken by key, never retyped. `request_id` stays `fact`, as on the request: it is
+ *  Realm's own id (#715 (R)), not a provider's. */
 const REFERENCE_TABLE = {
   from: 'fact',
   request_start: USAGE_RECORD_ROWS.request_start,
@@ -179,6 +180,7 @@ const REFERENCE_TABLE = {
   prefix_parts: USAGE_RECORD_ROWS.prefix_parts,
   cache_marked: USAGE_RECORD_ROWS.cache_marked,
   request_strict_sent: USAGE_RECORD_ROWS.request_strict_sent,
+  agent_profile_changed: 'fact',
 } as const satisfies Row<CacheReference>;
 
 /** A provider's per-request usage: its rows, and (caching 3-M, piece A-1) its copied predecessor. */

@@ -136,6 +136,7 @@ const TCK_REFERENCE = {
   },
   cache_marked: ['system', 'prompt', 'key'],
   request_strict_sent: true,
+  agent_profile_changed: true,
 } satisfies Required<CacheReference>;
 
 /**
