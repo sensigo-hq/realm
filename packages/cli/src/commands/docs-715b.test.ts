@@ -367,6 +367,13 @@ describe('#715 (b) 04 §E — testing-package.md: the store contracts', () => {
       TESTING,
       `Without \`seedLegacyTerminal\`, \`STAMP_CLASSIFIED_ROUNDTRIP\` has no case and a \`STAMP_PRESERVES_UPDATED_AT\` case fails, saying that the hook is missing: ${withoutHook.length} cases.`,
     );
+    // #616 PR-2c c4-i: the counts table's note names the settlement contract's skips on this store.
+    // (a) red when the number drifts from the cases the contract registers as skipped; (b) prints the
+    // sentence.
+    claim(
+      TESTING,
+      `the ${all.filter((c) => c.skipped === true).length} the settlement contract reports as skipped for \`InMemoryStore\``,
+    );
   });
 
   it('#616 PR-1a unit 16a: the storeClockContract adapter table names exactly the adapter’s fields', () => {

@@ -491,6 +491,13 @@ describe('#872 (b1) B11 — testing-package.md: the fidelity laws', () => {
       laws: String(RUN_STORE_FIDELITY_LAWS.length),
       cases: `${cases.length}, with \`InMemoryStore\``,
     });
+    // #616 PR-2c c4-i: the table's note names the fidelity contract's skips on this store. (a) red
+    // when the number drifts from the cases the contract registers as skipped; (b) prints the
+    // sentence.
+    claim(
+      PAGE,
+      `the ${cases.filter((c) => c.skipped === true).length} the fidelity contract reports as skipped for \`InMemoryStore\``,
+    );
     // #616 PR-1a unit 16a: core-library.md's table, run. (a) red when a row's cases or failures
     // differ from the run of its store (the 9 / 9 / 1 this unit found stale), or the failure shown is
     // not the dishonest copy's one failure; (b) prints the page's cells beside the run's counts, and
@@ -586,6 +593,24 @@ describe('#616 PR-2c c4-i — testing-package.md: the scan laws, and the in-memo
       '| `SCAN_PAGES_EVERY_RECORD_ONCE` | Across the pages of one scan, every record present for the whole scan comes back exactly once, in the order of the ids Realm mints; only a full page carries `next_after`; a `pageSize` of 0, more than 1,000 or not a whole number is refused. |',
       '| `SCAN_FILTERS_HOLD` | Each filter field selects exactly the records it matches — `workflow`, `phase`, `terminal`, `key` (with `workflow`), `created_since`, `updated_since` — and `key` without `workflow` is refused. |',
       'Its `resolveKey` and `tombstonesSince` answer `since` as `1970-01-01T00:00:00.000Z`: a store that never deletes a run has forgotten nothing.',
+    ])
+      claim(PAGE, sentence);
+  });
+
+  it('the law table names the three purge laws and PURGE_CAPABILITY_WIRED, the adapter table its purge field, and the counts note why InMemoryStore skips cases', () => {
+    // The behaviour: store-sqlite's contract-fidelity-616.test.ts (`conforms to` each law, with the
+    // store's own `deleteAllForRun` as the adapter's purge) and in-memory-store.test.ts's "#616 PR-2c
+    // c4-i — the purge laws" cells (the skipped registrations; the four mis-wired adapters); the two
+    // numbers in the note are pinned beside the counts they state (here and in the cli's
+    // docs-715b.test.ts). (a) red when a row or a reason is reworded or removed; (b) prints it.
+    for (const sentence of [
+      "| `KEY_RESOLVES_THREE_WAYS` | `resolveKey` answers `unseen`, with an ISO `since`, for a key no run has carried; `held`, with the run's id, for a keyed run; and — on a store with `purgesRuns: true` — `purged`, listing that run and the time it was deleted, after the contract ended the only run carrying the key and the adapter's `purge` removed it. |",
+      "| `PURGED_RUNS_SCAN_AS_TOMBSTONES` | On a store with `purgesRuns: true`, after the adapter's `purge` deleted an ended run, a `scan` with `include_purged` yields it as `{ kind: 'purged' }` and not as `{ kind: 'run' }`, and a `scan` without `include_purged` does not yield it at all. |",
+      '| `HORIZON_BELOW_TOMBSTONES` | On a store with `purgesRuns: true`, `tombstonesSince()` is an ISO instant at or before every `purged_at` a scan or `resolveKey` lists. |',
+      '| `PURGE_CAPABILITY_WIRED` | `purgesRuns` is `true` or `false` and agrees with the adapter: `true` with a `purge` supplied, `false` without one. A disagreement fails with a message beginning `ADAPTER_WIRING:`; it never skips. |',
+      "| `purge` | A function that deletes one ended run by id and leaves its tombstone, for a store with `purgesRuns: true`; the contract ends the run before it calls it. Leave it out for a store that never deletes a run: the purge laws' cases are then registered as skipped, and `PURGE_CAPABILITY_WIRED` fails a store whose `purgesRuns` disagrees with this field. |",
+      'reports as skipped for `InMemoryStore` (it keeps claims, so the no-claims case does not apply)',
+      "reports as skipped for `InMemoryStore` (it never deletes a run, so the purge laws' cases are skipped).",
     ])
       claim(PAGE, sentence);
   });

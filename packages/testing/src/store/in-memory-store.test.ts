@@ -122,6 +122,89 @@ describe('InMemoryStore RunStore fidelity wiring — the run list is derived fro
   });
 });
 
+// #616 PR-2c c4-i: the purge laws on a store that never deletes a run, and on adapters that say the
+// wrong thing about deleting. No shipped wiring is mis-wired, so these cells are the only ones that
+// reach the wiring check's failing branches.
+describe('#616 PR-2c c4-i — the purge laws: skipped for InMemoryStore, failing a mis-wired adapter', () => {
+  const SKIP = 'SKIPPED — store does not delete runs (purgesRuns: false): ';
+  const casesOf = (store: InMemoryStore, purge?: unknown) =>
+    runStoreFidelityContract({
+      store,
+      definition: agentWf,
+      stepName: 'work',
+      ...(purge !== undefined ? { purge: purge as (runId: string) => Promise<void> } : {}),
+    });
+
+  it('InMemoryStore registers the three purge cases as skipped, by name', () => {
+    const skipped = casesOf(new InMemoryStore())
+      .filter((c) => c.skipped === true)
+      .map((c) => ({ law: c.law, name: c.name, skipped: c.skipped }));
+    // (1) red when a purge case is registered without `skipped: true` (a wiring then runs it, and it
+    //     fails on a store with nothing to purge) or loses its name, or another case is skipped;
+    //     (2) prints each skipped case's law, name and field.
+    expect(skipped).toEqual([
+      {
+        law: 'KEY_RESOLVES_THREE_WAYS',
+        name: `${SKIP}after the only run carrying a key ended and was purged, the key resolves purged, listing that run and when it was deleted, with since at or before it`,
+        skipped: true,
+      },
+      {
+        law: 'PURGED_RUNS_SCAN_AS_TOMBSTONES',
+        name: `${SKIP}a purged run scans as { kind: 'purged' } with include_purged, never as { kind: 'run' }, and not at all without it`,
+        skipped: true,
+      },
+      {
+        law: 'HORIZON_BELOW_TOMBSTONES',
+        name: `${SKIP}tombstonesSince is an ISO instant at or before every purged_at a scan or resolveKey lists`,
+        skipped: true,
+      },
+    ]);
+  });
+
+  const MISWIRED: Array<{ wiring: string; flag: unknown; purge?: unknown }> = [
+    { wiring: '`purgesRuns: true` and no purge', flag: true },
+    { wiring: '`purgesRuns: false` and a purge', flag: false, purge: async () => undefined },
+    { wiring: 'a `purgesRuns` that is not a boolean', flag: undefined },
+    { wiring: 'a purge that is not a function', flag: true, purge: 42 },
+  ];
+  it.each(MISWIRED)(
+    'an adapter with $wiring fails PURGE_CAPABILITY_WIRED and every purge case with ADAPTER_WIRING, none skipped',
+    async ({ flag, purge }) => {
+      const gated = casesOf(new InMemoryStore())
+        .filter((c) => c.skipped === true)
+        .map((c) => c.name.slice(SKIP.length));
+      const store = new InMemoryStore();
+      Object.defineProperty(store, 'purgesRuns', { value: flag });
+      const results: Array<{ law: string; skipped: boolean; threw: string }> = [];
+      for (const c of casesOf(store, purge)) {
+        if (c.law !== 'PURGE_CAPABILITY_WIRED' && !gated.includes(c.name)) continue;
+        const error = await c.run().then(
+          () => undefined,
+          (err: unknown) => err,
+        );
+        const threw =
+          error instanceof Error && /^ADAPTER_WIRING: /.test(error.message)
+            ? `${error.name}: ADAPTER_WIRING`
+            : error instanceof Error
+              ? `${error.name}: ${error.message.slice(0, 80)}`
+              : String(error);
+        results.push({ law: c.law, skipped: c.skipped === true, threw });
+      }
+      // (1) red when the wiring check's branch for this wiring is removed (the wired law then passes,
+      //     and a purge case calls a missing or non-function purge, a TypeError, or finds nothing
+      //     purged), or a case is skipped; (2) prints each case's law, skip field and what it threw.
+      expect(results).toEqual(
+        [
+          'KEY_RESOLVES_THREE_WAYS',
+          'PURGED_RUNS_SCAN_AS_TOMBSTONES',
+          'HORIZON_BELOW_TOMBSTONES',
+          'PURGE_CAPABILITY_WIRED',
+        ].map((law) => ({ law, skipped: false, threw: 'Error: ADAPTER_WIRING' })),
+      );
+    },
+  );
+});
+
 /**
  * A deliberately DISHONEST RunStore (issue #188): declares it persists `extension_identity` in
  * `persistedRunRecordFields`, but silently drops the field on every `update` — proves the TCK's
