@@ -3,11 +3,8 @@
 import {
   WorkflowError,
   chooseAutoOneLifetime,
-  keptCacheGaps,
   normalizeCacheAuto,
   validateAgentSubmission,
-  type AutoPriceInput,
-  type CacheAutoPrices,
   type CacheChoice,
   type JsonSchema,
   type RequestEndpoint,
@@ -105,10 +102,6 @@ export function openAiCachePlan(
 
 /** #896 (A1): the one lifetime Realm can ask OpenAI for on Chat Completions, in seconds. */
 export const OPENAI_EXPLICIT_LIFETIME_S = 1800;
-
-/** #896 unit B — thrown when a request or `capabilities()` reads an `auto` choice not yet settled. */
-const AUTO_CHOICE_PENDING =
-  'OpenAIProvider: the auto cache choice is not settled; call settleAutoChoice first';
 
 /** #896: an explicit cache mark on one text part. It never carries a `ttl` (refused on Chat). */
 function markedPart(text: string): Rec {
@@ -325,13 +318,11 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
   private readonly cacheFields: CacheFieldMemory = {};
   /**
    * #896 unit B — in the explicit set, what a step without tools asks for: `off`, or the 30-minute
-   * lifetime (`long`, the one lifetime's place in {@link chooseAutoOneLifetime}). Settled at build,
-   * except `auto` with kept gaps in the set, which is `'pending'` until {@link settleAutoChoice}
-   * prices it. Read only through {@link settledChoice}. A tool step reads the setting, never this.
+   * lifetime (`long`, the one lifetime's place in {@link chooseAutoOneLifetime}), when a call
+   * carries no choice of its own. Settled at build; caching 3-M D-3: under `auto` it is the 30
+   * minutes, never pending. A tool step reads the setting, never this.
    */
-  private explicitChoice: Exclude<CacheChoice, 'short'> | 'pending';
-  /** #896 unit B — where the settled `auto` choice took its prices; absent when none was needed. */
-  private autoPrices: CacheAutoPrices | undefined;
+  private readonly explicitChoice: Exclude<CacheChoice, 'short'>;
 
   constructor(
     model: string,
@@ -346,57 +337,18 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     this.endpoint = opts?.endpoint ?? (baseUrl === undefined ? 'default' : 'custom');
     this.promptCache = opts?.promptCache;
     const value = this.promptCache?.value;
-    this.explicitChoice =
-      value === 'off'
-        ? 'off'
-        : value === 'auto' &&
-            this.explicitCache() &&
-            keptCacheGaps(this.promptCache?.auto?.gaps_s).length > 0
-          ? 'pending'
-          : 'long';
-  }
-
-  /** #896 unit B — the one way to read the choice: it throws while an `auto` choice is pending. */
-  private settledChoice(): Exclude<CacheChoice, 'short'> {
-    if (this.explicitChoice === 'pending') throw new Error(AUTO_CHOICE_PENDING);
-    return this.explicitChoice;
+    this.explicitChoice = value === 'off' ? 'off' : 'long';
   }
 
   /** Caching 3-M (D-1): the choice this call's requests follow: the call's own, else the provider's. */
   private choiceFor(call: CallCacheChoice | undefined): CacheChoice {
-    return call?.choice ?? this.settledChoice();
-  }
-
-  /** #896 unit B — whether an `auto` choice waits for {@link settleAutoChoice}. */
-  isAutoChoicePending(): boolean {
-    return this.explicitChoice === 'pending';
-  }
-
-  /**
-   * #896 unit B — settles a pending `auto` choice from the runner's price file (`AutoPriceInput`)
-   * by `chooseAutoOneLifetime`, over `off` and OpenAI's one lifetime, 30 minutes. Returns the choice
-   * and where its prices came from. Throws when no choice is pending — which also covers a second
-   * call.
-   */
-  settleAutoChoice(prices: AutoPriceInput): { choice: CacheChoice; prices?: CacheAutoPrices } {
-    if (this.explicitChoice !== 'pending') {
-      throw new Error(
-        'OpenAIProvider: no auto cache choice is pending; settleAutoChoice runs once, for an auto choice with measured gaps',
-      );
-    }
-    const outcome = chooseAutoOneLifetime({
-      gapsS: this.promptCache?.auto?.gaps_s,
-      lifetime_s: OPENAI_EXPLICIT_LIFETIME_S,
-      prices,
-    });
-    this.explicitChoice = outcome.choice;
-    this.autoPrices = outcome.prices;
-    return outcome;
+    return call?.choice ?? this.explicitChoice;
   }
 
   /**
    * Caching 3-M (D-2) — under `auto`, in the explicit set, the rule a drive chooses each step's
-   * lifetime by: the settle's own (`chooseAutoOneLifetime`) over one step's gaps. No `toolStep`: a
+   * lifetime by: `chooseAutoOneLifetime` over one step's gaps, from the runner's prices
+   * (`AutoPriceInput`), over `off` and OpenAI's one lifetime, 30 minutes. No `toolStep`: a
    * tool step is not part of the choice. Changes no state. Absent outside the set or under any other
    * setting.
    */
@@ -433,9 +385,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         : {}),
       // caching 3-B (D1, D3): OpenAI caches by its own rules; the endpoint decides the start line's
       // words and whether the key goes out. #896: in the explicit set, Realm asks for 30 minutes,
-      // or for nothing under `off` (unit B: or when `auto` chose it; a pending choice throws).
+      // or for nothing under `off` (under `auto` each step's own choice is on its requests, caching
+      // 3-M D-2).
       promptCache: this.explicitCache()
-        ? this.settledChoice() === 'off'
+        ? this.explicitChoice === 'off'
           ? 'off'
           : { lifetime_s: OPENAI_EXPLICIT_LIFETIME_S }
         : 'provider',
@@ -454,24 +407,19 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
   /**
    * #896 unit A — the ask a request in the explicit set records, as Anthropic's does: 30 minutes,
    * sent (OpenAI has no default to leave out), or `off`; the setting's source facts when given.
-   * Unit B: the settled choice (`auto` may choose `off`), and under `auto` also `cache_auto` — the
-   * basis, the gaps read and, when a price was needed, where it came from (Anthropic's shape). A
-   * tool step records this only under a stated `off`, so never with `cache_auto`. Caching 3-M (D-1):
-   * a call with its own choice records that choice and what it was chosen on.
+   * Under `auto` also `cache_auto` — the basis (`no_measurement` when the call carries no choice of
+   * its own). A tool step records this only under a stated `off`, so never with `cache_auto`.
+   * Caching 3-M (D-1): a call with its own choice records that choice and what it was chosen on,
+   * prices included.
    */
   private explicitAskFacts(call?: CallCacheChoice): Partial<UsageRecord> {
     const p = this.promptCache;
     const choice = this.choiceFor(call);
-    const basis = p?.auto ?? { basis: 'no_measurement' as const };
     const cacheAuto =
       call !== undefined
         ? normalizeCacheAuto(call.auto)
         : p?.value === 'auto'
-          ? normalizeCacheAuto({
-              basis: basis.basis,
-              ...(basis.gaps_s !== undefined ? { gaps_s: basis.gaps_s } : {}),
-              ...(this.autoPrices !== undefined ? { prices: this.autoPrices } : {}),
-            })
+          ? normalizeCacheAuto(p.auto ?? { basis: 'no_measurement' })
           : undefined;
     return {
       ...(choice === 'off'

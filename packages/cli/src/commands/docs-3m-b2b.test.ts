@@ -76,11 +76,6 @@ describe('caching 3-M B2b — realm-agent.md', () => {
       AGENT,
       "`error: option '--cache-diagnostics <on\\|off>' argument 'yes' is invalid. --cache-diagnostics must be on or off.`",
     );
-    // `agent.test.ts`, the `--cache-gaps` refusal cell.
-    claim(
-      AGENT,
-      "`Error: --cache-gaps is set by realm listen for the agents it starts; it is not an operator's option. Remove it. Nothing was started.`",
-    );
     // The `--run-id` rows of the B2b describe.
     claim(
       AGENT,

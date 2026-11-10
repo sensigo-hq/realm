@@ -159,18 +159,10 @@ describe('#610 — AnthropicProvider.callStepWithTools records each answered req
   // compared with the single-shot record's value for the same setting. This drive is one text
   // answer — one main turn; the final extraction's record is pinned in the #899 file (M7).
   describe('P5, a main turn’s record of the tool loop, per conjunct: the ask `requestFacts` writes, under each setting that writes one', () => {
-    /** #898: a provider whose `auto` choice is pending (gaps given) is settled at today's Anthropic
-     *  ratios, which choose as the shipped multiples did; its records gain `prices`. */
+    /** The provider for a setting (caching 3-M D-3: an `auto` one is never pending). */
     const built = (
       promptCache: ConstructorParameters<typeof AnthropicProvider>[1],
-    ): AnthropicProvider => {
-      const provider = new AnthropicProvider('claude-x', promptCache);
-      if (provider.isAutoChoicePending())
-        provider.settleAutoChoice({
-          rates: { input: 3, output: 15, cache_read: 0.3, cache_write_5m: 3.75, cache_write_1h: 6 },
-        });
-      return provider;
-    };
+    ): AnthropicProvider => new AnthropicProvider('claude-x', promptCache);
     const recordFor = async (
       promptCache: ConstructorParameters<typeof AnthropicProvider>[1],
       url?: string,
@@ -232,9 +224,9 @@ describe('#610 — AnthropicProvider.callStepWithTools records each answered req
       expect(ask(r, 'cache_requested_by'), keys).toEqual([true, single['cache_requested_by']]);
     });
 
-    it('(c) `auto` with gaps given: `cache_auto` on the record', async () => {
+    it('(c) `auto` on a drive realm listen started: `cache_auto` on the record', async () => {
       const setting: Setting = {
-        promptCache: { value: 'auto', auto: { basis: 'listen_trigger_gaps', gaps_s: [420] } },
+        promptCache: { value: 'auto', by: 'realm listen', auto: { basis: 'no_measurement' } },
       };
       const r = await recordFor(setting);
       const single = await singleShotFor(setting);

@@ -112,7 +112,7 @@ const EXECUTOR = async () => ({ content: [{ type: 'text', text: 'ok' }] });
 const SHORT = { type: 'ephemeral' };
 const LONG = { type: 'ephemeral', ttl: '1h' };
 const NO_MEASUREMENT: CacheAuto = { basis: 'no_measurement' };
-const GAPS_900: CacheAuto = { basis: 'listen_trigger_gaps', gaps_s: [900] };
+const GAPS_900: CacheAuto = { basis: 'step_gaps', gaps_s: [900] };
 
 /** `auto` with no measurement: Anthropic settles it at short, OpenAI's set at its 30 minutes. */
 const autoAgent = (): PromptCacheRequest => ({
@@ -121,23 +121,17 @@ const autoAgent = (): PromptCacheRequest => ({
   by: 'realm agent',
   auto: NO_MEASUREMENT,
 });
-/** `auto` on a listen basis: with no gaps Anthropic settles it at long; with gaps it is pending. */
-const autoListen = (gaps_s: number[]): PromptCacheRequest => ({
+/** `auto` on a drive `realm listen` started: Anthropic asks its prior, long (caching 3-M D-3). */
+const autoListen = (): PromptCacheRequest => ({
   value: 'auto',
   source: 'runner_default',
   by: 'realm listen',
-  auto: { basis: 'listen_trigger_gaps', gaps_s },
+  auto: NO_MEASUREMENT,
 });
 type AnthropicOptions = NonNullable<ConstructorParameters<typeof AnthropicProvider>[1]>;
 const anthropic = (promptCache: PromptCacheRequest, over: AnthropicOptions = {}) =>
   new AnthropicProvider('claude-x', { endpoint: 'default', promptCache, ...over });
 const ASKING = { cacheDiagnostics: true } as const;
-/** An `auto` instance settled `off` (a long gap, no price file). */
-const anthropicSettledOff = (over: AnthropicOptions = {}): AnthropicProvider => {
-  const provider = anthropic(autoListen([7200]), over);
-  provider.settleAutoChoice({ cause: 'no_file' });
-  return provider;
-};
 
 /** Every `cache_control` in the body, in order. */
 function marks(body: Body): unknown[] {
@@ -188,7 +182,7 @@ describe('caching 3-M D-1 — Anthropic, a single-shot call that carries its own
     ],
     [
       'settled long, option short',
-      () => anthropic(autoListen([])),
+      () => anthropic(autoListen()),
       { choice: 'short', auto: NO_MEASUREMENT },
       [SHORT, SHORT],
       { ...LIFETIME_5M, cache_auto: NO_MEASUREMENT },
@@ -208,26 +202,22 @@ describe('caching 3-M D-1 — Anthropic, a single-shot call that carries its own
     });
   });
 
-  // Check 1. Real case: the instance holds prices from the runner's file, which belong to its own
-  // choice. (1) red when the instance's `prices` are kept (the normaliser drops the whole field on
-  // the first row; they replace the option's on the second), or the option's are dropped (the second
-  // row). (2) prints the recorded `cache_auto`.
+  // Check 1. Real case: the option's own `cache_auto`, with and without prices, on an instance whose
+  // choice was made without any (caching 3-M D-3: an instance holds no prices). (1) red when the
+  // option's prices are dropped (the second row). (2) prints the recorded `cache_auto`.
   it.each<[string, CacheAuto, 'short' | 'long']>([
     ['no prices of its own', NO_MEASUREMENT, 'short'],
     [
       'its own prices',
       {
-        basis: 'listen_trigger_gaps',
+        basis: 'step_gaps',
         gaps_s: [900],
         prices: { from: 'none', cause: 'input_zero' },
       },
       'long',
     ],
   ])('the record holds the option’s cache_auto: %s', async (_n, auto, choice) => {
-    const provider = anthropic(autoListen([420]));
-    provider.settleAutoChoice({
-      rates: { input: 3, output: 15, cache_read: 0.3, cache_write_5m: 3.75, cache_write_1h: 6 },
-    });
+    const provider = anthropic(autoListen());
     const r = await singleShot(provider, { choice, auto });
     expect(r.usage![0]!.cache_auto).toEqual(auto);
   });
@@ -235,7 +225,7 @@ describe('caching 3-M D-1 — Anthropic, a single-shot call that carries its own
   // The source and the runner are the setting's, not the call's. (1) red when the option replaces
   // them. (2) prints both.
   it('the setting’s source and runner stay the instance’s', async () => {
-    const r = await singleShot(anthropic(autoListen([])), {
+    const r = await singleShot(anthropic(autoListen()), {
       choice: 'short',
       auto: NO_MEASUREMENT,
     });
@@ -268,7 +258,7 @@ describe('caching 3-M D-1 — Anthropic, a single-shot call that carries its own
   // Check 4. Real case: D-2 does not pass the option on every call. (1) red when the option is
   // stored on the instance and left there (the third call). (2) prints each call's marks and ask.
   it('the calls of one drive differ: each sends and records its own, and no option means the instance', async () => {
-    const provider = anthropic(autoListen([]));
+    const provider = anthropic(autoListen());
     const first = await singleShot(provider, { choice: 'long', auto: GAPS_900 });
     const second = await singleShot(provider, { choice: 'short', auto: NO_MEASUREMENT });
     const third = await singleShot(provider);
@@ -289,7 +279,7 @@ describe('caching 3-M D-1 — Anthropic, a single-shot call that carries its own
   // step's choice must not put them back. (1) red when the option overrides the drop. (2) prints the
   // marks and the recorded ask.
   it('after a gateway refused the cache fields, a call under its own choice sends none and records no ask', async () => {
-    const provider = anthropic(autoListen([]), { endpoint: 'custom' });
+    const provider = anthropic(autoListen(), { endpoint: 'custom' });
     script = [
       httpError(400, 'system.0.cache_control: Extra inputs are not permitted'),
       textAnswer(),
@@ -309,7 +299,7 @@ describe('caching 3-M D-1 — Anthropic, a tool call that carries its own choice
   // tool path reads the instance's choice. (2) prints each request's kind, marks and ask.
   it('every main turn follows the option; the final extraction has no marker and no ask', async () => {
     script = [toolCall(1), toolCall(2), submit()];
-    const r = await anthropic(autoListen([])).callStepWithTools('prompt', [LOOKUP], EXECUTOR, {
+    const r = await anthropic(autoListen()).callStepWithTools('prompt', [LOOKUP], EXECUTOR, {
       inputSchema: SCHEMA,
       maxToolCalls: 2,
       cacheChoice: { choice: 'short', auto: NO_MEASUREMENT },
@@ -368,13 +358,6 @@ describe('caching 3-M D-1 — whether the request asks Anthropic why it missed f
     });
   });
 
-  // Row 2. Real case: the drive settled `off`, but this step's rhythm is worth caching. (1) red when
-  // `asksWhy` reads the instance. (2) prints the question.
-  it.each(PATHS)('2 settled off, option short (%s): the question goes out', async (_n, run) => {
-    await run(anthropicSettledOff(ASKING), OPTION_SHORT);
-    expect(question(0)).toEqual({ previous_message_id: null });
-  });
-
   // Row 3. Real case: a gateway address, which may not accept the field. (1) red when the option
   // replaces the `asking` test. (2) prints the question.
   it.each(PATHS)('3 a custom address, option short (%s): no question', async (_n, run) => {
@@ -411,17 +394,6 @@ describe('caching 3-M D-1 — whether the request asks Anthropic why it missed f
       facts: r.usage![0]!.cache_diagnostics,
     }).toEqual({ question: 'none', facts: undefined });
   });
-
-  // Row 6. Real case: a drive settled `off`, where one step under its own choice was refused; a
-  // later step with no option never would have asked. (1) red when the helper's test reads the
-  // option alone. (2) prints the record.
-  it('6 settled off, a refusal under option short, then no option: nothing on the record', async () => {
-    const provider = anthropicSettledOff(ASKING);
-    script = [httpError(400, REFUSED), textAnswer()];
-    await singleShot(provider, OPTION_SHORT);
-    const r = await singleShot(provider);
-    expect(r.usage![0]!.cache_diagnostics).toBeUndefined();
-  });
 });
 
 describe('caching 3-M D-1 — OpenAI', () => {
@@ -429,11 +401,6 @@ describe('caching 3-M D-1 — OpenAI', () => {
   const OLD = 'gpt-5.5';
   const openai = (model: string, promptCache: PromptCacheRequest) =>
     new OpenAIProvider(model, undefined, false, { endpoint: 'default', promptCache });
-  const openaiSettledOff = (): OpenAIProvider => {
-    const provider = openai(LUNA, autoListen([7200]));
-    provider.settleAutoChoice({ cause: 'no_file' });
-    return provider;
-  };
   const PLAIN = (p: OpenAIProvider, cacheChoice: CallCacheChoice) =>
     p.callStepWithMeta(PROMPT, undefined, undefined, {
       cachePrefixChars: HEAD.length,
@@ -472,21 +439,6 @@ describe('caching 3-M D-1 — OpenAI', () => {
       });
     },
   );
-
-  // Check 7. Real case: the drive settled `off`, and this step's rhythm is worth caching. (1) red when
-  // `off` is read from the instance on that path. (2) prints the body's cache fields and the ask.
-  it.each(PATHS)('%s: settled off, option long: its one lifetime and the key', async (_n, run) => {
-    const r = await run(openaiSettledOff(), { choice: 'long', auto: GAPS_900 });
-    expect({ body: view(sent[0]!), record: asked(r.usage![0]!) }).toEqual({
-      body: { options: { mode: 'explicit', ttl: '30m' }, key: true, marked: true },
-      record: {
-        cache_requested: 'lifetime',
-        cache_lifetime_s: 1800,
-        cache_ttl_sent: true,
-        cache_auto: GAPS_900,
-      },
-    });
-  });
 
   /** A record without what differs between any two calls. */
   const stable = (u: UsageRecord) => {

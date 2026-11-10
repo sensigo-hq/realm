@@ -399,16 +399,12 @@ export type CacheRequestSource = (typeof CACHE_REQUEST_SOURCES)[number];
 
 /**
  * Issue #600 (the lifetime unit) — on what `--prompt-cache auto` chose a request's lifetime
- * (`UsageRecord.cache_auto.basis`). The first three are produced by the CLI's `resolvePromptCache`, for
- * the drive's own choice, which the adapter writes on a request that carries no choice of its own:
- * - `no_measurement` — the setting was `auto` and the drive was not started by `realm listen`: no
- *   gaps exist, so the short lifetime (the runner's prior) is asked for;
- * - `listen_trigger_gaps` — `realm listen` started the drive and passed the gaps it measured between
- *   that workflow's recent triggers (possibly none yet — the long lifetime is then the prior);
- * - `listen_gaps_unreadable` — `realm listen` started the drive and passed a value the agent could
- *   not read; the long lifetime (the prior) is asked for and the drive goes on.
- * Caching 3-M (D-2): the last three are produced by the CLI's `chooseStepCaches`, one choice per agent
- * step, which `realm agent` passes on each of the step's calls:
+ * (`UsageRecord.cache_auto.basis`):
+ * - `no_measurement` — produced by the CLI's `resolvePromptCache` for the setting `auto`, which the
+ *   adapter writes on a request that carries no choice of its own (a host that passes none): no gaps
+ *   were measured, so the runner's prior is asked for (caching 3-M D-3: older records too);
+ * Caching 3-M (D-2): the other three are produced by the CLI's `chooseStepCaches`, one choice per
+ * agent step, which `realm agent` passes on each of the step's calls:
  * - `step_gaps` — a step without tools, chosen by the provider's rule over the gaps between the
  *   step's requests in the workflow's earlier runs (`stepCacheGaps`; possibly none — the runner's
  *   prior is then asked for);
@@ -419,8 +415,6 @@ export type CacheRequestSource = (typeof CACHE_REQUEST_SOURCES)[number];
  */
 export const CACHE_AUTO_BASES = [
   'no_measurement',
-  'listen_trigger_gaps',
-  'listen_gaps_unreadable',
   'step_gaps',
   'step_gaps_unreadable',
   'tool_step',
@@ -483,13 +477,6 @@ export interface CacheAuto {
   gaps_s?: number[];
   prices?: CacheAutoPrices;
 }
-
-/**
- * Issue #898 — a view's `cache_auto.prices`: the stored value, or `not_recorded` for a request
- * recorded before Realm priced `auto` from the price file (gaps kept, no `prices`). A view word,
- * never stored.
- */
-export type CacheAutoPricesView = CacheAutoPrices | { from: 'not_recorded' };
 
 /**
  * Issue #600 PR 2 — which kind of endpoint a request went to (`UsageRecord.endpoint`): the
@@ -716,8 +703,8 @@ export interface UsageRecord {
   cache_requested_by?: string;
   /**
    * Issue #600 (the lifetime unit) — present iff the setting was `auto`: the basis of the choice,
-   * and the gaps it read. `gaps_s` is present iff `basis` is `listen_trigger_gaps` or (caching 3-M
-   * D-2) `step_gaps`: 0 to 5 whole seconds, each from 0 to 604 800, oldest first. Issue #898: `prices` says where the choice took
+   * and the gaps it read. `gaps_s` is present iff `basis` is `step_gaps` (caching 3-M D-2): 0 to 5
+   * whole seconds, each from 0 to 604 800, oldest first. Issue #898: `prices` says where the choice took
    * its prices, present only when gaps were kept. Normalised where it enters the record
    * (`boundRequestFacts` → `normalizeCacheAuto`).
    */

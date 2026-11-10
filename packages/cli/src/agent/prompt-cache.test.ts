@@ -17,19 +17,19 @@ import { listenCommand } from '../commands/listen.js';
 
 describe('resolvePromptCache (issue #600, the lifetime unit — B2)', () => {
   // One cell per branch of B2. (a) red when a stated word loses to a default, the default is not
-  // `auto`, a branch reads the wrong basis, or listen's value is read past the pattern or the bound;
-  // (b) prints the input and the resolved setting (test values only).
+  // `auto`, or a runner's `auto` is given a basis other than `no_measurement` (caching 3-M D-3: the
+  // drive measures nothing); (b) prints the input and the resolved setting (test values only).
   it.each<[Parameters<typeof resolvePromptCache>[0], ResolvedPromptCache]>([
     [
-      { flag: 'long' as const, spawnedByListen: false, cacheGaps: undefined },
+      { flag: 'long' as const, spawnedByListen: false },
       { value: 'long', source: 'stated', by: 'realm agent' },
     ],
     [
-      { flag: 'off' as const, spawnedByListen: true, cacheGaps: '420' },
+      { flag: 'off' as const, spawnedByListen: true },
       { value: 'off', source: 'stated', by: 'realm listen' },
     ],
     [
-      { flag: undefined, spawnedByListen: false, cacheGaps: undefined },
+      { flag: undefined, spawnedByListen: false },
       {
         value: 'auto',
         source: 'runner_default',
@@ -38,47 +38,22 @@ describe('resolvePromptCache (issue #600, the lifetime unit — B2)', () => {
       },
     ],
     [
-      { flag: 'auto' as const, spawnedByListen: false, cacheGaps: undefined },
+      { flag: 'auto' as const, spawnedByListen: false },
       { value: 'auto', source: 'stated', by: 'realm agent', auto: { basis: 'no_measurement' } },
     ],
     [
-      { flag: undefined, spawnedByListen: true, cacheGaps: undefined },
+      { flag: undefined, spawnedByListen: true },
       {
         value: 'auto',
         source: 'runner_default',
         by: 'realm listen',
-        auto: { basis: 'listen_trigger_gaps', gaps_s: [] },
+        auto: { basis: 'no_measurement' },
       },
     ],
     [
-      { flag: undefined, spawnedByListen: true, cacheGaps: '420,720' },
-      {
-        value: 'auto',
-        source: 'runner_default',
-        by: 'realm listen',
-        auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
-      },
+      { flag: 'auto' as const, spawnedByListen: true },
+      { value: 'auto', source: 'stated', by: 'realm listen', auto: { basis: 'no_measurement' } },
     ],
-    [
-      { flag: 'auto' as const, spawnedByListen: true, cacheGaps: '604800' },
-      {
-        value: 'auto',
-        source: 'stated',
-        by: 'realm listen',
-        auto: { basis: 'listen_trigger_gaps', gaps_s: [604800] },
-      },
-    ],
-    ...['7,abc', '1,2,3,4,5,6', '604801', '', '1.5', '-1'].map(
-      (gaps): [Parameters<typeof resolvePromptCache>[0], ResolvedPromptCache] => [
-        { flag: undefined, spawnedByListen: true, cacheGaps: gaps },
-        {
-          value: 'auto',
-          source: 'runner_default',
-          by: 'realm listen',
-          auto: { basis: 'listen_gaps_unreadable' },
-        },
-      ],
-    ),
   ])('%j resolves to %j', (input, expected) => {
     expect(resolvePromptCache(input)).toEqual(expected);
   });

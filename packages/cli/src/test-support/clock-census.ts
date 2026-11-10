@@ -108,7 +108,6 @@ export const CENSUS: Record<string, Entry> = {
     'event',
     "agent_started_at, on the store's clock (03 §A.4)",
   ],
-  'cli/src/commands/listen.ts#makeAgentSpawner#performance.now()': [1, 'duration', MONOTONIC],
   'cli/src/commands/run.ts#recordChange#performance.now()': [2, 'duration', MONOTONIC],
   'cli/src/commands/watch.ts#registerFile#new Date()': [1, 'outside', "a watch log line's stamp"],
   'cli/src/commands/watch.ts#renderProfilesGone#new Date()': [

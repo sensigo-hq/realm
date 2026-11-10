@@ -3,12 +3,6 @@
 // listen-child notice; and one drive that prints it after `Run ID:`. On a failing CI host each cell
 // prints the line it built: no environment, header or key.
 import { describe, expect, it, vi } from 'vitest';
-import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { startAnthropicStub } from './test-support/anthropic-stub.js';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
@@ -16,10 +10,9 @@ import {
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { lifetimeText, promptCacheStartLine, type ResolvedPromptCache } from './prompt-cache.js';
+import { promptCacheStartLine, type ResolvedPromptCache } from './prompt-cache.js';
 import { runAgent } from './run-agent.js';
 import { LlmProvider, type ProviderCapabilities } from './providers/llm-provider.js';
-import { makeTempHome, runIds } from '../test-support/temp-home.js';
 
 const agent = (tools?: string[]): StepDefinition =>
   ({ description: 'S.', execution: 'agent', ...(tools ? { tools } : {}) }) as StepDefinition;
@@ -66,77 +59,78 @@ const TOOLS_TAIL =
   ' On a step that calls tools, it is also asked to cache the conversation so far, at each turn.';
 
 describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () => {
-  // One cell per producing branch of B8, the at-stake branch first: `auto` choosing the long
-  // lifetime from listen's gaps. (a) red when the reason clause drops what `auto` read, or the
-  // duration is not in words; (b) prints the line (test values only).
-  it('auto → long, from the gaps listen measured', () => {
-    expect(
-      line(
-        ANTHROPIC(LONG),
-        pc('auto', 'runner_default', 'realm listen', {
-          basis: 'listen_trigger_gaps',
-          gaps_s: [420, 720],
-        }),
-      ),
-    ).toBe(
-      `${FIX} 1 hour (auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes; ${LISTEN_DEFAULT}).`,
-    );
-  });
-
-  it('auto → short (a drive realm agent starts on its own) and auto → off (gaps of two hours)', () => {
-    expect([
-      line(
-        ANTHROPIC(SHORT),
-        pc('auto', 'runner_default', 'realm agent', { basis: 'no_measurement' }),
-      ),
-      line(
-        ANTHROPIC('off'),
-        pc('auto', 'runner_default', 'realm listen', {
-          basis: 'listen_trigger_gaps',
-          gaps_s: [7200, 7200, 7200],
-        }),
-      ),
-    ]).toEqual([
-      `${FIX} 5 minutes (auto: a drive realm agent starts on its own has no trigger history; ${AGENT_DEFAULT}).`,
-      `Caching: off; Anthropic is asked to cache nothing (auto: the last 3 gaps between this workflow's triggers were about 2 hours, 2 hours and 2 hours; ${LISTEN_DEFAULT}).`,
-    ]);
-  });
-
-  it("auto — listen's first trigger of a workflow, and a measurement that could not be read", () => {
-    expect([
-      line(
-        ANTHROPIC(LONG),
-        pc('auto', 'runner_default', 'realm listen', { basis: 'listen_trigger_gaps', gaps_s: [] }),
-      ),
-      line(
-        ANTHROPIC(LONG),
-        pc('auto', 'runner_default', 'realm listen', { basis: 'listen_gaps_unreadable' }),
-      ),
-      line(
-        ANTHROPIC(SHORT),
-        pc('auto', 'runner_default', 'realm listen', {
-          basis: 'listen_trigger_gaps',
-          gaps_s: [10],
-        }),
-      ),
-    ]).toEqual([
-      `${FIX} 1 hour (auto: no earlier trigger of this workflow since realm listen started; ${LISTEN_DEFAULT}).`,
-      `${FIX} 1 hour (auto: realm listen's measurement could not be read; ${LISTEN_DEFAULT}).`,
-      `${FIX} 5 minutes (auto: the last gap between this workflow's triggers was about 10 seconds; ${LISTEN_DEFAULT}).`,
-    ]);
-  });
-
-  it('a stated auto, on realm agent and on realm listen', () => {
-    expect([
-      line(ANTHROPIC(SHORT), pc('auto', 'stated', 'realm agent', { basis: 'no_measurement' })),
-      line(
-        ANTHROPIC(LONG),
-        pc('auto', 'stated', 'realm listen', { basis: 'listen_trigger_gaps', gaps_s: [600] }),
-      ),
-    ]).toEqual([
-      `${FIX} 5 minutes (auto: a drive realm agent starts on its own has no trigger history; set by --prompt-cache auto).`,
-      `${FIX} 1 hour (auto: the last gap between this workflow's triggers was about 10 minutes; set by realm listen --prompt-cache auto).`,
-    ]);
+  // Caching 3-M D-3 check 1: under `auto` the start line names no single lifetime, since each step
+  // chooses its own from that step's earlier runs. The real cases: a drive `realm agent` starts, one
+  // `realm listen` starts, and a stated `auto` on each, on each shape of workflow, on Anthropic and on
+  // OpenAI in the explicit set. (a) red when the instance's lifetime is printed, or the tool sentence
+  // is dropped on a mix (that row); (b) prints the line.
+  const AUTO_ASK = `${FIX} 5 minutes, 1 hour or not at all, as auto chooses per step from that step's own earlier runs`;
+  const AUTO_TOOLS =
+    ' On a step that calls tools, it is asked for 5 minutes and also to cache the conversation so far, at each turn.';
+  const OPENAI_EXPLICIT = {
+    providerId: 'openai' as const,
+    jsonMode: true,
+    promptCache: { lifetime_s: 1800 },
+    endpoint: 'default' as const,
+  };
+  const OPENAI_ASK =
+    "Caching: OpenAI is asked to cache each step's fixed instructions and the stable start of its prompt for 30 minutes or not at all, as auto chooses per step from that step's own earlier runs";
+  const OPENAI_TOOLS =
+    " A step that calls tools is left to OpenAI's own caching, which reuses each turn at the next.";
+  const AGENT_AUTO = pc('auto', 'runner_default', 'realm agent', { basis: 'no_measurement' });
+  const LISTEN_AUTO = pc('auto', 'runner_default', 'realm listen', { basis: 'no_measurement' });
+  it.each<[string, Parameters<typeof line>[0], ResolvedPromptCache, WorkflowDefinition, string]>([
+    [
+      'Anthropic, steps without tools only',
+      ANTHROPIC(SHORT),
+      AGENT_AUTO,
+      SINGLE,
+      `${AUTO_ASK} (${AGENT_DEFAULT}).`,
+    ],
+    [
+      'Anthropic, a mix',
+      ANTHROPIC(LONG),
+      LISTEN_AUTO,
+      MIXED,
+      `${AUTO_ASK} (${LISTEN_DEFAULT}).${AUTO_TOOLS}`,
+    ],
+    [
+      'Anthropic, every step with tools',
+      ANTHROPIC(SHORT),
+      pc('auto', 'stated', 'realm agent', { basis: 'no_measurement' }),
+      ALL_TOOLS,
+      "Caching: every agent step calls tools, so Anthropic is asked to cache each step's fixed instructions and the conversation so far, at each turn, for 5 minutes (set by --prompt-cache auto).",
+    ],
+    [
+      'OpenAI in the explicit set, steps without tools only',
+      OPENAI_EXPLICIT,
+      pc('auto', 'stated', 'realm listen', { basis: 'no_measurement' }),
+      SINGLE,
+      `${OPENAI_ASK} (set by realm listen --prompt-cache auto).`,
+    ],
+    [
+      'OpenAI in the explicit set, a mix',
+      OPENAI_EXPLICIT,
+      AGENT_AUTO,
+      MIXED,
+      `${OPENAI_ASK} (${AGENT_DEFAULT}).${OPENAI_TOOLS}`,
+    ],
+    [
+      'OpenAI in the explicit set, every step with tools',
+      OPENAI_EXPLICIT,
+      AGENT_AUTO,
+      ALL_TOOLS,
+      "Caching: every agent step calls tools, so each is left to OpenAI's own caching, which reuses each turn at the next; Realm sends a cache key (auto, realm agent's default; turn it off with --prompt-cache off).",
+    ],
+    [
+      'a workflow with no agent step',
+      ANTHROPIC(SHORT),
+      AGENT_AUTO,
+      NO_AGENT,
+      'Caching: no step is cached; this workflow has no agent step.',
+    ],
+  ])('auto: %s', (_case, caps, promptCache, definition, expected) => {
+    expect(line(caps, promptCache, definition)).toBe(expected);
   });
 
   it('a stated short, long and off — no auto clause', () => {
@@ -217,16 +211,13 @@ describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () =
     );
     // Its default is not a flag anyone gave: no once-line.
     expect(
-      line(
-        caps,
-        pc('auto', 'runner_default', 'realm listen', { basis: 'listen_trigger_gaps', gaps_s: [] }),
-      ),
+      line(caps, pc('auto', 'runner_default', 'realm listen', { basis: 'no_measurement' })),
     ).toBe(OPENAI_LINE);
   });
 
-  // F5 for a tools-only workflow (issue #899: F4a is gone) and F4b. (a) red when a tools-only
-  // workflow is said to have no step cached; (b) prints the lines.
-  it('F5 with the tools tail — on, every agent step calls tools (was F4a); F4b — on, no agent step', () => {
+  // A tools-only workflow (issue #899: F4a is gone; caching 3-M D-3: under `auto`, its own line) and
+  // F4b. (a) red when a tools-only workflow is said to have no step cached; (b) prints the lines.
+  it('auto, every agent step calls tools: asked for 5 minutes at each turn (was F4a); F4b — on, no agent step', () => {
     expect([
       line(
         ANTHROPIC(SHORT),
@@ -235,7 +226,7 @@ describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () =
       ),
       line(ANTHROPIC(LONG), pc('long', 'stated', 'realm listen'), NO_AGENT),
     ]).toEqual([
-      `${FIX} 5 minutes (auto: a drive realm agent starts on its own has no trigger history; ${AGENT_DEFAULT}).${TOOLS_TAIL}`,
+      `Caching: every agent step calls tools, so Anthropic is asked to cache each step's fixed instructions and the conversation so far, at each turn, for 5 minutes (${AGENT_DEFAULT}).`,
       'Caching: no step is cached; this workflow has no agent step.',
     ]);
   });
@@ -316,127 +307,8 @@ describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () =
     }
     expect(lines.slice(1, 4).map((l) => l.replace(/Run ID: \S+/, 'Run ID: <run>'))).toEqual([
       'Run ID: <run>',
-      `${FIX} 5 minutes (auto: a drive realm agent starts on its own has no trigger history; ${AGENT_DEFAULT}).`,
+      `${FIX} 5 minutes, 1 hour or not at all, as auto chooses per step from that step's own earlier runs (${AGENT_DEFAULT}).`,
       '',
     ]);
   });
-});
-
-// Guardrail 7(b)'s CROSS cell (the lifetime unit, cell 8): where `auto`'s prior and its choice differ
-// — a listen child (prior: long) whose gaps choose short. Caching 3-M D-2 (MA 2's ruling, registry
-// MA2-3MD2-03): until D-3 the start line says the drive's choice, while the request follows its
-// step, which on the workflow's first run has no gap and asks the listen prior. The built CLI against the in-test Anthropic stand-in (local, answers 200),
-// with a scratch HOME and only a dummy key; on a failing host it prints the start line and the
-// recorded seconds — never an environment, a header or a key.
-describe('until D-3, the start line says the drive’s choice and the record the step’s (issue #600, cell 8; caching 3-M D-2)', () => {
-  it('until D-3, a listen child given gaps 10,10,10,7200,7200 says the drive’s 5 minutes and records the step’s own prior, 3600 (red: the step’s choice not passed — the record goes back to 300 — or the start line from the prior)', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'realm-600-cross-'));
-    const h = await makeTempHome();
-    const stub = await startAnthropicStub({
-      finalContent: { summary: 'ok' },
-      answeredModel: 'claude-x-20260101',
-      usage: {
-        input_tokens: 20,
-        output_tokens: 3,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-      },
-    });
-    try {
-      const home = h.root;
-      writeFileSync(
-        join(root, 'workflow.yaml'),
-        'id: cross-600\nname: Cross 600\nversion: 1\nsteps:\n  ask:\n    description: Answer.\n    execution: agent\n',
-        'utf8',
-      );
-      // #898: `auto` with gaps is priced from the runner's price file. A full file at today's
-      // Anthropic ratios keeps this cell's choice where the shipped multiples put it: 5 minutes.
-      writeFileSync(
-        join(root, 'realm.yaml'),
-        'version: 1\nrunner:\n  cache:\n    economics: prices.json\n',
-        'utf8',
-      );
-      writeFileSync(
-        join(root, 'prices.json'),
-        JSON.stringify({
-          version: 1,
-          currency: 'USD',
-          models: {
-            'claude-x': {
-              prices: [
-                {
-                  per_million_tokens: {
-                    input: 3,
-                    output: 15,
-                    cache_read: 0.3,
-                    cache_write_5m: 3.75,
-                    cache_write_1h: 6,
-                  },
-                },
-              ],
-            },
-          },
-        }),
-        'utf8',
-      );
-      const cli = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
-      const stdout = await new Promise<string>((resolve) => {
-        const child = spawn(
-          process.execPath,
-          [
-            cli,
-            'agent',
-            '--workflow',
-            join(root, 'workflow.yaml'),
-            '--model',
-            'claude-x',
-            '--spawned-by-listen',
-            '--cache-gaps',
-            '10,10,10,7200,7200',
-          ],
-          {
-            cwd: root,
-            env: {
-              PATH: process.env['PATH'] ?? '',
-              HOME: home,
-              ANTHROPIC_API_KEY: 'k-600',
-              ANTHROPIC_BASE_URL: stub.baseUrl,
-            },
-            stdio: ['ignore', 'pipe', 'pipe'],
-          },
-        );
-        let out = '';
-        child.stdout.on('data', (c: Buffer) => (out += c.toString()));
-        const timer = setTimeout(() => child.kill('SIGKILL'), 20_000);
-        child.on('close', () => {
-          clearTimeout(timer);
-          resolve(out);
-        });
-      });
-      const { record } = await h.home.runStore.get((await runIds(h.home.runStore))[0]!);
-      const request = record.evidence[0]!.diagnostics!.cache!.requests[0]!;
-      const startLine = stdout.split('\n').find((l) => l.startsWith('Caching:')) ?? '';
-      const words = /fixed instructions and the stable start of its prompt for (.+?) \(/.exec(
-        startLine,
-      )?.[1];
-      expect({
-        recorded: request.cache_lifetime_s,
-        auto: request.cache_auto,
-        words,
-        wordsOfRecord: lifetimeText(request.cache_lifetime_s ?? 0),
-        // #898: the start line says where the choice took its prices.
-        priced: startLine.includes('; priced from your price file; '),
-      }).toEqual({
-        recorded: 3600,
-        auto: { basis: 'step_gaps', gaps_s: [] },
-        words: '5 minutes',
-        wordsOfRecord: '1 hour',
-        priced: true,
-      });
-    } finally {
-      await stub.close();
-      await h.cleanup();
-      rmSync(root, { recursive: true, force: true });
-    }
-  }, 30_000);
 });

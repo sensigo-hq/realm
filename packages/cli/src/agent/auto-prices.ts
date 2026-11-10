@@ -1,9 +1,8 @@
 // auto-prices.ts — issue #898: `--prompt-cache auto` reads its prices from the runner's price file
-// (`runner.cache.economics`). `realm agent` builds the Anthropic provider (#896 unit B: or the OpenAI
-// one on GPT-5.6 and later at OpenAI's own address) before the workflow and `realm.yaml` load, so a
-// drive `realm listen` started with measured gaps leaves the provider's choice PENDING; after the
-// load, `realm agent` reads the file once here and settles it. Nothing here can stop
-// a run: every failure of the file is a named cause, and the choice falls back by the owner's rule.
+// (`runner.cache.economics`). After the workflow and `realm.yaml` load, `realm agent` reads the file
+// once here, for the steps whose gaps need a price (caching 3-M D-2, `chooseStepCaches`). Nothing here
+// can stop a run: every failure of the file is a named cause, and the choice falls back by the
+// owner's rule.
 import {
   selectEconomicsRates,
   type AutoPriceInput,
@@ -70,11 +69,11 @@ export function priceFileWarning(path: string, read: FileCause): string {
 }
 
 /**
- * Settles a pending `auto` choice from the runner's price file (C.2): the wall clock is read once
- * (C.3 — class `outside`: the provider bills on its own day, as `request_start` does), the file is
- * read once, and the provider's `settleAutoChoice` (`settleAuto`) chooses. Returns its outcome and,
- * when the file could not be read or is not valid, the one stderr line for `realm agent` to print.
- * Reads no `RunRecord` instant.
+ * Reads the runner's price file once for `auto`'s choice (C.2): the wall clock is read once (C.3 —
+ * class `outside`: the provider bills on its own day, as `request_start` does), the file is read
+ * once, and `settleAuto`, the caller's choice over those prices (caching 3-M D-2: every step's),
+ * chooses. Returns its outcome and, when the file could not be read or is not valid, the one stderr
+ * line for `realm agent` to print. Reads no `RunRecord` instant.
  */
 export async function settleAutoFromPriceFile(
   settleAuto: (prices: AutoPriceInput) => { choice: CacheChoice; prices?: CacheAutoPrices },

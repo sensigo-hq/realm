@@ -571,27 +571,27 @@ describe('#896 check 10 — the words', () => {
       'Caching: off; OpenAI is asked to cache nothing (set by --prompt-cache off).',
     ]);
   });
-  // #896 unit B: Anthropic's `auto` reason (the evidence, then where the setting came from).
+  // #896 unit B; caching 3-M D-3: under `auto` the line names no single lifetime, and its reason is
+  // only where the setting came from (what each step chose is on its requests).
+  const AUTO_ASK =
+    "Caching: OpenAI is asked to cache each step's fixed instructions and the stable start of its prompt for 30 minutes or not at all, as auto chooses per step from that step's own earlier runs";
   const ALONE: CacheAuto = { basis: 'no_measurement' };
-  const FIRST: CacheAuto = { basis: 'listen_trigger_gaps', gaps_s: [] };
-  const lone = 'auto: a drive realm agent starts on its own has no trigger history';
-  const first = 'auto: no earlier trigger of this workflow since realm listen started';
   it.each([
     [
       { ...setting('auto', 'runner_default'), auto: ALONE },
-      `${lone}; realm agent's default; turn it off with --prompt-cache off`,
+      "realm agent's default; turn it off with --prompt-cache off",
     ],
     [
-      { ...setting('auto', 'runner_default', 'realm listen'), auto: FIRST },
-      `${first}; realm listen's default; change it with realm listen --prompt-cache`,
+      { ...setting('auto', 'runner_default', 'realm listen'), auto: ALONE },
+      "realm listen's default; change it with realm listen --prompt-cache",
     ],
-    [{ ...setting('auto'), auto: ALONE }, `${lone}; set by --prompt-cache auto`],
+    [{ ...setting('auto'), auto: ALONE }, 'set by --prompt-cache auto'],
     [
-      { ...setting('auto', 'stated', 'realm listen'), auto: FIRST },
-      `${first}; set by realm listen --prompt-cache auto`,
+      { ...setting('auto', 'stated', 'realm listen'), auto: ALONE },
+      'set by realm listen --prompt-cache auto',
     ],
   ] as const)('the start line, an auto reason: %j', (promptCache, reason) => {
-    expect(startLine(promptCache, SINGLE)).toBe(`${ASK} (${reason}).`);
+    expect(startLine(promptCache, SINGLE)).toBe(`${AUTO_ASK} (${reason}).`);
   });
   it('the start line, no setting given (a host calling runAgent): no parenthetical', () => {
     expect(startLine(undefined, SINGLE, undefined)).toBe(`${ASK}.`);
@@ -603,7 +603,7 @@ describe('#896 check 10 — the words', () => {
     ]).toEqual([
       'off: OpenAI is asked to cache nothing',
       // #896 unit B: `auto` (here listen's default) chooses.
-      'auto: off or 30 minutes for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; a cache key, except on a step without tools when off',
+      "auto: off or 30 minutes for each step without tools, by that step's own earlier runs and the prices in runner.cache.economics; a cache key, except on a step without tools when off",
     ]);
   });
 

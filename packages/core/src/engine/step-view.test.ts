@@ -674,9 +674,9 @@ describe('composeCostView — the request facts (issue #600 PR 2)', () => {
       cache_requested_by: 'realm listen',
     };
     const view = composeCostView([
-      req({ ...asked, cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] } }, 0),
-      req({ ...asked, cache_auto: { gaps_s: [420, 720], basis: 'listen_trigger_gaps' } }, 1),
-      req({ ...asked, cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [] } }, 2),
+      req({ ...asked, cache_auto: { basis: 'step_gaps', gaps_s: [420, 720] } }, 0),
+      req({ ...asked, cache_auto: { gaps_s: [420, 720], basis: 'step_gaps' } }, 1),
+      req({ ...asked, cache_auto: { basis: 'step_gaps', gaps_s: [] } }, 2),
       req({ ...asked, cache_auto: { basis: 'guessed' } }, 3),
     ]);
     expect(view!.cache_requested).toEqual({
@@ -687,13 +687,8 @@ describe('composeCostView — the request facts (issue #600 PR 2)', () => {
           ttl_sent: true,
           source: 'runner_default',
           by: 'realm listen',
-          // #898 (A.6): a record with kept gaps and no `prices` predates priced auto; the view says
-          // so, deterministically, so the two key orders still make one ask.
-          auto: {
-            basis: 'listen_trigger_gaps',
-            gaps_s: [420, 720],
-            prices: { from: 'not_recorded' },
-          },
+          // The two key orders make one ask.
+          auto: { basis: 'step_gaps', gaps_s: [420, 720] },
         },
         {
           value: 'lifetime',
@@ -701,7 +696,7 @@ describe('composeCostView — the request facts (issue #600 PR 2)', () => {
           ttl_sent: true,
           source: 'runner_default',
           by: 'realm listen',
-          auto: { basis: 'listen_trigger_gaps', gaps_s: [] },
+          auto: { basis: 'step_gaps', gaps_s: [] },
         },
         {
           value: 'lifetime',

@@ -204,10 +204,10 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
     };
     expect([
       await storedAuto({ basis: 'guessed' }),
-      await storedAuto({ basis: 'listen_trigger_gaps', gaps_s: [1, 2, 3, 4, 5, 6] }),
+      await storedAuto({ basis: 'step_gaps', gaps_s: [1, 2, 3, 4, 5, 6] }),
       await storedAuto('no_measurement'),
       await storedAuto(
-        { extra: 'x', gaps_s: [420, 720], basis: 'listen_trigger_gaps' },
+        { extra: 'x', gaps_s: [420, 720], basis: 'step_gaps' },
         'claude-x-20260101\n',
       ),
       await storedAuto({ basis: 'no_measurement' }, 'claude-\u001bx'),
@@ -217,7 +217,7 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
       { has: false, cache_auto: undefined, keys: [], model: undefined, prompt_tokens: 10 },
       {
         has: true,
-        cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+        cache_auto: { basis: 'step_gaps', gaps_s: [420, 720] },
         keys: ['basis', 'gaps_s'],
         model: 'claude-x-20260101',
         prompt_tokens: 10,
@@ -408,12 +408,12 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
   // Cell 2, called directly. (a) red when the function changes its input's `cache_auto` in place;
   // (b) prints the returned array and the input.
   it('cache_auto, called directly: normalised in a new entry; the input is not changed', () => {
-    const entry = { cache_auto: { gaps_s: [7], basis: 'listen_trigger_gaps', extra: true } };
+    const entry = { cache_auto: { gaps_s: [7], basis: 'step_gaps', extra: true } };
     expect(boundRequestFacts([entry])).toEqual([
-      { cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [7] } },
+      { cache_auto: { basis: 'step_gaps', gaps_s: [7] } },
     ]);
     expect(entry).toEqual({
-      cache_auto: { gaps_s: [7], basis: 'listen_trigger_gaps', extra: true },
+      cache_auto: { gaps_s: [7], basis: 'step_gaps', extra: true },
     });
   });
 });

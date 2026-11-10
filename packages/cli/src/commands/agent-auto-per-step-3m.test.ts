@@ -222,47 +222,37 @@ async function drive(name: string, d: Deployment, args: string[], runId?: string
   };
 }
 
-const LISTEN_GAPS = ['--spawned-by-listen', '--cache-gaps', '420,720'];
-
 describe('caching 3-M D-2 — check 3: the price file is read once', () => {
-  // (a) The real case: a listen child with measured trigger gaps and a workflow with no earlier run.
-  //     Red when the read needs a step's gap (nothing settles the pending choice: the child exits on
-  //     it). (b) The same child, a workflow of two steps each with an earlier run: red when the settle
-  //     and the steps read separately, or each step reads (2 or more reads). (c) `realm agent` alone,
-  //     a step with an earlier run: red when the read waits on a settle (no read, no cause on the
-  //     record). Each prints the exit code, stderr's start, the read count and the warning lines.
-  it('(a) --cache-gaps 420,720, no earlier run → completes, one read, one warning', async () => {
-    const d = await deployment('3a', { prices: UNREADABLE });
-    const runId = await newRun(d);
-    const r = await drive(
-      '3a',
-      d,
-      ['--run-id', runId, '--model', 'claude-x', ...LISTEN_GAPS],
-      runId,
-    );
-    expect({ code: r.code, stderr: r.stderr, reads: r.reads, warnings: r.warnings }).toEqual({
-      code: 0,
-      stderr: '',
-      reads: 1,
-      warnings: 1,
-    });
-  }, 60_000);
-
-  it('(b) --cache-gaps 420,720, two steps each with an earlier run → one read, one warning', async () => {
+  // (b) The real case: a listen child on a workflow of two steps, each with an earlier run: red when
+  //     the steps read separately (2 or more reads), or a step's choice is not its own (its basis).
+  //     (c) `realm agent` alone, a step with an earlier run: red when the read waits on anything but a
+  //     step's gap (no read, no cause on the record). Each prints the exit code, stderr's start, the
+  //     read count and the warning lines. Caching 3-M D-3: (a), a listen child's own measured gaps on
+  //     a workflow with no earlier run, went with them.
+  it('(b) a drive realm listen started, two steps each with an earlier run → one read, one warning, each step on its own gaps', async () => {
     const d = await deployment('3b', { prices: UNREADABLE, steps: TWO });
     await seedEarlier(d, ['ask', 'check'], 600);
     const runId = await newRun(d);
     const r = await drive(
       '3b',
       d,
-      ['--run-id', runId, '--model', 'claude-x', ...LISTEN_GAPS],
+      ['--run-id', runId, '--model', 'claude-x', '--spawned-by-listen'],
       runId,
     );
-    expect({ code: r.code, stderr: r.stderr, reads: r.reads, warnings: r.warnings }).toEqual({
+    const basis = (step: string) =>
+      (r.requests as Record<string, { auto?: { basis?: string } }>)[step]?.auto?.basis;
+    expect({
+      code: r.code,
+      stderr: r.stderr,
+      reads: r.reads,
+      warnings: r.warnings,
+      basis: [basis('ask'), basis('check')],
+    }).toEqual({
       code: 0,
       stderr: '',
       reads: 1,
       warnings: 1,
+      basis: ['step_gaps', 'step_gaps'],
     });
   }, 60_000);
 

@@ -171,7 +171,7 @@ const TCK_REFERENCE = {
   cache_lifetime_s: 300,
   cache_ttl_sent: true,
   cache_auto: {
-    basis: 'listen_trigger_gaps',
+    basis: 'step_gaps',
     gaps_s: [62, 3598],
     prices: { from: 'economics', excluded: ['long'], missing: ['cache_write_1h'] },
   },
@@ -236,7 +236,7 @@ const TCK_REQUEST_FACTS: Required<
   // in the shape with the most keys, so a store that drops a nested key fails (the law compares by
   // deep equality, so a store that keeps the keys in another order passes)
   cache_auto: {
-    basis: 'listen_trigger_gaps',
+    basis: 'step_gaps',
     gaps_s: [61, 3599],
     prices: { from: 'economics', excluded: ['long'], missing: ['cache_write_1h'] },
   },

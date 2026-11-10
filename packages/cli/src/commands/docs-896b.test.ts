@@ -41,7 +41,7 @@ describe('#896 unit B — the docs sentences', () => {
     // Check 1 (the off line with Anthropic's reason), check 9 (the branches).
     claim(
       'docs/reference/cli/realm-agent.md',
-      "With `auto`, on a workflow with a step without tools, OpenAI's line gives the same reason as Anthropic's, and it reads `Caching: off; OpenAI is asked to cache nothing (…)` when `auto` chose no caching (added after version 0.48.0).",
+      "With `auto`, on a workflow with a step without tools, OpenAI's line is `Caching: OpenAI is asked to cache each step's fixed instructions and the stable start of its prompt for 30 minutes or not at all, as auto chooses per step from that step's own earlier runs (…)` (added after version 0.48.0).",
     );
   });
 
@@ -60,7 +60,7 @@ describe('#896 unit B — the docs sentences', () => {
 
   it('CHANGELOG: the behaviour, the two vocabularies and the new export', () => {
     for (const lead of [
-      "**`--prompt-cache auto` chooses for OpenAI GPT-5.6 and later too,** at OpenAI's own address. On a drive `realm listen` starts, a step without tools asks for 30 minutes or for no caching, by the gaps between the workflow's recent triggers and your price file's `cache_read` and `cache_write` rates. Without usable prices it asks for 30 minutes when any of the last five gaps is under 27 minutes, and for no caching otherwise. Steps with tools are left to OpenAI's own caching. (#896)",
+      "**`--prompt-cache auto` chooses for OpenAI GPT-5.6 and later too,** at OpenAI's own address. A step without tools asks for 30 minutes or for no caching, by that step's own earlier runs and your price file's `cache_read` and `cache_write` rates. Without usable prices it asks for 30 minutes when any of the last five gaps is under 27 minutes, and for no caching otherwise. Steps with tools are left to OpenAI's own caching. (#896)",
       '**`CACHE_AUTO_RATES` gains `cache_write`.** (#896)',
       '**`CacheRequestedEntry` gains `provider`.** (#896)',
       "**Core exports `chooseAutoOneLifetime`,** `--prompt-cache auto`'s rule for a provider with one cache lifetime. (#896)",

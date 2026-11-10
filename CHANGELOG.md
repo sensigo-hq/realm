@@ -12,7 +12,7 @@ All notable changes to this project are documented here.
 - **OpenAI gets a cache key.** On OpenAI's own endpoint, Realm sends `prompt_cache_key` — the SHA-256 of the prompt's stable start — on every request of a step, under every `--prompt-cache` setting but `off`; on another endpoint (`--base-url` or `OPENAI_BASE_URL`) only for a setting you state. It is a hint: OpenAI caches by its own rules. (#600)
 - **OpenAI GPT-5.6 and later cache only each step's fixed part.** At OpenAI's own address, Realm marks the fixed instructions and the stable start of the prompt of each step without tools, for 30 minutes (the one lifetime Realm can ask OpenAI for; `short` and `long` both ask for it). It asks OpenAI to write only up to the marks, so the rest of the prompt is not written at the cache price. Steps with tools are left to OpenAI's own caching. (#896)
 - **`--prompt-cache off` turns OpenAI's caching off on GPT-5.6 and later** at OpenAI's own address: nothing is written or read. (#896)
-- **`--prompt-cache auto` chooses for OpenAI GPT-5.6 and later too,** at OpenAI's own address. On a drive `realm listen` starts, a step without tools asks for 30 minutes or for no caching, by the gaps between the workflow's recent triggers and your price file's `cache_read` and `cache_write` rates. Without usable prices it asks for 30 minutes when any of the last five gaps is under 27 minutes, and for no caching otherwise. Steps with tools are left to OpenAI's own caching. (#896)
+- **`--prompt-cache auto` chooses for OpenAI GPT-5.6 and later too,** at OpenAI's own address. A step without tools asks for 30 minutes or for no caching, by that step's own earlier runs and your price file's `cache_read` and `cache_write` rates. Without usable prices it asks for 30 minutes when any of the last five gaps is under 27 minutes, and for no caching otherwise. Steps with tools are left to OpenAI's own caching. (#896)
 - **An MCP `run_step` entry carries `stable_prefix`: `{ chars, unit: 'utf16', sha256 }`.** A client cuts the `prompt` it received at `chars` and checks the SHA-256 of that start against `sha256`, so it can cache the same start with its own provider. It is absent when Realm cannot vouch for it. See [Cache a step's prompt over MCP](docs/guides/cache-an-mcp-step-prompt.md). (#600)
 - **On a custom endpoint, a 400 that names Realm's cache fields drops them.** When a gateway refuses `cache_control` or `prompt_cache_key` by name, Realm sends the request again once without its cache fields, strict structured output as it was sent; when that works, every later request of the drive goes without them, the record says so (`cache_controls_rejected`; on Anthropic such a request records no ask, since it asked for nothing) and `realm run inspect` prints `the endpoint refused the cache fields (400)` with how to stop sending them. On a provider's own endpoint nothing changes. (#600)
 - **Each request whose prompt was split records the split:** `prefix_sha256`, `prefix_chars`, `prefix_parts`, `cache_marked`, `request_strict_sent`, `cache_controls_rejected` and `cache_key_sent`. `realm run inspect` adds `cached head: <n> characters (marked: …)` for a head that was marked or keyed, and the store contract (`USAGE_RECORD_ROUNDTRIP`) holds every one. (#600)
@@ -141,6 +141,9 @@ All notable changes to this project are documented here.
 - **One error code for it: `STATE_STORE_CHECK_REFUSED`** (a home with no store file, or an empty one; nothing is created) (#616).
 - **`realm run import <path…>` brings Realm's JSON run records and exports into the SQLite store:** one line per file (`imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run`), a run already stored is never overwritten, and the exit code is 1 when any file was not imported (#616).
 - `@sensigo/realm-mcp/home` exports `createRealmMcpServerOnHome({ home?, … })`: it opens the Realm home's SQLite store once for the process and serves the MCP tools over it, returning `{ server, close }`; the `realm-mcp` command uses it. `createRealmMcpServer` with four injected stores is unchanged and loads no SQLite.
+- **`--prompt-cache auto` chooses per step.** Each step without tools takes the lifetime its own earlier runs pay for, read from the store when the drive starts, so a drive you start yourself gets a measured choice too. A step that calls tools asks Anthropic for 5 minutes. `realm listen` no longer measures gaps of its own. (#600)
+- **`callStepWithMeta` and `callStepWithTools` take `cacheChoice`,** a cache lifetime chosen for that call; a provider module that ignores it sends what it always sent. (#600)
+- **Upgrading:** a drive you start yourself asked for 5 minutes every time; a step without tools that has earlier runs now asks for what its gaps pay for, and with no price file for 1 hour when a recent gap is under 54 minutes, else for no caching. `cache_auto.basis` no longer has `listen_trigger_gaps` or `listen_gaps_unreadable`. (#600)
 
 ### Changed
 
@@ -152,14 +155,13 @@ All notable changes to this project are documented here.
 - **BREAKING: `--prompt-cache` with `--provider openai` is accepted** by `realm agent` and `realm listen`: the setting decides whether the cache key is sent. The start line says what OpenAI is sent, per endpoint and setting, and `realm listen`'s caching line names the key. (#600)
 - **`realm workflow validate`, `register` and `watch` count the stable start of each step's prompt in its fixed part**, so their sizes grow. Two steps share a whole fixed part only when their prompts also start the same way. (#600)
 - **`--prompt-cache auto` now chooses from the prices in the runner's price file
-  (`runner.cache.economics`); Realm uses no price of its own for the choice.** On a drive `realm
-listen` starts, with measured gaps, each cached lifetime is costed only when the file states its
+  (`runner.cache.economics`); Realm uses no price of its own for the choice.** With measured gaps, each cached lifetime is costed only when the file states its
   rates, and an option the file cannot cost is never chosen. When the file cannot price the choice —
   no file, a file that cannot be read or is not valid, no entry for the model, an input price of 0,
   or no read rate or no write rate for either lifetime — `auto` asks for 1 hour when any of the last
   five gaps is under 54 minutes, and for no caching otherwise. Each request's record
-  (`cache_auto.prices`), the start line, `realm run inspect` and `get_run_state` say which happened
-  and why. **Upgrading:** with no usable price file, such a drive no longer asks for 5 minutes, and
+  (`cache_auto.prices`), `realm run inspect` and `get_run_state` say which happened
+  and why. **Upgrading:** with no usable price file, a drive `realm listen` starts no longer asks for 5 minutes, and
   it asks for 1 hour on some gap patterns where it asked for no caching before. A file without a
   1-hour write rate never asks for 1 hour, and one without a 5-minute write rate never asks for 5
   minutes. A file that gives only a single `cache_write` rate, or prices input at 0, is treated as

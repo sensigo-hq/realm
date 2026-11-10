@@ -77,14 +77,12 @@ describe('normalizeCacheAuto (issue #600, the lifetime unit)', () => {
   it('each valid shape comes back equal, as a new object', () => {
     const shapes = [
       { basis: 'no_measurement' },
-      { basis: 'listen_gaps_unreadable' },
-      { basis: 'listen_trigger_gaps', gaps_s: [] },
-      { basis: 'listen_trigger_gaps', gaps_s: [0, 420, 720, 7200, CACHE_GAP_MAX_S] },
+      { basis: 'step_gaps', gaps_s: [0, 420, 720, 7200, CACHE_GAP_MAX_S] },
     ];
     const out = shapes.map((s) => normalizeCacheAuto(s));
     expect(out).toEqual(shapes);
-    expect(out.map((o, i) => o !== shapes[i])).toEqual([true, true, true, true]);
-    expect(out[3]!.gaps_s !== shapes[3]!.gaps_s).toBe(true);
+    expect(out.map((o, i) => o !== shapes[i])).toEqual([true, true]);
+    expect(out[1]!.gaps_s !== shapes[1]!.gaps_s).toBe(true);
   });
 
   // (a) red when any of these is kept; (b) prints each result.
@@ -93,13 +91,11 @@ describe('normalizeCacheAuto (issue #600, the lifetime unit)', () => {
       [
         { basis: 'guessed' },
         { basis: 'no_measurement', gaps_s: [] },
-        { basis: 'listen_gaps_unreadable', gaps_s: [1] },
-        { basis: 'listen_trigger_gaps' },
-        { basis: 'listen_trigger_gaps', gaps_s: [1, 2, 3, 4, 5, 6] },
-        { basis: 'listen_trigger_gaps', gaps_s: [1.5] },
-        { basis: 'listen_trigger_gaps', gaps_s: [CACHE_GAP_MAX_S + 1] },
-        { basis: 'listen_trigger_gaps', gaps_s: [-1] },
-        { basis: 'listen_trigger_gaps', gaps_s: '420' },
+        { basis: 'step_gaps', gaps_s: [1, 2, 3, 4, 5, 6] },
+        { basis: 'step_gaps', gaps_s: [1.5] },
+        { basis: 'step_gaps', gaps_s: [CACHE_GAP_MAX_S + 1] },
+        { basis: 'step_gaps', gaps_s: [-1] },
+        { basis: 'step_gaps', gaps_s: '420' },
         null,
         'no_measurement',
         [{ basis: 'no_measurement' }],
@@ -107,13 +103,13 @@ describe('normalizeCacheAuto (issue #600, the lifetime unit)', () => {
           basis = 'no_measurement';
         })(),
       ].map((v) => normalizeCacheAuto(v)),
-    ).toEqual(Array(13).fill(undefined));
+    ).toEqual(Array(11).fill(undefined));
   });
 
   // (a) red when the keys come back in the input's order, or an extra key is kept (`toEqual`
   // ignores key order, so the keys are asserted); (b) prints the keys.
   it("an input with its keys reversed and an extra key → the keys ['basis', 'gaps_s']", () => {
-    const out = normalizeCacheAuto({ extra: 1, gaps_s: [420], basis: 'listen_trigger_gaps' });
+    const out = normalizeCacheAuto({ extra: 1, gaps_s: [420], basis: 'step_gaps' });
     expect(Object.keys(out ?? {})).toEqual(['basis', 'gaps_s']);
   });
 });

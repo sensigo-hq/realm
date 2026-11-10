@@ -77,19 +77,16 @@ const asking = (over: Options = {}): AnthropicProvider =>
     cacheDiagnostics: true,
     ...over,
   });
-/** `auto` with kept gaps, settled from a price file that is not there. */
-const autoSettled = (gaps_s: number[]): AnthropicProvider => {
-  const provider = asking({
+/** `auto` on a drive `realm listen` started: with no call option it asks its prior, 1 hour. */
+const autoListen = (): AnthropicProvider =>
+  asking({
     promptCache: {
       value: 'auto',
       source: 'runner_default',
       by: 'realm listen',
-      auto: { basis: 'listen_trigger_gaps', gaps_s },
+      auto: { basis: 'no_measurement' },
     },
   });
-  provider.settleAutoChoice({ cause: 'no_file' });
-  return provider;
-};
 
 const body = (i: number): Body => mockCreate.mock.calls[i]![0] as Body;
 /** Per request: `none` for no question, else what it names (`null`, or the id). */
@@ -161,21 +158,21 @@ describe('caching 3-M B2a — the question on the request', () => {
   );
 
   // Real case: a drive that caches nothing is never judged, so a fingerprint would serve nothing.
-  // Both routes to a settled `off`. (1) red when the ask does not read the settled choice, or reads
-  // the setting (`auto`) or the pending value. (2) prints the failure and each question.
+  // A stated `off` (a call's own `off` is D-1's check 5). (1) red when the ask does not read the
+  // choice, or reads the setting (`auto`). (2) prints the failure and each question.
   describe.each(PATHS)('1 (d) a settled choice of off ($name)', (path) => {
-    it.each([
-      ['--prompt-cache off', () => asking({ promptCache: { value: 'off' } })],
-      ['auto, settled off', () => autoSettled([7200])],
-    ] as const)('%s: no question, and a 400 is not probed', async (_name, make) => {
-      mockCreate.mockRejectedValueOnce(httpError(400, REFUSED));
-      const failed = await failure(path.run(make()));
-      expect({ failed, questions: questions() }).toEqual({ failed: 400, questions: ['none'] });
-    });
+    it.each([['--prompt-cache off', () => asking({ promptCache: { value: 'off' } })]] as const)(
+      '%s: no question, and a 400 is not probed',
+      async (_name, make) => {
+        mockCreate.mockRejectedValueOnce(httpError(400, REFUSED));
+        const failed = await failure(path.run(make()));
+        expect({ failed, questions: questions() }).toEqual({ failed: 400, questions: ['none'] });
+      },
+    );
 
-    it('auto, settled long: the question goes out', async () => {
+    it('auto on a drive realm listen started (its 1 hour): the question goes out', async () => {
       mockCreate.mockResolvedValueOnce(path.ends(msgId(1)));
-      await path.run(autoSettled([420]));
+      await path.run(autoListen());
       expect(questions()).toEqual([null]);
     });
   });
