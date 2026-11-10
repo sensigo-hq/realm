@@ -589,9 +589,9 @@ function askSourceText(entry: CacheRequestedEntry): string {
 
 /**
  * Issue #600 PR 2 (D3) — one distinct ask, in words; the lifetime unit: when `auto` chose it, what it
- * read (`; auto: <evidence>`, the start line's words); issue #898: then where its prices came from
- * (`; <prices text>`, from core's view — `not_recorded` included), by the lifetime asked and (#896
- * unit B) the entry's provider, whose fallback window it names.
+ * read (`; auto: <evidence>`); issue #898: then where its prices came from (`; <prices text>`, from
+ * core's view), by the lifetime asked and (#896 unit B) the entry's provider, whose fallback window
+ * it names.
  */
 function askEntryText(entry: CacheRequestedEntry): string {
   const autoFor = (asked: number | 'off'): string =>

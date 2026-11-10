@@ -33,7 +33,7 @@ describe('#896 unit A — the docs sentences', () => {
     // The ask, the lifetime and off: checks 1, 5; the start line's words: check 10.
     claim(
       AGENT_REF,
-      "On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (`short` and `long` alike); on a drive realm listen starts, `auto` chooses between that and no caching, as for Anthropic, and without usable prices asks for 30 minutes when a recent gap is under 27 minutes; `off` turns OpenAI's caching off (added after version 0.48.0).",
+      "On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (`short` and `long` alike); `auto` chooses between that and no caching per step, as for Anthropic, and without usable prices asks for 30 minutes when a recent gap is under 27 minutes; `off` turns OpenAI's caching off (added after version 0.48.0).",
     );
     claim(
       AGENT_REF,
@@ -45,11 +45,11 @@ describe('#896 unit A — the docs sentences', () => {
     // Check 10 (listen's openai value in the set, off and not off); checks 1 and 5 (the request).
     claim(
       LISTEN_REF,
-      "On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes (under `auto`, 30 minutes or no caching for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; without usable prices, 30 minutes when a recent gap is under 27 minutes), and `off` turns OpenAI's caching off (added after version 0.48.0).",
+      "On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes (under `auto`, 30 minutes or no caching for each step without tools, by that step's own earlier runs and the prices in runner.cache.economics; without usable prices, 30 minutes when a recent gap is under 27 minutes), and `off` turns OpenAI's caching off (added after version 0.48.0).",
     );
     claim(
       LISTEN_REF,
-      'When `--model` is GPT-5.6 or later and the endpoint is OpenAI\'s own, the openai value reads `"auto: off or 30 minutes for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; a cache key, except on a step without tools when off"` under `auto` or no setting, `"30 minutes, the one lifetime Realm can ask OpenAI for, and a cache key"` with `short` or `long`, and `"off: OpenAI is asked to cache nothing"` with off (added after version 0.48.0).',
+      'When `--model` is GPT-5.6 or later and the endpoint is OpenAI\'s own, the openai value reads `"auto: off or 30 minutes for each step without tools, by that step\'s own earlier runs and the prices in runner.cache.economics; a cache key, except on a step without tools when off"` under `auto` or no setting, `"30 minutes, the one lifetime Realm can ask OpenAI for, and a cache key"` with `short` or `long`, and `"off: OpenAI is asked to cache nothing"` with off (added after version 0.48.0).',
     );
   });
 

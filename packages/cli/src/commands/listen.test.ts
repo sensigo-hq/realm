@@ -1500,7 +1500,7 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
       line(undefined, undefined, 'default', 'gpt-4o'),
       line(undefined, 'short', 'default', 'gpt-4o'),
     ]).toEqual([
-      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics","set_by":"realm listen\'s default","openai":"sends a cache key on OpenAI\'s own endpoint"}',
+      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each step without tools, by that step\'s own earlier runs and the prices in runner.cache.economics; 5 minutes for a step that calls tools","set_by":"realm listen\'s default","openai":"sends a cache key on OpenAI\'s own endpoint"}',
       'listen: caching {"anthropic":"5 minutes","set_by":"--prompt-cache short","openai":"sends a cache key on OpenAI\'s own endpoint"}',
     ]);
   });
@@ -1513,8 +1513,8 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
         line('anthropic', w as never, 'default', 'claude-sonnet-4-6'),
       ),
     ).toEqual([
-      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics","set_by":"realm listen\'s default"}',
-      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics","set_by":"--prompt-cache auto"}',
+      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each step without tools, by that step\'s own earlier runs and the prices in runner.cache.economics; 5 minutes for a step that calls tools","set_by":"realm listen\'s default"}',
+      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each step without tools, by that step\'s own earlier runs and the prices in runner.cache.economics; 5 minutes for a step that calls tools","set_by":"--prompt-cache auto"}',
       'listen: caching {"anthropic":"5 minutes","set_by":"--prompt-cache short"}',
       'listen: caching {"anthropic":"1 hour","set_by":"--prompt-cache long"}',
       'listen: caching {"anthropic":"off","set_by":"--prompt-cache off"}',
@@ -1570,227 +1570,36 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
   });
 });
 
-// ── issue #600 (the lifetime unit), cell 10: listen measures the gaps between each workflow's
-// triggers and passes them to the agent it starts as `--cache-gaps`. The clock is injected (a queue
-// of monotonic milliseconds); the spawn is the file's mock, which follows the folder, so a missing
-// folder makes a start that fails. Beside each cell: (a) the change that turns it red; (b) it prints
-// the argvs (run ids, models and numbers only).
-describe("issue #600 (the lifetime unit) — listen measures each workflow's trigger gaps", () => {
-  /** A clock that returns the given monotonic times, one per call. */
-  const clock = (...ms: number[]) => {
-    const queue = [...ms];
-    return () => {
-      const next = queue.shift();
-      if (next === undefined) throw new Error('clock: no time left in the queue');
-      return next;
-    };
-  };
-  /** The argv each spawn was given, without the binary. */
-  const argvs = () =>
-    spawnMock.mock.calls.map((c) => (c as unknown as [string, string[]])[1].slice(1));
-  /** The `--cache-gaps` value of one argv, or `none`. */
-  const gapsOf = (argv: string[]) => {
-    const at = argv.indexOf('--cache-gaps');
-    return at === -1 ? 'none' : argv[at + 1];
-  };
-
-  // (a) red when the spawner passes no gaps, passes them in another order or unit, or passes a
-  // gap on the first trigger; (b) prints each spawn's gaps.
-  it('three triggers of one workflow at 0, 420 s and 1 140 s → none, then 420, then 420,720', async () => {
+// ── issue #600 (the lifetime unit), cell 10, until caching 3-M D-3: listen measured the gaps
+// between each workflow's triggers and passed them to the agent it started as `--cache-gaps`. Since
+// D-3 each agent's `auto` reads its steps' own earlier runs, and listen passes no gaps. The spawn is
+// the file's mock. Beside each cell: (a) the change that turns it red; (b) it prints the argvs (run
+// ids, models and flags only).
+describe('issue #600 (the lifetime unit) — listen passes no gaps; the help', () => {
+  // Caching 3-M D-3, check 4. Real case: the same webhook fires twice, 7 minutes apart; before D-3
+  // the second agent was started with `--cache-gaps 420`. (a) red when listen still measures and
+  // passes the gaps (the second argv carries `--cache-gaps`); (b) prints both argvs.
+  it('D-3 check 4: a second trigger of one workflow starts its agent with no --cache-gaps', async () => {
     spawnMock.mockClear();
-    const spawn = makeAgentSpawner(
-      { model: 'm-600' },
-      silentLogger,
-      undefined,
-      clock(0, 420_000, 1_140_000),
-    );
+    const spawn = makeAgentSpawner({ model: 'm-600', promptCache: 'auto' }, silentLogger);
     const folder = existingFolder();
-    const results = [
-      await spawn('run-1', folder, 'wf-a'),
-      await spawn('run-2', folder, 'wf-a'),
-      await spawn('run-3', folder, 'wf-a'),
-    ];
-    expect({ results, gaps: argvs().map(gapsOf) }).toEqual({
-      results: [{ pid: 4242 }, { pid: 4242 }, { pid: 4242 }],
-      gaps: ['none', '420', '420,720'],
-    });
-    expect(argvs()[2]).toEqual([
-      'agent',
-      '--run-id',
-      'run-3',
-      '--model',
-      'm-600',
-      '--cache-gaps',
-      '420,720',
-      '--spawned-by-listen',
-      '--no-release-line-advisory',
-    ]);
-  });
-
-  // (a) red when the history is keyed by the folder (the two workflows share one folder here); (b)
-  // prints each spawn's gaps.
-  it("two workflows in one folder: each workflow's gaps are its own", async () => {
-    spawnMock.mockClear();
-    const spawn = makeAgentSpawner(
-      { model: 'm-600' },
-      silentLogger,
-      undefined,
-      clock(0, 100_000, 420_000, 1_000_000),
-    );
-    const folder = existingFolder();
-    await spawn('run-a1', folder, 'wf-a');
-    await spawn('run-b1', folder, 'wf-b');
-    await spawn('run-a2', folder, 'wf-a');
-    await spawn('run-b2', folder, 'wf-b');
-    expect(argvs().map(gapsOf)).toEqual(['none', 'none', '420', '900']);
-  });
-
-  // (a) red when a start that failed keeps its time (the third gap would read 600, from the
-  // failed start); (b) prints each spawn's result kind and gaps.
-  it('a start that fails adds no gap for the next', async () => {
-    spawnMock.mockClear();
-    const spawn = makeAgentSpawner(
-      { model: 'm-600' },
-      silentLogger,
-      undefined,
-      clock(0, 300_000, 900_000),
-    );
-    const results = [
-      await spawn('run-1', existingFolder(), 'wf-a'),
-      await spawn('run-2', missingFolder(), 'wf-a'),
-      await spawn('run-3', existingFolder(), 'wf-a'),
-    ];
-    expect({
-      results: results.map((r) => ('error' in r ? 'error' : 'pid')),
-      gaps: argvs().map(gapsOf),
-    }).toEqual({ results: ['pid', 'error', 'pid'], gaps: ['none', '300', '900'] });
-  });
-
-  // (a) red when a gap is not capped at 7 days; (b) prints the gaps.
-  it('a 30-day gap is passed as 604800 (7 days)', async () => {
-    spawnMock.mockClear();
-    const spawn = makeAgentSpawner(
-      { model: 'm-600' },
-      silentLogger,
-      undefined,
-      clock(0, 30 * 86_400_000),
-    );
-    const folder = existingFolder();
-    await spawn('run-1', folder, 'wf-a');
-    await spawn('run-2', folder, 'wf-a');
-    expect(argvs().map(gapsOf)).toEqual(['none', '604800']);
-  });
-
-  // (a) red when more than the last five gaps are passed, or a gap is not rounded to whole seconds;
-  // (b) prints the last spawn's gaps.
-  it('seven triggers: the last five gaps, each rounded to whole seconds', async () => {
-    spawnMock.mockClear();
-    const spawn = makeAgentSpawner(
-      { model: 'm-600' },
-      silentLogger,
-      undefined,
-      clock(0, 1_000, 3_000, 6_000, 10_000, 15_000, 21_600),
-    );
-    const folder = existingFolder();
-    for (let i = 1; i <= 7; i++) await spawn(`run-${i}`, folder, 'wf-a');
-    expect(gapsOf(argvs()[6]!)).toBe('2,3,4,5,7');
-  });
-
-  // (a) red when the spawner measures regardless of the setting (a stated short, long or off would
-  // carry gaps), or a stated auto does not measure; (b) prints each spawn's `--prompt-cache` and
-  // gaps.
-  it('a stated short, long or off passes no gaps; a stated auto measures', async () => {
-    const run = async (promptCache: 'auto' | 'short' | 'long' | 'off') => {
-      spawnMock.mockClear();
-      const spawn = makeAgentSpawner(
-        { model: 'm-600', promptCache },
-        silentLogger,
-        undefined,
-        clock(0, 420_000, 1_140_000),
-      );
-      const folder = existingFolder();
-      for (const id of ['run-1', 'run-2', 'run-3']) await spawn(id, folder, 'wf-a');
-      return argvs().map((a) => `${a[a.indexOf('--prompt-cache') + 1]} ${gapsOf(a)}`);
-    };
-    expect({
-      auto: await run('auto'),
-      short: await run('short'),
-      long: await run('long'),
-      off: await run('off'),
-    }).toEqual({
-      auto: ['auto none', 'auto 420', 'auto 420,720'],
-      short: ['short none', 'short none', 'short none'],
-      long: ['long none', 'long none', 'long none'],
-      off: ['off none', 'off none', 'off none'],
-    });
-  });
-
-  // (a) red when the handler does not pass the workflow id; (b) prints the call's arguments.
-  it("the handler's call passes the workflow id", async () => {
-    const trigger: WebhookTrigger = {
-      ...SHARED_SECRET_TRIGGER,
-      params_map: { ticket_id: 'body.id' },
-    };
-    const deps = makeDeps();
-    const handler = makeListenHandler(routesFor(wf(trigger)), deps);
-    const { status, body } = await invoke(handler, {
-      url: '/wf',
-      headers: { ...JSON_CT, authorization: SECRET },
-      body: JSON.stringify({ id: 'ticket-600' }),
-    });
-    expect(status).toBe(202);
-    expect(deps.spawnAgent.mock.calls).toEqual([[body['run_id'], '/tmp/wf', 'gorgias-wf']]);
-  });
-
-  // (a) red when `buildAgentArgv` drops the gaps, places them elsewhere, or passes an empty list;
-  // (b) prints the argvs.
-  it('buildAgentArgv: --cache-gaps after --prompt-cache, only when there are gaps', () => {
-    expect([
-      buildAgentArgv('run-5', {
-        model: 'm-600',
-        llmTimeoutSeconds: 30,
-        promptCache: 'auto',
-        cacheGaps: [420, 720],
-      }),
-      buildAgentArgv('run-6', { model: 'm-600', cacheGaps: [7200] }),
-      buildAgentArgv('run-7', { model: 'm-600', cacheGaps: [] }),
-    ]).toEqual([
-      [
+    await spawn('run-1', folder);
+    await spawn('run-2', folder);
+    const argvs = spawnMock.mock.calls.map((c) => (c as unknown as [string, string[]])[1].slice(1));
+    expect({ argvs, gaps: argvs.map((a) => a.includes('--cache-gaps')) }).toEqual({
+      argvs: [1, 2].map((n) => [
         'agent',
         '--run-id',
-        'run-5',
+        `run-${String(n)}`,
         '--model',
         'm-600',
-        '--llm-timeout',
-        '30',
         '--prompt-cache',
         'auto',
-        '--cache-gaps',
-        '420,720',
         '--spawned-by-listen',
         '--no-release-line-advisory',
-      ],
-      [
-        'agent',
-        '--run-id',
-        'run-6',
-        '--model',
-        'm-600',
-        '--cache-gaps',
-        '7200',
-        '--spawned-by-listen',
-        '--no-release-line-advisory',
-      ],
-      [
-        'agent',
-        '--run-id',
-        'run-7',
-        '--model',
-        'm-600',
-        '--spawned-by-listen',
-        '--no-release-line-advisory',
-      ],
-    ]);
+      ]),
+      gaps: [false, false],
+    });
   });
 
   // Cell 12; #898 S11. (a) red when the option's description differs from B4's words, or (#898) it
@@ -1812,7 +1621,7 @@ describe("issue #600 (the lifetime unit) — listen measures each workflow's tri
 
   it("the help: listen's --prompt-cache description", () => {
     expect(listenCommand.options.find((o) => o.long === '--prompt-cache')?.description).toBe(
-      "Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: 1 hour when a recent gap is under 54 minutes, else off). short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes (under `auto`, 30 minutes or no caching for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; without usable prices, 30 minutes when a recent gap is under 27 minutes), and `off` turns OpenAI's caching off. Other providers' own caching applies.",
+      "Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour for each step without tools, by that step's own earlier runs, priced from runner.cache.economics (with no usable prices: 1 hour when a recent gap is under 54 minutes, else off); a step that calls tools asks for 5 minutes. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes (under `auto`, 30 minutes or no caching for each step without tools, by that step's own earlier runs and the prices in runner.cache.economics; without usable prices, 30 minutes when a recent gap is under 27 minutes), and `off` turns OpenAI's caching off. Other providers' own caching applies.",
     );
   });
 });

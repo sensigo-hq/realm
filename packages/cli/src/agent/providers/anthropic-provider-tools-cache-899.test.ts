@@ -156,15 +156,9 @@ async function sixMainTurns(setting: Setting): Promise<void> {
 }
 
 /** Two tool calls use up the budget of 2, then the final extraction answers with the submit tool. */
-/** #898: a provider whose `auto` choice is pending (gaps given) is settled at today's Anthropic
- *  ratios, which choose as the shipped multiples did; its records gain `prices`. */
+/** The provider for a setting (caching 3-M D-3: an `auto` one is never pending). */
 function built(setting: Setting): AnthropicProvider {
-  const provider = new AnthropicProvider('claude-x', setting);
-  if (provider.isAutoChoicePending())
-    provider.settleAutoChoice({
-      rates: { input: 3, output: 15, cache_read: 0.3, cache_write_5m: 3.75, cache_write_1h: 6 },
-    });
-  return provider;
+  return new AnthropicProvider('claude-x', setting);
 }
 
 async function budgetUsedUp(setting: Setting) {
@@ -365,13 +359,13 @@ describe('#899 — what each request of the tool loop records', () => {
   for (const [name, setting, keys] of [
     ['long, stated by realm agent', stated('long'), ASK_KEYS.filter((k) => k !== 'cache_auto')],
     [
-      'auto with gaps, realm listen',
+      'auto, realm listen',
       {
         promptCache: {
           value: 'auto',
           source: 'runner_default',
           by: 'realm listen',
-          auto: { basis: 'listen_trigger_gaps', gaps_s: [420] },
+          auto: { basis: 'no_measurement' },
         },
       } as Setting,
       ASK_KEYS,

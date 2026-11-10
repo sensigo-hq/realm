@@ -1,6 +1,9 @@
 // auto-prices-898.test.ts — issue #898 S9: `realm agent` end to end. The built CLI drives a listen-
-// shaped run (`--run-id … --spawned-by-listen --cache-gaps …`) against the in-test Anthropic stand-in
-// (local, records each request body), in a scratch HOME, with a fixture `realm.yaml` and price file.
+// shaped run (`--run-id … --spawned-by-listen`) against the in-test Anthropic stand-in (local,
+// records each request body), in a scratch HOME, with a fixture `realm.yaml` and price file. Caching
+// 3-M D-3: (a)–(d) went with `realm listen`'s measured gaps; what the price file decides, its one
+// read, its warning and the fallback's words are now held by `agent-auto-per-step-3m.test.ts` (D-2's
+// checks 3 and 12, D-2r's check 2).
 // The child runs with `NODE_OPTIONS=--import <hook>`, where the hook appends every path passed to an
 // fs read to a log, so a cell can count the reads of the price file. Beside each: (a) the change that
 // turns it red; (b) what it prints when it fails — the stub's recorded `cache_control` fields only,
@@ -178,108 +181,7 @@ async function drive(
   };
 }
 
-const FIX =
-  "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for";
-const LISTEN_DEFAULT = "realm listen's default; change it with realm listen --prompt-cache";
-
 describe('#898 S9 — realm agent end to end: the price file decides what auto asks for', () => {
-  // (a) red when the settle runs before the load (no path yet: no_file, 1 hour), or the file's rates
-  //     are not read; (b) prints the stub's cache_control fields, the record's cache_auto, the start
-  //     line and the count of price-file reads. Caching 3-M (D-2): the request follows its step,
-  //     which has no earlier run, so it asks the listen prior; the start line is the drive's (D-3).
-  it('(a) gaps 10,10,10,7200,7200 with a full price file → the start line says 5 minutes, priced from the file read once; the step with no earlier run asks 1 hour', async () => {
-    const d = await deployment('a', { realmYaml: NAMES_PRICES, prices: PRICES_FULL });
-    const r = await drive('a', d, [
-      '--run-id',
-      d.runId,
-      '--model',
-      'claude-x',
-      '--spawned-by-listen',
-      '--cache-gaps',
-      '10,10,10,7200,7200',
-    ]);
-    expect(r).toEqual({
-      code: 0,
-      startLine: `${FIX} 5 minutes (auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours; priced from your price file; ${LISTEN_DEFAULT}).`,
-      warning: undefined,
-      cacheControl: [[{ type: 'ephemeral', ttl: '1h' }]],
-      cacheAuto: { basis: 'step_gaps', gaps_s: [] },
-      priceFileReads: 1,
-    });
-  }, 60_000);
-
-  // (a) red when the fallback ignores the missing file, or the file is read though not named; (b)
-  //     as (a). Together with (a): the file changes what is sent (5 minutes there, 1 hour here).
-  it('(b) the same gaps with no runner.cache.economics → the start line says 1 hour without prices; the price file on disk is never read; the step asks 1 hour', async () => {
-    const d = await deployment('b', { realmYaml: 'version: 1\n', prices: PRICES_FULL });
-    const r = await drive('b', d, [
-      '--run-id',
-      d.runId,
-      '--model',
-      'claude-x',
-      '--spawned-by-listen',
-      '--cache-gaps',
-      '10,10,10,7200,7200',
-    ]);
-    expect(r).toEqual({
-      code: 0,
-      startLine: `${FIX} 1 hour (auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours; no price file (runner.cache.economics is not set), so 1 hour without prices; ${LISTEN_DEFAULT}).`,
-      warning: undefined,
-      cacheControl: [[{ type: 'ephemeral', ttl: '1h' }]],
-      cacheAuto: { basis: 'step_gaps', gaps_s: [] },
-      priceFileReads: 0,
-    });
-  }, 60_000);
-
-  // (a) red when the fallback's guard is dropped (the plain prior asks 1 hour); (b) as (a). Caching
-  //     3-M (D-2): the start line pins the drive's choice; the step, with no earlier run, asks 1 hour.
-  it('(c) gaps 7200,7200,7200 with no price file → the start line says no caching and why; the step asks 1 hour', async () => {
-    const d = await deployment('c', { prices: PRICES_FULL });
-    const r = await drive('c', d, [
-      '--run-id',
-      d.runId,
-      '--model',
-      'claude-x',
-      '--spawned-by-listen',
-      '--cache-gaps',
-      '7200,7200,7200',
-    ]);
-    expect(r).toEqual({
-      code: 0,
-      startLine: `Caching: off; Anthropic is asked to cache nothing (auto: the last 3 gaps between this workflow's triggers were about 2 hours, 2 hours and 2 hours; no price file (runner.cache.economics is not set), and no gap was under 54 minutes, so no caching; ${LISTEN_DEFAULT}).`,
-      warning: undefined,
-      cacheControl: [[{ type: 'ephemeral', ttl: '1h' }]],
-      cacheAuto: { basis: 'step_gaps', gaps_s: [] },
-      priceFileReads: 0,
-    });
-  }, 60_000);
-
-  // (a) red when an unreadable file stops the run, or its warning is lost; (b) as (a), with the
-  //     warning line.
-  it('(d) an unreadable price file → economics_unreadable, one stderr line naming the file, and the run goes on', async () => {
-    const d = await deployment('d', {
-      realmYaml: NAMES_PRICES,
-      prices: 'version: 1\n\tcurrency: USD\n',
-    });
-    const r = await drive('d', d, [
-      '--run-id',
-      d.runId,
-      '--model',
-      'claude-x',
-      '--spawned-by-listen',
-      '--cache-gaps',
-      '420,720',
-    ]);
-    expect(r).toEqual({
-      code: 0,
-      startLine: `${FIX} 1 hour (auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes; the price file is not a valid price file, so 1 hour without prices; ${LISTEN_DEFAULT}).`,
-      warning: `  ⚠ the price file could not be used: '${d.pricesPath}' (line 2, column 1): tab characters must not be used in indentation. auto chose without prices.`,
-      cacheControl: [[{ type: 'ephemeral', ttl: '1h' }]],
-      cacheAuto: { basis: 'step_gaps', gaps_s: [] },
-      priceFileReads: 1,
-    });
-  }, 60_000);
-
   // (a) red when the file is read unconditionally; (b) prints the read count and cache_auto.
   it('(e) a lone realm agent drive (no gaps) never opens the price file, and its cache_auto has no prices (its step has no earlier run)', async () => {
     const d = await deployment('e', { realmYaml: NAMES_PRICES, prices: PRICES_FULL });
@@ -292,7 +194,7 @@ describe('#898 S9 — realm agent end to end: the price file decides what auto a
   }, 60_000);
 
   // (a) red when the file is read unconditionally; (b) prints the read count.
-  it('(f) --provider openai with --prompt-cache auto and gaps never opens the price file', async () => {
+  it('(f) --provider openai with --prompt-cache auto never opens the price file', async () => {
     const d = await deployment('f', { realmYaml: NAMES_PRICES, prices: PRICES_FULL });
     const r = await drive('f', d, [
       '--run-id',
@@ -304,19 +206,18 @@ describe('#898 S9 — realm agent end to end: the price file decides what auto a
       '--prompt-cache',
       'auto',
       '--spawned-by-listen',
-      '--cache-gaps',
-      '420,720',
     ]);
     expect({ code: r.code, reads: r.priceFileReads }).toEqual({ code: 0, reads: 0 });
   }, 60_000);
 
-  // (a) red when a presence check reads a pending choice (the drive then throws before it starts),
-  //     or the C3b refusal stops firing; (b) prints the exit codes and the refusal's first words.
+  // (a) red when a stated auto on a listen-shaped drive stops it before it starts (until caching 3-M
+  //     D-3: a presence check that read a pending choice), or the C3b refusal stops firing; (b)
+  //     prints the exit codes and the refusal's first words.
   // caching 3-B (row 4): the C3b refusal is gone — OpenAI applies the setting (the cache key). The
   // OpenAI command now goes past the old refusal's place to reading its workflow (`none.yaml` is
   // not written, so it stops there). (a) red when the refusal is put back; (b) prints the codes and
   // stderr's first line.
-  it('(g) a stated auto on a listen-shaped drive with gaps passes both presence checks; an OpenAI drive given a setting is no longer refused', async () => {
+  it('(g) a stated auto on a listen-shaped drive completes; an OpenAI drive given a setting is no longer refused', async () => {
     const d = await deployment('g', { realmYaml: NAMES_PRICES, prices: PRICES_FULL });
     const stated = await drive('g', d, [
       '--run-id',
@@ -326,8 +227,6 @@ describe('#898 S9 — realm agent end to end: the price file decides what auto a
       '--prompt-cache',
       'auto',
       '--spawned-by-listen',
-      '--cache-gaps',
-      '420,720',
     ]);
     const refused = await new Promise<{ code: number | null; first: string }>((resolve) => {
       const child = spawn(

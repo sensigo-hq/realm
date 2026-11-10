@@ -557,7 +557,7 @@ const askedStep = {
           cache_ttl_sent: true,
           cache_requested_source: 'stated',
           cache_requested_by: 'realm listen',
-          cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+          cache_auto: { basis: 'step_gaps', gaps_s: [420, 720] },
           provider: 'anthropic',
           cache_creation_input_tokens: 75,
           cache_creation: { ephemeral_5m_input_tokens: 70, ephemeral_1h_input_tokens: 5 },
@@ -677,13 +677,8 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
                 by: 'realm listen',
                 // #896 unit B: the provider the request records.
                 provider: 'anthropic',
-                // #898: the fixture's record predates priced auto (gaps, no prices): the view
-                // says so.
-                auto: {
-                  basis: 'listen_trigger_gaps',
-                  gaps_s: [420, 720],
-                  prices: { from: 'not_recorded' },
-                },
+                // The fixture's record names no prices, so the view has none.
+                auto: { basis: 'step_gaps', gaps_s: [420, 720] },
               },
             ],
             reported: 1,
@@ -844,16 +839,11 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
       ttl_sent: { surface: 'rendered', probe: () => expect(entry.ttl_sent).toBe(true) },
       source: { surface: 'rendered', probe: () => expect(entry.source).toBe('stated') },
       by: { surface: 'rendered', probe: () => expect(entry.by).toBe('realm listen') },
-      // issue #600 (the lifetime unit): the evidence `auto` chose by, as data; #898: and where its
-      // prices came from — this fixture predates priced auto, so the view says not_recorded.
+      // issue #600 (the lifetime unit): the evidence `auto` chose by, as data (this fixture's record
+      // names no prices, so the view has none).
       auto: {
         surface: 'rendered',
-        probe: () =>
-          expect(entry.auto).toEqual({
-            basis: 'listen_trigger_gaps',
-            gaps_s: [420, 720],
-            prices: { from: 'not_recorded' },
-          }),
+        probe: () => expect(entry.auto).toEqual({ basis: 'step_gaps', gaps_s: [420, 720] }),
       },
       // caching 3-B (D2): the key, as data, on the split response's first ask.
       key_sent: {
@@ -1186,7 +1176,7 @@ const ENTRY_B = {
       cache_ttl_sent: true,
       cache_requested_source: 'stated',
       cache_requested_by: 'realm listen',
-      cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+      cache_auto: { basis: 'step_gaps', gaps_s: [420, 720] },
       provider: 'anthropic',
       cache_creation: { ephemeral_5m_input_tokens: 70, ephemeral_1h_input_tokens: 5 },
     },
@@ -1299,13 +1289,8 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
                 by: 'realm listen',
                 // #896 unit B: the provider the request records.
                 provider: 'anthropic',
-                // #898: the fixture's record predates priced auto (gaps, no prices): the view
-                // says so.
-                auto: {
-                  basis: 'listen_trigger_gaps',
-                  gaps_s: [420, 720],
-                  prices: { from: 'not_recorded' },
-                },
+                // The fixture's record names no prices, so the view has none.
+                auto: { basis: 'step_gaps', gaps_s: [420, 720] },
               },
             ],
             reported: 1,
@@ -1414,16 +1399,11 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
       ttl_sent: { surface: 'rendered', probe: () => expect(entry.ttl_sent).toBe(true) },
       source: { surface: 'rendered', probe: () => expect(entry.source).toBe('stated') },
       by: { surface: 'rendered', probe: () => expect(entry.by).toBe('realm listen') },
-      // issue #600 (the lifetime unit): the evidence `auto` chose by, as data; #898: and where its
-      // prices came from — this fixture predates priced auto, so the view says not_recorded.
+      // issue #600 (the lifetime unit): the evidence `auto` chose by, as data (this fixture's record
+      // names no prices, so the view has none).
       auto: {
         surface: 'rendered',
-        probe: () =>
-          expect(entry.auto).toEqual({
-            basis: 'listen_trigger_gaps',
-            gaps_s: [420, 720],
-            prices: { from: 'not_recorded' },
-          }),
+        probe: () => expect(entry.auto).toEqual({ basis: 'step_gaps', gaps_s: [420, 720] }),
       },
       // caching 3-B (D2): the key, as data, on the split response's failed drive.
       key_sent: {

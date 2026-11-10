@@ -27,9 +27,6 @@ import type {
   ExtensionRegistry,
   Attributed,
   PromptCacheSetting,
-  AutoPriceInput,
-  CacheAutoPrices,
-  CacheChoice,
 } from '@sensigo/realm';
 import {
   LlmProvider,
@@ -306,7 +303,7 @@ export const agentCommand = new Command('agent')
   .option(
     '--prompt-cache <setting>',
     // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
-    `What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under ${autoFallbackWindowText()}, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (\`short\` and \`long\` alike); on a drive realm listen starts, \`auto\` chooses between that and no caching, as for Anthropic, and without usable prices asks for 30 minutes when a recent gap is under 27 minutes; \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
+    `What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per step, from that step's own earlier runs in the last 7 days: off, short or long, priced from the runner's price file (runner.cache.economics); a step that calls tools asks for short. A step with no earlier run asks for short on a drive realm agent starts and long on a drive realm listen starts. With no usable prices, it asks for long when a recent gap is under ${autoFallbackWindowText()}, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (\`short\` and \`long\` alike); \`auto\` chooses between that and no caching per step, as for Anthropic, and without usable prices asks for 30 minutes when a recent gap is under 27 minutes; \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
     parsePromptCache,
   )
   // Caching 3-M (B2b): no Commander default — unstated means on where it can act, and stays unstated.
@@ -320,9 +317,8 @@ export const agentCommand = new Command('agent')
   // must not repeat the release-line advisory. Hidden because it is listen's, not an operator's.
   .addOption(new Option('--no-release-line-advisory').hideHelp())
   // issue #600 PR 2: listen's own, never an operator's. `realm listen` appends it to every child it
-  // spawns (buildAgentArgv), so the child's `auto` reads listen's measurement (its prior is the long
-  // lifetime), its runner is recorded as `realm listen`, and a setting it cannot apply is disclosed,
-  // not refused.
+  // spawns (buildAgentArgv), so a step with no earlier run asks for the long lifetime, its runner is
+  // recorded as `realm listen`, and a setting it cannot apply is disclosed, not refused.
   .addOption(new Option('--spawned-by-listen').hideHelp())
   // #729 PR-3 (L-1): this drive's output is a shared log — the broadcast audience, as under
   // listen: a run's values print as their shapes, secrets are hidden as on a log (a gate's
@@ -332,11 +328,6 @@ export const agentCommand = new Command('agent')
     '--log-mode',
     "Print as a shared log, as realm listen's drives do: a run's values print as their type and size, and one line per run counts what was hidden",
   )
-  // issue #600 (the lifetime unit): listen's own too — the gaps between the recent triggers of the
-  // child's workflow, in whole seconds. No argParser: a refusal there would exit a listen child after
-  // listen already answered `202`, leaving the run undriven; `resolvePromptCache` reads it and never
-  // throws.
-  .addOption(new Option('--cache-gaps <seconds>').hideHelp())
   .action(
     async (opts: {
       workflow?: string;
@@ -357,7 +348,6 @@ export const agentCommand = new Command('agent')
       cacheDiagnostics?: CacheDiagnosticsSetting;
       spawnedByListen?: boolean;
       logMode?: boolean;
-      cacheGaps?: string;
       releaseLineAdvisory: boolean;
     }) => {
       // issue #625 (holder slice): this program's name, made once, before any other output. A name
@@ -383,21 +373,11 @@ export const agentCommand = new Command('agent')
         opts.runId !== undefined
           ? `If run ${opts.runId} exists, it was not changed.`
           : 'Nothing was started.';
-      // issue #600 (the lifetime unit): `--cache-gaps` is listen's measurement, passed only to the
-      // agents it starts; refused here, before anything is loaded, when an operator types it.
-      if (opts.cacheGaps !== undefined && opts.spawnedByListen !== true) {
-        console.error(
-          // eslint-disable-next-line no-restricted-syntax -- prose naming the program, not a command to copy (#729 PR-3, L-2).
-          `Error: --cache-gaps is set by realm listen for the agents it starts; it is not an operator's option. Remove it. ${tail}`,
-        );
-        process.exit(1);
-      }
       // issue #600 PR 2 (C1): the caching setting, resolved once — the provider is built with it
       // and the drive's start line names it.
       const promptCache = resolvePromptCache({
         flag: opts.promptCache,
         spawnedByListen: opts.spawnedByListen === true,
-        cacheGaps: opts.cacheGaps,
       });
       // issue #600 PR 2 (C3e): a stated setting the workflow has no step to apply to is refused
       // (an operator's `realm agent` only: listen's flag is fleet-wide and cannot be judged per
@@ -442,21 +422,13 @@ export const agentCommand = new Command('agent')
         const store = home.runStore;
         const traceBufferStore = home.traceBufferStore;
         let provider: LlmProvider;
-        // issue #898: an Anthropic provider whose `auto` choice is pending (a drive `realm listen`
-        // started, with measured gaps) — settled from the runner's price file after the load — and
-        // the requested `--model` the file is read by. #896 unit B: or an OpenAI provider on GPT-5.6
-        // and later at OpenAI's own address.
-        let settleAuto:
-          | ((prices: AutoPriceInput) => { choice: CacheChoice; prices?: CacheAutoPrices })
-          | undefined;
-        // Caching 3-M (D-2): under `auto`, the provider's rule for each step's choice.
+        // Caching 3-M (D-2): under `auto`, the provider's rule for each step's choice, and the
+        // requested `--model` the runner's price file is read by.
         let autoRule: AutoStepRule | undefined;
         let requestedModel: string | undefined;
-        // issue #898 (C.1): whether the provider applies --prompt-cache, never by reading a pending
-        // choice: a provider with one pending (Anthropic; #896 unit B: OpenAI on GPT-5.6 and later at
-        // OpenAI's own address) applies the setting.
-        const appliesPromptCache = (): boolean =>
-          settleAuto !== undefined || provider.capabilities().promptCache !== undefined;
+        // issue #898 (C.1): whether the provider applies --prompt-cache (no provider's `auto` choice
+        // is pending, caching 3-M D-3, so its capability can always be read).
+        const appliesPromptCache = (): boolean => provider.capabilities().promptCache !== undefined;
         // issue #313: a third-party provider cannot declare a `providerId` capability (realm
         // does not know its dialect), so its identity travels separately and evidence can still
         // name it. In-repo providers declare their own and this stays undefined.
@@ -530,7 +502,7 @@ export const agentCommand = new Command('agent')
                 'COMPAT endpoint enforces strict, and native OpenAI endpoints already do.',
             );
           }
-          ({ provider, settleAuto, autoRule } = await resolveProvider({
+          ({ provider, autoRule } = await resolveProvider({
             provider: opts.provider,
             model: opts.model,
             baseUrl: opts.baseUrl,
@@ -575,43 +547,29 @@ export const agentCommand = new Command('agent')
           providerAppliesPromptCache: appliesPromptCache(),
         });
         // issue #600 PR 2: the setting the provider was built with, for the start line. A
-        // `--provider-module` run has none: the module asks for what it asks. Issue #898 (C.4): when
-        // a settle ran, its `prices` join the setting's `auto` — the start line's only source for it.
-        const promptCacheFor = (
-          prices: CacheAutoPrices | undefined,
-        ): { promptCache?: typeof promptCache } =>
-          moduleProviderId !== undefined
-            ? {}
-            : {
-                promptCache:
-                  prices !== undefined && promptCache.auto !== undefined
-                    ? { ...promptCache, auto: { ...promptCache.auto, prices } }
-                    : promptCache,
-              };
-        // issue #898 (C.2): a pending `auto` choice is settled from the runner's price file, read once
-        // after the definition and `realm.yaml` load and before the drive. Caching 3-M (D-2): under
-        // `auto`, for a provider that takes a lifetime, the same one read also chooses each agent
-        // step's lifetime from its gaps in the earlier runs; nothing needing a price, no file is
-        // opened. A stated setting and any other provider choose nothing here.
+        // `--provider-module` run has none: the module asks for what it asks.
+        const promptCacheFor = (): { promptCache?: typeof promptCache } =>
+          moduleProviderId !== undefined ? {} : { promptCache };
+        // Caching 3-M (D-2): under `auto`, for a provider that takes a lifetime, each agent step's
+        // lifetime is chosen from its gaps in the earlier runs, beside the one read of the runner's
+        // price file (issue #898, after the definition and `realm.yaml` load and before the drive);
+        // nothing needing a price, no file is opened. A stated setting and any other provider choose
+        // nothing here.
         const chooseFromPriceFile = async (
           definition: WorkflowDefinition,
           earlier: { earlierRuns?: EarlierRuns },
           economicsPath: string | undefined,
-        ): Promise<{ autoPrices?: CacheAutoPrices; stepCacheChoices?: StepCacheChoices }> => {
+        ): Promise<{ stepCacheChoices?: StepCacheChoices }> => {
           if (autoRule === undefined || requestedModel === undefined) return {};
           const outcome = await chooseStepCaches({
             definition,
             earlierRuns: earlier.earlierRuns,
             rule: autoRule,
-            settleAuto,
             economicsPath,
             model: requestedModel,
           });
           if (outcome.warning !== undefined) console.error(outcome.warning);
-          return {
-            ...(outcome.prices !== undefined ? { autoPrices: outcome.prices } : {}),
-            stepCacheChoices: outcome.choices,
-          };
+          return { stepCacheChoices: outcome.choices };
         };
         // Caching 3-M (piece C2): the one read of the workflow's earlier runs, here because the
         // driver's store has no `scan`. No read when nothing can use it: a stated `off` asks for no
@@ -696,7 +654,7 @@ export const agentCommand = new Command('agent')
             extensionOpts,
           );
           const earlierRuns = await earlierRunsFor(definition, opts.runId);
-          const { autoPrices, stepCacheChoices } = await chooseFromPriceFile(
+          const { stepCacheChoices } = await chooseFromPriceFile(
             definition,
             earlierRuns,
             loaded.cacheEconomicsPath,
@@ -727,7 +685,7 @@ export const agentCommand = new Command('agent')
               schemaRetries: opts.schemaRetries,
               llmTimeoutSeconds: opts.llmTimeout,
               reattachFlags,
-              ...promptCacheFor(autoPrices),
+              ...promptCacheFor(),
               ...earlierRuns,
               ...(stepCacheChoices !== undefined ? { stepCacheChoices } : {}),
               ...(gateHandler ? { gateHandler } : {}),
@@ -782,7 +740,7 @@ export const agentCommand = new Command('agent')
             process.exit(1);
           }
           const earlierRuns = await earlierRunsFor(definition, undefined);
-          const { autoPrices, stepCacheChoices } = await chooseFromPriceFile(
+          const { stepCacheChoices } = await chooseFromPriceFile(
             definition,
             earlierRuns,
             loaded.cacheEconomicsPath,
@@ -813,7 +771,7 @@ export const agentCommand = new Command('agent')
               schemaRetries: opts.schemaRetries,
               llmTimeoutSeconds: opts.llmTimeout,
               reattachFlags,
-              ...promptCacheFor(autoPrices),
+              ...promptCacheFor(),
               ...earlierRuns,
               ...(stepCacheChoices !== undefined ? { stepCacheChoices } : {}),
               ...(gateHandler ? { gateHandler } : {}),

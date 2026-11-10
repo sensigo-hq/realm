@@ -48,8 +48,6 @@ import {
   type CacheDiagnosticsSetting,
 } from '../agent/prompt-cache.js';
 import {
-  AUTO_GAPS_KEPT,
-  CACHE_GAP_MAX_S,
   type PromptCacheSetting,
   type RequestEndpoint,
   loadWorkflowFromFile,
@@ -133,9 +131,7 @@ export interface ListenDeps {
   dedupStoreFor: (workflowId: string) => DedupStore;
   // issue #744: settles once Node has said whether the agent started (`'spawn'`) or not
   // (`'error'`, which for a missing or unenterable folder comes on the next tick, not as a throw).
-  // issue #600 (the lifetime unit): the workflow id keys the spawner's trigger gaps; optional, so a
-  // double that ignores it still fits.
-  spawnAgent: (runId: string, cwd: string, workflowId?: string) => Promise<SpawnResult>;
+  spawnAgent: (runId: string, cwd: string) => Promise<SpawnResult>;
   logger: Logger;
 }
 
@@ -751,7 +747,7 @@ export function makeListenHandler(
       // `try`, so a start Node refuses later, or a rejection, takes the same path.
       let spawnResult: SpawnResult;
       try {
-        spawnResult = await deps.spawnAgent(run.id, entry.workflowDir, entry.definition.id);
+        spawnResult = await deps.spawnAgent(run.id, entry.workflowDir);
       } catch (err) {
         spawnResult = { error: err instanceof Error ? err : new Error(String(err)) };
       }
@@ -1360,11 +1356,6 @@ export type AgentArgvOptions = {
   promptCache?: PromptCacheSetting;
   /** Caching 3-M (B2b): listen's `--cache-diagnostics`, only when the operator stated it. */
   cacheDiagnostics?: CacheDiagnosticsSetting;
-  /**
-   * Issue #600 (the lifetime unit): the gaps, in whole seconds, between the recent triggers of the
-   * child's workflow, when `auto` measures and at least one exists.
-   */
-  cacheGaps?: readonly number[];
 };
 
 /**
@@ -1383,11 +1374,11 @@ export type AgentArgvOptions = {
  * ceiling naming `--llm-timeout` as the lever.
  *
  * CACHING (issue #600): a stated `--prompt-cache` is passed on as given; unstated, nothing is
- * passed and the child uses `auto`. `--cache-gaps` (the lifetime unit) follows it when listen
- * measured at least one gap between the workflow's recent triggers — `auto` reads them; never when
- * empty. `--spawned-by-listen` is always passed, so the child knows listen started it: its `auto`
- * reads listen's measurement (its prior is the long lifetime), its runner is recorded as `realm
- * listen`, and a setting its provider cannot apply is disclosed on its start line, never refused.
+ * passed and the child uses `auto`, which chooses for each step from that step's own earlier runs
+ * (caching 3-M D-3: listen measures nothing). `--spawned-by-listen` is always passed, so the child
+ * knows listen started it: a step with no earlier run asks for the long lifetime, its runner is
+ * recorded as `realm listen`, and a setting its provider cannot apply is disclosed on its start line,
+ * never refused.
  */
 export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] {
   const argv = ['agent', '--run-id', runId];
@@ -1399,9 +1390,6 @@ export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] 
   if (opts.promptCache !== undefined) argv.push('--prompt-cache', opts.promptCache);
   if (opts.cacheDiagnostics !== undefined) {
     argv.push('--cache-diagnostics', opts.cacheDiagnostics);
-  }
-  if (opts.cacheGaps !== undefined && opts.cacheGaps.length > 0) {
-    argv.push('--cache-gaps', opts.cacheGaps.join(','));
   }
   argv.push('--spawned-by-listen');
   // issue #620 PR-C: listen tells the operator once at startup; a child per webhook would repeat it.
@@ -1473,13 +1461,8 @@ export function defaultSpawnAgent(
  * unchanged — the value is closed over here rather than threaded through it.
  * issue #676: and the model (always) and the provider (when given), the same way.
  * issue #744: an error the agent process reports after it started is logged, never fatal.
- * issue #600 PR 2: and a stated `--prompt-cache`, the same way.
- * issue #600 (the lifetime unit): under `auto` (unstated or stated), the spawner measures. It keeps,
- * per workflow id (else per folder), the start times of its last `AUTO_GAPS_KEPT + 1` spawns on a
- * monotonic clock (`monotonicMs`; listen's own clock is the wall clock); synchronously on entry it
- * computes the gaps between them and now (whole seconds, clamped to `[0, CACHE_GAP_MAX_S]`, the last
- * `AUTO_GAPS_KEPT`), records now, and passes the gaps as `--cache-gaps`; a spawn that fails removes
- * the start it recorded. Under any other setting it keeps nothing and passes no gaps.
+ * issue #600 PR 2: and a stated `--prompt-cache`, the same way. Caching 3-M D-3: it measures
+ * nothing; each agent's `auto` reads its steps' own earlier runs.
  */
 export function makeAgentSpawner(
   listenOpts: {
@@ -1491,8 +1474,7 @@ export function makeAgentSpawner(
   },
   logger: Logger,
   spawnFn: typeof nodeSpawn = nodeSpawn,
-  monotonicMs: () => number = () => performance.now(),
-): (runId: string, cwd: string, workflowId?: string) => Promise<SpawnResult> {
+): (runId: string, cwd: string) => Promise<SpawnResult> {
   const agentOpts: AgentArgvOptions = {
     model: listenOpts.model,
     ...(listenOpts.provider !== undefined ? { provider: listenOpts.provider } : {}),
@@ -1502,45 +1484,22 @@ export function makeAgentSpawner(
       ? { cacheDiagnostics: listenOpts.cacheDiagnostics }
       : {}),
   };
-  const measures = listenOpts.promptCache === undefined || listenOpts.promptCache === 'auto';
-  const starts = new Map<string, number[]>();
-  const spawn = (runId: string, cwd: string, opts: AgentArgvOptions): Promise<SpawnResult> =>
+  return (runId, cwd) =>
     defaultSpawnAgent(
       runId,
       cwd,
-      opts,
+      agentOpts,
       (err) =>
         logger.error('webhook: agent process error', { run_id: runId, cwd, error: String(err) }),
       spawnFn,
     );
-  return (runId, cwd, workflowId) => {
-    if (!measures) return spawn(runId, cwd, agentOpts);
-    const key = workflowId ?? cwd;
-    const now = monotonicMs();
-    const times = [...(starts.get(key) ?? []), now];
-    const gaps = times
-      .slice(1)
-      .map((t, i) => Math.min(CACHE_GAP_MAX_S, Math.max(0, Math.round((t - times[i]!) / 1000))))
-      .slice(-AUTO_GAPS_KEPT);
-    starts.set(key, times.slice(-(AUTO_GAPS_KEPT + 1)));
-    return spawn(runId, cwd, gaps.length > 0 ? { ...agentOpts, cacheGaps: gaps } : agentOpts).then(
-      (result) => {
-        if ('error' in result) {
-          const kept = starts.get(key) ?? [];
-          const at = kept.lastIndexOf(now);
-          if (at !== -1) kept.splice(at, 1);
-        }
-        return result;
-      },
-    );
-  };
 }
 
 /**
  * Issue #600 (D2; the lifetime unit) — what listen's startup line says each provider is asked to
  * cache. A child that uses Anthropic asks for the stated setting, or listen's default, `auto` (off,
- * 5 minutes or 1 hour per workflow, by the gaps between its recent triggers and the prices in the
- * runner's price file — #898); caching 3-B: a child that uses OpenAI sends a cache key (a hint;
+ * 5 minutes or 1 hour for each step without tools, by that step's own earlier runs and the prices in
+ * the runner's price file — #898, caching 3-M D-3; 5 minutes for a step that calls tools); caching 3-B: a child that uses OpenAI sends a cache key (a hint;
  * OpenAI caches by its own rules) as {@link openaiCachingWords} says, by the endpoint it will resolve
  * and the setting it is given. With `--provider`, only that provider's agents are started, so the
  * other is named only as `not used` (Anthropic) or not at all (OpenAI).
@@ -1561,7 +1520,7 @@ export function listenCachingFacts(
     };
   }
   const words: Record<PromptCacheSetting, string> = {
-    auto: 'auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics',
+    auto: "auto: off, 5 minutes or 1 hour for each step without tools, by that step's own earlier runs and the prices in runner.cache.economics; 5 minutes for a step that calls tools",
     short: '5 minutes',
     long: '1 hour',
     off: 'off',
@@ -1581,7 +1540,7 @@ export function listenCachingFacts(
  * OpenAI's own endpoint the key goes out under every setting but `off`; on a custom endpoint only
  * for a stated setting other than `off`. #896: on GPT-5.6 and later at OpenAI's own address, the
  * agent also asks for 30 minutes, or for nothing under `off`; unit B: under `auto` (or no setting),
- * for 30 minutes or nothing, by the gaps and the price file.
+ * for 30 minutes or nothing for each step without tools, by its own earlier runs and the price file.
  */
 function openaiCachingWords(
   promptCache: PromptCacheSetting | undefined,
@@ -1591,7 +1550,7 @@ function openaiCachingWords(
   if (endpoint === 'default' && openAiExplicitCacheModel(model)) {
     if (promptCache === 'off') return 'off: OpenAI is asked to cache nothing';
     return promptCache === undefined || promptCache === 'auto'
-      ? 'auto: off or 30 minutes for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; a cache key, except on a step without tools when off'
+      ? "auto: off or 30 minutes for each step without tools, by that step's own earlier runs and the prices in runner.cache.economics; a cache key, except on a step without tools when off"
       : '30 minutes, the one lifetime Realm can ask OpenAI for, and a cache key';
   }
   if (endpoint === 'custom') {
@@ -1719,7 +1678,7 @@ export const listenCommand = new Command('listen')
   .option(
     '--prompt-cache <setting>',
     // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
-    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes (under \`auto\`, 30 minutes or no caching for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; without usable prices, 30 minutes when a recent gap is under 27 minutes), and \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
+    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour for each step without tools, by that step's own earlier runs, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off); a step that calls tools asks for 5 minutes. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes (under \`auto\`, 30 minutes or no caching for each step without tools, by that step's own earlier runs and the prices in runner.cache.economics; without usable prices, 30 minutes when a recent gap is under 27 minutes), and \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
     parsePromptCache,
   )
   // Caching 3-M (B2b): passed on only when stated, so an unstated flag leaves each child's argv as it was.

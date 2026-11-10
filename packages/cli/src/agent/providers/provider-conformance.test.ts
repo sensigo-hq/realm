@@ -223,7 +223,7 @@ describe('provider conformance — promptCache is a promise about the wire (issu
   // G6. (a) red when the capability declares a lifetime while the request is built without it
   // (the constructor's value ignored); (b) prints, per provider and setting, the declaration and
   // whether the single-shot request carried the marker.
-  it("G6 — capabilities().promptCache !== 'off' iff the single-shot request carries cache_control", async () => {
+  it("G6 — with no call option, capabilities().promptCache !== 'off' iff the single-shot request carries cache_control", async () => {
     const { AnthropicProvider } = await import('./anthropic-provider.js');
     const { OpenAIProvider } = await import('./openai-provider.js');
     const { OpenAIReasoningProvider } = await import('./openai-reasoning-provider.js');
@@ -236,33 +236,7 @@ describe('provider conformance — promptCache is a promise about the wire (issu
           }),
         sent: () => anthropicCreate.mock.calls[0]![0],
       })),
-      // The lifetime unit: `auto` keeps the promise for what it chose — off, and a lifetime.
-      {
-        name: 'anthropic auto (chose off)',
-        // #898: gaps make the choice pending; settled at today's Anthropic ratios it is off, as
-        // the shipped multiples chose.
-        make: () => {
-          const p = new AnthropicProvider('claude-sonnet-4-5', {
-            promptCache: {
-              value: 'auto',
-              source: 'stated',
-              by: 'realm agent',
-              auto: { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] },
-            },
-          });
-          p.settleAutoChoice({
-            rates: {
-              input: 3,
-              output: 15,
-              cache_read: 0.3,
-              cache_write_5m: 3.75,
-              cache_write_1h: 6,
-            },
-          });
-          return p;
-        },
-        sent: () => anthropicCreate.mock.calls[0]![0],
-      },
+      // The lifetime unit: `auto` with no call option keeps the promise for its prior.
       {
         name: 'anthropic auto (chose short)',
         make: () =>

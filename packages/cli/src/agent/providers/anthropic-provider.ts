@@ -4,7 +4,6 @@ import {
   WorkflowError,
   validateAgentSubmission,
   chooseAutoLifetime,
-  keptCacheGaps,
   normalizeCacheAuto,
   normalizeResponseId,
   type AutoPriceInput,
@@ -110,10 +109,6 @@ export const ANTHROPIC_CACHE_TIERS: {
   short: { lifetime_s: 300 },
   long: { lifetime_s: 3600 },
 };
-
-/** Issue #898 — thrown when a request or `capabilities()` reads an `auto` choice not yet settled. */
-const AUTO_CHOICE_PENDING =
-  'AnthropicProvider: the auto cache choice is not settled; call settleAutoChoice first';
 
 /**
  * Issue #899 — the one `cache_control` shape a request's markers carry: `short` sends no `ttl` (the
@@ -658,27 +653,22 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     auto?: CacheAuto;
   };
   /**
-   * Issue #600 (the lifetime unit) — the ONE choice this instance asks for. Issue #898: settled at
-   * build, except `auto` with kept gaps, which is `'pending'` until {@link settleAutoChoice} prices
-   * it. Read only through {@link settledChoice}.
+   * Issue #600 (the lifetime unit) — the choice this instance asks for when a call carries none of
+   * its own, settled at build. Caching 3-M D-3: under `auto` it is the runner's prior, never pending.
    */
-  private cacheChoice: CacheChoice | 'pending';
+  private readonly cacheChoice: CacheChoice;
   /** Caching 3-B (D1, E1): `default` or `custom`, resolved once (`resolveProvider`). */
   private readonly endpoint: RequestEndpoint;
   /** Caching 3-B (E3): this drive's memory of a gateway's refusal of the cache fields. */
   private readonly cacheFields: CacheFieldMemory = {};
   /** Caching 3-M (B2a): this drive's state of asking why a request missed. */
   private readonly cacheAsk: CacheAsk;
-  /** Issue #898 — where the settled `auto` choice took its prices; absent when none was needed. */
-  private autoPrices: CacheAutoPrices | undefined;
-
   /**
    * `promptCache` (issue #600): what it asks to cache on each request it marks: a single-shot
    * request, and every main turn of a tool step. Without it the provider asks for nothing (`off`) —
    * the request is byte-for-byte the one before caching. `off`, `short` and `long` ask for that.
-   * `auto` with no kept gap asks for its prior: the short lifetime for a drive with no measurement,
-   * the long one for a drive `realm listen` started. `auto` with kept gaps (#898) is PENDING until
-   * {@link settleAutoChoice} chooses from the runner's price file.
+   * `auto` asks for its prior on a call that carries no choice of its own (caching 3-M D-3): the long
+   * lifetime for a drive `realm listen` started, the short one otherwise.
    */
   constructor(
     private readonly model: string,
@@ -705,29 +695,20 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     };
     this.promptCache = opts?.promptCache ?? { value: 'off' };
     const { value } = this.promptCache;
-    this.cacheChoice =
-      value !== 'auto'
-        ? value
-        : keptCacheGaps(this.promptCache.auto?.gaps_s).length === 0
-          ? this.autoPrior()
-          : 'pending';
+    this.cacheChoice = value !== 'auto' ? value : this.autoPrior();
   }
 
-  /** Issue #600 (the lifetime unit) — `auto`'s prior: short with no measurement, else long. */
+  /**
+   * Issue #600 (the lifetime unit) — `auto`'s prior, by the runner that chose the setting (caching
+   * 3-M D-3): long for a drive `realm listen` started, short for any other (and for no runner).
+   */
   private autoPrior(): 'short' | 'long' {
-    const { auto } = this.promptCache;
-    return auto === undefined || auto.basis === 'no_measurement' ? 'short' : 'long';
-  }
-
-  /** Issue #898 — the one way to read the choice: it throws while an `auto` choice is pending. */
-  private settledChoice(): CacheChoice {
-    if (this.cacheChoice === 'pending') throw new Error(AUTO_CHOICE_PENDING);
-    return this.cacheChoice;
+    return this.promptCache.by === 'realm listen' ? 'long' : 'short';
   }
 
   /** Caching 3-M (D-1): the choice a request of this call follows: the call's own, else the provider's. */
   private choiceFor(call: CallCacheChoice | undefined): CacheChoice {
-    return call?.choice ?? this.settledChoice();
+    return call?.choice ?? this.cacheChoice;
   }
 
   /**
@@ -740,30 +721,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     return this.cacheAsk.asking && this.choiceFor(call) !== 'off';
   }
 
-  /** Issue #898 — whether an `auto` choice waits for {@link settleAutoChoice}. */
-  isAutoChoicePending(): boolean {
-    return this.cacheChoice === 'pending';
-  }
-
   /**
-   * Issue #898 — settles a pending `auto` choice from the runner's price file (`AutoPriceInput`:
-   * its base rates for the model, or the cause it gave none) by `chooseAutoLifetime`, over
-   * Anthropic's two lifetimes. Returns the choice and where its prices came from. Throws when no
-   * choice is pending — which also covers a second call.
+   * Issue #898 — `chooseAutoLifetime` over Anthropic's two lifetimes, with this drive's prior, from
+   * the runner's prices (`AutoPriceInput`: its base rates for the model, or the cause it gave none).
    */
-  settleAutoChoice(prices: AutoPriceInput): { choice: CacheChoice; prices?: CacheAutoPrices } {
-    if (this.cacheChoice !== 'pending') {
-      throw new Error(
-        'AnthropicProvider: no auto cache choice is pending; settleAutoChoice runs once, for an auto choice with measured gaps',
-      );
-    }
-    const outcome = this.chooseAuto(this.promptCache.auto?.gaps_s, prices);
-    this.cacheChoice = outcome.choice;
-    this.autoPrices = outcome.prices;
-    return outcome;
-  }
-
-  /** Issue #898 — `chooseAutoLifetime` over Anthropic's two lifetimes, with this drive's prior. */
   private chooseAuto(
     gapsS: readonly number[] | undefined,
     prices: AutoPriceInput,
@@ -780,8 +741,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   }
 
   /**
-   * Caching 3-M (D-2) — under `auto`, the rule a drive chooses each step's lifetime by: the settle's own
-   * rule over one step's gaps, and the short lifetime for a step with tools (its own turns reuse the
+   * Caching 3-M (D-2) — under `auto`, the rule a drive chooses each step's lifetime by: `chooseAuto`
+   * over one step's gaps, and the short lifetime for a step with tools (its own turns reuse the
    * entry). Changes no state. Absent under any other setting.
    */
   autoStepRule(): AutoStepRule | undefined {
@@ -802,9 +763,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   capabilities(): ProviderCapabilities {
     // issue #600 PR 2 (B2): what it asks to cache on each request it marks: a single-shot request,
     // and every main turn of a tool step; always — `off` included;
-    // the lifetime unit: the one resolved choice, as `'off'` or its lifetime in seconds (#898: a
-    // pending `auto` choice throws).
-    const choice = this.settledChoice();
+    // the lifetime unit: the instance's choice, as `'off'` or its lifetime in seconds (under `auto`
+    // the runner's prior; each step's own choice is on its requests, caching 3-M D-2).
+    const choice = this.cacheChoice;
     return {
       jsonMode: false,
       toolArgsStrict: true,
@@ -821,10 +782,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * the response's `model`, the ask (`lifetime` with its seconds and whether the lifetime was sent,
    * or `off`), its source and runner when given, the endpoint, and that Anthropic reports a
    * lifetime split. Never `provider`: `realm agent` stamps that. The lifetime unit: when the setting
-   * is `auto`, also `cache_auto` — the basis of the choice and the gaps it read (`no_measurement`
-   * when none was given), and (#898) where its prices came from when it needed any — whatever it
-   * chose, `off` included. Caching 3-M (D-1): a call with its own choice records that choice and
-   * what it was chosen on; the setting's source and runner stay the provider's.
+   * is `auto`, also `cache_auto` — the basis of the choice (`no_measurement` when the call carries
+   * none of its own). Caching 3-M (D-1): a call with its own choice records that choice and what it
+   * was chosen on, prices included; the setting's source and runner stay the provider's.
    */
   private requestFacts(
     response: unknown,
@@ -835,16 +795,11 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const choice = this.choiceFor(call);
     const model = responseModel(response);
     const endpoint = endpointOf(client, ANTHROPIC_DEFAULT_BASE_URL);
-    const basis = auto ?? { basis: 'no_measurement' as const };
     const cacheAuto =
       call !== undefined
         ? normalizeCacheAuto(call.auto)
         : value === 'auto'
-          ? normalizeCacheAuto({
-              basis: basis.basis,
-              ...(basis.gaps_s !== undefined ? { gaps_s: basis.gaps_s } : {}),
-              ...(this.autoPrices !== undefined ? { prices: this.autoPrices } : {}),
-            })
+          ? normalizeCacheAuto(auto ?? { basis: 'no_measurement' })
           : undefined;
     return {
       ...(model !== undefined ? { model } : {}),

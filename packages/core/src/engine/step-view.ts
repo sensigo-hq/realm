@@ -16,7 +16,6 @@ import {
   CACHE_MARKED_PARTS,
   CACHE_MISS_TYPES,
   type CacheAuto,
-  type CacheAutoPricesView,
   type CacheMarkedPart,
   type CacheMissType,
   type RequestFactAbsentCause,
@@ -254,11 +253,9 @@ export type CostModels =
  * Issue #600 PR 2 — one distinct ask: `value` (a `CACHE_REQUESTS` word, verbatim when a string),
  * `lifetime_s` (kept when a number, of any value — the render judges it), `ttl_sent` (kept when a
  * boolean), `source` (verbatim when a string), `by` (read through `readStoredName`) and — the
- * lifetime unit — `auto` (what `--prompt-cache auto` chose on, read through `normalizeCacheAuto`).
- * Issue #898: `auto.prices` is where the choice took its prices; a request with kept gaps that
- * recorded none (written before Realm priced `auto` from the price file) reads `{ from:
- * 'not_recorded' }`, derived here once for every carrier. No `prices` with no kept gaps means "not
- * needed".
+ * lifetime unit — `auto` (what `--prompt-cache auto` chose on, read through `normalizeCacheAuto`, so
+ * a stored word this Realm does not list leaves it out). Issue #898: `auto.prices` is where the
+ * choice took its prices; no `prices` means none was needed (no kept gap).
  */
 export interface CacheRequestedEntry {
   value: string;
@@ -266,7 +263,7 @@ export interface CacheRequestedEntry {
   ttl_sent?: boolean;
   source?: string;
   by?: string;
-  auto?: Omit<CacheAuto, 'prices'> & { prices?: CacheAutoPricesView };
+  auto?: CacheAuto;
   /** Caching 3-B (D2): with `provider_rules`, the requests of this ask carried OpenAI's cache key. */
   key_sent?: true;
   /**
@@ -397,23 +394,6 @@ function composeModels(requests: readonly unknown[]): CostModels {
   return { names, reported, of: requests.length };
 }
 
-/**
- * Issue #898 — the view's typed absence (framework §5 E1): a stored `cache_auto` with kept gaps and
- * no `prices` was written before Realm priced `auto` from the price file, so its view says
- * `{ from: 'not_recorded' }`. Every other value passes as stored.
- */
-function withPricesAbsence(auto: CacheAuto | undefined): CacheRequestedEntry['auto'] | undefined {
-  if (
-    auto !== undefined &&
-    auto.basis === 'listen_trigger_gaps' &&
-    (auto.gaps_s?.length ?? 0) > 0 &&
-    auto.prices === undefined
-  ) {
-    return { ...auto, prices: { from: 'not_recorded' } };
-  }
-  return auto;
-}
-
 /** Issue #600 PR 2 — the distinct asks the requests recorded. */
 function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested {
   const entries: CacheRequestedEntry[] = [];
@@ -428,7 +408,7 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
     const source = fieldOf(r, 'cache_requested_source');
     const by = readStoredName(fieldOf(r, 'cache_requested_by'));
     const provider = readStoredName(fieldOf(r, 'provider'));
-    const auto = withPricesAbsence(normalizeCacheAuto(fieldOf(r, 'cache_auto')));
+    const auto = normalizeCacheAuto(fieldOf(r, 'cache_auto'));
     const entry: CacheRequestedEntry = {
       value,
       ...(typeof lifetime === 'number' ? { lifetime_s: lifetime } : {}),

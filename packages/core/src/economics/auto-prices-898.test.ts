@@ -340,7 +340,7 @@ describe('#898 S4 — an input price of 0 falls back, named input_zero (today Na
 
 describe('#898 S5 — normalizeCacheAuto keeps prices in its five shapes, and drops the whole value otherwise', () => {
   const withPrices = (prices: unknown) => ({
-    basis: 'listen_trigger_gaps',
+    basis: 'step_gaps',
     gaps_s: [61, 3599],
     prices,
   });
@@ -417,12 +417,10 @@ describe('#898 S5 — normalizeCacheAuto keeps prices in its five shapes, and dr
         'missing on another cause',
         withPrices({ from: 'none', cause: 'no_file', missing: ['cache_read'] }),
       ],
-      [
-        'prices with no gaps',
-        { basis: 'listen_trigger_gaps', gaps_s: [], prices: { from: 'economics' } },
-      ],
       ['prices on another basis', { basis: 'no_measurement', prices: { from: 'economics' } }],
-      ['the view word not_recorded', withPrices({ from: 'not_recorded' })],
+      // A record written by another version, whose `from` is a word this one does not know: dropped
+      // whole, never read as `none` (caching 3-M D-3 correction 1; MA2-3MD3-03).
+      ['a from another version wrote', withPrices({ from: 'guessed', cause: 'no_file' })],
       ['a model id key', withPrices({ from: 'economics', model: 'claude-x' })],
       ['prices not an object', withPrices('economics')],
     ];
@@ -431,7 +429,7 @@ describe('#898 S5 — normalizeCacheAuto keeps prices in its five shapes, and dr
       ['prices: undefined', normalizeCacheAuto(withPrices(undefined))],
     ]).toEqual([
       ...illegal.map(([name]) => [name, undefined]),
-      ['prices: undefined', { basis: 'listen_trigger_gaps', gaps_s: [61, 3599] }],
+      ['prices: undefined', { basis: 'step_gaps', gaps_s: [61, 3599] }],
     ]);
   });
 });

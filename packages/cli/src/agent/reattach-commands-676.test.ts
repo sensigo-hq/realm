@@ -327,14 +327,13 @@ describe('#729 PR-0 — buildReattachFlags owns the prompt-cache rule', () => {
   });
 
   // Cell 9 (the lifetime unit), called as the command calls it — its parsed options spread, a
-  // listen child's `--cache-gaps` among them. (a) red when the builder repeats `--cache-gaps`, or
-  // drops a stated `auto`; (b) prints the flag strings.
-  it('a stated auto is repeated like any word; --cache-gaps never is', () => {
+  // listen child's `--spawned-by-listen` among them. (a) red when the builder drops a stated `auto`,
+  // or repeats a default; (b) prints the flag strings.
+  it('a stated auto is repeated like any word', () => {
     const parsed = {
       model: 'm',
       promptCache: 'auto',
       spawnedByListen: true,
-      cacheGaps: '420,720',
     } as unknown as Parameters<typeof buildReattachFlags>[0];
     // The default: the command's options carry no `promptCache` at all.
     const { promptCache: _stated, ...unstated } = parsed;

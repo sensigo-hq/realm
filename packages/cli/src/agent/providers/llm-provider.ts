@@ -74,8 +74,7 @@ export interface ProviderCapabilities {
    * means Realm asks this provider for nothing. The Anthropic provider declares `'off'` or a
    * lifetime; the OpenAI providers declare `'provider'`, except (#896) the `openai` provider on a
    * GPT-5.6-or-later model at OpenAI's own address ({@link openAiExplicitCacheModel}), which declares
-   * `{ lifetime_s: 1800 }`, or `'off'` under `off` or when `auto` chose it (unit B: a pending choice
-   * throws, as Anthropic's does); a provider module may declare any of the three
+   * `{ lifetime_s: 1800 }`, or `'off'` under `off`; a provider module may declare any of the three
    * (the start line says what it reads, and that `--prompt-cache` does not reach a module).
    */
   promptCache?: 'off' | 'provider' | { lifetime_s: number };
@@ -91,7 +90,8 @@ export interface ProviderCapabilities {
 /**
  * Issue #600 PR 2 — the cache setting a runner hands the Anthropic provider: the value, where it came
  * from, which runner chose it (`realm agent`, `realm listen`) and — the lifetime unit — when the value
- * is `auto`, on what basis the provider chooses (the gaps `realm listen` measured, when it did).
+ * is `auto`, on what basis the provider chooses for a call that carries no choice of its own
+ * (`no_measurement`).
  */
 export interface PromptCacheRequest {
   value: PromptCacheSetting;
@@ -586,12 +586,9 @@ export async function resolveOpenAiEndpoint(): Promise<RequestEndpoint> {
  * frequently"). The checks and their messages are `checkProviderFlags`'; this throws its message.
  * Also throws when the provider's SDK package is not installed.
  *
- * Issue #898: returns the provider and, exactly when it built an Anthropic provider whose `auto`
- * choice is pending (measured gaps), `settleAuto` — that provider's `settleAutoChoice`, bound. The
- * caller settles it from the runner's price file before the provider serves a request. #896 unit B:
- * so too an `openai` provider in the explicit set (GPT-5.6 and later at OpenAI's own address).
- * Caching 3-M (D-2): and, under `auto`, `autoRule` for a provider that takes a lifetime (Anthropic;
- * OpenAI in the explicit set), so `realm agent` can choose for each step.
+ * Returns the provider and (caching 3-M D-2), under `auto`, `autoRule` for a provider that takes a
+ * lifetime (Anthropic; OpenAI in the explicit set: GPT-5.6 and later at OpenAI's own address), so
+ * `realm agent` can choose for each step. No provider's `auto` choice is ever pending (D-3).
  */
 export async function resolveProvider(options: {
   provider: ProviderName | undefined;
@@ -605,11 +602,10 @@ export async function resolveProvider(options: {
    *  cache key. */
   promptCache: PromptCacheRequest;
   /** Caching 3-M (B2b): `--cache-diagnostics`, only when stated. Anthropic asks unless it is `off`;
-   *  the provider itself gates the address and the settled choice. Other providers take no option. */
+   *  the provider itself gates the address and the call's choice. Other providers take no option. */
   cacheDiagnostics?: CacheDiagnosticsSetting | undefined;
 }): Promise<{
   provider: LlmProvider;
-  settleAuto?: (prices: AutoPriceInput) => { choice: CacheChoice; prices?: CacheAutoPrices };
   autoRule?: AutoStepRule;
 }> {
   const providerFlag = options.provider;
@@ -657,13 +653,8 @@ export async function resolveProvider(options: {
       endpoint,
       promptCache: options.promptCache,
     });
-    // #896 unit B: in the explicit set, `auto` with measured gaps waits for the price file too.
     const openaiRule = openai.autoStepRule();
-    return {
-      provider: openai,
-      ...(openai.isAutoChoicePending() ? { settleAuto: openai.settleAutoChoice.bind(openai) } : {}),
-      ...(openaiRule !== undefined ? { autoRule: openaiRule } : {}),
-    };
+    return { provider: openai, ...(openaiRule !== undefined ? { autoRule: openaiRule } : {}) };
   } else {
     const { AnthropicProvider, ANTHROPIC_DEFAULT_BASE_URL } =
       await import('./anthropic-provider.js');
@@ -680,9 +671,6 @@ export async function resolveProvider(options: {
     const anthropicRule = anthropic.autoStepRule();
     return {
       provider: anthropic,
-      ...(anthropic.isAutoChoicePending()
-        ? { settleAuto: anthropic.settleAutoChoice.bind(anthropic) }
-        : {}),
       ...(anthropicRule !== undefined ? { autoRule: anthropicRule } : {}),
     };
   }

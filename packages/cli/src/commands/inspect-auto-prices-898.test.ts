@@ -1,15 +1,15 @@
-// inspect-auto-prices-898.test.ts — issue #898 S10: where `auto`'s choice took its prices, in words,
-// on every surface. Each row of `autoPricesText` on the start line, in `realm run inspect`'s ask entry
-// and as `get_run_state`'s structured `entry.auto.prices` — the at-stake branches (`none`, `excluded`,
-// `not_recorded`) first — then the record with no kept gaps (no clause) and a stored `none` with a
-// 5-minute ask (the cause, no tail, no throw); and guardrail 7's cross cell: `inspect` and
-// `get_run_state` carry the same `prices` for the same request. Beside each: (a) the change that
-// turns it red; (b) what it prints when it fails — the line, or the entry's `auto`.
+// inspect-auto-prices-898.test.ts — issue #898 S10: where `auto`'s choice took its prices, in words.
+// Each row of `autoPricesText` in `realm run inspect`'s ask entry and as `get_run_state`'s structured
+// `entry.auto.prices` — the at-stake branches (`none`, `excluded`) first — then the record with no
+// kept gaps (no clause) and a stored `none` with a 5-minute ask (the cause, no tail, no throw); and
+// guardrail 7's cross cell: `inspect` and `get_run_state` carry the same `prices` for the same
+// request. Caching 3-M D-3: the start line no longer carries `auto`'s evidence or prices. Beside
+// each: (a) the change that turns it red; (b) what it prints when it fails — the line, or the
+// entry's `auto`.
 import { describe, expect, it } from 'vitest';
 import { handleGetRunState } from '@sensigo/realm-mcp/dist/tools/get-run-state.js';
 import type {
   CacheAutoPrices,
-  CacheAutoPricesView,
   EvidenceSnapshot,
   RunRecord,
   RunStore,
@@ -19,11 +19,7 @@ import type {
 } from '@sensigo/realm';
 import { declared } from '../test-support/declared.js';
 import { inspectRun } from './inspect.js';
-import {
-  autoPricesText,
-  promptCacheStartLine,
-  type ResolvedPromptCache,
-} from '../agent/prompt-cache.js';
+import { autoPricesText } from '../agent/prompt-cache.js';
 import {
   doubleClock,
   noSettle,
@@ -167,63 +163,24 @@ const WORDS: Record<string, string> = {
   economics: 'priced from your price file',
 };
 const EVIDENCE =
-  "auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes";
-
-describe('#898 S10 — the start line says where auto took its prices', () => {
-  // (a) red when the start line drops the clause, or puts it out of place; (b) prints the line.
-  it('each stored row on the start line, after the evidence and before the source', () => {
-    const line = (prices: CacheAutoPrices, asked: number | 'off'): string =>
-      promptCacheStartLine({
-        caps: {
-          jsonMode: false,
-          providerId: 'anthropic',
-          promptCache: asked === 'off' ? 'off' : { lifetime_s: asked },
-        },
-        promptCache: {
-          value: 'auto',
-          source: 'runner_default',
-          by: 'realm listen',
-          auto: { basis: 'listen_trigger_gaps', gaps_s: GAPS, prices },
-        } satisfies ResolvedPromptCache,
-        moduleProviderId: undefined,
-        definition: DEF,
-      });
-    const source = "realm listen's default; change it with realm listen --prompt-cache";
-    expect(ROWS.map(([name, prices, asked]) => [name, line(prices, asked)])).toEqual(
-      ROWS.map(([name, , asked]) => [
-        name,
-        asked === 'off'
-          ? `Caching: off; Anthropic is asked to cache nothing (${EVIDENCE}; ${WORDS[name]}; ${source}).`
-          : `Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for ${asked === 3600 ? '1 hour' : '5 minutes'} (${EVIDENCE}; ${WORDS[name]}; ${source}).`,
-      ]),
-    );
-  });
-});
+  "auto: the last 2 gaps between this step's runs were about 7 minutes and 12 minutes";
 
 describe('#898 S10 — realm run inspect and get_run_state carry it, from core’s one view', () => {
-  // (a) red when inspect drops the clause, or derives `not_recorded` itself instead of reading the
-  //     view (the get_run_state cell then lacks it); (b) prints each ask entry.
-  it('inspect: not_recorded on an old-shape record with gaps first, then each stored row; no clause with no kept gaps; a stored none under 5 minutes gives the cause with no tail', async () => {
+  // (a) red when inspect drops the clause; (b) prints each ask entry.
+  it('inspect: each stored row; no clause with no kept gaps; a stored none under 5 minutes gives the cause with no tail', async () => {
     const asks = [
-      [
-        'not_recorded',
-        await inspectAsk(request(3600, { basis: 'listen_trigger_gaps', gaps_s: GAPS })),
-      ],
       ...(await Promise.all(
         ROWS.map(async ([name, prices, asked]) => [
           name,
-          await inspectAsk(request(asked, { basis: 'listen_trigger_gaps', gaps_s: GAPS, prices })),
+          await inspectAsk(request(asked, { basis: 'step_gaps', gaps_s: GAPS, prices })),
         ]),
       )),
-      [
-        'no kept gaps',
-        await inspectAsk(request(3600, { basis: 'listen_trigger_gaps', gaps_s: [] })),
-      ],
+      ['no kept gaps', await inspectAsk(request(3600, { basis: 'step_gaps', gaps_s: [] }))],
       [
         'none under 5 minutes',
         await inspectAsk(
           request(300, {
-            basis: 'listen_trigger_gaps',
+            basis: 'step_gaps',
             gaps_s: GAPS,
             prices: { from: 'none', cause: 'model_unknown' },
           }),
@@ -235,38 +192,28 @@ describe('#898 S10 — realm run inspect and get_run_state carry it, from core�
         ? `; asked for no caching (realm listen's default; ${EVIDENCE}; ${clause})`
         : `; asked for ${asked === 3600 ? '1 hour' : '5 minutes'} (${asked === 3600 ? 'sent as 1 hour' : "the provider's default lifetime"}; realm listen's default; ${EVIDENCE}; ${clause})`;
     expect(asks).toEqual([
-      [
-        'not_recorded',
-        ask(
-          3600,
-          'price source not recorded (this request was recorded before Realm priced auto from the price file)',
-        ),
-      ],
       ...ROWS.map(([name, , asked]) => [name, ask(asked, WORDS[name]!)]),
       [
         'no kept gaps',
-        "; asked for 1 hour (sent as 1 hour; realm listen's default; auto: no earlier trigger of this workflow since realm listen started)",
+        "; asked for 1 hour (sent as 1 hour; realm listen's default; auto: Realm found no earlier request of this step from the last 7 days)",
       ],
       ['none under 5 minutes', ask(300, 'the price file does not price this model')],
     ]);
   });
 
-  // (a) red when the view does not derive `not_recorded` (a record with gaps and no prices), or
-  //     drops a stored prices; (b) prints each entry's `auto`.
-  it('get_run_state: entry.auto.prices as structured data — not_recorded first, each stored row, none with no kept gaps', async () => {
+  // (a) red when the view drops a stored prices; (b) prints each entry's `auto`.
+  it('get_run_state: entry.auto.prices as structured data — each stored row, none with no kept gaps', async () => {
     const got = [
-      await stateAuto(request(3600, { basis: 'listen_trigger_gaps', gaps_s: GAPS })),
       ...(await Promise.all(
         ROWS.map(([, prices, asked]) =>
-          stateAuto(request(asked, { basis: 'listen_trigger_gaps', gaps_s: GAPS, prices })),
+          stateAuto(request(asked, { basis: 'step_gaps', gaps_s: GAPS, prices })),
         ),
       )),
-      await stateAuto(request(3600, { basis: 'listen_trigger_gaps', gaps_s: [] })),
+      await stateAuto(request(3600, { basis: 'step_gaps', gaps_s: [] })),
     ];
     expect(got).toEqual([
-      { basis: 'listen_trigger_gaps', gaps_s: GAPS, prices: { from: 'not_recorded' } },
-      ...ROWS.map(([, prices]) => ({ basis: 'listen_trigger_gaps', gaps_s: GAPS, prices })),
-      { basis: 'listen_trigger_gaps', gaps_s: [] },
+      ...ROWS.map(([, prices]) => ({ basis: 'step_gaps', gaps_s: GAPS, prices })),
+      { basis: 'step_gaps', gaps_s: [] },
     ]);
   });
 
@@ -274,14 +221,13 @@ describe('#898 S10 — realm run inspect and get_run_state carry it, from core�
   //     derives its own); (b) prints both carriers' words for each request.
   it('cross: for the same request, inspect says exactly the words of get_run_state’s prices', async () => {
     const records = [
-      request(3600, { basis: 'listen_trigger_gaps', gaps_s: GAPS }),
       ...ROWS.map(([, prices, asked]) =>
-        request(asked, { basis: 'listen_trigger_gaps', gaps_s: GAPS, prices }),
+        request(asked, { basis: 'step_gaps', gaps_s: GAPS, prices }),
       ),
     ];
     const pairs = await Promise.all(
       records.map(async (r) => {
-        const auto = (await stateAuto(r)) as { prices?: CacheAutoPricesView } | undefined;
+        const auto = (await stateAuto(r)) as { prices?: CacheAutoPrices } | undefined;
         const asked = r.cache_requested === 'off' ? 'off' : r.cache_lifetime_s!;
         const fromState =
           auto?.prices === undefined ? '(no prices)' : autoPricesText(auto.prices, asked);

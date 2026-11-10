@@ -393,7 +393,7 @@ const asked5mStep = askedStep('asked_5m_step', {
   cache_ttl_sent: false,
   cache_requested_source: 'runner_default',
   cache_requested_by: 'realm listen',
-  cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [10, 10, 10, 7200, 7200] },
+  cache_auto: { basis: 'step_gaps', gaps_s: [10, 10, 10, 7200, 7200] },
   provider: 'anthropic',
   cache_creation_input_tokens: 30,
   cache_creation: { ephemeral_1h_input_tokens: 30 },
@@ -563,8 +563,8 @@ const STEP_LINE_CACHE_REQUESTED_ENTRY = {
     surface: 'rendered',
     probe: (out) =>
       expect(out).toContain(
-        // #898: the fixture predates priced auto (gaps, no prices).
-        "; auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours; price source not recorded (this request was recorded before Realm priced auto from the price file))",
+        // A record with gaps and no prices: the evidence alone (caching 3-M D-3: no price-source clause).
+        "; auto: the last 5 gaps between this step's runs were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours)",
       ),
   },
   // caching 3-B (D2): the key branch, on the split render.
@@ -714,7 +714,7 @@ const OPENAI_OFF_REQUESTS = [
     cache_requested_source: 'runner_default',
     cache_requested_by: 'realm listen',
     cache_auto: {
-      basis: 'listen_trigger_gaps',
+      basis: 'step_gaps',
       gaps_s: [2400, 7200],
       prices: { from: 'none', cause: 'no_file' },
     },
@@ -1207,7 +1207,7 @@ const ENTRY_C = {
       cache_ttl_sent: false,
       cache_requested_source: 'runner_default',
       cache_requested_by: 'realm listen',
-      cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [10, 10, 10, 7200, 7200] },
+      cache_auto: { basis: 'step_gaps', gaps_s: [10, 10, 10, 7200, 7200] },
       provider: 'anthropic',
       cache_creation: { ephemeral_1h_input_tokens: 30 },
     },
@@ -1457,8 +1457,8 @@ const FAILURE_CACHE_REQUESTED_ENTRY = {
     surface: 'rendered',
     probe: (out) =>
       expect(out).toContain(
-        // #898: the fixture predates priced auto (gaps, no prices).
-        "; auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours; price source not recorded (this request was recorded before Realm priced auto from the price file))",
+        // A record with gaps and no prices: the evidence alone (caching 3-M D-3: no price-source clause).
+        "; auto: the last 5 gaps between this step's runs were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours)",
       ),
   },
   // caching 3-B (D2): the key branch, on the split render's failure block.

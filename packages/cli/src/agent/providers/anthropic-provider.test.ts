@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Anthropic from '@anthropic-ai/sdk';
 import { AnthropicProvider, ANTHROPIC_DEFAULT_BASE_URL } from './anthropic-provider.js';
-import { WorkflowError, type AutoPriceInput, type CacheAuto } from '@sensigo/realm';
+import { WorkflowError, type CacheAuto } from '@sensigo/realm';
 import {
   CLASS_B_NO_TEXT_MARKER,
   buildSystemPrompt,
@@ -1682,16 +1682,16 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
         ...(auto !== undefined ? { auto } : {}),
       },
     });
-  // #898: an `auto` with kept gaps is pending until settled from the runner's price file. These cells
-  // settle it at today's Anthropic ratios (read 0.1×, writes 1.25× and 2×), which choose as the
-  // shipped multiples did, so each choice is unchanged and its record gains `prices`.
-  const FULL_PRICES: AutoPriceInput = {
-    rates: { input: 3, output: 15, cache_read: 0.3, cache_write_5m: 3.75, cache_write_1h: 6 },
-  };
-  const settled = (provider: AnthropicProvider): AnthropicProvider => {
-    if (provider.isAutoChoicePending()) provider.settleAutoChoice(FULL_PRICES);
-    return provider;
-  };
+  // Caching 3-M D-3: `auto` on a drive `realm listen` started, whose prior is the long lifetime.
+  const atListen = () =>
+    new AnthropicProvider('claude-sonnet-4-5', {
+      promptCache: {
+        value: 'auto',
+        source: 'stated',
+        by: 'realm listen',
+        auto: { basis: 'no_measurement' },
+      },
+    });
   // The three single-shot requests `buildOpts` builds: the first, the strict ladder's retry after
   // a 400, and the non-JSON retry. Returns every request body the SDK was handed, in order.
   const threeRequests = async (
@@ -1826,14 +1826,13 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
     });
   });
 
-  // Cell 6 (the lifetime unit): `auto` with each basis records `cache_auto` — whatever it chose,
-  // `off` included — and asks for what `chooseCacheLifetime` chose (the short prior for no
-  // measurement, the long one for a drive listen started). (a) red when `auto` records no
-  // `cache_auto`, chooses `off` without recording it, or uses the wrong prior; 3-M A-0: also red
-  // when a row records no parts or the `off` row records a marker; (b) prints the facts and the
-  // capability (test values only). Each row's digests are of the last body sent: every row sends the
-  // same system text, submit tool and prompt.
-  it('auto — each basis: the choice, its record, and cache_auto (an auto choosing off records both)', async () => {
+  // Cell 6 (the lifetime unit): `auto` with no call option records `cache_auto` and asks for the
+  // runner's prior (caching 3-M D-3: the short lifetime on a drive `realm agent` started, and with no
+  // basis given; the long one on a drive `realm listen` started). (a) red when `auto` records no
+  // `cache_auto` or uses the wrong prior; 3-M A-0: also red when a row records no parts; (b) prints
+  // the facts and the capability (test values only). Each row's digests are of the last body sent:
+  // every row sends the same system text, submit tool and prompt.
+  it('auto — by runner: the prior, its record, and cache_auto', async () => {
     const row = async (provider: AnthropicProvider) => ({
       facts: await facts(provider),
       promptCache: provider.capabilities().promptCache,
@@ -1843,23 +1842,20 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
       cache_lifetime_s: lifetime,
       cache_ttl_sent: lifetime === 3600,
     });
-    const common = {
+    const common = (by: string) => ({
       cache_requested_source: 'stated',
-      cache_requested_by: 'realm agent',
+      cache_requested_by: by,
       cache_split_offered: true,
-    };
+    });
     expect([
       await row(at('auto', { basis: 'no_measurement' })),
-      await row(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [] })),
-      await row(settled(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [420, 720] }))),
-      await row(settled(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] }))),
-      await row(at('auto', { basis: 'listen_gaps_unreadable' })),
+      await row(atListen()),
       await row(at('auto')),
     ]).toEqual([
       {
         facts: {
           ...asked(300),
-          ...common,
+          ...common('realm agent'),
           cache_auto: { basis: 'no_measurement' },
           ...sentParts(),
           cache_marked: ['system'],
@@ -1869,46 +1865,8 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
       {
         facts: {
           ...asked(3600),
-          ...common,
-          cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [] },
-          ...sentParts(),
-          cache_marked: ['system'],
-        },
-        promptCache: { lifetime_s: 3600 },
-      },
-      {
-        facts: {
-          ...asked(3600),
-          ...common,
-          cache_auto: {
-            basis: 'listen_trigger_gaps',
-            gaps_s: [420, 720],
-            prices: { from: 'economics' },
-          },
-          ...sentParts(),
-          cache_marked: ['system'],
-        },
-        promptCache: { lifetime_s: 3600 },
-      },
-      {
-        facts: {
-          cache_requested: 'off',
-          ...common,
-          cache_auto: {
-            basis: 'listen_trigger_gaps',
-            gaps_s: [7200, 7200, 7200],
-            prices: { from: 'economics' },
-          },
-          // `off` sent no marker: no `cache_marked`.
-          ...sentParts(),
-        },
-        promptCache: 'off',
-      },
-      {
-        facts: {
-          ...asked(3600),
-          ...common,
-          cache_auto: { basis: 'listen_gaps_unreadable' },
+          ...common('realm listen'),
+          cache_auto: { basis: 'no_measurement' },
           ...sentParts(),
           cache_marked: ['system'],
         },
@@ -1918,7 +1876,7 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
       {
         facts: {
           ...asked(300),
-          ...common,
+          ...common('realm agent'),
           cache_auto: { basis: 'no_measurement' },
           ...sentParts(),
           cache_marked: ['system'],
@@ -1928,9 +1886,9 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
     ]);
   });
 
-  // Cell 6: what `auto` sends is the body of the word it chose. (a) red when `auto` sends a body other
-  // than its choice's; (b) prints the system sent.
-  it("auto — the body sent is the chosen word's: off the plain string, short no ttl, long ttl '1h'", async () => {
+  // Cell 6: what `auto` sends with no call option is the body of the runner's prior. (a) red when
+  // `auto` sends a body other than its prior's; (b) prints the system sent.
+  it("auto — the body sent is the prior's: short no ttl on a drive realm agent started, long ttl '1h' on one realm listen started", async () => {
     const sent = async (provider: AnthropicProvider) => {
       mockCreate.mockReset();
       mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
@@ -1938,12 +1896,7 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
       return (mockCreate.mock.calls[0]![0] as Record<string, unknown>)['system'];
     };
     const system = buildSystemPrompt(SCHEMA, undefined, true);
-    expect([
-      await sent(settled(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] }))),
-      await sent(at('auto', { basis: 'no_measurement' })),
-      await sent(settled(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [420, 720] }))),
-    ]).toEqual([
-      system,
+    expect([await sent(at('auto', { basis: 'no_measurement' })), await sent(atListen())]).toEqual([
       [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
       [{ type: 'text', text: system, cache_control: { type: 'ephemeral', ttl: '1h' } }],
     ]);

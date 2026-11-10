@@ -164,9 +164,9 @@ A model with one price prints `current price`. A model with several prices print
 
 ## What `--prompt-cache auto` reads from it
 
-On a drive `realm listen` starts with Anthropic, or with OpenAI on GPT-5.6 and later at OpenAI's own address, `--prompt-cache auto` chooses which cache lifetime to ask for from the gaps between the workflow's recent triggers, priced from this file. This section was added after version 0.48.0.
+With Anthropic, or with OpenAI on GPT-5.6 and later at OpenAI's own address, `--prompt-cache auto` chooses, for each step without tools, which cache lifetime to ask for from that step's own earlier runs, priced from this file. This section was added after version 0.48.0.
 
-- `realm agent` reads the file once, when the drive starts, after the workflow and `realm.yaml` load. A drive with no measured gap reads no file: a drive `realm agent` starts on its own, and a workflow's first trigger since `realm listen` started. So do `--prompt-cache short`, `long` and `off`, OpenAI other than GPT-5.6 and later at OpenAI's own address, and a provider module.
+- `realm agent` reads the file once, when the drive starts, after the workflow and `realm.yaml` load. A drive in which no step without tools has a measured gap reads no file. So do `--prompt-cache short`, `long` and `off`, OpenAI other than GPT-5.6 and later at OpenAI's own address, and a provider module.
 - The choice reads the entry of the id you pass to `--model`, as a request is priced: that id, else the id without a date at its end. Key your price file by the id you pass to `--model`: an entry keyed only by a dated id does not match an undated `--model`.
 - The choice reads the price row in force when the drive starts, on the base tier: the price's own rates, never a tier's.
 - Each rate is divided by `input`. 5 minutes is costed only when the row states `cache_read` and `cache_write_5m`, and 1 hour only when it states `cache_read` and `cache_write_1h`. A lifetime the row cannot cost is never chosen, no rate is filled from another, and a single `cache_write` is not read as either lifetime's write.
@@ -174,7 +174,8 @@ On a drive `realm listen` starts with Anthropic, or with OpenAI on GPT-5.6 and l
 - When the file cannot price the choice — `runner.cache.economics` is not set, the file cannot be read or is not a valid price file, it has no entry for the model, it prices `input` at 0, or it has no `cache_read` or no write rate for either lifetime — `auto` asks for 1 hour when any of the last five gaps is under 54 minutes, and for no caching otherwise.
 - On OpenAI GPT-5.6 and later at OpenAI's own address, in place of the lifetimes, rates and fallback above: there is one lifetime, 30 minutes. It is costed when the row states `cache_read` and `cache_write`; `cache_write_5m` and `cache_write_1h` are not read as its write. On a tie with no caching, 30 minutes. Without prices, `auto` asks for 30 minutes when any of the last five gaps is under 27 minutes, and for no caching otherwise. A step that calls tools is not part of the choice (added after version 0.48.0).
 - `auto` reads only this file, never the installed price list. Realm ships no prices, for the choice either.
-- The drive's `Caching:` line, `realm run inspect`, `get_run_state` and each request's record (`cache_auto.prices`) say whether the choice was priced from your file, and why not when it was not.
+- `realm run inspect`, `get_run_state` and each request's record (`cache_auto.prices`) say whether the choice was priced from your file, and why not when it was not.
+- On Anthropic, a step that calls tools is not part of the choice either: it asks for 5 minutes.
 - The file decides which lifetime `auto` asks for, so a login that can change it can change that choice. The separation check's economics line shows whether this login can.
 
 ## What Realm prints

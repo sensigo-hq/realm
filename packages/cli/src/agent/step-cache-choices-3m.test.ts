@@ -175,10 +175,7 @@ function anthropic(
       value: 'auto',
       source: 'runner_default',
       by,
-      auto:
-        by === 'realm agent'
-          ? { basis: 'no_measurement' }
-          : { basis: 'listen_trigger_gaps', gaps_s: [] },
+      auto: { basis: 'no_measurement' },
     },
     endpoint: 'default',
   });
@@ -240,7 +237,6 @@ describe('caching 3-M D-2 — check 2: two steps, two rhythms', () => {
       definition: RHYTHMS,
       earlierRuns: await readEarlierRuns(h.home.runStore, RHYTHMS, undefined),
       rule: provider.autoStepRule()!,
-      settleAuto: undefined,
       economicsPath: pricesFile,
       model: 'claude-x',
     });
@@ -313,7 +309,6 @@ describe('caching 3-M D-2 — check 5: a step with tools', () => {
         definition: TOOLS,
         earlierRuns: rhythm('classify', every),
         rule: provider.autoStepRule()!,
-        settleAuto: undefined,
         economicsPath: pricesFile,
         model: 'claude-x',
       });
@@ -343,7 +338,6 @@ describe('caching 3-M D-2 — check 7 (a tool step): the read failed', () => {
       definition: TOOLS,
       earlierRuns: undefined,
       rule: anthropic('realm listen').autoStepRule()!,
-      settleAuto: undefined,
       economicsPath: pricesFile,
       model: 'claude-x',
     });
@@ -550,7 +544,6 @@ describe('caching 3-M D-2 follow-up — the guards the first cells did not hold'
       definition: def,
       earlierRuns: rhythm('a', 1200),
       rule: anthropic('realm agent').autoStepRule()!,
-      settleAuto: undefined,
       economicsPath: pricesFile,
       model: 'claude-x',
     });
@@ -570,7 +563,6 @@ describe('caching 3-M D-2 follow-up — the guards the first cells did not hold'
       definition: def,
       earlierRuns: rhythm(stepName, 1200),
       rule: anthropic('realm agent').autoStepRule()!,
-      settleAuto: undefined,
       economicsPath: join(root, 'no-such-prices.json'),
       model: 'claude-x',
     });

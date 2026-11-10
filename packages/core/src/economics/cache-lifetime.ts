@@ -7,15 +7,16 @@
 // read under that lifetime, else that lifetime's write price. Return the cheapest; on a tie, the
 // longer lifetime, then the shorter, then `off`. This is the cost-aware fan-out design's test (Q4,
 // `plans/cost-aware-fanout/design-d3.md:236`: a start-to-start inter-arrival below the lifetime,
-// priced) applied to the gaps between a workflow's recent triggers as `realm listen` sees them. Q4
-// PR-2's cadence report and #675 will call this same function; they are not built here.
+// priced) applied to the gaps between a step's earlier runs (caching 3-M D-2; since D-3 the only
+// source of gaps). Q4 PR-2's cadence report and #675 will call this same function; they are not built
+// here.
 //
 // The two constants:
-// - `AUTO_GAPS_KEPT` — only the most recent gaps are read, so a workflow's cadence change shows in a
-//   few triggers;
+// - `AUTO_GAPS_KEPT` — only the most recent gaps are read, so a step's cadence change shows in a few
+//   runs;
 // - `AUTO_LIFETIME_MARGIN` — a gap is read under a lifetime only when it is below 90% of it: the gap
-//   is measured trigger to trigger, while a provider counts a lifetime from the previous request's
-//   start, which a run's own duration shifts.
+//   is measured from one run's request to the next, while a provider counts a lifetime from the
+//   previous request's start, which a run's own duration shifts.
 //
 // The prices and lifetimes are the caller's (an adapter's `CacheTiers`): core names no provider and
 // holds no price. Issue #898: `chooseAutoLifetime` takes the multiples from the runner's price file
@@ -329,7 +330,7 @@ function normalizeCacheAutoPrices(value: unknown): CacheAutoPrices | undefined {
  * A stored or passed `cache_auto` as the record keeps it: a NEW object `{ basis }`,
  * `{ basis, gaps_s }` or (#898) `{ basis, gaps_s, prices }` (keys in that order) when the value is a
  * plain object whose `basis` is one of {@link CACHE_AUTO_BASES} and `gaps_s` is present exactly
- * when `basis` is `listen_trigger_gaps` or (caching 3-M D-2) `step_gaps` — an array of at most {@link AUTO_GAPS_KEPT} whole numbers
+ * when `basis` is `step_gaps` (caching 3-M D-2) — an array of at most {@link AUTO_GAPS_KEPT} whole numbers
  * from 0 to {@link CACHE_GAP_MAX_S}; `prices` only with a non-empty `gaps_s`, and only in one of
  * its five shapes ({@link normalizeCacheAutoPrices}; a `prices` of `undefined` counts as absent);
  * otherwise `undefined`. Other keys are dropped. Total: never throws.
@@ -343,7 +344,7 @@ export function normalizeCacheAuto(value: unknown): CacheAuto | undefined {
   }
   const gaps = v['gaps_s'];
   const prices = v['prices'];
-  if (basis !== 'listen_trigger_gaps' && basis !== 'step_gaps') {
+  if (basis !== 'step_gaps') {
     return gaps === undefined && prices === undefined
       ? { basis: basis as CacheAutoBasis }
       : undefined;

@@ -24,7 +24,7 @@ import {
   serializeToolResult,
   setAdditionalRedactionValues,
 } from '../agent/providers/agent-utils.js';
-import { makeTempHome, runIds, runsOf } from '../test-support/temp-home.js';
+import { runsOf } from '../test-support/temp-home.js';
 
 // issue #600 PR 2: resolveProvider takes an options object; the caching setting is required.
 const TEST_PROMPT_CACHE = { value: 'short', source: 'runner_default', by: 'realm agent' } as const;
@@ -711,13 +711,13 @@ steps:
   });
 });
 
-// ── issue #600 (the lifetime unit), cells 9 and 12: `--cache-gaps` is realm listen's own option; a
-// malformed value from listen never stops a drive; the re-attach command repeats a stated
-// `--prompt-cache` (`auto` included) and never `--cache-gaps`; the help names the four words. The
-// built CLI, with a scratch HOME and only a dummy key, against the in-test Anthropic stand-in (local,
-// answers 200). On a failing host each cell prints the exit code, stdout, stderr and the recorded
-// request facts — never an environment, a header or a key.
-describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the lifetime unit)', () => {
+// ── issue #600 (the lifetime unit), cells 9 and 12: the re-attach command repeats a stated
+// `--prompt-cache` (`auto` included); the help names the four words. (Caching 3-M D-3 removed the
+// hidden option realm listen passed its measured gaps in, with its refusal.) The built CLI, with a
+// scratch HOME and only a dummy key, against the in-test Anthropic stand-in (local, answers 200). On
+// a failing host each cell prints the exit code, stdout, stderr and the recorded request facts —
+// never an environment, a header or a key.
+describe('realm agent --prompt-cache auto (issue #600, the lifetime unit)', () => {
   const cli = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
   type Done = { code: number | null; stdout: string; stderr: string };
   const run = (root: string, args: string[], baseUrl: string): Promise<Done> =>
@@ -742,19 +742,6 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
         resolve({ code, stdout, stderr });
       });
     });
-  /** #616 PR-2c (c0, R4): a handle on the child's home, `<root>/home/.realm`, to read through the
-   *  store what the child `realm agent` recorded there. */
-  const childHome = (root: string) => makeTempHome({ home: join(root, 'home', '.realm') });
-  const runFiles = async (root: string): Promise<string[]> => {
-    const child = await childHome(root);
-    try {
-      return await runIds(child.home.runStore);
-    } finally {
-      await child.cleanup();
-    }
-  };
-  const ONE_STEP =
-    'id: gaps-600\nname: Gaps 600\nversion: 1\nsteps:\n  ask:\n    description: Answer.\n    execution: agent\n';
   const BLOCKED = [
     'id: reattach-gaps-600',
     'name: Reattach Gaps 600',
@@ -787,90 +774,9 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
     }
   };
 
-  // Cell 9, both producing branches of the refusal's tail. (a) red when `--cache-gaps` is accepted
-  // without `--spawned-by-listen`, or the words change; (b) prints the exit code, stderr, the run
-  // files and the requests the stand-in received.
-  it('--cache-gaps without --spawned-by-listen is refused with the exact words, and nothing is started', async () => {
-    await withRoot(ONE_STEP, async (root, baseUrl, requests) => {
-      const created = await run(
-        root,
-        ['--workflow', join(root, 'workflow.yaml'), '--model', 'claude-x', '--cache-gaps', '420'],
-        baseUrl,
-      );
-      const attached = await run(
-        root,
-        ['--run-id', 'run_600_none', '--model', 'claude-x', '--cache-gaps', '420'],
-        baseUrl,
-      );
-      expect({
-        created: { code: created.code, stderr: created.stderr.trim() },
-        attached: { code: attached.code, stderr: attached.stderr.trim() },
-        runs: await runFiles(root),
-        requests: requests(),
-      }).toEqual({
-        created: {
-          code: 1,
-          stderr:
-            "Error: --cache-gaps is set by realm listen for the agents it starts; it is not an operator's option. Remove it. Nothing was started.",
-        },
-        attached: {
-          code: 1,
-          stderr:
-            "Error: --cache-gaps is set by realm listen for the agents it starts; it is not an operator's option. Remove it. If run run_600_none exists, it was not changed.",
-        },
-        runs: [],
-        requests: 0,
-      });
-    });
-  }, 30_000);
-
-  // Cell 9. (a) red when a malformed `--cache-gaps` stops the drive, or is read as gaps; (b) prints
-  // the exit code, the start line and the recorded request facts.
-  it('--spawned-by-listen --cache-gaps 7,abc drives: the start line says unreadable; the step, with no earlier run, asks the listen prior (1 hour)', async () => {
-    await withRoot(ONE_STEP, async (root, baseUrl) => {
-      const r = await run(
-        root,
-        [
-          '--workflow',
-          join(root, 'workflow.yaml'),
-          '--model',
-          'claude-x',
-          '--spawned-by-listen',
-          '--cache-gaps',
-          '7,abc',
-        ],
-        baseUrl,
-      );
-      const child = await childHome(root);
-      const files = await runIds(child.home.runStore);
-      const { record } = await child.home.runStore
-        .get(files[0] ?? 'none')
-        .finally(() => child.cleanup());
-      const request = record.evidence[0]!.diagnostics!.cache!.requests[0]!;
-      expect({
-        code: r.code,
-        startLine: r.stdout.split('\n').find((l) => l.startsWith('Caching:')),
-        recorded: {
-          lifetime: request.cache_lifetime_s,
-          by: request.cache_requested_by,
-          auto: request.cache_auto,
-        },
-      }).toEqual({
-        code: 0,
-        startLine:
-          "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 1 hour (auto: realm listen's measurement could not be read; realm listen's default; change it with realm listen --prompt-cache).",
-        recorded: {
-          lifetime: 3600,
-          by: 'realm listen',
-          auto: { basis: 'step_gaps', gaps_s: [] },
-        },
-      });
-    });
-  }, 30_000);
-
-  // Cell 9. (a) red when the re-attach command repeats `--cache-gaps`, drops a stated `auto`, or
-  // repeats a default; (b) prints the blocked line of each drive.
-  it('the re-attach command: a stated auto is repeated, a default is not, and --cache-gaps never is', async () => {
+  // Cell 9. (a) red when the re-attach command drops a stated `auto`, or repeats a default; (b)
+  // prints the blocked line of each drive.
+  it('the re-attach command: a stated auto is repeated, a default is not', async () => {
     await withRoot(BLOCKED, async (root, baseUrl) => {
       const blocked = (r: Done) =>
         r.stderr.split('\n').find((l) => l.startsWith("⚠ Step 'publish' is blocked:")) ?? r.stderr;
@@ -884,8 +790,6 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
           '--prompt-cache',
           'auto',
           '--spawned-by-listen',
-          '--cache-gaps',
-          '420,720',
         ],
         baseUrl,
       );
@@ -918,7 +822,7 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
 
   it("the help: realm agent's --prompt-cache description", () => {
     expect(agentCommand.options.find((o) => o.long === '--prompt-cache')?.description).toBe(
-      "What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under 54 minutes, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (`short` and `long` alike); on a drive realm listen starts, `auto` chooses between that and no caching, as for Anthropic, and without usable prices asks for 30 minutes when a recent gap is under 27 minutes; `off` turns OpenAI's caching off. Other providers' own caching applies.",
+      "What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per step, from that step's own earlier runs in the last 7 days: off, short or long, priced from the runner's price file (runner.cache.economics); a step that calls tools asks for short. A step with no earlier run asks for short on a drive realm agent starts and long on a drive realm listen starts. With no usable prices, it asks for long when a recent gap is under 54 minutes, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (`short` and `long` alike); `auto` chooses between that and no caching per step, as for Anthropic, and without usable prices asks for 30 minutes when a recent gap is under 27 minutes; `off` turns OpenAI's caching off. Other providers' own caching applies.",
     );
   });
 });

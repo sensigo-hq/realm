@@ -8,8 +8,6 @@ import {
   stepCacheGaps,
   type AutoPriceInput,
   type CacheAuto,
-  type CacheAutoPrices,
-  type CacheChoice,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { settleAutoFromPriceFile } from './auto-prices.js';
@@ -30,20 +28,17 @@ const NO_PRICE_NEEDED: AutoPriceInput = { cause: 'no_file' };
  *   rule over no gap), recorded `{ basis: 'step_gaps_unreadable' }`;
  * - otherwise: the rule over the step's gaps (`stepCacheGaps`), recorded `{ basis: 'step_gaps',
  *   gaps_s, prices? }`; with no gap, the prior and no `prices`.
- * The price file is read once, through `settleAutoFromPriceFile`, and only when something needs a
- * price: a pending choice (`settleAuto`, which the same read then settles) or a step without tools
- * with a kept gap. Returns the choices and, from that read, the settle's `prices` (the start line's)
- * and the one warning line for a file that could not be used.
+ * The price file is read once, through `settleAutoFromPriceFile`, and only when a step without tools
+ * has a kept gap. Returns the choices and, from that read, the one warning line for a file that
+ * could not be used.
  */
 export async function chooseStepCaches(input: {
   definition: Pick<WorkflowDefinition, 'steps'>;
   earlierRuns: EarlierRuns | undefined;
   rule: AutoStepRule;
-  settleAuto:
-    ((prices: AutoPriceInput) => { choice: CacheChoice; prices?: CacheAutoPrices }) | undefined;
   economicsPath: string | undefined;
   model: string;
-}): Promise<{ choices: StepCacheChoices; prices?: CacheAutoPrices; warning?: string }> {
+}): Promise<{ choices: StepCacheChoices; warning?: string }> {
   // The end of each step's last gap, standing for the next request's start: the host's clock, as a
   // `request_start` is; compared only with an earlier request's start.
   const endMs = Date.now();
@@ -81,8 +76,7 @@ export async function chooseStepCaches(input: {
       }
     }
   };
-  const needsPrice =
-    input.settleAuto !== undefined || steps.some((step) => !step.tools && step.gaps.length > 0);
+  const needsPrice = steps.some((step) => !step.tools && step.gaps.length > 0);
   if (!needsPrice) {
     choose(NO_PRICE_NEEDED);
     return { choices };
@@ -90,15 +84,11 @@ export async function chooseStepCaches(input: {
   const read = await settleAutoFromPriceFile(
     (prices) => {
       choose(prices);
-      // With nothing pending, this outcome is not kept: only the read's warning is.
-      return input.settleAuto?.(prices) ?? { choice: 'off' };
+      // The reader's outcome is not kept: the choices are, and the read's warning.
+      return { choice: 'off' };
     },
     input.economicsPath,
     input.model,
   );
-  return {
-    choices,
-    ...(read.prices !== undefined ? { prices: read.prices } : {}),
-    ...(read.warning !== undefined ? { warning: read.warning } : {}),
-  };
+  return { choices, ...(read.warning !== undefined ? { warning: read.warning } : {}) };
 }

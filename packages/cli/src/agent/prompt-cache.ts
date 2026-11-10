@@ -7,7 +7,7 @@ import {
   CACHE_GAP_MAX_S,
   PROMPT_CACHE_SETTINGS,
   type CacheAuto,
-  type CacheAutoPricesView,
+  type CacheAutoPrices,
   type CacheRequestSource,
   type PromptCacheSetting,
   type WorkflowDefinition,
@@ -64,8 +64,8 @@ export function cacheableStepCounts(definition: Pick<WorkflowDefinition, 'steps'
 /**
  * The setting a drive asks Anthropic for (caching 3-B: and by which an OpenAI drive sends its cache
  * key, or not), where it came from, which runner chose it and — when the
- * setting is `auto` — on what basis the adapter chooses (`UsageRecord.cache_auto`). Issue #898: after
- * a settle, `realm agent` adds `auto.prices` from its outcome for the start line.
+ * setting is `auto` — on what basis the adapter chooses when a call carries no choice of its own
+ * (`UsageRecord.cache_auto`; caching 3-M D-2: `realm agent` passes one for each step).
  */
 export interface ResolvedPromptCache {
   value: PromptCacheSetting;
@@ -74,44 +74,22 @@ export interface ResolvedPromptCache {
   auto?: CacheAuto;
 }
 
-/** `--cache-gaps`' words: one to five whole numbers of at most six digits, comma-separated. */
-const CACHE_GAPS_PATTERN = /^\d{1,6}(,\d{1,6}){0,4}$/;
-
 /**
  * The setting a `realm agent` drive asks for (issue #600, the lifetime unit). `value` is the stated
  * flag, else `auto`; `source` says which (`stated`, `runner_default`); `by` is the runner (a drive
- * marked `--spawned-by-listen` is `realm listen`'s). Under `auto`:
- * - a drive `realm agent` starts on its own has no measurement: `{ basis: 'no_measurement' }`;
- * - a drive listen starts with no `--cache-gaps` (its workflow's first trigger):
- *   `{ basis: 'listen_trigger_gaps', gaps_s: [] }`;
- * - with a readable `--cache-gaps` (one to five whole seconds, each at most 604 800):
- *   `{ basis: 'listen_trigger_gaps', gaps_s }`;
- * - anything else: `{ basis: 'listen_gaps_unreadable' }`.
- * Pure. Never throws: a value listen passes can never stop a run.
+ * marked `--spawned-by-listen` is `realm listen`'s). Under `auto`, for both runners,
+ * `{ basis: 'no_measurement' }`: the drive itself measures nothing (caching 3-M D-3); each step's
+ * choice is made from its own earlier runs (`chooseStepCaches`). Pure. Never throws.
  */
 export function resolvePromptCache(input: {
   flag: PromptCacheSetting | undefined;
   spawnedByListen: boolean;
-  cacheGaps: string | undefined;
 }): ResolvedPromptCache {
   const by = input.spawnedByListen ? 'realm listen' : 'realm agent';
   const value = input.flag ?? 'auto';
   const source: CacheRequestSource = input.flag !== undefined ? 'stated' : 'runner_default';
   if (value !== 'auto') return { value, source, by };
-  return { value, source, by, auto: autoBasis(input.spawnedByListen, input.cacheGaps) };
-}
-
-/** What `auto` reads, from the drive's start (B2). */
-function autoBasis(spawnedByListen: boolean, cacheGaps: string | undefined): CacheAuto {
-  if (!spawnedByListen) return { basis: 'no_measurement' };
-  if (cacheGaps === undefined) return { basis: 'listen_trigger_gaps', gaps_s: [] };
-  if (CACHE_GAPS_PATTERN.test(cacheGaps)) {
-    const gaps = cacheGaps.split(',').map(Number);
-    if (gaps.every((g) => g <= CACHE_GAP_MAX_S)) {
-      return { basis: 'listen_trigger_gaps', gaps_s: gaps };
-    }
-  }
-  return { basis: 'listen_gaps_unreadable' };
+  return { value, source, by, auto: { basis: 'no_measurement' } };
 }
 
 /** `1 hour`, `N hours`; else `1 minute`, `N minutes`; else `1 second`, `N seconds` — exact. */
@@ -139,7 +117,7 @@ export function gapsText(gaps: readonly number[]): string {
   return `about ${joined}`;
 }
 
-/** What `auto` chose on, in words (the start line, `realm run inspect`). */
+/** What `auto` chose on, in words (`realm run inspect`). */
 export function autoEvidence(auto: Pick<CacheAuto, 'basis' | 'gaps_s'>): string {
   switch (auto.basis) {
     // Caching 3-M (D-2): a choice made for one step.
@@ -155,16 +133,7 @@ export function autoEvidence(auto: Pick<CacheAuto, 'basis' | 'gaps_s'>): string 
     case 'tool_step':
       return 'a step that calls tools reuses its own turns, so auto does not choose for it';
     case 'no_measurement':
-      return 'a drive realm agent starts on its own has no trigger history';
-    case 'listen_gaps_unreadable':
-      return "realm listen's measurement could not be read";
-    case 'listen_trigger_gaps': {
-      const gaps = auto.gaps_s ?? [];
-      if (gaps.length === 0)
-        return 'no earlier trigger of this workflow since realm listen started';
-      const n = gaps.length;
-      return `the last ${n === 1 ? 'gap' : `${n} gaps`} between this workflow's triggers ${n === 1 ? 'was' : 'were'} ${gapsText(gaps)}`;
-    }
+      return 'no gaps were measured';
   }
 }
 
@@ -198,7 +167,7 @@ function fallbackLifetimeS(provider: string | undefined): number {
  * record can hold.
  */
 export function autoPricesText(
-  prices: CacheAutoPricesView,
+  prices: CacheAutoPrices,
   asked: number | 'off',
   provider?: string,
 ): string {
@@ -219,8 +188,6 @@ export function autoPricesText(
         return `priced from your price file without ${short}: it has no cache_write_5m rate for this model`;
       }
       return 'priced from your price file';
-    case 'not_recorded':
-      return 'price source not recorded (this request was recorded before Realm priced auto from the price file)';
     case 'none':
       switch (prices.cause) {
         case 'no_file':
@@ -240,36 +207,19 @@ export function autoPricesText(
 }
 
 /**
- * The reason clause of the start line (`R`): where the setting came from, and what `auto` read —
- * and (#898) where its prices came from, after the evidence. `asked` is what the provider asks;
- * `provider` (#896 unit B) names whose fallback window the price words give.
+ * The reason clause of the start line (`R`): where the setting came from. Caching 3-M D-3: under
+ * `auto` that is all — what each step chose, and why, is on each request.
  */
-function reasonText(
-  promptCache: ResolvedPromptCache,
-  asked: number | 'off',
-  provider?: string,
-): string {
+function reasonText(promptCache: ResolvedPromptCache): string {
   const v = promptCache.value;
   const listen = promptCache.by === 'realm listen';
-  if (v !== 'auto') {
+  if (v !== 'auto' || promptCache.source === 'stated') {
     // eslint-disable-next-line no-restricted-syntax -- prose naming the setting's source, not a command to copy (#729 PR-3, L-2).
     return listen ? `set by realm listen --prompt-cache ${v}` : `set by --prompt-cache ${v}`;
   }
-  const prices = promptCache.auto?.prices;
-  const evidence =
-    `auto: ${autoEvidence(promptCache.auto ?? { basis: 'no_measurement' })}; ` +
-    (prices !== undefined ? `${autoPricesText(prices, asked, provider)}; ` : '');
-  if (promptCache.source === 'stated') {
-    return (
-      evidence + (listen ? 'set by realm listen --prompt-cache auto' : 'set by --prompt-cache auto')
-    );
-  }
-  return (
-    evidence +
-    (listen
-      ? "realm listen's default; change it with realm listen --prompt-cache"
-      : "realm agent's default; turn it off with --prompt-cache off")
-  );
+  return listen
+    ? "realm listen's default; change it with realm listen --prompt-cache"
+    : "realm agent's default; turn it off with --prompt-cache off";
 }
 
 /** A module's declared lifetime the start line can read: a whole number of seconds, 1 to 7 days. */
@@ -292,6 +242,7 @@ function readableLifetime(asked: unknown): asked is { lifetime_s: number } {
  * - F2, a provider without the capability: Realm asks it for no caching;
  * - F3, `off`;
  * - F4b, on, but the workflow has no agent step;
+ * - caching 3-M D-3, `auto` on Anthropic: no single lifetime — each step chooses its own (`autoLine`);
  * - F5, on, with the steps it applies to.
  * `promptCache` is absent for a provider module and for a host that calls `runAgent` itself; then
  * F3 and F5 leave out their parenthetical.
@@ -328,15 +279,13 @@ export function promptCacheStartLine(input: {
     // F2: a provider without the capability (a provider module or a host's own provider).
     return `Caching: Realm asks ${providerName(caps, 'this provider')} for no caching; any caching it does is its own.`;
   }
-  const source =
-    promptCache === undefined
-      ? ''
-      : ` (${reasonText(promptCache, asked === 'off' ? 'off' : asked.lifetime_s)})`;
+  const source = promptCache === undefined ? '' : ` (${reasonText(promptCache)})`;
   if (asked === 'off') return `Caching: off; Anthropic is asked to cache nothing${source}.`;
   const counts = cacheableStepCounts(input.definition);
   if (counts.singleShot + counts.withTools === 0) {
     return 'Caching: no step is cached; this workflow has no agent step.';
   }
+  if (promptCache?.value === 'auto') return autoLine(counts, source);
   const tools =
     counts.withTools > 0
       ? ' On a step that calls tools, it is also asked to cache the conversation so far, at each turn.'
@@ -345,18 +294,35 @@ export function promptCacheStartLine(input: {
 }
 
 /**
+ * Caching 3-M D-3 — Anthropic's start line under `auto`: no single lifetime, since each step without
+ * tools chooses its own from that step's earlier runs, and a step that calls tools asks for the short
+ * lifetime. `source` is the reason clause, with its brackets.
+ */
+function autoLine(counts: { singleShot: number; withTools: number }, source: string): string {
+  const short = lifetimeText(ANTHROPIC_CACHE_TIERS.short.lifetime_s);
+  if (counts.singleShot === 0) {
+    return `Caching: every agent step calls tools, so Anthropic is asked to cache each step's fixed instructions and the conversation so far, at each turn, for ${short}${source}.`;
+  }
+  const tools =
+    counts.withTools > 0
+      ? ` On a step that calls tools, it is asked for ${short} and also to cache the conversation so far, at each turn.`
+      : '';
+  return `Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for ${short}, ${autoLongText()} or not at all, as auto chooses per step from that step's own earlier runs${source}.${tools}`;
+}
+
+/**
  * #896 — the start line of the `openai` provider in the explicit set (GPT-5.6 and later at OpenAI's
  * own address). In order:
- * - a stated `off`: the off line, whatever the steps (unit A's);
- * - no agent step: the off line when `auto` chose no caching (Anthropic's order), else no step is
- *   cached;
+ * - `off`: the off line, whatever the steps (unit A's; an `auto` provider is never `off`, caching
+ *   3-M D-3);
+ * - no agent step: no step is cached;
  * - every agent step calls tools: those are left to OpenAI's own caching, the key still sent —
  *   whatever `auto` chose, since a tool step is not part of the choice (unit A's reason);
- * - `auto` chose no caching: the off line;
+ * - caching 3-M D-3, `auto`: 30 minutes or not at all, as each step without tools chooses;
  * - otherwise the 30-minute ask.
  * The last two add a sentence on tool steps when one calls tools, and give Anthropic's reason
- * (unit B: `auto`'s evidence and price words, OpenAI's window). With no setting given (a host
- * calling `runAgent`), no parenthetical.
+ * (where the setting came from). With no setting given (a host calling `runAgent`), no
+ * parenthetical.
  */
 function openAiExplicitLine(
   asked: 'off' | { lifetime_s: number },
@@ -365,23 +331,20 @@ function openAiExplicitLine(
 ): string {
   const source = promptCache === undefined ? '' : ` (${openAiReasonText(promptCache)})`;
   const offLine = 'Caching: off; OpenAI is asked to cache nothing';
-  if (asked === 'off' && promptCache?.value !== 'auto') return `${offLine}${source}.`;
-  const reason =
-    promptCache === undefined
-      ? ''
-      : ` (${reasonText(promptCache, asked === 'off' ? 'off' : asked.lifetime_s, 'openai')})`;
+  if (asked === 'off') return `${offLine}${source}.`;
+  const reason = promptCache === undefined ? '' : ` (${reasonText(promptCache)})`;
   const counts = cacheableStepCounts(definition);
   if (counts.singleShot + counts.withTools === 0) {
-    return asked === 'off'
-      ? `${offLine}${reason}.`
-      : 'Caching: no step is cached; this workflow has no agent step.';
+    return 'Caching: no step is cached; this workflow has no agent step.';
   }
   const leftToOpenAi = "OpenAI's own caching, which reuses each turn at the next";
   if (counts.singleShot === 0) {
     return `Caching: every agent step calls tools, so each is left to ${leftToOpenAi}; Realm sends a cache key${source}.`;
   }
   const tools = counts.withTools > 0 ? ` A step that calls tools is left to ${leftToOpenAi}.` : '';
-  if (asked === 'off') return `${offLine}${reason}.${tools}`;
+  if (promptCache?.value === 'auto') {
+    return `Caching: OpenAI is asked to cache each step's fixed instructions and the stable start of its prompt for ${lifetimeText(OPENAI_EXPLICIT_LIFETIME_S)} or not at all, as auto chooses per step from that step's own earlier runs${reason}.${tools}`;
+  }
   return `Caching: OpenAI is asked to cache each step's fixed instructions and the stable start of its prompt for ${lifetimeText(asked.lifetime_s)}, the one lifetime Realm can ask OpenAI for${reason}.${tools}`;
 }
 
