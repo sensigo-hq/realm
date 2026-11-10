@@ -1662,6 +1662,11 @@ describe('caching 3-M C1 — a request judged against another run', () => {
       { ...CONVERSATION, read: 0, write: 6897 },
     ],
     [
+      'only this side conversation: a workflow edit gave the step tools',
+      { ...CONVERSATION, read: 0, write: 6897 },
+      { ...SINGLE_SHOT, read: 0, write: 4019 },
+    ],
+    [
       'this side provider_rules: an OpenAI request',
       { ...OPENAI_RULES, read: 0, write: 4012 },
       { ...OPENAI_EXPLICIT, read: 0, write: 4012 },
@@ -1714,6 +1719,33 @@ describe('caching 3-M C1 — a request judged against another run', () => {
         predecessor: { from: 'reference' },
         expected_tokens: 6897,
         shortfall_tokens: 6897,
+        rule: 'exact',
+      },
+    ]);
+  });
+
+  // Check 1's else-arm. Real case: a stored list from another writer or an older version (`realm run
+  // import` keeps a file's values as they are, and the write gate only closes what it writes) holds a
+  // reference whose `from` is missing or is no word Realm writes; it is placed as any copy of this
+  // run's own record, never as another run's. Can fail: the place decided by anything but the word
+  // `earlier_run` (such a reference placed `earlier_run`, or its tool-step turn declined). Prints the
+  // entry and its reference, then the verdict.
+  it.each<[string, unknown]>([
+    ['no from at all', undefined],
+    ['a word Realm does not write', 'bogus'],
+    ['the right word in capitals', 'EARLIER_RUN'],
+    ['a number', 5],
+  ])('a reference with %s is placed reference, not earlier_run', (_label, from) => {
+    const reference: Record<string, unknown> = { ...referenceOf(WROTE) };
+    if (from === undefined) delete reference['from'];
+    else reference['from'] = from;
+    const list = stored({ ...SINGLE_SHOT, read: 0, write: 4019, in_call: 0, reference });
+    expect(cacheReadVerdicts(list), show(list)).toEqual([
+      {
+        outcome: 'missed',
+        predecessor: { from: 'reference' },
+        expected_tokens: 4019,
+        shortfall_tokens: 4019,
         rule: 'exact',
       },
     ]);
