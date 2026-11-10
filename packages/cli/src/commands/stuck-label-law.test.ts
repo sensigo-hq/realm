@@ -14,7 +14,7 @@ import { STUCK_DEFINITION_PARSE_CAP_BYTES, CURRENT_WORKFLOW_SCHEMA_VERSION } fro
 import type { RunStore, RunRecord, RunHealthFinding, WorkflowDefinition } from '@sensigo/realm';
 import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
-import { plantRegistryRow } from '../test-support/plant-registry-row.js';
+import { plantRegistryRow } from '@sensigo/realm-store-sqlite/test-support';
 
 type Kind = RunHealthFinding['kind'];
 

@@ -344,7 +344,7 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
     const what =
       options == null ? 'no options were given' : `no ${joinStoreNames(missing)} was given`;
     throw new WorkflowError(
-      `createRealmMcpServer: ${what}. The library has no default store, so no server was built and nothing was opened. Pass runStore, workflowStore, traceBufferStore and failedAttemptStore, opened once per process — the file stores are new JsonFileStore(), new JsonWorkflowStore(), new JsonTraceBufferStore(runStore.runsDirPath, runStore) and new JsonFileFailedAttemptStore(runStore.runsDirPath) — or run the realm-mcp command, which opens ~/.realm itself.`,
+      `createRealmMcpServer: ${what}. The library has no default store, so no server was built and nothing was opened. Pass runStore, workflowStore, traceBufferStore and failedAttemptStore, opened once per process (a test may use InMemoryStore from @sensigo/realm-testing and InMemoryTraceBufferStore from @sensigo/realm for the run and trace stores), or open a Realm home with createRealmMcpServerOnHome from @sensigo/realm-mcp/home.`,
       {
         code: 'VALIDATION_OPTION_INVALID',
         category: 'VALIDATION',

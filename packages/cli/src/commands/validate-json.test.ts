@@ -28,7 +28,7 @@ import type { LoaderWarning } from '@sensigo/realm';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
-import { plantRegistryRow } from '../test-support/plant-registry-row.js';
+import { plantRegistryRow } from '@sensigo/realm-store-sqlite/test-support';
 // =================================================================================================
 // U1 — the severity normalizer's ONLY honest pin (unit-level; no fixture can produce this input —
 // every mint site in the tree already resolves severity at construction, so minted ≡ effective
