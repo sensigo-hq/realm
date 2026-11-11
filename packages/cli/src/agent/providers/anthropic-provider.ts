@@ -536,6 +536,84 @@ export function readAnthropicUsage(response: unknown): AnthropicUsage | undefine
 }
 
 /**
+ * Issue #1122 — the Anthropic workspace Realm's requests act in, from `ANTHROPIC_WORKSPACE_ID`, as
+ * given. Unset, empty or only spaces is `undefined`: nothing is sent for it. A key that is not tied
+ * to a workspace is refused by Anthropic on every request that names none.
+ */
+function anthropicWorkspaceId(): string | undefined {
+  const value = process.env['ANTHROPIC_WORKSPACE_ID'];
+  return value === undefined || value.trim() === '' ? undefined : value;
+}
+
+/**
+ * Issue #1122 — the client option that names the workspace on every request the client sends:
+ * Anthropic's own documented `defaultHeaders` (present since SDK 0.20.0). The SDK merges
+ * `ANTHROPIC_CUSTOM_HEADERS` under it, so this value wins over the same header given there.
+ */
+function workspaceClientOptions(): Record<string, unknown> {
+  const workspace = anthropicWorkspaceId();
+  return workspace === undefined ? {} : { defaultHeaders: { 'anthropic-workspace-id': workspace } };
+}
+
+/** An SDK error's status, and its parsed body's `error.type` and `error.message`, when present. */
+function apiErrorParts(err: unknown): { status?: unknown; type?: unknown; message?: unknown } {
+  if (err === null || typeof err !== 'object') return {};
+  const e = err as { status?: unknown; error?: unknown };
+  const body = e.error;
+  const inner =
+    body !== null && typeof body === 'object'
+      ? ((body as { error?: unknown }).error as { type?: unknown; message?: unknown } | null)
+      : undefined;
+  return inner !== null && typeof inner === 'object'
+    ? { status: e.status, type: inner.type, message: inner.message }
+    : { status: e.status };
+}
+
+/**
+ * Issue #1122 — Anthropic refusing a request for its workspace, read from the error's own fields as
+ * #676's `explainFailure` reads them (never `instanceof`, never a pattern over the whole message):
+ * - `missing` (R1): the setting is not set; 400 `invalid_request_error` naming
+ *   `anthropic-workspace-id` (the key needs a workspace);
+ * - `invalid` (R2): the setting is set; the same 400 (Anthropic: "anthropic-workspace-id header must
+ *   be a valid workspace ID.");
+ * - `unknown` (R3): the setting is set; 404 `not_found_error` with a message starting `Workspace `
+ *   and containing `not found` (Anthropic: "Workspace `<id>` not found.").
+ * Every conjunct is needed; anything else is `undefined`, and so is any read that throws. One
+ * predicate serves both the stop (no re-send of any kind) and the line `explainFailure` gives.
+ */
+export function workspaceRefusal(
+  err: unknown,
+  workspaceSet: boolean = anthropicWorkspaceId() !== undefined,
+): 'missing' | 'invalid' | 'unknown' | undefined {
+  try {
+    const { status, type, message } = apiErrorParts(err);
+    if (typeof message !== 'string') return undefined;
+    if (status === 400 && type === 'invalid_request_error') {
+      if (!message.includes('anthropic-workspace-id')) return undefined;
+      return workspaceSet ? 'invalid' : 'missing';
+    }
+    if (status === 404 && type === 'not_found_error' && workspaceSet) {
+      return message.startsWith('Workspace ') && message.includes('not found')
+        ? 'unknown'
+        : undefined;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Issue #1122 — the line under the failure line, for each workspace refusal (W1, W2, W3). */
+const WORKSPACE_REFUSAL_LINES = {
+  missing:
+    'Anthropic refused this API key because it is not tied to a workspace. Set ANTHROPIC_WORKSPACE_ID to the ID of the workspace to use (in the Claude Console, Settings → Workspaces, the ID column), or use a key made inside a workspace.',
+  invalid:
+    'Anthropic refused the workspace ID in ANTHROPIC_WORKSPACE_ID as not valid. Copy the ID from the Claude Console (Settings → Workspaces, the ID column); it starts with wrkspc_.',
+  unknown:
+    'Anthropic has no workspace with the ID in ANTHROPIC_WORKSPACE_ID that this API key can use. Check the ID in the Claude Console (Settings → Workspaces, the ID column).',
+} as const;
+
+/**
  * Caching 3-M (piece B2a): one drive's state of asking Anthropic why a request's cache read fell
  * short, one per provider instance as {@link CacheFieldMemory} is. Set on only at Anthropic's own
  * address; `resolveProvider` turns it on in B2b.
@@ -564,7 +642,15 @@ async function sendAsking<T>(
   try {
     return await post(body);
   } catch (err) {
-    if (!('diagnostics' in body) || ask.probed || extractHttpStatus(err) !== 400) throw err;
+    // Issue #1122: a workspace refusal stops here; no re-send would be accepted.
+    if (
+      !('diagnostics' in body) ||
+      ask.probed ||
+      extractHttpStatus(err) !== 400 ||
+      workspaceRefusal(err) !== undefined
+    ) {
+      throw err;
+    }
     ask.probed = true;
     const response = await post(withoutQuestion());
     ask.asking = false;
@@ -609,6 +695,8 @@ async function createMessageWithLadder(
   // else propagates untouched. Status-keyed: it never reads the message (caching 3-B: the gateway
   // rule, which does, runs before it and only on a custom endpoint).
   const strictLadder = async (err: unknown, withCache: boolean): Promise<unknown> => {
+    // Issue #1122: a workspace refusal is not about the schema; it stops at its first request.
+    if (workspaceRefusal(err) !== undefined) throw err;
     const status = extractHttpStatus(err);
     if (status !== 400 && status !== 503) throw err; // unrelated failure — never engage the ladder
     const api_message = extractErrorMessage(err);
@@ -838,7 +926,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   }
 
   /**
-   * Issue #676 — one sentence for the one error this provider explains: Anthropic answering that
+   * Issue #1122 — first, Anthropic refusing for the workspace ({@link workspaceRefusal}): the line
+   * that names ANTHROPIC_WORKSPACE_ID and where the Claude Console shows the ID.
+   * Issue #676 — then one sentence for Anthropic answering that
    * it has no model by the name this provider was built with. The body says only `model: <id>`,
    * captured on 2026-10-04:
    *   404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-sonnet-4-5"},…}
@@ -850,16 +940,13 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    */
   override explainFailure(err: unknown): string | undefined {
     try {
-      if (err === null || typeof err !== 'object') return undefined;
-      const e = err as { status?: unknown; error?: unknown };
-      if (e.status !== 404) return undefined;
-      const body = e.error;
-      if (body === null || typeof body !== 'object') return undefined;
-      const inner = (body as { error?: unknown }).error as
-        { type?: unknown; message?: unknown } | null | undefined;
-      if (inner === null || typeof inner !== 'object') return undefined;
-      if (inner.type !== 'not_found_error') return undefined;
-      if (inner.message !== 'model: ' + this.model) return undefined;
+      // Issue #1122: a workspace refusal (W1–W3) comes first; its 404 never names a model.
+      const workspace = workspaceRefusal(err);
+      if (workspace !== undefined) return WORKSPACE_REFUSAL_LINES[workspace];
+      const { status, type, message } = apiErrorParts(err);
+      if (status !== 404) return undefined;
+      if (type !== 'not_found_error') return undefined;
+      if (message !== 'model: ' + this.model) return undefined;
       return (
         `Anthropic offers no model named ${this.model} to this API key. Check the name given to --model; ` +
         `current models are listed at ${ANTHROPIC_MODELS_URL} and retired ones at ` +
@@ -902,6 +989,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
       maxRetries: MAX_RETRIES,
       fetch: makeCountingFetch(counters),
+      // Issue #1122: `anthropic-workspace-id` on every request, when ANTHROPIC_WORKSPACE_ID is set.
+      ...workspaceClientOptions(),
     });
   }
 
@@ -1244,6 +1333,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
       maxRetries: MAX_RETRIES,
       fetch: makeCountingFetch(counters),
+      // Issue #1122: `anthropic-workspace-id` on every request, when ANTHROPIC_WORKSPACE_ID is set.
+      ...workspaceClientOptions(),
     });
     assertMaxTokensCoherent(resolveMaxTokens(this.model), clock);
 
@@ -1535,6 +1626,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         withCache: boolean,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ): Promise<{ response: any; key: string }> => {
+        // Issue #1122: a workspace refusal is not about the tools; it stops at its first request.
+        if (workspaceRefusal(err) !== undefined) throw err;
         const status = extractHttpStatus(err);
         if (status !== 400 && status !== 503) throw err; // unrelated failure — never engage
         const api_message = extractErrorMessage(err);
