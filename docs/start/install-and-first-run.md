@@ -25,7 +25,7 @@ realm --version
 It prints the version number, for example:
 
 ```text
-0.46.0
+0.49.0
 ```
 
 ## 2. Create a workflow
