@@ -35,7 +35,7 @@ With an Anthropic key made without a workspace (the Claude Console calls its sco
 export ANTHROPIC_WORKSPACE_ID=wrkspc_your-workspace-id
 ```
 
-The ID is in the Claude Console under Settings → Workspaces. Without it, Anthropic refuses every request of such a key.
+The ID is in the Claude Console under Settings → Workspaces. Without it, Anthropic refuses every request of such a key. The setting was added after version 0.48.0.
 
 Name the model with `--model <name>`. It is required: Realm has no default model, because providers change their models often. Anthropic lists its models at [platform.claude.com/docs/en/models/overview](https://platform.claude.com/docs/en/models/overview), and OpenAI at [developers.openai.com/api/docs/models](https://developers.openai.com/api/docs/models). Version 0.45.0 has a default model (`gpt-4o`, or `claude-sonnet-4-5` for Anthropic).
 
