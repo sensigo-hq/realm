@@ -64,9 +64,9 @@
     }
   },
   "devDependencies": {
-    "@pydantic/genai-prices": "0.1.12",
+    "@pydantic/genai-prices": "0.2.1",
     "@sensigo/realm-testing": "*",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.6.6",
     "@types/proper-lockfile": "^4.1.4",
     "typescript": "*",
     "vitest": "^4.1.0"
