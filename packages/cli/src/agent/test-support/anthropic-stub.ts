@@ -69,8 +69,11 @@ export interface AnthropicStubOptions {
    * honored. Pair it with `x-should-retry: false` to keep the cell fast — the real SDK obeys that
    * directive before it sleeps, so the failure comes back immediately with the long Retry-After
    * intact in the record.
+   *
+   * Issue #1122: `body`, when given, is the JSON answer in place of the fixed `rate_limit_error`
+   * one, so the real SDK parses a provider's exact refusal (e.g. Anthropic's workspace refusals).
    */
-  failure?: { status: number; headers: Record<string, string> };
+  failure?: { status: number; headers: Record<string, string>; body?: Record<string, unknown> };
   /**
    * The assistant's final answer, returned once the tool has replied (or on the first and only
    * turn in single-shot mode). MUST validate against the driven step's `input_schema` — a mismatch
@@ -174,7 +177,11 @@ export async function startAnthropicStub(options: AnthropicStubOptions): Promise
           'content-type': 'application/json',
           ...options.failure.headers,
         });
-        res.end(JSON.stringify({ type: 'error', error: { type: 'rate_limit_error' } }));
+        res.end(
+          JSON.stringify(
+            options.failure.body ?? { type: 'error', error: { type: 'rate_limit_error' } },
+          ),
+        );
         return;
       }
 

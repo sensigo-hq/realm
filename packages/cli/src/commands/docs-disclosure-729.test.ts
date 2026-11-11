@@ -123,10 +123,10 @@ const shown = (text: string, audience: DisclosureAudience, set = setFor(audience
 
 describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
   it('the count of the variables Realm reads by name matches its table, and its REALM_ names are the ones the code reads', () => {
-    claim(ENV_PAGE, "Realm's own code reads 12 variables by name:");
+    claim(ENV_PAGE, "Realm's own code reads 13 variables by name:");
     const lines = read(ENV_PAGE).split('\n');
     const start = lines.findIndex((l) =>
-      l.includes("Realm's own code reads 12 variables by name:"),
+      l.includes("Realm's own code reads 13 variables by name:"),
     );
     let rows = 0;
     const names: string[] = [];
@@ -148,7 +148,7 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       realm: names.filter((n) => n.startsWith('REALM_')).sort(),
       exemptOnThePage: [...NOT_YET_ON_THE_PAGE.keys()].filter((n) => read(ENV_PAGE).includes(n)),
     }).toEqual({
-      rows: 12,
+      rows: 13,
       realm: [...REALM_SETTING_VARIABLES, ...REALM_CREDENTIAL_VARIABLES, 'REALM_NOT_SECRET']
         .filter((n) => !NOT_YET_ON_THE_PAGE.has(n))
         .sort(),
