@@ -1,5 +1,5 @@
 // price-source-list.test.ts — issue #600 caching PR P (G9): the list adapter against the installed
-// `@pydantic/genai-prices` 0.1.12, pinned EXACTLY as a devDependency (its model data changes from
+// `@pydantic/genai-prices` 0.2.1, pinned EXACTLY as a devDependency (its model data changes from
 // release to release; these figures are the design review's and the audit's probes). On a failing
 // CI host each cell prints the priced figure and what the list matched: test figures only.
 import { describe, expect, it } from 'vitest';
@@ -27,7 +27,7 @@ const input = (
 const total = (r: PriceResult): number | string =>
   'priced' in r ? Number(r.priced.total.toFixed(9)) : r.not_priced;
 
-describe('the price list adapter on genai-prices 0.1.12 (issue #600 caching PR P, G9)', () => {
+describe('the price list adapter on genai-prices 0.2.1 (issue #600 caching PR P, G9)', () => {
   // (a) red when the split keys are dropped (the total alone prices the 1-hour write at the
   // 5-minute rate: $0.022); (b) prints the figure.
   it('a recorded 1-hour split prices at the 1-hour rate: claude-sonnet-5-5 10k prompt / 4k 1h write = $0.028', () => {
@@ -110,7 +110,7 @@ describe('the price list adapter on genai-prices 0.1.12 (issue #600 caching PR P
   });
 
   it('the version read from the installed package (its package.json in the first node_modules folder Node would search from the adapter)', () => {
-    expect(readPriceListVersion()).toBe('0.1.12');
+    expect(readPriceListVersion()).toBe('0.2.1');
   });
 
   // (a) red when the note is set on the default endpoint; (b) prints the notes.
@@ -144,7 +144,7 @@ describe('the price list adapter on genai-prices 0.1.12 (issue #600 caching PR P
     const r = source.price(
       input('claude-sonnet-5-5', {}, { prompt_tokens: 10000, cache_read_tokens: 4000 }),
     );
-    // 10k prompt at the full input rate ($2 per million on 0.1.12), against $0.0124 with the read.
+    // 10k prompt at the full input rate ($2 per million on 0.2.1), against $0.0124 with the read.
     expect('priced' in r && Number(r.priced.uncached_counterfactual.toFixed(9))).toBe(0.02);
   });
 });
