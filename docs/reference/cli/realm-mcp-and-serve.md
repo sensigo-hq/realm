@@ -32,7 +32,7 @@ When it starts, `realm mcp` prints one line to standard error: the gate-answers 
 A client that connects is told the server's name and version:
 
 ```json
-{ "name": "realm", "version": "0.46.0" }
+{ "name": "realm", "version": "0.49.0" }
 ```
 
 ### `--project` has no default
