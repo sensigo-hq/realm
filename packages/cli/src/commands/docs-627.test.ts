@@ -589,6 +589,11 @@ describe('#627 W — the other pages W changed', () => {
       'docs/reference/cli/realm-mcp-and-serve.md',
       'When it starts, `realm mcp` prints one line to standard error: the gate-answers value it runs with, where it came from, and what that means (added after version 0.47.0, which printed nothing).',
     );
+    // The release pass after 0.48.0 (P4, 2026-11-11): `realm --help` lists seven commands; `db` is this release's.
+    claim(
+      'docs/reference/cli/realm-mcp-and-serve.md',
+      '`realm` has seven commands: `workflow`, `run`, `db`, `agent`, `listen`, `mcp` and `serve`.',
+    );
     // Correction 2 (6.9, 4.2): executed by gate-answers-door-627's 4.2 rows (serve, and mcp under
     // withheld and offered) and this file's form-wait cell.
     claim(

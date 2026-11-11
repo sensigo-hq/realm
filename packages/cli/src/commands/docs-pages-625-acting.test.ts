@@ -2725,7 +2725,7 @@ describe(
       );
       claim(
         'CHANGELOG.md',
-        "- **`realm run import <path…>` brings Realm's JSON run records and exports into the SQLite store:** one line per file (`imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run`), a run already stored is never overwritten, and the exit code is 1 when any file was not imported (#616).",
+        "- **`realm run import <path…>` brings Realm's JSON run records and exports into the SQLite store:** one line per file (`imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run`), a run already stored is never overwritten, and the exit code is 1 when any file read `diverged`, `purged`, `legacy` or `not_a_run` (#616).",
       );
     });
   },

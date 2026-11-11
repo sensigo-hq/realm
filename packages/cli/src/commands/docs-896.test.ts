@@ -133,7 +133,7 @@ describe('#896 unit A — the docs sentences', () => {
     for (const lead of [
       "**OpenAI GPT-5.6 and later cache only each step's fixed part.**",
       "**`--prompt-cache off` turns OpenAI's caching off on GPT-5.6 and later**",
-      '**BREAKING: on those models the record and `capabilities()` state the ask:**',
+      "**BREAKING: on OpenAI GPT-5.6 and later at OpenAI's own address, the record and `capabilities()` state the ask:**",
     ])
       claimChangelog(lead);
   });

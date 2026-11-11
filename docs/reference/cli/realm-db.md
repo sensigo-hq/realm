@@ -86,7 +86,7 @@ and then:
 
 `Re-stamped the phase index of <k> run(s) with the current derivation.`
 
-**Exit code:** 0 when every step ran, or none was pending, and the re-stamp finished. 1 when the command refuses or a step fails, with one `Error:` line on standard error:
+**Exit code:** 0 when every step ran, or none was pending, and the re-stamp finished. 1 when the command refuses or a step fails, with one line on standard error — the two flag refusals as written below, every other refusal as an `Error:` line:
 
 - neither flag: `Provide --backup <path> (a copy of the store file, made before anything changes) or --no-backup.`; both: `Cannot combine --backup with --no-backup. Use one or the other.` Nothing is opened.
 - the home has no store file: `There is no store file at <home>/realm.db to migrate.`; an empty one: `<home>/realm.db holds no store yet: there is nothing to migrate.` These have the code [`STATE_STORE_MIGRATE_REFUSED`](../error-codes.md); nothing is created or copied.

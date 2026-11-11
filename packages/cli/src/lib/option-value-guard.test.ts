@@ -29,7 +29,11 @@ function claim(page: string, text: string): void {
 /** The CHANGELOG's `[Unreleased]` section (#871's form). */
 function unreleased(): string {
   const text = read('CHANGELOG.md');
-  return text.slice(text.indexOf('## [Unreleased]'), text.indexOf('\n## [0.48.0]'));
+  // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+  const start = text.includes('## [Unreleased]')
+    ? text.indexOf('## [Unreleased]')
+    : text.indexOf('\n## [') + 1;
+  return text.slice(start, text.indexOf('\n## [0.48.0]'));
 }
 
 let h: TempHome & { readonly root: string };
@@ -716,7 +720,7 @@ describe('#920 C-2 — the pages name every guarded option', () => {
     ).toEqual({ project: 1, workflow: 1, reason: 1, stepAndWorkflow: 1 });
     expect(flat(unreleased()), 'the CHANGELOG [Unreleased] #920 bullet, C-2 clause').toContain(
       flat(
-        'The same now holds for 19 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`), `run export --out`, `run abandon --reason`, `run respond --by`, `run reclaim --step`, and `agent --params` and `--base-url`.',
+        'The same now holds for 20 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`), `run export --out`, `run abandon --reason`, `run respond --by`, `run reclaim --step`, and `agent --params` and `--base-url`, and `db migrate --backup`.',
       ),
     );
   });
