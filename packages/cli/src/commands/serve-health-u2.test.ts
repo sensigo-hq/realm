@@ -307,8 +307,7 @@ describe(
       const mcp = answer(
         (await ask(s.port, POST_HEAD(Buffer.byteLength(TOOLS_LIST)) + TOOLS_LIST, /"\}$/)).text(),
       );
-      // (1) Red when the address is answered after the token check (401), and when the token check
-      //     is lost (the POST answered).
+      // (1) Red when the address is answered after the token check (401).
       // (2) Prints both statuses and the health body.
       const facts = { health: health.status, body: health.body, mcp: mcp.status };
       expect(facts, JSON.stringify(facts)).toEqual({
@@ -446,8 +445,10 @@ describe(
       });
     });
 
-    it("H7: a drain closes nothing: a silent connection and a real MCP client's GET stream are open 2 s into a drain of 3; the stream ends within 300 ms of the drain's end, exit 0, no cut line", async () => {
+    it("H7: a drain closes nothing: a connection silent for 4 s and a real MCP client's GET stream are open 2 s into a drain of 3; both end within 300 ms of the drain's end, exit 0, no cut line", async () => {
       const s = await startServe(['--shutdown-drain', '3']);
+      // Silent for 4 s at the signal: without the drain its 5 s young window would end 1 s after it.
+      const silent = await raw(s.port);
       const watch = watchedFetch();
       const client = new Client({ name: 'u2-health', version: '0' });
       client.onerror = () => {};
@@ -459,7 +460,7 @@ describe(
       onTestFinished(() => client.close().catch(() => {}));
       const startedBy = performance.now() + 5000;
       while (watch.opened() === undefined && performance.now() < startedBy) await sleep(20);
-      const silent = await raw(s.port);
+      await sleep(Math.max(0, silent.connectedAt + 4000 - performance.now()));
       const t = s.signal('SIGTERM');
       await sleep(2000);
       const at2s = { stream: watch.ended() === undefined, silent: silent.closedAt() === undefined };
@@ -470,7 +471,9 @@ describe(
         else await sleep(30);
       }
       const exit = await s.exitWithin(9000);
-      // (1) Red when held streams or silent connections are ended at the signal (closed at 2 s).
+      // (1) Red when every connection is closed at the signal, when the stop begins at the signal
+      //     (the stream ended at once), and when the drain is ignored (the silent connection closed
+      //     about 1 s after the signal).
       // (2) Prints whether each was open at 2 s, when the stream ended and the silent connection
       //     closed after the signal (ms), when the first connection was refused, the exit code and
       //     the cut lines.
@@ -489,7 +492,8 @@ describe(
           streamEndedMs:
             facts.streamEndedMs! >= 2900 && facts.streamEndedMs! <= facts.refusedMs! + 300,
           refusedMs: facts.refusedMs! >= 2900,
-          silentClosedMs: facts.silentClosedMs! >= 2900 && facts.silentClosedMs! <= 8000,
+          silentClosedMs:
+            facts.silentClosedMs! >= 2900 && facts.silentClosedMs! <= facts.refusedMs! + 300,
         },
         JSON.stringify(facts),
       ).toEqual({
@@ -609,9 +613,9 @@ describe(
         '--shutdown-drain <seconds> Seconds the program keeps serving, with /health answering 503, after Ctrl+C or SIGTERM before the stop begins and it stops accepting connections; a whole number from 0 to 2147483. 0 begins the stop at once. (default: 0)';
       const line = (v: string): string =>
         `error: option '--shutdown-drain <seconds>' argument '${v}' is invalid. --shutdown-drain must be a whole number from 0 to 2147483.`;
-      // (1) Red on the base (`unknown option`), when the range changes, when 0 waits or prints a
-      //     drain line, when 2147483 overflows Node's timer (`TimeoutOverflowWarning`, and the drain
-      //     would end at once), and when the help's text or default changes.
+      // (1) Red on the base (`unknown option`), when the value is not checked, when 0 waits or
+      //     prints a drain line, when 2147483 overflows Node's timer (`TimeoutOverflowWarning`, and
+      //     the drain would end at once), and when the help's default changes.
       // (2) Prints each refusal's exit code and output, each start's exit code and time (ms), the
       //     drain lines, whether the warning appeared, and whether the help holds the text.
       const facts = {

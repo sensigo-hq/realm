@@ -148,8 +148,8 @@ describe('#960 U2 the health address', { timeout: 30_000 }, () => {
       connection: 'close',
     };
     // (1) Red with another body (a version, a timestamp), without `Cache-Control: no-store`, when
-    //     the answer stays 200 once stopping, without `Connection: close` on the 503, when HEAD
-    //     gets a body, and when a request that is not the address is answered.
+    //     the answer stays 200 once stopping, without `Connection: close` on the 503, and when a
+    //     request that is not the address is answered. (Node itself never sends a body for `HEAD`.)
     // (2) Prints each answer's status, its four headers and its body.
     const facts = { running, other, stopped };
     expect(facts, JSON.stringify(facts)).toEqual({

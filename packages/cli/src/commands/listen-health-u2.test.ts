@@ -313,7 +313,7 @@ describe(
           )
         ).text(),
       );
-      // (1) Red when the address is answered after the method check (405) or asks for the secret.
+      // (1) Red when the address is answered after the method check (405).
       // (2) Prints both statuses and the health body.
       const facts = { health: health.status, body: health.body, unsigned: unsigned.status };
       expect(facts, JSON.stringify(facts)).toEqual({
@@ -463,26 +463,42 @@ describe(
       });
     });
 
-    it('H7: a drain closes nothing: a silent connection is open 2 s into a drain of 3, and is ended by the stop after it; exit 0, no cut line', async () => {
-      const s = await startListen(['--shutdown-drain', '3']);
+    it('H7: a drain closes nothing: a connection silent for 4 s is open 2 s into a drain of 3, and is ended by the stop when the drain ends; exit 0, no cut line', async () => {
+      // `--body-timeout-ms 30000`: listen's header timeout is its body timeout, and the default 5 s
+      // would end the silent connection itself.
+      const s = await startListen(['--shutdown-drain', '3', '--body-timeout-ms', '30000']);
+      // Silent for 4 s at the signal: without the drain its 5 s young window would end 1 s after it.
       const silent = await raw(s.port);
+      await sleep(4000);
       const t = s.signal('SIGTERM');
       await sleep(2000);
       const openAt2s = silent.closedAt() === undefined;
+      // The drain's end: the first moment a new connection is refused.
+      let refusedAt: number | undefined;
+      while (refusedAt === undefined && performance.now() < t + 9000) {
+        if (!(await accepts(s.port))) refusedAt = performance.now();
+        else await sleep(30);
+      }
       const exit = await s.exitWithin(10_000);
-      // (1) Red when silent connections are ended at the signal (closed at 2 s).
-      // (2) Prints whether it was open at 2 s, when it closed after the signal (ms), the exit code
-      //     and the cut lines.
+      // (1) Red when every connection is closed at the signal (closed before 2 s), and when the
+      //     drain is ignored (closed about 1 s after the signal).
+      // (2) Prints whether it was open at 2 s, when it closed and when the first connection was
+      //     refused after the signal (ms), the exit code and the cut lines.
       const facts = {
         openAt2s,
         closedMs: round((silent.closedAt() ?? Infinity) - t),
+        refusedMs: round((refusedAt ?? Infinity) - t),
         code: exit?.code,
         cut: s.cutLines(),
       };
       expect(
-        { ...facts, closedMs: facts.closedMs! >= 2900 && facts.closedMs! <= 8000 },
+        {
+          ...facts,
+          closedMs: facts.closedMs! >= 2900 && facts.closedMs! <= facts.refusedMs! + 300,
+          refusedMs: facts.refusedMs! >= 2900,
+        },
         JSON.stringify(facts),
-      ).toEqual({ openAt2s: true, closedMs: true, code: 0, cut: [] });
+      ).toEqual({ openAt2s: true, closedMs: true, refusedMs: true, code: 0, cut: [] });
     });
 
     it('H8: `--shutdown-drain 20` and a second signal during it: exit 1 within 2 s with the second-signal line when a request is in flight; exit 0 within 2 s when none is', async () => {
@@ -584,9 +600,9 @@ describe(
         '--shutdown-drain <seconds> Seconds the program keeps serving, with /health answering 503, after Ctrl+C or SIGTERM before the stop begins and it stops accepting connections; a whole number from 0 to 2147483. 0 begins the stop at once. (default: 0)';
       const line = (v: string): string =>
         `error: option '--shutdown-drain <seconds>' argument '${v}' is invalid. --shutdown-drain must be a whole number from 0 to 2147483.`;
-      // (1) Red on the base (`unknown option`), when the range changes, when 0 waits or logs a drain
-      //     line, when 2147483 overflows Node's timer (`TimeoutOverflowWarning`, and the drain would
-      //     end at once), and when the help's text or default changes.
+      // (1) Red on the base (`unknown option`), when the value is not checked, when 0 waits or logs
+      //     a drain line, when 2147483 overflows Node's timer (`TimeoutOverflowWarning`, and the
+      //     drain would end at once), and when the help's default changes.
       // (2) Prints each refusal's exit code and output, each start's exit code and time (ms), the
       //     drain lines, whether the warning appeared, and whether the help holds the text.
       const facts = {
