@@ -54,18 +54,19 @@ The same run started through `realm mcp` ran the step.
 ## `realm serve`
 
 ```text
-realm serve [--port <number>] [--host <address>] [--dev] [--project <dir>] [--extensions-module <path>] [--gate-answers <value>] [--check]
+realm serve [--port <number>] [--host <address>] [--shutdown-grace <seconds>] [--dev] [--project <dir>] [--extensions-module <path>] [--gate-answers <value>] [--check]
 ```
 
-| Flag                         | Default            | What it does                                                                                                                                             |
-| ---------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--port <number>`            | `3001`             | The port to listen on: a whole number from 0 to 65535; 0 lets the system pick, and the start line prints the port it picked. Added after version 0.48.0. |
-| `--host <address>`           | `127.0.0.1`        | The address to listen on. The default accepts connections from the same machine only. An IP address or a host name.                                      |
-| `--dev`                      | Off                | Turns the token check off.                                                                                                                               |
-| `--project <dir>`            | The current folder | The project whose `realm.yaml` applies to workflows that have no project of their own.                                                                   |
-| `--extensions-module <path>` | None               | Loads this code file in place of the files named by every workflow's `extensions`.                                                                       |
-| `--gate-answers <value>`     | `asked`            | As for `realm mcp`. Added after version 0.47.0.                                                                                                          |
-| `--check`                    | Off                | As for `realm mcp`. Added after version 0.47.0.                                                                                                          |
+| Flag                         | Default            | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--port <number>`            | `3001`             | The port to listen on: a whole number from 0 to 65535; 0 lets the system pick, and the start line prints the port it picked. Added after version 0.48.0.                                                                                                                                                                                                                                                                                          |
+| `--host <address>`           | `127.0.0.1`        | The address to listen on. The default accepts connections from the same machine only. An IP address or a host name.                                                                                                                                                                                                                                                                                                                               |
+| `--shutdown-grace <seconds>` | `30`               | How long requests that are being answered get to finish after Ctrl+C or `SIGTERM`: a whole number of seconds from 0 to 2147483. When it runs out, the requests still open are cut and the exit code is 1. 0 cuts them at once. A program that stops `realm serve` on a shorter limit than this ends it first (`docker stop` waits 10 seconds by default, systemd 90): give it a limit longer than `--shutdown-grace`. Added after version 0.49.0. |
+| `--dev`                      | Off                | Turns the token check off.                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `--project <dir>`            | The current folder | The project whose `realm.yaml` applies to workflows that have no project of their own.                                                                                                                                                                                                                                                                                                                                                            |
+| `--extensions-module <path>` | None               | Loads this code file in place of the files named by every workflow's `extensions`.                                                                                                                                                                                                                                                                                                                                                                |
+| `--gate-answers <value>`     | `asked`            | As for `realm mcp`. Added after version 0.47.0.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `--check`                    | Off                | As for `realm mcp`. Added after version 0.47.0.                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 `--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
@@ -113,12 +114,22 @@ The token is checked before anything else, so a caller without it learns nothing
 
 ### Stopping and exit codes
 
-On Ctrl+C or a `SIGTERM`, `realm serve` stops accepting connections and exits with code 0.
+On Ctrl+C or a `SIGTERM`, `realm serve` stops accepting requests. A connection that is waiting between requests is closed at once. A connection that has not sent a request yet is given up to 5 seconds from the moment it connected, and a request that arrives on it in that time is answered. Requests being answered get `--shutdown-grace` seconds (30 by default) to finish; each answer written from then on says `Connection: close`, and a connection is closed once its answer is finished. A stream that a client opened only to wait for the server's messages (an MCP client's `GET` stream) is closed at once; that is not a cut request. A second Ctrl+C or `SIGTERM` ends everything still open at once.
 
-| Code | When                                   |
-| ---- | -------------------------------------- |
-| 0    | It was stopped by Ctrl+C or `SIGTERM`. |
-| 1    | It could not start.                    |
+When it had to cut requests, `realm serve` prints one line to stderr and exits with code 1. With `--shutdown-grace 1` and a request whose body never finished:
+
+```text
+realm serve: --shutdown-grace 1 ran out. Requests cut: 1.
+```
+
+After a second signal the line is `realm serve: a second signal arrived. Requests cut: 1.`
+
+A request cut while it ran an `auto` step leaves that step taken by `realm serve`: `realm run inspect <run>` shows it in progress, and `realm run list --stuck` does not list the run while that claim is healthy (`realm run reclaim <run>` shows it healthy, with its deadline). `realm run reclaim <run> --step <step> --force` frees it and warns that the step's side effects may repeat; `realm run inspect` then shows the step owed, with the `realm run advance <run>` that runs it again.
+
+| Code | When                                                                                          |
+| ---- | --------------------------------------------------------------------------------------------- |
+| 0    | It was stopped by Ctrl+C or `SIGTERM` and cut no request.                                     |
+| 1    | It could not start, or it was stopped and had to cut requests that were still being answered. |
 
 It does not start in these cases:
 
@@ -128,6 +139,7 @@ It does not start in these cases:
 | The port is in use (changed after version 0.48.0)                                                         | `Error: cannot listen on 127.0.0.1:3001: the port is already in use. Stop the program using it, or choose another --port.`                                                    |
 | `--port` is not a whole number from 0 to 65535 (added after version 0.48.0)                               | `error: option '--port <number>' argument 'abc' is invalid. --port must be a whole number from 0 to 65535.`                                                                   |
 | `--host` is empty, holds a space or starts with `-` (added after version 0.48.0)                          | `error: option '--host <address>' argument 'a b' is invalid. --host must be an IP address or a host name.`                                                                    |
+| `--shutdown-grace` is not a whole number from 0 to 2147483 (added after version 0.49.0)                   | `error: option '--shutdown-grace <seconds>' argument '-1' is invalid. --shutdown-grace must be a whole number from 0 to 2147483.`                                             |
 | The port needs rights `realm serve` does not have, or the system reserves it (added after version 0.48.0) | `Error: cannot listen on 127.0.0.1:80: permission denied. A port below 1024 usually needs extra rights, and on Windows the system can reserve a port. Choose another --port.` |
 | `--host` is not an address of this machine (added after version 0.48.0)                                   | `Error: cannot listen on 192.0.2.1:3001: 192.0.2.1 is not an address of this machine. Check --host.`                                                                          |
 | `--host` is a name that cannot be resolved (added after version 0.48.0)                                   | `Error: cannot listen on no-such-host.invalid:3001: the name no-such-host.invalid cannot be resolved. Check --host.`                                                          |
