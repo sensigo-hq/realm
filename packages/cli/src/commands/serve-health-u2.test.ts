@@ -361,11 +361,14 @@ describe(
       });
     });
 
-    it('H5: with no drain, a connection open before SIGTERM that sends `GET /health` after it gets 503 `{"status":"shutting_down"}`, `connection: close`, then exit 0', async () => {
+    it('H5: with no drain, a new connection is refused after SIGTERM, and a connection open before it that sends `GET /health` after it gets 503 `{"status":"shutting_down"}`, `connection: close`, then exit 0', async () => {
       const s = await startServe();
       const c = await raw(s.port);
       s.signal('SIGTERM');
-      await sleep(300);
+      await sleep(150);
+      // With no drain the listener closes at the signal: a new connection is refused.
+      const newRefused = !(await accepts(s.port));
+      await sleep(150);
       c.socket.write(GET_HEALTH);
       const end = performance.now() + 3000;
       while (
@@ -376,10 +379,13 @@ describe(
         await sleep(10);
       }
       const exit = await s.exitWithin(5000);
-      // (1) Red when the address stays 200 once the stop has begun.
-      // (2) Prints the answer, the exit code and when it came after the answer (ms).
+      // (1) Red when the address stays 200 once the stop has begun, and when a new connection is
+      //     still accepted after the signal with no drain.
+      // (2) Prints the answer, whether the new connection was refused, the exit code and when it
+      //     came after the answer (ms).
       const facts = {
         ...answer(c.text()),
+        newRefused,
         code: exit?.code,
         afterAnswerMs: round(exit && exit.at - (c.seenAt(HEALTH_END) ?? Infinity)),
       };
@@ -390,6 +396,7 @@ describe(
         status: 503,
         headers: STOPPING,
         body: '{"status":"shutting_down"}',
+        newRefused: true,
         code: 0,
         afterAnswerMs: true,
       });
