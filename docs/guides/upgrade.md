@@ -2,13 +2,13 @@
 
 <!-- description: Upgrade Realm without surprises: read what changed, upgrade every Realm package together, and check your workflows and runs against the new version. -->
 
-This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.43.0 to 0.45.0, except the two lines in step 2 that the 0.46.0 `realm` command printed for a project still on 0.43.0, and the outputs of the first section, which the version after 0.48.0 printed.
+This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.48.0 to 0.49.0 on Node 22, except three blocks in step 2, kept as they were: the block that shows two versions in one project and the `ENGINE_HANDLER_FAILED` line, from an earlier upgrade from 0.43.0 to 0.45.0, and the two lines the 0.46.0 `realm` command printed for a project still on 0.43.0.
 
 ## What an upgrade can change
 
 Realm's version starts with 0, and a release such as 0.44.0 may change behaviour that 0.43.0 had. Three things are worth knowing before you start:
 
-- **Workflows you registered keep working as they were.** A new version often checks workflow files more strictly. Those checks apply when a workflow is loaded from its file. A copy that is already registered is not checked again until you register it again.
+- **Workflows you registered keep working as they were, with one exception.** A new version often checks workflow files more strictly. Those checks apply when a workflow is loaded from its file. A copy that is already registered is not checked again until you register it again. The exception is the version after 0.48.0: it does not carry registered copies over, so after the move you register each workflow from its file (the first section, step 4), and the new version's checks apply then.
 - **Runs carry over, with one exception.** Runs started on the old version can be listed, inspected and continued on the new one. The exception is the version after 0.48.0, which keeps runs in one SQLite file instead of JSON files: its first command on an old home refuses to run until you move the old folders out and import the runs. Do [the first section](#move-your-runs-into-the-sqlite-store) before anything else.
 - **All Realm packages must be the same version.** There are five: `@sensigo/realm`, `@sensigo/realm-cli`, `@sensigo/realm-mcp`, `@sensigo/realm-testing` and, from the version after 0.48.0, `@sensigo/realm-store-sqlite`, which `@sensigo/realm-cli` and `@sensigo/realm-mcp` install for you.
 
@@ -71,10 +71,10 @@ For the command installed for the whole machine:
 npm install -g @sensigo/realm-cli@latest
 ```
 
-In a project that lists Realm packages in its `package.json`, give every one of them the same exact version, the version of the `realm` command you just installed (0.45.0 in this example):
+In a project that lists Realm packages in its `package.json`, give every one of them the same exact version, the version of the `realm` command you just installed (0.49.0 in this example):
 
 ```bash
-npm install --save-exact @sensigo/realm@0.45.0 @sensigo/realm-cli@0.45.0
+npm install --save-exact @sensigo/realm@0.49.0 @sensigo/realm-cli@0.49.0
 ```
 
 Then check that only one version is installed:
@@ -86,13 +86,15 @@ npm ls @sensigo/realm
 It prints one version, with the other entries marked `deduped`. That version must be the one `realm --version` prints: a `realm` command installed for the whole machine does not appear in `npm ls`.
 
 ```text
-├─┬ @sensigo/realm-cli@0.45.0
-│ ├─┬ @sensigo/realm-mcp@0.45.0
-│ │ └── @sensigo/realm@0.45.0 deduped
-│ ├─┬ @sensigo/realm-testing@0.45.0
-│ │ └── @sensigo/realm@0.45.0 deduped
-│ └── @sensigo/realm@0.45.0 deduped
-└── @sensigo/realm@0.45.0
+├─┬ @sensigo/realm-cli@0.49.0
+│ ├─┬ @sensigo/realm-mcp@0.49.0
+│ │ └── @sensigo/realm@0.49.0 deduped
+│ ├─┬ @sensigo/realm-store-sqlite@0.49.0
+│ │ └── @sensigo/realm@0.49.0 deduped
+│ ├─┬ @sensigo/realm-testing@0.49.0
+│ │ └── @sensigo/realm@0.49.0 deduped
+│ └── @sensigo/realm@0.49.0 deduped
+└── @sensigo/realm@0.49.0
 ```
 
 If you see two versions here, your code and the project's `@sensigo/realm-cli` are using two different versions of Realm:
@@ -134,12 +136,14 @@ realm workflow list
 It prints:
 
 ```text
-ID      NAME                       VERSION  ORIGIN  SCHEMA
-digest  Summarise a note           1        human   1 (current)
-intake  Take in a support request  1        human   1 (current)
+ID          NAME              VERSION  ORIGIN  SCHEMA
+digest      Summarise a note  1        human   1 (current)
+tidy-notes  Tidy notes        1        human   1 (current)
 
 2 workflows registered.
 ```
+
+These are the workflows you registered again when you moved your runs. `intake` is not there, for the reason in the next section.
 
 Then ask the new version what it thinks of each registered copy:
 
@@ -150,32 +154,36 @@ realm workflow validate --registered digest
 For a workflow the new version accepts, it prints:
 
 ```text
-Auditing the registered copy of 'digest' (schema_version 1) with realm 0.45.0's loader.
-Registered copies stay grandfathered at runtime against LOADER changes — this reports what re-registration today would say. …
+Auditing the registered copy of 'digest' (schema_version 1) with realm 0.49.0's loader.
+Registered copies stay grandfathered at runtime against LOADER changes — the checks run today's loader on the copy, as registering the unchanged workflow again would; the cache lines size the copy as stored. A NEW engine-side dispatch check (issue #508, realm 0.42.0) is NOT grandfathered: it applies immediately, whatever schema_version is on file.
 Valid: digest v1 (1 step)
+cache: summarise — anthropic 570 chars ≈ 334–758 tokens, with Anthropic's tool text · openai 313 chars ≈ 63–125 tokens (estimates: 2.5–5 chars/token, with margin)
+anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently
+openai: on OpenAI's own address realm sends a cache key and, for GPT-5.6 and later, marks the fixed instructions and the stable start of the prompt of each step without tools for 30 minutes, unless --prompt-cache turns it off; otherwise the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
+anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
 
 The command changes nothing. Its checks run the new version's loader on the registered copy, as registering the unchanged workflow again would. From the version after 0.48.0 it also prints a cache line for each agent step, sized from the copy as stored, profile text included, not from the files now in the folder (see [the cache lines](../reference/cli/realm-workflow.md#the-cache-lines)).
 
 ## 4. See the new version find a problem
 
-The `intake` workflow was written with a misspelt rule, `minlength` where JSON Schema says `minLength`. Version 0.43.0 said the file was valid. Version 0.45.0 does not:
+The `intake` workflow was written with a misspelt rule, `minlength` where JSON Schema says `minLength`. Versions before 0.44.0 registered the file without complaint. Every version from 0.44.0 refuses it, so registering it again after the move stops there:
 
 ```bash
-realm workflow validate --registered intake
+realm workflow register intake
 ```
 
-It prints, after the same two opening lines:
+It prints one line and exits with code 1, and nothing is stored:
 
 ```text
-Invalid workflow: Step 'summarise': 'input_schema' is refused by realm's validator — 'minlength' is not a JSON-Schema keyword ('minlength: 10' here), at "input_schema/properties/summary". Every execute_step submission to this step would be rejected with that error at run time; remove 'minlength', or write 'minLength' if that is what you meant.
+Invalid workflow: Step 'summarise': 'input_schema' is refused by realm's validator — 'minlength' is not a JSON-Schema keyword ('minlength: 10' here), at "input_schema/properties/summary". Every execute_step submission to this step would be rejected with that error at run time; remove 'minlength', or write 'minLength' if that is what you meant. (line 15)
 ```
 
-The command exits with code 1, so a script can check every workflow and report the ones that need attention. This loop needs `jq`:
+To find every workflow that needs attention before you register it, check the source folders. `realm workflow validate <folder>` checks a folder without registering it and exits with code 1 when it finds a problem. Run this loop in the folder that holds your workflows' folders:
 
 ```bash
-for id in $(realm workflow list --json | jq -r '.workflows[].id'); do
-  realm workflow validate --registered "$id" > /dev/null 2>&1 || echo "needs attention: $id"
+for dir in */; do
+  realm workflow validate "$dir" > /dev/null 2>&1 || echo "needs attention: ${dir%/}"
 done
 ```
 
@@ -185,7 +193,9 @@ It prints:
 needs attention: intake
 ```
 
-The registered copy still starts runs, on the new version as on the old. In this case the step could never be completed on either, because of the mistake. The upgrade did not break the workflow; it named a problem that was already there.
+On a later upgrade the registered copies carry over, so check those instead: `realm workflow validate --registered <id>` for each ID that `realm workflow list --json` lists.
+
+A copy that is already registered is not checked again until you register it again. So a copy registered before 0.44.0 went unchecked through every upgrade since, and started runs whose step could never be completed. The move registers each workflow from its file, so the problem shows now. The upgrade did not break the workflow; it named a problem that was already there.
 
 ## 5. Fix, and register again
 
@@ -202,9 +212,10 @@ They print:
 Registered: intake v1 (1 step)
 …
 Valid: intake v1 (1 step)
+…
 ```
 
-Registering again replaces the stored copy. Runs that are still open use the new copy from their next step. A run of `intake` that had been started on 0.43.0, and could not be completed there, completed on 0.45.0 once the corrected workflow was registered.
+Registering again replaces the stored copy. Runs that are still open use the new copy from their next step. Then one run of `intake`, started after the fix, completed over the MCP server, `realm mcp`: `start_run`, then `execute_step` with a summary of ten characters or more.
 
 ## 6. Check the runs
 
@@ -224,7 +235,7 @@ On a store with nothing to do, it prints:
 
 ```text
 Nothing would be stamped — every terminal run already carries its seal arm.
-2 run(s) already stamped, and their arms agree with the record.
+1 run(s) already stamped, and their arms agree with the record.
 Residue: 0 terminal run(s) still without a recorded seal arm.
 ```
 

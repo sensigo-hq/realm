@@ -1,0 +1,8 @@
+id: tidy-notes
+name: Tidy notes
+version: 1
+steps:
+  work:
+    description: Tidy the notes.
+    execution: auto
+    handler: noop
