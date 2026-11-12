@@ -1712,7 +1712,7 @@ describe('#600 caching PR P — the prices realm run inspect builds (G14)', () =
       expect([noRoot, invalid, absent]).toEqual([
         " | not priced (economics unreachable: the run's workflow copy records no deployment root)",
         ` | not priced (economics unreachable: '${join(dir, 'realm.yaml')}' is invalid: manifest: unknown key 'foo')`,
-        ' | $0.02 (genai-prices 0.1.12; current price)',
+        ' | $0.02 (genai-prices 0.2.1; current price)',
       ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

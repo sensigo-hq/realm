@@ -458,10 +458,10 @@ describe('#600 caching PR P (G12) — get_run_state money', () => {
         2,
         2,
         [
-          ['price_list', '0.1.12', note, 'list price, your endpoint may bill differently'],
-          ['price_list', '0.1.12', note, 'none'],
+          ['price_list', '0.2.1', note, 'list price, your endpoint may bill differently'],
+          ['price_list', '0.2.1', note, 'none'],
         ],
-        [['0.1.12', 2]],
+        [['0.2.1', 2]],
       ]);
     } finally {
       await client.close();
