@@ -18,7 +18,12 @@ import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
 import { openCliHome, type CliHome } from '../lib/home.js';
 import { parseHost, parseWholeNumber } from '../lib/option-parsers.js';
-import { trackConnections, type ConnectionTracker } from '../lib/graceful-stop.js';
+import {
+  trackConnections,
+  type ConnectionTracker,
+  type StopOutcome,
+} from '../lib/graceful-stop.js';
+import { answerHealth } from '../lib/health-address.js';
 import { bindFailureLine } from '../lib/bind-failure.js';
 import { cliDisclosureProvider, writerCtx, writerInstalled } from '../output/writer.js';
 import {
@@ -83,6 +88,11 @@ export type StartServerOptions = ServeStores & {
    * attach what must see every connection (the stop's tracker, `graceful-stop.ts`).
    */
   beforeListen?: (server: Server) => void;
+  /**
+   * #960 U2: whether this server is stopping (from the first Ctrl+C or `SIGTERM`), read per request
+   * by the health address. The caller owns it; absent, the server is never stopping.
+   */
+  isStopping?: () => boolean;
 };
 
 /**
@@ -145,7 +155,12 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
   // The startup construction: a throw here rejects this async function's promise.
   createRealmMcpServer(serverOptions);
 
+  const isStopping = options.isStopping ?? (() => false);
   const httpServer = createServer(async (req, res) => {
+    // #960 U2: the health address (`GET`/`HEAD` `/health`), before the token: a load balancer asks
+    // it without credentials. It never throws (this is outside the `try` below).
+    if (answerHealth(req, res, isStopping)) return;
+
     // Auth gate — evaluated before any MCP logic.
     if (!devMode) {
       if (!checkBearerToken(req.headers['authorization'], token!)) {
@@ -273,6 +288,13 @@ export const serveCommand = new Command('serve')
     parseWholeNumber('--shutdown-grace', 0, 2_147_483),
     30,
   )
+  // #960 U2: checked when the command line is read, like `--shutdown-grace`.
+  .option(
+    '--shutdown-drain <seconds>',
+    'Seconds the program keeps serving, with /health answering 503, after Ctrl+C or SIGTERM before the stop begins and it stops accepting connections; a whole number from 0 to 2147483. 0 begins the stop at once.',
+    parseWholeNumber('--shutdown-drain', 0, 2_147_483),
+    0,
+  )
   .option('--dev', 'Disable authentication (for local development only)')
   .option(
     '--extensions-module <path>',
@@ -361,6 +383,8 @@ export const serveCommand = new Command('serve')
     // listen failure it does not know still propagates.
     let httpServer: Server;
     let tracker: ConnectionTracker | undefined;
+    // #960 U2: set in the first signal's turn (below); the health address reads it per request.
+    let stopping = false;
     try {
       httpServer = await startHttpMcpServer({
         port,
@@ -376,6 +400,7 @@ export const serveCommand = new Command('serve')
         beforeListen: (server) => {
           tracker = trackConnections(server);
         },
+        isStopping: () => stopping,
       });
     } catch (err) {
       const line = bindFailureLine(err, host, port);
@@ -400,29 +425,48 @@ export const serveCommand = new Command('serve')
     console.log(gateAnswersStartLine(settings.answers, true));
     if (devMode && settings.answers.value !== 'withheld') console.warn(DEV_MODE_ANSWER_WARNING);
 
-    // Issue #960: on Ctrl+C or SIGTERM the server stops accepting, and each open connection is ended
-    // by its state (`graceful-stop.ts`): requests being answered get `--shutdown-grace` seconds, and
-    // a second signal cuts everything at once. The exit code is 0 when no request was cut, else 1,
-    // after one line saying how many were.
+    // Issue #960: on Ctrl+C or SIGTERM `/health` answers 503 at once (U2); with `--shutdown-drain N`
+    // the server goes on serving for N seconds; then it stops accepting, and each open connection
+    // is ended by its state (`graceful-stop.ts`): requests being answered get `--shutdown-grace`
+    // seconds. A second signal cuts everything at once, the drain included. The exit code is 0 when
+    // no request was cut, else 1, after one line saying how many were.
     const graceSeconds = options.shutdownGrace as number;
+    const drainSeconds = options.shutdownDrain as number;
     const stopper = tracker!;
-    let stopping = false;
+    let drainTimer: NodeJS.Timeout | undefined;
+    const finish = ({ cut, because }: StopOutcome): void => {
+      if (cut > 0) {
+        console.error(
+          because === 'second_signal'
+            ? `realm serve: a second signal arrived. Requests cut: ${cut}.`
+            : `realm serve: --shutdown-grace ${graceSeconds} ran out. Requests cut: ${cut}.`,
+        );
+      }
+      process.exit(cut > 0 ? 1 : 0);
+    };
     const onSignal = (): void => {
       if (stopping) {
-        stopper.cutAll();
+        if (drainTimer !== undefined) {
+          clearTimeout(drainTimer);
+          drainTimer = undefined;
+          void stopper.cutAll().then(finish);
+        } else {
+          void stopper.cutAll();
+        }
         return;
       }
       stopping = true;
-      void stopper.stop(graceSeconds * 1000).then(({ cut, because }) => {
-        if (cut > 0) {
-          console.error(
-            because === 'second_signal'
-              ? `realm serve: a second signal arrived. Requests cut: ${cut}.`
-              : `realm serve: --shutdown-grace ${graceSeconds} ran out. Requests cut: ${cut}.`,
-          );
-        }
-        process.exit(cut > 0 ? 1 : 0);
-      });
+      if (drainSeconds === 0) {
+        void stopper.stop(graceSeconds * 1000).then(finish);
+        return;
+      }
+      console.error(
+        `realm serve: --shutdown-drain ${drainSeconds} started. /health answers 503 now; connections are accepted until the drain ends. A second Ctrl+C ends it at once.`,
+      );
+      drainTimer = setTimeout(() => {
+        drainTimer = undefined;
+        void stopper.stop(graceSeconds * 1000).then(finish);
+      }, drainSeconds * 1000);
     };
     process.on('SIGINT', onSignal);
     process.on('SIGTERM', onSignal);
