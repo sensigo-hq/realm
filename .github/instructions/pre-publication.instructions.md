@@ -121,10 +121,12 @@ Rename `## [Unreleased]` to `## [<version>] — YYYY-MM-DD`. Use [keepachangelog
 - Breaking changes: include a note referencing the migration guide.
 - If using automated CHANGELOG tooling (changesets, git-cliff), run the tool and verify its output before committing.
 
+Two docs pages quote the version the published command prints; set both to `<version>` in this same commit, the only moment the number is true of a release: the `realm --version` output in `docs/start/install-and-first-run.md` and the initialize reply's `"version"` in `docs/reference/cli/realm-mcp-and-serve.md` (0.47.0 and 0.48.0 shipped with the first still at 0.46.0).
+
 Commit:
 
 ```bash
-git add CHANGELOG.md
+git add CHANGELOG.md docs/start/install-and-first-run.md docs/reference/cli/realm-mcp-and-serve.md
 git commit -m "docs: update changelog for v<version>"
 ```
 
@@ -253,6 +255,8 @@ node --input-type=module -e "import { openRealmHome } from '@sensigo/realm-store
 ```
 
 It prints `function`.
+
+**The upgrade guide's captures.** The outputs quoted in `docs/guides/upgrade.md` come from one real upgrade on published packages, between the two versions its first paragraph names; between releases, `packages/cli/src/commands/docs-upgrade-captures-616.test.ts` keeps the quoted outputs of steps 3–6 true to the tree. If `git diff v<previous>..v<version> -- docs/guides/upgrade.md` changes a quoted block, a product change has moved the page off that run: re-run the guide's story on the published packages, from `<previous>` to `<version>` — every command the page quotes, in the page's order, on a throwaway home that holds `packages/cli/src/commands/fixtures/old-json-home/runs`, registering the workflow files of `packages/cli/src/commands/fixtures/upgrade-story` (step 5 registers `upgrade-story-corrected/intake`) — set each re-run block to what the published version printed (the blocks the first paragraph says were kept stay as they are), name `<previous>` and `<version>` in that paragraph, and merge it as a docs PR.
 
 **8. Create the GitHub Release**
 
