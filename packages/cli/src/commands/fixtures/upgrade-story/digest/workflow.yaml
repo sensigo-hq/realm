@@ -1,0 +1,14 @@
+id: digest
+name: Summarise a note
+version: 1
+steps:
+  summarise:
+    description: Summarise the note in two sentences.
+    execution: agent
+    prompt: Summarise the note in two sentences.
+    input_schema:
+      type: object
+      required: [summary]
+      properties:
+        summary:
+          type: string
