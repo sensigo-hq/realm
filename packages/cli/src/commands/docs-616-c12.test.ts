@@ -318,7 +318,7 @@ describe(
     it('the page’s words: the exception, the five packages, the procedure and what stays behind', () => {
       // C2 above (the refusal, the steps, the import's lines, the list, the second import).
       for (const sentence of [
-        'and the outputs of the first section, which the version after 0.48.0 printed.',
+        'The outputs on this page are from a real upgrade from 0.48.0 to 0.49.0 on Node 22, except, in step 2, the block that shows two versions in one project, the `ENGINE_HANDLER_FAILED` line and the 0.46.0 warning lines, printed by 0.45.0, 0.43.0 and 0.46.0 and kept as they were.',
         '**Runs carry over, with one exception.** Runs started on the old version can be listed, inspected and continued on the new one. The exception is the version after 0.48.0, which keeps runs in one SQLite file instead of JSON files: its first command on an old home refuses to run until you move the old folders out and import the runs. Do [the first section](#move-your-runs-into-the-sqlite-store) before anything else.',
         // store-sqlite-package-616.test.ts (the published set); the cli and mcp-server package.json "*".
         'There are five: `@sensigo/realm`, `@sensigo/realm-cli`, `@sensigo/realm-mcp`, `@sensigo/realm-testing` and, from the version after 0.48.0, `@sensigo/realm-store-sqlite`, which `@sensigo/realm-cli` and `@sensigo/realm-mcp` install for you.',

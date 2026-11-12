@@ -1,0 +1,15 @@
+id: intake
+name: Take in a support request
+version: 1
+steps:
+  summarise:
+    description: Summarise the support request.
+    execution: agent
+    prompt: Summarise the support request in one sentence.
+    input_schema:
+      type: object
+      required: [summary]
+      properties:
+        summary:
+          type: string
+          minLength: 10
