@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`--shutdown-grace <seconds>` on `realm serve` and `realm listen`**: how long requests being answered get to finish after Ctrl+C or `SIGTERM`; 30 by default; 0 to 2147483.
+
+### Changed
+
+- **`realm serve` and `realm listen` exit with code 1 when they had to cut requests that were still being answered**; 0 when none was cut.
+
+### Fixed
+
+- **`realm serve` and `realm listen` stop when asked (issue #960).** Before, one connection that had sent nothing kept either program running after Ctrl+C or `SIGTERM` until it was killed. Now a connection waiting between requests is closed at once, a connection that has not sent a request yet gets up to 5 seconds, and requests being answered get time to finish before they are cut. A second signal cuts everything at once, and a connected MCP client's notification stream is closed at once; that is not a cut request.
+
 ## [0.49.0] — 2026-11-11
 
 ### Upgrading

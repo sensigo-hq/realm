@@ -16,7 +16,10 @@
 //   - `100-continue` is answered only after the checks before the body (#744)
 //   - headers must arrive within the body timeout; a whole request within Node's 5-minute request
 //     timeout, or twice the body timeout plus `lingerMs` plus 1 s if that is longer (#744)
-//   - SIGTERM/SIGINT → server.close(); the agent child is detached and survives.
+//   - SIGTERM/SIGINT → the stop (`graceful-stop.ts`, #960): accept nothing more, end each open
+//     connection by its state, give requests being answered `--shutdown-grace` seconds, a second
+//     signal cuts everything; exit 0, or 1 when requests were cut. The agent child is detached and
+//     survives.
 import {
   createServer,
   maxHeaderSize,
@@ -90,6 +93,7 @@ import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-pa
 import { InMemoryDedupStore } from '../lib/dedup-store.js';
 import { parseHost, parseOneOf, parseWholeNumber } from '../lib/option-parsers.js';
 import { bindFailureLine } from '../lib/bind-failure.js';
+import { trackConnections } from '../lib/graceful-stop.js';
 import {
   loadProjectExtensions,
   onceReleaseLineSink,
@@ -933,6 +937,11 @@ export interface ListenOptions {
    * Absent (the default) = the sweeper never runs — byte-identical to pre-#291 `listen` behavior.
    */
   sweepExpiredGatesIntervalMs?: number;
+  /**
+   * Issue #960: the seconds requests being answered get to finish after a stop (`--shutdown-grace`);
+   * default 30. When they run out, the requests still open are cut.
+   */
+  shutdownGraceSeconds?: number;
 }
 
 /** Per-pass sweep outcome (issue #291) — returned for tests/logging; the CLI action itself only
@@ -1125,8 +1134,9 @@ export interface ListenHandle {
   shutdown(reason: string): Promise<void>;
 }
 
-/** Wires the HTTP server + SIGTERM/SIGINT handlers. Returns a handle whose shutdown() stops
- *  accepting new connections; in-flight requests finish and the detached agents survive. */
+/** Wires the HTTP server + SIGTERM/SIGINT handlers. Returns a handle whose shutdown() stops the
+ *  server (#960: each open connection is ended by its state, requests being answered get the grace)
+ *  and resolves once it has closed; the detached agents survive. */
 export function startListen(
   routes: Map<string, WorkflowEntry>,
   options: ListenOptions,
@@ -1182,6 +1192,8 @@ export function startListen(
     },
     onRequest,
   );
+  // Issue #960: before the server listens, so it sees every connection.
+  const tracker = trackConnections(server);
   // With a 'checkContinue' listener Node no longer answers `Expect: 100-continue` itself: the
   // handler invites the body only after the checks before it (#744).
   server.on('checkContinue', (req, res) => onRequest(req, res, { continueExpected: true }));
@@ -1317,18 +1329,35 @@ export function startListen(
         }, options.sweepExpiredGatesIntervalMs)
       : undefined;
 
-  let shuttingDown = false;
+  // Issue #960: the stop. Requests being answered get the grace; a second signal cuts everything at
+  // once; the exit code is 0 when no request was cut, else 1, after one line at level `error`.
+  const graceSeconds = options.shutdownGraceSeconds ?? 30;
+  let stopped: Promise<void> | undefined;
+  let cut = 0;
   const shutdown = (reason: string): Promise<void> => {
-    if (shuttingDown) return Promise.resolve();
-    shuttingDown = true;
+    if (stopped !== undefined) return stopped;
     deps.logger.info('listen: shutting down', { reason });
     if (sweepTimer !== undefined) clearInterval(sweepTimer);
     for (const cancel of gateWaits.values()) cancel();
     gateWaits.clear();
-    return new Promise((resolve) => server.close(() => resolve()));
+    stopped = tracker.stop(graceSeconds * 1000).then((outcome) => {
+      cut = outcome.cut;
+      if (outcome.cut > 0) {
+        deps.logger.error('listen: shutdown cut requests', {
+          cut: outcome.cut,
+          because: outcome.because,
+          grace_seconds: graceSeconds,
+        });
+      }
+    });
+    return stopped;
   };
   const onSignal = (sig: string): void => {
-    void shutdown(sig).then(() => process.exit(0));
+    if (stopped !== undefined) {
+      tracker.cutAll();
+      return;
+    }
+    void shutdown(sig).then(() => process.exit(cut > 0 ? 1 : 0));
   };
   process.on('SIGTERM', () => onSignal('SIGTERM'));
   process.on('SIGINT', () => onSignal('SIGINT'));
@@ -1695,6 +1724,13 @@ export const listenCommand = new Command('listen')
       'realm run drain --expired.',
     parseWholeNumber('--sweep-expired-gates', 1, 2_147_483),
   )
+  // issue #960: checked when the command line is read, like the five above.
+  .option(
+    '--shutdown-grace <seconds>',
+    'Seconds that requests being answered get to finish after Ctrl+C or SIGTERM, a whole number from 0 to 2147483. When it runs out they are cut and the exit code is 1; 0 cuts them at once.',
+    parseWholeNumber('--shutdown-grace', 0, 2_147_483),
+    30,
+  )
   .action(
     async (
       workflows: string[],
@@ -1707,6 +1743,7 @@ export const listenCommand = new Command('listen')
         dedupStore?: 'file' | 'memory';
         logLevel?: string;
         sweepExpiredGates?: number;
+        shutdownGrace?: number;
         llmTimeout?: number;
         provider?: ProviderName;
         model?: string;
@@ -1843,6 +1880,9 @@ export const listenCommand = new Command('listen')
             maxConcurrent: opts['maxConcurrent'] ?? 20,
             ...(sweepExpiredGatesSeconds !== undefined
               ? { sweepExpiredGatesIntervalMs: sweepIntervalMs(sweepExpiredGatesSeconds) }
+              : {}),
+            ...(opts.shutdownGrace !== undefined
+              ? { shutdownGraceSeconds: opts.shutdownGrace }
               : {}),
           },
           deps,

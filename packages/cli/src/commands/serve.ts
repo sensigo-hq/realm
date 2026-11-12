@@ -18,6 +18,7 @@ import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
 import { openCliHome, type CliHome } from '../lib/home.js';
 import { parseHost, parseWholeNumber } from '../lib/option-parsers.js';
+import { trackConnections, type ConnectionTracker } from '../lib/graceful-stop.js';
 import { bindFailureLine } from '../lib/bind-failure.js';
 import { cliDisclosureProvider, writerCtx, writerInstalled } from '../output/writer.js';
 import {
@@ -77,6 +78,11 @@ export type StartServerOptions = ServeStores & {
   driver?: Attributed;
   /** #627 W: the `--gate-answers` flag's value, passed to every per-request server (source `flag`). */
   gateAnswersFlag?: string;
+  /**
+   * Issue #960: called with the server once it is built, before it listens, so the caller can
+   * attach what must see every connection (the stop's tracker, `graceful-stop.ts`).
+   */
+  beforeListen?: (server: Server) => void;
 };
 
 /**
@@ -216,6 +222,7 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
       }
     });
 
+    options.beforeListen?.(httpServer);
     httpServer.listen(port, host, () => {
       isListening = true;
       resolve(httpServer);
@@ -259,6 +266,13 @@ export const serveCommand = new Command('serve')
     3001,
   )
   .option('--host <address>', 'Bind address', parseHost('--host'), '127.0.0.1')
+  // issue #960: checked when the command line is read, like `--port`.
+  .option(
+    '--shutdown-grace <seconds>',
+    'Seconds that requests being answered get to finish after Ctrl+C or SIGTERM, a whole number from 0 to 2147483. When it runs out they are cut and the exit code is 1; 0 cuts them at once.',
+    parseWholeNumber('--shutdown-grace', 0, 2_147_483),
+    30,
+  )
   .option('--dev', 'Disable authentication (for local development only)')
   .option(
     '--extensions-module <path>',
@@ -346,6 +360,7 @@ export const serveCommand = new Command('serve')
     // that does not resolve) is first told as such, in one line naming the host and the port; a
     // listen failure it does not know still propagates.
     let httpServer: Server;
+    let tracker: ConnectionTracker | undefined;
     try {
       httpServer = await startHttpMcpServer({
         port,
@@ -358,6 +373,9 @@ export const serveCommand = new Command('serve')
         ...(options.gateAnswers !== undefined
           ? { gateAnswersFlag: options.gateAnswers as string }
           : {}),
+        beforeListen: (server) => {
+          tracker = trackConnections(server);
+        },
       });
     } catch (err) {
       const line = bindFailureLine(err, host, port);
@@ -382,8 +400,30 @@ export const serveCommand = new Command('serve')
     console.log(gateAnswersStartLine(settings.answers, true));
     if (devMode && settings.answers.value !== 'withheld') console.warn(DEV_MODE_ANSWER_WARNING);
 
-    // Graceful shutdown on SIGINT / SIGTERM.
-    const shutdown = () => httpServer.close(() => process.exit(0));
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
+    // Issue #960: on Ctrl+C or SIGTERM the server stops accepting, and each open connection is ended
+    // by its state (`graceful-stop.ts`): requests being answered get `--shutdown-grace` seconds, and
+    // a second signal cuts everything at once. The exit code is 0 when no request was cut, else 1,
+    // after one line saying how many were.
+    const graceSeconds = options.shutdownGrace as number;
+    const stopper = tracker!;
+    let stopping = false;
+    const onSignal = (): void => {
+      if (stopping) {
+        stopper.cutAll();
+        return;
+      }
+      stopping = true;
+      void stopper.stop(graceSeconds * 1000).then(({ cut, because }) => {
+        if (cut > 0) {
+          console.error(
+            because === 'second_signal'
+              ? `realm serve: a second signal arrived. Requests cut: ${cut}.`
+              : `realm serve: --shutdown-grace ${graceSeconds} ran out. Requests cut: ${cut}.`,
+          );
+        }
+        process.exit(cut > 0 ? 1 : 0);
+      });
+    };
+    process.on('SIGINT', onSignal);
+    process.on('SIGTERM', onSignal);
   });
