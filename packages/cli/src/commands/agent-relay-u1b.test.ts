@@ -26,7 +26,7 @@ import { makeTempHome, runsOf, type TempHome } from '../test-support/temp-home.j
 
 // The words an operator reads, as written (the docs quote them; `docs-u1b.test.ts`).
 const DRAIN_LINE =
-  "A program started by a handler kept the output open after the command's work ended; what it printed after that is not in this log.";
+  "A program started by a handler kept the output open after the command's work ended; it has been stopped, and what it printed after that is not in this log.";
 const RELAY_STANDING_UNKNOWN_WORDS = 'declared values unknown (the drive ended before it said)';
 const RELAY_WALKS_NOT_COUNTED_WORDS =
   'values shown as their type and size: not counted (the drive ended before it said)';
@@ -1171,13 +1171,15 @@ describe('U1b — the trigger and the marker', () => {
     });
   }, 60_000);
 
-  it('(k2) a drive that sends no piece of the declared set (no `realm.yaml`) exits within 2 s of its work', async () => {
+  it('(k2) GROUNDING — a drive that sends no piece of the declared set (no `realm.yaml`) exits within 2 s of its work', async () => {
     const started = start(agentArgs(bareStep('quiet'), bare));
     await started.waitFor(/Run complete/);
     const from = Date.now();
     const ran = await started.done;
-    // (a) red when the channel holds the worker's loop (no unref at init); (b) prints the code and
-    //     whether it ended within 2 s of its last line.
+    // GROUNDING, not acceptance: every exit of `realm agent` is explicit, so a channel that held the
+    // worker's loop (no unref at init) cannot turn this red here. Its acceptance home is Unit 2's
+    // `drain` door, which returns from its work. (b) prints the code and whether it ended within
+    // 2 s of its last line.
     expect({ code: ran.code, quick: Date.now() - from < 2000 }).toEqual({ code: 0, quick: true });
   }, 60_000);
 
@@ -1378,4 +1380,255 @@ describe('U1b — the harness', () => {
     //     whether it answered and its child count.
     expect({ answered: out.includes('"id":1'), children }).toEqual({ answered: true, children: 0 });
   }, 30_000);
+});
+
+// ─── Correction 1 ─────────────────────────────────────────────────────────────────────────────────
+
+/** The fake a project module's top-level code puts into the environment (never in the command's). */
+const LOADED_FAKE = 'CANARY-u1b-loaded-9f2b-xxxxxxxxxx';
+/** The fake a module sets beside a REALM_NOT_SECRET entry naming it: shown whole, as on the base. */
+const PUBLIC_FAKE = 'CANARY-u1b-public-3c9d-xxxxxxxxxx';
+/** The fake the command lists in REALM_NOT_SECRET, which a module then removes. */
+const LISTED_FAKE = 'CANARY-u1b-listed-6e4a-xxxxxxxxxx';
+/** The fake a handler first sets inside `execute()`. */
+const LATE_FAKE = 'CANARY-u1b-late-2b7f-xxxxxxxxxxxx';
+const loadedShown = (text: string): Record<string, number> => ({
+  loaded: text.split(LOADED_FAKE).length - 1,
+  public: text.split(PUBLIC_FAKE).length - 1,
+  listed: text.split(LISTED_FAKE).length - 1,
+  late: text.split(LATE_FAKE).length - 1,
+});
+
+/** The `use:` module: its top-level code changes the environment as the command's flags say. */
+const LOADED_MODULE = `import { spawn } from 'node:child_process';
+if (process.env.U1B_SET_LOADED === '1') process.env.U1B_LOADED = '${LOADED_FAKE}';
+if (process.env.U1B_ADD_PUBLIC === '1') {
+  process.env.REALM_NOT_SECRET = process.env.REALM_NOT_SECRET + ',U1B_PUBLIC';
+  process.env.U1B_PUBLIC = '${PUBLIC_FAKE}';
+}
+if (process.env.U1B_DROP_NOT_SECRET === '1') delete process.env.REALM_NOT_SECRET;
+if (process.env.U1B_MOVE_TO !== undefined) process.chdir(process.env.U1B_MOVE_TO);
+const say = (line) => process.stdout.write(line + '\\n');
+const step = (id, execute) => ({ id, execute });
+const printing = (label, name) => ({ id }) => step(id, async () => {
+  say(label + ': ' + process.env[name] + ' end');
+  return { data: { note: label } };
+});
+export const makeLoaded = printing('loaded', 'U1B_LOADED');
+export const makePublic = printing('public', 'U1B_PUBLIC');
+export const makeListed = printing('listed', 'U1B_LISTED');
+export const makeOldCwd = printing('old cwd', 'U1B_OLD_CWD');
+export const makeLate = ({ id }) => step(id, async () => {
+  process.env.U1B_LATE = '${LATE_FAKE}';
+  say('late: ' + process.env.U1B_LATE + ' end');
+  return { data: { note: 'late' } };
+});
+export const makeHoldWait = ({ id }) => step(id, async () => {
+  const sleeper = spawn('sleep', ['30'], { stdio: 'inherit' });
+  say('ready: pid=' + process.pid + ' sleep=' + sleeper.pid);
+  await new Promise(() => {});
+});
+`;
+
+describe('U1b correction 1 — what a project module puts into the environment while it loads', () => {
+  let loaded: string;
+  let loadedExt: string;
+  let elsewhere: string;
+  const LOADED_HANDLERS: Record<string, string> = {
+    loaded: 'makeLoaded',
+    public_value: 'makePublic',
+    listed: 'makeListed',
+    old_cwd: 'makeOldCwd',
+    late: 'makeLate',
+    hold_wait: 'makeHoldWait',
+  };
+
+  beforeAll(() => {
+    loaded = join(root, 'loaded');
+    mkdirSync(loaded);
+    writeFileSync(
+      join(loaded, 'realm.yaml'),
+      [
+        'version: 1',
+        'handlers:',
+        ...Object.entries(LOADED_HANDLERS).flatMap(([name, factory]) => [
+          `  ${name}:`,
+          `    use: ./loaded.mjs#${factory}`,
+        ]),
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeFileSync(join(loaded, 'loaded.mjs'), LOADED_MODULE, 'utf8');
+    writeFileSync(join(loaded, 'package.json'), '{ "type": "module" }\n', 'utf8');
+    // A project with no `realm.yaml`: its workflow's `extensions:` module sets the value at its top.
+    loadedExt = join(root, 'loaded-ext');
+    mkdirSync(loadedExt);
+    writeFileSync(join(loadedExt, 'package.json'), '{ "type": "module" }\n', 'utf8');
+    writeFileSync(
+      join(loadedExt, 'ext-env.mjs'),
+      `process.env.U1B_LOADED = '${LOADED_FAKE}';
+export default { handlers: { ext_loaded: { id: 'ext_loaded', execute: async () => {
+  process.stdout.write('ext loaded: ' + process.env.U1B_LOADED + ' end\\n');
+  return { data: { note: 'ext loaded' } };
+} } } };
+`,
+      'utf8',
+    );
+    elsewhere = join(root, 'elsewhere');
+    mkdirSync(elsewhere);
+  });
+
+  const oneStepIn = (dir: string, name: string, handler: string, head: string[] = []): string =>
+    wf(
+      dir,
+      name,
+      ['  s:', '    description: One step.', '    execution: auto', `    handler: ${handler}`],
+      head,
+    );
+  const loadedStep = (name: string, handler: string): string => oneStepIn(loaded, name, handler);
+  /** `realm agent … > file 2>&1`: both streams one file; the code and the file's text. */
+  const toFile = (args: string[], extra: Record<string, string>, label: string) => {
+    const log = join(root, `${label}.log`);
+    const fd = openSync(log, 'w');
+    let code: number | null;
+    try {
+      code = spawnSync(process.execPath, args, {
+        cwd,
+        env: env(extra),
+        stdio: ['ignore', fd, fd],
+        timeout: 60_000,
+      }).status;
+    } finally {
+      closeSync(fd);
+    }
+    return { code, text: readFileSync(log, 'utf8') };
+  };
+  const lineOf = (text: string, start: string): string | undefined =>
+    text.split('\n').find((l) => l.startsWith(start));
+  const environmentHidden = (text: string): (string | undefined)[] =>
+    disclosureLines(text).map((l) => /(\d+) environment,/.exec(l)?.[1]);
+
+  it("(x1) a `use:` module's top-level code sets an environment value the handler prints, `> file 2>&1` → [REDACTED]; the receipt counts it environment", () => {
+    const w = loadedStep('x1', 'loaded');
+    const plain = toFile(agentArgs(w, loaded), { U1B_SET_LOADED: '1' }, 'x1-plain');
+    const logged = toFile(
+      agentArgs(w, loaded, ['--log-mode']),
+      { U1B_SET_LOADED: '1' },
+      'x1-logged',
+    );
+    // (a) red on 9cc4239c and without the piece after the `use:` loop (the relay sweeps its own
+    //     environment only: the fake whole, the count 0); green on the base 59778b53 (one process
+    //     reads its live environment); (b) prints the codes, the lines, the counts and the receipt's.
+    expect({
+      codes: [plain.code, logged.code],
+      lines: [lineOf(plain.text, 'loaded: '), lineOf(logged.text, 'loaded: ')],
+      fake: loadedShown(plain.text + logged.text),
+      environment: environmentHidden(logged.text),
+    }).toEqual({
+      codes: [0, 0],
+      lines: ['loaded: [REDACTED] end', 'loaded: [REDACTED] end'],
+      fake: { loaded: 0, public: 0, listed: 0, late: 0 },
+      environment: ['1'],
+    });
+  }, 90_000);
+
+  it("(x1b) a module's top-level code moves the working folder → a variable naming the old folder is [REDACTED], as the base hides it", async () => {
+    const ran = await run(agentArgs(loadedStep('x1b', 'old_cwd'), loaded), {
+      env: env({ U1B_MOVE_TO: elsewhere, U1B_OLD_CWD: cwd }),
+    });
+    // (a) red without the working folder in the piece (the relay still reads its own folder, so
+    //     the old folder is the working directory and prints whole); (b) prints the code and line.
+    expect({
+      code: ran.code,
+      line: lineOf(ran.stdout, 'old cwd: '),
+      shownWhole: ran.stdout.includes(`old cwd: ${cwd} end`),
+    }).toEqual({ code: 0, line: 'old cwd: [REDACTED] end', shownWhole: false });
+  }, 60_000);
+
+  it("(x2) the same value set by an `extensions:` module's top-level code → [REDACTED]", async () => {
+    const w = oneStepIn(loadedExt, 'x2', 'ext_loaded', ['extensions: ../ext-env.mjs']);
+    const ran = await run(agentArgs(w, loadedExt, ['--log-mode']));
+    // (a) red without the piece after the `extensions:` loop (no manifest here, so no later piece
+    //     carries it); (b) prints the code, the line, the counts and the receipt's.
+    expect({
+      code: ran.code,
+      line: lineOf(ran.stdout, 'ext loaded: '),
+      fake: loadedShown(ran.stdout + ran.stderr),
+      environment: environmentHidden(ran.stderr),
+    }).toEqual({
+      code: 0,
+      line: 'ext loaded: [REDACTED] end',
+      fake: { loaded: 0, public: 0, listed: 0, late: 0 },
+      environment: ['1'],
+    });
+  }, 60_000);
+
+  it("(x3) a module's top-level code adds a name to REALM_NOT_SECRET and sets it → shown whole, not counted, as the worker's own writer would", async () => {
+    const ran = await run(agentArgs(loadedStep('x3', 'public_value'), loaded, ['--log-mode']), {
+      env: env({ U1B_ADD_PUBLIC: '1' }),
+    });
+    // (a) red when the relay reads REALM_NOT_SECRET from its own environment only (the value
+    //     [REDACTED], counted 1); (b) prints the code, the line and the receipt's count.
+    expect({
+      code: ran.code,
+      line: ran.stdout.includes(`public: ${PUBLIC_FAKE} end`)
+        ? 'whole'
+        : lineOf(ran.stdout, 'public: '),
+      environment: environmentHidden(ran.stderr),
+    }).toEqual({ code: 0, line: 'whole', environment: ['0'] });
+  }, 60_000);
+
+  it("(x3b) a module's top-level code removes REALM_NOT_SECRET → a value it listed is [REDACTED], as the base hides it", async () => {
+    const ran = await run(agentArgs(loadedStep('x3b', 'listed'), loaded), {
+      env: env({
+        U1B_DROP_NOT_SECRET: '1',
+        REALM_NOT_SECRET: 'HOME,U1B_LISTED',
+        U1B_LISTED: LISTED_FAKE,
+      }),
+    });
+    // (a) red without the removed names in the piece (the relay still reads its own
+    //     REALM_NOT_SECRET, which lists the value's name); (b) prints the code, the line, counts.
+    expect({
+      code: ran.code,
+      line: lineOf(ran.stdout, 'listed: '),
+      fake: loadedShown(ran.stdout + ran.stderr),
+    }).toEqual({
+      code: 0,
+      line: 'listed: [REDACTED] end',
+      fake: { loaded: 0, public: 0, listed: 0, late: 0 },
+    });
+  }, 60_000);
+
+  it('(x4) GROUNDING — a value first set inside `execute()` prints whole, on the base and on this build (today’s limit)', async () => {
+    const ran = await run(agentArgs(loadedStep('x4', 'late'), loaded));
+    // GROUNDING, not acceptance: neither build rebuilds its set for a change made inside a
+    // handler's `execute()`; this pins that limit. (b) prints the code and whether it was whole.
+    expect({ code: ran.code, whole: ran.stdout.includes(`late: ${LATE_FAKE} end`) }).toEqual({
+      code: 0,
+      whole: true,
+    });
+  }, 60_000);
+
+  it("(x6) `kill -9 <relay>` while a handler's program (`sleep 30`, inherited stdio) runs → the worker and the program are gone within 5 s", async () => {
+    const started = start(agentArgs(loadedStep('x6', 'hold_wait'), loaded));
+    const m = await started.waitFor(/ready: pid=(\d+) sleep=(\d+)/);
+    const worker = Number(m[1]);
+    const sleeper = Number(m[2]);
+    // A worker or a program that outlives its relay (the cell's red) is not left behind.
+    onTestFinished(() => {
+      for (const pid of [worker, sleeper]) if (alive(pid)) process.kill(pid, 'SIGKILL');
+    });
+    started.child.kill('SIGKILL');
+    const by = Date.now() + 5000;
+    while ((alive(worker) || alive(sleeper)) && Date.now() < by) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    // (a) red when the worker ends only itself on its channel's close (the program lives on, an
+    //     orphan); (b) prints which of the two is gone.
+    expect({ worker: !alive(worker), program: !alive(sleeper) }).toEqual({
+      worker: true,
+      program: true,
+    });
+  }, 60_000);
 });

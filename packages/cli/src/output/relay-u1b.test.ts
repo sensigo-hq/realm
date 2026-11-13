@@ -158,6 +158,8 @@ interface WorkerRun {
   stderr: string;
   ends: Array<Record<string, unknown>>;
   deltas: number;
+  /** Each piece's kind, in the order sent (correction 1). */
+  kinds: string[];
   /** How many pieces were sent but not yet acknowledged when `watch` first matched the output. */
   pendingAtWatch?: number;
 }
@@ -178,6 +180,7 @@ function collect(child: ChildProcess, options: CollectOptions = {}): Promise<Wor
   let stderr = '';
   const ends: Array<Record<string, unknown>> = [];
   let deltas = 0;
+  const kinds: string[] = [];
   let acked = 0;
   let pendingAtWatch: number | undefined;
   const seen = (): void => {
@@ -198,6 +201,7 @@ function collect(child: ChildProcess, options: CollectOptions = {}): Promise<Wor
     if (m['t'] === 'realm-relay-end') ends.push(m);
     if (m['t'] === 'realm-relay-delta') {
       deltas += 1;
+      kinds.push(String(m['kind']));
       const ack = (): void => {
         acked += 1;
         if (child.connected) child.send({ t: 'realm-relay-ack', seq: m['seq'] });
@@ -214,6 +218,7 @@ function collect(child: ChildProcess, options: CollectOptions = {}): Promise<Wor
         stderr,
         ends,
         deltas,
+        kinds,
         ...(pendingAtWatch !== undefined ? { pendingAtWatch } : {}),
       }),
     ),
@@ -578,5 +583,61 @@ describe('U1b — the relay holds a declared value before the worker prints next
       pieces: ran.deltas > 0,
       pendingAtPrint: ran.pendingAtWatch,
     }).toEqual({ code: 0, pieces: true, pendingAtPrint: 0 });
+  }, 60_000);
+});
+
+describe('U1b correction 1 — the relay holds the environment a module set before the worker prints next', () => {
+  let loadedEnv: string;
+  beforeAll(() => {
+    loadedEnv = join(root, 'loaded-env');
+    mkdirSync(join(loadedEnv, 'wf'), { recursive: true });
+    writeFileSync(
+      join(loadedEnv, 'realm.yaml'),
+      ['version: 1', 'handlers:', '  loaded:', '    use: ./loaded.mjs#makeLoaded', ''].join('\n'),
+      'utf8',
+    );
+    writeFileSync(join(loadedEnv, 'package.json'), '{ "type": "module" }\n', 'utf8');
+    writeFileSync(
+      join(loadedEnv, 'loaded.mjs'),
+      `process.env.U1B_LOADED = 'CANARY-u1b-loaded-9f2b-xxxxxxxxxx';
+export const makeLoaded = ({ id }) => ({ id, execute: async () => {
+  process.stdout.write('loaded printed\\n');
+  return { data: { note: 'loaded' } };
+} });
+`,
+      'utf8',
+    );
+    writeFileSync(
+      join(loadedEnv, 'wf', 'workflow.yaml'),
+      'id: u1b-loaded\nname: loaded\nversion: 1\nsteps:\n  s:\n    description: One step.\n    execution: auto\n    handler: loaded\n',
+      'utf8',
+    );
+  });
+
+  // The relay is slow here (1.5 s per acknowledgement): a print that does not wait for the
+  // environment piece shows while it is pending.
+  it("(x5) the environment piece a `use:` module's top-level code causes is acknowledged before the worker prints next", async () => {
+    const ran = await asWorker(
+      [
+        'agent',
+        '--workflow',
+        join(loadedEnv, 'wf'),
+        '--project',
+        loadedEnv,
+        '--provider',
+        'anthropic',
+        '--model',
+        'fake-model',
+      ],
+      {},
+      { ackDelayMs: 1500, watch: /Run ID:|loaded printed/ },
+    );
+    // (a) red without the wait after the piece (the drive prints while it is pending); (b) prints
+    //     the code, the kinds sent and the count pending at the first print after the loop.
+    expect({
+      code: ran.code,
+      environmentPiece: ran.kinds.includes('environment'),
+      pendingAtPrint: ran.pendingAtWatch,
+    }).toEqual({ code: 0, environmentPiece: true, pendingAtPrint: 0 });
   }, 60_000);
 });

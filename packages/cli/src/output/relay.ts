@@ -7,8 +7,9 @@
 //   in a relay's worker, and only when a stream is not a terminal or the drive prints as a shared
 //   log (broadcast). A terminal on both streams with no broadcast runs today's in-process path.
 // - The relay holds what only the worker resolves — the declared values, their standings, the
-//   manifests' not-secret lists — sent as numbered pieces and acknowledged one by one (`writer.ts`).
-//   It opens no store and holds no claim.
+//   manifests' not-secret lists, and what the project modules put into its environment while they
+//   loaded — sent as numbered pieces and acknowledged one by one (`writer.ts`). It opens no store
+//   and holds no claim.
 // - Signals are forwarded to the worker's process group; the stop signal the sudo way; the worker's
 //   status is the relay's (a signal death re-raised).
 // - After the worker's exit, the relay waits at most `DRAIN_BOUND_MS` for the pipes to close; past
@@ -22,6 +23,7 @@ import {
   RELAY_KEY_ENV,
   addDeclaredDisclosure,
   addDeclaredValues,
+  addWorkerEnvironment,
   flushHeld,
   isRelayWorker,
   noteDeclaredStanding,
@@ -39,7 +41,7 @@ export const SIGKILL_AFTER_MS = 10_000;
 
 /** The line printed once when a program held the output open past the drain bound. */
 export const DRAIN_LINE =
-  "A program started by a handler kept the output open after the command's work ended; what it printed after that is not in this log.";
+  "A program started by a handler kept the output open after the command's work ended; it has been stopped, and what it printed after that is not in this log.";
 
 /** The line printed when the worker cannot be started: the drive never runs in-process instead. */
 export function spawnFailedLine(err: unknown): string {
@@ -178,8 +180,18 @@ function startRelay(deps: RelayDeps): void {
         return;
       }
       if (m['t'] !== 'realm-relay-delta' || typeof m['seq'] !== 'number') return;
-      heardDelta = true;
       const payload = m['payload'] as Record<string, unknown>;
+      // Correction 1 (C1): what the worker's project modules put into its environment while they
+      // loaded. Not a piece of the declared set: the drive has still said nothing of it.
+      if (m['kind'] === 'environment') {
+        addWorkerEnvironment(
+          payload['env'] as Record<string, string>,
+          payload['unset'] as readonly string[],
+          (payload['cwd'] as string | null) ?? undefined,
+        );
+      } else {
+        heardDelta = true;
+      }
       if (m['kind'] === 'declared') {
         addDeclaredDisclosure(
           payload['declared'] as Record<string, string>,

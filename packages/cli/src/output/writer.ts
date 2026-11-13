@@ -84,6 +84,11 @@ function readRelayMarkers(): Buffer | undefined {
 const relayKey = readRelayMarkers();
 /** U1b: this process is a relay's worker. */
 const relayWorker = relayKey !== undefined;
+/** U1b correction 1 (C1): in a relay's worker, its environment and working folder at its start
+ *  (the relay's own, its markers aside); what changes after is told to the relay. */
+const startEnvironment = relayWorker
+  ? { env: { ...process.env } as Record<string, string | undefined>, cwd: currentCwd() }
+  : undefined;
 /** U1b: in a relay's worker, which streams are pipes to the relay (a terminal is inherited). */
 const relayed: Record<'stdout' | 'stderr', boolean> = {
   stdout: relayWorker && process.stdout.isTTY !== true,
@@ -135,7 +140,11 @@ export type RelayDelta =
       kind: 'values';
       payload: { declared: Record<string, string>; manifestNotSecret: readonly string[] | null };
     }
-  | { kind: 'standing'; payload: { path: string; standing: DeclaredStanding } };
+  | { kind: 'standing'; payload: { path: string; standing: DeclaredStanding } }
+  | {
+      kind: 'environment';
+      payload: { env: Record<string, string>; unset: string[]; cwd: string | null };
+    };
 
 export type RelayMessage =
   | ({ t: 'realm-relay-delta'; seq: number } & RelayDelta)
@@ -195,10 +204,58 @@ if (relayWorker) {
       for (const resolve of syncWaiters.splice(0)) resolve();
     }
   });
-  // The relay is gone (its channel closed): the worker ends as on SIGTERM.
+  // The relay is gone (its channel closed, whatever ended it): the worker's whole process group
+  // ends as on SIGTERM, the programs its handlers started included (correction 1, C2). The worker
+  // leads its group (spawned detached); a worker that does not (a test's fork) ends itself.
   process.on('disconnect', () => {
-    process.kill(process.pid, 'SIGTERM');
+    try {
+      process.kill(-process.pid, 'SIGTERM');
+    } catch {
+      process.kill(process.pid, 'SIGTERM');
+    }
   });
+}
+
+function currentCwd(): string | undefined {
+  try {
+    return process.cwd();
+  } catch {
+    return undefined;
+  }
+}
+
+/** C1: what the relay holds of the worker's environment beyond its own start: the values sent,
+ *  the names sent as unset, and the working folder sent. */
+const sentEnvironment = new Map<string, string | undefined>();
+let sentCwd: string | undefined;
+
+/**
+ * U1b correction 1 (C1): in a relay's worker, tells the relay which environment names appeared,
+ * changed or were removed since the worker started (each value it has not yet sent), and the
+ * working folder when it changed: what a project module's top-level code put there while it loaded
+ * (`dotenv.config()`, a token read for a child CLI). The relay sweeps them as the worker's own
+ * writer would. The caller awaits {@link writerSynced} before this process prints next. Sends
+ * nothing outside a relay's worker, or when nothing changed.
+ */
+export function noteLoadedEnvironment(): void {
+  if (startEnvironment === undefined) return;
+  const known = (name: string): string | undefined =>
+    sentEnvironment.has(name) ? sentEnvironment.get(name) : startEnvironment.env[name];
+  const env: Record<string, string> = {};
+  const unset: string[] = [];
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined && value !== known(name)) env[name] = value;
+  }
+  for (const name of new Set([...Object.keys(startEnvironment.env), ...sentEnvironment.keys()])) {
+    if (process.env[name] === undefined && known(name) !== undefined) unset.push(name);
+  }
+  const cwd = currentCwd();
+  const cwdChanged = cwd !== undefined && cwd !== (sentCwd ?? startEnvironment.cwd);
+  if (Object.keys(env).length === 0 && unset.length === 0 && !cwdChanged) return;
+  for (const [name, value] of Object.entries(env)) sentEnvironment.set(name, value);
+  for (const name of unset) sentEnvironment.set(name, undefined);
+  if (cwdChanged) sentCwd = cwd;
+  sendDelta({ kind: 'environment', payload: { env, unset, cwd: cwdChanged ? cwd : null } });
 }
 
 /**
@@ -524,6 +581,9 @@ interface WriterState {
   readRule?: { accepted: boolean };
   /** U1: each stream's held tail on a log (`log`, `broadcast`), and the idle timer that flushes it. */
   carry: Record<'stdout' | 'stderr', { chunk: ChunkCarry; idle?: NodeJS.Timeout }>;
+  /** U1b correction 1 (C1): in a relay, its worker's environment changes (a value, or `undefined`
+   *  for a name removed) and working folder, as the worker sent them. */
+  worker?: { env: Map<string, string | undefined>; cwd?: string };
 }
 
 /** What this process's output hid and shaped, its sources on a private terminal, and whether it
@@ -569,8 +629,8 @@ function setFor(audience: DisclosureAudience): DisclosureSet {
   if (set === undefined) {
     const standing = processStanding(s);
     set = buildDisclosureSet({
-      env: process.env,
-      cwd: process.cwd(),
+      env: environmentOf(s),
+      cwd: s.worker?.cwd ?? process.cwd(),
       declared: Object.fromEntries(s.declared),
       declaredState: standing.declared,
       ...(standing.declaredCause !== undefined ? { declaredCause: standing.declaredCause } : {}),
@@ -580,6 +640,35 @@ function setFor(audience: DisclosureAudience): DisclosureSet {
     s.sets.set(audience, set);
   }
   return set;
+}
+
+/** The environment the sweep and `REALM_NOT_SECRET` are read from: this process's own; in a relay,
+ *  with its worker's changes over it (the worker's value winning, a name it removed gone). */
+function environmentOf(s: WriterState): Readonly<Record<string, string | undefined>> {
+  if (s.worker === undefined) return process.env;
+  const env: Record<string, string | undefined> = { ...process.env };
+  for (const [name, value] of s.worker.env) {
+    if (value === undefined) delete env[name];
+    else env[name] = value;
+  }
+  return env;
+}
+
+/**
+ * U1b correction 1 (C1): in a relay, its worker's environment changes and working folder (the
+ * `environment` piece) join what its sets are built from, and the sets are rebuilt.
+ */
+export function addWorkerEnvironment(
+  env: Readonly<Record<string, string>>,
+  unset: readonly string[],
+  cwd: string | undefined,
+): void {
+  if (state === undefined) return;
+  state.worker ??= { env: new Map() };
+  for (const [name, value] of Object.entries(env)) state.worker.env.set(name, value);
+  for (const name of unset) state.worker.env.set(name, undefined);
+  if (cwd !== undefined) state.worker.cwd = cwd;
+  state.sets.clear();
 }
 
 function audienceOf(stream: 'stdout' | 'stderr'): StreamAudience {

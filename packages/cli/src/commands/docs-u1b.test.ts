@@ -31,7 +31,7 @@ describe('U1b Unit 1 — the docs say what the relay does', () => {
     // (a) the grandchild masked; (h) the bound and the drain line; (h3) the line under --log-mode.
     claim(
       'docs/guides/operate-runs.md',
-      "When the output goes to a file or a pipe, what a program started by a step's handler writes there is hidden as the handler's own prints are — under `realm agent`. After the command's work ends, the log keeps what reached it within five seconds; a program that holds the output open longer is cut off, and the log says so.",
+      "When the output goes to a file or a pipe, what a program started by a step's handler writes there is hidden as the handler's own prints are — under `realm agent`. After the command's work ends, the log keeps what reached it within five seconds; a program that still holds the output open then is stopped, and Realm says so on its error output.",
     );
   });
 
@@ -41,7 +41,7 @@ describe('U1b Unit 1 — the docs say what the relay does', () => {
     // clause is scoped to an abrupt end (a clean drive without a manifest reads as today).
     claim(
       'docs/reference/cli/realm-agent.md',
-      "When its output goes to a file or a pipe, `realm agent` runs the drive in a second process and keeps the first to mask what reaches the file or pipe, including what the programs a handler starts print; `kill` on the first process stops both. The `Disclosure:` line is the first process's. When the drive ends abruptly (a crash, a kill), the line reads `values shown as their type and size: not counted (the drive ended before it said)`, and `declared values unknown (the drive ended before it said)` when it had not yet said what the manifest declares.",
+      "When its output goes to a file or a pipe, or with `--log-mode`, `realm agent` runs the drive in a second process and keeps the first to mask what reaches the file or pipe, including what the programs a handler starts print; `kill` on the first process stops both, and a drive still running ten seconds after Ctrl-C or `kill` is killed. With both streams sent to one place (`2>&1`), whole lines from the two streams can arrive in a different order than they were printed; each stream keeps its own order. The `Disclosure:` line is the first process's. When the drive ends by a signal (a kill, or a crash that ends it by one), the line reads `values shown as their type and size: not counted (the drive ended before it said)`, and `declared values unknown (the drive ended before it said)` when it had not yet said what the manifest declares.",
     );
   });
 
@@ -57,7 +57,7 @@ describe('U1b Unit 1 — the docs say what the relay does', () => {
   it('the CHANGELOG entry', () => {
     // (a), (b) the grandchild masked; (h) the five seconds and the line.
     claimChangelog(
-      "- Hardening: when the output goes to a file or a pipe, what a program started by a step's handler prints there is hidden as the handler's own prints are: `realm agent` runs its drive in a second process and keeps the first to do the hiding. A program that holds the output open past five seconds after the drive's work ends is cut off, and the log says so.",
+      "- Hardening: when the output goes to a file or a pipe, what a program started by a step's handler prints there is hidden as the handler's own prints are: `realm agent` runs its drive in a second process and keeps the first to do the hiding. A program that still holds the output open five seconds after the drive's work ends is stopped, and Realm says so on its error output.",
     );
   });
 });
