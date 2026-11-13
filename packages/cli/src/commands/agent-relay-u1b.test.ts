@@ -1428,6 +1428,16 @@ export const makeHoldWait = ({ id }) => step(id, async () => {
   say('ready: pid=' + process.pid + ' sleep=' + sleeper.pid);
   await new Promise(() => {});
 });
+export const makeTrapWait = ({ id }) => step(id, async () => {
+  process.on('SIGTERM', () => say('trapped SIGTERM'));
+  say('ready: pid=' + process.pid);
+  await new Promise(() => {});
+});
+export const makeHoldEnd = ({ id }) => step(id, async () => {
+  const sleeper = spawn('sleep', ['30'], { stdio: 'inherit' });
+  say('held: sleep=' + sleeper.pid);
+  return { data: { note: 'held' } };
+});
 `;
 
 describe('U1b correction 1 — what a project module puts into the environment while it loads', () => {
@@ -1441,6 +1451,8 @@ describe('U1b correction 1 — what a project module puts into the environment w
     old_cwd: 'makeOldCwd',
     late: 'makeLate',
     hold_wait: 'makeHoldWait',
+    trap_wait: 'makeTrapWait',
+    hold_end: 'makeHoldEnd',
   };
 
   beforeAll(() => {
@@ -1630,5 +1642,58 @@ export default { handlers: { ext_loaded: { id: 'ext_loaded', execute: async () =
       worker: true,
       program: true,
     });
+  }, 60_000);
+
+  it('(x7) a handler that traps SIGTERM and keeps working: `kill <first process>` once → both processes gone at about 10 s, the first by SIGKILL', async () => {
+    const started = start(agentArgs(loadedStep('x7', 'trap_wait'), loaded));
+    const worker = Number((await started.waitFor(/ready: pid=(\d+)/))[1]);
+    // A worker that outlives the bound (the cell's red) is not left behind.
+    onTestFinished(() => {
+      if (alive(worker)) process.kill(worker, 'SIGKILL');
+    });
+    const from = Date.now();
+    started.child.kill('SIGTERM');
+    await started.waitFor(/trapped SIGTERM/);
+    await new Promise((r) => setTimeout(r, 2000));
+    const livedPastTerm = alive(worker);
+    while (alive(worker) && Date.now() - from < 13_000) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    const workerGoneAt = alive(worker) ? undefined : Date.now() - from;
+    if (workerGoneAt === undefined) started.child.kill('SIGKILL');
+    const ran = await started.done;
+    const relayGoneAt = Date.now() - from;
+    const atTheBound = (ms: number | undefined): boolean =>
+      ms !== undefined && ms >= 9_500 && ms < 11_500;
+    // (a) red without the 10 s backstop after the first signal (the worker lives on past 13 s); red
+    //     when the trap does not hold (the cell would prove nothing: the worker gone at once); (b)
+    //     prints whether the trap held, when each process was gone, and the first's signal.
+    expect(
+      {
+        trapped: livedPastTerm,
+        worker: atTheBound(workerGoneAt),
+        relay: atTheBound(relayGoneAt),
+        signal: ran.signal,
+      },
+      `worker gone at ${String(workerGoneAt)} ms, relay at ${relayGoneAt} ms`,
+    ).toEqual({ trapped: true, worker: true, relay: true, signal: 'SIGKILL' });
+  }, 60_000);
+
+  it('(x8) a handler leaves `sleep 30` holding the output → at the bound the drain line, and once the command returns the program is gone', async () => {
+    const started = start(agentArgs(loadedStep('x8', 'hold_end'), loaded));
+    const sleeper = Number((await started.waitFor(/held: sleep=(\d+)/))[1]);
+    // A program that outlives the command (the cell's red) is not left behind.
+    onTestFinished(() => {
+      if (alive(sleeper)) process.kill(sleeper, 'SIGKILL');
+    });
+    const ran = await started.done;
+    const goneIn = await waitDead(sleeper, 1000);
+    // (a) red without the group kill at the bound (the program holds the output for its 30 s); (b)
+    //     prints the code, how many drain lines and whether the program was gone.
+    expect({
+      code: ran.code,
+      drainLines: ran.stderr.split('\n').filter((l) => l === DRAIN_LINE).length,
+      programGone: goneIn !== undefined,
+    }).toEqual({ code: 0, drainLines: 1, programGone: true });
   }, 60_000);
 });
