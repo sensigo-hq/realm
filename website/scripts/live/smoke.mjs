@@ -2,11 +2,12 @@
 // 1 static scan (free names vs allowlist) · 2 import in a node:vm context holding web-standard globals only
 // · 3 zero calls into throwing members · 4 version equality · 5 the recorder's full sequence, both endings,
 // compared with the recording under a DEFINED projection (below) · 6 live-ran · 7 stand-in request log
-// · 8 a refused start_run is not live (N3) · 9 bundle size (300 KB gzip ceiling) · 10 the page's decisions
+// · 8 a refused start_run is not live (N3) · 9 bundle size (420 KB gzip ceiling) · 10 the page's decisions
 // (view.mjs, imported FROM THE BUNDLE): visible strings, the Live state table's state letters A–E and
 // the machine-checkable claim-ledger rows, in both modes (recorded: from the recording-derived state)
 // · 11 a failed run (state E) and an MCP-layer refusal that is not counted · 12 no reply carries a
-// warning mentioning a store.
+// warning mentioning a store · 13 the gate question is whole (no cut marker), in both modes · 14 no
+// local folder in replay.json.
 //
 // Projection (N2): every reply is cut to distill.mjs's pick (env(): status, error_code, errors, agent_action,
 // context_hint, run_phase, blocked_reason.eligible_steps, error_details.errors[instancePath,keyword,params,message];
@@ -60,8 +61,11 @@ console.log(
 
 // 1. static scan
 const src = fs.readFileSync(bundlePath, 'utf8');
-// M3: a bump that doubles the bundle fails here.
-const GZIP_CEILING = 300 * 1024;
+// M3: a bump that grows the bundle by more than about a tenth fails here. The ceiling is the built
+// 0.49.0 bundle's size plus about 10%: 390,548 B gzip, measured on 2026-11-13, so 420 KB. It is set
+// from that size because the bundle loads only when a visitor presses "Try it yourself", not with
+// the home page.
+const GZIP_CEILING = 420 * 1024;
 const gz = zlib.gzipSync(fs.readFileSync(bundlePath), { level: 9 }).length;
 console.log(`size: ${fs.statSync(bundlePath).size} B min, ${gz} B gzip (ceiling ${GZIP_CEILING})`);
 if (gz > GZIP_CEILING) die(`the bundle is ${gz} B gzip, over the ${GZIP_CEILING} B ceiling`);
@@ -258,16 +262,8 @@ const phLive = (x, ids) =>
   });
 const recAttempt = (id) => R.attempts.find((a) => a.id === id);
 // correction 1: the sentences that follow the state (stage 3 heading, Next's waiting label, the
-// stage-4 labels, "Ran:", the stage-2 line, the skip line), in this order.
-const STATE_KEYS = [
-  'gate',
-  'waitLabel',
-  'otherTried',
-  'ran',
-  'sentFrom2',
-  'skippedLabel',
-  'skipped',
-];
+// stage-4 labels, "Ran:", the skip line), in this order.
+const STATE_KEYS = ['gate', 'waitLabel', 'otherTried', 'ran', 'skippedLabel', 'skipped'];
 const byState = (S) => Object.fromEntries(STATE_KEYS.map((k) => [k, S[k]]));
 const GATE_B = 'The run stops. The posting steps cannot run until the gate is answered.';
 const GATE_A = 'The run has not reached the gate yet.';
@@ -275,7 +271,12 @@ const GATE_CD = 'The gate is answered.';
 const GATE_E = 'This run failed before reaching the gate.';
 const OTHER_TRIED = 'The agent tries the branch that was not chosen';
 const SKIPPED_LABEL = 'Skipped, with the reason on the record';
-const NONE = { otherTried: null, ran: null, sentFrom2: null, skippedLabel: null, skipped: null };
+const NONE = { otherTried: null, ran: null, skippedLabel: null, skipped: null };
+// The cut markers 0.49.0 writes into a gate question that does not fit its view, and into a value
+// cut when the question opened (docs/reference/workflow/gates.md).
+const CUT_MARKS = ['Cut when this question opened', '[cut at mint'];
+const cutMarks = (t) => CUT_MARKS.filter((m) => String(t ?? '').includes(m));
+const POSTS = () => ns.diagnostics().fetches.filter((f) => f.startsWith('POST ')).length;
 const classes = [];
 
 const replies = []; // every raw reply of the guard's runs (for the store-warning check)
@@ -404,6 +405,14 @@ async function runEnding(E, choice, withWrong) {
   const v = await send('valid', tool, va);
   const validRaw = lastRaw;
   check(prefix + 'view: gate text = recording gate.display', R.gate.display, gateText(validRaw));
+  check(
+    prefix + 'the gate question with the prepared review is whole (no cut marker)',
+    [],
+    cutMarks(gateText(validRaw)),
+  );
+  console.log(
+    `${prefix}gate question: ${v.gate?.display?.length} characters as Realm sent it, ${gateText(validRaw)?.length} as the page shows it (trimmed)`,
+  );
   check(prefix + 'state letter after the valid review', 'B', stateLetter(states.valid.after));
   check(
     prefix + 'ledger :63 (L): the stop sentence shows once the gate is pending',
@@ -489,13 +498,20 @@ async function runEnding(E, choice, withWrong) {
   const runAns = await E.run(ids.run);
   const vsAns = { ...afterAns, choice: answeredChoice(runAns) };
   check(prefix + 'state letter after the answer', 'C', stateLetter(vsAns));
-  // ledger :104: on this release the answer leaves the chosen posting step to the agent. If a
-  // release runs it (#625), this check fails and the sentence must be re-worded.
+  // ledger :104: on 0.49.0 the answer leaves the chosen posting step owed to the engine, and the
+  // agent's advance_run runs it. If a release runs it at the answer, or hands it back to the agent,
+  // this check fails and the sentence must be re-worded.
   check(
     prefix +
-      'ledger :104 condition: after the answer the posted step is not completed and the run is running',
-    [false, 'running'],
-    [afterAns.completed_steps.includes(ending.posted.step), afterAns.run_phase],
+      'ledger :104 condition: after the answer the posted step is not completed, the run is running and owes the step to the engine (advance_run)',
+    [false, 'running', 'advance_owed', 'advance_run', [ending.posted.step]],
+    [
+      afterAns.completed_steps.includes(ending.posted.step),
+      afterAns.run_phase,
+      afterAns.next_actions_status,
+      afterAns.next_actions?.[0]?.instruction?.tool,
+      (afterAns.engine_runnable ?? []).map((x) => x.step),
+    ],
   );
   const sAns = stageSentences('live', vsAns);
   check(
@@ -506,7 +522,6 @@ async function runEnding(E, choice, withWrong) {
       waitLabel: null,
       otherTried: OTHER_TRIED,
       ran: null,
-      sentFrom2: null,
       skippedLabel: SKIPPED_LABEL,
       skipped: ending.skipped,
     },
@@ -522,7 +537,7 @@ async function runEnding(E, choice, withWrong) {
     prefix + 'ledger :104 (L): heading and agent-sends sentence after the answer',
     [
       `The reviewer chose \`${choice}\`. Realm closes the other branch.`,
-      'On this release the agent still sends the chosen step itself.',
+      'Realm runs the chosen step itself when the agent calls `advance_run`.',
     ],
     [sAns.branch, sAns.agentSends],
   );
@@ -530,9 +545,14 @@ async function runEnding(E, choice, withWrong) {
     prefix + 'ledger stage 3/5 (L, C): the chose line and the not-finished line',
     [
       `The reviewer chose ${choice}.`,
-      'The run is not finished: the agent has not sent the chosen step yet.',
+      'The run is not finished: the agent has not called `advance_run` yet.',
     ],
     [sAns.chose, sAns.notFinished],
+  );
+  check(
+    prefix + 'ledger stage 4 button (L, C): the label names the call it makes',
+    'The agent calls advance_run',
+    sAns.sendLabel,
   );
   check(
     prefix + 'view: next action after the answer = the chosen posting step only',
@@ -545,6 +565,24 @@ async function runEnding(E, choice, withWrong) {
       260,
     ),
   );
+  // Stage 2's editor in state C: the agent sends the chosen posting step itself. Refused, not
+  // counted, the run stays in C, and nothing is posted.
+  const postsBeforeEditor = POSTS();
+  const ed = await send('editor_in_C', 'execute_step', { command: ending.posted.step, params: {} });
+  const edView = classify(lastRaw, states.editor_in_C.before, states.editor_in_C.after);
+  check(
+    prefix +
+      "the editor in C: the chosen step sent by the agent is refused ('it is an automatic step'), not counted, state C, no POST",
+    ['Realm refuses', true, 'Nothing was counted.', 'C', 0],
+    [
+      edView.label,
+      edView.reason.includes('it is an automatic step'),
+      countLine(lastRaw),
+      stateLetter({ ...states.editor_in_C.after, choice }),
+      POSTS() - postsBeforeEditor,
+    ],
+  );
+  console.log(`${prefix}the editor in C: ${JSON.stringify(ed.context_hint)}`.slice(0, 260));
   if (ending.other_branch) {
     const { tool: t2, ...oa } = ending.other_branch.call;
     await send('other_branch', t2, oa, ending.other_branch.response);
@@ -560,18 +598,19 @@ async function runEnding(E, choice, withWrong) {
         waitLabel: null,
         otherTried: OTHER_TRIED,
         ran: null,
-        sentFrom2: null,
         skippedLabel: SKIPPED_LABEL,
         skipped: ending.skipped,
       },
       byState(stageSentences('live', { ...states.other_branch.after, choice })),
     );
   }
-  await send(
-    'posted',
-    'execute_step',
-    { command: ending.posted.step, params: {} },
-    ending.posted.response,
+  // Stage 4's button: advance_run with run_id only; Realm runs the chosen posting step.
+  const postsBeforePost = POSTS();
+  await send('posted', 'advance_run', {}, ending.posted.response);
+  check(
+    prefix + 'posted: advance_run with run_id only draws no warning, and posts once',
+    [[], 1],
+    [lastRaw.value?.warnings, POSTS() - postsBeforePost],
   );
   const run = await E.run(ids.run);
   const afterPost = await J('get_run_state', { run_id: ids.run }, 'state');
@@ -585,14 +624,12 @@ async function runEnding(E, choice, withWrong) {
   );
   check(prefix + 'ledger stage 5 (L, D): no not-finished line', null, sPost.notFinished);
   check(
-    prefix +
-      'state sentences (L, D): gate answered, Ran:, the stage-2 line, skip line = the recording',
+    prefix + 'state sentences (L, D): gate answered, Ran:, skip line = the recording',
     {
       gate: GATE_CD,
       waitLabel: null,
       otherTried: OTHER_TRIED,
       ran: `Ran: \`${ending.posted.step}\``,
-      sentFrom2: `The agent sent \`${ending.posted.step}\` from stage 2.`,
       skippedLabel: SKIPPED_LABEL,
       skipped: ending.skipped,
     },
@@ -603,13 +640,6 @@ async function runEnding(E, choice, withWrong) {
       'view: skipLine(state after the post) and skipLine(run record) = the recording skipped',
     [ending.skipped, ending.skipped],
     [skipLine(afterPost), skipLine(run)],
-  );
-  check(
-    prefix + "view: the stage-2 path's row (chosenStep's evidence row) is the posted step's",
-    [ending.posted.step, 'success'],
-    (([x]) => [x?.step, x?.label])(
-      evidenceRows(run).filter((x) => x.step === chosenStep(afterPost)),
-    ),
   );
   check(
     prefix + 'view: no next action after the post',
@@ -668,6 +698,14 @@ async function runEnding(E, choice, withWrong) {
   console.log(
     `${prefix}evidence hashes live:     ${ev.map((x) => x.step + (x.kind === 'gate_response' ? '(answer)' : '') + ':' + x.hash.slice(0, 12)).join(' ')}`,
   );
+  // A second press of stage 4's button on the finished run: nothing runs, nothing is posted.
+  const postsBeforeSecond = POSTS();
+  const again = await send('second_press', 'advance_run', {});
+  check(
+    prefix + 'a second advance_run on the finished run: "already terminal", no POST',
+    [true, 0],
+    [/already terminal/.test(again.context_hint ?? ''), POSTS() - postsBeforeSecond],
+  );
   // no-op on the finished run (a reply class)
   await send('noop_on_finished', 'execute_step', { command: ending.posted.step, params: {} });
   return ids.run;
@@ -684,7 +722,7 @@ for (const [choice, ending] of Object.entries(R.endings)) {
       'running',
       false,
       `The reviewer chose \`${choice}\`. Realm closes the other branch.`,
-      'On this release the agent still sends the chosen step itself.',
+      'Realm runs the chosen step itself when the agent calls `advance_run`.',
     ],
     [rs.run_phase, rs.completed_steps.includes(ending.posted.step), S.branch, S.agentSends],
   );
@@ -695,7 +733,6 @@ for (const [choice, ending] of Object.entries(R.endings)) {
       waitLabel: null,
       otherTried: OTHER_TRIED,
       ran: `Ran: \`${ending.posted.step}\``,
-      sentFrom2: null,
       skippedLabel: SKIPPED_LABEL,
       skipped: null,
     },
@@ -720,6 +757,37 @@ check(
   ['fetch_pr'],
   R.after_refusals.completed_steps,
 );
+// The recorded gate question is whole (the owner's (b): the prepared review is short enough).
+console.log(
+  `gate question (recorded, trimmed by distill.mjs): ${R.gate.display.length} characters`,
+);
+check('the recorded gate question is whole (no cut marker)', [], cutMarks(R.gate.display));
+// No local folder in replay.json: distill.mjs replaces the recorder's folder with ~/pr-review.
+{
+  const ROOTS = ['/tmp/', '/home/', '/Users/', '/var/', '/private/', '/mnt/', '/root/'];
+  const strings = [];
+  const walk = (x, at) =>
+    typeof x === 'string'
+      ? strings.push([at, x])
+      : x && typeof x === 'object'
+        ? Object.entries(x).forEach(([k, v]) => walk(v, at + '.' + k))
+        : null;
+  walk(R, 'replay');
+  check(
+    'replay.json: no string holds a local folder (' + ROOTS.join(' ') + ')',
+    [],
+    strings.flatMap(([at, x]) => ROOTS.filter((r) => x.includes(r)).map((r) => at + ': ' + r)),
+  );
+  const named = strings.flatMap(([at, x]) =>
+    [...x.matchAll(/the project code under (\S+?)[.,;:]?(?=\s|$)/g)].map((m) => [at, m[1]]),
+  );
+  console.log(`replay.json: "the project code under …" found ${named.length} times`);
+  check(
+    'replay.json: every "the project code under …" names ~/pr-review/project',
+    [],
+    named.filter(([, f]) => f !== '~/pr-review/project').map(([at, f]) => at + ': ' + f),
+  );
+}
 const live = [];
 for (const [choice, wrong] of [
   ['request_changes', true],
@@ -883,12 +951,16 @@ check(
     'request_changes: past_gate|Realm refuses',
     'request_changes: past_gate_other|Realm refuses',
     'request_changes: answer|Realm accepts it',
+    'request_changes: editor_in_C|Realm refuses',
     'request_changes: other_branch|Realm refuses',
     'request_changes: posted|Realm accepts it',
+    'request_changes: second_press|The run has already ended',
     'request_changes: noop_on_finished|The run has already ended',
     'approve: valid|Realm accepts it',
     'approve: answer|Realm accepts it',
+    'approve: editor_in_C|Realm refuses',
     'approve: posted|Realm accepts it',
+    'approve: second_press|The run has already ended',
     'approve: noop_on_finished|The run has already ended',
     'params: []|Realm’s MCP layer refuses',
     'failed: a valid review after the failure|The run has already ended',

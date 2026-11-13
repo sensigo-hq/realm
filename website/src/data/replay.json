@@ -1,10 +1,10 @@
 {
   "meta": {
-    "realm_version": "0.46.0",
-    "recorded_at": "2026-10-08T13:28:28.960Z",
+    "realm_version": "0.49.0",
+    "recorded_at": "2026-11-13T22:55:10.114Z",
     "workflow_id": "pr-review",
     "example": "examples/08-pr-review",
-    "register": "Registered: pr-review v1 (5 steps)"
+    "register": "Registered: pr-review v1 (5 steps)\ncache: write_review — anthropic 1,398 chars ≈ 500–1,089 tokens, with Anthropic's tool text · openai 755 chars ≈ 151–302 tokens (estimates: 2.5–5 chars/token, with margin)\nanthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently\nopenai: on OpenAI's own address realm sends a cache key and, for GPT-5.6 and later, marks the fixed instructions and the stable start of the prompt of each step without tools for 30 minutes, unless --prompt-cache turns it off; otherwise the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)\nanthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write"
   },
   "start": {
     "call": {
@@ -17,7 +17,7 @@
     },
     "response": {
       "status": "ok",
-      "context_hint": "Step 'fetch_pr' completed. 1 step(s) now available.",
+      "context_hint": "Step 'fetch_pr' completed. Ready for the agent: 'write_review'.",
       "run_phase": "running"
     },
     "pr": {
@@ -35,7 +35,7 @@
     "evidence": {
       "step": "fetch_pr",
       "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
-      "duration_ms": 68
+      "duration_ms": 37
     }
   },
   "task": {
@@ -82,7 +82,7 @@
         "status": "blocked",
         "errors": [],
         "agent_action": "resolve_precondition",
-        "context_hint": "Step 'post_approval' is not eligible in the current run state.",
+        "context_hint": "Step 'post_approval' cannot be called now: its dependencies are not settled ('confirm_review'). Ready for the agent: 'write_review'.",
         "run_phase": "running",
         "blocked_reason": {
           "eligible_steps": ["write_review"]
@@ -97,13 +97,9 @@
         "tool": "execute_step",
         "command": "write_review",
         "params": {
-          "key_changes": [
-            "deliverWebhook now retries a failed POST in a loop instead of failing on the first error",
-            "New MAX_RETRIES constant (5) in webhooks/config.ts",
-            "One new test: a single failure followed by a success"
-          ],
+          "key_changes": ["deliverWebhook retries a failed POST up to 5 times"],
           "recommendation": "request_changes",
-          "review_comment": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
+          "review_comment": "Changes requested. After the last retry fails, rethrow the error instead of returning normally."
         }
       },
       "response": {
@@ -136,13 +132,9 @@
         "command": "write_review",
         "params": {
           "risk": "high",
-          "key_changes": [
-            "deliverWebhook now retries a failed POST in a loop instead of failing on the first error",
-            "New MAX_RETRIES constant (5) in webhooks/config.ts",
-            "One new test: a single failure followed by a success"
-          ],
+          "key_changes": ["deliverWebhook retries a failed POST up to 5 times"],
           "recommendation": "merge",
-          "review_comment": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
+          "review_comment": "Changes requested. After the last retry fails, rethrow the error instead of returning normally."
         }
       },
       "response": {
@@ -175,13 +167,9 @@
         "command": "write_review",
         "params": {
           "risk": "high",
-          "key_changes": [
-            "deliverWebhook now retries a failed POST in a loop instead of failing on the first error",
-            "New MAX_RETRIES constant (5) in webhooks/config.ts",
-            "One new test: a single failure followed by a success"
-          ],
+          "key_changes": ["deliverWebhook retries a failed POST up to 5 times"],
           "recommendation": "request_changes",
-          "review_comment": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed.",
+          "review_comment": "Changes requested. After the last retry fails, rethrow the error instead of returning normally.",
           "approved_by": "the agent"
         }
       },
@@ -215,18 +203,14 @@
         "command": "write_review",
         "params": {
           "risk": "high",
-          "key_changes": [
-            "deliverWebhook now retries a failed POST in a loop instead of failing on the first error",
-            "New MAX_RETRIES constant (5) in webhooks/config.ts",
-            "One new test: a single failure followed by a success"
-          ],
+          "key_changes": ["deliverWebhook retries a failed POST up to 5 times"],
           "recommendation": "request_changes",
-          "review_comment": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
+          "review_comment": "Changes requested. After the last retry fails, rethrow the error instead of returning normally."
         }
       },
       "response": {
         "status": "confirm_required",
-        "context_hint": "Run is paused at gate '5494540b-535e-43d4-8162-5ad03bd1a94e'. Available choices: approve, request_changes.",
+        "context_hint": "Run is paused at gate '06d0bd6a-57d0-432d-8281-1e7f9980b78e'.",
         "run_phase": "gate_waiting"
       }
     }
@@ -238,7 +222,7 @@
   },
   "gate": {
     "step": "confirm_review",
-    "display": "PR #42 — acme/payments-api\n\nRisk: HIGH\nAI recommendation: request_changes\n\nKey changes:\n• deliverWebhook now retries a failed POST in a loop instead of failing on the first error\n• New MAX_RETRIES constant (5) in webhooks/config.ts\n• One new test: a single failure followed by a success\n\nReview comment to post:\nChanges requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed.",
+    "display": "PR #42 — acme/payments-api\n\nRisk: HIGH\nAI recommendation: request_changes\n\nKey changes:\n• deliverWebhook retries a failed POST up to 5 times\n\nReview comment to post:\nChanges requested. After the last retry fails, rethrow the error instead of returning normally.",
     "choices": ["approve", "request_changes"],
     "state": {
       "run_phase": "gate_waiting",
@@ -258,7 +242,7 @@
           "status": "blocked",
           "errors": [],
           "agent_action": "resolve_precondition",
-          "context_hint": "Step 'post_approval' is not eligible in the current run state.",
+          "context_hint": "Step 'post_approval' cannot be called now: it waits on the question on step 'confirm_review' (choices: approve, request_changes) — answer it with submit_human_response.",
           "run_phase": "gate_waiting",
           "blocked_reason": {
             "eligible_steps": []
@@ -278,7 +262,7 @@
           "status": "blocked",
           "errors": [],
           "agent_action": "resolve_precondition",
-          "context_hint": "Step 'post_changes_request' is not eligible in the current run state.",
+          "context_hint": "Step 'post_changes_request' cannot be called now: it waits on the question on step 'confirm_review' (choices: approve, request_changes) — answer it with submit_human_response.",
           "run_phase": "gate_waiting",
           "blocked_reason": {
             "eligible_steps": []
@@ -289,11 +273,11 @@
   },
   "endings": {
     "request_changes": {
-      "run_id": "76a4e5a6-3374-4a76-b186-0e8692879886",
+      "run_id": "f0cd035a-c27c-47b1-9df4-5651f0672454",
       "choice": "request_changes",
       "respond": {
         "argv": "realm run respond <run-id> --gate <gate-id> --choice request_changes",
-        "stdout": "Responded: 76a4e5a6-3374-4a76-b186-0e8692879886 | choice 'request_changes' | new state 'running'"
+        "stdout": "Responded: f0cd035a-c27c-47b1-9df4-5651f0672454 | choice 'request_changes' | new state 'running'\nOwed to the engine: 'post_changes_request' — realm run advance f0cd035a-c27c-47b1-9df4-5651f0672454 runs it, with the project code under ~/pr-review/project, in the environment of the shell it runs in.\nIf a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is."
       },
       "other_branch": {
         "id": "other_branch",
@@ -308,7 +292,7 @@
           "status": "blocked",
           "errors": [],
           "agent_action": "resolve_precondition",
-          "context_hint": "Step 'post_approval' is not eligible in the current run state.",
+          "context_hint": "Step 'post_approval' cannot be called now: it was skipped. Owed to the engine: 'post_changes_request' — call advance_run.",
           "run_phase": "running",
           "blocked_reason": {
             "eligible_steps": ["post_changes_request"]
@@ -320,10 +304,10 @@
         "response": {
           "status": "ok",
           "errors": [],
-          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id '76a4e5a6-3374-4a76-b186-0e8692879886' to retrieve the full evidence record.",
+          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id 'f0cd035a-c27c-47b1-9df4-5651f0672454' to retrieve the full evidence record.",
           "run_phase": "completed"
         },
-        "body": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
+        "body": "Changes requested. After the last retry fails, rethrow the error instead of returning normally."
       },
       "skipped": "post_approval: when_false: confirm_review.choice == 'approve' [lhs → \"request_changes\"]",
       "completed_steps": ["fetch_pr", "write_review", "confirm_review", "post_changes_request"],
@@ -339,7 +323,7 @@
           "step": "fetch_pr",
           "kind": "step",
           "status": "success",
-          "duration_ms": 68,
+          "duration_ms": 37,
           "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
           "choice": null,
           "rejections": null
@@ -349,7 +333,7 @@
           "kind": "step",
           "status": "success",
           "duration_ms": 0,
-          "hash": "e6cb3f2bd8a5d1aa6760aca7ff1ab5c8725c37c2d723adf318970c5f1e5207ca",
+          "hash": "6ceb12ca08ae200e9ea4aa3fb4ba5f937ef5652f00f3158f49e1a3cd74252c59",
           "choice": null,
           "rejections": 3
         },
@@ -358,7 +342,7 @@
           "kind": "step",
           "status": "success",
           "duration_ms": 0,
-          "hash": "e6cb3f2bd8a5d1aa6760aca7ff1ab5c8725c37c2d723adf318970c5f1e5207ca",
+          "hash": "6ceb12ca08ae200e9ea4aa3fb4ba5f937ef5652f00f3158f49e1a3cd74252c59",
           "choice": null,
           "rejections": null
         },
@@ -366,8 +350,8 @@
           "step": "confirm_review",
           "kind": "gate_response",
           "status": "success",
-          "duration_ms": 1951,
-          "hash": "17e0025f9bd2854e37648fe7873bf4f92bf9fd709d1aa1b204417c1358e0be9d",
+          "duration_ms": 1516,
+          "hash": "be4a5d307bce69725aa40b1b14056ac136fb3132ad03f078b727ec1f963789ee",
           "choice": "request_changes",
           "rejections": null
         },
@@ -375,19 +359,19 @@
           "step": "post_changes_request",
           "kind": "step",
           "status": "success",
-          "duration_ms": 13,
-          "hash": "a7297b7f232bdf7a9416d2ea4b9c28029d28577b50b0ec7818868f5ed9a72f3f",
+          "duration_ms": 6,
+          "hash": "7c73a5dfe66e6ca7ec7da8179f40b7b0643cb1e5fbfcff3666ebb6634bbc45fa",
           "choice": null,
           "rejections": null
         }
       ]
     },
     "approve": {
-      "run_id": "e164cc71-b9ec-4985-8ec0-281a52da1da7",
+      "run_id": "6868e380-02be-4fb1-96c3-2ba93777e245",
       "choice": "approve",
       "respond": {
         "argv": "realm run respond <run-id> --gate <gate-id> --choice approve",
-        "stdout": "Responded: e164cc71-b9ec-4985-8ec0-281a52da1da7 | choice 'approve' | new state 'running'"
+        "stdout": "Responded: 6868e380-02be-4fb1-96c3-2ba93777e245 | choice 'approve' | new state 'running'\nOwed to the engine: 'post_approval' — realm run advance 6868e380-02be-4fb1-96c3-2ba93777e245 runs it, with the project code under ~/pr-review/project, in the environment of the shell it runs in.\nIf a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is."
       },
       "other_branch": null,
       "posted": {
@@ -395,10 +379,10 @@
         "response": {
           "status": "ok",
           "errors": [],
-          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id 'e164cc71-b9ec-4985-8ec0-281a52da1da7' to retrieve the full evidence record.",
+          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id '6868e380-02be-4fb1-96c3-2ba93777e245' to retrieve the full evidence record.",
           "run_phase": "completed"
         },
-        "body": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
+        "body": "Changes requested. After the last retry fails, rethrow the error instead of returning normally."
       },
       "skipped": "post_changes_request: when_false: confirm_review.choice == 'request_changes' [lhs → \"approve\"]",
       "completed_steps": ["fetch_pr", "write_review", "confirm_review", "post_approval"],
@@ -414,7 +398,7 @@
           "step": "fetch_pr",
           "kind": "step",
           "status": "success",
-          "duration_ms": 8,
+          "duration_ms": 4,
           "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
           "choice": null,
           "rejections": null
@@ -424,7 +408,7 @@
           "kind": "step",
           "status": "success",
           "duration_ms": 0,
-          "hash": "e6cb3f2bd8a5d1aa6760aca7ff1ab5c8725c37c2d723adf318970c5f1e5207ca",
+          "hash": "6ceb12ca08ae200e9ea4aa3fb4ba5f937ef5652f00f3158f49e1a3cd74252c59",
           "choice": null,
           "rejections": null
         },
@@ -433,7 +417,7 @@
           "kind": "step",
           "status": "success",
           "duration_ms": 0,
-          "hash": "e6cb3f2bd8a5d1aa6760aca7ff1ab5c8725c37c2d723adf318970c5f1e5207ca",
+          "hash": "6ceb12ca08ae200e9ea4aa3fb4ba5f937ef5652f00f3158f49e1a3cd74252c59",
           "choice": null,
           "rejections": null
         },
@@ -441,8 +425,8 @@
           "step": "confirm_review",
           "kind": "gate_response",
           "status": "success",
-          "duration_ms": 1829,
-          "hash": "12b00114fef2242e92601c768ecb962ba5f2b230c60c5d134bed8966d4bb0c1e",
+          "duration_ms": 1499,
+          "hash": "2f20b1a7b35f600e0681bc2359aaffce33f2db7b8a32ec907a9eac6d8b0cc054",
           "choice": "approve",
           "rejections": null
         },
@@ -450,8 +434,8 @@
           "step": "post_approval",
           "kind": "step",
           "status": "success",
-          "duration_ms": 4,
-          "hash": "a7297b7f232bdf7a9416d2ea4b9c28029d28577b50b0ec7818868f5ed9a72f3f",
+          "duration_ms": 7,
+          "hash": "7c73a5dfe66e6ca7ec7da8179f40b7b0643cb1e5fbfcff3666ebb6634bbc45fa",
           "choice": null,
           "rejections": null
         }

@@ -30,8 +30,8 @@ export function diagnostics() {
 }
 
 // A failed-attempt store that writes nothing, with every method of the engine's file store for
-// failed attempts (`FailedAttemptStore` in the 0.46.0 this demo runs; `JsonFileFailedAttemptStore`
-// after #616): the engine still counts refusals in the run; there is just no .attempts.jsonl sidecar.
+// failed attempts (`JsonFileFailedAttemptStore` in the 0.49.0 this demo runs): the engine still
+// counts refusals in the run; there is just no .attempts.jsonl sidecar.
 const noFailedAttempts = () => ({
   append: async () => {},
   read: async () => ({ records: [], capped: false }),
@@ -90,8 +90,9 @@ export async function start(opts = {}) {
     workflowId: def.id,
     steps: Object.keys(def.steps ?? {}),
     call,
-    run: async (id) => runStore.get(id),
-    evidence: async (id) => (await runStore.get(id)).evidence,
+    // The store returns a snapshot, { record, at } (0.49.0); the page reads the record.
+    run: async (id) => (await runStore.get(id)).record,
+    evidence: async (id) => (await runStore.get(id)).record.evidence,
     close: async () => {
       await client.close();
       await server.close?.();
