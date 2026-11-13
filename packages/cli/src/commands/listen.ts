@@ -23,6 +23,10 @@
 //   - `GET`/`HEAD` `/health` → the health address (`health-address.ts`, #960 U2): 200, or 503 from
 //     the first signal; `--shutdown-drain` keeps serving that many seconds before the stop begins;
 //     a workflow cannot be mounted at `/health`
+//   - `GET`/`HEAD` `<path>/runs/<run id>` → the read address (`run-read-address.ts`, R1.1): for a
+//     workflow with `trigger.result_map`, the run's phase and declared result to the holder of the
+//     run's code; the same `403` for every refusal (an id that is not a lowercase UUID is no read
+//     request: `405`, as before); no `--max-concurrent` slot
 import {
   createServer,
   maxHeaderSize,
@@ -85,6 +89,7 @@ import type {
   PendingGate,
   RunRecord,
   Snapshot,
+  DisclosureSet,
 } from '@sensigo/realm';
 import {
   verifyGithub,
@@ -99,10 +104,21 @@ import { bindFailureLine } from '../lib/bind-failure.js';
 import { trackConnections, type StopOutcome } from '../lib/graceful-stop.js';
 import { answerHealth, HEALTH_PATH, requestPath } from '../lib/health-address.js';
 import {
+  answerRead,
+  deriveReadKey,
+  optedIn,
+  PhaseCache,
+  readEntriesOf,
+  readFields,
+  readPrefix,
+  readRequestOf,
+  type ReadContext,
+} from '../lib/run-read-address.js';
+import {
   loadProjectExtensions,
   onceReleaseLineSink,
 } from '../extensions/load-project-extensions.js';
-import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { RUN_PHASE_WORDS, cliDisclosureProvider, writerCtx } from '../output/writer.js';
 import { addDeclaredValues } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
 
@@ -132,15 +148,28 @@ export interface ListenDeps {
   // can be written.
   // #715 (b) (03 §A.4, D6-8): and the store's `clock` — the instants this server writes and the
   // expiry waits of the sweeper are the store's.
+  // R1.1: and `resolveKey` — a repeat of an event inside the duplicate window names its run.
   runStore: Pick<
     RunStore,
-    'create' | 'get' | 'update' | 'scan' | 'settleStep' | 'persistedRunRecordFields' | 'clock'
+    | 'create'
+    | 'get'
+    | 'update'
+    | 'scan'
+    | 'settleStep'
+    | 'persistedRunRecordFields'
+    | 'clock'
+    | 'resolveKey'
   >;
   dedupStoreFor: (workflowId: string) => DedupStore;
   // issue #744: settles once Node has said whether the agent started (`'spawn'`) or not
   // (`'error'`, which for a missing or unenterable folder comes on the next tick, not as a throw).
   spawnAgent: (runId: string, cwd: string) => Promise<SpawnResult>;
   logger: Logger;
+  /**
+   * R1.1: the disclosure set a completed run's result is walked with, built for each read from the
+   * run's own manifest (what the MCP door does). Default: the CLI writer's `cliDisclosureProvider`.
+   */
+  disclosureProvider?: (definition: WorkflowDefinition, run: RunRecord) => Promise<DisclosureSet>;
 }
 
 /** A mounted workflow: its definition, trigger, source directory, and pre-resolved secret. */
@@ -155,6 +184,9 @@ export interface WorkflowEntry {
    *  identity, `origin: 'start'`), written into every run this route creates; undefined when the
    *  load carried no identity. */
   startIdentity?: ExtensionIdentityEntry;
+  /** R1.1: for a workflow with `trigger.result_map`, the key its read codes are made with, derived
+   *  from `secret` by `prepareListenWorkflows`; never stored. Absent, every read is refused. */
+  readKey?: Buffer;
 }
 
 export interface HandlerOptions {
@@ -322,13 +354,19 @@ function readBody(
   });
 }
 
-function respond(res: ServerResponse, status: number, payload: Record<string, unknown>): void {
+function respond(
+  res: ServerResponse,
+  status: number,
+  payload: Record<string, unknown>,
+  headers: Record<string, string> = {},
+): void {
   // #744: every reply carries its length, so a reply to an HTTP/1.0 sender that keeps its
   // connection open does not end it.
   const body = JSON.stringify(payload);
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
+    ...headers,
   });
   res.end(body);
 }
@@ -365,6 +403,15 @@ export function makeListenHandler(
   // later requests ignored on it; and how many of them linger (close in stages).
   const closingSockets = new WeakMap<Socket, { refusal: ServerResponse; ignored: number }>();
   let lingeringCount = 0;
+  // R1.1: the read address of each workflow with `result_map`. The entries are the route table's
+  // own, so a key `prepareListenWorkflows` derives later is read at each request.
+  const readCtx: ReadContext = {
+    entries: readEntriesOf(routes.values()),
+    get: (runId) => deps.runStore.get(runId),
+    disclosureProvider: deps.disclosureProvider ?? cliDisclosureProvider,
+    logger: deps.logger,
+    cache: new PhaseCache(),
+  };
 
   /**
    * #744 E2: the one way to refuse while the body is unread or only partly read: 417, 400
@@ -503,6 +550,14 @@ export function makeListenHandler(
     // (no line, the connection kept), and logs nothing.
     if (answerHealth(req, res, isStopping)) return;
 
+    // R1.1: a read request (`GET`/`HEAD` `<path>/runs/<run id>`), in the same place and on the same
+    // terms as the health address; on every path, so an opted-in path cannot be told from another.
+    const read = readRequestOf(req);
+    if (read !== undefined) {
+      await answerRead(req, res, read, readCtx);
+      return;
+    }
+
     // 1. Non-POST → 405.
     if (req.method !== 'POST') {
       refuse(req, res, 405, { error: 'method_not_allowed' });
@@ -621,7 +676,28 @@ export function makeListenHandler(
           dedupStore = deps.dedupStoreFor(entry.definition.id);
           if (await dedupStore.check(dedupId, ttlMs)) {
             deps.logger.debug('webhook: deduplicated', { path });
-            respond(res, 200, { status: 'deduplicated' });
+            // R1.1: the reply names the run the event started, when the store still holds it; a
+            // purged or unseen run, a run a failed start sealed (its replies are unchanged), or a
+            // read that fails, gets the bare reply as before.
+            let named: { run_id: string; run_phase: string } | undefined;
+            try {
+              const key = await deps.runStore.resolveKey(entry.definition.id, dedupId);
+              if (key.state === 'held') {
+                const { record } = await deps.runStore.get(key.run_id);
+                if (record.sealed_by?.arm !== 'spawn_failure') {
+                  named = { run_id: record.id, run_phase: deriveRunPhase(record) };
+                }
+              }
+            } catch {
+              named = undefined;
+            }
+            respond(
+              res,
+              200,
+              named === undefined
+                ? { status: 'deduplicated' }
+                : { status: 'deduplicated', ...named, ...readFields(entry, named.run_id) },
+            );
             return;
           }
         }
@@ -741,6 +817,7 @@ export function makeListenHandler(
           run_id: run.id,
           run_phase: runPhase,
           ...(paramsDiffer ? { params_differ: true } : {}),
+          ...readFields(entry, run.id),
         });
         return;
       }
@@ -816,8 +893,19 @@ export function makeListenHandler(
       }
 
       deps.logger.info('webhook: dispatched', { path, run_id: run.id, pid: spawnResult.pid });
-      // 12. Accepted.
-      respond(res, 202, { run_id: run.id, status: 'accepted' });
+      // 12. Accepted. R1.1: a workflow with `result_map` also says where, and with what code, to read
+      // the run; without its key (never derived) it says nothing more, as an un-opted one.
+      const read = readFields(entry, run.id);
+      if (read.status_path !== undefined) {
+        respond(
+          res,
+          202,
+          { run_id: run.id, status: 'accepted', run_phase: 'running', ...read },
+          { Location: read.status_path, 'Retry-After': '5' },
+        );
+      } else {
+        respond(res, 202, { run_id: run.id, status: 'accepted' });
+      }
     } finally {
       inFlight -= 1;
     }
@@ -841,6 +929,8 @@ export function buildRouteTable(
   deps: { env: Record<string, string | undefined>; logger: Logger },
 ): Map<string, WorkflowEntry> {
   const routes = new Map<string, WorkflowEntry>();
+  // R1.1: the read address prefix of each workflow with `result_map`, and whose it is.
+  const readPrefixes = new Map<string, string>();
   for (const { definition, workflowDir } of inputs) {
     const trigger = definition.trigger;
     if (trigger === undefined) {
@@ -880,6 +970,24 @@ export function buildRouteTable(
       addDeclaredValues({ [`webhook:${auth.secret_from}`]: value });
     }
 
+    // R1.1: two workflows with `result_map` whose paths differ only by trailing slashes would share
+    // one read address.
+    if (trigger.result_map !== undefined) {
+      const prefix = readPrefix(path);
+      const other = readPrefixes.get(prefix);
+      if (other !== undefined) {
+        throw new Error(
+          `listen: the read address '${prefix}/runs/<run id>' is taken twice — workflow '${definition.id}' conflicts with '${other}'; give each workflow with a result_map its own trigger.path`,
+        );
+      }
+      readPrefixes.set(prefix, definition.id);
+      if (secret !== undefined && secret.length < 16) {
+        deps.logger.warn(
+          `listen: the secret for workflow '${definition.id}' has fewer than 16 characters; a read code made from it can be guessed offline from one captured code. Use a longer secret.`,
+        );
+      }
+    }
+
     routes.set(path, {
       path,
       definition,
@@ -905,7 +1013,19 @@ export async function prepareListenWorkflows(
   routes: Map<string, WorkflowEntry>,
   deps: Pick<ListenDeps, 'workflowStore' | 'logger'>,
   loadExtensions: typeof loadProjectExtensions = loadProjectExtensions,
+  deriveKey: typeof deriveReadKey = deriveReadKey,
 ): Promise<void> {
+  // R1.1: each read key is about 100 ms of scrypt, so all of them are started at once, off the
+  // event loop, and awaited below, before the server listens.
+  const keys = Promise.all(
+    [...routes.values()]
+      .filter((entry) => optedIn(entry) && entry.secret !== undefined)
+      .map(async (entry) => {
+        entry.readKey = await deriveKey(entry.secret!, entry.definition.id);
+      }),
+  );
+  // Awaited at the end; a start that fails before then must not leave its rejection unhandled.
+  keys.catch(() => undefined);
   // issue #620 PR-C: a project realm of another version is told once per distinct copy, through
   // listen's own logger (its children are silenced with --no-release-line-advisory).
   const onReleaseLineWarning = onceReleaseLineSink((w) => deps.logger.warn(renderLoaderWarning(w)));
@@ -925,6 +1045,7 @@ export async function prepareListenWorkflows(
       });
     }
   }
+  await keys;
 }
 
 export interface ListenOptions {
