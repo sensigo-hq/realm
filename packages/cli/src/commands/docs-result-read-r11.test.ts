@@ -117,15 +117,15 @@ describe('R1.1 — webhook-trigger.md', () => {
     );
     claim(
       TRIGGER,
-      '| `result_masked` | How many values Realm hid in the result: declared secrets, environment values, and values under names that read as credentials. |',
+      '| `result_masked` | How many times Realm hid a value in the result, by kind: declared secrets, environment values, and values under names that read as credentials. A value the map reaches twice counts twice. A value Realm hides is sent as the text `[REDACTED]`. |',
     );
     claim(
       TRIGGER,
-      "| `result_error` | In place of `result`. `too_large`: the declared values are longer than 40,000 characters; none is sent. `values_withheld`, with `because`: Realm could not tell which values are secret, after the project's `secrets:` changed or became unreadable; none is sent. `realm run inspect` shows the run. |",
+      "| `result_error` | In place of `result`. `too_large`: the declared values are longer than 40,000 characters; none is sent. `values_withheld`, with `because` (`declared values changed` or `declared values could not be read`): Realm could not tell which values are secret, after the project's `secrets:` changed or became unreadable; none is sent. `realm run inspect` shows the run. |",
     );
     claim(
       TRIGGER,
-      '| `workflow_version_differs` | `true`: the workflow file changed after the run started; the result is still given. |',
+      '| `workflow_version_differs` | `true`: the `version:` of the workflow `realm listen` loaded at start is not the one the run started under; the result is still given. |',
     );
     // G8 (one run of one workflow), G10 (a secret change ends the code; a restart keeps it).
     claim(
@@ -141,6 +141,13 @@ describe('R1.1 — webhook-trigger.md', () => {
     claim(
       TRIGGER,
       "Realm hides a value equal to one of the project's declared secrets, or to an environment value of 8 or more characters, wherever it appears in a result, even if it is not a secret; and it hides a text or a number kept under a name like `token` or `password` in the run's output, whichever way `result_map` reaches it.",
+    );
+    // L2 (core's `workflow/result-map-r11.test.ts`: the loader's verdict on each name this lists, in
+    // its cases and with a prefix), G4 (`source-canary-729.test.ts`: a value is hidden by the field
+    // it sits under, also when a path lifts it out to a harmless name).
+    claim(
+      TRIGGER,
+      "A name is refused when Realm treats a field of that name as a credential's: `token`, `password`, `api_key`, `secret`, `authorization`, `cookie` and `private_key` are, in any case and with a prefix (`my_token`, `x_secret`); `tokens`, `auth` and `session` are not. Realm hides a value by the field it sits under in the run's output, not by the name given here, so a name like these would look protected and not be.",
     );
     // L1 (the four modes refused).
     claim(
@@ -164,7 +171,7 @@ describe('R1.1 — webhook-trigger.md', () => {
     // G11 (no slot), G12 (only the read shape), G9 (the 403 without a valid code).
     claim(
       TRIGGER,
-      'Also before the method check, a `GET` or `HEAD` whose path ends in `/runs/<run id>` is a read request (see [`result_map`](#result_map)): it is answered there, takes no signature and no `--max-concurrent` slot, and gets the one `403` unless it carries a valid code. Added after version 0.49.0.',
+      'Also before the method check, a `GET` or `HEAD` whose path ends in `/runs/` and a run id in lower case is a read request (see [`result_map`](#result_map)): it is answered there, takes no signature and no `--max-concurrent` slot, and gets the one `403` unless it carries a valid code. Added after version 0.49.0.',
     );
     claim(
       TRIGGER,
@@ -187,7 +194,7 @@ describe('R1.1 — webhook-trigger.md', () => {
     );
     claim(
       TRIGGER,
-      "| A `result_map` name that reads as a credential's (added after version 0.49.0) | `trigger.result_map: 'token' reads as a credential's name, so Realm may hide its value in the reply. Rename it.` |",
+      "| A `result_map` name that reads as a credential's (added after version 0.49.0) | `trigger.result_map: 'token' reads as a credential's name. Realm hides a value because of the field it sits under in the run's output, not because of the name given here, so this name would look protected and not be. Rename it.` |",
     );
     claim(
       TRIGGER,
@@ -206,7 +213,7 @@ describe('R1.1 — realm-listen.md', () => {
     // G14 (one second from memory); the "not logged" half: G13's lines hold only the failures.
     claim(
       LISTEN,
-      '## The read address For a workflow with `result_map` (see [the webhook trigger](../workflow/webhook-trigger.md#result_map)), `GET` and `HEAD` of `<its path>/runs/<run id>` with `Authorization: Bearer <token>` answer the run\'s phase and, once the run has completed, the values the workflow declares; the `202` gives the path and the token. The read is answered before the method, address and capacity checks, as the health address is: it takes no `--max-concurrent` slot, keeps the connection, and is not logged. A refused read gets `403` `{"error":"forbidden"}`, the same on every path that ends in `/runs/<run id>`, whatever the reason. When the store cannot be read, or the values cannot be checked for secrets, the read gets `503` `{"error":"unavailable"}`, and `webhook: read failed` is logged at `error`. A run that is running or waiting for a person is answered from memory for one second after it was read, so a caller that asks many times a second reads the store once a second. This section was added after version 0.49.0.',
+      '## The read address For a workflow with `result_map` (see [the webhook trigger](../workflow/webhook-trigger.md#result_map)), `GET` and `HEAD` of `<its path>/runs/<run id>` with `Authorization: Bearer <token>` answer the run\'s phase and, once the run has completed, the values the workflow declares; the `202` gives the path and the token. The read is answered before the method, address and capacity checks, as the health address is: it takes no `--max-concurrent` slot, keeps the connection, and is not logged. A refused read gets `403` `{"error":"forbidden"}`, the same on every path that ends in `/runs/` and a run id in lower case (as the `202` gives it), whatever the reason. A path whose last part is not one (an upper-case id, a slash after it, no UUID) is not a read request and gets `405`, as before. When the store cannot be read, or the values cannot be checked for secrets, the read gets `503` `{"error":"unavailable"}`, and `webhook: read failed` is logged at `error`. A run that is running or waiting for a person is answered from memory for one second after it was read, so a caller that asks many times a second reads the store once a second. This section was added after version 0.49.0.',
     );
     // S1 (the warning), R1 (the refusal).
     claim(
@@ -263,6 +270,11 @@ describe('R1.1 — the webhooks guide and the CHANGELOG', () => {
       GUIDE,
       '### Getting the result back The caller can also read what happened to the run, and values the workflow chooses to hand back, when the workflow declares them in `result_map` under `trigger` (with `auth.mode: shared_secret`; see [`result_map`](../reference/workflow/webhook-trigger.md#result_map)).',
     );
+    // G1 (the request that started the captured run; its body is the capture's).
+    claim(
+      GUIDE,
+      'The request that started the run was `POST /refunds`, with the shared secret in its header and the body `{"event_id":"evt-301","approved":true,"note":"refund to the original card"}`; the whole workflow is under [`result_map`](../reference/workflow/webhook-trigger.md#result_map).',
+    );
     claim(GUIDE, ACCEPTED);
     claim(GUIDE, `-H 'Authorization: Bearer ${TOKEN}'`);
     claim(GUIDE, COMPLETED);
@@ -274,7 +286,7 @@ describe('R1.1 — the webhooks guide and the CHANGELOG', () => {
       "- **A caller of `realm listen` can read a finished run's declared result**: `result_map` in the `trigger:` block (`shared_secret` workflows only), `status_path` and `token` in the `202` and in a repeated event's reply, and `GET`/`HEAD` `<path>/runs/<run id>` with `Authorization: Bearer <token>`.",
     );
     claimChangelog(
-      '- **A repeat of an event inside the duplicate window now names the run** (`run_id` and `run_phase`) instead of answering the bare `{"status":"deduplicated"}`; a `GET` or `HEAD` that ends in `/runs/<run id>` no longer gets `405`: it is a read request and answers `403` unless it carries a valid code.',
+      '- **A repeat of an event inside the duplicate window now names the run** (`run_id` and `run_phase`) instead of answering the bare `{"status":"deduplicated"}`; a `GET` or `HEAD` that ends in `/runs/` and a run id in lower case no longer gets `405`: it is a read request and answers `403` unless it carries a valid code.',
     );
   });
 });

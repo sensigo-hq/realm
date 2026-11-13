@@ -136,6 +136,8 @@ result_map:
   note: context.resources.review.note
 ```
 
+The request that started the run was `POST /refunds`, with the shared secret in its header and the body `{"event_id":"evt-301","approved":true,"note":"refund to the original card"}`; the whole workflow is under [`result_map`](../reference/workflow/webhook-trigger.md#result_map).
+
 Its `202` then also says where to read the run, and with what token:
 
 ```text

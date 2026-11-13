@@ -1,7 +1,7 @@
 // result-map-r11.test.ts — R1.1 (the read side of `realm listen`): `trigger.result_map`, what a
 // caller may read of a finished run, at load. The author writes it in the workflow file; the loader
-// refuses it on every `auth.mode` but `shared_secret`, refuses a name the disclosure walk would hide,
-// and refuses a path that names no step of this workflow. Each cell loads a real workflow text through
+// refuses it on every `auth.mode` but `shared_secret`, refuses a name that `isCredentialName(name, '')`
+// (the disclosure walk's own test) flags, and refuses a path that names no step of this workflow. Each cell loads a real workflow text through
 // `loadWorkflowFromString` (the loader `register`, `validate` and `validate --registered` share; the
 // three CLI surfaces have their own cells in the CLI package) and reads the lines it refuses with.
 // On a failing host a cell prints the case and the lines it got.
@@ -45,7 +45,7 @@ function refusals(text: string): string[] {
 const MODE_REFUSAL = (mode: string): string =>
   `trigger.result_map is allowed only with auth.mode 'shared_secret'; this trigger uses '${mode}'. A caller reads a run with a code worked out from the shared secret, and only a request that carries the secret in a header is handed it: with a signed body the code would go to anyone who replays a captured signed request, and 'none' has no secret. Remove result_map, or use shared_secret.`;
 const NAME_REFUSAL = (name: string): string =>
-  `trigger.result_map: '${name}' reads as a credential's name, so Realm may hide its value in the reply. Rename it.`;
+  `trigger.result_map: '${name}' reads as a credential's name. Realm hides a value because of the field it sits under in the run's output, not because of the name given here, so this name would look protected and not be. Rename it.`;
 const ROOT_REFUSAL = (name: string, path: string): string =>
   `trigger.result_map.${name}: '${path}' must start with 'context.resources.' and a step of this workflow, as in context.resources.review.approved.`;
 const NOT_A_STEP = (name: string, step: string, closest?: string): string =>
@@ -82,16 +82,33 @@ describe('R1.1 — trigger.result_map at load', () => {
     }).toEqual({ map: [], empty: [] });
   });
 
-  it("L2: a name the disclosure walk would hide is refused; the loader's verdict is the walk's", () => {
-    const names = ['token', 'api_key', 'password', 'pwd', 'client_secret', 'my_token'];
-    const kept = ['approved', 'tokens', 'secret_x'];
+  it("L2: a name the disclosure walk's own test flags is refused; the loader's verdict is that test's", () => {
+    // The names webhook-trigger.md lists (refused: in any case, with a prefix; kept: `tokens`,
+    // `auth`, `session`) are among these.
+    const names = [
+      'token',
+      'api_key',
+      'password',
+      'pwd',
+      'client_secret',
+      'my_token',
+      'secret',
+      'authorization',
+      'cookie',
+      'private_key',
+      'Token',
+      'PASSWORD',
+      'x_secret',
+    ];
+    const kept = ['approved', 'tokens', 'secret_x', 'auth', 'session'];
     const map =
       '  result_map:\n' +
       [...names, ...kept].map((n) => `    ${n}: context.resources.review.${n}\n`).join('');
     const lines = refusals(workflow('shared_secret', map)).map(bare);
-    // (a) red when the name check is removed (no line for the six), or when it uses a test other
-    //     than the walk's own (`tokens` and `secret_x` refused, or one of the six let through); (b)
-    //     prints each name with the walk's verdict and whether the loader refused it.
+    // (a) red when the name check is removed (no line for the refused names), or when it uses a test
+    //     other than the walk's own (a kept name refused, or a refused name let through), or when
+    //     the walk's test stops flagging a name the page lists; (b) prints each name with the walk's
+    //     verdict and whether the loader refused it with the sentence.
     expect(
       [...names, ...kept].map((n) => ({
         name: n,

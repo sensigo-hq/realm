@@ -268,10 +268,11 @@ function validateStepsReadRoot(
 /**
  * R1.1 — the loader's rules for `trigger.result_map`, beside the schema (which refuses a name or a
  * value that is not non-empty text). A caller reads a run with a code worked out from the shared
- * secret, so the key is allowed only with `auth.mode: shared_secret`; a name the disclosure walk
- * would hide (`isCredentialName(name, '')`, the walk's own test) is refused, so the two cannot
- * disagree; each value must be `context.resources.<step>…` with `<step>` a step of this workflow
- * (`$settlement` is not one). No check walks a step's output.
+ * secret, so the key is allowed only with `auth.mode: shared_secret`; a name that
+ * `isCredentialName(name, '')` (the disclosure walk's own test) flags is refused: the walk hides a
+ * value by the field it sits under in the run's output, never by the name given here, so such a name
+ * would look protected and not be; each value must be `context.resources.<step>…` with `<step>` a
+ * step of this workflow (`$settlement` is not one). No check walks a step's output.
  */
 function validateResultMap(
   triggerRaw: unknown,
@@ -306,7 +307,7 @@ function validateResultMap(
       errors.push(
         withTopLevelLine(
           at,
-          `trigger.result_map: '${name}' reads as a credential's name, so Realm may hide its value in the reply. Rename it.`,
+          `trigger.result_map: '${name}' reads as a credential's name. Realm hides a value because of the field it sits under in the run's output, not because of the name given here, so this name would look protected and not be. Rename it.`,
         ),
       );
     }

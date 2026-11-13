@@ -25,7 +25,8 @@
 //     a workflow cannot be mounted at `/health`
 //   - `GET`/`HEAD` `<path>/runs/<run id>` → the read address (`run-read-address.ts`, R1.1): for a
 //     workflow with `trigger.result_map`, the run's phase and declared result to the holder of the
-//     run's code; the same `403` for everything else; no `--max-concurrent` slot
+//     run's code; the same `403` for every refusal (an id that is not a lowercase UUID is no read
+//     request: `405`, as before); no `--max-concurrent` slot
 import {
   createServer,
   maxHeaderSize,
