@@ -349,6 +349,8 @@ const CLAIM_TABLE = {
   token: 'fact',
   holder: { nested: ATTRIBUTED_TABLE },
   since: 'fact',
+  // #729, the claim window (CW-1): the claim lease's id, minted by the store; written by nothing yet.
+  lease: 'fact',
 } as const satisfies Row<ClaimRecord>;
 
 const CAPABILITY_BLOCK_TABLE = {
@@ -667,6 +669,7 @@ export const CLAIM_FACTS = {
   deadline: 'time',
   token: 'id',
   since: 'time',
+  lease: 'id',
 } as const satisfies FactProducers<typeof CLAIM_TABLE, ClaimRecord>;
 
 export const CAPABILITY_BLOCK_FACTS = {

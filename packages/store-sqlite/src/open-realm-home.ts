@@ -33,6 +33,7 @@ import {
   type RealmWorkflowRegistrar,
   type TraceBufferStore,
 } from '@sensigo/realm';
+import { createLeasePort } from './claim-lease.js';
 import { RealmDb } from './connection.js';
 import { SqliteDedupStore } from './dedup-store.js';
 import { SqliteFailedAttemptStore } from './failed-attempt-store.js';
@@ -183,7 +184,7 @@ async function lookUp(
     let closed = false;
     const dedupStores = new Map<string, DedupStore>();
     return {
-      runStore: new SqliteRunStore(db),
+      runStore: new SqliteRunStore(db, createLeasePort(home)),
       dedupStoreFor(workflowId: string): DedupStore {
         let store = dedupStores.get(workflowId);
         if (store === undefined) {

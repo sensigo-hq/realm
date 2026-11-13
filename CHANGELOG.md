@@ -11,6 +11,7 @@ All notable changes to this project are documented here.
 - **`--shutdown-grace <seconds>` on `realm serve` and `realm listen`**: how long requests being answered get to finish after Ctrl+C or `SIGTERM`; 30 by default; 0 to 2147483.
 - **A health address on `realm serve` and `realm listen`**: `GET` and `HEAD` `/health`, without a token, `200` `{"status":"ok"}`, and `503` `{"status":"shutting_down"}` once the program is asked to stop.
 - **`--shutdown-drain <seconds>` on `realm serve` and `realm listen`**: how long the program keeps serving, with `/health` answering 503, after Ctrl+C or `SIGTERM` before it stops accepting connections; 0 by default.
+- **A run store can keep claim leases.** `RunStore` has a new optional property, `leases`: a store without it, or with `null`, keeps none, as before, so a store you wrote needs no change. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. `@sensigo/realm-store-sqlite`'s store keeps claim leases in `claim-leases/` in the Realm home, as locks the operating system lets go of when the program holding one ends; nothing in Realm takes one yet. `@sensigo/realm-testing` adds `leasePortContract`, `LEASE_PORT_LAWS` and `createLeaseDouble`.
 
 ### Changed
 

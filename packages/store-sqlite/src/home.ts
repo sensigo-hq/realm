@@ -18,6 +18,10 @@
 // and each fence's temporary file, which only the opener that made it removes. Every other entry in
 // the home is never read, moved or deleted. Nothing here renames, copies or deletes the database
 // file, and no error replaces it.
+// `claim-leases/` (issue #729, the claim window) is also one of Realm's own names in the home, but
+// nothing here makes, fences or reads it: the lease module (`claim-lease.ts`) makes it at its first
+// hold. It is not one of the four old store names, and must never join `LEGACY_STORE_NAMES`: it would
+// get a fence file, or every later open would be refused.
 import {
   accessSync,
   closeSync,
