@@ -21,6 +21,7 @@ import {
   instantText,
   parseStamp,
   quoteStatedName,
+  UNSHOWABLE_NAME,
   type DisclosureAudience,
   type DisclosureSet,
   type InspectWay,
@@ -42,13 +43,8 @@ import type {
 import { PLAIN, RUN_PHASE_WORDS, writerSetFor, type RenderCtx } from '../output/writer.js';
 import { cliCommandOf, respondLines } from '../commands/ways-renderer.js';
 
-/**
- * The one phrase for a recorded name that cannot be printed — a control character in it, or a value
- * that is not a name with its source. No byte of the stored value reaches the screen. Used on claim
- * lines, attempt lines and answer lines alike; never nested inside parentheses.
- */
-export const UNSHOWABLE_NAME =
-  'a recorded name that cannot be printed (control characters, or not a name with its source)';
+/** The one phrase for a recorded name that cannot be printed; defined in core (#729 PR-6a c1). */
+export { UNSHOWABLE_NAME };
 
 /** How a name is known, as words — never the class token (`from the OS user`, not `derived`). */
 export const BY_SOURCE_WORDS: Record<BySourceClass, string> = {

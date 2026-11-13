@@ -22,6 +22,7 @@ import {
   parseStamp,
   quoteStatedName,
   readInstant,
+  UNSHOWABLE_NAME,
   shownViewEvidence,
   submitHumanResponse,
   MCP_FORM_RENDERER,
@@ -480,7 +481,7 @@ export function renderOutcome(outcome: Outcome, words: OutcomeDoorWords, closed?
     by.name !== undefined
       ? `, by ${quoteStatedName(by.name)} (as stated)`
       : by.name_absent === 'name_unreadable'
-        ? ', by a name that cannot be printed (as stated)'
+        ? `, by ${UNSHOWABLE_NAME}`
         : '';
   const time = instantOf(outcome.at);
   const at = time !== undefined ? `, at ${time}` : '';

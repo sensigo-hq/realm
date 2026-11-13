@@ -321,6 +321,15 @@ export function quoteStatedName(name: string): string {
 }
 
 /**
+ * The one phrase for a recorded name that cannot be printed — a control character in it, or a value
+ * that is not a name with its source. No byte of the stored value reaches the screen. Used on claim
+ * lines, attempt lines and answer lines alike, and by the outcome composer; never nested inside
+ * parentheses. #729 PR-6a correction 1: defined here once (PR0-CONTRACT:52, "never a second phrase").
+ */
+export const UNSHOWABLE_NAME =
+  'a recorded name that cannot be printed (control characters, or not a name with its source)';
+
+/**
  * Reads a stored `Attributed` (a claim's `holder`, an entry's `driven_by`). Total: never throws.
  * A value that is not an object, whose `by` or `channel` is not a string, whose `by_source` is not a
  * member, whose `by` is blank, or whose `by` (after spaces at either end are removed) or `channel`

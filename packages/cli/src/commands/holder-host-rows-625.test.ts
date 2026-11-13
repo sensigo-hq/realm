@@ -75,7 +75,7 @@ describe('`realm run respond --by` — the option the operator reads in --help',
     expect(option?.mandatory).toBe(false); // … but the flag itself is optional
     // #729 PR-6a (Words): the prompt's `--by` help, word for word.
     expect(option?.description).toBe(
-      "Who made the choice, as you state it — recorded with the answer, not verified, and shown with it: to anyone whose later answer is not recorded, and in the question's Slack thread when it closes. At most 200 characters, no control characters. Optional: the answer names its answerer only when this is given.",
+      'Who made the choice, as you state it — recorded with the answer, not verified, and shown with it: to anyone whose later answer is not recorded, and in Slack when the question closes. At most 200 characters, no control characters. Optional: the answer names its answerer only when this is given.',
     );
   });
 });

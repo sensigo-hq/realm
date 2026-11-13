@@ -142,7 +142,7 @@ Recorded: send.
 
 When the answer ends the run, the reply says ``✅ Gate resolved: `send`. The run has ended.`` instead, and the run's ending is printed where `realm agent` runs.
 
-When your reply is not recorded, the thread says so once, and why. When another answer was recorded first, it names that answer: its choice, the name as stated (left out when it names nobody), where it came from and when, in UTC to the second. For example, after someone answered from a terminal:
+While `realm agent` is still listening to the thread, a reply that is not recorded gets one post saying so, and why. It stops listening a few seconds after the question closes; a reply after that gets no answer. When another answer was recorded first, it names that answer: its choice, the name as stated (left out when it names nobody), where it came from and when, in UTC to the second. For example, after someone answered from a terminal:
 
 ```text
 Not recorded: your choice 'discard'. The question on step 'review' was already answered — send, by "alice" (as stated), from a terminal, at 2026-11-12T10:02:14Z.

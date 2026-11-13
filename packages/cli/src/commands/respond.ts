@@ -470,9 +470,9 @@ export const respondCommand = new Command('respond')
   .option(
     '--by <name>',
     'Who made the choice, as you state it — recorded with the answer, not verified, and shown with ' +
-      "it: to anyone whose later answer is not recorded, and in the question's Slack thread when it " +
-      'closes. At most 200 characters, no control characters. Optional: the answer names its ' +
-      'answerer only when this is given.',
+      'it: to anyone whose later answer is not recorded, and in Slack when the question closes. At ' +
+      'most 200 characters, no control characters. Optional: the answer names its answerer only ' +
+      'when this is given.',
   )
   .action(
     async (

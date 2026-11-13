@@ -669,7 +669,7 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     // #729 PR-6a (B3): the host program declared no route.
     expect(bob, shown).toBe(
       await beatenLine(
-        ', by a name that cannot be printed (as stated)',
+        ', by a recorded name that cannot be printed (control characters, or not a name with its source)',
         'through a route its program did not declare',
       ),
     );

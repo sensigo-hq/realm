@@ -265,10 +265,12 @@ describe('#729 PR-6a — the Slack thread tells a reply that was not recorded wh
     const sent = await attend(def, runId, gate, undefined);
     // (a) red when a raw `<` reaches the post (Slack would ping the channel and the user); (b)
     //     prints the post.
-    expect({
-      escaped: sent[0]?.includes('by "&lt;!channel&gt; &lt;@U123&gt;" (as stated)'),
-      raw: sent.some((p) => p.includes('<')),
-    }).toEqual({ escaped: true, raw: false });
+    const shown = `the posts: ${JSON.stringify(sent, null, 2)}`;
+    expect(sent[0], shown).toContain('by "&lt;!channel&gt; &lt;@U123&gt;" (as stated)');
+    expect(
+      sent.filter((p) => p.includes('<')),
+      shown,
+    ).toEqual([]);
   });
 
   it('check 16: a reply inside the window after `drain --expired` carried out `on_expiry: abort` — one post, the time-limit-aborted sentence; no "Try again"', async () => {

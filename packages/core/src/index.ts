@@ -93,6 +93,7 @@ export {
   // #729 PR-6a (B2 (2), B4): the one classification of a stated name, and its one quoting.
   readStatedAnswerer,
   quoteStatedName,
+  UNSHOWABLE_NAME,
   readAttributed,
   readDrivenBy,
   readGateClaimVerdict,

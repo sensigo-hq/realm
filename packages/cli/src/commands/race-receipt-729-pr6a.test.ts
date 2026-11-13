@@ -217,14 +217,17 @@ describe('#729 PR-6a — realm run respond tells a second answerer whose answer 
     const inspected = await inspectRun(runId, store, workflows);
     const composed = await refusedWith(respond(runId, gateId, 'reject'));
     // (a) red when a byte of the name reaches either line, or the composer names no unprintable
-    //     name; (b) prints both.
-    expect({
-      inspect: inspected.includes(`answered by ${UNSHOWABLE_NAME}`),
-      composer: composed.includes(
-        ', by a name that cannot be printed (as stated), from a terminal',
-      ),
-      escape: inspected.includes('\u001b') || composed.includes('\u001b'),
-    }).toEqual({ inspect: true, composer: true, escape: false });
+    //     name or another phrase than inspect's (#729 PR-6a c1: one phrase); (b) prints both, JSON-
+    //     quoted so a control character shows as an escape.
+    const printed = `inspect: ${JSON.stringify(inspected)}\ncomposer: ${JSON.stringify(composed)}`;
+    expect({ inspect: inspected, composer: composed }, printed).toEqual({
+      inspect: expect.stringContaining(`answered by ${UNSHOWABLE_NAME}`),
+      composer: expect.stringContaining(`, by ${UNSHOWABLE_NAME}, from a terminal`),
+    });
+    expect({ inspect: inspected, composer: composed }, printed).toEqual({
+      inspect: expect.not.stringContaining('\u001b'),
+      composer: expect.not.stringContaining('\u001b'),
+    });
   });
 
   it('check 18 (inspect): the `Answer:` line quotes the name and says ` · given at <T>` after the route part', async () => {
@@ -341,12 +344,14 @@ describe('#729 PR-6a — the realm workflow run prompt: a typed answer another a
   it('check 6: a typed same choice after a terminal answer — `✗ Not recorded: … already had this answer …`, and no `✓ →`', async () => {
     const { out, at } = await beatenAtPrompt('approve');
     // (a) red on today's `✓ → running` for an answer that recorded nothing; (b) prints stdout.
-    expect({
-      beaten: out.includes(
-        `  ✗ Not recorded: the question on step 'review' already had this answer — approve, by "alice" (as stated), from a terminal, at ${at}.\n`,
-      ),
-      success: out.some((l) => l.includes('✓ →')),
-    }).toEqual({ beaten: true, success: false });
+    const shown = `stdout: ${JSON.stringify(out, null, 2)}`;
+    expect(out, shown).toContain(
+      `  ✗ Not recorded: the question on step 'review' already had this answer — approve, by "alice" (as stated), from a terminal, at ${at}.\n`,
+    );
+    expect(
+      out.filter((l) => l.includes('✓ →')),
+      shown,
+    ).toEqual([]);
   });
 
   it('check 7: a typed different choice after a terminal answer — `✗ Not recorded: your choice …`, naming alice, the door and the time', async () => {

@@ -813,8 +813,6 @@ export function composeCostView(
   return view;
 }
 
-/** A stored `responded_by` as an answer view shows it. Total. */
-
 /**
  * True when an evidence entry is an ANSWER to a step's question: a `gate_response` entry, except the
  * one an `on_expiry: abort` expiry writes (`resolution: 'expired_abort'`). That entry answers nothing
