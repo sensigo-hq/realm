@@ -35,10 +35,12 @@ describe('#729 CW-1 — the claim lease’s words', () => {
     // law, real locks) and claim-lease-cw1 (a probe that does not throw on an unsearchable folder);
     // the refusal, and a store without it or with `null` admitted — core's admission.test.ts; "nothing in Realm takes a lease
     // yet" — claim-lease-witness-cw1 (no `hold(` call in production source). The count sentence is
-    // docs-715b's c4 cell (computed from the built interface).
+    // docs-715b's c4 cell (computed from the built interface). "may still change until the claim
+    // window's last unit ships" says what may change, not what the code does: no cell executes it
+    // (the owner's compatibility policy, e531209a).
     claim(
       CORE,
-      '| `leases` | No | Without it, or `null`, the store keeps no claim leases. Otherwise its lease port, an object with `hold()` and `probe(id)`. A claim lease is a lock the operating system keeps while the program holding it runs, and lets go of when that program ends. `probe` says whether a lease is held: `held`, `not_held`, `absent`, or `unknown` with a reason; it never throws. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. Nothing in Realm takes a lease yet. Added after version 0.49.0. |',
+      "| `leases` | No | Without it, or `null`, the store keeps no claim leases. Otherwise its lease port, an object with `hold()` and `probe(id)`. A claim lease is a lock the operating system keeps while the program holding it runs, and lets go of when that program ends. `probe` says whether a lease is held: `held`, `not_held`, `absent`, or `unknown` with a reason; it never throws. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. Nothing in Realm takes a lease yet. The lease port may still change until the claim window's last unit ships. Added after version 0.49.0. |",
     );
   });
 
@@ -61,10 +63,11 @@ describe('#729 CW-1 — the claim lease’s words', () => {
     );
     // The section: each law's line is the law the contract checks (lease-port-contract.ts, run in
     // contract-leases-cw1); the evidence line is the contract's own print; the refusal of an
-    // in-process holder is the contract's guard.
+    // in-process holder is the contract's guard, for a `process` adapter only (the double's
+    // `simulated` holders, this process's own, run in lease-port-double.test.ts).
     claim(
       TESTING,
-      "The laws of a store's claim leases, `RunStore.leases` (added after version 0.49.0). A claim lease is a lock the operating system keeps while the program holding it runs. Each case builds its own homes, and the adapter starts each holder in another process: a case refuses a holder whose process is the test's own, and prints one line, `[lease-law] <law> platform= node= sqlite= holder= prober= -> <what it saw>`.",
+      "The laws of a store's claim leases, `RunStore.leases` (added after version 0.49.0). A claim lease is a lock the operating system keeps while the program holding it runs. Each case builds its own homes. For a store with real locks (holder kind `process`), the adapter starts each holder in another process: a case refuses a holder whose process is the test's own, and prints one line, `[lease-law] <law> platform= node= sqlite= holder= prober= -> <what it saw>`.",
     );
     for (const row of [
       '| `L1_HELD_ACROSS_PROCESSES` | A lease another program holds reads `held`, in a plain home and in one whose path holds `#`, `%`, `?` and a space. |',
@@ -82,7 +85,7 @@ describe('#729 CW-1 — the claim lease’s words', () => {
     // The double's states and the laws it runs: the testing package's lease-port-double.test.ts.
     claim(
       TESTING,
-      '`createLeaseDouble()` returns a lease port in memory whose leases a test sets to `live`, `closed_kept`, `removed`, `dead` or `forced`, for the laws that do not need a real lock. A `live` lease reads `held`, a `closed_kept` or `dead` one `not_held`, a `removed` one `absent`, as does an id it never made, and a `forced` one the fact the test gave. It runs `L1_HELD_ACROSS_PROCESSES`, `L2_NOT_HELD_AFTER_DEATH`, `L3_DEAD_LEASE_NEVER_HELD_AGAIN` and `L5_CLOSE_BY_RECORD`; the other six laws need a real lock or a file.',
+      '`createLeaseDouble()` returns a lease port in memory whose leases a test sets to `live`, `closed_kept`, `removed`, `dead` or `{ forced: fact }`, for the laws that do not need a real lock. A `live` lease reads `held`, a `closed_kept` or `dead` one `not_held`, a `removed` one `absent`, as does an id it never made, and a `{ forced: fact }` one that fact. It runs `L1_HELD_ACROSS_PROCESSES`, `L2_NOT_HELD_AFTER_DEATH`, `L3_DEAD_LEASE_NEVER_HELD_AGAIN` and `L5_CLOSE_BY_RECORD`; the other six laws need a real lock or a file.',
     );
     claim(
       TESTING,
@@ -99,9 +102,10 @@ describe('#729 CW-1 — the claim lease’s words', () => {
     // The refusal, and a store without `leases` admitted ("a store you wrote needs no change"):
     // admission.test.ts; the store's folder: contract-leases-cw1's L4D (the folder is
     // `claim-leases/` through the module's constant); "nothing in Realm takes one yet":
-    // claim-lease-witness-cw1; the testing package's exports: docs-616-c12's C10 and the index.
+    // claim-lease-witness-cw1; the testing package's exports: docs-616-c12's C10 and the index; the
+    // last sentence says what may change, not what the code does: no cell executes it.
     claimChangelog(
-      "- **A run store can keep claim leases.** `RunStore` has a new optional property, `leases`: a store without it, or with `null`, keeps none, as before, so a store you wrote needs no change. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. `@sensigo/realm-store-sqlite`'s store keeps claim leases in `claim-leases/` in the Realm home, as locks the operating system lets go of when the program holding one ends; nothing in Realm takes one yet. `@sensigo/realm-testing` adds `leasePortContract`, `LEASE_PORT_LAWS` and `createLeaseDouble`.",
+      "- **A run store can keep claim leases.** `RunStore` has a new optional property, `leases`: a store without it, or with `null`, keeps none, as before, so a store you wrote needs no change. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. `@sensigo/realm-store-sqlite`'s store keeps claim leases in `claim-leases/` in the Realm home, as locks the operating system lets go of when the program holding one ends; nothing in Realm takes one yet. `@sensigo/realm-testing` adds `leasePortContract`, `LEASE_PORT_LAWS` and `createLeaseDouble`. The lease port may still change until the claim window's last unit ships.",
     );
   });
 });

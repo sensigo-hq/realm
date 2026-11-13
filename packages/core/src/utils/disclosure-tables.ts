@@ -342,6 +342,12 @@ function skipDetailTable(value: unknown): ClassTable {
     : UNKNOWN_KIND_TABLE;
 }
 
+/** #729, the claim window (CW-1): a claim's lease, a table of its own so that a key a stored lease
+ *  holds beyond its id is walked as any unclassified field. Written by nothing yet. */
+const CLAIM_LEASE_TABLE = {
+  id: 'fact',
+} as const satisfies Row<NonNullable<ClaimRecord['lease']>>;
+
 /** A claim: its token is the claim's proof, shown as a fact on record views as it is today; export
  *  replaces a live one with its own marker. */
 const CLAIM_TABLE = {
@@ -349,8 +355,7 @@ const CLAIM_TABLE = {
   token: 'fact',
   holder: { nested: ATTRIBUTED_TABLE },
   since: 'fact',
-  // #729, the claim window (CW-1): the claim lease's id, minted by the store; written by nothing yet.
-  lease: 'fact',
+  lease: { nested: CLAIM_LEASE_TABLE },
 } as const satisfies Row<ClaimRecord>;
 
 const CAPABILITY_BLOCK_TABLE = {
@@ -669,8 +674,12 @@ export const CLAIM_FACTS = {
   deadline: 'time',
   token: 'id',
   since: 'time',
-  lease: 'id',
 } as const satisfies FactProducers<typeof CLAIM_TABLE, ClaimRecord>;
+
+/** #729, the claim window (CW-1): the lease's id is the store's own (`hold()` mints it). */
+export const CLAIM_LEASE_FACTS = {
+  id: 'id',
+} as const satisfies FactProducers<typeof CLAIM_LEASE_TABLE, NonNullable<ClaimRecord['lease']>>;
 
 export const CAPABILITY_BLOCK_FACTS = {
   requirement: 'author_literal',

@@ -64,7 +64,8 @@ export interface LeasePort {
   hold(): Promise<LeaseHoldResult>;
   /**
    * Whether the lease `id` is held, and how that is known (`basis: 'kernel_lock'`). `held` and
-   * `not_held` are facts; `absent` means no lease with this id exists; `unknown` gives its reason.
+   * `not_held` are facts; `absent` means no lease file with this id is there, which never proves
+   * its holder ended: a file can be deleted while its holder runs; `unknown` gives its reason.
    * Only a write lock taken on a verified, writable lease file proves `not_held`.
    */
   probe(id: string): Promise<LeaseFact>;

@@ -2,7 +2,8 @@
 // its claim leases, beside the published contract (`contract-leases-cw1.test.ts`): what `hold()` and
 // `probe()` answer when the file system or SQLite refuses a step, that a lease file already there is
 // never taken over, and that a second `close()` does nothing. Every lease here is held by this process
-// and probed only after it is closed, or never held: no cell needs another process.
+// and probed only after it is closed, or never held, or asked for only by an id that is not a plain
+// name: no cell needs another process.
 //
 // The failure cells reach `hold()`'s steps through the module's test seams (`createLeasePort(home,
 // seams)`, package-internal). Their errors copy the shapes the platform gives: a SQLite error carries
@@ -166,6 +167,40 @@ describe('#729 CW-1 — the SQLite store’s claim leases: its own cells', () =>
       files: ['a', 'b', 'c'],
       names: ['a.lease', 'b.lease', 'c.lease'],
     });
+  });
+
+  it("an id that is not a plain name reads unknown(not_a_lease), even an id whose `..` leads to a lease held outside this home's claim-leases/", async () => {
+    const { home: root } = home();
+    // Two homes side by side: `other` holds a lease; `prober` asks with ids that are not plain
+    // names, the first leading out of its own lease folder to that held file.
+    mkdirSync(join(root, 'other'));
+    const result = await createLeasePort(join(root, 'other')).hold();
+    if (!('held' in result)) throw new Error(`no lease: ${result.unavailable}`);
+    const { held } = result;
+    try {
+      const prober = createLeasePort(join(root, 'prober'));
+      const ids = [
+        `../../other/${CLAIM_LEASES_FOLDER}/${held.id}`,
+        '',
+        '.',
+        '..',
+        `..\\${held.id}`,
+        `${held.id}\0`,
+      ];
+      const read: Record<string, string> = {};
+      for (const id of ids) read[JSON.stringify(id)] = show(await prober.probe(id));
+      // (1) red without the check: the `..` id reads `held` (the path is the other home's held
+      //     lease), and each other id reads what its path gives (`absent` for the empty id, `.`,
+      //     `..` and the `\` one on Linux, `unknown(io_error)` for the NUL one) — and when one member
+      //     of the check is dropped, that id alone; (2) prints each id and what it read.
+      expect(read).toEqual(
+        Object.fromEntries(ids.map((id) => [JSON.stringify(id), 'unknown(not_a_lease)'])),
+      );
+      // (1) red when the probe made the prober's lease folder; (2) prints the homes' names.
+      expect(listed(root)).toEqual(['other']);
+    } finally {
+      held.close();
+    }
   });
 
   it('a second close() does nothing: the file a first close() kept stays, and reads not_held', async () => {

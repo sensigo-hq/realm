@@ -592,7 +592,7 @@ Types: `StoreClockContractAdapter`, `StoreClockContractCase`, `StoreClockLaw`, `
 
 ### `leasePortContract(adapter)`
 
-The laws of a store's claim leases, `RunStore.leases` (added after version 0.49.0). A claim lease is a lock the operating system keeps while the program holding it runs. Each case builds its own homes, and the adapter starts each holder in another process: a case refuses a holder whose process is the test's own, and prints one line, `[lease-law] <law> platform= node= sqlite= holder= prober= -> <what it saw>`.
+The laws of a store's claim leases, `RunStore.leases` (added after version 0.49.0). A claim lease is a lock the operating system keeps while the program holding it runs. Each case builds its own homes. For a store with real locks (holder kind `process`), the adapter starts each holder in another process: a case refuses a holder whose process is the test's own, and prints one line, `[lease-law] <law> platform= node= sqlite= holder= prober= -> <what it saw>`.
 
 | Law                                    | What it checks                                                                                                                                                                           |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -607,7 +607,7 @@ The laws of a store's claim leases, `RunStore.leases` (added after version 0.49.
 | `LGC_UNREFERENCED_HOLD_STAYS_HELD`     | A hold its program no longer refers to stays `held` after garbage collection.                                                                                                            |
 | `LSELF_OWN_ID_OPENS_NOTHING`           | With its file deleted, the holder's own check of its lease reads `held`, another program's reads `absent`, and the file is not made again.                                               |
 
-`createLeaseDouble()` returns a lease port in memory whose leases a test sets to `live`, `closed_kept`, `removed`, `dead` or `forced`, for the laws that do not need a real lock. A `live` lease reads `held`, a `closed_kept` or `dead` one `not_held`, a `removed` one `absent`, as does an id it never made, and a `forced` one the fact the test gave. It runs `L1_HELD_ACROSS_PROCESSES`, `L2_NOT_HELD_AFTER_DEATH`, `L3_DEAD_LEASE_NEVER_HELD_AGAIN` and `L5_CLOSE_BY_RECORD`; the other six laws need a real lock or a file.
+`createLeaseDouble()` returns a lease port in memory whose leases a test sets to `live`, `closed_kept`, `removed`, `dead` or `{ forced: fact }`, for the laws that do not need a real lock. A `live` lease reads `held`, a `closed_kept` or `dead` one `not_held`, a `removed` one `absent`, as does an id it never made, and a `{ forced: fact }` one that fact. It runs `L1_HELD_ACROSS_PROCESSES`, `L2_NOT_HELD_AFTER_DEATH`, `L3_DEAD_LEASE_NEVER_HELD_AGAIN` and `L5_CLOSE_BY_RECORD`; the other six laws need a real lock or a file.
 
 Types: `LeaseDouble`, `LeaseDoubleState`, `LeaseHolder`, `LeaseHomeFiles`, `LeasePortContractAdapter`, `LeasePortContractCase`, `LeasePortLaw`, `LeaseTestHome`.
 

@@ -1060,7 +1060,7 @@ describe('#625 PR-H — context 3b, get_run_state.step_claims and the answer', (
         probe: () => expect(claim.since).toBe('2026-01-01T00:00:00.000Z'),
       },
       // #729, the claim window (CW-1): the claim's lease id; nothing writes it until CW-2.
-      lease: { surface: 'waived', reason: "no surface shows a claim's lease until CW-4" },
+      lease: { surface: 'waived', reason: "the cost view does not show a claim's lease" },
     } satisfies Record<keyof ClaimRecord, DisclosureRoute>;
 
     const ATTRIBUTED = {

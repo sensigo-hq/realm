@@ -258,7 +258,18 @@ function holdLease(folder: string, seams: LeaseSeams): LeaseHoldResult {
   }
 }
 
+/**
+ * Whether `id` can name a lease: not empty, not `.` or `..`, and holding no `/`, `\` or NUL. Any
+ * other id would point the probe at a path outside `claim-leases/` (an id comes from a stored claim,
+ * which an imported or damaged record can hold). `hold()` mints its own ids and never checks them.
+ */
+function isLeaseName(id: string): boolean {
+  return id !== '' && id !== '.' && id !== '..' && !/[/\\\0]/.test(id);
+}
+
 async function probeLease(folder: string, id: string): Promise<LeaseFact> {
+  // An id that is not a plain name: the probe opens and checks nothing.
+  if (!isLeaseName(id)) return unknown('not_a_lease');
   const path = leaseFile(folder, id);
   // An id this program holds: the answer is the registry's, and the file is never opened here.
   if (HOLDS.has(path)) return HELD;
