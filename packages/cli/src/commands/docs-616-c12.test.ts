@@ -45,16 +45,13 @@ const read = (page: string): string => readFileSync(join(ROOT, page), 'utf8');
 function claim(page: string, sentence: string): void {
   expect(flat(read(page)), `${page} no longer says: ${sentence}`).toContain(flat(sentence));
 }
-/** The CHANGELOG section that holds this unit's entries: `[Unreleased]` until a release renames it. */
-function unreleased(): string {
+/** The CHANGELOG section that holds this unit's entries: 0.49.0's, the release that shipped them. */
+function section049(): string {
   const text = read('CHANGELOG.md');
-  const start = text.includes('## [Unreleased]')
-    ? text.indexOf('## [Unreleased]')
-    : text.indexOf('\n## [') + 1;
-  return text.slice(start, text.indexOf('\n## [0.48.0]'));
+  return text.slice(text.indexOf('## [0.49.0]'), text.indexOf('\n## [0.48.0]'));
 }
 function claimChangelog(sentence: string): void {
-  expect(flat(unreleased()), `the CHANGELOG no longer says: ${sentence}`).toContain(flat(sentence));
+  expect(flat(section049()), `the CHANGELOG no longer says: ${sentence}`).toContain(flat(sentence));
 }
 /** A product file's text: the constant a page quotes. (a) red when the constant changes by a word;
  *  (b) prints the words. */
@@ -491,7 +488,7 @@ describe('#616 PR-2c c12 — the duplicate window (webhooks.md, realm-listen.md,
 });
 
 describe('#616 PR-2c c12 — the CHANGELOG’s Upgrading section', { timeout: 60_000 }, () => {
-  it('C5: four numbered items, first in [Unreleased]', () => {
+  it("C5: four numbered items, first in 0.49.0's section", () => {
     // Item 1: C2 (the refusal, the procedure); item 2: the floor's words (driver.ts, below); item 3:
     // the packages (store-sqlite-package-616.test.ts); item 4: the cell below.
     for (const sentence of [
@@ -502,8 +499,8 @@ describe('#616 PR-2c c12 — the CHANGELOG’s Upgrading section', { timeout: 60
       "**4. The former `gc` and `reconcile` subcommands of `realm run`, and the former `migrate` subcommand of `realm workflow`, are removed.** A script that calls one now stops with `error: unknown command '<name>'` on stderr and exit code 1; what they did is done by the store (one transaction per write) and by `realm db migrate`.",
     ])
       claimChangelog(sentence);
-    // (a) red when the section is not the first heading of [Unreleased]; (b) prints the heading.
-    expect(/^### .*$/m.exec(unreleased())?.[0]).toBe('### Upgrading');
+    // (a) red when the section is not the first heading of 0.49.0's section; (b) prints the heading.
+    expect(/^### .*$/m.exec(section049())?.[0]).toBe('### Upgrading');
   });
 
   it("C5 (item 4), on the built CLI: each former subcommand stops with commander's line on stderr and exit 1, and creates nothing", () => {

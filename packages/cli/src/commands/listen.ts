@@ -16,7 +16,13 @@
 //   - `100-continue` is answered only after the checks before the body (#744)
 //   - headers must arrive within the body timeout; a whole request within Node's 5-minute request
 //     timeout, or twice the body timeout plus `lingerMs` plus 1 s if that is longer (#744)
-//   - SIGTERM/SIGINT → server.close(); the agent child is detached and survives.
+//   - SIGTERM/SIGINT → the stop (`graceful-stop.ts`, #960): accept nothing more, end each open
+//     connection by its state, give requests being answered `--shutdown-grace` seconds, a second
+//     signal cuts everything; exit 0, or 1 when requests were cut. The agent child is detached and
+//     survives.
+//   - `GET`/`HEAD` `/health` → the health address (`health-address.ts`, #960 U2): 200, or 503 from
+//     the first signal; `--shutdown-drain` keeps serving that many seconds before the stop begins;
+//     a workflow cannot be mounted at `/health`
 import {
   createServer,
   maxHeaderSize,
@@ -90,6 +96,8 @@ import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-pa
 import { InMemoryDedupStore } from '../lib/dedup-store.js';
 import { parseHost, parseOneOf, parseWholeNumber } from '../lib/option-parsers.js';
 import { bindFailureLine } from '../lib/bind-failure.js';
+import { trackConnections, type StopOutcome } from '../lib/graceful-stop.js';
+import { answerHealth, HEALTH_PATH, requestPath } from '../lib/health-address.js';
 import {
   loadProjectExtensions,
   onceReleaseLineSink,
@@ -155,6 +163,11 @@ export interface HandlerOptions {
   bodyTimeoutMs: number;
   /** #744 E2: how long a refused socket keeps reading and discarding before it is destroyed. */
   lingerMs: number;
+  /**
+   * #960 U2: whether this server is stopping (from the first Ctrl+C or `SIGTERM`), read per request
+   * by the health address. `startListen` owns it; absent, the server is never stopping.
+   */
+  isStopping?: () => boolean;
 }
 
 const DEFAULT_HANDLER_OPTIONS: HandlerOptions = {
@@ -321,20 +334,6 @@ function respond(res: ServerResponse, status: number, payload: Record<string, un
 }
 
 /**
- * A request's path: the pathname only, never the query string (which can carry a token), even for
- * an address the URL parser refuses (one starting with `//`, for one).
- */
-function requestPath(req: IncomingMessage): string {
-  try {
-    return new URL(req.url ?? '/', 'http://localhost').pathname;
-  } catch {
-    const raw = req.url ?? '/';
-    const cut = raw.search(/[?#]/);
-    return cut === -1 ? raw : raw.slice(0, cut);
-  }
-}
-
-/**
  * issue #735 (F1): the ONE reply to a delivery whose agent failed to start — the first copy's, and
  * every retry of that delivery that matches the run the failure sealed. A replayed request gets its
  * FIRST verdict, never a success for work that never ran.
@@ -360,6 +359,7 @@ export function makeListenHandler(
   via?: { continueExpected?: boolean; expectationFailed?: boolean },
 ) => Promise<void> {
   const opts: HandlerOptions = { ...DEFAULT_HANDLER_OPTIONS, ...options };
+  const isStopping = opts.isStopping ?? (() => false);
   let inFlight = 0;
   // #744 E2: every socket closing after a refusal, mapped to that refusal's reply and the number of
   // later requests ignored on it; and how many of them linger (close in stages).
@@ -497,6 +497,11 @@ export function makeListenHandler(
       refuse(req, res, 400, { error: 'host_required' });
       return;
     }
+
+    // #960 U2: the health address (`GET`/`HEAD` `/health`), before the method, path and capacity
+    // checks: it takes no signature, does not count toward `--max-concurrent`, is not a refusal
+    // (no line, the connection kept), and logs nothing.
+    if (answerHealth(req, res, isStopping)) return;
 
     // 1. Non-POST → 405.
     if (req.method !== 'POST') {
@@ -826,7 +831,8 @@ function isLoopbackHost(host: string): boolean {
 /**
  * Builds the path→workflow route table from loaded workflows. Fail-closed at startup:
  *  - workflows without a `trigger:` block are skipped (logged);
- *  - a path collision across workflows throws;
+ *  - a workflow at `/health` (the health address's path) throws, then a path collision across
+ *    workflows throws;
  *  - every referenced secret env var is resolved now (missing → throws);
  *  - `auth.mode === 'none'` emits a prominent warning.
  */
@@ -844,6 +850,12 @@ export function buildRouteTable(
       continue;
     }
     const path = trigger.path ?? `/${definition.id}`;
+    // #960 U2: the health address's path is listen's own; checked before the collision.
+    if (path === HEALTH_PATH) {
+      throw new Error(
+        `listen: path '${HEALTH_PATH}' is reserved for the health address — workflow '${definition.id}' cannot use it; give it another trigger.path`,
+      );
+    }
     if (routes.has(path)) {
       throw new Error(
         `listen: path collision on '${path}' — workflow '${definition.id}' conflicts with '${routes.get(path)!.definition.id}'`,
@@ -933,6 +945,16 @@ export interface ListenOptions {
    * Absent (the default) = the sweeper never runs — byte-identical to pre-#291 `listen` behavior.
    */
   sweepExpiredGatesIntervalMs?: number;
+  /**
+   * Issue #960: the seconds requests being answered get to finish after a stop (`--shutdown-grace`);
+   * default 30. When they run out, the requests still open are cut.
+   */
+  shutdownGraceSeconds?: number;
+  /**
+   * #960 U2: the seconds the program keeps serving after the first signal, with `/health` answering
+   * 503, before the stop begins (`--shutdown-drain`); default 0.
+   */
+  shutdownDrainSeconds?: number;
 }
 
 /** Per-pass sweep outcome (issue #291) — returned for tests/logging; the CLI action itself only
@@ -1125,19 +1147,25 @@ export interface ListenHandle {
   shutdown(reason: string): Promise<void>;
 }
 
-/** Wires the HTTP server + SIGTERM/SIGINT handlers. Returns a handle whose shutdown() stops
- *  accepting new connections; in-flight requests finish and the detached agents survive. */
+/** Wires the HTTP server + SIGTERM/SIGINT handlers. Returns a handle whose shutdown() stops the
+ *  server (#960: `/health` answers 503 at once, the drain keeps serving for its seconds, then each
+ *  open connection is ended by its state and requests being answered get the grace) and resolves
+ *  once it has closed; the detached agents survive. */
 export function startListen(
   routes: Map<string, WorkflowEntry>,
   options: ListenOptions,
   deps: ListenDeps,
 ): Promise<ListenHandle> {
   const lingerMs = options.lingerMs ?? DEFAULT_HANDLER_OPTIONS.lingerMs;
+  // #960 U2: this server's own stopping state (never a module variable: one process can hold many
+  // servers), set in the first signal's turn; the health address reads it per request.
+  let stopping = false;
   const handler = makeListenHandler(routes, deps, {
     maxConcurrent: options.maxConcurrent,
     maxBodyBytes: options.maxBodyBytes,
     bodyTimeoutMs: options.bodyTimeoutMs,
     lingerMs,
+    isStopping: () => stopping,
   });
   // #744: the last request handed to the handler on each socket; the 'clientError' listener reads
   // it.
@@ -1182,6 +1210,8 @@ export function startListen(
     },
     onRequest,
   );
+  // Issue #960: before the server listens, so it sees every connection.
+  const tracker = trackConnections(server);
   // With a 'checkContinue' listener Node no longer answers `Expect: 100-continue` itself: the
   // handler invites the body only after the checks before it (#744).
   server.on('checkContinue', (req, res) => onRequest(req, res, { continueExpected: true }));
@@ -1317,18 +1347,59 @@ export function startListen(
         }, options.sweepExpiredGatesIntervalMs)
       : undefined;
 
-  let shuttingDown = false;
+  // Issue #960: the stop. From the first signal `/health` answers 503 (U2); with `--shutdown-drain`
+  // the server then goes on serving for that many seconds; then requests being answered get the
+  // grace. A second signal cuts everything at once, the drain included. The exit code is 0 when no
+  // request was cut, else 1, after one line at level `error`.
+  const graceSeconds = options.shutdownGraceSeconds ?? 30;
+  const drainSeconds = options.shutdownDrainSeconds ?? 0;
+  let stopped: Promise<void> | undefined;
+  /** While the drain runs: ends it now and cuts everything (a second signal). */
+  let endDrain: (() => void) | undefined;
+  let cut = 0;
   const shutdown = (reason: string): Promise<void> => {
-    if (shuttingDown) return Promise.resolve();
-    shuttingDown = true;
+    if (stopped !== undefined) return stopped;
+    stopping = true;
     deps.logger.info('listen: shutting down', { reason });
     if (sweepTimer !== undefined) clearInterval(sweepTimer);
     for (const cancel of gateWaits.values()) cancel();
     gateWaits.clear();
-    return new Promise((resolve) => server.close(() => resolve()));
+    let outcome: Promise<StopOutcome>;
+    if (drainSeconds > 0) {
+      deps.logger.info('listen: draining', { seconds: drainSeconds });
+      outcome = new Promise<StopOutcome>((resolve) => {
+        const timer = setTimeout(() => {
+          endDrain = undefined;
+          resolve(tracker.stop(graceSeconds * 1000));
+        }, drainSeconds * 1000);
+        endDrain = () => {
+          clearTimeout(timer);
+          endDrain = undefined;
+          resolve(tracker.cutAll());
+        };
+      });
+    } else {
+      outcome = tracker.stop(graceSeconds * 1000);
+    }
+    stopped = outcome.then((result) => {
+      cut = result.cut;
+      if (result.cut > 0) {
+        deps.logger.error('listen: shutdown cut requests', {
+          cut: result.cut,
+          because: result.because,
+          grace_seconds: graceSeconds,
+        });
+      }
+    });
+    return stopped;
   };
   const onSignal = (sig: string): void => {
-    void shutdown(sig).then(() => process.exit(0));
+    if (stopped !== undefined) {
+      if (endDrain !== undefined) endDrain();
+      else void tracker.cutAll();
+      return;
+    }
+    void shutdown(sig).then(() => process.exit(cut > 0 ? 1 : 0));
   };
   process.on('SIGTERM', () => onSignal('SIGTERM'));
   process.on('SIGINT', () => onSignal('SIGINT'));
@@ -1695,6 +1766,20 @@ export const listenCommand = new Command('listen')
       'realm run drain --expired.',
     parseWholeNumber('--sweep-expired-gates', 1, 2_147_483),
   )
+  // issue #960: checked when the command line is read, like the five above.
+  .option(
+    '--shutdown-grace <seconds>',
+    'Seconds that requests being answered get to finish after Ctrl+C or SIGTERM, a whole number from 0 to 2147483. When it runs out they are cut and the exit code is 1; 0 cuts them at once.',
+    parseWholeNumber('--shutdown-grace', 0, 2_147_483),
+    30,
+  )
+  // #960 U2: checked when the command line is read, like `--shutdown-grace`.
+  .option(
+    '--shutdown-drain <seconds>',
+    'Seconds the program keeps serving, with /health answering 503, after Ctrl+C or SIGTERM before the stop begins and it stops accepting connections; a whole number from 0 to 2147483. 0 begins the stop at once.',
+    parseWholeNumber('--shutdown-drain', 0, 2_147_483),
+    0,
+  )
   .action(
     async (
       workflows: string[],
@@ -1707,6 +1792,8 @@ export const listenCommand = new Command('listen')
         dedupStore?: 'file' | 'memory';
         logLevel?: string;
         sweepExpiredGates?: number;
+        shutdownGrace?: number;
+        shutdownDrain?: number;
         llmTimeout?: number;
         provider?: ProviderName;
         model?: string;
@@ -1843,6 +1930,12 @@ export const listenCommand = new Command('listen')
             maxConcurrent: opts['maxConcurrent'] ?? 20,
             ...(sweepExpiredGatesSeconds !== undefined
               ? { sweepExpiredGatesIntervalMs: sweepIntervalMs(sweepExpiredGatesSeconds) }
+              : {}),
+            ...(opts.shutdownGrace !== undefined
+              ? { shutdownGraceSeconds: opts.shutdownGrace }
+              : {}),
+            ...(opts.shutdownDrain !== undefined
+              ? { shutdownDrainSeconds: opts.shutdownDrain }
               : {}),
           },
           deps,

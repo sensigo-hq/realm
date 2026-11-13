@@ -161,6 +161,10 @@ export const CENSUS: Record<string, Entry> = {
     'outside',
     "the dedup window's bucket and TTL (#177): a delivery's age, no run record",
   ],
+  'cli/src/lib/graceful-stop.ts#armGrace#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/lib/graceful-stop.ts#armYoung#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/lib/graceful-stop.ts#onConnection#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/lib/graceful-stop.ts#stop#performance.now()': [1, 'duration', MONOTONIC],
   'cli/src/lib/webhook-verifiers.ts#verifyHmac#Date.now()': [
     1,
     'outside',
