@@ -1207,6 +1207,12 @@ const bodiesOf = (stub: { mock: { calls: unknown[][] } }) =>
       JSON.parse(String((init as RequestInit).body)) as { text?: string; blocks?: unknown[] },
   );
 
+/** #729 PR-6b: the posts alone (`chat.postMessage`), leaving out the question post's edit. */
+const postsOf = (stub: { mock: { calls: unknown[][] } }) =>
+  bodiesOf({
+    mock: { calls: stub.mock.calls.filter(([url]) => String(url).includes('postMessage')) },
+  });
+
 /** Records `outcomeOf` reads at the poll's end (the shapes `person-notice.test.ts` pins). */
 const closedGate = pr4Gate({
   expires_at: '2026-10-27T11:00:00.000Z',
@@ -1750,7 +1756,7 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
     );
     // (a) red when nothing is posted at the poll's end, or `how` is mapped wrong; (b) prints the
     //     thread's texts.
-    expect(bodiesOf(posts).map((b) => b.text)).toEqual([`This question is closed: ${how}.`]);
+    expect(postsOf(posts).map((b) => b.text)).toEqual([`This question is closed: ${how}.`]);
   });
 
   it.each(CLOSED_CASES)('question_closed in the webhook loop: "$how"', async ({ how, record }) => {
@@ -1794,7 +1800,7 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
     });
     await done;
     // (a) red when the closed line follows the person's own answer; (b) prints the thread's texts.
-    expect(bodiesOf(posts).map((b) => b.text)).toEqual([
+    expect(postsOf(posts).map((b) => b.text)).toEqual([
       '✅ Gate resolved: `approve` — run continuing.',
     ]);
   });

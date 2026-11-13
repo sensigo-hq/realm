@@ -29,7 +29,12 @@ const definition: WorkflowDefinition = {
 };
 
 describe('buildManifestGateHandler', () => {
-  const deps = { store: new InMemoryStore(), definition, provider: new NoopProvider() };
+  const deps = {
+    store: new InMemoryStore(),
+    definition,
+    provider: new NoopProvider(),
+    home: '/nonexistent-realm-home',
+  };
 
   it('returns undefined when the manifest declares no notifier (terminal fallback)', () => {
     expect(buildManifestGateHandler(undefined, deps)).toBeUndefined();
