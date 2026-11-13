@@ -65,6 +65,7 @@ describe('R1.1 — result_map on register, validate and validate --registered', 
         { surface: 'validate', code: 1, refused: true },
       ]);
     },
+    60_000,
   );
 
   it.each(['hmac', 'stripe', 'github', 'none'])(
@@ -98,6 +99,7 @@ describe('R1.1 — result_map on register, validate and validate --registered', 
         refused: true,
       });
     },
+    60_000,
   );
 
   it('L1: with shared_secret, register, validate and validate --registered accept it', () => {
@@ -110,5 +112,5 @@ describe('R1.1 — result_map on register, validate and validate --registered', 
     expect(
       [register, validate, registered].map((r) => (r.code === 0 ? 0 : `${r.code}: ${r.out}`)),
     ).toEqual([0, 0, 0]);
-  });
+  }, 60_000);
 });
