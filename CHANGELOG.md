@@ -9,10 +9,13 @@ All notable changes to this project are documented here.
 ### Added
 
 - **`--shutdown-grace <seconds>` on `realm serve` and `realm listen`**: how long requests being answered get to finish after Ctrl+C or `SIGTERM`; 30 by default; 0 to 2147483.
+- **A health address on `realm serve` and `realm listen`**: `GET` and `HEAD` `/health`, without a token, `200` `{"status":"ok"}`, and `503` `{"status":"shutting_down"}` once the program is asked to stop.
+- **`--shutdown-drain <seconds>` on `realm serve` and `realm listen`**: how long the program keeps serving, with `/health` answering 503, after Ctrl+C or `SIGTERM` before it stops accepting connections; 0 by default.
 
 ### Changed
 
 - **`realm serve` and `realm listen` exit with code 1 when they had to cut requests that were still being answered**; 0 when none was cut.
+- **`/health` is taken.** `realm listen` now refuses to start a workflow whose path is `/health` (its `trigger.path`, or the default path of a workflow with the id `health`), and on `realm serve` a `GET` or `HEAD` to `/health` no longer reaches the MCP endpoint.
 
 ### Fixed
 

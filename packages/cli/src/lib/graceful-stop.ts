@@ -16,8 +16,10 @@
 //   - a held stream (a `GET` answered with `Content-Type: text/event-stream`, the notification
 //     stream an MCP client opens and holds): ended at once, and not a cut request.
 // When the grace ends, or on `cutAll()` (a second signal), everything still open is destroyed, and
-// each response not finished on it counts as cut. A client that hangs up ends its own request: that
-// is not a cut, so the count is read when the stop destroys, never from close events.
+// each response not finished on it counts as cut. A `cutAll()` before `stop()` (a second signal
+// during `--shutdown-drain`, #960 U2) begins the stop with no grace, and its cause is the signal.
+// A client that hangs up ends its own request: that is not a cut, so the count is read when the
+// stop destroys, never from close events.
 //
 // The tracker observes the server's events by wrapping its `emit`, passing every event through
 // unchanged: it adds no listener of its own, because a `checkContinue` or `checkExpectation`
@@ -46,8 +48,12 @@ export interface ConnectionTracker {
    * once; a later call returns the same promise.
    */
   stop(graceMs: number): Promise<StopOutcome>;
-  /** A second signal: destroys everything still open now. Does nothing before `stop()`. */
-  cutAll(): void;
+  /**
+   * A second signal: destroys everything still open now, cause `second_signal`, and returns the
+   * stop's promise. Before `stop()` (a second signal during a drain) it begins the stop, with no
+   * grace.
+   */
+  cutAll(): Promise<StopOutcome>;
 }
 
 /** One connection the server accepted. */
@@ -147,6 +153,8 @@ export function trackConnections(
   let cut = 0;
   let because: StopCause | undefined;
   let stopped: Promise<StopOutcome> | undefined;
+  /** Set by a `cutAll()` that begins the stop: what its zero grace destroys is the signal's cut. */
+  let cutNow = false;
 
   /** Ends a connection that finished every request it had, unless it is already ending. */
   const endIfIdle = (conn: Conn): void => {
@@ -256,7 +264,7 @@ export function trackConnections(
     return Reflect.apply(emit, this, [event, ...args]) as boolean;
   } as Server['emit'];
 
-  return {
+  const tracker: ConnectionTracker = {
     stop(grace: number): Promise<StopOutcome> {
       if (stopped !== undefined) return stopped;
       stopping = true;
@@ -282,11 +290,17 @@ export function trackConnections(
         else if (conn.requests === 0) armYoung(conn);
         else endIfIdle(conn);
       }
-      if (graceMs === 0) destroyAll('grace_ran_out');
+      if (graceMs === 0) destroyAll(cutNow ? 'second_signal' : 'grace_ran_out');
       return stopped;
     },
-    cutAll(): void {
+    cutAll(): Promise<StopOutcome> {
+      if (stopped === undefined) {
+        cutNow = true;
+        return tracker.stop(0);
+      }
       destroyAll('second_signal');
+      return stopped;
     },
   };
+  return tracker;
 }

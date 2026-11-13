@@ -50,6 +50,8 @@ The address, written with a leading `/`. Without it, the address is `/` followed
 Error: listen: path collision on '/open' — workflow 'dup' conflicts with 'open'
 ```
 
+`/health` is taken by the health address; a workflow cannot have it.
+
 ## `auth`
 
 `auth.mode` says how a request is checked. Each mode has its own keys, and a key of another mode is refused: `trigger/auth: unknown property 'algorithm'`.
@@ -138,7 +140,7 @@ started a run with the parameters `{"ticket_id": 102, "source": "helpdesk"}` and
 
 ## Replies
 
-`realm listen` checks a request in this order, and stops at the first check that fails.
+`realm listen` checks a request in this order, and stops at the first check that fails. Before the method check, `realm listen` answers a `GET` or `HEAD` of `/health` itself: `200` `{"status":"ok"}`, or `503` `{"status":"shutting_down"}` once it is stopping. It is not one of the checks below, and a workflow cannot have that path.
 
 | Check                                                                           | Reply when it fails                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
