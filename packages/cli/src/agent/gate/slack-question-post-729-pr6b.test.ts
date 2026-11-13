@@ -600,8 +600,18 @@ describe('#729 PR-6b — the Slack question post', () => {
     first.stderr.on('data', (d: Buffer) => (out += d.toString()));
     const exited = new Promise<void>((resolve) => first.on('exit', () => resolve()));
     const folder = join(h.path, 'slack-posts');
+    // The kill waits for the file to hold the post's `ts`, not only for its name: the exclusive
+    // create makes the name first and writes the bytes after, so a kill between the two leaves an
+    // empty file, which a restart rightly reads as not usable (CI run 43500728217, under load). It
+    // also waits for the `Run ID:` line the test reads below: under the log-mode relay (U1b) the
+    // worker writes the file while the relay may not yet have passed that line on to this pipe.
     await until(
-      () => existsSync(folder) && readdirSync(folder).some((n) => n.endsWith('.json')),
+      () =>
+        /Run ID: \S+/.test(out) &&
+        existsSync(folder) &&
+        readdirSync(folder).some(
+          (n) => n.endsWith('.json') && typeof fileIn(join(folder, n))?.['ts'] === 'string',
+        ),
       30_000,
     );
     first.kill('SIGKILL');
@@ -899,7 +909,7 @@ describe('#729 PR-6b — check 15: the docs’ new sentences', () => {
     ],
     [
       FILES,
-      "| `slack-posts/` | One small file per open Slack question that `realm agent` posted with a bot token: the channel, the post's timestamp, and which `realm agent` process wrote it. Deleted when the question closes. A file stays when the question closed while no `realm agent` attended it, or when a restarted `realm agent` took the stopped one for one still running (the Slack guide says when); a file that stays can be deleted. Added after version 0.49.0. | `realm agent` |",
+      "| `slack-posts/` | One small file per open Slack question that `realm agent` posted with a bot token: the channel, the post's timestamp, and which `realm agent` wrote it. Deleted when the question closes. A file stays when the question closed while no `realm agent` attended it, or when a restarted `realm agent` took the stopped one for one still running (the Slack guide says when); a file that stays can be deleted. Added after version 0.49.0. | `realm agent` |",
     ],
   ];
   it.each(sentences)('%s holds the sentence: %s', (page, sentence) => {

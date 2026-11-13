@@ -39,6 +39,7 @@ import { createSourcePositionCollector, type SourcePositionMap } from './source-
 import { resolveTemplates } from './template-resolver.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
+import { isCredentialName } from '../utils/redaction.js';
 import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
 import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from '../engine/claim-liveness.js';
 import {
@@ -262,6 +263,76 @@ function validateStepsReadRoot(
     message = notAStepRefusal(surface, opening, root, closestKey(root, stepNames));
   }
   if (message !== undefined) errors.push(withLine(stepName, message));
+}
+
+/**
+ * R1.1 — the loader's rules for `trigger.result_map`, beside the schema (which refuses a name or a
+ * value that is not non-empty text). A caller reads a run with a code worked out from the shared
+ * secret, so the key is allowed only with `auth.mode: shared_secret`; a name that
+ * `isCredentialName(name, '')` (the disclosure walk's own test) flags is refused: the walk hides a
+ * value by the field it sits under in the run's output, never by the name given here, so such a name
+ * would look protected and not be; each value must be `context.resources.<step>…` with `<step>` a
+ * step of this workflow (`$settlement` is not one). No check walks a step's output.
+ */
+function validateResultMap(
+  triggerRaw: unknown,
+  stepNames: readonly string[],
+  errors: string[],
+  withTopLevelLine: (path: readonly string[], message: string) => string,
+): void {
+  if (typeof triggerRaw !== 'object' || triggerRaw === null || Array.isArray(triggerRaw)) return;
+  const trigger = triggerRaw as Record<string, unknown>;
+  const map = trigger['result_map'];
+  if (typeof map !== 'object' || map === null || Array.isArray(map)) return;
+  const auth = trigger['auth'];
+  const mode =
+    typeof auth === 'object' && auth !== null
+      ? (auth as Record<string, unknown>)['mode']
+      : undefined;
+  if (typeof mode === 'string' && mode !== 'shared_secret') {
+    errors.push(
+      withTopLevelLine(
+        ['trigger', 'result_map'],
+        `trigger.result_map is allowed only with auth.mode 'shared_secret'; this trigger uses '${mode}'. ` +
+          'A caller reads a run with a code worked out from the shared secret, and only a request that ' +
+          'carries the secret in a header is handed it: with a signed body the code would go to anyone ' +
+          "who replays a captured signed request, and 'none' has no secret. Remove result_map, or use " +
+          'shared_secret.',
+      ),
+    );
+  }
+  for (const [name, path] of Object.entries(map as Record<string, unknown>)) {
+    const at = ['trigger', 'result_map', name];
+    if (name !== '' && isCredentialName(name, '')) {
+      errors.push(
+        withTopLevelLine(
+          at,
+          `trigger.result_map: '${name}' reads as a credential's name. Realm hides a value because of the field it sits under in the run's output, not because of the name given here, so this name would look protected and not be. Rename it.`,
+        ),
+      );
+    }
+    if (typeof path !== 'string' || path === '') continue;
+    const parts = path.split('.');
+    const step = parts[2];
+    if (parts[0] !== 'context' || parts[1] !== 'resources' || step === undefined || step === '') {
+      errors.push(
+        withTopLevelLine(
+          at,
+          `trigger.result_map.${name}: '${path}' must start with 'context.resources.' and a step of this workflow, as in context.resources.review.approved.`,
+        ),
+      );
+    } else if (!stepNames.includes(step)) {
+      const closest = closestKey(step, stepNames);
+      errors.push(
+        withTopLevelLine(
+          at,
+          `trigger.result_map.${name}: '${step}' is not a step of this workflow.` +
+            (closest === undefined ? '' : ` Did you mean '${closest}'?`) +
+            ' Name a step of this workflow.',
+        ),
+      );
+    }
+  }
 }
 
 /**
@@ -3650,6 +3721,7 @@ function parseWorkflowString(
     if (triggerRaw !== undefined) {
       normalizeTriggerFilter(triggerRaw); // canonicalise shorthand BEFORE validation
       errors.push(...validateTriggerStructure(triggerRaw));
+      validateResultMap(triggerRaw, stepNames, errors, withTopLevelLine);
     }
 
     // Step 3c: workflow-level context blocks (issue #553). These four rules need nothing but the

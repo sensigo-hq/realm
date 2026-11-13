@@ -31,6 +31,10 @@ function makeDeps(): ListenDeps {
       settleStep: noSettle,
       // #715 (b) (03 §A.4): and its `clock` — the sweeper's waits are the store's.
       clock: doubleClock,
+      // R1.1: and `resolveKey` (a repeat of an event names its run) — never called here.
+      resolveKey: async () => {
+        throw new Error('n/a');
+      },
     },
     dedupStoreFor: () => ({
       // The DedupStore contract is asynchronous (#616 B1: core's interface): `check`, `record` and
