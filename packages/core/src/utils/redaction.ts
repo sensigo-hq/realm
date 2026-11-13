@@ -442,8 +442,9 @@ export const REALM_CREDENTIAL_VARIABLES: ReadonlySet<string> = new Set(['REALM_S
 /**
  * U1b: names realm's own processes pass to each other and delete at their init — `realm agent` in
  * log mode, its relay to its worker. Never a setting (no exemption from the environment sweep: a
- * value that ever leaked is judged as any other — the key's hex is swept, a pid is under the
- * environment floor), never a credential an operator holds, never on the environment page.
+ * value that ever reached an output is judged as any other — the key's hex is swept, a pid is
+ * under the environment floor), never a credential an operator holds, never on the environment
+ * page.
  */
 export const REALM_INTERNAL_VARIABLES: ReadonlySet<string> = new Set([
   'REALM_RELAY_CHILD', // the relay's pid
