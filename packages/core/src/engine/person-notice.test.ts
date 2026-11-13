@@ -239,7 +239,7 @@ describe('#729 PR-4 — composePersonNotice, per kind', () => {
     expect((n as { code: string }).code).toBe('STATE_RUN_TERMINAL');
   });
 
-  it('question_closed: `how` from outcomeOf — expired, abandoned, superseded with its choice; an unsettled ending is abandoned', () => {
+  it('question_closed: `how` from outcomeOf — expired, abandoned, superseded with the whole winning answer; an unsettled ending is abandoned', () => {
     const hows = [EXPIRED, CANCELLED, ANSWERED, record({})].map((r) => {
       const n = composePersonNotice({
         kind: 'question_closed',
@@ -247,14 +247,17 @@ describe('#729 PR-4 — composePersonNotice, per kind', () => {
         gate,
         outcome: outcome(r, false),
       });
-      return [(n as { how: string }).how, (n as { choice?: string }).choice ?? null];
+      // #729 PR-6a (B9; PR6-R-04): `superseded` carries the whole winning answer (`outcome`).
+      const closed = n as { how: string; outcome?: { choice?: string; by: { kind: string } } };
+      return [closed.how, closed.outcome?.choice ?? null, closed.outcome?.by.kind ?? null];
     });
-    // (a) red when a `how` is mapped wrong (a timeout read as abandoned); (b) prints the pairs.
+    // (a) red when a `how` is mapped wrong (a timeout read as abandoned), or `superseded` drops the
+    //     winning answer; (b) prints the triples.
     expect(hows).toEqual([
-      ['expired', null],
-      ['abandoned', null],
-      ['superseded', 'approve'],
-      ['abandoned', null],
+      ['expired', null, null],
+      ['abandoned', null, null],
+      ['superseded', 'approve', 'answer'],
+      ['abandoned', null, null],
     ]);
   });
 });

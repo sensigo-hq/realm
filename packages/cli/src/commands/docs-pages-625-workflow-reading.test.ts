@@ -496,7 +496,7 @@ describe(
         lateExit: 1,
         inTime: [
           expect.stringMatching(
-            /^Answer: ship · answered by alice .* · (no claim token|the claim token)/,
+            /^Answer: ship · answered by "alice" .* · (no claim token|the claim token)/,
           ),
         ],
       });

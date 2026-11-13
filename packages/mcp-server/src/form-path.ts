@@ -17,8 +17,12 @@ import {
   dueExpiry,
   loadSnapshot,
   judgedSnapshotOf,
+  instantText,
   outcomeOf,
+  parseStamp,
+  quoteStatedName,
   readInstant,
+  UNSHOWABLE_NAME,
   shownViewEvidence,
   submitHumanResponse,
   MCP_FORM_RENDERER,
@@ -26,6 +30,7 @@ import {
   type EngineReply,
   type ExtensionRegistry,
   type Outcome,
+  type OutcomeDoorWords,
   type PendingGate,
   type Principal,
   type RunRecord,
@@ -108,6 +113,8 @@ export type FormResult =
   | {
       kind: 'answered';
       reply: EngineReply;
+      /** #729 PR-6a (B2 (1)): the choice the form came back with — this call's own. */
+      choice: string;
       step: string;
       gate_id: string;
       expires_at?: string;
@@ -333,6 +340,7 @@ export async function sendQuestionForm(
     return {
       kind: 'answered',
       reply,
+      choice,
       step: gate.step_name,
       gate_id: gateId,
       ...(gate.expires_at !== undefined ? { expires_at: gate.expires_at } : {}),
@@ -412,11 +420,46 @@ export function routePhraseOf(route: string): string {
 }
 
 /**
- * #627 W (W-f3): how a question was settled, in one sentence per `by.kind` — "Not recorded:" when
- * this call's form was accepted (it tried to answer), "Meanwhile," when it did not. The stated name is
- * delimited, and labelled as stated; a route absence is its own whole template.
+ * #729 PR-6a (B1): the words the assistant's doors (the MCP tool, the MCP form, the library's
+ * sentence) name a door with — `through <routePhraseOf>`, exactly as W wrote them for the agent.
  */
-export function renderOutcome(outcome: Outcome): string {
+export const ASSISTANT_DOOR_WORDS: OutcomeDoorWords = {
+  mcp_form: `through ${routePhraseOf('mcp_form')}`,
+  mcp: `through ${routePhraseOf('mcp')}`,
+  cli: `through ${routePhraseOf('cli')}`,
+  slack: `through ${routePhraseOf('slack')}`,
+  other_route: (route) => `through ${routePhraseOf(route)}`,
+};
+
+/** A stored instant in `instantText`'s form; `undefined` when it is absent or does not parse. */
+function instantOf(stamp: string | undefined): string | undefined {
+  if (stamp === undefined) return undefined;
+  const ms = parseStamp(stamp);
+  if (ms === undefined) return undefined;
+  try {
+    return instantText(ms);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The door an answer came through, in `words` — a route this version's doors declare, or another. */
+function doorPhrase(via: string, words: OutcomeDoorWords): string {
+  return Object.prototype.hasOwnProperty.call(words, via) && via !== 'other_route'
+    ? words[via as keyof Omit<OutcomeDoorWords, 'other_route'>]
+    : words.other_route(via);
+}
+
+/**
+ * #627 W (W-f3), #729 PR-6a (B3): how a question was settled, in one sentence per state — the ONE
+ * sentence-maker every door says it through; each door passes only its own fixed words for naming
+ * doors (`words`). "Not recorded:" when this call tried to answer — your choice beaten by another
+ * choice, or the question already holding this answer —, "Meanwhile," when it did not; with
+ * `closed`, the subject of a closing line (`<closed> is closed: it was answered — …`), for an
+ * answer only. The winner's name is quoted by `quoteStatedName` and labelled as stated; the time is
+ * `instantText`'s, and is left out when it is absent or does not parse.
+ */
+export function renderOutcome(outcome: Outcome, words: OutcomeDoorWords, closed?: string): string {
   const lead = outcome.attempted ? 'Not recorded:' : 'Meanwhile,';
   const q = `the question on step '${outcome.step}'`;
   const by = outcome.by;
@@ -424,24 +467,41 @@ export function renderOutcome(outcome: Outcome): string {
     by.kind === 'timeout' ||
     (typeof outcome.via === 'object' && outcome.via.absent === 'settled_by_expiry')
   ) {
+    const expiry = instantOf(outcome.expiry);
+    const limit = `reached its time limit${expiry !== undefined ? ` at ${expiry}` : ''}`;
     return outcome.choice !== undefined
-      ? `${lead} ${q} reached its time limit, and the run took the default ${outcome.choice}.`
-      : `${lead} ${q} reached its time limit, and the run ended as aborted.`;
+      ? `${lead} ${q} ${limit}, and the run took the default ${outcome.choice}.`
+      : `${lead} ${q} ${limit}, and the run ended as aborted.`;
   }
   if (by.kind === 'engine') {
     return `${lead} ${q} was closed because step '${by.step}' aborted the run.`;
   }
   const choice = outcome.choice ?? '';
-  const name = by.name !== undefined ? `, by "${by.name}" (as stated)` : '';
+  const name =
+    by.name !== undefined
+      ? `, by ${quoteStatedName(by.name)} (as stated)`
+      : by.name_absent === 'name_unreadable'
+        ? `, by ${UNSHOWABLE_NAME}`
+        : '';
+  const time = instantOf(outcome.at);
+  const at = time !== undefined ? `, at ${time}` : '';
   const via = outcome.via;
-  if (typeof via === 'object' && via.absent === 'route_not_declared') {
-    return `${lead} ${q} was answered — ${choice}${name}, through a route its program did not declare.`;
+  const tail =
+    typeof via === 'object' && via.absent === 'recorded_without_route'
+      ? `${name}${at}; how the answer arrived was not recorded.`
+      : typeof via === 'object' && via.absent === 'route_not_declared'
+        ? `${name}, through a route its program did not declare${at}.`
+        : typeof via === 'string'
+          ? `${name}, ${doorPhrase(via, words)}${at}.`
+          : `${name}${at}.`;
+  if (closed !== undefined) return `${closed} is closed: it was answered — ${choice}${tail}`;
+  const mine = outcome.attempted_choice;
+  if (outcome.attempted && mine !== undefined) {
+    return mine === outcome.choice
+      ? `Not recorded: ${q} already had this answer — ${choice}${tail}`
+      : `Not recorded: your choice '${mine}'. The question on step '${outcome.step}' was already answered — ${choice}${tail}`;
   }
-  if (typeof via === 'object' && via.absent === 'recorded_without_route') {
-    return `${lead} ${q} was answered — ${choice}${name}; how the answer arrived was not recorded.`;
-  }
-  const route = typeof via === 'string' ? `, through ${routePhraseOf(via)}` : '';
-  return `${lead} ${q} was answered — ${choice}${name}${route}.`;
+  return `${lead} ${q} was answered — ${choice}${tail}`;
 }
 
 /** W-f2's opening, by how the form ended (correction 2, 1.4). */
@@ -532,13 +592,13 @@ export async function replyAfterForm(
     if (gate === undefined || gate.gate_id !== result.gate_id) {
       // What settled the question instead — read before the run-ended arm, so a run the other answer
       // ended still says "Not recorded: …"; its run_phase says it ended.
-      const outcome = outcomeOf(record, result.step, result.expires_at, true);
+      const outcome = outcomeOf(record, result.step, result.expires_at, true, result.choice);
       return {
         ...base,
         ...(record.terminal_state ? { intrinsic_action: 'stop' as const } : {}),
         context_hint:
           outcome !== undefined
-            ? renderOutcome(outcome)
+            ? renderOutcome(outcome, ASSISTANT_DOOR_WORDS)
             : `Not recorded: the question on step '${result.step}' was closed.`,
         names_next: true,
       };
@@ -575,7 +635,7 @@ export async function replyAfterForm(
       ...base,
       context_hint:
         outcome !== undefined
-          ? renderOutcome(outcome)
+          ? renderOutcome(outcome, ASSISTANT_DOOR_WORDS)
           : `Meanwhile, the question on step '${result.step}' was closed.`,
       names_next: true,
     };

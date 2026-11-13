@@ -462,21 +462,26 @@ describe(
       expect([swept.enacted, swept.skipped_unregistered]).toEqual([0, 1]);
     });
 
-    it('C170 gates.md: an answer after the abort is refused with the aborted run’s way out (realm run respond)', async () => {
+    it('C170 gates.md: an answer after the abort is told the time limit ended the run, then the aborted run’s way out (realm run respond; #729 PR-6a)', async () => {
       claimDoc625(
         'docs/reference/cli/realm-run-acting.md',
         "| The run has ended | `Run '00b33778-…' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 00b33778-…' previews what it would remove.` The words after the dash name the way out that kind of ending has, as `submit_human_response` names it: see [A run that has ended](../mcp/tools.md#a-run-that-has-ended). |",
       );
       claim(
         'workflow/gates.md',
-        "Run '063dee23-e68e-4d7f-bcc2-968dd764370c' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 063dee23-e68e-4d7f-bcc2-968dd764370c' previews what it would remove.",
+        "Not recorded: the question on step 'approve' reached its time limit, and the run ended as aborted. An aborted run is never resumed; 'realm run purge 063dee23-e68e-4d7f-bcc2-968dd764370c' previews what it would remove.",
       );
       const { runId, gateId } = await atQuestion(gateThenAuto('dc-aborted', 'abort'));
       expect(realm('run', 'advance', runId).code).toBe(0);
       const r = realm('run', 'respond', runId, '--gate', gateId, '--choice', 'approve');
-      expect(r.err.filter((l) => l !== '')).toContain(
-        `Run '${runId}' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge ${runId}' previews what it would remove.`,
-      );
+      // #729 PR-6a (B5): the time limit, through the one sentence-maker, then the way out.
+      expect({ code: r.code, err: r.err.filter((l) => l !== '') }).toEqual({
+        code: 1,
+        err: [
+          "Not recorded: the question on step 'confirm' reached its time limit, and the run ended as aborted.",
+          `An aborted run is never resumed; 'realm run purge ${runId}' previews what it would remove.`,
+        ],
+      });
     });
 
     it.each(['completed', 'aborted', 'failed', 'abandoned'] as const)(

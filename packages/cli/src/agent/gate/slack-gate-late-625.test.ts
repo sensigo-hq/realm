@@ -209,8 +209,9 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
     ];
     // (a) red when the operator's lines are posted to the thread again (#729 PR-4, G9), or the
     //     person is told to try again for a gate the expiry settled; (b) prints the posts.
+    // #729 PR-6a (B9): the people's words, through the one sentence-maker (`lateWords` is gone).
     expect(posts).toEqual([
-      "This question's time ran out before your reply arrived; it was settled as `approve`. The run goes on.",
+      "Not recorded: the question on step 'confirm' reached its time limit at 2020-01-01T01:00:00Z, and the run took the default approve. The run goes on.",
     ]);
     // (a) red when the terminal does not get the lines, or gets the line twice; (b) prints them.
     expect(printed).toEqual([WAITING, ...lines]);
@@ -231,8 +232,9 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
     ];
     // (a) red when the same-choice answer is posted as recorded, or the operator's lines reach the
     //     thread (#729 PR-4, G9); (b) prints the posts.
+    // #729 PR-6a (B9): the people's words, through the one sentence-maker.
     expect(posts).toEqual([
-      "This question's time ran out before your reply arrived; it was settled as `approve`. The run goes on.",
+      "Not recorded: the question on step 'confirm' reached its time limit at 2020-01-01T01:00:00Z, and the run took the default approve. The run goes on.",
     ]);
     expect(printed).toEqual([WAITING, ...lines]);
   });
@@ -250,8 +252,9 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
     ];
     // (a) red when the abort is posted as a submit failure to retry, or the operator's lines reach
     //     the thread (#729 PR-4, G9); (b) prints the posts.
+    // #729 PR-6a (B9): the time-limit-aborted sentence says the run ended; nothing is added.
     expect(posts).toEqual([
-      "This question's time ran out before your reply arrived; the run stopped. The run has ended.",
+      "Not recorded: the question on step 'confirm' reached its time limit at 2020-01-01T01:00:00Z, and the run ended as aborted.",
     ]);
     expect(printed).toEqual([WAITING, ...lines]);
   });

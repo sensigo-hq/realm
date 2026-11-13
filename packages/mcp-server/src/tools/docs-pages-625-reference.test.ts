@@ -15,6 +15,7 @@ import {
   cannotRunParts,
   cannotRunSummary,
   createDefaultRegistry,
+  instantText,
   loadWorkflowFromString,
   type ExtensionRegistry,
   type Unavailable,
@@ -199,7 +200,7 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
       advance_run:
         '| `advance_run` | `ok` without `agent_action`: `Run \'<id>\' is already terminal (<phase>); nothing ran.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place |',
       submit_human_response:
-        "| `submit_human_response` | `ok` without `agent_action` when it repeats the choice its gate recorded: `Gate '<gate>' was already resolved with choice '<c>' — no action was taken.`",
+        '| `submit_human_response` | `ok` without `agent_action` when it repeats the choice its gate recorded: `Not recorded: the question on step \'<step>\' already had this answer — <c>, by "<name>" (as stated), through <door>, at <time>.`',
       append_trace:
         "| `append_trace` | Refused with `STATE_STEP_NOT_ELIGIBLE` and `report_to_user`: `Run '<id>' is terminal (phase: '<phase>') — trace entries can no longer be adopted by any step.` |",
       get_run_state:
@@ -234,10 +235,12 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
     });
     // (a) red when repeating the recorded choice is refused, carries agent_action, or says
     //     another sentence; (b) prints the reply's parts.
+    // #729 PR-6a (B7): the beaten-same sentence, whose answer stands.
+    const sameAt = (same['outcome'] as { at?: string } | undefined)?.at;
     expect([same['status'], 'agent_action' in same, same['context_hint']]).toEqual([
       'ok',
       false,
-      `Gate '${gateId}' was already resolved with choice 'send' — no action was taken.`,
+      `Not recorded: the question on step 'draft' already had this answer — send, through Realm's MCP answer tool, at ${instantText(Date.parse(String(sameAt)))}.`,
     ]);
     const trace = await call('append_trace', {
       run_id: runId,
@@ -356,7 +359,7 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
   it('line 374, the refusal row: the gate was answered with another choice — STATE_BLOCKED, the choice not recorded', async () => {
     claim(
       TOOLS,
-      "| The gate was answered with another choice | `STATE_BLOCKED` | `Gate '70d76b3b-…' was already resolved with choice 'send' — your choice 'discard' was not recorded.` See below. |",
+      "| The gate was answered with another choice | `STATE_BLOCKED` | `Not recorded: your choice 'discard'. The question on step 'draft' was already answered — send, by \"alice\" (as stated), through a terminal, at 2026-11-12T10:02:14Z.` See below. |",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(TRIAGE);
@@ -369,10 +372,12 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
     });
     // (a) red when another choice is not refused with STATE_BLOCKED and the row's message, or is
     //     recorded; (b) prints the reply's parts and the record.
+    // #729 PR-6a (B7): the beaten-different sentence in the assistant's words — whose answer stands.
+    const at = (r['outcome'] as { at?: string } | undefined)?.at;
     expect([r['error_code'], r['errors']]).toEqual([
       'STATE_BLOCKED',
       [
-        `Gate '${gateId}' was already resolved with choice 'send' — your choice 'discard' was not recorded.`,
+        `Not recorded: your choice 'discard'. The question on step 'draft' was already answered — send, through Realm's MCP answer tool, at ${instantText(Date.parse(String(at)))}.`,
       ],
     ]);
     expect((await runStore.get(runId)).record.settled?.['draft']?.choice).toBe('send');

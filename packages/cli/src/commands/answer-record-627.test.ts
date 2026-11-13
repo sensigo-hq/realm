@@ -15,6 +15,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   advanceRun,
   answerArrivalOf,
+  instantText,
   loadWorkflowFromString,
   type AnswerView,
 } from '@sensigo/realm';
@@ -107,7 +108,8 @@ describe('#627 W — the CLI door records its route (cell 5, CLI half)', () => {
       answer: { route: 'cli' },
       principal: { absent: 'not_a_server_door' },
       driver: { by: 'ops', by_source: 'ambient', channel: 'respond' },
-      line: "Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops (from REALM_OPERATOR) · no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
+      // #729 PR-6a (B8): the name quoted, and when the answer was given after the route part.
+      line: `Answer: approve · answered by "alice" (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops (from REALM_OPERATOR) · given at ${instantText(Date.parse(String(entry?.completed_at)))} · no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)`,
     });
   }, 60_000);
 });
@@ -217,9 +219,10 @@ describe('#627 W — inspect’s answer line (W-i1…W-i8, W-i10)', () => {
       respond: answererClause(view({ answered_by: by }), true).replace(' | ', ''),
       phrase: `answered by ${answererPhrase(by, 'as stated')}`,
     }).toEqual({
-      inspect: 'answered by alice (as stated)',
-      respond: 'answered by alice (as stated)',
-      phrase: 'answered by alice (as stated)',
+      // #729 PR-6a (B4): one quoting for both.
+      inspect: 'answered by "alice" (as stated)',
+      respond: 'answered by "alice" (as stated)',
+      phrase: 'answered by "alice" (as stated)',
     });
   });
 });

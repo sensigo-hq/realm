@@ -267,8 +267,9 @@ describe('#715 (b) Amendment 4 addendum (v) — an after-statement composed from
     expect({
       // non-vacuity: the record holds the declared name the sentence names.
       recordedBy: JSON.stringify(stored.evidence).includes(DECLARED),
+      // #729 PR-6a (B3): the form's own choice, beaten — the sentence names the winner's answer.
       hintOpens: hint.startsWith(
-        "Not recorded: the question on step 'q' was answered — reject, by \"",
+        "Not recorded: your choice 'approve'. The question on step 'q' was already answered — reject, by \"",
       ),
       hintHoldsIt: hint.includes(DECLARED),
       wireHoldsIt: sent.some((m) => m.includes(DECLARED)),

@@ -28,6 +28,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
   executeStep,
+  instantText,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
@@ -537,7 +538,8 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
     }).toEqual({
       status: 'error',
       agent_action: 'report_to_user',
-      hint: `Gate '${gateId}' was already resolved with choice 'approve' — your choice 'reject' was not recorded. Owed to the engine: 'after' — call advance_run.`,
+      // #729 PR-6a (B7): the beaten-different sentence in the assistant's words, the tail kept.
+      hint: `Not recorded: your choice 'reject'. The question on step 'confirm' was already answered — approve, through Realm's MCP answer tool, at ${instantText(Date.parse(String(reply.outcome?.at)))}. Owed to the engine: 'after' — call advance_run.`,
       next: ['advance_run'],
     });
   });

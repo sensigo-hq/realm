@@ -381,6 +381,8 @@ describe('C2 — get_run_state on a run whose gate expired to its default (a rea
       {
         choice: 'approve',
         answered_by: { by: null, absent_cause: 'settled_by_expiry' },
+        // #729 PR-6a (B8): when the entry was written.
+        at: expect.any(String),
         claim_proof_absent: 'settled_by_expiry',
       },
     ]);
@@ -486,6 +488,8 @@ describe('get_run_state — who took each step; the token has one door and this 
       {
         choice: 'approve',
         answered_by: { by: null, absent_cause: 'not_stated' },
+        // #729 PR-6a (B8): when the answer was given.
+        at: expect.any(String),
         claim_proof: { proof: 'matched' },
       },
     ]);
@@ -585,6 +589,8 @@ describe('the answer as data — an answer-only step, a planted name, a long nam
         {
           choice: 'approve',
           answered_by: { by: 'alice', by_source: 'stated' },
+          // #729 PR-6a (B8): when the answer was given.
+          at: expect.any(String),
           claim_proof: { proof: 'absent' },
         },
       ],
