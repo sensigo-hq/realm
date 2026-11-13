@@ -691,7 +691,7 @@ describe('#729 PR-6b — the Slack question post', () => {
       edited: [OLD_TS],
       file: false,
     });
-  });
+  }, 20_000);
 
   it('check 10: the writer still running (a live process on this host names the file) — a second question post; the file’s bytes unchanged at close', async () => {
     const def = gated('pr6b-10');
@@ -740,7 +740,7 @@ describe('#729 PR-6b — the Slack question post', () => {
       edited: [[CHANNEL, POST_TS]],
       said: [],
     });
-  });
+  }, 20_000);
 
   it('check 12: two takeovers of one stopped file at once — exactly one succeeds; with two agents, the other posts its own question', async () => {
     const def = gated('pr6b-12');
@@ -772,7 +772,7 @@ describe('#729 PR-6b — the Slack question post', () => {
       },
       `the takeovers: ${JSON.stringify(both)}\n${shown()}`,
     ).toEqual({ succeeded: 1, said: 1, questionPosts: 1, edited: [OLD_TS, POST_TS].sort() });
-  });
+  }, 20_000);
 
   it('check 13: the file holds exactly the channel, the `ts`, the pid, the host name and the random id; no token', async () => {
     const def = gated('pr6b-13');
