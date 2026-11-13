@@ -132,9 +132,11 @@ button.openall:hover { border-color: var(--muted); }
 .tool:target { outline: 2px solid var(--muted); outline-offset: -2px; }
 .tool h3 { font-size: 17px; font-weight: 600; }
 .tool .tmeta { margin: 4px 0 0; font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); }
+.tool .tmeta span { white-space: nowrap; }
 .tool p { max-width: 76ch; line-height: 1.5; }
 .tool p.sl { margin: 10px 0 0; }
-.tool .slab { display: block; font: 500 11px/1.3 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+/* The label keeps the tool's own spelling of its name (n8n), so it is never upper-cased. */
+.tool .slab { display: block; font: 600 13px/1.3 'IBM Plex Sans', system-ui, sans-serif; color: var(--muted); margin-bottom: 3px; }
 @media (max-width: 640px) {
   .rowsof thead { display: none; }
   .rowsof tr { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 12px 14px; border-top: 1px solid var(--line-soft); }
@@ -257,7 +259,7 @@ button.openall:hover { border-color: var(--muted); }
       {tools.map((t) => (
         <section class={t.key === 'realm' ? 'tool realm' : 'tool'} id={t.key === 'realm' ? undefined : `realm-vs-${t.key}`}>
           <h3>{t.key === 'realm' ? t.name : `Realm vs ${t.name}`}</h3>
-          <p class="tmeta">{t.group} · {t.version} · checked {t.checked}</p>
+          <p class="tmeta"><span>{t.group}</span> · <span>{t.version}</span> · <span>checked {t.checked}</span></p>
           <p class="sl"><span class="slab">{t.name} is stronger at</span>{linkParts(strengths[t.key].stronger).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p>
           <p class="sl"><span class="slab">{t.name} falls short at</span>{linkParts(strengths[t.key].weaker).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p>
           {t.key === 'realm' && olderNote(strengths.realm.release) ? <p class="tmeta">{olderNote(strengths.realm.release)}</p> : null}
