@@ -1201,6 +1201,12 @@ export interface WebhookTrigger {
   dedup?: DedupConfig | false;
   /** Maps run params from payload: keys = param names, values = dot-paths into { headers, body }. */
   params_map?: Record<string, string>;
+  /**
+   * R1.1: what the caller of `realm listen` may read of a finished run: keys = the names in the
+   * reply's `result`, values = `context.resources.<step>.<field>` paths. `{}` hands out the phase
+   * only. Allowed with `auth.mode: shared_secret` only (the loader refuses every other mode).
+   */
+  result_map?: Record<string, string>;
 }
 
 export type TriggerDefinition = WebhookTrigger;
