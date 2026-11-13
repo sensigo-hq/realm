@@ -67,21 +67,22 @@ export const RELAY_CHILD_ENV = 'REALM_RELAY_CHILD';
 export const RELAY_KEY_ENV = 'REALM_RELAY_KEY';
 
 /**
- * U1b: the relay's span key, when this process is that relay's worker: the markers are honoured only
- * when the parent's pid is the one named AND an IPC channel exists. Both markers are deleted here,
- * at the module's init, whether honoured or not, so a handler never sees either.
+ * U1b: the relay's span key and pid, when this process is that relay's worker: the markers are
+ * honoured only when the parent's pid is the one named AND an IPC channel exists. Both markers are
+ * deleted here, at the module's init, whether honoured or not, so a handler never sees either.
  */
-function readRelayMarkers(): Buffer | undefined {
+function readRelayMarkers(): { key: Buffer; parent: number } | undefined {
   const parent = process.env[RELAY_CHILD_ENV];
   const key = process.env[RELAY_KEY_ENV];
   delete process.env[RELAY_CHILD_ENV];
   delete process.env[RELAY_KEY_ENV];
   if (parent === undefined || key === undefined || !/^[0-9a-f]{64}$/.test(key)) return undefined;
   if (process.ppid !== Number(parent) || typeof process.send !== 'function') return undefined;
-  return Buffer.from(key, 'hex');
+  return { key: Buffer.from(key, 'hex'), parent: Number(parent) };
 }
 
-const relayKey = readRelayMarkers();
+const relayMarkers = readRelayMarkers();
+const relayKey = relayMarkers?.key;
 /** U1b: this process is a relay's worker. */
 const relayWorker = relayKey !== undefined;
 /** U1b correction 1 (C1): in a relay's worker, its environment and working folder at its start
@@ -107,6 +108,12 @@ export function spanKeyHex(): string {
 /** U1b: whether this process is a relay's worker. */
 export function isRelayWorker(): boolean {
   return relayWorker;
+}
+
+/** U1b: the pid the operator sees for this drive: in a relay's worker the relay's, else this
+ *  process's. */
+export function drivePid(): number {
+  return relayMarkers?.parent ?? process.pid;
 }
 
 /** U1b: the one line said when a stream's pipe cannot be made blocking: never a run unmasked. */
