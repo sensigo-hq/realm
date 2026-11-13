@@ -738,7 +738,12 @@ async function walk(which, width) {
   const p0 = await posts();
   await go(3);
   await page.dblclick('[data-act="post"]');
-  await page.waitForFunction(() => document.querySelector('.rp').dataset.liveState === 'D');
+  // If the run does not complete, the check below prints what the page shows instead.
+  await page
+    .waitForFunction(() => document.querySelector('.rp').dataset.liveState === 'D', null, {
+      timeout: 10000,
+    })
+    .catch(() => {});
   await idle();
   ok(
     `a double-click on "${S.sendLabel}" sends one call: the run completed (state D), one POST`,
@@ -791,7 +796,11 @@ async function walk(which, width) {
   await go(3);
   const p1 = await posts();
   await page.click('[data-act="post"]');
-  await page.waitForFunction(() => document.querySelector('.rp').dataset.liveState === 'D');
+  await page
+    .waitForFunction(() => document.querySelector('.rp').dataset.liveState === 'D', null, {
+      timeout: 10000,
+    })
+    .catch(() => {});
   await idle();
   ok(
     `a single click on "${S.sendLabel}" → the run completed (state D), one POST, stage 4, focus on its heading`,
