@@ -530,4 +530,39 @@ describe('#960 the stop tracker', { timeout: 30_000 }, () => {
       outcome: { cut: 0, because: undefined },
     });
   });
+
+  it('A14: a second signal before the stop (during `--shutdown-drain`) begins it and cuts what is in flight at once, cause `second_signal`; with nothing open it ends cutting nothing', async () => {
+    const one = await start(() => {});
+    const c1 = await client(one.port);
+    c1.socket.write(GET);
+    await sleep(100);
+    const t = performance.now();
+    const cut = await within(one.tracker.cutAll(), 2000);
+    await closedAll([c1]);
+    const closedMs = round((c1.closedAt() ?? Infinity) - t);
+    // The server accepts nothing after it, and a later `stop()` returns the same outcome.
+    const refused = await new Promise<boolean>((r) => {
+      const probe = connect(one.port, '127.0.0.1');
+      probe.on('connect', () => {
+        probe.destroy();
+        r(false);
+      });
+      probe.on('error', () => r(true));
+    });
+    const again = await within(one.tracker.stop(30_000), 1000);
+    const two = await start(() => {});
+    const empty = await within(two.tracker.cutAll(), 2000);
+    // (1) Red with U1's `cutAll()`, which did nothing before `stop()` (no outcome, the request
+    //     left open), and when it begins the stop as a grace of 0 (`because: grace_ran_out`).
+    // (2) Prints the outcomes, when the client's socket closed after the cut (ms) and whether a
+    //     new connection was refused.
+    const facts = { cut, closedMs, refused, again, empty };
+    expect({ ...facts, closedMs: facts.closedMs! <= 1000 }, JSON.stringify(facts)).toEqual({
+      cut: { cut: 1, because: 'second_signal' },
+      closedMs: true,
+      refused: true,
+      again: { cut: 1, because: 'second_signal' },
+      empty: { cut: 0, because: 'second_signal' },
+    });
+  });
 });

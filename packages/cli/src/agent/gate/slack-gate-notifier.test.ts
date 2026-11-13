@@ -48,7 +48,7 @@ function heldAt(gate: PendingGate): Snapshot {
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import { renderOutcome } from '@sensigo/realm-mcp';
+import { ASSISTANT_DOOR_WORDS, renderOutcome } from '@sensigo/realm-mcp';
 import { renderAnswerLine } from '../../lib/holder-render.js';
 import { join } from 'node:path';
 import { LlmProvider } from '../providers/llm-provider.js';
@@ -800,13 +800,16 @@ describe('handleBidirectionalGate', () => {
         },
         answerArrivalOf(entry),
       ).includes(' · through a Slack thread (as its door declared), '),
-      agent: renderOutcome({
-        step: gate.step_name,
-        attempted: false,
-        by: { kind: 'answer', basis: 'stated' },
-        choice: 'approve',
-        via: answerViaOf(entry),
-      }),
+      agent: renderOutcome(
+        {
+          step: gate.step_name,
+          attempted: false,
+          by: { kind: 'answer', basis: 'stated' },
+          choice: 'approve',
+          via: answerViaOf(entry),
+        },
+        ASSISTANT_DOOR_WORDS,
+      ),
     }).toEqual({
       inspect: true,
       agent:
@@ -1245,7 +1248,8 @@ const CLOSED_CASES = [
     }),
   },
   {
-    how: 'it was answered elsewhere as `approve`',
+    // #729 PR-6a (B3's last row): the whole winning answer — its route was not recorded here.
+    how: 'it was answered — approve, by "sam" (as stated), at 2026-10-27T10:05:00Z; how the answer arrived was not recorded',
     record: closedRecord({
       evidence: [
         {
@@ -1637,8 +1641,11 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
         {
           step: 'review',
           attempted: true,
+          attempted_choice: 'reject',
           by: { kind: 'answer', basis: 'stated', name: 'sam' },
           choice: 'approve',
+          via: 'cli',
+          at: '2026-11-12T10:02:14.131Z',
         } as never,
         false,
       ),
@@ -1647,7 +1654,14 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
         false,
       ),
       late({ step: 'review', attempted: true, by: { kind: 'timeout' } } as never, true),
-      late({ step: 'review', attempted: true, by: { kind: 'engine' } } as never, true),
+      late(
+        {
+          step: 'review',
+          attempted: true,
+          by: { kind: 'engine', cause: 'gate_cancelled_by_abort', step: 'stop' },
+        } as never,
+        true,
+      ),
       renderSlack(
         composePersonNotice({
           kind: 'answer_refused',
@@ -1662,12 +1676,14 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
     // (a) red when a kind's words change or an operator command enters the thread; (b) prints the
     //     texts.
     expect({ words, command: words.some((w) => /realm /.test(w)) }).toEqual({
+      // #729 PR-6a (B9): one composer — the people's words through `renderOutcome`; a run that
+      // ended with no outcome asks for no retry.
       words: [
-        'This question was already answered by sam — `approve` — before your reply arrived. The run goes on.',
-        "This question's time ran out before your reply arrived; it was settled as `reject`. The run goes on.",
-        "This question's time ran out before your reply arrived; the run stopped. The run has ended.",
-        'This question was withdrawn when the run stopped; your reply was not recorded. The run has ended.',
-        "⚠️ Couldn't record your response (`STATE_RUN_TERMINAL`). Try again.",
+        "Not recorded: your choice 'reject'. The question on step 'review' was already answered — approve, by \"sam\" (as stated), from a terminal, at 2026-11-12T10:02:14Z.",
+        "Not recorded: the question on step 'review' reached its time limit, and the run took the default reject. The run goes on.",
+        "Not recorded: the question on step 'review' reached its time limit, and the run ended as aborted.",
+        "Not recorded: the question on step 'review' was closed because step 'stop' aborted the run.",
+        'Not recorded: this run stopped before your reply arrived.',
       ],
       command: false,
     });
@@ -1720,7 +1736,8 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
     //     booleans.
     expect({
       resolution: replies.some((t) => t.includes('Shipping with [REDACTED]')),
-      outcome: replies.some((t) => t.includes('answered by [REDACTED]')),
+      // #729 PR-6a (B4): the name quoted.
+      outcome: replies.some((t) => t.includes('by "[REDACTED]" (as stated)')),
       leaked: replies.some((t) => t.includes(PR4_ENV_VALUE)),
     }).toEqual({ resolution: true, outcome: true, leaked: false });
   });

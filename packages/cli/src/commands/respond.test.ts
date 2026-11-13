@@ -13,6 +13,7 @@ import {
   executeStep,
   submitHumanResponse,
   composeStepViews,
+  instantText,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type RunStore,
 } from '@sensigo/realm';
@@ -597,14 +598,23 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
 
   const respondedLine = (clause: string): string =>
     `Responded: ${runId} | choice 'ship'${clause} | new state 'running'`;
+  /** #729 PR-6a (B5): a repeat's line — whose answer stands, from the reply's `outcome`. */
+  async function beatenLine(by: string, door: string): Promise<string> {
+    const entry = (await runStore.get(runId)).record.evidence.find(
+      (e) => e.kind === 'gate_response',
+    );
+    const at = instantText(Date.parse(entry!.completed_at));
+    return `Not recorded: the question on step 'decide' already had this answer — ship${by}, ${door}, at ${at}.`;
+  }
 
   it('1. a repeat names the answerer the record holds, never its own --by', async () => {
     await respond('alice');
     const bob = await respond('bob');
     // (a) red when the clause is composed from this command's `--by`: bob's line names bob, while
-    //     the record keeps alice. (b) prints bob's line and the record's answers.
+    //     the record keeps alice; #729 PR-6a (B5): or when the repeat says `Responded:`, as if it
+    //     had recorded something. (b) prints bob's line and the record's answers.
     expect(bob, `the record's answers: ${await recordedAnswers()}`).toBe(
-      respondedLine(' | answered by alice (as stated)'),
+      await beatenLine(', by "alice" (as stated)', 'from a terminal'),
     );
   });
 
@@ -612,9 +622,10 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     await respond();
     const bob = await respond('bob');
     // (a) red when the clause is composed from `--by`: bob's line names bob, while the record holds
-    //     no name. (b) prints bob's line and the record's answers.
+    //     no name — #729 PR-6a (B3): the sentence then has no `by` part. (b) prints bob's line and
+    //     the record's answers.
     expect(bob, `the record's answers: ${await recordedAnswers()}`).toBe(
-      respondedLine(' | answered by (not stated)'),
+      await beatenLine('', 'from a terminal'),
     );
   });
 
@@ -624,7 +635,7 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     // (a) red when the clause is said only when `--by` was given (`byGiven ? … : ''` for every
     //     answer): the line has no clause. (b) prints the line and the record's answers.
     expect(anonymous, `the record's answers: ${await recordedAnswers()}`).toBe(
-      respondedLine(' | answered by alice (as stated)'),
+      await beatenLine(', by "alice" (as stated)', 'from a terminal'),
     );
   });
 
@@ -655,9 +666,11 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     //     as `(not stated)`, or when the stored bytes are printed. (b) prints bob's line, JSON-quoted
     //     so a control character shows as an escape, and the record's answers.
     const shown = `bob's line: ${JSON.stringify(bob)}; the record's answers: ${await recordedAnswers()}`;
+    // #729 PR-6a (B3): the host program declared no route.
     expect(bob, shown).toBe(
-      respondedLine(
-        ' | answered by a recorded name that cannot be printed (control characters, or not a name with its source)',
+      await beatenLine(
+        ', by a recorded name that cannot be printed (control characters, or not a name with its source)',
+        'through a route its program did not declare',
       ),
     );
     expect(bob.includes('\u0007'), shown).toBe(false);
@@ -714,15 +727,19 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     expect(answersAfter.length, shown).toBe(1);
     // (a) red when the clause is composed from `--by` (bob), or from the record bob read BEFORE his
     //     call (the question open: no answer, so no clause).
-    expect(bob, shown).toBe(respondedLine(' | answered by alice (as stated)'));
+    // #729 PR-6a (B5): whose answer stands — alice's, through the route her call declared (none).
+    expect(bob, shown).toBe(
+      await beatenLine(', by "alice" (as stated)', 'through a route its program did not declare'),
+    );
   });
 
   it('6. (preservation) a first answer with --by names that answerer', async () => {
     const alice = await respond('alice');
     // (a) red when a recorded name stops being said, or its words change. (b) prints the line and
     //     the record's answers.
+    // #729 PR-6a (B8): the name quoted (B4).
     expect(alice, `the record's answers: ${await recordedAnswers()}`).toBe(
-      respondedLine(' | answered by alice (as stated)'),
+      respondedLine(' | answered by "alice" (as stated)'),
     );
   });
 
@@ -746,7 +763,7 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     };
     says(
       'docs/reference/cli/realm-run-acting.md',
-      'Giving the same answer again prints the `Responded:` line again, naming the answerer the record holds (`answered by <name> (as stated)`, or `answered by (not stated)` when you gave `--by` and the record holds no name); it records no new answer.',
+      'Giving the same answer again records nothing. In place of the `Responded:` line, `respond` says whose answer stands: `Not recorded: the question on step \'<step>\' already had this answer — <choice>, by "<name>" (as stated), <door>, at <time>.`',
     );
     says(
       'CHANGELOG.md',

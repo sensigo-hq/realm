@@ -817,7 +817,8 @@ describe(
             respond.code,
             respond.out.includes(`Responded: ${first.runId} | choice 'send'`),
           ],
-          byAlice: [byAlice.code, inspect.out.includes('answered by alice (as stated)')],
+          // #729 PR-6a (B4): the name quoted.
+          byAlice: [byAlice.code, inspect.out.includes('answered by "alice" (as stated)')],
         },
         list.out + respond.out + respond.err + byAlice.out + byAlice.err + inspect.out,
       ).toEqual({ list: [0, true], respond: [0, true], byAlice: [0, true] });

@@ -910,6 +910,8 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
             {
               choice: 'approve',
               answered_by: { by: 'alice', by_source: 'stated' },
+              // #729 PR-6a (B8): when the answer was given.
+              at: expect.any(String),
               claim_proof: { proof: 'absent' },
             },
           ]),
@@ -1083,6 +1085,11 @@ describe('#625 PR-H — context 3b, get_run_state.step_claims and the answer', (
       claim_proof: {
         surface: 'rendered',
         probe: () => expect(answer.claim_proof).toEqual({ proof: 'absent' }),
+      },
+      // #729 PR-6a (B8): when the answer was given — the entry's `completed_at`, as stored.
+      at: {
+        surface: 'rendered',
+        probe: () => expect(answer.at).toMatch(/^\d{4}-\d{2}-\d{2}T/),
       },
       claim_proof_absent: {
         surface: 'rendered',

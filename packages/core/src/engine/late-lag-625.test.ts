@@ -183,14 +183,16 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
       { kind: 'timeout' },
       "Gate '<g>' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.",
     ],
-    // Amendment 3: the abort row — the run the expiry ended answers as any ended run does.
+    // Amendment 3: the abort row — the run the expiry ended answers as any ended run does; #729
+    // PR-6a (B2 (3)): with what the question met — its expiry (`outcome`), and the answer not
+    // recorded — as the reply of the call that carried the abort out says.
     [
       'abort',
       'approve',
       'error',
       'STATE_RUN_TERMINAL',
-      undefined,
-      undefined,
+      false,
+      { kind: 'timeout' },
       "Run '<r>' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge <r>' previews what it would remove.",
     ],
   ] as const)(

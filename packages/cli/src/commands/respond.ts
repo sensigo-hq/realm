@@ -28,13 +28,20 @@ import {
   sentenceEnd,
   pendingCleanupLine,
   pendingCleanupWay,
+  endedRunWayOutOf,
 } from '@sensigo/realm';
+import { renderOutcome } from '@sensigo/realm-mcp';
 import {
   loadProjectExtensions,
   type LoadedProjectExtensions,
 } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
-import { answererPhrase, recordedAnswer } from '../lib/holder-render.js';
+import {
+  PEOPLE_DOOR_WORDS,
+  answererPhrase,
+  namedAnswerer,
+  recordedAnswer,
+} from '../lib/holder-render.js';
 import { CLI_COMMANDS, cannotGoOnLines, owedItems, writerHost } from './ways-renderer.js';
 import {
   agentReadyReason,
@@ -177,10 +184,40 @@ function gateMismatchLines(result: EngineReply): string[] {
  */
 export function answererClause(answer: AnswerView | undefined, byGiven: boolean): string {
   if (answer === undefined) return '';
-  const by = answer.answered_by;
-  if (by.by === null && by.absent_cause === 'settled_by_expiry') return '';
+  const by = namedAnswerer(answer.answered_by);
+  if (by === undefined) return '';
   if (by.by === null && by.absent_cause !== 'name_unreadable' && !byGiven) return '';
   return ` | answered by ${answererPhrase(by, 'as stated')}`;
+}
+
+/**
+ * #729 PR-6a (B5): the sentence for an answer another person's answer beat — with a different choice
+ * (the refusal) or the same one (an `ok` reply that recorded nothing) — from the reply's `outcome`,
+ * never a read of the run (T-19 (c)), through the one sentence-maker in the people's words.
+ * `undefined` for every other reply.
+ */
+function beatenSentence(result: EngineReply): string | undefined {
+  const outcome = result.outcome;
+  if (outcome === undefined || outcome.by.kind !== 'answer' || result.answer_recorded === false) {
+    return undefined;
+  }
+  return renderOutcome(outcome, PEOPLE_DOOR_WORDS);
+}
+
+/**
+ * #729 PR-6a (B2 (3), B5): an answer after an `on_expiry: abort` that ANOTHER call carried out —
+ * the reply says what the question met (`outcome`: its expiry, no choice) and carries no `expiry`
+ * receipt (this call carried nothing out).
+ */
+function abortedByOtherCall(result: EngineReply): boolean {
+  const outcome = result.outcome;
+  return (
+    result.answer_recorded === false &&
+    result.expiry === undefined &&
+    outcome !== undefined &&
+    outcome.by.kind === 'timeout' &&
+    outcome.choice === undefined
+  );
 }
 
 /** What `respondToGate` hands the command to print (issue #625). */
@@ -288,12 +325,21 @@ export async function respondToGate(
     // learn what the run is doing now: refusal → guard lines → `Not recorded:`. Every other
     // refusal prints exactly what it printed before (plus the ending, should the reply carry one),
     // and an answer naming a gate that is not the open one its way on (#729 PR-0 correction, C5).
-    const refusal = result.errors[0] ?? 'Gate response failed';
+    // #729 PR-6a (B5): an answer another person's answer beat says whose answer stands.
+    const refusal = beatenSentence(result) ?? result.errors[0] ?? 'Gate response failed';
     let lines = [refusal, ...gateMismatchLines(result), ...describeEndedBy(result)];
     // #715 (b) (D6-17, Amendment 4): the lines about the record after the answer are judged on the
     // snapshot the engine judged its reply on — never a second load; a reply with none gets none.
     const judged = judgedSnapshotOf(result);
-    if (result.answer_recorded === false && judged !== undefined) {
+    if (abortedByOtherCall(result)) {
+      // #729 PR-6a (B5): the question's time limit ended the run before this answer — said through
+      // the one sentence-maker, then the way out of the ended run (today's wording, C170).
+      const wayOut = judged !== undefined ? endedRunWayOutOf(judged, workflow) : undefined;
+      lines = [
+        renderOutcome(result.outcome!, PEOPLE_DOOR_WORDS),
+        ...(wayOut !== undefined ? [`${wayOut.charAt(0).toUpperCase()}${wayOut.slice(1)}`] : []),
+      ];
+    } else if (result.answer_recorded === false && judged !== undefined) {
       const { record: lateRun, at: lateAt } = judged;
       const late = lateAnswerOutcome(result, lateRun);
       // decision C146: the composer starts with which call carried out the question's expiry
@@ -372,6 +418,22 @@ export async function respondToGate(
       ].join('\n'),
     };
   }
+  // #729 PR-6a (B5): the same choice another person's answer recorded first — recorded nothing: the
+  // sentence that says whose answer stands takes the place of `Responded:`, and what the run owes
+  // follows as on a recorded answer. Exit 0: the outcome asked for holds (a retry is told the same).
+  const beaten = beatenSentence(result);
+  if (beaten !== undefined) {
+    return {
+      choice: options.choice,
+      newState: deriveRunPhase(updatedRun),
+      recorded: false,
+      lines,
+      lastLine: [
+        beaten,
+        ...nextLines(runId, workflow, updatedRun, updatedAt, effectiveRegistry, hasCode),
+      ].join('\n'),
+    };
+  }
   // issue #625 PR-2a (decision C11): the answerer the record holds — read after the call, for the
   // question's step (the reply's `command`, on the recording path and on a repeat alike), never this
   // command's `--by` (#706 walk W8-R1) —, the DERIVED phase, and — when the answer left engine work
@@ -407,8 +469,10 @@ export const respondCommand = new Command('respond')
   )
   .option(
     '--by <name>',
-    'Who made the choice, as you state it — recorded with the answer, not verified. At most 200 ' +
-      'characters, no control characters. Optional: the answer names its answerer only when this is given.',
+    'Who made the choice, as you state it — recorded with the answer, not verified, and shown with ' +
+      'it: to anyone whose later answer is not recorded, and in Slack when the question closes. At ' +
+      'most 200 characters, no control characters. Optional: the answer names its answerer only ' +
+      'when this is given.',
   )
   .action(
     async (

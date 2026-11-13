@@ -279,13 +279,20 @@ If a realm workflow run or realm agent is still waiting on this run, it goes on 
 
 Over MCP these replies carry `answer_recorded: false`. See [`submit_human_response`](../mcp/tools.md#submit_human_response).
 
-**`on_expiry: abort`.** The run ended and no choice was settled, so there is no `Not recorded:` line. The answer that carries out the abort is refused with the message below, and its MCP reply carries `answer_recorded: false`:
+**`on_expiry: abort`.** The run ended and no choice was settled. The answer that carries out the abort is refused with the message below, with no `Not recorded:` line, and its MCP reply carries `answer_recorded: false`:
 
 ```text
 Gate '638d412e-ee8a-492c-ae80-750d2a26cbc2' on 'approve' expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded.
 ```
 
-An answer that arrives after something else carried out the abort is refused with `STATE_RUN_TERMINAL`, without that field — as is every answer to a question that recorded no choice on a run that has ended (see [A run that has ended](../mcp/tools.md#a-run-that-has-ended)):
+An answer that arrives after something else carried out the abort is refused with `STATE_RUN_TERMINAL`. Its reply carries `answer_recorded: false` and an `outcome` that says the question's time limit ended the run (added after version 0.49.0). `realm run respond` prints:
+
+```text
+Not recorded: the question on step 'approve' reached its time limit, and the run ended as aborted.
+An aborted run is never resumed; 'realm run purge 063dee23-e68e-4d7f-bcc2-968dd764370c' previews what it would remove.
+```
+
+Over MCP, the first line is the refusal's `errors[0]`, and its `context_hint` is the refusal a run that has ended gives (see [A run that has ended](../mcp/tools.md#a-run-that-has-ended)):
 
 ```text
 Run '063dee23-e68e-4d7f-bcc2-968dd764370c' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 063dee23-e68e-4d7f-bcc2-968dd764370c' previews what it would remove.

@@ -36,10 +36,16 @@ function claimChangelog(text: string): void {
   expect(flat(section), `the CHANGELOG no longer says: ${text}`).toContain(flat(text));
 }
 
-/** The supervisor sentence, the same on both pages but for the program's name. Docker's 10 s is
- *  registry row AUD-944r5-11 (executed); systemd's 90 s (`DefaultTimeoutStopSec`) is read from its
- *  documentation and was never run here: INFERRED. */
+/** The supervisor sentence, the same on both pages but for the program's name. #960 U2 replaced
+ *  U1's (whose "`docker stop` waits 10 seconds by default" a real check found untrue on this
+ *  machine's Docker). Executed: systemd's 90 s, its `SIGKILL` with no line printed and
+ *  `TimeoutStopSec=` (registry MA3-SUP-01, systemd 255), and `docker stop`'s `--stop-timeout` and
+ *  `-t` (MA3-SUP-02, MA3-SUP-03). From Docker's documentation, not run: the daemon's default of 10
+ *  seconds and its `default-stop-timeout` option (Docker 29.7). */
 const SUPERVISOR = (program: string): string =>
+  `A program that stops \`${program}\` on a shorter limit than \`--shutdown-drain\` plus \`--shutdown-grace\` ends it first, with \`SIGKILL\` and no line printed: give it a longer one. systemd waits 90 seconds by default (\`TimeoutStopSec=\` in the unit sets it). \`docker stop\` waits for the container's \`--stop-timeout\` (\`docker run --stop-timeout <seconds>\`, or \`docker stop -t <seconds>\`); without one it waits the Docker daemon's default, which Docker's documentation gives as 10 seconds and the daemon's \`default-stop-timeout\` option can change.`;
+/** U1's supervisor sentence, which U2 replaced. */
+const OLD_SUPERVISOR = (program: string): string =>
   `A program that stops \`${program}\` on a shorter limit than this ends it first (\`docker stop\` waits 10 seconds by default, systemd 90): give it a limit longer than \`--shutdown-grace\`.`;
 /** The stop paragraph's middle, the same on both pages. */
 const STOPS =
@@ -47,7 +53,7 @@ const STOPS =
 const ROW_TEXT =
   'How long requests that are being answered get to finish after Ctrl+C or `SIGTERM`: a whole number of seconds from 0 to 2147483. When it runs out, the requests still open are cut and the exit code is 1. 0 cuts them at once.';
 const CODES =
-  '| 0 | It was stopped by Ctrl+C or `SIGTERM` and cut no request. | | 1 | It could not start, or it was stopped and had to cut requests that were still being answered. |';
+  '| 0 | It was stopped by Ctrl+C or `SIGTERM` and cut no request (changed after version 0.49.0). | | 1 | It could not start, or it was stopped and had to cut requests that were still being answered (the second case was added after version 0.49.0). |';
 const REFUSAL =
   "| `--shutdown-grace` is not a whole number from 0 to 2147483 (added after version 0.49.0) | `error: option '--shutdown-grace <seconds>' argument '-1' is invalid. --shutdown-grace must be a whole number from 0 to 2147483.` |";
 
@@ -67,7 +73,8 @@ describe('issue #960 — realm-listen.md', () => {
       LISTEN,
       '```text\nlisten: shutdown cut requests {"cut":1,"because":"grace_ran_out","grace_seconds":1}\n```',
     );
-    claim(LISTEN, SUPERVISOR('realm listen'));
+    claim(LISTEN, `${SUPERVISOR('realm listen')} This flag was added after version 0.49.0.`);
+    gone(LISTEN, OLD_SUPERVISOR('realm listen'));
   });
 
   it('"How it stops": the stop by state, the second signal, a cut delivery; the old promise gone', () => {
@@ -75,15 +82,16 @@ describe('issue #960 — realm-listen.md', () => {
     // close`), B4 (waiting between requests: closed at once), B5 (an answer after the signal,
     // `connection: close`, then the exit), B7b (30 by default), B7 (the second signal), B6 (a cut
     // delivery: no bytes, its connection closed).
+    // #960 U2: with `--shutdown-drain` the listener closes when the stop begins, not at the signal.
     claim(
       LISTEN,
-      'On Ctrl+C or a `SIGTERM`, `realm listen` logs `listen: shutting down {"reason":"SIGTERM"}` and stops accepting requests.',
+      'On Ctrl+C or a `SIGTERM`, `realm listen` logs `listen: shutting down {"reason":"SIGTERM"}`; when the stop begins, it stops accepting requests.',
     );
     claim(LISTEN, STOPS);
     claim(LISTEN, 'A second Ctrl+C or `SIGTERM` ends everything still open at once.');
     claim(
       LISTEN,
-      'A delivery that is cut gets no answer: `realm listen` closes its connection without replying.',
+      'A delivery that is cut gets no answer: `realm listen` closes its connection without replying. This paragraph, and the one above it, were added or changed after version 0.49.0.',
     );
     gone(LISTEN, 'stops accepting requests, and exits with code 0.');
   });
@@ -94,7 +102,7 @@ describe('issue #960 — realm-listen.md', () => {
     claim(LISTEN, CODES);
     claim(
       LISTEN,
-      '| `error` | `listen: shutdown cut requests {"cut","because","grace_seconds"}` | `--shutdown-grace` ran out, or a second signal came, while requests were being answered; `because` is `grace_ran_out` or `second_signal` |',
+      '| `error` | `listen: shutdown cut requests {"cut","because","grace_seconds"}` | `--shutdown-grace` ran out, or a second signal came, while requests were being answered; `because` is `grace_ran_out` or `second_signal`. Added after version 0.49.0. |',
     );
     claim(LISTEN, REFUSAL);
     gone(LISTEN, '| 0 | It was stopped by Ctrl+C or `SIGTERM`. |');
@@ -108,19 +116,21 @@ describe('issue #960 — realm-mcp-and-serve.md', () => {
     // once).
     claim(
       SERVE,
-      'realm serve [--port <number>] [--host <address>] [--shutdown-grace <seconds>] [--dev]',
+      'realm serve [--port <number>] [--host <address>] [--shutdown-grace <seconds>] [--shutdown-drain <seconds>] [--dev]',
     );
     claim(
       SERVE,
       `| \`--shutdown-grace <seconds>\` | \`30\` | ${ROW_TEXT} ${SUPERVISOR('realm serve')} Added after version 0.49.0. |`,
     );
+    gone(SERVE, OLD_SUPERVISOR('realm serve'));
   });
 
   it('"Stopping and exit codes": the stop by state, the held stream, the lines; the old promise gone', () => {
     // Executed by serve B1, B2, B3, B4, B5 (as for listen), B12 (a connected MCP client's GET
     // stream is closed at once: exit 0, no line), B7 (the second signal and its line), B6 (the
     // grace's line, exit 1).
-    claim(SERVE, 'On Ctrl+C or a `SIGTERM`, `realm serve` stops accepting requests.');
+    // #960 U2: with `--shutdown-drain` the listener closes when the stop begins, not at the signal.
+    claim(SERVE, 'When the stop begins, `realm serve` stops accepting requests.');
     claim(SERVE, STOPS);
     claim(
       SERVE,
@@ -145,7 +155,7 @@ describe('issue #960 — realm-mcp-and-serve.md', () => {
     // `realm run advance`.
     claim(
       SERVE,
-      "A request cut while it ran an `auto` step leaves that step taken by `realm serve`: `realm run inspect <run>` shows it in progress, and `realm run list --stuck` does not list the run while that claim is healthy (`realm run reclaim <run>` shows it healthy, with its deadline). `realm run reclaim <run> --step <step> --force` frees it and warns that the step's side effects may repeat; `realm run inspect` then shows the step owed, with the `realm run advance <run>` that runs it again.",
+      "A request cut while it ran an `auto` step leaves that step taken by `realm serve`: `realm run inspect <run>` shows it in progress, and `realm run list --stuck` does not list the run while that claim is healthy (`realm run reclaim <run>` shows it healthy, with its deadline). `realm run reclaim <run> --step <step> --force` frees it and warns that the step's side effects may repeat; `realm run inspect` then shows the step owed, with the `realm run advance <run>` that runs it again. Every paragraph above in this section was added or changed after version 0.49.0.",
     );
   });
 
@@ -160,12 +170,17 @@ describe('issue #960 — realm-mcp-and-serve.md', () => {
 
 describe('issue #960 — the deploy guide and the CHANGELOG', () => {
   it("the deploy guide's exit-code sentence under the systemd unit", () => {
-    // The exit codes: serve B6 (1 after a cut) and B12 (0). The systemd half (no restart after
-    // `systemctl stop`, a restart after exit 1 under `Restart=on-failure`) is read from systemd's
-    // documentation (registry AUD-960-26) and was never run here: INFERRED.
+    // The exit codes: serve B6 (1 after a cut) and B12 (0). The systemd half, rewritten by #960 U2
+    // after a real check on systemd 255 (registry MA3-SUP-01): `systemctl stop` with a cut request
+    // leaves the unit `failed (Result: exit-code)` and does not restart it; a `kill` that cut
+    // requests exits 1 and is restarted under `Restart=on-failure`.
     claim(
       DEPLOY,
-      '`realm serve` exits 0 when it was stopped and cut no request, and 1 when it had to cut requests (see [its page](../reference/cli/realm-mcp-and-serve.md#stopping-and-exit-codes)). systemd does not restart a service you stop with `systemctl stop`, but it restarts one that exits 1 under `Restart=on-failure`, such as a `kill` that cut requests.',
+      '`realm serve` exits 0 when it was stopped and cut no request, and 1 when it had to cut requests (see [its page](../reference/cli/realm-mcp-and-serve.md#stopping-and-exit-codes)). A service that `systemctl stop` stopped is not restarted, but if `realm serve` had to cut a request and exited 1, systemd shows the service as failed (`Active: failed (Result: exit-code)`). One that exits 1 on its own, such as after a `kill` that cut requests, is restarted under `Restart=on-failure`. This paragraph was added after version 0.49.0.',
+    );
+    gone(
+      DEPLOY,
+      'systemd does not restart a service you stop with `systemctl stop`, but it restarts one that exits 1 under `Restart=on-failure`, such as a `kill` that cut requests.',
     );
   });
 

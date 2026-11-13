@@ -18,6 +18,7 @@ import {
   advanceRun,
   executeStep,
   formatDuration,
+  instantText,
   loadWorkflowFromString,
   type EngineReply,
   type RegistryListing,
@@ -28,6 +29,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { renderReply } from '../render-reply.js';
+
+/** #729 PR-6a (B3): when the winning answer was given, as the sentence writes it (`instantText`). */
+const givenAtOf = (r: Record<string, unknown>): string =>
+  instantText(Date.parse(String((r['outcome'] as { at?: string } | undefined)?.at)));
 import { zOf } from '../test-support/instant.js';
 import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
@@ -491,11 +496,11 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
     ]);
   });
 
-  it('C154, W4-R1 submit_human_response repeating the recorded choice: ok without agent_action, no action taken', async () => {
+  it('C154, W4-R1 submit_human_response repeating the recorded choice: ok without agent_action, whose answer stands (#729 PR-6a)', async () => {
     claim('mcp/tools.md', ENDED_ROW);
     claim(
       'mcp/tools.md',
-      "`ok` without `agent_action` when it repeats the choice its gate recorded: `Gate '<gate>' was already resolved with choice '<c>' — no action was taken.`",
+      '`ok` without `agent_action` when it repeats the choice its gate recorded: `Not recorded: the question on step \'<step>\' already had this answer — <c>, by "<name>" (as stated), through <door>, at <time>.`',
     );
     const { call, runId, gateId } = await endedRun();
     const r = await call('submit_human_response', {
@@ -506,7 +511,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
     expect([r['status'], 'agent_action' in r, r['context_hint']]).toEqual([
       'ok',
       false,
-      `Gate '${gateId}' was already resolved with choice 'approve' — no action was taken.`,
+      `Not recorded: the question on step 'confirm' already had this answer — approve, through Realm's MCP answer tool, at ${givenAtOf(r)}.`,
     ]);
   });
 
@@ -515,11 +520,11 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
     async (choice) => {
       claim(
         'mcp/tools.md',
-        "Any other choice on that gate is refused with `STATE_BLOCKED`: `… your choice '<other>' was not recorded.`",
+        "Any other choice on that gate is refused with `STATE_BLOCKED`: `Not recorded: your choice '<other>'. The question on step '<step>' was already answered — <c>, …`.",
       );
       claim(
         'mcp/tools.md',
-        "`Gate '70d76b3b-…' was already resolved with choice 'send' — your choice 'discard' was not recorded.`",
+        "`Not recorded: your choice 'discard'. The question on step 'draft' was already answered — send, by \"alice\" (as stated), through a terminal, at 2026-11-12T10:02:14Z.`",
       );
       claim('mcp/tools.md', 'Each refusal carries `report_to_user`.');
       const { call, runId, gateId } = await endedRun();
@@ -528,7 +533,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
         'error',
         'STATE_BLOCKED',
         'report_to_user',
-        `Gate '${gateId}' was already resolved with choice 'approve' — your choice '${choice}' was not recorded.`,
+        `Not recorded: your choice '${choice}'. The question on step 'confirm' was already answered — approve, through Realm's MCP answer tool, at ${givenAtOf(r)}.`,
       ]);
     },
   );
@@ -536,7 +541,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
   it('C154, W4-R1 submit_human_response, another gate ID: STATE_RUN_TERMINAL, report_to_user', async () => {
     claim(
       'mcp/tools.md',
-      "Another gate ID, or the gate of a question that recorded no choice (its `on_expiry: abort` ended the run), is refused with `STATE_RUN_TERMINAL`: `Run '<id>' is terminal (<phase>); cannot submit a gate response — …`, ending with the way out for that kind of ending:",
+      "Another gate ID is refused with `STATE_RUN_TERMINAL`: `Run '<id>' is terminal (<phase>); cannot submit a gate response — …`, ending with the way out for that kind of ending:",
     );
     const { call, runId } = await endedRun();
     const r = await call('submit_human_response', {
@@ -556,14 +561,18 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
     );
   });
 
-  it('C154 submit_human_response on the gate of a question whose abort ended the run: STATE_RUN_TERMINAL, without answer_recorded (gates.md)', async () => {
+  it('C154 submit_human_response on the gate of a question whose abort ended the run: STATE_RUN_TERMINAL, not recorded, with what the question met (gates.md; #729 PR-6a)', async () => {
     claim(
       'mcp/tools.md',
-      "Another gate ID, or the gate of a question that recorded no choice (its `on_expiry: abort` ended the run), is refused with `STATE_RUN_TERMINAL`: `Run '<id>' is terminal (<phase>); cannot submit a gate response — …`, ending with the way out for that kind of ending:",
+      'The gate of a question whose `on_expiry: abort` ended the run is refused with `STATE_RUN_TERMINAL`, `answer_recorded: false` and `outcome` carrying `by: { "kind": "timeout" }`; its `errors[0]` is `Not recorded: the question on step \'<step>\' reached its time limit, and the run ended as aborted.`, and its `context_hint` is the refusal that another gate ID gets (added after version 0.49.0). Another gate ID is refused with `STATE_RUN_TERMINAL`: `Run \'<id>\' is terminal (<phase>); cannot submit a gate response — …`, ending with the way out for that kind of ending:',
     );
     claim(
       'workflow/gates.md',
-      'An answer that arrives after something else carried out the abort is refused with `STATE_RUN_TERMINAL`, without that field — as is every answer to a question that recorded no choice on a run that has ended',
+      "An answer that arrives after something else carried out the abort is refused with `STATE_RUN_TERMINAL`. Its reply carries `answer_recorded: false` and an `outcome` that says the question's time limit ended the run (added after version 0.49.0).",
+    );
+    claim(
+      'workflow/gates.md',
+      "Over MCP, the first line is the refusal's `errors[0]`, and its `context_hint` is the refusal a run that has ended gives",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-abort', 'abort'));
@@ -577,11 +586,23 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
       gate_id: gateId,
       choice: 'approve',
     });
-    expect([r['status'], r['error_code'], r['agent_action'], 'answer_recorded' in r]).toEqual([
+    // #729 PR-6a (B2 (3), B7): what the question met, and the time-limit sentence in errors[0].
+    expect([
+      r['status'],
+      r['error_code'],
+      r['agent_action'],
+      r['answer_recorded'],
+      (r['outcome'] as { by?: unknown } | undefined)?.by,
+      (r['errors'] as string[])[0],
+      String(r['context_hint']).startsWith(`Run '${runId}' is terminal (aborted); cannot submit`),
+    ]).toEqual([
       'error',
       'STATE_RUN_TERMINAL',
       'report_to_user',
       false,
+      { kind: 'timeout' },
+      "Not recorded: the question on step 'confirm' reached its time limit, and the run ended as aborted.",
+      true,
     ]);
   });
 
@@ -2499,7 +2520,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     );
     claim(
       'mcp/tools.md',
-      "`ok` without `agent_action` when it repeats the choice its gate recorded: `Gate '<gate>' was already resolved with choice '<c>' — no action was taken.`, or, when the question's expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.`",
+      "`ok` without `agent_action` when it repeats the choice its gate recorded: `Not recorded: the question on step '<step>' already had this answer — <c>, by \"<name>\" (as stated), through <door>, at <time>.`, or, when the question's expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.`",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('r21-exp', 'settle_default'));
@@ -2537,8 +2558,9 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
       gate_id: g2,
       choice: 'approve',
     });
+    // #729 PR-6a (B7): a person's recorded choice repeated says whose answer stands.
     expect([human['context_hint'], 'answer_recorded' in human]).toEqual([
-      `Gate '${g2}' was already resolved with choice 'approve' — no action was taken.`,
+      `Not recorded: the question on step 'confirm' already had this answer — approve, through Realm's MCP answer tool, at ${givenAtOf(human)}.`,
       false,
     ]);
   });
@@ -3040,7 +3062,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
   it('C178, W4-1: a different choice after an earlier call carried the expiry out is told the expiry chose — and outcome says the timeout (#729 PR-0); a person’s recorded choice says the answer', async () => {
     claim(
       'mcp/tools.md',
-      "When an earlier call carried the expiry out, an answer that names another choice is refused with the same words and the same `outcome`, `by: { \"kind\": \"timeout\" }` included: `Gate '<gate>' was settled by timeout with choice '<c>' — your choice '<other>' was not recorded.` An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `outcome` and what the run owes included. Neither has the expiry line in `warnings`, nor `expiry`; that call printed it. A choice a person recorded first is refused with `Gate '<gate>' was already resolved with choice '<c>' — your choice '<other>' was not recorded.`, and its `outcome` says `by: { \"kind\": \"answer\", … }`.",
+      "When an earlier call carried the expiry out, an answer that names another choice is refused with the same words and the same `outcome`, `by: { \"kind\": \"timeout\" }` included: `Gate '<gate>' was settled by timeout with choice '<c>' — your choice '<other>' was not recorded.` An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `outcome` and what the run owes included. Neither has the expiry line in `warnings`, nor `expiry`; that call printed it. A choice a person recorded first is refused with `Not recorded: your choice '<other>'. The question on step '<step>' was already answered — <c>, …` (above), and its `outcome` says `by: { \"kind\": \"answer\", … }`.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('r22-exp', 'settle_default'));
@@ -3089,7 +3111,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       person['error_details'],
       [personOutcome?.choice, personOutcome?.by?.kind],
     ]).toEqual([
-      `Gate '${g2}' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`,
+      `Not recorded: your choice 'reject'. The question on step 'confirm' was already answered — approve, through Realm's MCP answer tool, at ${givenAtOf(person)}.`,
       { runId: done, gateId: g2 },
       ['approve', 'answer'],
     ]);

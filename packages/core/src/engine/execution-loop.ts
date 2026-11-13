@@ -70,6 +70,7 @@ import {
   describeClaimHolder,
   readDrivenBy,
   composeGateClaimSentence,
+  readStatedAnswerer,
   type Attributed,
   type ActorAbsent,
 } from './holder.js';
@@ -1335,6 +1336,18 @@ function endedRunWayOut(
 }
 
 /**
+ * #729 PR-6a (B5): the way out of a run that has ended ({@link endedRunWayOut}), judged on the
+ * snapshot it was read in — the sentence a refusal on an ended run ends with, for a surface that
+ * words the refusal itself (`realm run respond` after a time limit ended the run).
+ */
+export function endedRunWayOutOf(
+  snapshot: Snapshot,
+  workflow: Parameters<typeof resumeWay>[1],
+): string {
+  return endedRunWayOut(snapshot.record, workflow, snapshot.at);
+}
+
+/**
  * F2: the sentence an ended run's reply ends with in place of a resume offer — for a run an operator
  * ended, {@link operatorEndingSentence}; for one an engine failure ended with a failed step `realm
  * run resume` takes ({@link offeredResumeWay}), `To make the failed step runnable again: <the command>`; `undefined` otherwise. The one composer {@link withResumeOffer}, {@link
@@ -1811,17 +1824,27 @@ export function expiryReceiptLine(receipt: ExpiryReceipt): string {
  * snapshot taken before any wait (a settled record has no `pending_gate`); `attempted` says whether
  * the caller tried to answer. Exported for #627 W's form path, whose reply after a wait reads it from
  * a fresh snapshot (`renderOutcome`).
+ *
+ * #729 PR-6a (B2): `attemptedChoice` is this call's own choice; it becomes `attempted_choice` only
+ * when `attempted` is true. The winner's name is read through `readStatedAnswerer`, the answer view's
+ * own classification: no name or a blank one gives no `name`, a refused one `name_absent`.
  */
 export function outcomeOf(
   run: RunRecord,
   step: string,
   expiresAt: string | undefined,
   attempted: boolean,
+  attemptedChoice?: string,
 ): Outcome | undefined {
   const winning = [...run.evidence]
     .reverse()
     .find((e) => e.step_id === step && e.kind === 'gate_response');
-  const base = { step, ...(expiresAt !== undefined ? { expiry: expiresAt } : {}), attempted };
+  const base = {
+    step,
+    ...(expiresAt !== undefined ? { expiry: expiresAt } : {}),
+    attempted,
+    ...(attempted && attemptedChoice !== undefined ? { attempted_choice: attemptedChoice } : {}),
+  };
   const at = winning !== undefined ? { at: winning.completed_at } : {};
   const settled = run.settled?.[step];
   // #627 W (cell 29): how the winning entry arrived — its route, else the record's own absence.
@@ -1836,10 +1859,16 @@ export function outcomeOf(
         ...at,
         ...base,
       };
-    const name = winning?.responded_by;
+    const stated = readStatedAnswerer(winning?.responded_by);
+    const name =
+      stated.by !== null
+        ? { name: stated.by }
+        : stated.absent_cause === 'name_unreadable'
+          ? { name_absent: 'name_unreadable' as const }
+          : {};
     return {
       ...choice,
-      by: { kind: 'answer', ...(name !== undefined ? { name } : {}), basis: 'stated' },
+      by: { kind: 'answer', ...name, basis: 'stated' },
       ...via,
       ...at,
       ...base,
@@ -5283,7 +5312,7 @@ async function composeExpiryReply(
     stepName: string,
     receipt: ExpiryReceipt | undefined,
   ): EngineReply => {
-    const outcome = outcomeOf(finalRun, stepName, expiresAt, true);
+    const outcome = outcomeOf(finalRun, stepName, expiresAt, true, originalChoice);
     return {
       ...reply,
       ...(outcome !== undefined ? { outcome } : {}),
@@ -5583,7 +5612,7 @@ async function submitHumanResponseBody(
               // #729 PR-0 (A-16, T-19): this answer was not recorded — a repeat of the recorded
               // choice, or the choice the question's expiry recorded; `outcome` says which.
               ...(() => {
-                const outcome = outcomeOf(noopRun, stepName, readExpiresAt, true);
+                const outcome = outcomeOf(noopRun, stepName, readExpiresAt, true, options.choice);
                 return outcome !== undefined ? { outcome } : {};
               })(),
               // decision C171: when the question's expiry recorded that choice, the hint says so — the
@@ -5639,13 +5668,18 @@ async function submitHumanResponseBody(
           );
           const conflictOutcome =
             stepName !== undefined
-              ? outcomeOf(result.run, stepName, readExpiresAt, true)
+              ? outcomeOf(result.run, stepName, readExpiresAt, true, options.choice)
               : undefined;
+          // #729 PR-6a (B2; #729 comment 6237959686 item 15): the refusal is the one admission's
+          // verdict on the record the settle returned — `question_settled` while the run goes on,
+          // `run_ended` once it has ended; `outcome` names the winner either way.
+          const conflictRefusal = answerRefusal(result.run, result.at);
           const conflictWithNext: EngineReply = {
             ...conflictReply,
             ...waysOf(store, definition, result.run, options.registry, result.at),
             ...(result.run.terminal_state ? {} : { names_next: true as const }),
             ...(conflictOutcome !== undefined ? { outcome: conflictOutcome } : {}),
+            ...(conflictRefusal !== undefined ? { refusal: conflictRefusal } : {}),
           };
           // issue #625: see `already_settled` above — a gate its expiry settled.
           return byTimeout ? { ...conflictWithNext, answer_recorded: false } : conflictWithNext;
@@ -5742,7 +5776,13 @@ async function submitHumanResponseBody(
               },
             );
             // #729 PR-0 (Amendment 6): the gate cancelled by the abort is the answer's outcome.
-            const cancelOutcome = outcomeOf(result.run, cancelledStep, readExpiresAt, true);
+            const cancelOutcome = outcomeOf(
+              result.run,
+              cancelledStep,
+              readExpiresAt,
+              true,
+              options.choice,
+            );
             return judgedOn(
               {
                 ...errorEnvelope(
@@ -5758,6 +5798,18 @@ async function submitHumanResponseBody(
               writtenSnapshot(result.run, result.at),
             );
           }
+          // #729 PR-6a (B2 (3); PR6-R-20): an answer after an `on_expiry: abort` that another call
+          // carried out — the question's step is the one whose `gate_expired` skip bears this gate.
+          // The reply says what the question met (`outcome`: its expiry, no choice; `expiry` only
+          // when this call's read still held the open question) and that the answer was not
+          // recorded, as the reply of the call that carried the abort out says.
+          const expiredStep = Object.entries(result.run.skip_details ?? {}).find(
+            ([, d]) => d.kind === 'gate_expired' && d.gate_id === options.gateId,
+          )?.[0];
+          const expiredOutcome =
+            expiredStep !== undefined
+              ? outcomeOf(result.run, expiredStep, readExpiresAt, true, options.choice)
+              : undefined;
           // Zombie/grandfathered variant — the #282 class: a terminal record may still carry a
           // stale pending_gate (never cleared), which is the best-effort step label here.
           const zombieStep = result.run.pending_gate?.step_name ?? 'submit_gate';
@@ -5772,15 +5824,18 @@ async function submitHumanResponseBody(
               details: { runId: options.runId, run_phase: result.run.run_phase },
             },
           );
+          const zombieReply = errorEnvelope(
+            zombieStep,
+            options.runId,
+            result.run.version,
+            err,
+            err.message,
+            result.run.run_phase,
+          );
           return judgedOn(
-            errorEnvelope(
-              zombieStep,
-              options.runId,
-              result.run.version,
-              err,
-              err.message,
-              result.run.run_phase,
-            ),
+            expiredOutcome !== undefined
+              ? { ...zombieReply, outcome: expiredOutcome, answer_recorded: false }
+              : zombieReply,
             writtenSnapshot(result.run, result.at),
           );
         }

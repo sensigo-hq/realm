@@ -232,7 +232,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
   it('the reminders, the escalation, the expiry reminder and the closed lines, in their words; durations in `formatDuration`’s forms', () => {
     claim(
       SLACK,
-      "A reminder reads ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.``; the escalation is the same line with the gate's `owner` first. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`, with the instant beside them in UTC; each is counted to the moment the reminder was scheduled for. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or ``This question is closed: it was answered elsewhere as `send`.``",
+      'A reminder reads ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.``; the escalation is the same line with the gate\'s `owner` first. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`, with the instant beside them in UTC; each is counted to the moment the reminder was scheduled for. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or `This question is closed: it was answered — send, by "alice" (as stated), from a terminal, at 2026-11-12T10:02:14Z.` (the name is left out when that answer names nobody; version 0.49.0 said ``it was answered elsewhere as `send` ``)',
     );
     const now = new Date('2026-10-27T10:12:00.000Z');
     const g = gate({ owner: '@ana' });
@@ -266,11 +266,14 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
         expiry,
         closed({ step: 'review', attempted: false, by: { kind: 'timeout' } } as never),
         closed(undefined),
+        // #729 PR-6a (B3's last row): the whole winning answer.
         closed({
           step: 'review',
           attempted: false,
-          by: { kind: 'answer', basis: 'stated' },
+          by: { kind: 'answer', name: 'alice', basis: 'stated' },
           choice: 'send',
+          via: 'cli',
+          at: '2026-11-12T10:02:14.131Z',
         } as never),
       ],
       forms: [
@@ -286,7 +289,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
         '⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.',
         'This question is closed: its time ran out.',
         'This question is closed: the run stopped.',
-        'This question is closed: it was answered elsewhere as `send`.',
+        'This question is closed: it was answered — send, by "alice" (as stated), from a terminal, at 2026-11-12T10:02:14Z.',
       ],
       forms: ['1h 5m', '12m', '42s'],
     });

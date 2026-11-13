@@ -363,6 +363,8 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       {
         choice: 'approve',
         answered_by: { by: null, absent_cause: 'not_stated' },
+        // #729 PR-6a (B8): the page's example time.
+        at: '2026-11-12T10:02:14.131Z',
         claim_proof: { proof: 'absent' },
       },
       answerArrivalOf({
@@ -793,7 +795,7 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     // :: "cell 25 — the principal by kind (W-i8) …; the client prompt (W-i5)".
     claim(
       READING,
-      "Then the line says how the answer arrived, as its door declared it — `through the user's app, as a form`, `through Realm's MCP answer tool` or `through a terminal (realm run respond)`, each followed by `(as its door declared)` — and the program that recorded it: its channel, the name it runs as, and how that name is known. An answer from a program that declared no route reads `through a route its program did not declare`; one from a program that did not name itself reads `as recorded by a program that did not name itself`; an answer recorded by an earlier version, or with no route, reads `how it arrived was not recorded`.",
+      "Then the line says how the answer arrived, as its door declared it — `through the user's app, as a form`, `through Realm's MCP answer tool` or `through a terminal (realm run respond)`, each followed by `(as its door declared)` — and the program that recorded it: its channel, the name it runs as, and how that name is known. Then `given at <time>`: when the answer was given, in UTC to the second (added after version 0.49.0). An answer from a program that declared no route reads `through a route its program did not declare`; one from a program that did not name itself reads `as recorded by a program that did not name itself`; an answer recorded by an earlier version, or with no route, reads `how it arrived was not recorded`.",
     );
     claim(
       READING,

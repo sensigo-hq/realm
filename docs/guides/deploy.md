@@ -197,7 +197,7 @@ Authentication: Bearer token (REALM_SERVE_TOKEN)
 
 Stopped with `kill -9`, the server was started again by systemd and answered the next request.
 
-`realm serve` exits 0 when it was stopped and cut no request, and 1 when it had to cut requests (see [its page](../reference/cli/realm-mcp-and-serve.md#stopping-and-exit-codes)). systemd does not restart a service you stop with `systemctl stop`, but it restarts one that exits 1 under `Restart=on-failure`, such as a `kill` that cut requests.
+`realm serve` exits 0 when it was stopped and cut no request, and 1 when it had to cut requests (see [its page](../reference/cli/realm-mcp-and-serve.md#stopping-and-exit-codes)). A service that `systemctl stop` stopped is not restarted, but if `realm serve` had to cut a request and exited 1, systemd shows the service as failed (`Active: failed (Result: exit-code)`). One that exits 1 on its own, such as after a `kill` that cut requests, is restarted under `Restart=on-failure`. This paragraph was added after version 0.49.0.
 
 `realm serve` accepts connections from the same machine only, unless you set `--host`. To reach it from elsewhere, put it behind a web server that provides HTTPS. See [Connect an MCP client](connect-an-mcp-client.md#connecting-over-http) and [Start runs from webhooks](webhooks.md#running-it-for-real).
 

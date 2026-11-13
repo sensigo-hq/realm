@@ -1016,7 +1016,7 @@ describe(
     it('advance, C191 (walk c9, W3-Y1): `Last recorded driver:` names the program on the newest entry that names one — after an answer, still the program that opened the question; inspect shows who answered; newer entries with no program are counted', async () => {
       claim(
         PAGE,
-        "`Last recorded driver:` names the program on the run's newest evidence entry that names one, with that entry's step and time: `<program> at step '<step>', <time>.`, or `none recorded.` A step's own entry names the program that ran it when that program recorded its name; an answer to a question is skipped (its entry names the program that recorded the answer, added after version 0.47.0), and so is a guard's decision. So the program that answered a question is not named here: after an answer whose write ran no cleanup step, the line still names the program that ran the question's step and opened the question. `realm run inspect` shows who answered, on that step's `Answer:` line (`answered by <name>`, the name `--by` gave, or `answered by (not stated)`). When newer entries name no program, the line ends `; 1 newer entry records no driver.` (or `; <n> newer entries record no driver.`). Each one counts but a question's answer, the entry its expiry writes and a guard's decision: a step run by a program that recorded no name (a library call made without `driver`, for one), and an entry realm writes without running a step, such as the one `realm run reclaim` writes for the step whose claim it frees.",
+        "`Last recorded driver:` names the program on the run's newest evidence entry that names one, with that entry's step and time: `<program> at step '<step>', <time>.`, or `none recorded.` A step's own entry names the program that ran it when that program recorded its name; an answer to a question is skipped (its entry names the program that recorded the answer, added after version 0.47.0), and so is a guard's decision. So the program that answered a question is not named here: after an answer whose write ran no cleanup step, the line still names the program that ran the question's step and opened the question. `realm run inspect` shows who answered, on that step's `Answer:` line (`answered by \"<name>\"`, the name `--by` gave, or `answered by (not stated)`). When newer entries name no program, the line ends `; 1 newer entry records no driver.` (or `; <n> newer entries record no driver.`). Each one counts but a question's answer, the entry its expiry writes and a guard's decision: a step run by a program that recorded no name (a library call made without `driver`, for one), and an entry realm writes without running a step, such as the one `realm run reclaim` writes for the step whose claim it frees.",
       );
       const { def } = await project(
         'cli-c191-wf',
@@ -1084,7 +1084,7 @@ describe(
         answered: 0,
         afterAnswer: `Last recorded driver: opener (from REALM_OPERATOR, via advance) at step 'confirm', ${confirmAt}.`,
         answerLine: expect.stringMatching(
-          /^\s+Answer: approve · answered by alice \(as stated\) · .* · (no claim token|the claim token)/,
+          /^\s+Answer: approve · answered by "alice" \(as stated\) · .* · (no claim token|the claim token)/,
         ),
         openedThrough: '     Question opened through: opener (from REALM_OPERATOR, via advance)',
         afterStep: `Last recorded driver: third (from REALM_OPERATOR, via advance) at step 'after', ${afterAt}.`,

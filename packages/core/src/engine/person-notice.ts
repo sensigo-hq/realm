@@ -98,7 +98,11 @@ export type PersonNotice =
       gate_id: string;
       step: string;
       how: 'expired' | 'abandoned' | 'superseded';
-      choice?: string;
+      /**
+       * #729 PR-6a (B9; PR6-R-04): the whole winning answer — its choice, the name as stated, the
+       * door it came through and when — present exactly when `how` is `superseded`.
+       */
+      outcome?: Outcome;
     };
 
 /** The engine's facts a notice is composed from, per kind. */
@@ -266,14 +270,8 @@ export function composePersonNotice(event: PersonNoticeEvent): PersonNotice {
     case 'question_closed': {
       const by = event.outcome?.by.kind;
       if (by === 'timeout') return { kind: 'question_closed', ...ids, how: 'expired' };
-      if (by === 'answer') {
-        const choice = event.outcome?.choice;
-        return {
-          kind: 'question_closed',
-          ...ids,
-          how: 'superseded',
-          ...(choice !== undefined ? { choice } : {}),
-        };
+      if (by === 'answer' && event.outcome !== undefined) {
+        return { kind: 'question_closed', ...ids, how: 'superseded', outcome: event.outcome };
       }
       return { kind: 'question_closed', ...ids, how: 'abandoned' };
     }

@@ -45,6 +45,7 @@ import {
 import {
   readDrivenBy,
   readGateClaimVerdict,
+  readStatedAnswerer,
   readStoredName,
   type ActorAbsent,
   type Attributed,
@@ -341,6 +342,8 @@ export interface AttemptView {
 export interface AnswerView {
   choice?: string;
   answered_by: { by: string; by_source: 'stated' } | ActorAbsent;
+  /** #729 PR-6a (B8): when the answer was given — its entry's `completed_at`, as stored (ISO). */
+  at?: string;
   claim_proof?: GateClaimVerdict;
   claim_proof_absent?: ClaimProofAbsentCause;
 }
@@ -810,17 +813,6 @@ export function composeCostView(
   return view;
 }
 
-/** A stored `responded_by` as an answer view shows it. Total. */
-function readAnswerer(raw: unknown): AnswerView['answered_by'] {
-  if (raw === undefined || raw === null) return { by: null, absent_cause: 'not_stated' };
-  if (typeof raw !== 'string') return { by: null, absent_cause: 'name_unreadable' };
-  // A value the tool accepted before the name bound existed can be empty: it reads as no name.
-  if (raw.trim().length === 0) return { by: null, absent_cause: 'not_stated' };
-  const name = readStoredName(raw);
-  if (name === undefined) return { by: null, absent_cause: 'name_unreadable' };
-  return { by: name, by_source: 'stated' };
-}
-
 /**
  * True when an evidence entry is an ANSWER to a step's question: a `gate_response` entry, except the
  * one an `on_expiry: abort` expiry writes (`resolution: 'expired_abort'`). That entry answers nothing
@@ -859,9 +851,12 @@ function composeAnswerView(entry: Record<string, unknown>): AnswerView {
   const answer: AnswerView = {
     answered_by: settledByExpiry
       ? { by: null, absent_cause: 'settled_by_expiry' }
-      : readAnswerer(entry['responded_by']),
+      : readStatedAnswerer(entry['responded_by']),
   };
   if (choice !== undefined) answer.choice = choice;
+  // #729 PR-6a (B8): when the answer was given — the entry's `completed_at`, as stored.
+  const at = entry['completed_at'];
+  if (typeof at === 'string') answer.at = at;
   const proof = readGateClaimVerdict(entry['claim_proof']);
   if (proof !== undefined) {
     answer.claim_proof = proof;

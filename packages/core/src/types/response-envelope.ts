@@ -1,6 +1,6 @@
 // Types for the EngineReply returned by every engine entry (issue #729 PR-0: the core reply; the MCP
 // envelope is rendered from it by `renderReply`, the CLI's lines by `CLI_COMMANDS`).
-import type { EvidenceSnapshot, RunPhase, SealArm } from './run-record.js';
+import type { AnswerRoute, EvidenceSnapshot, RunPhase, SealArm } from './run-record.js';
 import type { AgentAction, ErrorCode, ErrorFacts } from './workflow-error.js';
 import type { LoaderWarning } from '../workflow/diagnostics.js';
 import type { ActorAbsent, Attributed, GateClaimVerdict } from '../engine/holder.js';
@@ -56,11 +56,17 @@ export interface GateInfo {
  * `responded_by`, always `basis: 'stated'` — realm never claims who was on the other end. `step` and
  * `expiry` are the question's, from the call's snapshot taken before any wait; `attempted` says
  * whether THIS call tried to answer. Data in PR-0; W's `renderOutcome` renders it.
+ *
+ * #729 PR-6a (B2): `attempted_choice` is this call's own choice — present exactly when `attempted` is
+ * true and the call gave one; `by.name` is read through core's one reader of a stated name
+ * (`readStatedAnswerer`): no name, or a blank one, gives no `name`; a name that reader refuses gives
+ * `name_absent: 'name_unreadable'` instead.
  */
 export interface Outcome {
   choice?: string;
+  attempted_choice?: string;
   by:
-    | { kind: 'answer'; name?: string; basis: 'stated' }
+    | { kind: 'answer'; name?: string; name_absent?: 'name_unreadable'; basis: 'stated' }
     | { kind: 'timeout' }
     | {
         kind: 'engine';
@@ -81,6 +87,16 @@ export interface Outcome {
    */
   via?: string | { absent: 'settled_by_expiry' | 'recorded_without_route' | 'route_not_declared' };
 }
+
+/**
+ * #729 PR-6a (B1; the renderer law, framework §0.9): how a door names the door an answer came through,
+ * as the outcome composer (`renderOutcome`) puts it in its sentence — one fixed phrase per route this
+ * version's doors declare, and one for any other route a door declared (its id, as the door words it).
+ * A port core declares: each door passes its own static table, and no door writes its own sentence.
+ */
+export type OutcomeDoorWords = { readonly [R in AnswerRoute]: string } & {
+  readonly other_route: (route: string) => string;
+};
 
 /** issue #729 PR-0 (T-3): one race a loop met — the step, the T-1 kind, whether this call's code ran. */
 export interface RaceEntry {

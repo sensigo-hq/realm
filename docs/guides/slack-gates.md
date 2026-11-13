@@ -142,6 +142,14 @@ Recorded: send.
 
 When the answer ends the run, the reply says ``✅ Gate resolved: `send`. The run has ended.`` instead, and the run's ending is printed where `realm agent` runs.
 
+While `realm agent` is still listening to the thread, a reply that is not recorded gets one post saying so, and why. It stops listening a few seconds after the question closes; a reply after that gets no answer. When another answer was recorded first, it names that answer: its choice, the name as stated (left out when it names nobody), where it came from and when, in UTC to the second. For example, after someone answered from a terminal:
+
+```text
+Not recorded: your choice 'discard'. The question on step 'review' was already answered — send, by "alice" (as stated), from a terminal, at 2026-11-12T10:02:14Z.
+```
+
+A reply with the choice already recorded gets `Not recorded: the question on step 'review' already had this answer — …` in the same words, never `✅ Gate resolved`. A reply after the question's time limit reads `Not recorded: the question on step 'review' reached its time limit at 2026-11-12T10:11:18Z, and the run took the default discard. The run goes on.`, or ends `…, and the run ended as aborted.` when the time limit ended the run. When the run stopped before the reply arrived, it reads `Not recorded: this run stopped before your reply arrived.` None of these asks you to try again: ``⚠️ Couldn't record your response (`<code>`). Try again.`` is only for a failure a retry can fix, such as a busy store. Added after version 0.49.0.
+
 In the terminal, the run carries on:
 
 ```text
@@ -171,7 +179,7 @@ escalation_threshold_ms: 900000
 
 These timers live in the `realm agent` process. If that process stops, the reminders stop.
 
-A reminder reads ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.``; the escalation is the same line with the gate's `owner` first. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`, with the instant beside them in UTC; each is counted to the moment the reminder was scheduled for. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or ``This question is closed: it was answered elsewhere as `send`.`` With only `webhook_url`, the post names the gate and the run first, since there is no thread.
+A reminder reads ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.``; the escalation is the same line with the gate's `owner` first. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`, with the instant beside them in UTC; each is counted to the moment the reminder was scheduled for. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or `This question is closed: it was answered — send, by "alice" (as stated), from a terminal, at 2026-11-12T10:02:14Z.` (the name is left out when that answer names nobody; version 0.49.0 said ``it was answered elsewhere as `send` ``) With only `webhook_url`, the post names the gate and the run first, since there is no thread.
 
 No message in the thread names a command. The command that carries out an expired question's `on_expiry`, `realm run drain --expired`, is printed where `realm agent` runs when it attends the thread with a bot token; with only `webhook_url`, nothing in `realm agent` carries the expiry out or prints it (#882).
 
