@@ -459,11 +459,13 @@ describe('makeListenHandler — request pipeline', () => {
     const first = await invoke(handler, reqOpts);
     expect(first.status).toBe(202);
     const second = await invoke(handler, reqOpts);
-    expect(second.status).toBe(200);
-    expect(second.body['status']).toBe('deduplicated');
-    // issue #735, cell 4 (preservation): inside the window the reply stays the bare one — the
-    // run's id is said only when the run store matched the delivery.
-    expect(second.body).not.toHaveProperty('run_id');
+    // R1.1 (C): inside the window the reply names the run the event started (it was the bare
+    // `{"status":"deduplicated"}` until R1.1; #735's cell 4 pinned that). (a) red when the
+    // in-window reply is bare again, or names another run or phase; (b) prints the reply.
+    expect(second).toEqual({
+      status: 200,
+      body: { status: 'deduplicated', run_id: first.body['run_id'], run_phase: 'running' },
+    });
   });
 
   it('dedup id unresolvable + on_missing_id reject → 400', async () => {
@@ -816,8 +818,12 @@ describe('makeListenHandler — request pipeline', () => {
     // Green on the code before #735 too (it also recorded after a matched spawn). (a) red when the
     // matched branch's `dedupStore.record` is deleted: the third copy reaches `create` again;
     // (b) prints the third reply and the number of `create` calls.
+    // R1.1 (C): the in-window reply names the run.
     expect({ third: r.third, creates: r.create.mock.calls.length }).toEqual({
-      third: { status: 200, body: { status: 'deduplicated' } },
+      third: {
+        status: 200,
+        body: { status: 'deduplicated', run_id: r.runId, run_phase: 'running' },
+      },
       creates: 2,
     });
   });
@@ -863,7 +869,11 @@ describe('makeListenHandler — request pipeline', () => {
         ],
       ],
       warned: [],
-      third: { status: 200, body: { status: 'deduplicated' } },
+      // R1.1 (C): the in-window reply names the run.
+      third: {
+        status: 200,
+        body: { status: 'deduplicated', run_id: r.runId, run_phase: 'failed' },
+      },
       creates: 2,
     });
   });
