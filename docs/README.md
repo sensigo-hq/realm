@@ -2,7 +2,7 @@
 
 <!-- description: Documentation for Realm, the workflow engine an AI agent calls: getting started, concepts, guides, and reference for the workflow file, CLI and MCP tools. -->
 
-Realm is a workflow engine that an AI agent calls. These pages describe Realm as it is on the `main` branch; the published version is 0.49.0. Where a page shows something added after a version, it says so: what is marked as added after an earlier version is in the published one, and what is marked as added after the published version is not out yet. Every command and output in them came from a run. User names, host names and folders in the outputs may be placeholders, such as `ops@server-1`, `/srv/shop` or `/home/you`.
+Realm is a workflow engine that an AI agent calls. These pages describe Realm 0.49.0; on GitHub's `main` branch they also carry what has been added since. Where a page shows something added after a version, it says so: an addition marked as after an earlier version is in 0.49.0, and one marked as after 0.49.0 is on `main` only, not released yet. Every command and output in them came from a run. User names, host names and folders in the outputs may be placeholders, such as `ops@server-1`, `/srv/shop` or `/home/you`.
 
 ## Start here
 
