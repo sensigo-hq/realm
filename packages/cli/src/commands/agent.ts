@@ -81,6 +81,9 @@ export function buildManifestGateHandler(
     registry?: ExtensionRegistry;
     /** Issue #625: the program this command runs in — forwarded to the Slack attendant. */
     driver?: Attributed;
+    /** #729 PR-6b (B): the home this command opened its store in — the Slack question post's file
+     *  is kept under it. */
+    home: string;
   },
 ): ((runId: string, gate: import('@sensigo/realm').PendingGate) => Promise<void>) | undefined {
   const slack = notifiers?.slack_gate;
@@ -91,6 +94,7 @@ export function buildManifestGateHandler(
     provider: deps.provider,
     ...(deps.registry !== undefined ? { registry: deps.registry } : {}),
     ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
+    home: deps.home,
     ...(slack.webhook_url !== undefined && { webhookUrl: slack.webhook_url }),
     ...(slack.bot_token !== undefined && { botToken: slack.bot_token }),
     ...(slack.channel_id !== undefined && { channelId: slack.channel_id }),
@@ -666,6 +670,7 @@ export const agentCommand = new Command('agent')
             provider,
             registry: loaded.registry,
             ...(driver !== undefined ? { driver } : {}),
+            home: home.path,
           });
 
           result = await runAgent(
@@ -752,6 +757,7 @@ export const agentCommand = new Command('agent')
             provider,
             registry: loaded.registry,
             ...(driver !== undefined ? { driver } : {}),
+            home: home.path,
           });
 
           result = await runAgent(
