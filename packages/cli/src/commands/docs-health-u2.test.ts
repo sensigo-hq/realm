@@ -82,7 +82,7 @@ describe('#960 U2 — realm-listen.md', () => {
     // logged at `debug`).
     claim(
       LISTEN,
-      `## The health address ${HEALTH} This section was added after version 0.49.0. The path \`/health\` belongs to it: a workflow whose \`trigger.path\` is \`/health\`, or whose \`id\` is \`health\` with no \`trigger.path\`, stops \`realm listen\` from starting (see [Exit codes](#exit-codes)). The health request does not count toward \`--max-concurrent\` and is not logged. ## What it does for a request`,
+      `## The health address ${HEALTH} This section was added after version 0.49.0. The path \`/health\` belongs to it: a workflow whose \`trigger.path\` is \`/health\`, or whose \`id\` is \`health\` with no \`trigger.path\`, stops \`realm listen\` from starting (see [Exit codes](#exit-codes)). The health request does not count toward \`--max-concurrent\` and is not logged. ## The read address`,
     );
   });
 

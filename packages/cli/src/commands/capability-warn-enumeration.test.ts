@@ -59,6 +59,9 @@ const N_A: Record<string, string> = {
     'the issue #279 (increment 1) settleStep conformance TCK — creates throwaway runs purely to ' +
     'exercise settlement-law cases (and one internal fidelity-dropping fixture store) against a ' +
     'store under test; not a production run-creating path',
+  'listen-read-r11.ts':
+    "R1.1's test support for the read address cells — creates throwaway runs straight into a store " +
+    'under test so the engine can put them in each phase; not a production run-creating path',
 };
 
 describe('#134 pre-flight capability warning — create-site enumeration (Part B3)', () => {

@@ -7,7 +7,7 @@
 // reaches through `compileCapturing` and the run-time checks through `compileCached`); this site
 // and the adapter `config_schema` site are deliberately NOT that. The surface is intentionally
 // small: `auth` carries a verification *mode* (shared_secret | github | stripe |
-// hmac | none), an optional `filter`, optional `dedup`, and `params_map`.
+// hmac | none), an optional `filter`, optional `dedup`, `params_map`, and `result_map` (R1.1).
 //
 // Patterns carried over from the earlier (closed) rich design: per-mode CLOSED sets (each mode's
 // `then` has its own additionalProperties:false + properties + required, with property stubs on the
@@ -148,6 +148,14 @@ export const TRIGGER_JSON_SCHEMA = {
     },
     params_map: {
       type: 'object',
+      additionalProperties: { type: 'string', minLength: 1 },
+    },
+    // R1.1: what a caller may read of a finished run, name → `context.resources.<step>.<field>`.
+    // The loader's own rules (yaml-loader.ts, step 3b) refuse it on every mode but `shared_secret`,
+    // a name that reads as a credential's, and a path that names no step of this workflow.
+    result_map: {
+      type: 'object',
+      propertyNames: { type: 'string', minLength: 1 },
       additionalProperties: { type: 'string', minLength: 1 },
     },
   },
