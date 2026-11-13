@@ -474,7 +474,7 @@
       "ask": "Is the record hashed, chained or signed so an edit can be detected?",
       "verdict": {
         "kind": "open",
-        "text": "Nobody has this in full. Realm's store check catches an edit that leaves an entry's stored hash, but not one that rewrites it, and nothing here is chained or signed. LangGraph's optional encryption hides values but does not show that a record was changed."
+        "text": "Realm's store check catches an edit to an entry that leaves its stored hash unchanged, but not one that also rewrites that hash, and nothing here is chained or signed. LangGraph's optional encryption hides values but does not show that a record was changed."
       },
       "cells": {
         "realm": {

@@ -93,7 +93,9 @@ thead .rowhead { background: var(--panel2); z-index: 2; }
 .v-behind { background: var(--warn-soft); color: var(--warn); }
 .v-open { background: var(--danger-soft); color: var(--danger); }
 .qrows { display: grid; gap: 28px; margin-top: 8px; }
-section.q { border-top: 1px solid var(--line); padding-top: 22px; scroll-margin-top: 16px; }
+/* Link targets (a question, an answer row, a tool's place) keep the site's own clearance under its
+   sticky top bar (site.css, `.wrap *`): this page sets none of its own. */
+section.q { border-top: 1px solid var(--line); padding-top: 22px; }
 .qtop { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .qtop h3 { font-size: 19px; font-weight: 600; }
 .ask { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
@@ -111,7 +113,6 @@ table.rowsof { border-collapse: collapse; width: 100%; font-size: 14.5px; }
 .rowsof p.src { margin-top: 4px; font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); overflow-wrap: anywhere; }
 .rowsof .tmeta { display: block; font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); font-weight: 400; margin-top: 2px; white-space: nowrap; }
 .rowsof tr:target { outline: 2px solid var(--muted); outline-offset: -2px; }
-.rowsof tr { scroll-margin-top: 16px; }
 details.box > summary { cursor: pointer; padding: 11px 16px; color: var(--ink); font-weight: 600; font-size: 14.5px; list-style-position: inside; }
 details.box > summary:hover { background: var(--panel2); }
 details.box[open] > summary { border-bottom: 1px solid var(--line-soft); }
@@ -127,7 +128,7 @@ button.openall:hover { border-color: var(--muted); }
 /* Tool by tool: one block per tool, in the table's column order; each other tool's block is the
    page's "Realm vs <tool>" place (its id realm-vs-<key>), Realm's own comes first. */
 .toolset { display: grid; gap: 12px; margin-top: 14px; }
-.tool { border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel); padding: 14px 18px; scroll-margin-top: 16px; }
+.tool { border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel); padding: 14px 18px; }
 .tool.realm { background: var(--realm-tint); }
 .tool:target { outline: 2px solid var(--muted); outline-offset: -2px; }
 .tool h3 { font-size: 17px; font-weight: 600; }

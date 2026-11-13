@@ -136,7 +136,7 @@ export const HEADINGS = {
 };
 export const partialNote = 'Partial always means something is missing; the answers below say what.';
 export const toolsIntro =
-  'Where each tool is stronger than Realm, and where it falls short for making an agent follow steps and show what it did.';
+  "Realm's own strengths and gaps come first. Then each other tool: where it is stronger than Realm, and where it falls short for making an agent follow steps and show what it did.";
 
 export const dataUrl = `${SOURCE_URL}/blob/main/website/src/data/comparison.json`;
 export const issueUrl = `${SOURCE_URL}/issues/new?title=${encodeURIComponent('Comparison: ')}&body=${encodeURIComponent(
