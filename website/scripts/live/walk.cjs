@@ -839,7 +839,10 @@ async function walk(which, width) {
         r.txt.includes('Nothing was counted.') &&
         (await letter()) === 'C' &&
         (await posts()) === pe,
-      r.txt.split('\n').slice(0, 6).join(' | '),
+      r.txt
+        .split('\n')
+        .filter((l) => /^REALM|automatic step|counted/i.test(l))
+        .join(' | ') + ` | state ${await letter()}, POSTs ${(await posts()) - pe}`,
     );
     await cells('C', ending);
   }
@@ -1020,7 +1023,7 @@ async function walk(which, width) {
     ok(
       'recorded mode: the gate question is whole (no cut marker)',
       g === R.gate.display && !CUT_MARKS.some((x) => g.includes(x)),
-      `${g.length} chars`,
+      `${g.length} chars, markers ${JSON.stringify(CUT_MARKS.filter((x) => g.includes(x)))}`,
     );
     await p.context().close();
   }
