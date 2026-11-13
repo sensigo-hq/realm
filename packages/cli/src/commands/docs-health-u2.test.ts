@@ -69,8 +69,11 @@ describe('#960 U2 — realm-listen.md', () => {
   it('the flag row, its count, and the `--shutdown-drain` section', () => {
     // Executed by listen H10, H6, H8 and H9 (see ROW and DRAIN); the count is the table's 15 rows.
     claim(LISTEN, ROW);
-    claim(LISTEN, 'This page lists its argument and 15 flags,');
-    claim(LISTEN, `### \`--shutdown-drain\` ${DRAIN('realm listen', 'under _How it stops_')}`);
+    claim(LISTEN, 'This page lists its argument and 15 flags (13 in version 0.49.0),');
+    claim(
+      LISTEN,
+      `### \`--shutdown-drain\` ${DRAIN('realm listen', 'under _How it stops_')} This flag was added after version 0.49.0.`,
+    );
   });
 
   it('"The health address", the reserved path, and its place after "What it does when it starts"', () => {
@@ -79,7 +82,7 @@ describe('#960 U2 — realm-listen.md', () => {
     // logged at `debug`).
     claim(
       LISTEN,
-      `## The health address ${HEALTH} The path \`/health\` belongs to it: a workflow whose \`trigger.path\` is \`/health\`, or whose \`id\` is \`health\` with no \`trigger.path\`, stops \`realm listen\` from starting (see [Exit codes](#exit-codes)). The health request does not count toward \`--max-concurrent\` and is not logged. ## What it does for a request`,
+      `## The health address ${HEALTH} This section was added after version 0.49.0. The path \`/health\` belongs to it: a workflow whose \`trigger.path\` is \`/health\`, or whose \`id\` is \`health\` with no \`trigger.path\`, stops \`realm listen\` from starting (see [Exit codes](#exit-codes)). The health request does not count toward \`--max-concurrent\` and is not logged. ## What it does for a request`,
     );
   });
 
@@ -90,7 +93,7 @@ describe('#960 U2 — realm-listen.md', () => {
     claim(LISTEN, `## How it stops ${FROM_SIGNAL}`);
     claim(
       LISTEN,
-      '| `info` | `listen: draining {"seconds"}` | `--shutdown-drain` is above 0: printed at the first signal, before the drain |',
+      '| `info` | `listen: draining {"seconds"}` | `--shutdown-drain` is above 0: printed at the first signal, before the drain. Added after version 0.49.0. |',
     );
     claim(
       LISTEN,
@@ -107,7 +110,7 @@ describe('#960 U2 — realm-mcp-and-serve.md', () => {
     claim(SERVE, ROW);
     claim(
       SERVE,
-      `### The health address ${HEALTH} \`GET\` and \`HEAD\` requests to \`/health\` no longer reach the MCP endpoint; a client that used that path as its address must use another. ### Stopping and exit codes`,
+      `### The health address ${HEALTH} This section was added after version 0.49.0. After version 0.49.0, \`GET\` and \`HEAD\` requests to \`/health\` no longer reach the MCP endpoint; a client that used that path as its address must use another. ### Stopping and exit codes`,
     );
   });
 
@@ -116,11 +119,11 @@ describe('#960 U2 — realm-mcp-and-serve.md', () => {
     // and H2 (the address takes no token; `POST /` without one is 401).
     claim(
       SERVE,
-      'Apart from `GET` and `HEAD` to `/health` (see [The health address](#the-health-address)), the path is not checked: every path reaches the server.',
+      'Apart from `GET` and `HEAD` to `/health` (added after version 0.49.0; see [The health address](#the-health-address)), the path is not checked: every path reaches the server.',
     );
     claim(
       SERVE,
-      'The token is checked before anything else except the health address, so a caller without it learns nothing about the request.',
+      'The token is checked before anything else except the health address (added after version 0.49.0), so a caller without it learns nothing about the request.',
     );
     gone(
       SERVE,
@@ -153,10 +156,13 @@ describe('#960 U2 — the webhook trigger page and the CHANGELOG', () => {
   it('webhook-trigger.md: the `path` sentence and the reply before the checks', () => {
     // Executed by listen H11 (a workflow cannot have `/health`), H4 (a `GET` of `/health` is
     // answered before the method check: 200, not 405), H5 (503 once stopping).
-    claim(TRIGGER, '`/health` is taken by the health address; a workflow cannot have it.');
     claim(
       TRIGGER,
-      '`realm listen` checks a request in this order, and stops at the first check that fails. Before the method check, `realm listen` answers a `GET` or `HEAD` of `/health` itself: `200` `{"status":"ok"}`, or `503` `{"status":"shutting_down"}` once it is stopping. It is not one of the checks below, and a workflow cannot have that path.',
+      '`/health` is taken by the health address; a workflow cannot have it. Added after version 0.49.0.',
+    );
+    claim(
+      TRIGGER,
+      '`realm listen` checks a request in this order, and stops at the first check that fails. Before the method check, `realm listen` answers a `GET` or `HEAD` of `/health` itself: `200` `{"status":"ok"}`, or `503` `{"status":"shutting_down"}` once it is stopping. It is not one of the checks below, and a workflow cannot have that path. Added after version 0.49.0.',
     );
   });
 
