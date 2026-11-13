@@ -14,6 +14,12 @@
 // store package's three re-included basenames (its `./test-support` entry, c10b-2b; the positive pin is
 // the store's `test-support-export-616` cell, so this law carries only the negative, across all five).
 //
+// THE LICENCE (release 0.50.0, the owner's yes 2e8d292c): every judged package also carries the
+// Apache License 2.0 text — the tarball's root holds a file named exactly `LICENSE` (npm packs a root
+// licence file whatever `files` says, and skips a symbolic link), and the package folder's `LICENSE` is
+// a regular file whose bytes are the root `LICENSE`'s; once per run, the root `LICENSE` is the text
+// apache.org publishes (its sha256, pinned: PR #1134 found the root reworded, unnoticed for months).
+//
 // HOME: the cli package, as `store-sqlite-package-616.test.ts`: cli's test task waits for every
 // package's build. (`scripts/test/` runs before the build in CI, so it cannot be the home.)
 //
@@ -22,7 +28,8 @@
 //
 // Each assertion carries the two questions of `~/.claude/TESTING-RULES.md` rule 8 next to it.
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, existsSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +49,36 @@ const PUBLISHED = [
   '@sensigo/realm-store-sqlite',
   '@sensigo/realm-testing',
 ];
+
+/** The repository's root `LICENSE`, which every published package carries a copy of. */
+const ROOT_LICENSE = join(PACKAGES, '..', 'LICENSE');
+/** The sha256 of apache.org's LICENSE-2.0.txt, the root `LICENSE` since PR #1134. */
+const LICENSE_SHA256 = 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30';
+
+/** What is wrong with `packages/<dir>/LICENSE` against the root text, or `undefined` when nothing is. */
+function licenceCopyProblem(dir: string, root: Buffer): string | undefined {
+  const file = join(PACKAGES, dir, 'LICENSE');
+  let kind: string;
+  try {
+    const st = lstatSync(file);
+    kind = st.isFile() ? 'file' : st.isSymbolicLink() ? 'a symbolic link' : 'not a regular file';
+  } catch {
+    return `packages/${dir}/LICENSE is missing`;
+  }
+  if (kind !== 'file') return `packages/${dir}/LICENSE is ${kind}, which npm does not pack`;
+  const copy = readFileSync(file);
+  if (copy.equals(root)) return undefined;
+  const shorter = Math.min(copy.length, root.length);
+  let first = -1;
+  let differ = Math.abs(copy.length - root.length);
+  for (let i = 0; i < shorter; i++) {
+    if (copy[i] === root[i]) continue;
+    differ++;
+    if (first < 0) first = i;
+  }
+  if (first < 0) first = shorter;
+  return `packages/${dir}/LICENSE is not the root LICENSE: ${differ} byte(s) differ, the first at offset ${first} (${copy.length} bytes, the root ${root.length})`;
+}
 
 /** The store package's deliberate test support: its `files` list re-includes these three basenames. */
 const STORE = '@sensigo/realm-store-sqlite';
@@ -113,6 +150,9 @@ describe('#616 c13b (A): the pack law', () => {
       const problems: string[] = [];
       const counts: string[] = [];
       const seen: Record<string, string> = {};
+      /** The packages whose tarball holds `LICENSE` and whose copy is the root text. */
+      const licensed: string[] = [];
+      const rootLicence = readFileSync(ROOT_LICENSE);
       const started = performance.now();
       for (const dir of readdirSync(PACKAGES).sort()) {
         const file = join(PACKAGES, dir, 'package.json');
@@ -176,6 +216,19 @@ describe('#616 c13b (A): the pack law', () => {
             seen['cli bin realm'] = p.target;
           }
         }
+        // The licence: the root of the tarball holds `LICENSE` by that exact name, and the folder's
+        // copy is the root text.
+        const licenceProblems: string[] = [];
+        if (!packed.includes('LICENSE')) {
+          const other = packed.filter((p) => !p.includes('/') && /^(licen[cs]e|copying)/i.test(p));
+          licenceProblems.push(
+            `${m.name}: LICENSE is not at the tarball's root${other.length > 0 ? ` (it packs ${other.join(', ')} instead)` : ''}`,
+          );
+        }
+        const copy = licenceCopyProblem(dir, rootLicence);
+        if (copy !== undefined) licenceProblems.push(`${m.name}: ${copy}`);
+        if (licenceProblems.length === 0) licensed.push(m.name);
+        problems.push(...licenceProblems);
         for (const p of packed) {
           if (!p.split('/').includes('test-support')) continue;
           if (m.name === STORE && STORE_TEST_SUPPORT.test(p)) continue;
@@ -190,13 +243,24 @@ describe('#616 c13b (A): the pack law', () => {
       //     loses `dist/test-support/index.*`), when a package gains or loses `private: true` (A3),
       //     when a test-support file is packed outside the store's entry (A4: core re-includes
       //     `dist/test-support/extra.*`), when npm cannot run (A5), and when a seeing-proof is not
-      //     seen (the store's entry, the mcp tools pattern, the cli program).
-      // (2) Prints: the judged and not-judged names, one sentence per problem (package, field, path),
-      //     and the three seeing-proofs; on a pass, the packed-file count of each package and the time.
-      expect({ judged: judged.sort(), notJudged, problems, seen }).toEqual({
+      //     seen (the store's entry, the mcp tools pattern, the cli program); and when a package's
+      //     tarball has no `LICENSE` at its root (a missing copy, a `LICENSE.txt`, a symbolic link) or
+      //     its copy is not the root text (`licensed` then lacks it).
+      // (2) Prints: the judged and not-judged names, one sentence per problem (package, field, path;
+      //     for the licence: missing, the name npm packed instead, a symbolic link, or how many bytes
+      //     differ and the first offset), and the seeing-proofs; on a pass, the packed-file count of
+      //     each package and the time.
+      expect({
+        judged: judged.sort(),
+        notJudged,
+        problems,
+        licensed: licensed.sort(),
+        seen,
+      }).toEqual({
         judged: PUBLISHED,
         notJudged: [],
         problems: [],
+        licensed: PUBLISHED,
         seen: {
           'store test-support': 'dist/test-support/index.js',
           'mcp tools': 'matched',
@@ -205,4 +269,15 @@ describe('#616 c13b (A): the pack law', () => {
       });
     },
   );
+
+  it("the root LICENSE is apache.org's Apache License 2.0 text (its sha256, pinned)", () => {
+    const sha = createHash('sha256').update(readFileSync(ROOT_LICENSE)).digest('hex');
+    // (1) Can it fail: red when the root LICENSE changes by one byte (every package's copy then also
+    //     fails the pack law above, which compares against the root).
+    // (2) Prints: the two hashes and what to do.
+    expect(
+      sha,
+      `the root LICENSE's sha256 is ${sha}, expected ${LICENSE_SHA256} (apache.org's LICENSE-2.0.txt, PR #1134): restore the text; change this pin only with a deliberate change of licence text`,
+    ).toBe(LICENSE_SHA256);
+  });
 });
