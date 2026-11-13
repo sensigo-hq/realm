@@ -20,6 +20,7 @@ import {
   submitHumanResponse,
   judgeFormWait,
   judgeGateAnswers,
+  instantText,
   type Outcome,
   type RunStore,
 } from '@sensigo/realm';
@@ -30,6 +31,7 @@ import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createRealmMcpServer } from './server.js';
 import {
+  ASSISTANT_DOOR_WORDS,
   renderOutcome,
   sendQuestionForm,
   WITHDRAWN,
@@ -253,6 +255,9 @@ const answers = async (s: Session, runId: string) =>
   (await s.runStore.get(runId)).record.evidence.filter((e) => e.kind === 'gate_response');
 
 const hintOf = (r: Reply) => String(r['context_hint']);
+/** #729 PR-6a (B3): when the run's first answer was given, in `instantText`'s form. */
+const givenAt = async (s: Session, runId: string) =>
+  instantText(Date.parse((await answers(s, runId))[0]!.completed_at));
 const firstEntry = (r: Reply) =>
   (r['next_actions'] as Array<{ human_readable: string; awaiting?: unknown }>)[0];
 
@@ -698,7 +703,8 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
       namesCommand: JSON.stringify(reply).includes('run respond'),
     }).toEqual({
       withdrawn: 1,
-      hint: "Meanwhile, the question on step 'q' was answered — approve, by \"alice\" (as stated), through a terminal. Ready for the agent: 'after'.",
+      // #729 PR-6a (B3): "Meanwhile," with the additions — the door and the time.
+      hint: `Meanwhile, the question on step 'q' was answered — approve, by "alice" (as stated), through a terminal, at ${await givenAt(s, runId)}. Ready for the agent: 'after'.`,
       namesCommand: false,
     });
   }, 20_000);
@@ -723,7 +729,8 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
       hint: hintOf(reply),
       choices: (await answers(s, runId)).map((e) => e.input_summary?.['choice']),
     }).toEqual({
-      hint: "Not recorded: the question on step 'q' was answered — reject, through a terminal. Ready for the agent: 'after'.",
+      // #729 PR-6a (B3, check 10): the form's own choice, beaten — whose answer stands, and when.
+      hint: `Not recorded: your choice 'approve'. The question on step 'q' was already answered — reject, through a terminal, at ${await givenAt(s, runId)}. Ready for the agent: 'after'.`,
       choices: ['reject'],
     });
   });
@@ -909,7 +916,7 @@ describe('#627 W — renderOutcome', () => {
   const base = { step: 'q', attempted: false } as const;
   it('one phrase per by.kind and per route absence; the stated name delimited; "Not recorded:" only when this call attempted', () => {
     const r = (o: Partial<Outcome> & Pick<Outcome, 'by'>) =>
-      renderOutcome({ ...base, ...o } as Outcome);
+      renderOutcome({ ...base, ...o } as Outcome, ASSISTANT_DOOR_WORDS);
     // (a) red when an expiry says "answered", a route absence is spliced into the route template,
     //     the name is not delimited, or the lead ignores `attempted`; (b) prints each phrase.
     expect({
@@ -1544,13 +1551,16 @@ describe('#627 W correction 2 — the form path', () => {
     box.s = s;
     const { runId, gateId } = await openedElsewhere(s);
     const reply = await s.call('present_question', { run_id: runId, gate_id: gateId });
-    // (a) red when the reply passes on the answer's own refusal; (b) prints whether "your choice"
-    //     appears, the hint's start and whether it names the recorded choice.
+    // (a) red when the reply passes on the answer's own refusal (the engine's words, which address
+    //     its caller); (b) prints whether the engine's refusal appears, the hint's start and whether
+    //     it names the recorded choice. #729 PR-6a (B3, check 10): the composer's own sentence now
+    //     says "your choice '<mine>'" — the form's choice beaten — so the engine's words are what is
+    //     looked for, not "your choice".
     expect({
-      yourChoice: JSON.stringify(reply).includes('your choice'),
-      notRecorded: hintOf(reply).startsWith('Not recorded:'),
+      ownRefusal: JSON.stringify(reply).includes('was already resolved'),
+      notRecorded: hintOf(reply).startsWith("Not recorded: your choice 'approve'."),
       namesReject: hintOf(reply).includes('reject'),
-    }).toEqual({ yourChoice: false, notRecorded: true, namesReject: true });
+    }).toEqual({ ownRefusal: false, notRecorded: true, namesReject: true });
   });
 
   it('1.4b (b): a form accepted after the run reached a second gate — the answer’s own reply is a refusal worded to its caller; the reply after the form opens "Not recorded:" and never passes it on', async () => {
@@ -1605,12 +1615,14 @@ describe('#627 W correction 2 — the form path', () => {
         'your choice',
       ),
       notRecorded: hintOf(started).startsWith('Not recorded:'),
-      yourChoice: JSON.stringify(started).includes('your choice'),
+      // #729 PR-6a: the engine's refusal words, never passed on (the composer's "your choice" is
+      // its own sentence, check 10).
+      ownRefusal: JSON.stringify(started).includes('was already resolved'),
     }).toEqual({
       ownOutcome: true,
       ownAddressesCaller: true,
       notRecorded: true,
-      yourChoice: false,
+      ownRefusal: false,
     });
   });
 

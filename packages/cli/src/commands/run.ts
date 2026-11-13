@@ -37,7 +37,9 @@ import {
   persistsField,
   startIdentityEntry,
 } from '@sensigo/realm';
+import { renderOutcome } from '@sensigo/realm-mcp';
 import {
+  PEOPLE_DOOR_WORDS,
   recordedAnswer,
   renderAnswerLine,
   recordedArrival,
@@ -937,12 +939,17 @@ export const runCommand = new Command('run')
                 console.log(`  ${line}`);
               }
               const late = lateAnswerOutcome(respondResult, run);
+              const beatenOk = respondResult.outcome;
               if (late !== undefined) {
                 // The call succeeded and the answer was NOT recorded (this process's own timer
                 // enacted the expiry first, with the same choice): never `✓ →`.
                 console.log(
                   `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${writerCtx().word(late.phase, RUN_PHASE_WORDS)}\n`,
                 );
+              } else if (beatenOk !== undefined && beatenOk.by.kind === 'answer') {
+                // #729 PR-6a (B6): the same choice another person's answer recorded first — nothing
+                // was recorded, so never `✓ →`: whose answer stands, from the reply's `outcome`.
+                console.log(`  ✗ ${renderOutcome(beatenOk, PEOPLE_DOOR_WORDS)}\n`);
               } else {
                 console.log(`  ✓ → ${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}\n`);
               }
@@ -970,6 +977,9 @@ export const runCommand = new Command('run')
                     ? `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${writerCtx().word(late.phase, RUN_PHASE_WORDS)}\n`
                     : `  ✗ not recorded → ${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}\n`,
                 );
+              } else if (respondResult.outcome?.by.kind === 'answer') {
+                // #729 PR-6a (B6): another person's answer, with another choice, stands — whose.
+                console.error(`  ✗ ${renderOutcome(respondResult.outcome, PEOPLE_DOOR_WORDS)}\n`);
               } else {
                 console.error(`  ✗ ${respondResult.errors.join(', ')}\n`);
               }

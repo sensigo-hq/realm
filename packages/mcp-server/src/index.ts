@@ -45,4 +45,5 @@ export type {
   FormWaitSetting,
   FormWaitInput,
 } from './door.js';
-export { routePhraseOf, renderOutcome } from './form-path.js';
+// #729 PR-6a (B1): the one sentence-maker, and the words the assistant's doors pass it.
+export { routePhraseOf, renderOutcome, ASSISTANT_DOOR_WORDS } from './form-path.js';

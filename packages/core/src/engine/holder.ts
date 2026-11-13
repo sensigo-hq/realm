@@ -294,6 +294,33 @@ export function readStoredName(value: unknown): string | undefined {
 }
 
 /**
+ * #729 PR-6a (B2 (2)): the ONE classification of an answer's stated name (`responded_by`), for the
+ * answer view and for `outcome.by` alike: no name, or a blank one, is `not_stated`; any other value
+ * {@link readStoredName} refuses (a non-string, a control character) is `name_unreadable`; else the
+ * name as that reader returns it.
+ */
+export function readStatedAnswerer(
+  raw: unknown,
+): { by: string; by_source: 'stated' } | ActorAbsent {
+  if (raw === undefined || raw === null) return { by: null, absent_cause: 'not_stated' };
+  if (typeof raw !== 'string') return { by: null, absent_cause: 'name_unreadable' };
+  // A value the tool accepted before the name bound existed can be empty: it reads as no name.
+  if (raw.trim().length === 0) return { by: null, absent_cause: 'not_stated' };
+  const name = readStoredName(raw);
+  if (name === undefined) return { by: null, absent_cause: 'name_unreadable' };
+  return { by: name, by_source: 'stated' };
+}
+
+/**
+ * #729 PR-6a (B4; T-19, the owner's 2026-10-11 ruling): a stated name, quoted, with `\` written `\\`
+ * and `"` written `\"` inside the quotes — so a name can never close its quotes and pose as part of
+ * the line around it. The ONE quoting: the CLI's answerer phrase and the outcome composer both use it.
+ */
+export function quoteStatedName(name: string): string {
+  return `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/**
  * Reads a stored `Attributed` (a claim's `holder`, an entry's `driven_by`). Total: never throws.
  * A value that is not an object, whose `by` or `channel` is not a string, whose `by_source` is not a
  * member, whose `by` is blank, or whose `by` (after spaces at either end are removed) or `channel`

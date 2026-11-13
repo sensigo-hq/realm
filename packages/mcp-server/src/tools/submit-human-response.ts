@@ -4,6 +4,7 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import {
   capText,
   submitHumanResponse,
+  type EngineReply,
   judgedSnapshotOf,
   endedRunWaysSentence,
   pendingCleanupSentence,
@@ -38,6 +39,7 @@ import {
   runReadError,
 } from '@sensigo/realm';
 import { boundedLines, boundedRefusal, moreUnknownKeys } from './refusal-format.js';
+import { ASSISTANT_DOOR_WORDS, renderOutcome } from '../form-path.js';
 
 /** The answer tool's description where the agent keeps it under `offered`. */
 export const SUBMIT_HUMAN_RESPONSE_DESCRIPTION =
@@ -186,7 +188,7 @@ export async function handleSubmitHumanResponse(
     RealmExtensionRegistry,
   );
 
-  const reply = await submitHumanResponse(runStore, definition, {
+  const engineReply = await submitHumanResponse(runStore, definition, {
     runId: args.run_id,
     gateId: args.gate_id,
     choice: args.choice,
@@ -206,6 +208,7 @@ export async function handleSubmitHumanResponse(
     principal: principalOfStores(stores),
     ...(onFallback(stores) ? { clientPromptRequested: true } : {}),
   });
+  const reply = withOutcomeWords(engineReply);
   // decision C211 (walk c14 W3-4's class): an answer that ended the run with cleanup steps left
   // pending says the command that runs them (the reply carries the resume offer already).
   const host = mcpHostOf(stores);
@@ -232,6 +235,39 @@ export async function handleSubmitHumanResponse(
   const own = moved ? { ...reply, context_hint: hint.slice(0, hint.length - offer.length) } : reply;
   const tail = `${named ? '' : cleanup}${moved ? offer : ''}`;
   return mcpReplyOf(withHintTail(renderReply(own, host), tail));
+}
+
+/**
+ * #729 PR-6a (B7): an answer that was not recorded, in the assistant's words, through the one
+ * sentence-maker (`renderOutcome`, {@link ASSISTANT_DOOR_WORDS}):
+ * - beaten by another person's answer: with a different choice the refusal's `errors[0]` and the
+ *   head of `context_hint` are the sentence (the door's sentence of what the run owes follows it,
+ *   as before); with the same choice `context_hint` is the sentence — and `answer_recorded` stays
+ *   unset, which means the question's expiry beat the answer;
+ * - after an `on_expiry: abort` another call carried out (no `expiry` receipt: this call did not):
+ *   `errors[0]` is the sentence; `context_hint` keeps the way out of the ended run.
+ * Every other reply is returned as it is (its time-limit words are core's, as before).
+ */
+function withOutcomeWords(reply: EngineReply): EngineReply {
+  const outcome = reply.outcome;
+  if (outcome === undefined) return reply;
+  if (outcome.by.kind === 'answer' && reply.answer_recorded !== false) {
+    const sentence = renderOutcome(outcome, ASSISTANT_DOOR_WORDS);
+    return reply.status === 'error'
+      ? { ...reply, errors: [sentence, ...reply.errors.slice(1)], context_hint: sentence }
+      : { ...reply, context_hint: sentence };
+  }
+  if (
+    outcome.by.kind === 'timeout' &&
+    outcome.choice === undefined &&
+    reply.answer_recorded === false &&
+    reply.expiry === undefined &&
+    reply.status === 'error'
+  ) {
+    const sentence = renderOutcome(outcome, ASSISTANT_DOOR_WORDS);
+    return { ...reply, errors: [sentence, ...reply.errors.slice(1)] };
+  }
+  return reply;
 }
 
 /** #627 W: whether this server's door is on `asked`'s fallback (`asked`, and no forms in this session). */

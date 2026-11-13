@@ -29,7 +29,13 @@ import {
 } from '@sensigo/realm';
 import { stripMarks, withoutMarks, writerCtx, writerSetFor } from '../../output/writer.js';
 import { cliCommandOf } from '../../commands/ways-renderer.js';
-import { cutWayLine, questionDeadlineLine, terminalRespondLines } from '../../lib/holder-render.js';
+import { renderOutcome } from '@sensigo/realm-mcp';
+import {
+  PEOPLE_DOOR_WORDS,
+  cutWayLine,
+  questionDeadlineLine,
+  terminalRespondLines,
+} from '../../lib/holder-render.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
 import { connectSocketMode } from './slack-socket-client.js';
@@ -261,22 +267,16 @@ export interface SlackHost {
 
 type SlackBlock = Record<string, unknown>;
 
-/** The words a late answer's outcome is told in (`answer_late`). */
-function lateWords(notice: Extract<PersonNotice, { kind: 'answer_late' }>): string {
+/**
+ * #729 PR-6a (B9): what a reply that was not recorded met, in the people's words, through the one
+ * sentence-maker (`renderOutcome`), Slack-escaped whole — so a stated name such as `<!channel>`
+ * cannot ping anyone. After the settled-by-its-time-limit sentence, whether the run goes on.
+ */
+function notRecordedWords(notice: Extract<PersonNotice, { kind: 'answer_late' }>): string {
   const { outcome } = notice;
-  const choice = outcome.choice !== undefined ? `\`${slackEscape(outcome.choice)}\`` : undefined;
-  switch (outcome.by.kind) {
-    case 'answer': {
-      const by = outcome.by.name !== undefined ? ` by ${slackEscape(outcome.by.name)}` : '';
-      return `This question was already answered${by}${choice !== undefined ? ` — ${choice} —` : ''} before your reply arrived.`;
-    }
-    case 'timeout':
-      return choice !== undefined
-        ? `This question's time ran out before your reply arrived; it was settled as ${choice}.`
-        : "This question's time ran out before your reply arrived; the run stopped.";
-    case 'engine':
-      return 'This question was withdrawn when the run stopped; your reply was not recorded.';
-  }
+  const sentence = slackEscape(renderOutcome(outcome, PEOPLE_DOOR_WORDS));
+  if (outcome.by.kind !== 'timeout' || outcome.choice === undefined) return sentence;
+  return `${sentence} ${notice.run_goes_on ? 'The run goes on.' : 'The run has ended.'}`;
 }
 
 /**
@@ -354,23 +354,32 @@ export function renderSlack(
       };
     }
     case 'answer_late':
-      return {
-        blocks: [],
-        text: `${lateWords(notice)} ${notice.run_goes_on ? 'The run goes on.' : 'The run has ended.'}`,
-      };
+      return { blocks: [], text: notRecordedWords(notice) };
     case 'answer_refused':
+      // #729 PR-6a (B9): a run that ended with nothing to say what the question met — no retry
+      // can record the reply, so none is asked for.
       return {
         blocks: [],
-        text: `⚠️ Couldn't record your response (\`${notice.code}\`). Try again.`,
+        text:
+          notice.code === 'STATE_RUN_TERMINAL'
+            ? 'Not recorded: this run stopped before your reply arrived.'
+            : `⚠️ Couldn't record your response (\`${notice.code}\`). Try again.`,
       };
     case 'question_closed': {
-      const how =
-        notice.how === 'expired'
-          ? 'its time ran out'
-          : notice.how === 'superseded'
-            ? `it was answered elsewhere${notice.choice !== undefined ? ` as \`${slackEscape(notice.choice)}\`` : ''}`
-            : 'the run stopped';
       // #729 PR-4 correction (C1): a channel post has no thread, so it names its gate and run.
+      const subject =
+        host.mode === 'webhook'
+          ? `This question (gate \`${notice.step}\`, run ${notice.run_id})`
+          : 'This question';
+      // #729 PR-6a (B3's last row): answered elsewhere — the whole winning answer, through the one
+      // sentence-maker's closing lead; Slack adds only the webhook framing above.
+      if (notice.how === 'superseded' && notice.outcome !== undefined) {
+        return {
+          blocks: [],
+          text: slackEscape(renderOutcome(notice.outcome, PEOPLE_DOOR_WORDS, subject)),
+        };
+      }
+      const how = notice.how === 'expired' ? 'its time ran out' : 'the run stopped';
       return {
         blocks: [],
         text:
@@ -882,6 +891,42 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
               }),
             );
           }
+          abortController.abort();
+        } else if (result.outcome !== undefined) {
+          // #729 PR-6a (B9): another answer — with this choice or another — or a step's abort settled
+          // the question first, so this reply was not recorded and no retry can record it: the
+          // thread is told, once, what the question met (never "Try again", never "✅").
+          const judged = judgedSnapshotOf(result);
+          console.log(renderOutcome(result.outcome, PEOPLE_DOOR_WORDS));
+          // Set before the post, as above: no closed line joins it when the poll ends.
+          personTold = true;
+          await tellThread(
+            composePersonNotice({
+              kind: 'answer_late',
+              run_id: runId,
+              gate,
+              choice: exactMatch,
+              outcome: result.outcome,
+              ended: result.ended_by !== undefined || judged?.record.terminal_state === true,
+            }),
+          );
+          abortController.abort();
+        } else if (result.status === 'error' && result.error_code === 'STATE_RUN_TERMINAL') {
+          // #729 PR-6a (B9): the run ended before this reply arrived, with nothing to say what the
+          // question met — told once; no retry can record it.
+          console.warn(
+            `Gate response submission failed: ${result.errors[0] ?? result.context_hint}`,
+          );
+          personTold = true;
+          await tellThread(
+            composePersonNotice({
+              kind: 'answer_refused',
+              run_id: runId,
+              gate,
+              choice: exactMatch,
+              code: 'STATE_RUN_TERMINAL',
+            }),
+          );
           abortController.abort();
         } else if (result.status === 'error') {
           await postSubmitError(

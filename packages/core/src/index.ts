@@ -66,7 +66,8 @@ export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';
 // Issue #625 PR-2a (F1): the one duration formatter — `<n>s` under a minute, then `<m>m`, `<h>h <m>m`,
 // `<d>d <h>h`.
-export { formatDuration, formatInstantWords } from './utils/duration.js';
+// #729 PR-6a (B3): `instantText` — the one instant formatter the outcome composer writes times with.
+export { formatDuration, formatInstantWords, instantText } from './utils/duration.js';
 // Issue #625 PR-2a (F6): the one POSIX shell quoter for a value a printed command carries.
 export { shellWord, quotedCommand } from './utils/shell-word.js';
 /**
@@ -89,6 +90,9 @@ export {
   validateDriver,
   composeProgramIdentity,
   readStoredName,
+  // #729 PR-6a (B2 (2), B4): the one classification of a stated name, and its one quoting.
+  readStatedAnswerer,
+  quoteStatedName,
   readAttributed,
   readDrivenBy,
   readGateClaimVerdict,
@@ -172,6 +176,8 @@ export {
   expiryReceiptLine,
   runReadError,
   terminalAnswerRefusalMessage,
+  // #729 PR-6a (B5): the way out of an ended run, the sentence a refusal on it ends with.
+  endedRunWayOutOf,
   withResumeOffer,
   withPendingCleanup,
   withEndedRunWays,

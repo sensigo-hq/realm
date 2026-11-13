@@ -96,7 +96,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       ]);
       expect(responded.status).toBe(0);
       expect(responded.stdout.trim()).toBe(
-        `Responded: ${run.id} | choice 'approve' | answered by alice (as stated) | new state 'running'\n` +
+        `Responded: ${run.id} | choice 'approve' | answered by "alice" (as stated) | new state 'running'\n` +
           // decision C98: where the code comes from (this definition has no trust_root: the folder
           // advance runs in) and that the environment is that shell's.
           `Owed to the engine: 'after' — realm run advance ${run.id} runs it, with the project code under the folder it runs in (or its --project), in the environment of the shell it runs in.\n` +

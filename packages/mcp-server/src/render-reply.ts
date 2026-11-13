@@ -1578,6 +1578,8 @@ export const ALSO_TABLE = {
 export const OUTCOME_BY_TABLE = {
   kind: 'fact',
   name: 'bounded',
+  // #729 PR-6a (B2 (2)): why the winner's stated name is not shown — realm's own word.
+  name_absent: 'fact',
   basis: 'fact',
   cause: 'fact',
   step: 'fact',
@@ -1586,6 +1588,8 @@ export const OUTCOME_BY_TABLE = {
 /** G4: a question's outcome, field by field: realm's words, the author's choice and step, times. */
 export const OUTCOME_TABLE = {
   choice: 'fact',
+  // #729 PR-6a (B2 (1)): this call's own choice, as the caller sent it — bounded, like `by.name`.
+  attempted_choice: 'bounded',
   by: { nested: OUTCOME_BY_TABLE },
   at: 'fact',
   step: 'fact',
@@ -2423,6 +2427,7 @@ export const DOOR_FACTS = {
   } satisfies FactProducers<typeof OUTCOME_TABLE, Outcome>,
   outcome_by: {
     kind: 'enum',
+    name_absent: 'enum',
     basis: 'enum',
     cause: 'enum',
     step: 'author_literal',

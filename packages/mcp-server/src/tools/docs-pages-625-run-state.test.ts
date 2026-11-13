@@ -925,7 +925,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     async () => {
       claim(
         PAGE,
-        'One entry for each answer to the step\'s gate: `choice`; `answered_by`, which is `{ "by": …, "by_source": "stated" }` (the name the caller gave, not verified) or `{ "by": null, "absent_cause": … }` with `not_stated` (the caller gave no name), `name_unreadable` (a stored name that cannot be shown) or `settled_by_expiry` (the gate\'s expiry wrote its default choice: no answer was recorded in time); and `claim_proof`, the verdict of [the claim token](tools.md#the-claim-token).',
+        'One entry for each answer to the step\'s gate: `choice`; `answered_by`, which is `{ "by": …, "by_source": "stated" }` (the name the caller gave, not verified) or `{ "by": null, "absent_cause": … }` with `not_stated` (the caller gave no name), `name_unreadable` (a stored name that cannot be shown) or `settled_by_expiry` (the gate\'s expiry wrote its default choice: no answer was recorded in time); `claim_proof`, the verdict of [the claim token](tools.md#the-claim-token); and `at`, when the answer was given (its entry\'s `completed_at`, as stored; added after version 0.49.0).',
       );
       const { call, workflowStore, runStore } = await connect();
       await workflowStore.register(
@@ -1004,7 +1004,10 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
         unnamed: [unnamed[0]!['answered_by'], 'claim_proof' in unnamed[0]!],
         unreadable: unreadable[0]!['answered_by'],
         expired: [expired[0]!['choice'], expired[0]!['answered_by']],
+        // #729 PR-6a (B8): `at`, as the page states.
+        namedAt: typeof named[0]!['at'],
       }).toEqual({
+        namedAt: 'string',
         named: [1, 'send', { by: 'ana', by_source: 'stated' }, true],
         unnamed: [{ by: null, absent_cause: 'not_stated' }, true],
         unreadable: { by: null, absent_cause: 'name_unreadable' },

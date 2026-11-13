@@ -13,6 +13,7 @@ All notable changes to this project are documented here.
 ### Changed
 
 - **`realm serve` and `realm listen` exit with code 1 when they had to cut requests that were still being answered**; 0 when none was cut.
+- **A second answer that is not recorded is now told whose answer stands, on every door:** the choice, the name as stated, where it came from and when. A same choice no longer prints a success line. Slack no longer says "Try again" for an answer that can never be recorded. `realm run inspect` and the run view show when the answer was given. Data: the not-recorded reply's `outcome` gains `attempted_choice` and, for a name that cannot be printed, `by.name_absent`; an answer after a time limit ended the run now gets an `outcome`; the library's conflict reply carries `refusal`; `get_run_state`'s `answers[]` gain `at`.
 
 ### Fixed
 

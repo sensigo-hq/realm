@@ -18,11 +18,15 @@ import {
   buildDisclosureSet,
   respondWayOfGate,
   formatInstantWords,
+  instantText,
+  parseStamp,
+  quoteStatedName,
   type DisclosureAudience,
   type DisclosureSet,
   type InspectWay,
 } from '@sensigo/realm';
 import type {
+  ActorAbsentCause,
   AnswerArrival,
   AnswerView,
   Attributed,
@@ -31,6 +35,7 @@ import type {
   ClaimProofAbsentCause,
   GateClaimVerdict,
   NotRecordedKind,
+  OutcomeDoorWords,
   PendingGate,
   RunRecord,
 } from '@sensigo/realm';
@@ -363,18 +368,44 @@ export function recordedAnswer(run: RunRecord, step: string): AnswerView | undef
   return answers[answers.length - 1];
 }
 
+/** #729 PR-6a (T-19 (e)): the answerers {@link answererPhrase} names — any but an answer the gate's
+ *  expiry wrote, which has no answerer. */
+export type NamedAnswerer =
+  | { by: string; by_source: 'stated' }
+  | { by: null; absent_cause: Exclude<ActorAbsentCause, 'settled_by_expiry'> };
+
+/** `by`, unless the gate's expiry wrote the answer (no one answered): then `undefined`. */
+export function namedAnswerer(by: AnswerView['answered_by']): NamedAnswerer | undefined {
+  if (by.by === null && by.absent_cause === 'settled_by_expiry') return undefined;
+  return by as NamedAnswerer;
+}
+
 /**
  * #706 walk W8-R1: the ONE phrase for who answered a question, each absence in its own words by
- * cause: a name → `<name> (<statedLabel>)`; a recorded name that cannot be printed → the one
+ * cause: a name → `"<name>" (<statedLabel>)`, quoted by core's one quoting (`quoteStatedName`, #729
+ * PR-6a B4: a name can never close its quotes); a recorded name that cannot be printed → the one
  * unshowable phrase, with no parentheses around it so nothing nests; no name stated →
- * `(not stated)`. For any `answered_by` but `settled_by_expiry` — an answer the gate's expiry wrote
- * has no answerer, and each caller words that case itself before it calls this.
+ * `(not stated)`. An answer the gate's expiry wrote has no answerer ({@link namedAnswerer}): each
+ * caller words that case itself.
  */
-export function answererPhrase(by: AnswerView['answered_by'], statedLabel: string): string {
-  if (by.by !== null) return `${by.by} (${statedLabel})`;
+export function answererPhrase(by: NamedAnswerer, statedLabel: string): string {
+  if (by.by !== null) return `${quoteStatedName(by.by)} (${statedLabel})`;
   if (by.absent_cause === 'name_unreadable') return UNSHOWABLE_NAME;
   return '(not stated)';
 }
+
+/**
+ * #729 PR-6a (B1): the words the people's doors — `realm run respond`, the `realm workflow run`
+ * prompt and the Slack thread — name a door with, in the outcome composer's sentence. Another route a
+ * door declared is its id, quoted as a name is.
+ */
+export const PEOPLE_DOOR_WORDS: OutcomeDoorWords = {
+  cli: 'from a terminal',
+  mcp: 'through an assistant',
+  mcp_form: "through a form in an assistant's app",
+  slack: 'in a Slack thread',
+  other_route: (route) => `through route ${quoteStatedName(route)}`,
+};
 
 /**
  * #627 W (W-i1, W-i8 by_source): how the program that recorded an answer knows its own name, as
@@ -471,20 +502,20 @@ export function renderAnswerLine(
   arrival: AnswerArrival,
   ctx: RenderCtx = PLAIN,
 ): string {
-  const by = answer.answered_by;
+  const by = namedAnswerer(answer.answered_by);
   const choice = answer.choice ?? '(no choice recorded)';
   const absent = answer.claim_proof_absent;
-  if (
-    (by.by === null && by.absent_cause === 'settled_by_expiry') ||
-    absent === 'settled_by_expiry'
-  ) {
+  if (by === undefined || absent === 'settled_by_expiry') {
     return `Answer: ${choice} · ${SETTLED_BY_EXPIRY_WORDS}`;
   }
   const principal = principalPhrase(arrival.principal);
+  // #729 PR-6a (B8): when the answer was given, after the route part; none when it does not parse.
+  const givenMs = answer.at !== undefined ? parseStamp(answer.at) : undefined;
   return [
     `Answer: ${choice}`,
     `answered by ${answererPhrase(by, 'as stated')}`,
     arrivalPhrase(arrival, ctx),
+    ...(givenMs !== undefined ? [`given at ${instantText(givenMs)}`] : []),
     ...(principal !== undefined ? [principal] : []),
     ...(arrival.client_prompt_requested ? [CLIENT_PROMPT_WORDS] : []),
     // D-14: realm's own text never puts a credential name before `:` or `=` (the name rule would hide

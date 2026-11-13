@@ -640,7 +640,7 @@ const STEP_LINE_STEP_VIEW = {
   answers: {
     surface: 'rendered',
     // The common gate step has ONE execution entry then ONE answer — its answer used to be dropped.
-    probe: (out) => expect(out).toContain('Answer: approve · answered by alice'),
+    probe: (out) => expect(out).toContain('Answer: approve · answered by "alice"'),
   },
   // issue #600 caching PR P: the step's money across its attempts, in its header.
   total: {
@@ -1056,7 +1056,12 @@ const HOLDER_ANSWER_VIEW = {
   choice: { surface: 'rendered', probe: (out) => expect(out).toContain('Answer: approve ·') },
   answered_by: {
     surface: 'rendered',
-    probe: (out) => expect(out).toContain('answered by alice (as stated)'),
+    probe: (out) => expect(out).toContain('answered by "alice" (as stated)'),
+  },
+  // #729 PR-6a (B8): when the answer was given — the entry's `completed_at`, after the route part.
+  at: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toMatch(/ · given at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z · /),
   },
   claim_proof: {
     surface: 'rendered',
@@ -1071,7 +1076,7 @@ const HOLDER_ANSWER_VIEW = {
     // `proof_not_recorded` — an answer with neither a verdict nor an expiry.
     probe: (out) =>
       expect(out).toContain(
-        'Answer: reject · answered by (not stated) · how it arrived was not recorded · no claim token recorded',
+        'Answer: reject · answered by (not stated) · how it arrived was not recorded · given at 2026-01-01T00:00:02Z · no claim token recorded',
       ),
   },
 } satisfies Record<keyof AnswerView, DisclosureRoute>;
