@@ -41,6 +41,14 @@ import { startSlackGateServer } from './slack-gate-server.js';
 import { connectSocketMode } from './slack-socket-client.js';
 import { deadlineSignal, readWithin, SLACK_CALL_DEADLINE_MS } from './slack-call.js';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
+import {
+  createSlackPostFile,
+  readSlackPostFile,
+  releaseSlackPostFile,
+  replaceSlackPostFile,
+  slackPostPath,
+  takeOverSlackPostFile,
+} from './slack-post-file.js';
 
 /**
  * #729 PR-3 (L-3; RECORD 05 "Slack"): Slack is a broadcast surface. The gate post is composed from
@@ -291,7 +299,6 @@ export function renderSlack(
   const step = `\`${slackEscape(notice.step)}\``;
   switch (notice.kind) {
     case 'question_opened': {
-      const owner = notice.owner !== undefined ? `\n*Owner:* ${slackOwner(notice.owner)}` : '';
       const choices = notice.view.choices.map((c) => `\`${slackEscape(c)}\``).join(' or ');
       // #729 PR-4 correction (A1): the route is keyed on whether Realm LISTENS in the thread, never
       // on the transport; the one respond command is always there (the ids a terminal answer needs).
@@ -299,25 +306,9 @@ export function renderSlack(
       const route = host.listens
         ? `Reply in this thread with ${choices}, or from a terminal:\n\`\`\`${command}\`\`\``
         : `*Gate requires a terminal response — open a terminal and run:*\n\`\`\`${command}\`\`\``;
-      const section = (text: string): SlackBlock => ({
-        type: 'section',
-        text: { type: 'mrkdwn', text },
-      });
       return {
         text: '⏸ Workflow gate waiting for approval',
-        blocks: [
-          section(`*Gate:* ${step}${owner}`),
-          section(viewBlockText(notice.view)),
-          section(route),
-          ...(notice.view.cut !== undefined
-            ? [
-                {
-                  type: 'context',
-                  elements: [{ type: 'mrkdwn', text: slackEscape(cutWayLine(notice.run_id)) }],
-                },
-              ]
-            : []),
-        ],
+        blocks: questionBlocks(notice, route),
       };
     }
     case 'reminder': {
@@ -389,6 +380,36 @@ export function renderSlack(
       };
     }
   }
+}
+
+/**
+ * The question post's blocks: the gate (and owner), the view, `route` (how to answer, or — #729 PR-6b
+ * (A.1) — the closing line once the question closed), and the way to the whole output when the view
+ * was cut.
+ */
+function questionBlocks(
+  notice: Extract<PersonNotice, { kind: 'question_opened' }>,
+  route: string,
+): SlackBlock[] {
+  const step = `\`${slackEscape(notice.step)}\``;
+  const owner = notice.owner !== undefined ? `\n*Owner:* ${slackOwner(notice.owner)}` : '';
+  const section = (text: string): SlackBlock => ({
+    type: 'section',
+    text: { type: 'mrkdwn', text },
+  });
+  return [
+    section(`*Gate:* ${step}${owner}`),
+    section(viewBlockText(notice.view)),
+    section(route),
+    ...(notice.view.cut !== undefined
+      ? [
+          {
+            type: 'context',
+            elements: [{ type: 'mrkdwn', text: slackEscape(cutWayLine(notice.run_id)) }],
+          },
+        ]
+      : []),
+  ];
 }
 
 /** The opening notice for a gate a slack host posts. */
@@ -713,6 +734,9 @@ export interface BidirectionalGateParams {
    * `responded_by` (#603) and no `claim_token` (the CLI never passes one).
    */
   driver?: Attributed;
+  /** #729 PR-6b (B): the question post's file this attendant holds — deleted when the question
+   *  closes (A.1, A.5–A.7); left as it is when the wait ends by a throw (A.8). */
+  postFile?: string;
 }
 
 /**
@@ -736,6 +760,22 @@ const DRAIN_TIMEOUT_MS = 2000;
  *  it claims nothing about the run (a closed gate may have ended it). */
 const THREAD_POST_UNDELIVERED = `Slack thread post not delivered within ${DRAIN_TIMEOUT_MS / 1000} s; the question is closed`;
 
+/** #729 PR-6b (A.5, A.7): the operator's line when the question post could not be edited. */
+const postNotUpdatedLine = (cause: string): string =>
+  `Slack question post not updated to say the question closed — ${cause}`;
+
+/** #729 PR-6b (A.6): the operator's line when the edit outlives the drain bound. */
+const POST_UPDATE_UNFINISHED = `Slack question post not updated within ${DRAIN_TIMEOUT_MS / 1000} s; the question is closed`;
+
+/** #729 PR-6b (B.12): a stopped agent's post taken over, with a listener (c1) or with none (c2). */
+const POST_TAKEN_OVER_LISTENING =
+  '  ℹ  This question is already in Slack, posted by a realm agent that has stopped; listening on that thread again.';
+const POST_TAKEN_OVER =
+  '  ℹ  This question is already in Slack, posted by a realm agent that has stopped; using that post again.';
+
+/** A thrown value's text. */
+const thrownText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
 export async function handleBidirectionalGate(params: BidirectionalGateParams): Promise<void> {
   const {
     gate,
@@ -754,6 +794,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     pollIntervalMs,
     registry,
     driver,
+    postFile,
   } = params;
 
   let clarificationCount = 0;
@@ -1081,6 +1122,18 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     ...(driver !== undefined ? { driver } : {}),
   });
 
+  // #729 PR-6b (A): the question post's edit once the question closed — its state for the drain.
+  const display = definition.steps[gate.step_name]?.display;
+  let editing: Promise<void> | undefined;
+  let editSettled = false;
+  let editPastBound = false;
+  let postReleased = false;
+  const releasePost = async (): Promise<void> => {
+    if (postFile === undefined || postReleased) return;
+    postReleased = true;
+    await releaseSlackPostFile(postFile);
+  };
+
   try {
     // Poll the store as the unified done-detector — resolves when candidate processor
     // calls submitHumanResponse OR when the terminal command is used.
@@ -1089,18 +1142,62 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     // thread is told how (its time ran out, the run stopped, it was answered elsewhere). A Slack
     // answer still in flight when the poll ended (its write is what ended the poll) decides first, so
     // the closed line never follows the person's own answer. Best effort, tracked into the drain
-    // below, so the whole of it is bounded.
+    // below, so the whole of it is bounded. #729 PR-6b (A.1): the same read of the record gives the
+    // question post's edit its closing line.
     const answersInFlight = [...inFlight];
+    const closing = (async (): Promise<ClosedReading> => {
+      await Promise.allSettled(answersInFlight);
+      return readClosed(store, runId, gate);
+    })();
     track(
       (async (): Promise<void> => {
-        await Promise.allSettled(answersInFlight);
-        if (personTold) return;
-        const closed = await closedNotice(store, runId, gate);
-        if (closed !== undefined) await tellThread(closed);
+        const closed = await closing;
+        if (personTold || !('notice' in closed)) return;
+        await tellThread(closed.notice);
       })().catch((err) => {
         console.warn(`Slack reply failed: ${err instanceof Error ? err.message : String(err)}`);
       }),
     );
+    if (gateThreadTs !== undefined) {
+      const ts = gateThreadTs;
+      editing = (async (): Promise<void> => {
+        const closed = await closing;
+        if (!('notice' in closed)) {
+          // A.7: no edit; the record read's error is the cause.
+          if (!editPastBound) console.warn(`  ⚠  ${postNotUpdatedLine(thrownText(closed.error))}`);
+          return;
+        }
+        // A.1: the closing line, disclosed as the thread's lines are; the post keeps its gate and
+        // its view, and the block that said how to answer becomes that line.
+        const line = disclose(
+          stripMarks(renderSlack(closed.notice, { mode: 'bot', listens }).text),
+          slackSet(),
+          'all',
+        ).text;
+        const verdict = await sendToSlack(
+          'https://slack.com/api/chat.update',
+          {
+            channel: slackChannelId,
+            ts,
+            text: line,
+            blocks: questionBlocks(questionOpened(gate, runId, display), line),
+          },
+          slackBotToken,
+        );
+        if (!verdict.ok && !editPastBound) {
+          console.warn(
+            `  ⚠  ${postNotUpdatedLine(slackFailureLine(verdict) ?? errorText(verdict))}`,
+          );
+        }
+      })()
+        .catch((err) => {
+          if (!editPastBound) console.warn(`  ⚠  ${postNotUpdatedLine(thrownText(err))}`);
+        })
+        .finally(async () => {
+          editSettled = true;
+          await releasePost();
+        });
+    }
   } finally {
     abortController.abort();
     clearTimers();
@@ -1114,41 +1211,69 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     // loop breaks the reply has flushed); it waits (≤2s) only when a reply is genuinely still in
     // flight. Candidate-scoped: reminder/escalation replies stay best-effort (cleared on resolve).
     // #729 PR-4 (02 §Transport (4)): when the bound fires, the operator is told — once.
+    // #729 PR-6b (A.3, A.6): the question post's edit is drained inside the same bound; past it,
+    // its own line once and nothing more for it, the thread's line only for an unfinished thread
+    // post, and the post's file deleted.
     let drainTimer: ReturnType<typeof setTimeout>;
     const bound = new Promise<'bound'>((resolve) => {
       drainTimer = setTimeout(() => resolve('bound'), DRAIN_TIMEOUT_MS);
     });
     try {
       const drained = await Promise.race([
-        Promise.allSettled([...inFlight]).then(() => 'drained' as const),
+        Promise.allSettled([...inFlight, ...(editing !== undefined ? [editing] : [])]).then(
+          () => 'drained' as const,
+        ),
         bound,
       ]);
-      if (drained === 'bound') console.warn(`  ⚠  ${THREAD_POST_UNDELIVERED}`);
+      if (drained === 'bound') {
+        if (editing !== undefined && !editSettled) {
+          editPastBound = true;
+          console.warn(`  ⚠  ${POST_UPDATE_UNFINISHED}`);
+          await releasePost();
+        }
+        if (inFlight.size > 0) console.warn(`  ⚠  ${THREAD_POST_UNDELIVERED}`);
+      }
     } finally {
       clearTimeout(drainTimer!);
     }
   }
 }
 
+/** How a question closed, read from the record; or the read's error (#729 PR-6b, A.7). */
+type ClosedReading = { readonly notice: PersonNotice } | { readonly error: unknown };
+
 /** #729 PR-4 (02): how a question closed, from the record as it is now (`outcomeOf`, nothing
- *  attempted by this host); `undefined` when the record cannot be read. */
-async function closedNotice(
+ *  attempted by this host). A notice is never the attendant's failure: a record that cannot be read
+ *  gives its error, and tells nothing. */
+async function readClosed(
   store: RunStore,
   runId: string,
   gate: PendingGate,
-): Promise<PersonNotice | undefined> {
+): Promise<ClosedReading> {
   try {
     const { record: run } = await store.get(runId);
-    return composePersonNotice({
-      kind: 'question_closed',
-      run_id: runId,
-      gate,
-      outcome: outcomeOf(run, gate.step_name, gate.expires_at, false),
-    });
-  } catch {
-    // A notice is never the attendant's failure: a record that cannot be read tells nothing.
-    return undefined;
+    return {
+      notice: composePersonNotice({
+        kind: 'question_closed',
+        run_id: runId,
+        gate,
+        outcome: outcomeOf(run, gate.step_name, gate.expires_at, false),
+      }),
+    };
+  } catch (error) {
+    return { error };
   }
+}
+
+/** The question's opening notice, as the post's blocks are composed from it. */
+function questionOpened(
+  gate: PendingGate,
+  runId: string,
+  display: string | undefined,
+): Extract<PersonNotice, { kind: 'question_opened' }> {
+  const notice = openingNotice(gate, runId, display);
+  if (notice.kind !== 'question_opened') throw new Error('unreachable: an opening notice');
+  return notice;
 }
 
 /** Polls the store until the gate is resolved or the run reaches a terminal state. */
@@ -1200,6 +1325,57 @@ export interface SlackGateHandlerConfig {
   registry?: ExtensionRegistry;
   /** Issue #625: the program this handler runs in — forwarded to the attendant. */
   driver?: Attributed;
+  /**
+   * #729 PR-6b (B): the Realm home `realm agent` opened its store in. With a bot token, the question
+   * post's channel and `ts` are kept in a file under its `slack-posts/` while the question is open, so
+   * a restarted `realm agent` uses the same post. Without it, no file is kept.
+   */
+  home?: string;
+}
+
+/**
+ * #729 PR-6b (B.10–B.14): the question's post. A stopped agent's post, when its file can be taken
+ * over, is used again and nothing is posted; otherwise the question is posted, and the new post is
+ * recorded in the file when no file is there (created exclusively) or the one there is not usable.
+ * A running writer's file, or one this agent failed to take over, is left alone: the new post is
+ * kept in memory only. `file` is set only when this agent holds the file.
+ */
+async function questionPost(
+  config: SlackGateHandlerConfig & { botToken: string; channelId: string },
+  runId: string,
+  gate: PendingGate,
+  listens: boolean,
+): Promise<{ ts: string | undefined; file?: string }> {
+  const file =
+    config.home !== undefined ? slackPostPath(config.home, runId, gate.gate_id) : undefined;
+  const found =
+    file !== undefined
+      ? await readSlackPostFile(file, config.channelId)
+      : ({ kind: 'none' } as const);
+  if (
+    file !== undefined &&
+    found.kind === 'stopped' &&
+    (await takeOverSlackPostFile(file, found))
+  ) {
+    console.log(listens ? POST_TAKEN_OVER_LISTENING : POST_TAKEN_OVER);
+    return { ts: found.record.ts, file };
+  }
+  const ts = await postGateViaApi(
+    config.botToken,
+    config.channelId,
+    gate,
+    runId,
+    listens,
+    config.definition.steps[gate.step_name]?.display,
+  );
+  if (ts === undefined || file === undefined) return { ts };
+  const held =
+    found.kind === 'none'
+      ? await createSlackPostFile(file, config.channelId, ts)
+      : found.kind === 'not_usable'
+        ? await replaceSlackPostFile(file, config.channelId, ts)
+        : false;
+  return held ? { ts, file } : { ts };
 }
 
 /**
@@ -1212,15 +1388,14 @@ export function createSlackGateHandler(
   return async (runId, gate) => {
     // Bidirectional path (bot token + channel).
     if (config.botToken !== undefined && config.channelId !== undefined) {
-      const display = config.definition.steps[gate.step_name]?.display;
-      const gateThreadTs = await postGateViaApi(
-        config.botToken,
-        config.channelId,
-        gate,
+      const listens = config.appToken !== undefined || config.signingSecret !== undefined;
+      const post = await questionPost(
+        { ...config, botToken: config.botToken, channelId: config.channelId },
         runId,
-        config.appToken !== undefined || config.signingSecret !== undefined,
-        display,
+        gate,
+        listens,
       );
+      const gateThreadTs = post.ts;
       await handleBidirectionalGate({
         gate,
         runId,
@@ -1238,6 +1413,7 @@ export function createSlackGateHandler(
         pollIntervalMs: config.pollIntervalMs ?? 3000,
         ...(config.registry !== undefined ? { registry: config.registry } : {}),
         ...(config.driver !== undefined ? { driver: config.driver } : {}),
+        ...(post.file !== undefined ? { postFile: post.file } : {}),
       });
     } else if (config.webhookUrl !== undefined) {
       // One-way webhook + inline poll loop (avoids circular dependency with run-agent.ts).
@@ -1269,7 +1445,8 @@ export function createSlackGateHandler(
       // #729 PR-4 (02): a webhook takes no answer, so the question always closed elsewhere — the
       // channel is told how, walked at every tier as a thread reply is (not when the channel was
       // never asked: the opening post failed). Awaited under the drain bound, as the bot path's.
-      const closed = posted ? await closedNotice(config.store, runId, gate) : undefined;
+      const read = posted ? await readClosed(config.store, runId, gate) : undefined;
+      const closed = read !== undefined && 'notice' in read ? read.notice : undefined;
       if (closed !== undefined) {
         let bound: ReturnType<typeof setTimeout> | undefined;
         try {
