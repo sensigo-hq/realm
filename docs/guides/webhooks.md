@@ -126,6 +126,37 @@ realm run list
 ed876b82-9365-4c63-9c6e-42ffed4d617e  tickets v1  completed  10/2/2026, 12:30:21 AM  1 step(s)
 ```
 
+### Getting the result back
+
+The caller can also read what happened to the run, and values the workflow chooses to hand back, when the workflow declares them in `result_map` under `trigger` (with `auth.mode: shared_secret`; see [`result_map`](../reference/workflow/webhook-trigger.md#result_map)). Here, a refunds workflow at `/refunds` whose step `review` records `approved` and `note`:
+
+```yaml
+result_map:
+  approved: context.resources.review.approved
+  note: context.resources.review.note
+```
+
+Its `202` then also says where to read the run, and with what token:
+
+```text
+202 {"run_id":"d5135829-125d-4f31-9ba7-84cf1ac5b333","status":"accepted","run_phase":"running","status_path":"/refunds/runs/d5135829-125d-4f31-9ba7-84cf1ac5b333","token":"a138b12da78072298d9b77e1ba0a4e5d510e1f5982f4908fc415a983b6ac846b"}
+```
+
+Read it with `GET`, putting your own base address in front of `status_path`:
+
+```bash
+curl http://127.0.0.1:3000/refunds/runs/d5135829-125d-4f31-9ba7-84cf1ac5b333 \
+  -H 'Authorization: Bearer a138b12da78072298d9b77e1ba0a4e5d510e1f5982f4908fc415a983b6ac846b'
+```
+
+Once the run has completed, the reply holds the declared values:
+
+```text
+200 {"run_id":"d5135829-125d-4f31-9ba7-84cf1ac5b333","run_phase":"completed","result":{"approved":true,"note":"refund to the original card"},"result_masked":{"declared":0,"environment":0,"pattern":0}}
+```
+
+This was added after version 0.49.0.
+
 ## 4. See what is turned away
 
 Each check has its own reply. Send these to see them.
@@ -136,19 +167,13 @@ Each check has its own reply. Send these to see them.
 {"error":"forbidden"}   403
 ```
 
-**The same event again** starts nothing. Within the duplicate window (`ttl_minutes`, 60 minutes by default) the reply is:
-
-```text
-{"status":"deduplicated"}   200
-```
-
-Later, while the run that event started exists (a sender's redelivery, for one), and when two copies of one delivery arrive together, the reply names that run and its phase. Nothing is started and the run is not written to, whether it is still going or has ended. Here the run had already finished:
+**The same event again** starts nothing. The reply names the run that event started and its phase: within the duplicate window (`ttl_minutes`, 60 minutes by default), later while that run exists (a sender's redelivery, for one), and when two copies of one delivery arrive together. Nothing is started and the run is not written to, whether it is still going or has ended. Here the run had already finished:
 
 ```text
 {"status":"deduplicated","run_id":"c1f1da1f-ce29-4bcd-b12b-1556c5698fc7","run_phase":"completed"}   200
 ```
 
-`run_phase` is the phase on the run's record, not whether an agent is working on it: a run whose agent stopped still reads `running`.
+`run_phase` is the phase on the run's record, not whether an agent is working on it: a run whose agent stopped still reads `running`. Within the duplicate window, a run that is gone (purged) gets the bare `{"status":"deduplicated"}`; until version 0.49.0 every reply within the window was that bare one (changed after version 0.49.0).
 
 **An event the filter does not want**, for example `"type":"ticket-closed"`, starts nothing:
 

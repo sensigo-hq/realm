@@ -5,7 +5,11 @@
 // `loadWorkflowFromString` (the loader `register`, `validate` and `validate --registered` share; the
 // three CLI surfaces have their own cells in the CLI package) and reads the lines it refuses with.
 // On a failing host a cell prints the case and the lines it got.
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { TRIGGER_JSON_SCHEMA } from './trigger-schema.js';
 import { loadWorkflowFromString } from './yaml-loader.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { isCredentialName } from '../utils/redaction.js';
@@ -182,5 +186,26 @@ describe('R1.1 — trigger.result_map at load', () => {
     expect(refusals(workflow('shared_secret', `${map}  results_map: {}\n`))).toEqual([
       "trigger: unknown property 'results_map'",
     ]);
+  });
+  it("L4: the trigger page's block table lists exactly the keys the schema allows", () => {
+    const page = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '..',
+        '..',
+        '..',
+        '..',
+        'docs',
+        'reference',
+        'workflow',
+        'webhook-trigger.md',
+      ),
+      'utf8',
+    );
+    const block = page.slice(page.indexOf('## The block'), page.indexOf('No other key is allowed'));
+    const rows = [...block.matchAll(/^\| \[?`([a-z_]+)`/gm)].map((m) => m[1]);
+    // (a) red when a key is added to the schema without its row on the page (or a row stays after
+    //     its key is gone); (b) prints the page's rows and the schema's keys.
+    expect(rows).toEqual(Object.keys(TRIGGER_JSON_SCHEMA.properties));
   });
 });
