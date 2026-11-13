@@ -215,19 +215,46 @@ Read again once it had completed:
 | `result_error`             | In place of `result`. `too_large`: the declared values are longer than 40,000 characters; none is sent. `values_withheld`, with `because` (`declared values changed` or `declared values could not be read`): Realm could not tell which values are secret, after the project's `secrets:` changed or became unreadable; none is sent. `realm run inspect` shows the run. |
 | `workflow_version_differs` | `true`: the `version:` of the workflow `realm listen` loaded at start is not the one the run started under; the result is still given.                                                                                                                                                                                                                                    |
 
+A later version of Realm may add fields to these replies and words to `run_phase` and `result_error`. A client written against this page ignores a field it does not know, reads a `run_phase` it does not know as a run that has not finished (it keeps asking until its own deadline), and reads a `result_error` it does not know as no result. It keeps the token as it came, and reads nothing into it.
+
 The token belongs to that run of that workflow and opens nothing else. It is worked out from the workflow's secret, so it stops working when the secret changes, and it sits wherever the caller logs the reply it came in: anyone who can read it can read that run's phase and declared values, and no more.
 
 A wrong or missing token, a run that does not exist or was purged, and a run of another workflow all get the same `403` `{"error":"forbidden"}`.
 
 Realm hides a value equal to one of the project's declared secrets, or to an environment value of 8 or more characters, wherever it appears in a result, even if it is not a secret; and it hides a text or a number kept under a name like `token` or `password` in the run's output, whichever way `result_map` reaches it.
 
-A name is refused when Realm treats a field of that name as a credential's: `token`, `password`, `api_key`, `secret`, `authorization`, `cookie` and `private_key` are, in any case and with a prefix (`my_token`, `x_secret`); `tokens`, `auth` and `session` are not. Realm hides a value by the field it sits under in the run's output, not by the name given here, so a name like these would look protected and not be.
+A name is refused when Realm treats a field of that name as a credential's: `token`, `password`, `api_key`, `secret`, `authorization`, `cookie` and `private_key` are, in any case, and with a prefix set off by `_`, `-`, `.`, a space or a capital letter (`my_token`, `x-secret`, `myToken`); `mytoken`, `xsecret` and `MYTOKEN` are not, nor are `tokens`, `auth` and `session`. Realm hides a value by the field it sits under in the run's output, not by the name given here, so a name like these would look protected and not be.
 
 `result_map` is refused for `hmac`, `stripe`, `github` and `none`: a sender who replays a captured signed request would be handed the token, and `none` has no secret to work it out from.
 
 A repeat of an event within `ttl_minutes` gets `200` `{"status":"deduplicated","run_id","run_phase"}`; if the run is gone, the bare `{"status":"deduplicated"}`. For a workflow with `result_map`, a repeat, inside the window or after it, also carries `status_path` and `token` again.
 
 A proxy or gateway that sets or removes the `Authorization` header itself keeps the token from reaching `realm listen`: the read then gets the `403`.
+
+### Waiting for the result
+
+A caller that would rather not ask again can send `Prefer: wait=N` with the `POST` that starts the run, N a whole number of seconds from 1. `realm listen` then holds its reply until one of these happens, and answers once:
+
+| What happens first                                                                                    | The reply                                                                                                                                              |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The run ends: `completed`, `failed`, `aborted` or `abandoned`                                         | `200` with what a `GET` of its `status_path` would answer: the phase and, for a completed run, the result, `result_masked` or `result_error`, as above |
+| The run stops at a person's gate                                                                      | The `202` above, with `"run_phase":"gate_waiting"`, within about 2 seconds of the gate                                                                 |
+| The process that drives the run exits and the run has not ended (it handed the run on, or it crashed) | The `202`, with the phase the run is in                                                                                                                |
+| N seconds pass                                                                                        | The `200` if the run has ended by then; otherwise the `202`, with its phase                                                                            |
+| `realm listen` is stopped (Ctrl+C or `SIGTERM`)                                                       | At once: the `200` if the run has ended; otherwise the `202`, with its phase                                                                           |
+| The caller hangs up                                                                                   | Nothing is sent                                                                                                                                        |
+
+N is no more than `--max-wait` (25 seconds unless it is set; see [`realm listen`](../cli/realm-listen.md)). Each of these replies carries `Preference-Applied: wait=<N>`, the N that was applied: the one asked for, or `--max-wait` if that is lower. If the run cannot be read when the wait ends, the reply is the `202` the request would have had without `Prefer`, without `Preference-Applied`.
+
+The wait never stops the run, and a caller that stops waiting does not stop it either: read the run later at its `status_path`.
+
+The header is ignored, and the request answered at once as if it had not asked, for a workflow without `result_map`, for a repeat of an event, for a run whose process could not be started, while `realm listen` is stopping, and when `--max-waiting` requests are already waiting. A value that is not a whole number of seconds from 1 is ignored too, never refused: `wait=0`, `wait=1.5`, `wait=20s` and `wait="20"` are, and so is a `wait` with a parameter (`wait=20; x=y`). Only the first `wait` in the header counts, and the name is read in any case. Other preferences, such as `respond-async`, are ignored.
+
+Version 0.49.0 and older ignore `Prefer`, and so does `realm listen` started with `--max-wait 0` or `--max-concurrent 1`. So handle the `202` always, and treat the wait as a way to save a read.
+
+A request held this long passes through every proxy or gateway in front of `realm listen`, and each must allow it: nginx closes a proxied connection that sends nothing for 60 seconds by default (`proxy_read_timeout`), and a wait sends nothing until it ends.
+
+This section was added after version 0.49.0.
 
 ## Replies
 
@@ -266,7 +293,7 @@ A request that passes them all gets:
 
 For a workflow with `result_map`, the `202` also carries `run_phase`, `status_path` and `token`, with the headers `Location: <status_path>` and `Retry-After: 5` (the example is under [`result_map`](#result_map)). Added after version 0.49.0.
 
-The reply is sent once the run exists and the separate process that drives it has started; `realm listen` does not wait for the run. When that process starts and then stops at once (no model key, for one), the request still gets this `202` and its run stays open: see the [`realm listen` reference](../cli/realm-listen.md#what-it-does-for-a-request). If that process cannot be started (its workflow folder missing, or a folder `realm listen` has no permission to enter), the run is ended as failed, the reply is instead the one below, and `realm listen` goes on serving.
+The reply is sent once the run exists and the separate process that drives it has started; `realm listen` does not wait for the run, unless the request asks it to wait: see [Waiting for the result](#waiting-for-the-result). When that process starts and then stops at once (no model key, for one), the request still gets this `202` and its run stays open: see the [`realm listen` reference](../cli/realm-listen.md#what-it-does-for-a-request). If that process cannot be started (its workflow folder missing, or a folder `realm listen` has no permission to enter), the run is ended as failed, the reply is instead the one below, and `realm listen` goes on serving.
 
 ```text
 500 {"error":"spawn_failed","run_id":"726707a4-a0f5-4b98-bff6-8edfe9c3aba8","status":"failed"}

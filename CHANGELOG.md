@@ -12,6 +12,7 @@ All notable changes to this project are documented here.
 - **A health address on `realm serve` and `realm listen`**: `GET` and `HEAD` `/health`, without a token, `200` `{"status":"ok"}`, and `503` `{"status":"shutting_down"}` once the program is asked to stop.
 - **`--shutdown-drain <seconds>` on `realm serve` and `realm listen`**: how long the program keeps serving, with `/health` answering 503, after Ctrl+C or `SIGTERM` before it stops accepting connections; 0 by default.
 - **A caller of `realm listen` can read a finished run's declared result**: `result_map` in the `trigger:` block (`shared_secret` workflows only), `status_path` and `token` in the `202` and in a repeated event's reply, and `GET`/`HEAD` `<path>/runs/<run id>` with `Authorization: Bearer <token>`.
+- **A caller of `realm listen` can ask the reply to wait for the run**: a `POST` that starts a run of a workflow with `result_map` and sends `Prefer: wait=N` is answered `200` with the result once the run ends, or with the `202` and the phase reached when the run stops at a person's gate, its process exits, N seconds pass or `realm listen` is stopped; the wait never stops the run. `--max-wait <seconds>` caps N (25 by default; 0 turns waiting off), and `--max-waiting <n>` how many requests wait at once (5 by default, and always fewer than `--max-concurrent`). Waiting requests are answered at the first Ctrl+C or `SIGTERM`, before any `--shutdown-drain`.
 
 ### Changed
 
