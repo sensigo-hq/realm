@@ -63,12 +63,19 @@ const HOLDER =
   'const p = JSON.parse(process.env.CW1_LEASE_HOLDER);' +
   'const home = await openRealmHome({ home: p.home });' +
   'const port = home.runStore.leases;' +
-  'let holds = [];' +
-  'for (let i = 0; i < p.count; i += 1) {' +
-  ' const r = await port.hold();' +
-  ' if (r.held === undefined) { console.log(JSON.stringify({ ready: false, unavailable: r.unavailable })); process.exit(3); }' +
-  ' holds.push(r.held);' +
-  '}' +
+  // The holds are taken inside a function of their own, so that once it returns nothing but `holds`
+  // refers to them: a hold left in a variable of this script would stay referenced after `drop`, and
+  // LGC could not see a store whose holds the garbage collector frees.
+  'const take = async (n) => {' +
+  ' const out = [];' +
+  ' for (let i = 0; i < n; i += 1) {' +
+  '  const r = await port.hold();' +
+  '  if (r.held === undefined) { console.log(JSON.stringify({ ready: false, unavailable: r.unavailable })); process.exit(3); }' +
+  '  out.push(r.held);' +
+  ' }' +
+  ' return out;' +
+  '};' +
+  'let holds = await take(p.count);' +
   'console.log(JSON.stringify({ ready: true, pid: process.pid, ids: holds.map((h) => h.id) }));' +
   'for await (const line of createInterface({ input: process.stdin })) {' +
   ' const c = JSON.parse(line);' +
