@@ -98,7 +98,7 @@ After these lines, `realm serve` prints the gate-answers value it runs with, and
 
 ### Requests
 
-A caller sends MCP messages as HTTP `POST` requests with the header `Authorization: Bearer <token>`. Apart from `GET` and `HEAD` to `/health` (see [The health address](#the-health-address)), the path is not checked: every path reaches the server. Each request is handled on its own, and nothing is kept in the process between requests.
+A caller sends MCP messages as HTTP `POST` requests with the header `Authorization: Bearer <token>`. Apart from `GET` and `HEAD` to `/health` (added after version 0.49.0; see [The health address](#the-health-address)), the path is not checked: every path reaches the server. Each request is handled on its own, and nothing is kept in the process between requests.
 
 `realm serve` serves plain HTTP. To reach it from another machine, put it behind a web server that provides HTTPS.
 
@@ -111,13 +111,13 @@ A caller sends MCP messages as HTTP `POST` requests with the header `Authorizati
 | A batch of more than 100 MCP messages                                                 | `400` `{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Batch must not exceed 100 messages"},"id":null}` (added after version 0.46.0, which answers it) |
 | An MCP message                                                                        | `200`, with the MCP reply                                                                                                                                                  |
 
-The token is checked before anything else except the health address, so a caller without it learns nothing about the request.
+The token is checked before anything else except the health address (added after version 0.49.0), so a caller without it learns nothing about the request.
 
 ### The health address
 
-`GET` and `HEAD` requests to `/health` are answered without a token or a signature, so a load balancer or a monitor can ask whether the program is accepting connections: `200` with `{"status":"ok"}`. From the moment it is asked to stop (Ctrl+C or `SIGTERM`) it answers `503` with `{"status":"shutting_down"}` and `Connection: close`. The body says nothing else. With the default `--shutdown-drain 0` the program stops accepting connections at once, so a poller usually sees a refused connection, not the `503`; set `--shutdown-drain` for the `503` to be seen. The address tells you the program is running and not stopping; it does not look at the store, so it does not tell you that a request would succeed. Do not use it as a check that restarts the program: it fails on purpose while the program stops.
+`GET` and `HEAD` requests to `/health` are answered without a token or a signature, so a load balancer or a monitor can ask whether the program is accepting connections: `200` with `{"status":"ok"}`. From the moment it is asked to stop (Ctrl+C or `SIGTERM`) it answers `503` with `{"status":"shutting_down"}` and `Connection: close`. The body says nothing else. With the default `--shutdown-drain 0` the program stops accepting connections at once, so a poller usually sees a refused connection, not the `503`; set `--shutdown-drain` for the `503` to be seen. The address tells you the program is running and not stopping; it does not look at the store, so it does not tell you that a request would succeed. Do not use it as a check that restarts the program: it fails on purpose while the program stops. This section was added after version 0.49.0.
 
-`GET` and `HEAD` requests to `/health` no longer reach the MCP endpoint; a client that used that path as its address must use another.
+After version 0.49.0, `GET` and `HEAD` requests to `/health` no longer reach the MCP endpoint; a client that used that path as its address must use another.
 
 ### Stopping and exit codes
 
@@ -141,10 +141,12 @@ After a second signal the line is `realm serve: a second signal arrived. Request
 
 A request cut while it ran an `auto` step leaves that step taken by `realm serve`: `realm run inspect <run>` shows it in progress, and `realm run list --stuck` does not list the run while that claim is healthy (`realm run reclaim <run>` shows it healthy, with its deadline). `realm run reclaim <run> --step <step> --force` frees it and warns that the step's side effects may repeat; `realm run inspect` then shows the step owed, with the `realm run advance <run>` that runs it again.
 
-| Code | When                                                                                          |
-| ---- | --------------------------------------------------------------------------------------------- |
-| 0    | It was stopped by Ctrl+C or `SIGTERM` and cut no request.                                     |
-| 1    | It could not start, or it was stopped and had to cut requests that were still being answered. |
+Every paragraph above in this section was added or changed after version 0.49.0.
+
+| Code | When                                                                                                                                           |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | It was stopped by Ctrl+C or `SIGTERM` and cut no request (changed after version 0.49.0).                                                       |
+| 1    | It could not start, or it was stopped and had to cut requests that were still being answered (the second case was added after version 0.49.0). |
 
 It does not start in these cases:
 

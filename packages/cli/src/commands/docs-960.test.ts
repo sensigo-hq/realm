@@ -53,7 +53,7 @@ const STOPS =
 const ROW_TEXT =
   'How long requests that are being answered get to finish after Ctrl+C or `SIGTERM`: a whole number of seconds from 0 to 2147483. When it runs out, the requests still open are cut and the exit code is 1. 0 cuts them at once.';
 const CODES =
-  '| 0 | It was stopped by Ctrl+C or `SIGTERM` and cut no request. | | 1 | It could not start, or it was stopped and had to cut requests that were still being answered. |';
+  '| 0 | It was stopped by Ctrl+C or `SIGTERM` and cut no request (changed after version 0.49.0). | | 1 | It could not start, or it was stopped and had to cut requests that were still being answered (the second case was added after version 0.49.0). |';
 const REFUSAL =
   "| `--shutdown-grace` is not a whole number from 0 to 2147483 (added after version 0.49.0) | `error: option '--shutdown-grace <seconds>' argument '-1' is invalid. --shutdown-grace must be a whole number from 0 to 2147483.` |";
 
@@ -73,7 +73,7 @@ describe('issue #960 — realm-listen.md', () => {
       LISTEN,
       '```text\nlisten: shutdown cut requests {"cut":1,"because":"grace_ran_out","grace_seconds":1}\n```',
     );
-    claim(LISTEN, SUPERVISOR('realm listen'));
+    claim(LISTEN, `${SUPERVISOR('realm listen')} This flag was added after version 0.49.0.`);
     gone(LISTEN, OLD_SUPERVISOR('realm listen'));
   });
 
@@ -91,7 +91,7 @@ describe('issue #960 — realm-listen.md', () => {
     claim(LISTEN, 'A second Ctrl+C or `SIGTERM` ends everything still open at once.');
     claim(
       LISTEN,
-      'A delivery that is cut gets no answer: `realm listen` closes its connection without replying.',
+      'A delivery that is cut gets no answer: `realm listen` closes its connection without replying. This paragraph, and the one above it, were added or changed after version 0.49.0.',
     );
     gone(LISTEN, 'stops accepting requests, and exits with code 0.');
   });
@@ -102,7 +102,7 @@ describe('issue #960 — realm-listen.md', () => {
     claim(LISTEN, CODES);
     claim(
       LISTEN,
-      '| `error` | `listen: shutdown cut requests {"cut","because","grace_seconds"}` | `--shutdown-grace` ran out, or a second signal came, while requests were being answered; `because` is `grace_ran_out` or `second_signal` |',
+      '| `error` | `listen: shutdown cut requests {"cut","because","grace_seconds"}` | `--shutdown-grace` ran out, or a second signal came, while requests were being answered; `because` is `grace_ran_out` or `second_signal`. Added after version 0.49.0. |',
     );
     claim(LISTEN, REFUSAL);
     gone(LISTEN, '| 0 | It was stopped by Ctrl+C or `SIGTERM`. |');
@@ -155,7 +155,7 @@ describe('issue #960 — realm-mcp-and-serve.md', () => {
     // `realm run advance`.
     claim(
       SERVE,
-      "A request cut while it ran an `auto` step leaves that step taken by `realm serve`: `realm run inspect <run>` shows it in progress, and `realm run list --stuck` does not list the run while that claim is healthy (`realm run reclaim <run>` shows it healthy, with its deadline). `realm run reclaim <run> --step <step> --force` frees it and warns that the step's side effects may repeat; `realm run inspect` then shows the step owed, with the `realm run advance <run>` that runs it again.",
+      "A request cut while it ran an `auto` step leaves that step taken by `realm serve`: `realm run inspect <run>` shows it in progress, and `realm run list --stuck` does not list the run while that claim is healthy (`realm run reclaim <run>` shows it healthy, with its deadline). `realm run reclaim <run> --step <step> --force` frees it and warns that the step's side effects may repeat; `realm run inspect` then shows the step owed, with the `realm run advance <run>` that runs it again. Every paragraph above in this section was added or changed after version 0.49.0.",
     );
   });
 
@@ -176,7 +176,7 @@ describe('issue #960 — the deploy guide and the CHANGELOG', () => {
     // requests exits 1 and is restarted under `Restart=on-failure`.
     claim(
       DEPLOY,
-      '`realm serve` exits 0 when it was stopped and cut no request, and 1 when it had to cut requests (see [its page](../reference/cli/realm-mcp-and-serve.md#stopping-and-exit-codes)). A service that `systemctl stop` stopped is not restarted, but if `realm serve` had to cut a request and exited 1, systemd shows the service as failed (`Active: failed (Result: exit-code)`). One that exits 1 on its own, such as after a `kill` that cut requests, is restarted under `Restart=on-failure`.',
+      '`realm serve` exits 0 when it was stopped and cut no request, and 1 when it had to cut requests (see [its page](../reference/cli/realm-mcp-and-serve.md#stopping-and-exit-codes)). A service that `systemctl stop` stopped is not restarted, but if `realm serve` had to cut a request and exited 1, systemd shows the service as failed (`Active: failed (Result: exit-code)`). One that exits 1 on its own, such as after a `kill` that cut requests, is restarted under `Restart=on-failure`. This paragraph was added after version 0.49.0.',
     );
     gone(
       DEPLOY,
