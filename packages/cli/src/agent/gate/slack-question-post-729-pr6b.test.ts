@@ -473,6 +473,48 @@ describe('#729 PR-6b — the Slack question post', () => {
     });
   });
 
+  it('check 7b (A.7): the record cannot be read at close — no edit; line (a) gives the read’s error; the file is deleted', async () => {
+    const def = gated('pr6b-7b');
+    const { runId, gate } = await openQuestion(def);
+    const file = slackPostPath(h.path, runId, gate.gate_id);
+    // The read that shows the question closed ends the wait; every read after it fails.
+    let closed = false;
+    const closingStore = new Proxy(store, {
+      get(target, prop) {
+        if (prop === 'get') {
+          return async (id: string) => {
+            if (closed) throw new Error('the store could not be read at close');
+            const snapshot = await target.get(id);
+            if (snapshot.record.pending_gate === undefined) closed = true;
+            return snapshot;
+          };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const run = handler(def, { store: closingStore })(runId, gate);
+    await until(() => existsSync(file));
+    await terminalAnswer(def, runId, gate);
+    await run;
+    // (a) red when the read's error prints no line, the post is edited anyway, or the file stays;
+    //     (b) prints every Slack call and every printed line.
+    expect(
+      {
+        warned: lines.filter((l) => l.includes('Slack question post not updated')),
+        edits: bodies('chat.update').length,
+        file: existsSync(file),
+      },
+      shown(),
+    ).toEqual({
+      warned: [
+        '  ⚠  Slack question post not updated to say the question closed — the store could not be read at close',
+      ],
+      edits: 0,
+      file: false,
+    });
+  });
+
   it('check 8: webhook only — no edit, nothing under `slack-posts/`, the channel’s closing post as today', async () => {
     fetchSpy = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', fetchSpy);
@@ -571,10 +613,23 @@ describe('#729 PR-6b — the Slack question post', () => {
     const file = slackPostPath(h.path, runId, gate.gate_id);
     const written = fileIn(file);
     // The second agent, in this process (a listener set).
-    const run = handler(loadWorkflowFromString(yaml))(runId, gate);
-    await until(() => onEvent !== undefined && lines.some((l) => l.includes('already in Slack')));
+    const def = loadWorkflowFromString(yaml);
+    const run = handler(def)(runId, gate);
+    await until(
+      () =>
+        onEvent !== undefined &&
+        (lines.some((l) => l.includes('already in Slack')) || questionPosts().length > 0),
+    );
     const during = fileIn(file);
-    onEvent!({ event_id: 'E9', thread_ts: OLD_TS, user: 'U1', text: 'approve', ts: '9.1' });
+    onEvent?.({ event_id: 'E9', thread_ts: OLD_TS, user: 'U1', text: 'approve', ts: '9.1' });
+    // The reply closes the question. One the agent did not take (it listens on another thread)
+    // leaves it open: a terminal answer then closes it, so the cell ends and shows what was done.
+    const open = async (): Promise<boolean> =>
+      (await store.get(runId)).record.pending_gate !== undefined;
+    const end = Date.now() + 5_000;
+    while ((await open()) && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+    const replyTaken = !(await open());
+    if (!replyTaken) await terminalAnswer(def, runId, gate);
     await run;
     const { record } = await store.get(runId);
     // (a) red when the restarted agent posts the question again (a dead pid read as running
@@ -587,6 +642,7 @@ describe('#729 PR-6b — the Slack question post', () => {
         said: lines.filter((l) => l.includes('already in Slack')),
         during: { ts: during?.['ts'], pid: during?.['pid'] },
         thread: bodies('chat.postMessage').map((b) => [b.thread_ts, b.text]),
+        replyTaken,
         answered: record.evidence.filter((e) => e.kind === 'gate_response').length,
         edited: bodies('chat.update').map((b) => b.ts),
         file: existsSync(file),
@@ -600,11 +656,42 @@ describe('#729 PR-6b — the Slack question post', () => {
       ],
       during: { ts: OLD_TS, pid: process.pid },
       thread: [[OLD_TS, '✅ Gate resolved: `approve` — run continuing.']],
+      replyTaken: true,
       answered: 1,
       edited: [OLD_TS],
       file: false,
     });
   }, 60_000);
+
+  it('check 9b (B.12, no listener): a stopped writer’s file taken over — line (c2), then today’s no-listener line; nothing posted; the old post edited; the file gone', async () => {
+    const def = gated('pr6b-9b');
+    const { runId, gate } = await openQuestion(def);
+    const seeded = seedFile(runId, gate, { channel: CHANNEL, ts: OLD_TS, pid: deadPid() });
+    const run = handler(def, { listen: false })(runId, gate);
+    await until(() => lines.some((l) => l.includes('Waiting for approval')));
+    await terminalAnswer(def, runId, gate);
+    await run;
+    const said = lines.filter((l) => l.startsWith('  ℹ  '));
+    // (a) red when the listening line (c1) is printed with no listener, the order changes, the
+    //     question is posted again, or another post is edited; (b) prints every printed line.
+    expect(
+      {
+        said: [said[0], said[1]?.split(';')[0]],
+        questionPosts: questionPosts().length,
+        edited: bodies('chat.update').map((b) => b.ts),
+        file: existsSync(seeded.path),
+      },
+      shown(),
+    ).toEqual({
+      said: [
+        '  ℹ  This question is already in Slack, posted by a realm agent that has stopped; using that post again.',
+        '  ℹ  Gate notification posted',
+      ],
+      questionPosts: 0,
+      edited: [OLD_TS],
+      file: false,
+    });
+  });
 
   it('check 10: the writer still running (a live process on this host names the file) — a second question post; the file’s bytes unchanged at close', async () => {
     const def = gated('pr6b-10');
