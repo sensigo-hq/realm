@@ -17,6 +17,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - **`realm serve` and `realm listen` stop when asked (issue #960).** Before, one connection that had sent nothing kept either program running after Ctrl+C or `SIGTERM` until it was killed. Now a connection waiting between requests is closed at once, a connection that has not sent a request yet gets up to 5 seconds, and requests being answered get time to finish before they are cut. A second signal cuts everything at once, and a connected MCP client's notification stream is closed at once; that is not a cut request.
+- Hardening: when the output goes to a file or a pipe, what a program started by a step's handler prints there is hidden as the handler's own prints are: `realm agent` runs its drive in a second process and keeps the first to do the hiding. A program that holds the output open past five seconds after the drive's work ends is cut off, and the log says so.
 
 ## [0.49.0] — 2026-11-11
 

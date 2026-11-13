@@ -69,6 +69,7 @@ import { resolveManifestSecrets, type SecretMode } from './manifest-secrets.js';
 import {
   addDeclaredDisclosure,
   noteDeclaredStanding,
+  writerSynced,
   warnManifestNotSecretUnset,
 } from '../output/writer.js';
 
@@ -673,6 +674,9 @@ async function applyDeploymentManifest(
     ctx.document.disclosure?.not_secret,
   );
   noteDeclaredStanding(ctx.path, { declared: 'resolved' });
+  // U1b: in a relay's worker, the relay holds these declared values before a project module is
+  // imported (a module's top-level code may print one, or start a program that does).
+  await writerSynced();
   const useFormats = new Map<string, 'esm' | 'cjs' | 'ts-jiti'>();
   const secretBearingHandlers: string[] = [];
   const secretBearingProcessors: string[] = [];

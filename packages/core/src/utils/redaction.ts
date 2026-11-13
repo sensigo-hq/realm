@@ -439,6 +439,16 @@ export const REALM_SETTING_VARIABLES: ReadonlySet<string> = new Set([
 ]);
 /** D-14: realm's own variables that hold a credential: never excluded. */
 export const REALM_CREDENTIAL_VARIABLES: ReadonlySet<string> = new Set(['REALM_SERVE_TOKEN']);
+/**
+ * U1b: names realm's own processes pass to each other and delete at their init — `realm agent` in
+ * log mode, its relay to its worker. Never a setting (no exemption from the environment sweep: a
+ * value that ever leaked is judged as any other — the key's hex is swept, a pid is under the
+ * environment floor), never a credential an operator holds, never on the environment page.
+ */
+export const REALM_INTERNAL_VARIABLES: ReadonlySet<string> = new Set([
+  'REALM_RELAY_CHILD', // the relay's pid
+  'REALM_RELAY_KEY', // the relay's span key
+]);
 /** Values public by shape: 2- or 3-segment dotted versions (issue #407). (Booleans are under the
  *  environment floor, so they never reach this test.) */
 const PUBLIC_VALUE_SHAPE = /^\d+\.\d+(\.\d+)?$/;

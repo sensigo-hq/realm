@@ -14,20 +14,20 @@ Realm rewrites the record each time the run changes, and adds 1 to `version` eac
 
 ### What the run is
 
-| Field              | Type   | Always there | Holds                                                                        |
-| ------------------ | ------ | ------------ | ---------------------------------------------------------------------------- |
-| `id`               | text   | Yes          | The run's ID.                                                                |
-| `workflow_id`      | text   | Yes          | The workflow's ID.                                                           |
-| `workflow_version` | number | Yes          | The workflow's `version` when the run was made.                              |
-| `params`           | object | Yes          | The parameters the run was started with.                                     |
-| `created_at`       | text   | Yes          | When the run was made.                                                       |
-| `updated_at`       | text   | Yes          | When the record was last written.                                            |
-| `version`          | number | Yes          | How many times the record has been written. A new run has 0.                 |
-| `idempotency_key`  | text   | No           | The key the run was started with.                                            |
-| `rerun_of`         | text   | No           | The ID of the ended run this run replaced under the same key.                |
-| `parent_run_id`    | text   | No           | The ID of the run that started this one with `start_run_batch`.              |
-| `agent_pid`        | number | No           | The process ID of the `realm agent` that `realm listen` started for the run. |
-| `agent_started_at` | text   | No           | When that process was started.                                               |
+| Field              | Type   | Always there | Holds                                                                                                                                                                                                                                                                                                        |
+| ------------------ | ------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`               | text   | Yes          | The run's ID.                                                                                                                                                                                                                                                                                                |
+| `workflow_id`      | text   | Yes          | The workflow's ID.                                                                                                                                                                                                                                                                                           |
+| `workflow_version` | number | Yes          | The workflow's `version` when the run was made.                                                                                                                                                                                                                                                              |
+| `params`           | object | Yes          | The parameters the run was started with.                                                                                                                                                                                                                                                                     |
+| `created_at`       | text   | Yes          | When the run was made.                                                                                                                                                                                                                                                                                       |
+| `updated_at`       | text   | Yes          | When the record was last written.                                                                                                                                                                                                                                                                            |
+| `version`          | number | Yes          | How many times the record has been written. A new run has 0.                                                                                                                                                                                                                                                 |
+| `idempotency_key`  | text   | No           | The key the run was started with.                                                                                                                                                                                                                                                                            |
+| `rerun_of`         | text   | No           | The ID of the ended run this run replaced under the same key.                                                                                                                                                                                                                                                |
+| `parent_run_id`    | text   | No           | The ID of the run that started this one with `start_run_batch`.                                                                                                                                                                                                                                              |
+| `agent_pid`        | number | No           | The process ID of the `realm agent` that `realm listen` started for the run. This process relays and masks the drive's output (the drives `realm listen` starts always print as a log); the drive itself runs in a child of it, and Ctrl-C's, `kill`'s and `kill -HUP`'s signal to `agent_pid` reaches both. |
+| `agent_started_at` | text   | No           | When that process was started.                                                                                                                                                                                                                                                                               |
 
 Every time is text in the form `2026-10-02T00:45:53.865Z`.
 

@@ -56,7 +56,9 @@ import { createSlackGateHandler } from '../agent/gate/slack-gate-notifier.js';
 import type { SlackGateHandlerConfig } from '../agent/gate/slack-gate-notifier.js';
 import {
   errorWithCommand,
+  exitProcess,
   noteRunManifest,
+  receiptIsTheRelays,
   valuesWithheldFor,
   valuesWithheldLine,
   withholdUnlessAccepted,
@@ -64,6 +66,7 @@ import {
   writerMode,
   writerReceiptLine,
 } from '../output/writer.js';
+import { relayIfLogged } from '../output/relay.js';
 import { openCliHome } from '../lib/home.js';
 
 /**
@@ -225,6 +228,8 @@ export function buildReattachFlags(opts: {
  */
 function printDriveReceipt(): void {
   if (writerMode() === 'broadcast') {
+    // U1b: in a relay's worker the relay prints the one line, from both processes' counts.
+    if (receiptIsTheRelays()) return;
     const receipt = writerReceiptLine();
     if (receipt !== undefined) console.error(receipt);
   }
@@ -350,23 +355,27 @@ export const agentCommand = new Command('agent')
       logMode?: boolean;
       releaseLineAdvisory: boolean;
     }) => {
-      // issue #625 (holder slice): this program's name, made once, before any other output. A name
-      // that cannot be used prints one line and exits 1 here; nothing has been started.
-      const driver = resolveProgramIdentity('agent');
       if (!opts.workflow && !opts.runId) {
         console.error('Error: one of --workflow or --run-id is required');
-        process.exit(1);
+        exitProcess(1);
       }
       if (opts.workflow && opts.runId) {
         console.error('Error: --workflow and --run-id are mutually exclusive');
-        process.exit(1);
+        exitProcess(1);
       }
       if (opts.params !== '{}' && opts.runId) {
         console.error(
           'Error: --params cannot be used with --run-id; the run already has params from creation time',
         );
-        process.exit(1);
+        exitProcess(1);
       }
+      // U1b (S1): in log mode the drive runs in a second process, which this one relays and masks —
+      // decided here, after the refusals that need no identity and before the identity and the
+      // store; this process then never returns from it.
+      await relayIfLogged();
+      // issue #625 (holder slice): this program's name, made once, before any other output of the
+      // drive. A name that cannot be used prints one line and exits 1 here; nothing has been started.
+      const driver = resolveProgramIdentity('agent');
       // The closing sentence of every refusal below: what happened to the run, which only this
       // command knows.
       const tail =
@@ -389,7 +398,7 @@ export const agentCommand = new Command('agent')
         console.error(
           `Error: --prompt-cache has nothing to apply to: workflow '${definition.id}' has no agent step, so the flag would change nothing. Remove --prompt-cache. ${tail}`,
         );
-        process.exit(1);
+        exitProcess(1);
       };
       // Caching 3-M (B2b): a stated `on` that cannot act is refused at load, with its reason (the
       // inert-config policy); `off` is true everywhere. A drive `realm listen` started is neither
@@ -400,7 +409,7 @@ export const agentCommand = new Command('agent')
         console.error(
           `Error: --cache-diagnostics on has nothing to act on: ${why} ${remedy} ${tail}`,
         );
-        process.exit(1);
+        exitProcess(1);
       };
       // Last of the load's refusals, once the definition is read, as `--prompt-cache`'s own.
       const refuseInertCacheDiagnostics = (definition: WorkflowDefinition): void => {
@@ -445,7 +454,7 @@ export const agentCommand = new Command('agent')
             console.error(
               'Error: --provider-module cannot be combined with --provider, --model, --base-url, --strict-base-url, --prompt-cache, or --cache-diagnostics on',
             );
-            process.exit(1);
+            exitProcess(1);
           }
           const modulePath = resolve(opts.providerModule);
           const moduleUrl = pathToFileURL(modulePath).href;
@@ -456,7 +465,7 @@ export const agentCommand = new Command('agent')
             console.error(
               `Error: failed to import provider module '${opts.providerModule}': ${err instanceof Error ? err.message : String(err)}`,
             );
-            process.exit(1);
+            exitProcess(1);
           }
           if (!(mod.default instanceof LlmProvider)) {
             // issue #620 PR-C: say which copy the provider's LlmProvider came from. Core composes
@@ -464,7 +473,7 @@ export const agentCommand = new Command('agent')
             const unrecognised = describeUnrecognised(mod.default, LlmProvider);
             if (unrecognised.kind === 'foreign_line') {
               for (const line of describeForeignProvider(unrecognised)) console.error(line);
-              process.exit(1);
+              exitProcess(1);
             }
             // The hedged clause ends the first line in place of its period.
             const ending =
@@ -475,7 +484,7 @@ export const agentCommand = new Command('agent')
               `Error: provider module default export must be an instance extending LlmProvider${ending}\n` +
                 `Import LlmProvider from '@sensigo/realm-cli/agent' and export 'export default new MyProvider()'.`,
             );
-            process.exit(1);
+            exitProcess(1);
           }
           provider = mod.default;
           moduleProviderId = `module:${basename(modulePath)}`;
@@ -491,7 +500,7 @@ export const agentCommand = new Command('agent')
           });
           if (!flags.ok) {
             console.error(`Error: ${flags.message} ${tail}`);
-            process.exit(1);
+            exitProcess(1);
           }
           // issue #313 (dead-config cell 1): the attestation only means anything for a compat
           // endpoint. Silently accepting it alone would let an author believe they had changed
@@ -737,7 +746,7 @@ export const agentCommand = new Command('agent')
             // #729 PR-3 correction 2 (C4): this exit skips the `finally` below, so the drive's
             // `Disclosure:` line is printed here.
             printDriveReceipt();
-            process.exit(1);
+            exitProcess(1);
           }
           const earlierRuns = await earlierRunsFor(definition, undefined);
           const { stepCacheChoices } = await chooseFromPriceFile(
@@ -806,6 +815,6 @@ export const agentCommand = new Command('agent')
       } finally {
         printDriveReceipt();
       }
-      process.exit(exitCode);
+      exitProcess(exitCode);
     },
   );
