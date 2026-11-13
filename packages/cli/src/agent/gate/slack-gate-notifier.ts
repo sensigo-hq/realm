@@ -769,7 +769,7 @@ const POST_UPDATE_UNFINISHED = `Slack question post not updated within ${DRAIN_T
 
 /** #729 PR-6b (B.12): a stopped agent's post taken over, with a listener (c1) or with none (c2). */
 const POST_TAKEN_OVER_LISTENING =
-  '  ℹ  This question is already in Slack, posted by a realm agent that has stopped; listening on that thread again.';
+  '  ℹ  This question is already in Slack, posted by a realm agent that has stopped; listening on that thread.';
 const POST_TAKEN_OVER =
   '  ℹ  This question is already in Slack, posted by a realm agent that has stopped; using that post again.';
 

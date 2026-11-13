@@ -652,7 +652,7 @@ describe('#729 PR-6b — the Slack question post', () => {
       firstWrote: { ts: OLD_TS, pid: first.pid },
       questionPosts: 0,
       said: [
-        '  ℹ  This question is already in Slack, posted by a realm agent that has stopped; listening on that thread again.',
+        '  ℹ  This question is already in Slack, posted by a realm agent that has stopped; listening on that thread.',
       ],
       during: { ts: OLD_TS, pid: process.pid },
       thread: [[OLD_TS, '✅ Gate resolved: `approve` — run continuing.']],
@@ -834,6 +834,45 @@ describe('#729 PR-6b — the Slack question post', () => {
       `the file while the question was open: ${during}\n${shown()}`,
     ).toEqual({ thrown: undefined, questionPosts: 1, during: { ts: POST_TS, pid: process.pid } });
   });
+
+  it('check 16: a settings value as the stated name — the edit masks it as the thread’s closing line does; no Slack call carries it', async () => {
+    // A value in the agent's environment, 8 characters or more: Realm hides it on every page.
+    const VALUE = 'carol.ops@example.com';
+    vi.stubEnv('REALM_NOT_SECRET', '');
+    vi.stubEnv('PR6B_FAKE_OPERATOR', VALUE);
+    try {
+      const def = gated('pr6b-16');
+      const { runId, gate } = await openQuestion(def);
+      const run = handler(def)(runId, gate);
+      await until(() => questionPosts().length > 0);
+      const answered = await submitHumanResponse(store, def, {
+        runId,
+        gateId: gate.gate_id,
+        choice: 'approve',
+        respondedBy: VALUE,
+        route: 'cli',
+        caller: 'respond',
+      });
+      if (answered.status !== 'ok') throw new Error(`fixture: ${answered.status}`);
+      await run;
+      const edit = bodies('chat.update')[0];
+      const thread = threadPosts();
+      const bodiesSent = fetchSpy.mock.calls.map(([, init]) => (init as { body: string }).body);
+      // (a) red when the edit sends its closing line without the masking the thread's line has;
+      //     (b) prints every Slack call's body and every printed line.
+      expect(
+        {
+          text: edit?.text,
+          route: edit?.blocks?.[2]?.text?.text,
+          thread,
+          carried: bodiesSent.filter((b) => b.includes(VALUE)).length,
+        },
+        shown(),
+      ).toEqual({ text: thread[0], route: thread[0], thread: [thread[0]], carried: 0 });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe('#729 PR-6b — check 15: the docs’ new sentences', () => {
@@ -848,7 +887,7 @@ describe('#729 PR-6b — check 15: the docs’ new sentences', () => {
     ],
     [
       GUIDE,
-      'If `realm agent` stops while a question is open and is started again for the same run while it is still open, it posts nothing new: it uses the same post, and listens on its thread when a listener is set. It prints `ℹ This question is already in Slack, posted by a realm agent that has stopped; listening on that thread again.` (with no listener, `…; using that post again.`). It finds the post through a small file in `~/.realm/slack-posts/`, one per open question, which it deletes when the question closes. A second `realm agent` started while the first is still running posts its own question. A question that closes while no `realm agent` attends it (answered, or out of time, while `realm agent` was stopped, even if a restarted agent then carries the time limit out) keeps its post as it was, and its file stays. Added after version 0.49.0.',
+      'If `realm agent` stops while a question is open and is started again for the same run, with the same Slack settings, while it is still open, it posts nothing new: it uses the same post, and listens on its thread when a listener is set. It prints `ℹ This question is already in Slack, posted by a realm agent that has stopped; listening on that thread.` (with no listener, `…; using that post again.`). It finds the post through a small file in `~/.realm/slack-posts/`, one per open question, which it deletes when the question closes. A second `realm agent` started while the first is still running posts its own question. So does a restarted one when another program now has the process number the stopped agent had, as can happen after the computer restarts: Realm takes the stopped agent for one still running, and the old post and its file stay as they were. A question that closes while no `realm agent` attends it (answered, or out of time, while `realm agent` was stopped, even if a restarted agent then carries the time limit out) keeps its post as it was, and its file stays. Added after version 0.49.0.',
     ],
     [
       GUIDE,
@@ -860,7 +899,7 @@ describe('#729 PR-6b — check 15: the docs’ new sentences', () => {
     ],
     [
       FILES,
-      "| `slack-posts/` | One small file per open Slack question that `realm agent` posted with a bot token: the channel, the post's timestamp, and which `realm agent` process wrote it. Deleted when the question closes. A file left by a question that closed while no `realm agent` attended it stays; it can be deleted. Added after version 0.49.0. | `realm agent` |",
+      "| `slack-posts/` | One small file per open Slack question that `realm agent` posted with a bot token: the channel, the post's timestamp, and which `realm agent` process wrote it. Deleted when the question closes. A file stays when the question closed while no `realm agent` attended it, or when a restarted `realm agent` took the stopped one for one still running (the Slack guide says when); a file that stays can be deleted. Added after version 0.49.0. | `realm agent` |",
     ],
   ];
   it.each(sentences)('%s holds the sentence: %s', (page, sentence) => {
