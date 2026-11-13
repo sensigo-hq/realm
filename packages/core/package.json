@@ -57,6 +57,7 @@
     "dist",
     "!dist/tsconfig.tsbuildinfo",
     "!dist/**/test-support/**",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ]
 }
