@@ -19,7 +19,9 @@
 // (`openDatabase` with anything but `':memory:'`) except the open (unit 7b's `open-file.ts`) and the
 // maintenance entry's open of the copy it made (c6's `maintenance.ts`), which `OPENERS` below names;
 // the scan also sees their own calls, so it cannot go blind. The schema ladder's in-memory
-// reference database is allowed anywhere.
+// reference database is allowed anywhere. #729's claim window (CW-1) adds the lease module
+// (`claim-lease.ts`), which opens the claim leases' own files and never realm.db: its three calls are
+// named one by one, so a fourth open there still fails the law.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { readdirSync, statSync } from 'node:fs';
@@ -37,6 +39,7 @@ const OPENERS: Record<string, string> = {
     'the one open (unit 7b): it checks the file before any use and sets up a new one, and its reopen opens the same file again',
   'src/maintenance.ts':
     'the maintenance entry (c6): it opens the COPY it just made — a file no process holds — to convert and check it, never realm.db',
+  'src/claim-lease.ts': "the claim leases' own files, never realm.db (design C5 §4.1)",
 };
 
 function productionFiles(dir: string, out: string[] = []): string[] {
@@ -253,6 +256,10 @@ describe('#616 unit 7a — the source laws of the open', () => {
     expect({ opens, admitted, memorySeen: memory > 0 }).toEqual({
       opens: [],
       admitted: [
+        // #729 CW-1: the lease's initialising connection, its holder's, and a probe's.
+        'src/claim-lease.ts: openDatabase(readWriteUrl(path))',
+        'src/claim-lease.ts: openDatabase(readWriteUrl(path))',
+        'src/claim-lease.ts: openDatabase(readWriteUrl(path))',
         'src/maintenance.ts: openDatabase(temporary)',
         // #616 PR-2c c8a1: the open's one call now passes the check's read-only option through.
         'src/open-file.ts: openDatabase(path, options)',
