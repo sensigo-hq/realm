@@ -43,7 +43,7 @@ const OPENING = [
   '',
   "**Answers that fit, or do not count.** When a step declares a JSON Schema, an answer that breaks it is refused and never recorded as the step's answer, and the refusal names the field. Over MCP, by default the sixth refused answer on a step fails the step and the run; a step can set another limit, or a default answer instead. When `realm agent` drives, it gives the model three tries per step by default, then stops and leaves the run open.",
   '',
-  "**A person decides where it matters.** Start Realm's MCP server with `--gate-answers withheld`, and the agent has no tool to answer a gate itself. A human gate then stops the run, and the agent's later steps are refused until a person answers: from a terminal, from Slack when `realm agent` drives the run, or in the assistant's own app when it shows forms.",
+  "**A person decides where it matters.** Start Realm's MCP server with `--gate-answers withheld`, and the agent has no tool to answer a gate itself. A human gate then stops the run, and the agent's later steps are refused until a person answers from a terminal. Without that setting, Realm sends the question as a form, in an assistant's app that shows forms, and the agent again has no tool to answer it. When `realm agent` drives the run, the person can answer from Slack.",
   '',
   '**A record you can show.** Every step that runs records its input, its output, its timing and a hash of the output. A skipped step records why, and the run records why it ended. `realm run export` writes the whole record to one file.',
   '',
