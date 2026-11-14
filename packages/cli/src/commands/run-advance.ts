@@ -8,13 +8,14 @@ import type {
   ExtensionRegistry,
   Attributed,
   WayOf,
+  Snapshot,
 } from '@sensigo/realm';
 import {
   advanceRun,
   lastExecutionIdentity,
   describePending,
-  writtenSnapshot,
   judgedSnapshotOf,
+  leaseFactOf,
   stepsThatCannotRun,
   describeRunDriver,
   judgeProgramFit,
@@ -47,6 +48,7 @@ import { resolveProgramIdentity } from '../lib/program-identity.js';
 import {
   BY_SOURCE_WORDS,
   describeProgram,
+  NO_SNAPSHOT,
   outcomeNotRecordedLine,
   takenLine,
   takenPhrase,
@@ -132,12 +134,18 @@ function inFlightSteps(run: RunForReasons): string[] {
  * the preview's `In flight:` line, the one place the holder and the time are printed (decision C43).
  */
 export function inFlightItems(
-  run: RunForReasons,
+  // #729 CW-1b part 2: the read the run came from, so each claim is described with its lease fact.
+  snap: Snapshot,
   keepsClaims: boolean,
   ctx: RenderCtx = PLAIN,
 ): string[] {
+  const run = snap.record;
   return inFlightSteps(run).map((step) => {
-    const described = describeClaimHolder(run.claims?.[step], keepsClaims);
+    const described = describeClaimHolder(
+      run.claims?.[step],
+      keepsClaims,
+      leaseFactOf(snap, run.claims?.[step]),
+    );
     const since = described.since !== undefined ? ` since ${described.since}` : '';
     return `'${step}' is in flight, ${takenPhrase(described, ctx)}${since}`;
   });
@@ -399,8 +407,10 @@ export async function advanceRunFromShell(
 ): Promise<0 | 1> {
   // decision C95: the reading the view judges the run at, so an open question whose time is up and
   // that declares `on_expiry` is named as owed — and `advanceRun` carries it out first. #715 (b):
-  // the store's own reading, taken before the load; `advanceRun` takes its own.
-  const { record: run, at: now } = await runStore.get(runId);
+  // the store's own reading, taken before the load; `advanceRun` takes its own. #729 CW-1b part 2:
+  // `read` whole, with the lease facts the store attached.
+  const read = await runStore.get(runId);
+  const { record: run, at: now } = read;
   const workflow = await getWorkflowForRun(workflowStore, run, {
     retryVerb: 'advance again',
     verb: 'advance',
@@ -415,13 +425,14 @@ export async function advanceRunFromShell(
       : undefined;
   const registry = registryOverride ?? loaded!.registry;
 
-  const pending = describePending(workflow, writtenSnapshot(run, now), registry);
+  const pending = describePending(workflow, read, registry);
   const keepsClaims = runStore.persistsClaims === true;
   // #729 PR-0 (A-10): the run's ways, composed by core and rendered here.
   const ways: ComposedWays = composeWaysAt(run, now, {
     definition: workflow,
     registry,
     persistsClaims: keepsClaims,
+    lease_facts: read.lease_facts,
   });
   // decision C98: what comes from where — the folder the step's project code is loaded from (not
   // the shell's, unless it is), and the environment, which is the shell's. Decision C107: a
@@ -444,7 +455,7 @@ export async function advanceRunFromShell(
   print(`Last recorded driver: ${driverWords(run, workflow, writerCtx())}.`);
   // decision C37: a step another process holds is named before anything runs — so a second program
   // is told why it may find nothing to run.
-  const inFlight = run.terminal_state ? [] : inFlightItems(run, keepsClaims, writerCtx());
+  const inFlight = run.terminal_state ? [] : inFlightItems(read, keepsClaims, writerCtx());
   if (inFlight.length > 0) print(`In flight: ${withFullStop(inFlight.join('; '))}`);
   if (pending.owed.length === 0) {
     // decision C43: "Nothing is owed" only when nothing is; owed work none of which can run now
@@ -535,10 +546,19 @@ export async function advanceRunFromShell(
         print(`→ ${step}`);
       },
       // D6.1: a step another process took is said as a past-tense fact — never "cannot run here".
-      onTaken: (step, record) => {
+      // #729 CW-1b part 2: the re-read snapshot core passes, its lease fact read for the claim.
+      onTaken: (step, record, snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT) => {
         sayDecidedGuards();
         print(
-          takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims), writerCtx()),
+          takenLine(
+            step,
+            describeClaimHolder(
+              record.claims?.[step],
+              keepsClaims,
+              leaseFactOf(snapshot, record.claims?.[step]),
+            ),
+            writerCtx(),
+          ),
         );
       },
       // decisions C194, C199, F7: the step this call ran was settled, or taken over, by another
@@ -547,9 +567,14 @@ export async function advanceRunFromShell(
       // claim refused because the record changed after this call read it (the run ended, a question
       // opened) ran nothing here: no line of its own — the stop reasons below say what the record
       // shows. The refusals' own warnings are said with the last reply's (the reply carries them).
-      onNotRecorded: (step, kind, record) => {
+      onNotRecorded: (
+        step,
+        kind,
+        record,
+        snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
+      ) => {
         sayDecidedGuards();
-        print(outcomeNotRecordedLine(kind, record, step, keepsClaims, writerCtx()));
+        print(outcomeNotRecordedLine(kind, record, step, keepsClaims, writerCtx(), snapshot));
       },
     });
     return reply;
@@ -660,6 +685,7 @@ export async function advanceRunFromShell(
     definition: workflow,
     registry,
     persistsClaims: runStore.persistsClaims === true,
+    lease_facts: judged.lease_facts,
   });
   const afterWays: ComposedWays =
     refusal && about !== undefined

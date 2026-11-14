@@ -26,8 +26,8 @@ import {
   pendingCleanupLine,
   classifyStop,
   isRaceStop,
-  writtenSnapshot,
   judgedSnapshotOf,
+  leaseFactOf,
   type NotRecordedKind,
   type RunStore,
   type WorkflowDefinition,
@@ -94,6 +94,7 @@ import {
   writerHost,
 } from '../commands/ways-renderer.js';
 import {
+  PLAIN,
   RUN_PHASE_WORDS,
   questionSpan,
   recordWalk,
@@ -121,6 +122,7 @@ import {
   describeProgram,
   goOnLine,
   inFlightLine,
+  NO_SNAPSHOT,
   outcomeNotRecordedLine,
   takenLine,
   waitingLine,
@@ -650,13 +652,20 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   }
 
   let runId: string;
-  // Declared without an initialiser and narrowed by `currentRun === undefined` below: the attach
-  // path always assigns it, and keying the moved re-read on the value rather than on the option
-  // is what keeps control-flow analysis satisfied.
-  let currentRun: RunRecord | undefined;
+  // #729 CW-1b part 2: the snapshot the drive holds, with its lease facts. Unset until the first
+  // read, and tested by `currentSnap === undefined` below: the attach path always sets it, and
+  // keying the moved re-read on the value rather than on the option keeps control-flow analysis
+  // satisfied. `currentRun` and `currentAt` are set only through `hold`, which refreshes both.
+  let currentSnap!: Snapshot;
+  let currentRun!: RunRecord;
   // #715 (b) (D6-17, D6-19): the reading `currentRun` was read at — every judgement of it is made at
   // that instant, never at a fresh clock read.
-  let currentAt: Date | undefined;
+  let currentAt!: Date;
+  const hold = (next: Snapshot): void => {
+    currentSnap = next;
+    currentRun = next.record;
+    currentAt = next.at;
+  };
   // decision C179: the agent steps this drive answered — the `Result` line names the program that
   // gave any other answer. Decision C189: filled from each engine call's reply (`answerRecordedByCall`).
   const answeredHere = new Set<string>();
@@ -665,7 +674,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
   if (options.existingRunId !== undefined) {
     // --run-id path: attach to existing run
-    ({ record: currentRun, at: currentAt } = await deps.store.get(options.existingRunId));
+    hold(await deps.store.get(options.existingRunId));
     if (currentRun.terminal_state) {
       // issue #279 (increment 1, PR-B), design record §6: point at the recovery verb when the
       // terminal run this attach targeted still carries an undelivered finalizer — the one mint
@@ -785,7 +794,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   const holdJudged = (reply: EngineReply): boolean => {
     const judged = judgedSnapshotOf(reply);
     if (judged === undefined) return false;
-    ({ record: currentRun, at: currentAt } = judged);
+    hold(judged);
     return true;
   };
   const stopOnEngineWords = (reply: EngineReply): 'failed' => {
@@ -796,8 +805,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // so a wall-clock step cannot shorten or lengthen a recorded `elapsed_ms`.
   let attemptStartedAt = performance.now();
   try {
-    if (currentRun === undefined) {
-      ({ record: currentRun, at: currentAt } = await deps.store.get(runId));
+    if (currentSnap === undefined) {
+      hold(await deps.store.get(runId));
 
       // #134 pre-flight (WARN-only, never refuse): warn at CREATE only. The attach path (--run-id)
       // above is N-A — it re-drives an EXISTING run, where recoverable-settle + the A5 surfaces
@@ -869,8 +878,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const dueExpiry =
           currentRun.pending_gate !== undefined &&
           !expiryAttempted.has(currentRun.pending_gate.gate_id) &&
-          describePending(definition, writtenSnapshot(currentRun, currentAt!), deps.registry)
-            .expiry_due !== undefined;
+          describePending(definition, currentSnap, deps.registry).expiry_due !== undefined;
         if (dueExpiry) expiryAttempted.add(currentRun.pending_gate!.gate_id);
         if (currentRun.pending_gate !== undefined && !dueExpiry) {
           const gate = currentRun.pending_gate;
@@ -929,7 +937,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             }
           }
 
-          ({ record: currentRun, at: currentAt } = await deps.store.get(runId));
+          hold(await deps.store.get(runId));
           continue;
         }
 
@@ -967,18 +975,34 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           },
           // D6.1: another process took an engine step — the same past-tense line as for an agent
           // step; `advanceRun` re-reads and continues.
-          onTaken: (step, record) => {
+          // #729 CW-1b part 2: the re-read snapshot core passes, its lease fact read for the claim.
+          onTaken: (step, record, snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT) => {
             startedNotDone = undefined;
             console.log(
-              takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims), writerCtx()),
+              takenLine(
+                step,
+                describeClaimHolder(
+                  record.claims?.[step],
+                  keepsClaims,
+                  leaseFactOf(snapshot, record.claims?.[step]),
+                ),
+                writerCtx(),
+              ),
             );
           },
           // F7: an engine step this call ran whose outcome another program's act kept from being
           // recorded — the race is core's to name, and its loop goes on; the line is the one
           // `realm run advance` prints, never `✓` and never `✗ … failed`.
-          onNotRecorded: (step, kind, record) => {
+          onNotRecorded: (
+            step,
+            kind,
+            record,
+            snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
+          ) => {
             startedNotDone = undefined;
-            console.log(outcomeNotRecordedLine(kind, record, step, keepsClaims, writerCtx()));
+            console.log(
+              outcomeNotRecordedLine(kind, record, step, keepsClaims, writerCtx(), snapshot),
+            );
           },
         });
         if (advanced.status === 'confirm_required') {
@@ -1029,6 +1053,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               definition,
               registry: deps.registry,
               persistsClaims: keepsClaims,
+              lease_facts: currentSnap.lease_facts,
             }),
           )) {
             const step = e.step ?? '';
@@ -1045,18 +1070,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const eligible =
           engineReply !== undefined
             ? []
-            : describePending(definition, writtenSnapshot(currentRun, currentAt!), deps.registry)
-                .agent_steps;
+            : describePending(definition, currentSnap, deps.registry).agent_steps;
         if (engineReply === undefined && eligible.length === 0) {
           // decisions C23, C31, C64, C82: the run cannot go on from here (`cannotGoOnHere`: no agent
           // step is ready, no engine step can run, nothing is in flight elsewhere — a step another
           // program holds may still change what can run — and a step cannot run): the drive stops
           // on the FIRST such step (definition order). With a step in flight it watches below.
-          const view = describePending(
-            definition,
-            writtenSnapshot(currentRun, currentAt!),
-            deps.registry,
-          );
+          const view = describePending(definition, currentSnap, deps.registry);
           const cannotRun = stepsThatCannotRun(view);
           if (cannotGoOnHere(currentRun, view)) {
             const stop = cannotRun[0]!;
@@ -1074,6 +1094,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                       definition,
                       registry: deps.registry,
                       persistsClaims: keepsClaims,
+                      lease_facts: currentSnap.lease_facts,
                     }),
                     runId,
                     derivePhaseOf(currentRun),
@@ -1113,14 +1134,18 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // (another program took the step, ran it, ended the run, or opened a question, in the
             // moment between the view and this call) is not this drive's stop: it goes on, and its
             // own end and question checks speak.
-            ({ record: currentRun, at: currentAt } = await deps.store.get(runId));
+            hold(await deps.store.get(runId));
             const exitStop = classifyStop(exitReply, first, currentRun);
             if (isRaceStop(exitStop)) {
               if (exitStop.kind === 'held_elsewhere' && !exitStop.ran_here) {
                 console.log(
                   takenLine(
                     first,
-                    describeClaimHolder(currentRun.claims?.[first], keepsClaims),
+                    describeClaimHolder(
+                      currentRun.claims?.[first],
+                      keepsClaims,
+                      leaseFactOf(currentSnap, currentRun.claims?.[first]),
+                    ),
                     writerCtx(),
                   ),
                 );
@@ -1132,6 +1157,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     first,
                     keepsClaims,
                     writerCtx(),
+                    currentSnap,
                   ),
                 );
               }
@@ -1160,7 +1186,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   ),
                 );
               }
-              ({ record: currentRun, at: currentAt } = await deps.store.get(runId));
+              hold(await deps.store.get(runId));
               // F7 (e): the way out is said only of a run that is still open — a run another program
               // ended meanwhile goes to the drive's own end check.
               if (currentRun.terminal_state) continue;
@@ -1173,6 +1199,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                       definition,
                       registry: deps.registry,
                       persistsClaims: keepsClaims,
+                      lease_facts: currentSnap.lease_facts,
                     }),
                     runId,
                     derivePhaseOf(currentRun),
@@ -1207,7 +1234,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               if (waitingSaid.has(key)) continue;
               waitingSaid.add(key);
               console.log(
-                waitingLine(step, describeClaimHolder(claim, keepsClaims), watchMs, writerCtx()),
+                waitingLine(
+                  step,
+                  describeClaimHolder(claim, keepsClaims, leaseFactOf(currentSnap, claim)),
+                  watchMs,
+                  writerCtx(),
+                ),
               );
             }
             const startVersion = currentRun.version;
@@ -1217,7 +1249,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               await new Promise((resolve) => setTimeout(resolve, pollMs));
               // #715 (b) (D6-19): every poll REPLACES the held snapshot, changed or not — the same
               // record at a newer reading, so a claim's staleness is judged at the latest one.
-              ({ record: currentRun, at: currentAt } = await deps.store.get(runId));
+              hold(await deps.store.get(runId));
               if (currentRun.version !== startVersion) {
                 changed = true;
                 break;
@@ -1225,13 +1257,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             }
             if (changed) continue;
             const states = new Map(
-              classifyInProgressClaims(writtenSnapshot(currentRun, currentAt!)).map((c) => [
-                c.step,
-                c.state,
-              ]),
+              classifyInProgressClaims(currentSnap).map((c) => [c.step, c.state]),
             );
             for (const step of inFlight) {
-              const described = describeClaimHolder(currentRun.claims?.[step], keepsClaims);
+              const described = describeClaimHolder(
+                currentRun.claims?.[step],
+                keepsClaims,
+                leaseFactOf(currentSnap, currentRun.claims?.[step]),
+              );
               const stale = states.get(step) === 'claim_stale';
               console.log(inFlightLine(runId, step, described, stale, watchMs, writerCtx()));
             }
@@ -1341,9 +1374,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // consults `validation_rejections`).
             // #729 PR-0: the step's brief (its template-filled prompt) from the run's ways — core's one
             // composer, no registry read (an observer), as before.
-            const stepWays = composeWaysAt(currentRun, currentAt!, { definition }).ways.filter(
-              (w) => w.verb === 'run_step',
-            );
+            const stepWays = composeWaysAt(currentRun, currentAt!, {
+              definition,
+              lease_facts: currentSnap.lease_facts,
+            }).ways.filter((w) => w.verb === 'run_step');
             const nextAction = (
               stepWays.find((w) => w.verb === 'run_step' && w.step === stepName) ?? stepWays[0]
             )?.brief;
@@ -2213,7 +2247,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           result.stopped_step !== stepName
         ) {
           heldCapabilityReplies.set(result.stopped_step, result);
-          ({ record: currentRun, at: currentAt } = errorSnapshot!);
+          hold(errorSnapshot!);
           console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
           continue;
         }
@@ -2230,8 +2264,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // guard of the chain (a concurrent settle that diverged from its abort) names no step, and
         // keeps the stop below — this drive's answer was recorded there.
         if (engineReply === undefined && errorRecord !== undefined && isRaceStop(resultStop)) {
-          currentRun = errorRecord;
-          currentAt = errorSnapshot!.at;
+          hold(errorSnapshot!);
           if (resultStop.ran_here || resultStop.kind === 'run_ended') {
             console.log(
               answerNotRecordedLine(
@@ -2240,6 +2273,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 keepsClaims,
                 resultStop.kind as NotRecordedKind,
                 writerCtx(),
+                currentSnap,
               ),
             );
           }
@@ -2271,7 +2305,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               ? ` after ${repairsUsed} schema-repair attempts`
               : '';
           if (isCapabilityBlock) {
-            ({ record: currentRun, at: currentAt } = errorSnapshot!);
+            hold(errorSnapshot!);
             const block = findCapabilityBlockedSteps(currentRun).find(
               (b) => b.step === stoppedStep,
             );
@@ -2350,9 +2384,25 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           result.intrinsic_action === 'stop' &&
           result.evidence.length === 0
         ) {
-          if (answerNotRecordedLine(currentRun, stepName, keepsClaims) !== undefined)
+          if (
+            answerNotRecordedLine(
+              currentRun,
+              stepName,
+              keepsClaims,
+              undefined,
+              PLAIN,
+              currentSnap,
+            ) !== undefined
+          )
             console.log(
-              answerNotRecordedLine(currentRun, stepName, keepsClaims, undefined, writerCtx()),
+              answerNotRecordedLine(
+                currentRun,
+                stepName,
+                keepsClaims,
+                undefined,
+                writerCtx(),
+                currentSnap,
+              ),
             );
           continue;
         }
@@ -2378,15 +2428,24 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     keepsClaims,
                     undefined,
                     writerCtx(),
+                    currentSnap,
                   ) ??
                     takenLine(
                       blockedStep,
-                      describeClaimHolder(currentRun.claims?.[blockedStep], keepsClaims),
+                      describeClaimHolder(
+                        currentRun.claims?.[blockedStep],
+                        keepsClaims,
+                        leaseFactOf(currentSnap, currentRun.claims?.[blockedStep]),
+                      ),
                       writerCtx(),
                     ))
                 : takenLine(
                     blockedStep,
-                    describeClaimHolder(currentRun.claims?.[blockedStep], keepsClaims),
+                    describeClaimHolder(
+                      currentRun.claims?.[blockedStep],
+                      keepsClaims,
+                      leaseFactOf(currentSnap, currentRun.claims?.[blockedStep]),
+                    ),
                     writerCtx(),
                   ),
             );
@@ -2403,9 +2462,25 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               blockedStep === stepName &&
               currentRun.terminal_state
             ) {
-              if (answerNotRecordedLine(currentRun, stepName, keepsClaims) !== undefined)
+              if (
+                answerNotRecordedLine(
+                  currentRun,
+                  stepName,
+                  keepsClaims,
+                  undefined,
+                  PLAIN,
+                  currentSnap,
+                ) !== undefined
+              )
                 console.log(
-                  answerNotRecordedLine(currentRun, stepName, keepsClaims, undefined, writerCtx()),
+                  answerNotRecordedLine(
+                    currentRun,
+                    stepName,
+                    keepsClaims,
+                    undefined,
+                    writerCtx(),
+                    currentSnap,
+                  ),
                 );
             }
             continue;
@@ -2416,7 +2491,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // purpose (C85): going back to the loop top on a reply the run's view does not explain
           // could bring back the unbounded, billed loop C82 removed.
           console.error(`\n✗ ${result.context_hint}`);
-          printResumeLine(writtenSnapshot(currentRun, currentAt!));
+          printResumeLine(currentSnap);
           return 'failed';
         }
         console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
@@ -2521,6 +2596,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       definition,
       registry: deps.registry,
       persistsClaims: deps.store.persistsClaims === true,
+      lease_facts: currentSnap.lease_facts,
     });
     const inspectWay = stopWays.ways.find((w) => w.verb === 'inspect');
     const abandonWay = stopWays.ways.find((w) => w.verb === 'abandon');
@@ -2540,6 +2616,6 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     return 'failed';
   }
   console.error(`\nRun ended in phase: ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
-  printResumeLine(writtenSnapshot(currentRun, currentAt!));
+  printResumeLine(currentSnap);
   return 'failed';
 }
