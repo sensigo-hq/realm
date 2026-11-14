@@ -773,6 +773,7 @@ function classifyRecordHealth(
     const composed = composeWaysAt(run, now, {
       definition: opts.definition,
       ...(opts.registry !== undefined ? { registry: opts.registry } : {}),
+      lease_facts: snapshot.lease_facts,
     });
     if (cannotGoOnUntilCorrected(composed)) {
       const refused = composed.unavailable.filter(

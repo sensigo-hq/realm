@@ -123,9 +123,12 @@ describe('#729 CW-1b — the lease facts’ words', () => {
     // before CW-1b works unchanged"); the three functions take or return a fact for a leased claim
     // and are unchanged for any other: core's lease-facts-cw1b (the classifyClaim table, the
     // consumers, "an unleased claim's results are exactly today's"); "nothing in Realm takes a lease
-    // yet": claim-lease-witness-cw1 (no `hold(` call in production source).
+    // yet": claim-lease-witness-cw1 (no `hold(` call in production source). Part 2a's sentence: the
+    // callbacks' snapshot, core's lease-facts-reach-cw1b2 (f) cells; `composeWaysAt`'s `lease_facts`,
+    // that file's composeWaysAt cell; `drainFinalizers`' `snapshot` (correction 1): no cell executes it
+    // (the correction adds none), its field is held by core's build.
     claimChangelog(
-      "- **A run a store returns can carry the facts about its claims' leases** (`lease_facts`, optional): `@sensigo/realm-store-sqlite` attaches them, and `InMemoryStore` does when given a lease port; a store without leases needs no change. `classifyClaim`, `describeClaimHolder` and `classifyInProgressClaims` take or return a lease fact for a claim that names a lease, and are unchanged for any other. Nothing in Realm takes a lease yet.",
+      "- **A run a store returns can carry the facts about its claims' leases** (`lease_facts`, optional): `@sensigo/realm-store-sqlite` attaches them, and `InMemoryStore` does when given a lease port; a store without leases needs no change. `classifyClaim`, `describeClaimHolder` and `classifyInProgressClaims` take or return a lease fact for a claim that names a lease, and are unchanged for any other. Nothing in Realm takes a lease yet. `advanceRun`'s `onTaken` and `onNotRecorded` receive the run's re-read snapshot, with its lease facts, as an optional last argument, `composeWaysAt` takes `lease_facts` in its input, and `drainFinalizers`' result carries the run's `snapshot`.",
     );
   });
 });
