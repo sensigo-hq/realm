@@ -12,6 +12,7 @@ import {
   installClockErrorSink,
 } from './commands-registry.js';
 import { reportExpectedRefusal } from './lib/expected-refusal.js';
+import { declareRealmProgram } from './output/relay.js';
 import { VERSION } from './version.js';
 
 const program = new Command();
@@ -69,6 +70,9 @@ if (
 // #715 (b) (03 §A.1, D-22): the process's waiter-error sink, set once before any command runs (a
 // gate's expiry timer, `realm listen`'s sweeper and `realm mcp`'s store all wait on a store's clock).
 installClockErrorSink();
+// U1b (prompt amendment A1): this process is the realm program, so a command in log mode may run its
+// work in a second process of this same program.
+declareRealmProgram();
 try {
   await program.parseAsync();
 } catch (err) {
