@@ -202,7 +202,17 @@ function released({ cut = true } = {}) {
 // The deploy build's own lines (each begins "deploy build: "), and the left-off list's entries.
 const own = (out) =>
   out.split('\n').filter((l) => l.startsWith('deploy build: ') || /^ {2}[0-9a-f]{8} /.test(l));
-const shown = (r) => `exit ${r.code}; the deploy build's lines:\n${own(r.out).join('\n')}`;
+// What a failed check prints: the exit code, the deploy build's lines and, when it failed, the end
+// of the build's own output (its error).
+const shown = (r) =>
+  `exit ${r.code}; the deploy build's lines:\n${own(r.out).join('\n')}` +
+  (r.code === 0
+    ? ''
+    : `\nthe end of its output:\n${r.out
+        .split('\n')
+        .filter((l) => !/^\s*\S*\s*[├└]─/.test(l))
+        .slice(-15)
+        .join('\n')}`);
 const docsPages = (f) => {
   const out = [];
   (function walk(dir) {
