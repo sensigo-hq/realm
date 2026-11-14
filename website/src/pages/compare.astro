@@ -27,6 +27,7 @@ import {
   linkParts,
   issueLink,
   HEADINGS,
+  OTHER_TOOLS,
 } from '../lib/compare-text.mjs';
 
 const PILL = { Yes: 'yes', Partial: 'part', No: 'no', 'N/A': 'na' };
@@ -250,6 +251,17 @@ button.openall:hover { border-color: var(--muted); }
         </section>
       ))}
     </div>
+  </section>
+
+  <section aria-labelledby="other-tools">
+    <div class="eyebrow">{OTHER_TOOLS.eyebrow}</div>
+    <h2 id="other-tools">{OTHER_TOOLS.heading}</h2>
+    <p>{OTHER_TOOLS.paragraph}</p>
+    <h3>{OTHER_TOOLS.question}</h3>
+    <p>{OTHER_TOOLS.answer}</p>
+    <ul>
+      {OTHER_TOOLS.items.map((item) => <li>{item.strong ? <strong>{item.strong}</strong> : null}{linkParts(item.text).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</li>)}
+    </ul>
   </section>
 
   <section aria-labelledby="tools">

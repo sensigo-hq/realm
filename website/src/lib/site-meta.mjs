@@ -5,7 +5,7 @@
 export const SITE_URL = 'https://realmengine.dev';
 export const SITE_NAME = 'Realm';
 
-// The home page's description; llms.txt quotes it as the site's one-line summary.
+// The home page uses this description; llms.txt opens with its own text.
 export const HOME_DESCRIPTION =
   'The workflow engine your AI agent calls over MCP. Steps run in order; answers that break their schema are refused.';
 
