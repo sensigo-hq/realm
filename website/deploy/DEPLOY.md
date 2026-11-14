@@ -16,7 +16,9 @@ npm run build:deploy
 ```
 
 `build:deploy` fetches from origin. It finds the newest release (the highest `vX.Y.Z` tag on origin),
-checks its docs branch and builds the site into `website/dist/`. When it stops, it prints why and what
+checks its docs branch and builds the site into `website/dist/`. A single-branch clone works: the
+build fetches the release tag and its docs branch itself. A shallow clone does not: the build says
+so and gives the command that deepens it. When it stops, it prints why and what
 to do, and leaves no `dist/`:
 
 - **"origin has no branch docs/v<version>"**: the branch was never cut. Cut it from the tag with the
@@ -27,12 +29,13 @@ to do, and leaves no `dist/`:
 - **"commit … is not a copy of a commit on main"**: someone committed on the branch directly, or
   copied a fix and edited it, or copied a commit that is not on main. Fixes reach the live docs only
   by landing on main first. One that cannot be copied cleanly stays off the live docs until the next
-  release.
+  release. To take the commit off, recreate the branch from the tag and copy the others again (below,
+  "To take a copy back").
 - **"… sends readers to …, which is not a page in the <version> docs"**: a site page, llms.txt or a
   redirect links a docs page the release does not have. Change the link on main, or, if that page is
   true of the release, copy its commit onto the branch.
-- **"the local tag v<version> points at …, but origin's points at …"**: make the local tag match
-  origin's (the published release), then run again.
+- **"the local tag v<version> points at …, but origin's points at …"**: delete the local tag with
+  git tag -d v<version>; the build then fetches origin's (the published release). Run again.
 - **"could not reach origin"**, or **"the build failed"**: fix what the line or the build's own
   error says, then run again.
 
@@ -44,12 +47,16 @@ A finished build lists the docs commits on main since the release that are not o
 that every one is), and any docs page on main the site lacks. Each listed commit stays off the live
 docs. Copy one onto the branch only if it is true of the release (below).
 
+Leaving them off is the normal case: most describe what came after the release, and a commit's
+subject alone does not say which. Read the commit before copying it.
+
 A warning line means the site's pages were not built from `origin/main` as it is. Build again from a
 clean checkout of `origin/main`.
 
 ## Deploy
 
-Only after the line `deploy build: done. …`, deploy `website/dist/` in the three steps of the
+Only after the line `deploy build: done. The site's pages are from …`, with no warning above it,
+deploy `website/dist/` in the three steps of the
 "Deploy order" at the top of `website/deploy/nginx-site.conf`:
 
 1. `rsync` the new `dist/` without `--delete`;
@@ -62,10 +69,15 @@ A fix that is true of the release lands on main first, as usual. Then it is copi
 
 ```sh
 git fetch origin
-git switch -c docs-fix origin/docs/v<version>
+git worktree add ../realm-docs-fix origin/docs/v<version>
+cd ../realm-docs-fix
 git cherry-pick -x <main commit>      # one main commit per copy, in main's order, with no hand edits
 git push origin HEAD:docs/v<version>
+cd -
+git worktree remove ../realm-docs-fix
 ```
+
+The copy is made in a separate worktree, so the checkout you deploy from stays on `origin/main`.
 
 `-x` writes the line "(cherry picked from commit …)" that the build checks. A copy that needs a hand
 edit is refused, so that fix waits for the next release.
@@ -74,9 +86,12 @@ To take a copy back, recreate the branch from the tag and copy the others again.
 push, which the repository allows for `docs/*` branches:
 
 ```sh
-git switch -c docs-redo refs/tags/v<version>
+git worktree add ../realm-docs-fix refs/tags/v<version>
+cd ../realm-docs-fix
 git cherry-pick -x <each main commit to keep>
 git push --force origin HEAD:docs/v<version>
+cd -
+git worktree remove ../realm-docs-fix
 ```
 
 A `git revert` on the branch carries no "(cherry picked from commit …)" line, so the build refuses

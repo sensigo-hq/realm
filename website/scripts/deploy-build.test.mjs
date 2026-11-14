@@ -83,6 +83,12 @@ const V1 = (v) =>
 const V2 =
   "These docs describe Realm as it is on the main branch, not a release. [Each release's docs](https://github.com/sensigo-hq/realm/tags) are on GitHub.";
 const X = 'deploy build: dist/ was removed, so nothing from this run can be deployed.';
+const S3_TAIL =
+  'A fix reaches the live docs by landing on main first, then being copied with git cherry-pick -x and no hand edits; one that cannot be copied cleanly stays off the live docs until the next release. To take this commit off the branch, recreate the branch from the tag and copy the others again, as website/deploy/DEPLOY.md says ("To take a copy back").';
+const T = (local, origin) =>
+  `deploy build: the local tag v0.10.0 points at ${local.slice(0, 8)}, but origin's points at ${origin.slice(0, 8)}. The release on origin is the one published: delete the local tag with git tag -d v0.10.0 (this build then fetches origin's), then run again.`;
+const D2 =
+  "deploy build: done, but not for deploying: the site's pages are not origin/main's as they are (see the warning above). Build again from a clean checkout of origin/main.";
 const F = 'deploy build: the build failed; its error is printed above.';
 
 function fixture(name) {
@@ -199,6 +205,29 @@ function released({ cut = true } = {}) {
   if (cut) f.git('push', '-q', 'origin', 'refs/tags/v0.10.0^0:refs/heads/docs/v0.10.0');
   return { f, tag };
 }
+// A clone of a fixture's origin (`args`: git clone's options and the address), beside its work tree,
+// with the demo bundle a plain build leaves, as a deployer's checkout.
+function cloneOf(f, ...args) {
+  const work = path.join(f.root, 'clone');
+  git(f.root, 'clone', '-q', ...args, 'clone');
+  const web = path.join(work, 'website');
+  fs.copyFileSync(
+    path.join(WEB, 'src/live/manifest.json'),
+    path.join(web, 'src/live/manifest.json'),
+  );
+  fs.cpSync(path.join(WEB, 'public/live'), path.join(web, 'public/live'), { recursive: true });
+  return {
+    work,
+    web,
+    git: (...a) => git(work, ...a),
+    deploy: () => sh('sh', ['-c', 'npm run --silent build:deploy 2>&1'], web),
+    hasDist: () => fs.existsSync(path.join(web, 'dist')),
+    leftoverDist() {
+      fs.mkdirSync(path.join(web, 'dist'), { recursive: true });
+      fs.writeFileSync(path.join(web, 'dist/left-by-a-plain-build.html'), 'old');
+    },
+  };
+}
 // The deploy build's own lines (each begins "deploy build: "), and the left-off list's entries.
 const own = (out) =>
   out.split('\n').filter((l) => l.startsWith('deploy build: ') || /^ {2}[0-9a-f]{8} /.test(l));
@@ -256,14 +285,7 @@ test('1: the newest release is the highest vX.Y.Z on origin, compared as version
   f.git('tag', '-f', 'v0.10.0', a);
   r = f.deploy();
   // Can fail: a local tag that is not compared with origin's.
-  assert.deepEqual(
-    own(r.out),
-    [
-      `deploy build: the local tag v0.10.0 points at ${a.slice(0, 8)}, but origin's points at ${b.slice(0, 8)}. The release on origin is the one published: make the local tag match it, then run again.`,
-      X,
-    ],
-    shown(r),
-  );
+  assert.deepEqual(own(r.out), [T(a, b), X], shown(r));
   assert.notEqual(r.code, 0, shown(r));
 });
 
@@ -409,8 +431,7 @@ test('4: stop 3 gives one line per commit that is not a copy, one reason each; a
     copies.c = f.git('rev-parse', 'HEAD');
   });
   const r = f.deploy();
-  const tail =
-    'A fix reaches the live docs by landing on main first, then being copied with git cherry-pick -x and no hand edits; one that cannot be copied cleanly stays off the live docs until the next release.';
+  const tail = S3_TAIL;
   // Can fail: patch-id with context refuses the clean copy; each reason left unchecked lets its commit through.
   assert.deepEqual(
     own(r.out),
@@ -461,7 +482,7 @@ test('5: stop 2 checks every built file and the redirects, in the same run as st
   assert.deepEqual(
     own(r.out),
     [
-      `deploy build: commit ${direct.slice(0, 8)} on docs/v0.10.0 ("docs: written on the branch") is not a copy of a commit on main: it has no "(cherry picked from commit …)" line. A fix reaches the live docs by landing on main first, then being copied with git cherry-pick -x and no hand edits; one that cannot be copied cleanly stays off the live docs until the next release.`,
+      `deploy build: commit ${direct.slice(0, 8)} on docs/v0.10.0 ("docs: written on the branch") is not a copy of a commit on main: it has no "(cherry picked from commit …)" line. ${S3_TAIL}`,
       s2('examples/index.html', '/docs/guides/gone-page/'),
       s2('index.html', '/docs/guides/gone-home/'),
       s2('index.html', '/og/docs-old.png'),
@@ -612,30 +633,31 @@ test('10: a plain build is unchanged: a docs page in no sidebar group still fail
   );
 });
 
-test("11: line W when the site's pages are not origin/main as it is, before D", () => {
+test("11: line W when the site's pages are not origin/main as it is, then D2 in place of D", () => {
   const { f, tag } = released();
   const W = (head, dirty) =>
     `deploy build: warning: the site's pages are from ${head.slice(0, 8)}${dirty ? ', with uncommitted changes' : ''}, not origin/main (${tag.slice(0, 8)}). A deploy should be built from origin/main with no changes.`;
   f.write('local.txt', 'a local change');
   const local = f.commit('site: a local commit, not pushed');
-  // Can fail: no W.
+  // Can fail: no W; D after W (a build the warning fired on, called done for deploying).
   let r = f.deploy();
   assert.equal(r.code, 0, shown(r));
-  assert.deepEqual(own(r.out).slice(-2, -1), [W(local, false)], shown(r));
-  assert.match(own(r.out).at(-1), /^deploy build: done\./, shown(r));
+  assert.deepEqual(own(r.out).slice(-2), [W(local, false), D2], shown(r));
   f.write('notes.txt', 'an untracked file');
   r = f.deploy();
-  assert.deepEqual(own(r.out).slice(-2, -1), [W(local, true)], shown(r));
+  assert.deepEqual(own(r.out).slice(-2), [W(local, true), D2], shown(r));
+  assert.equal(r.code, 0, shown(r));
   f.git('reset', '-q', '--hard', 'origin/main');
   r = f.deploy();
   assert.deepEqual(
-    own(r.out).slice(-2, -1),
+    own(r.out).slice(-2),
     [
       `deploy build: warning: the site's pages are from ${tag.slice(0, 8)}, with uncommitted changes. A deploy should be built from origin/main with no changes.`,
+      D2,
     ],
     shown(r),
   );
-  assert.match(own(r.out).at(-1), /^deploy build: done\./, shown(r));
+  assert.equal(r.code, 0, shown(r));
 });
 
 test('Behaviour 10: an interrupt during the build leaves no dist/ and prints X', async () => {
@@ -661,4 +683,97 @@ test('Behaviour 10: an interrupt during the build leaves no dist/ and prints X',
   assert.equal(end.code, 143, `exit ${end.code} ${end.signal}; ${lines.join(' | ')}`);
   assert.equal(lines.at(-1), X, lines.join('\n'));
   assert.equal(f.hasDist(), false, `dist/ is still there after SIGTERM: ${lines.join(' | ')}`);
+});
+
+test('C1-1: a single-branch clone builds as a full clone does: the docs branch is looked up on origin', () => {
+  const { f } = released();
+  f.edit('docs/guides/alpha.md', 'Line 2.', 'Line 2, fixed.');
+  const fix = f.commit('docs: a fix');
+  f.git('push', '-q', 'origin', 'main');
+  f.onBranch('0.10.0', () => f.git('cherry-pick', '-x', fix));
+  const c = cloneOf(f, '--single-branch', '--branch', 'main', f.origin);
+  assert.equal(
+    c.git('config', '--get-all', 'remote.origin.fetch'),
+    '+refs/heads/main:refs/remotes/origin/main',
+  );
+  const r = c.deploy();
+  // Can fail: the branch read from the clone's own refs ("origin has no branch docs/v0.10.0").
+  assert.equal(r.code, 0, shown(r));
+  assert.deepEqual(
+    own(r.out),
+    [
+      'deploy build: every docs commit on main since v0.10.0 is on the site.',
+      `deploy build: done. The site's pages are from ${fix.slice(0, 8)}, the docs from docs/v0.10.0 at ${f.git('rev-parse', 'origin/docs/v0.10.0').slice(0, 8)} (Realm 0.10.0). Deploy dist/ as website/deploy/DEPLOY.md says.`,
+    ],
+    shown(r),
+  );
+});
+
+test('C1-1b: a shallow clone stops first, with the command that deepens it, and leaves no dist/', () => {
+  const { f } = released();
+  const c = cloneOf(f, '--depth', '1', `file://${f.origin}`);
+  assert.equal(c.git('rev-parse', '--is-shallow-repository'), 'true');
+  c.leftoverDist();
+  const r = c.deploy();
+  // Can fail: no shallow check.
+  assert.deepEqual(
+    own(r.out),
+    [
+      "deploy build: this clone is shallow, so the docs branch cannot be checked against main's history. Run git fetch --unshallow origin, then run again.",
+      X,
+    ],
+    shown(r),
+  );
+  assert.equal(r.code, 1, shown(r));
+  assert.equal(c.hasDist(), false, `dist/ is still there. ${shown(r)}`);
+});
+
+test('C1-2: Ctrl-C during the fetch is an interrupt: X, exit 130, no dist/, no "could not reach origin"', async () => {
+  const { f } = released();
+  // origin answers slowly, so the fetch is still running when the terminal sends Ctrl-C.
+  const marker = path.join(f.root, 'upload-pack-started');
+  const slow = path.join(f.root, 'slow-upload-pack.sh');
+  fs.writeFileSync(slow, `#!/bin/sh\ntouch '${marker}'\nsleep 20\nexec git-upload-pack "$@"\n`, {
+    mode: 0o755,
+  });
+  f.git('config', 'remote.origin.uploadpack', slow);
+  f.leftoverDist();
+  // A terminal sends Ctrl-C to the whole foreground process group: the build and its git call.
+  const child = spawn('node', ['scripts/deploy-build.mjs'], {
+    cwd: f.web,
+    env: ENV,
+    detached: true,
+  });
+  let out = '';
+  child.stdout.on('data', (b) => (out += b));
+  child.stderr.on('data', (b) => (out += b));
+  const ended = new Promise((resolve) =>
+    child.on('exit', (code, signal) => resolve({ code, signal })),
+  );
+  for (let i = 0; i < 200 && !fs.existsSync(marker); i++)
+    await new Promise((r) => setTimeout(r, 50));
+  assert.ok(fs.existsSync(marker), 'the fetch never reached origin');
+  process.kill(-child.pid, 'SIGINT');
+  const end = await ended;
+  const lines = own(out);
+  // Can fail: the interrupted fetch read as a failed one ("could not reach origin").
+  assert.deepEqual(lines, [X], `exit ${end.code} ${end.signal}; ${lines.join(' | ')}`);
+  assert.equal(end.code, 130, `exit ${end.code} ${end.signal}; ${lines.join(' | ')}`);
+  assert.equal(f.hasDist(), false, `dist/ is still there: ${lines.join(' | ')}`);
+});
+
+test("C1-3: the T line's own advice (git tag -d, run again) gets the build through", () => {
+  const { f, tag } = released();
+  f.write('local.txt', 'a commit the local tag will point at');
+  const other = f.commit('fixture: elsewhere');
+  f.git('tag', '-f', 'v0.10.0', other);
+  f.git('reset', '-q', '--hard', 'origin/main');
+  let r = f.deploy();
+  // Can fail: the old T line, which gave no command.
+  assert.deepEqual(own(r.out), [T(other, tag), X], shown(r));
+  f.git('tag', '-d', 'v0.10.0');
+  r = f.deploy();
+  assert.equal(r.code, 0, shown(r));
+  assert.match(own(r.out).at(-1), /^deploy build: done\. The site's pages are from /, shown(r));
+  assert.equal(f.git('rev-parse', 'v0.10.0'), tag, "the build did not fetch origin's tag");
 });

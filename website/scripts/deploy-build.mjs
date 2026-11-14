@@ -32,6 +32,8 @@ const MAIN = 'refs/remotes/origin/main';
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
 
 const say = (s) => console.log(`deploy build: ${s}`);
+// The exit code of an interrupt, by signal.
+const INTERRUPT = { SIGINT: 130, SIGTERM: 143 };
 const short = (sha) => sha.slice(0, 8);
 const X = 'dist/ was removed, so nothing from this run can be deployed.';
 
@@ -42,6 +44,11 @@ if (top.status !== 0) {
 }
 const ROOT = top.stdout.trim();
 
+// A call that Ctrl-C or SIGTERM ended is an interrupt: the run stops as one (X, 130 or 143), not as
+// a failure of the call ("could not reach origin", "the build failed").
+function stopIfInterrupted(r) {
+  if (r.signal in INTERRUPT) stop([], INTERRUPT[r.signal]);
+}
 function git(args, opts = {}) {
   const r = spawnSync('git', args, {
     cwd: ROOT,
@@ -50,6 +57,7 @@ function git(args, opts = {}) {
     maxBuffer: 256 * 1024 * 1024,
     input: opts.input,
   });
+  stopIfInterrupted(r);
   return { ok: r.status === 0, out: r.stdout ?? '', err: String(r.stderr ?? '') };
 }
 const revParse = (ref) => {
@@ -81,10 +89,7 @@ function stop(lines, code = 1) {
 
 // An interrupt (Ctrl-C, SIGTERM) also leaves no dist/. The build runs in its own process group, so it
 // is stopped as a whole, and dist/ is removed once it has stopped writing.
-for (const [sig, code] of [
-  ['SIGINT', 130],
-  ['SIGTERM', 143],
-]) {
+for (const [sig, code] of Object.entries(INTERRUPT)) {
   process.on(sig, () => {
     if (!child) return stop([], code);
     const done = () => stop([], code);
@@ -101,13 +106,20 @@ for (const [sig, code] of [
 // 1. Start clean: a plain build or an earlier run leaves a dist/ behind.
 removeDist();
 
+// A shallow clone has no history to check the docs branch's copies against.
+if (git(['rev-parse', '--is-shallow-repository']).out.trim() === 'true')
+  stop([
+    "this clone is shallow, so the docs branch cannot be checked against main's history. Run git fetch --unshallow origin, then run again.",
+  ]);
+
 // 2. Fetch origin's branches. A branch deleted on origin goes locally too; tags are never pruned, so a
 // release tag made locally and not yet pushed survives (whatever fetch.pruneTags says).
 const fetched = git(['fetch', '--prune', '--no-prune-tags', 'origin']);
 if (!fetched.ok) stop([`could not reach origin (${firstErrorLine(fetched.err)}).`]);
 
-// 3. The newest release: the highest vX.Y.Z tag on origin itself, compared as versions.
-const listed = git(['ls-remote', '--tags', '--refs', 'origin']);
+// 3. The newest release: the highest vX.Y.Z tag on origin itself, compared as versions. Its docs
+// branch is looked up on origin too: a single-branch clone fetches only main.
+const listed = git(['ls-remote', '--refs', 'origin']);
 if (!listed.ok) stop([`could not reach origin (${firstErrorLine(listed.err)}).`]);
 const releases = listed.out
   .split('\n')
@@ -131,16 +143,25 @@ if (!localTag) {
 }
 if (localTag !== releases[0].sha)
   stop([
-    `the local tag ${TAG} points at ${short(localTag ?? '(nothing)')}, but origin's points at ${short(releases[0].sha)}. The release on origin is the one published: make the local tag match it, then run again.`,
+    `the local tag ${TAG} points at ${short(localTag ?? '(nothing)')}, but origin's points at ${short(releases[0].sha)}. The release on origin is the one published: delete the local tag with git tag -d ${TAG} (this build then fetches origin's), then run again.`,
   ]);
 const TAG_COMMIT = revParse(`refs/tags/${TAG}^{commit}`);
 
-// 4. Stop 1: the branch must exist and hold the release.
-const BRANCH_SHA = revParse(BRANCH_REF);
-if (!BRANCH_SHA)
+// 4. Stop 1: the branch must exist on origin and hold the release. The branch and main are fetched
+// by name, so a single-branch clone has both.
+if (!listed.out.split('\n').some((l) => l.trim().endsWith(`\trefs/heads/${BRANCH}`)))
   stop([
     `the newest release is ${VERSION} (tag ${TAG}), but origin has no branch ${BRANCH}, which the live docs are built from. Cut it from the tag: git push origin refs/tags/${TAG}^0:refs/heads/${BRANCH}`,
   ]);
+const both = git([
+  'fetch',
+  '--no-tags',
+  'origin',
+  `+refs/heads/main:${MAIN}`,
+  `+refs/heads/${BRANCH}:${BRANCH_REF}`,
+]);
+if (!both.ok) stop([`could not reach origin (${firstErrorLine(both.err)}).`]);
+const BRANCH_SHA = revParse(BRANCH_REF);
 if (!isAncestor(TAG_COMMIT, BRANCH_SHA))
   stop([
     `${BRANCH} does not hold the release tag ${TAG} (${short(TAG_COMMIT)}), so it is not the ${VERSION} docs. Recreate it from the tag, then copy its fixes again with git cherry-pick -x.`,
@@ -181,7 +202,7 @@ for (const sha of git(['rev-list', '--reverse', `${TAG_COMMIT}..${BRANCH_SHA}`])
   }
   if (reason)
     s3.push(
-      `commit ${short(sha)} on ${BRANCH} ("${subject}") is not a copy of a commit on main: ${reason}. A fix reaches the live docs by landing on main first, then being copied with git cherry-pick -x and no hand edits; one that cannot be copied cleanly stays off the live docs until the next release.`,
+      `commit ${short(sha)} on ${BRANCH} ("${subject}") is not a copy of a commit on main: ${reason}. A fix reaches the live docs by landing on main first, then being copied with git cherry-pick -x and no hand edits; one that cannot be copied cleanly stays off the live docs until the next release. To take this commit off the branch, recreate the branch from the tag and copy the others again, as ${STEPS_FILE} says ("To take a copy back").`,
     );
 }
 
@@ -194,8 +215,10 @@ try {
     cwd: ROOT,
     maxBuffer: 256 * 1024 * 1024,
   });
+  stopIfInterrupted(archive);
   if (archive.status !== 0) throw new Error(`git archive: ${String(archive.stderr).trim()}`);
   const untar = spawnSync('tar', ['-x', '-C', tmp], { input: archive.stdout });
+  stopIfInterrupted(untar);
   if (untar.status !== 0) throw new Error(`tar: ${String(untar.stderr).trim()}`);
   const sidebar = git(['show', `${BRANCH_SHA}:${SIDEBAR_FILE}`]);
   if (!sidebar.ok) throw new Error(`${BRANCH} has no ${SIDEBAR_FILE}`);
@@ -275,12 +298,13 @@ function cut(html, open) {
   return [html.slice(0, a) + html.slice(b), html.slice(a, b)];
 }
 
+// `&amp;` last, so "&amp;quot;" stays the text "&quot;" (decoding it first would decode twice).
 const decode = (s) =>
   s
-    .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'");
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, '&');
 // The addresses in a text: href values, Markdown links, and full https://realmengine.dev/… addresses.
 function addresses(text) {
   const out = [];
@@ -393,6 +417,12 @@ else if (dirty)
   );
 
 removeTmp();
-say(
-  `done. The site's pages are from ${short(HEAD)}, the docs from ${BRANCH} at ${short(BRANCH_SHA)} (Realm ${VERSION}). Deploy dist/ as ${STEPS_FILE} says.`,
-);
+// A build the warning fired on is not one to deploy, and the last line says so.
+if (HEAD !== MAIN_SHA || dirty)
+  say(
+    "done, but not for deploying: the site's pages are not origin/main's as they are (see the warning above). Build again from a clean checkout of origin/main.",
+  );
+else
+  say(
+    `done. The site's pages are from ${short(HEAD)}, the docs from ${BRANCH} at ${short(BRANCH_SHA)} (Realm ${VERSION}). Deploy dist/ as ${STEPS_FILE} says.`,
+  );

@@ -25,4 +25,11 @@ const parts = isDocsPageId(Astro.locals.starlightRoute.id) ? docsVersionParts() 
     font-size: var(--sl-text-sm);
     color: var(--sl-color-gray-2);
   }
+  /* The docs pages' body links (Starlight's .sl-markdown-content a), in both themes. */
+  .docs-version a {
+    color: var(--sl-color-text-accent);
+  }
+  .docs-version a:hover {
+    color: var(--sl-color-white);
+  }
 </style>
