@@ -8,7 +8,13 @@
 const isReminder = (c: string): boolean => c.includes('Please respond.') && !c.includes('expired');
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { startGateReminderTimers, checkDeadNotificationAdvisory } from './slack-gate-notifier.js';
-import { writtenSnapshot, type PendingGate, type RunRecord, type Snapshot } from '@sensigo/realm';
+import {
+  systemClock,
+  writtenSnapshot,
+  type PendingGate,
+  type RunRecord,
+  type Snapshot,
+} from '@sensigo/realm';
 import { zOf } from '../../test-support/instant.js';
 
 /** #715 (b) (D-29): the run as the notifier reads it when it starts — its gate, at this instant. */
@@ -57,6 +63,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       heldAt(gate),
       999_999_000, // operator config — must be IGNORED (record-keyed precedence)
       999_999_000,
+      systemClock,
     );
 
     await vi.advanceTimersByTimeAsync(1000); // occurrence 1
@@ -86,6 +93,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       heldAt(gate),
       999_999_000,
       999_999_000,
+      systemClock,
     );
 
     // t=1000: occurrence 1, plain (next-fire was computed at t=0 as 1000ms, < 1500ms expiry).
@@ -129,6 +137,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       heldAt(gate),
       999_999_000,
       999_999_000,
+      systemClock,
     );
     await vi.advanceTimersByTimeAsync(1000); // first (and only) occurrence is already >= expiry
     clear();
@@ -153,6 +162,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       heldAt(gate),
       999_999_000,
       999_999_000,
+      systemClock,
     );
     await vi.advanceTimersByTimeAsync(1000);
     clear();
@@ -173,6 +183,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       heldAt(gate),
       999_999_000,
       999_999_000,
+      systemClock,
     );
     await vi.advanceTimersByTimeAsync(1000);
     await vi.advanceTimersByTimeAsync(1000);
@@ -193,6 +204,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       heldAt(gate),
       500,
       999_999_000,
+      systemClock,
     );
     await vi.advanceTimersByTimeAsync(600);
     await vi.advanceTimersByTimeAsync(600); // would be a 2nd occurrence under the old bug — must not fire
@@ -211,6 +223,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       heldAt(gate),
       999_999_000,
       999_999_000,
+      systemClock,
     );
     await vi.advanceTimersByTimeAsync(1000);
     clear();
@@ -290,6 +303,7 @@ describe('#715 (b) (02 §D.3, D-29) — the reminders follow the run’s schedul
       heldAt(gate),
       1,
       999_999_000,
+      systemClock,
     );
     await vi.advanceTimersByTimeAsync(29_000);
     const before = calls.length;
