@@ -182,6 +182,30 @@ export function setStreamBlocking(
   return 'blocking';
 }
 
+/** #947: what the pipe rule did with a stream. */
+type PipeRule = 'blocking' | 'none' | 'missing' | 'terminal' | 'mcp';
+
+/**
+ * #947: the pipe rule, for every command: each stream given that is a pipe or a socket is set
+ * blocking ({@link setStreamBlocking}), so a write into a full pipe waits for its reader and nothing
+ * is left queued for an exit to drop. Never in mode `mcp` (`realm mcp`'s stdout is its client's
+ * channel: neither stream is touched) and never a terminal; a file or `/dev/null` has no handle;
+ * `'missing'` leaves the stream as it is (the relay refuses on its own).
+ */
+function blockPipes(
+  mode: WriterMode,
+  streams: Partial<Record<'stdout' | 'stderr', { isTTY?: boolean; _handle?: unknown }>>,
+): Partial<Record<'stdout' | 'stderr', PipeRule>> {
+  const done: Partial<Record<'stdout' | 'stderr', PipeRule>> = {};
+  for (const name of ['stdout', 'stderr'] as const) {
+    const stream = streams[name];
+    if (stream === undefined) continue;
+    done[name] =
+      mode === 'mcp' ? 'mcp' : stream.isTTY === true ? 'terminal' : setStreamBlocking(stream);
+  }
+  return done;
+}
+
 /** U1b: what a relay's worker sends: a numbered piece of the declared set, or its end message. */
 export type RelayDelta =
   | {
@@ -1174,6 +1198,8 @@ function flush(stream: 'stdout' | 'stderr', how: 'idle' | 'reset' | 'fatal' | 'e
     state.original[stream].call(process[stream], held, undefined as never);
     return;
   }
+  // #947: a program a handler started may have made the shared pipe non-blocking again.
+  blockPipes(state.mode, { [stream]: process[stream] });
   try {
     writeSync(stream === 'stdout' ? 1 : 2, held);
   } catch {
@@ -1213,6 +1239,8 @@ function fatal(err: unknown): void {
   } catch {
     text = FATAL_CONSTANT;
   }
+  // #947: the error's text waits for the reader too, whether or not stderr held a tail.
+  if (state !== undefined) blockPipes(state.mode, { stderr: process.stderr });
   try {
     writeSync(2, text);
   } catch {
@@ -1249,6 +1277,8 @@ export function installWriter(mode: WriterMode = 'default'): void {
     },
     carry: { stdout: { chunk: new ChunkCarry() }, stderr: { chunk: new ChunkCarry() } },
   };
+  // #947: from here on a piped stdout or stderr waits for its reader (never `realm mcp`'s channel).
+  blockPipes(mode, { stdout: process.stdout, stderr: process.stderr });
   // A value printed through `util.inspect` (console.log of an object) is never cut (I4).
   util.inspect.defaultOptions.maxStringLength = Infinity;
   patch('stdout');
@@ -1505,6 +1535,8 @@ export const writerTestSeams = {
   carry(stream: 'stdout' | 'stderr'): string {
     return state === undefined ? '' : state.carry[stream].chunk.peek();
   },
+  /** #947: the pipe rule the writer's install applies, on the streams given. */
+  blockPipes,
   reset(): void {
     if (state === undefined) return;
     flush('stdout', 'reset');
