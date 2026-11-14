@@ -1,4 +1,4 @@
-// lease-facts-reach-witness-cw1b2.test.ts — issue #729, the claim window, unit CW-1b part 2a: the
+// lease-facts-reach-witness-cw1b2.test.ts — issue #729, the claim window, unit CW-1b part 2: the
 // source witnesses that hold the conversion that makes the lease facts reach every judge. Read with
 // the TypeScript parser (a comment is never code; a Prettier-wrapped call is one call).
 //   - The rebuild census (check 2): outside the stores, no production `writtenSnapshot` call drops
@@ -13,8 +13,8 @@
 //     claim be judged by its deadline) passes only at an entry of the closed literal census, checked
 //     both ways (correction 1).
 //
-// SCOPE (part 2a): core's production source. Part 2b converts the CLI, the MCP server and the testing
-// package, and widens `SCANNED` to them.
+// SCOPE: every package's production source. Part 2a held core; part 2b converted the CLI, the MCP
+// server and the testing package, and widened `SCANNED` to them and to the SQLite store's package.
 //
 // WHAT IT SEES: every `.ts` file under the scanned packages' `src` but tests, declarations and the
 // `test-support` folders. WHAT IT CANNOT SEE: a call through another name (`const w = writtenSnapshot`),
@@ -32,8 +32,8 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
-/** The packages whose production source the witnesses read (part 2b adds the others). */
-const SCANNED = ['core'];
+/** The packages whose production source the witnesses read: every package (part 2b). */
+const SCANNED = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'];
 
 /** The stores and the snapshot module: they build the snapshots they return, facts and all. */
 const STORE_FILES = [
@@ -50,8 +50,8 @@ const NO_FACTS_ALLOWED = ['core/src/store/lease-facts.ts', 'core/src/index.ts', 
 
 /**
  * The closed census: each production `writtenSnapshot` call outside the stores that passes no facts,
- * by `file#function`, with where its record came from. Core has none: every one of its rebuilds was
- * converted (part 2a).
+ * by `file#function`, with where its record came from. There are none: core's rebuilds were converted
+ * in part 2a, the CLI's, the MCP server's and the testing package's in part 2b.
  */
 const CENSUS: Record<string, string> = {};
 
@@ -215,7 +215,7 @@ function breaches(path: string, text: string): Finding[] {
   return out;
 }
 
-describe('#729 CW-1b part 2a — the lease facts reach every judge (checks 2 and 3, core)', () => {
+describe('#729 CW-1b part 2 — the lease facts reach every judge (checks 2 and 3, every package)', () => {
   it('the instrument: it finds every breach spelling, and no conversion', () => {
     const breachesIn = (path: string, code: string) =>
       breaches(path, code)
@@ -280,7 +280,7 @@ describe('#729 CW-1b part 2a — the lease facts reach every judge (checks 2 and
     }).toEqual({ found: [], wrongly: [], atCensus: [] });
   });
 
-  it('core’s production source: no breach of the census or the consumer witness, and the census is closed', () => {
+  it('every package’s production source: no breach of the census or the consumer witness, and the census is closed', () => {
     const files = productionFiles();
     const found = files.flatMap((path) => breaches(rel(path), readFileSync(path, 'utf8')));
     const unlisted = found.filter(
@@ -289,7 +289,7 @@ describe('#729 CW-1b part 2a — the lease facts reach every judge (checks 2 and
         !(b.rule === 'writtenSnapshot without facts' && `${b.at.split(':')[0]}#${b.fn}` in CENSUS),
     );
     const listed = new Set(found.map((b) => `${b.at.split(':')[0]}#${b.fn}`));
-    // (1) red when a production call in core drops the facts (a rebuild, a composeWaysAt call, a
+    // (1) red when a production call in any package drops the facts (a rebuild, a composeWaysAt call, a
     //     judge's lease argument) or names NO_LEASE_FACTS outside its homes, or a census entry no
     //     longer matches a call (the census is closed both ways); (2) prints each breach with its rule,
     //     file, line and function, and each stale entry.
