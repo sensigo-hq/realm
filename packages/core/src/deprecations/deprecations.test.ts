@@ -1,7 +1,7 @@
 // deprecations.test.ts — CP-W: the deprecation channel's data. (e) the validator refuses a bad table,
 // naming the id, and the shipped (empty) table passes; the said-set says an id once. (f) the
-// compatibility page's table is pinned equal to this table. (i) the marker is one of realm's internal
-// variables. Every assertion names (a) the change that turns it red and (b) what it prints.
+// compatibility page's table is pinned equal to this table. Every assertion names (a) the change that
+// turns it red and (b) what it prints.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -15,7 +15,6 @@ import {
   validateDeprecations,
   type DeprecationEntry,
 } from './deprecations.js';
-import { REALM_INTERNAL_VARIABLES } from '../utils/redaction.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const entry = (id: string, over: Partial<DeprecationEntry> = {}): DeprecationEntry => ({
@@ -136,17 +135,5 @@ describe('CP-W (f) — the compatibility page lists every id the table holds', (
       rowTooManyInTheTable: false,
       pinned: { rows: [], noneLine: true, expected: [], expectNone: true },
     });
-  });
-});
-
-describe('CP-W (i) — the marker is internal', () => {
-  it('REALM_INTERNAL_VARIABLES holds REALM_DEPRECATIONS_SAID beside the relay’s two markers', () => {
-    // (a) red when the marker is not listed (the guard cell in redaction.test.ts then reds too);
-    //     (b) prints the list.
-    expect([...REALM_INTERNAL_VARIABLES].sort()).toEqual([
-      'REALM_DEPRECATIONS_SAID',
-      'REALM_RELAY_CHILD',
-      'REALM_RELAY_KEY',
-    ]);
   });
 });

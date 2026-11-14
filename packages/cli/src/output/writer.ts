@@ -93,8 +93,9 @@ const relayMarkers = readRelayMarkers();
  * CP-W (W3): seeds this process's said-set from the parent's marker, so a deprecation is said once
  * per command the operator ran, not once per process. Read and deleted here, with the relay's two
  * markers and before the start-environment snapshot; honoured only when the pid it names is this
- * process's parent (a shell cannot use it to silence a line). A marker that names another pid, or an
- * id not in the table, is ignored whole; nothing here throws.
+ * process's parent (a shell can silence only its own command's warning with it; the deletion at init
+ * is what keeps it from leaking). A marker that names another pid, or an id not in the table, is
+ * ignored whole; nothing here throws.
  */
 function readDeprecationsSaid(): void {
   const raw = process.env[DEPRECATIONS_SAID_ENV];
