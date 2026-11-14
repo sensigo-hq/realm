@@ -13,12 +13,14 @@
   "homepage": "https://realmengine.dev",
   "keywords": [
     "workflow",
+    "workflow-engine",
     "ai-agent",
     "mcp",
     "state-machine",
     "orchestration",
     "evidence",
     "human-in-the-loop",
+    "json-schema",
     "typescript"
   ],
   "private": false,

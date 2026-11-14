@@ -11,7 +11,8 @@ The outputs on this page come from real runs of `realm agent` against a local st
 You need:
 
 - a workflow with at least one agent step. This guide uses the `triage` workflow from [Write an agent step](agent-steps.md);
-- an API key for Anthropic or OpenAI, and the name of a model that provider offers.
+- an API key for Anthropic or OpenAI, and the name of a model that provider offers;
+- the provider's library, installed the same way as the CLI. With a CLI installed with `-g`, that is `npm install -g @anthropic-ai/sdk` for Anthropic or `npm install -g openai` for OpenAI. Without it, `realm agent` stops at the first agent step and names the package; the `npm install` command it suggests needs `-g` too when the CLI was installed with `-g`.
 
 ## 1. Set the provider key and choose a model
 
