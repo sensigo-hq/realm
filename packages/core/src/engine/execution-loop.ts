@@ -6257,7 +6257,8 @@ export async function drainFinalizers(
       );
     }
     hold(settledSnapshot(leaseResult));
-    // (#715 (b): `at` is the mark's below — every path from here assigns it or throws.)
+    // (#715 (b): `at` is set at the lease, just above, and again at the mark below — every path from
+    // here assigns it at the mark or throws.)
     // issue #558 PR-C: the lease APPLIED — this finalizer is attempted from here on, whatever the
     // handler returns (completed / failed / executed-but-unrecorded).
     attempted.push(finalizerName);
@@ -7300,9 +7301,10 @@ export interface AdvanceRunOptions {
   onTaken?: (step: string, run: RunRecord, snapshot?: Snapshot) => void;
   /**
    * F7: called with the name of a step this call ran whose own settle was refused because another
-   * program acted after this call's claim — the kind core's classifier names (`taken`: another
-   * program holds it now; `ran_elsewhere`: another program settled it; `run_ended`; `claim_removed`:
-   * its claim was removed, and the step is owed again) — with the record re-read after the refusal.
+   * program acted after this call's claim — the kind core's classifier names (`held_elsewhere`:
+   * another program holds it now; `step_settled`: another program settled it; `run_ended`;
+   * `claim_removed`: its claim was removed, and the step is owed again) — with the record re-read
+   * after the refusal.
    * The step's outcome was not recorded; the loop then goes on with what is left. #729 CW-1b part 2:
    * `snapshot`, an optional last argument, is the run's re-read snapshot, with its lease facts.
    */

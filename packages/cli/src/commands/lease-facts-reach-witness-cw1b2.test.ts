@@ -7,8 +7,11 @@
 //     never as `undefined` or `NO_LEASE_FACTS`; `NO_LEASE_FACTS` appears only in the lease-facts
 //     module, `snapshot.ts`, the stores and core's export line.
 //   - The consumer witness (check 3): every production call of `classifyClaim` and
-//     `describeClaimHolder` passes a lease argument, and that argument is neither `undefined` nor
-//     `leaseFactOf` of a snapshot built in place.
+//     `describeClaimHolder` passes a lease argument that is a real reading of the facts:
+//     `leaseFactOf(x, …)` with `x` a name or a property (a snapshot the code holds), or a name declared
+//     that way in the same function. An object literal (`{ absent: 'unleased' }`, which makes a leased
+//     claim be judged by its deadline) passes only at an entry of the closed literal census, checked
+//     both ways (correction 1).
 //
 // SCOPE (part 2a): core's production source. Part 2b converts the CLI, the MCP server and the testing
 // package, and widens `SCANNED` to them.
@@ -51,6 +54,16 @@ const NO_FACTS_ALLOWED = ['core/src/store/lease-facts.ts', 'core/src/index.ts', 
  * converted (part 2a).
  */
 const CENSUS: Record<string, string> = {};
+
+/**
+ * The closed literal census (check 3): each production `classifyClaim` or `describeClaimHolder` call
+ * whose lease argument is an object literal, by `file#function`, with why its claim names no lease.
+ */
+const LITERAL_CENSUS: Record<string, string> = {
+  'core/src/engine/execution-loop.ts#withGateClaim':
+    "the gate claim's `{ holder, since }` copy is no run's claim: an opened gate's claim is written " +
+    'without a lease',
+};
 
 function productionFiles(): string[] {
   const out: string[] = [];
@@ -98,22 +111,62 @@ function dropsFacts(arg: ts.Expression | undefined): boolean {
   );
 }
 
-/** A lease argument that is no fact of a store's snapshot: `undefined`, or `leaseFactOf` of one built here. */
+/** Whether `expr` reads the facts of a snapshot the code holds: `leaseFactOf(x, …)`, `x` a name or a property. */
+function readsFacts(expr: ts.Expression | undefined): boolean {
+  if (expr === undefined || !ts.isCallExpression(expr) || calleeName(expr) !== 'leaseFactOf')
+    return false;
+  const snap = expr.arguments[0];
+  return snap !== undefined && (ts.isIdentifier(snap) || ts.isPropertyAccessExpression(snap));
+}
+
+/** The nearest function around `node` (its own body is where a lease name must be declared). */
+function functionOf(node: ts.Node): ts.Node | undefined {
+  for (let n = node.parent; n !== undefined; n = n.parent) {
+    if (ts.isFunctionLike(n)) return n;
+  }
+  return undefined;
+}
+
+/** Whether the name `id` is declared, in the function around it, from a real reading of the facts. */
+function declaredFromFacts(id: ts.Identifier): boolean {
+  const fn = functionOf(id);
+  if (fn === undefined) return false;
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === id.text) {
+      found = readsFacts(n.initializer);
+      return;
+    }
+    // A function inside this one declares its own names.
+    if (n !== fn && ts.isFunctionLike(n)) return;
+    ts.forEachChild(n, visit);
+  };
+  visit(fn);
+  return found;
+}
+
+/**
+ * Why a lease argument is no real reading of the facts, or `undefined` when it is one;
+ * `'object literal'` for a literal (allowed only at a literal-census entry).
+ */
 function badLease(arg: ts.Expression | undefined): string | undefined {
   if (arg === undefined) return 'no lease argument';
   if (ts.isIdentifier(arg) && arg.text === 'undefined') return 'undefined';
-  if (ts.isCallExpression(arg) && calleeName(arg) === 'leaseFactOf') {
-    const snap = arg.arguments[0];
-    if (snap !== undefined && (ts.isObjectLiteralExpression(snap) || ts.isCallExpression(snap)))
-      return 'leaseFactOf of a snapshot built in place';
-  }
-  return undefined;
+  if (ts.isCallExpression(arg) && calleeName(arg) === 'leaseFactOf')
+    return readsFacts(arg) ? undefined : 'leaseFactOf of a snapshot built in place';
+  if (ts.isIdentifier(arg))
+    return declaredFromFacts(arg) ? undefined : 'a name not declared from leaseFactOf';
+  if (ts.isObjectLiteralExpression(arg)) return 'object literal';
+  return 'no reading of the facts';
 }
 
 interface Finding {
   rule: string;
   at: string;
   fn: string;
+  /** A literal at a literal-census entry: not a breach, but the census's own use (for the stale check). */
+  census?: true;
 }
 
 /** Every breach of checks 2 and 3 in `text` (a file at `path`, relative to the packages). */
@@ -142,7 +195,16 @@ function breaches(path: string, text: string): Finding[] {
       }
       if (name === 'classifyClaim' || name === 'describeClaimHolder') {
         const why = badLease(n.arguments[2]);
-        if (why !== undefined) add(`${name}: ${why}`, n);
+        if (why === 'object literal') {
+          if (`${path}#${enclosing(n)}` in LITERAL_CENSUS)
+            out.push({
+              rule: `${name}: a census literal`,
+              at: `${path}:${line(n)}`,
+              fn: enclosing(n),
+              census: true,
+            });
+          else add(`${name}: an object literal outside the census`, n);
+        } else if (why !== undefined) add(`${name}: ${why}`, n);
       }
     }
     if (ts.isIdentifier(n) && n.text === 'NO_LEASE_FACTS' && !NO_FACTS_ALLOWED.includes(path))
@@ -155,7 +217,11 @@ function breaches(path: string, text: string): Finding[] {
 
 describe('#729 CW-1b part 2a — the lease facts reach every judge (checks 2 and 3, core)', () => {
   it('the instrument: it finds every breach spelling, and no conversion', () => {
-    const at = (code: string) => breaches('core/src/engine/x.ts', code).map((b) => b.rule);
+    const breachesIn = (path: string, code: string) =>
+      breaches(path, code)
+        .filter((b) => b.census !== true)
+        .map((b) => b.rule);
+    const at = (code: string) => breachesIn('core/src/engine/x.ts', code);
     const must: Array<[string, string]> = [
       ['writtenSnapshot(run, at);', 'writtenSnapshot without facts'],
       ['writtenSnapshot(\n  run,\n  at,\n);', 'writtenSnapshot without facts'],
@@ -178,20 +244,40 @@ describe('#729 CW-1b part 2a — the lease facts reach every judge (checks 2 and
         'describeClaimHolder: leaseFactOf of a snapshot built in place',
       ],
       ['const x = NO_LEASE_FACTS;', 'NO_LEASE_FACTS outside its homes'],
+      // Correction 1: the spellings that are no reading of the facts.
+      [
+        "describeClaimHolder(c, true, { absent: 'unleased' });",
+        'describeClaimHolder: an object literal outside the census',
+      ],
+      [
+        'function f() {\n  const l = leaseFactOf({}, c);\n  classifyClaim(c, now, l);\n}',
+        'classifyClaim: a name not declared from leaseFactOf',
+      ],
+      [
+        'function f() {\n  classifyClaim(c, now, lease);\n}',
+        'classifyClaim: a name not declared from leaseFactOf',
+      ],
     ];
     const mustNot = [
       'writtenSnapshot(run, at, snap.lease_facts);',
       'composeWaysAt(run, at, { definition, lease_facts: snap.lease_facts });',
       'classifyClaim(claim, now, leaseFactOf(snap, claim));',
-      "describeClaimHolder(c, true, { absent: 'unleased' });",
+      'classifyClaim(claim, now, leaseFactOf(this.snap, claim));',
+      'function f() {\n  const l = leaseFactOf(snap, c);\n  classifyClaim(c, now, l);\n}',
       '// writtenSnapshot(run, at)',
     ];
+    // The literal at its census entry is the census's own use, never a breach there.
+    const atCensus = breachesIn(
+      'core/src/engine/execution-loop.ts',
+      "function withGateClaim() {\n  describeClaimHolder(c, true, { absent: 'unleased' });\n}",
+    );
     // (1) red when the reader stops finding a breach spelling (a Prettier-wrapped call is one call) or
     //     starts flagging a conversion or a comment; (2) prints which fixture and what it found.
     expect({
       found: must.filter(([code, rule]) => !at(code).includes(rule)).map(([code]) => code),
       wrongly: mustNot.filter((code) => at(code).length > 0),
-    }).toEqual({ found: [], wrongly: [] });
+      atCensus,
+    }).toEqual({ found: [], wrongly: [], atCensus: [] });
   });
 
   it('core’s production source: no breach of the census or the consumer witness, and the census is closed', () => {
@@ -199,6 +285,7 @@ describe('#729 CW-1b part 2a — the lease facts reach every judge (checks 2 and
     const found = files.flatMap((path) => breaches(rel(path), readFileSync(path, 'utf8')));
     const unlisted = found.filter(
       (b) =>
+        b.census !== true &&
         !(b.rule === 'writtenSnapshot without facts' && `${b.at.split(':')[0]}#${b.fn}` in CENSUS),
     );
     const listed = new Set(found.map((b) => `${b.at.split(':')[0]}#${b.fn}`));
@@ -209,7 +296,9 @@ describe('#729 CW-1b part 2a — the lease facts reach every judge (checks 2 and
     expect({
       files: files.length > 0,
       breaches: unlisted.map((b) => `${b.rule}: ${b.at} (${b.fn})`),
-      staleCensus: Object.keys(CENSUS).filter((entry) => !listed.has(entry)),
+      staleCensus: [...Object.keys(CENSUS), ...Object.keys(LITERAL_CENSUS)].filter(
+        (entry) => !listed.has(entry),
+      ),
     }).toEqual({ files: true, breaches: [], staleCensus: [] });
   });
 });
