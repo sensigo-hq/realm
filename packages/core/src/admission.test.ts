@@ -147,6 +147,7 @@ describe('the admission table', () => {
       'store_release_line',
       'store_clock',
       'store_settle_step',
+      'store_leases',
       'registry_release_line',
       'driver_shape',
       'caller',
@@ -184,6 +185,52 @@ describe('the admission table', () => {
       expect(calls).toEqual([]);
     },
   );
+
+  // #729, the claim window (CW-1): a run store whose `leases` is present and neither `null` nor a
+  // lease port is refused at the front door, in its four clauses, naming store.leases.
+  it.each(
+    ENGINE_ENTRIES.filter((e) => e !== 'getWorkflowForRun').flatMap((entry) =>
+      (
+        [
+          ['7', 7, 'number'],
+          ['{}', {}, 'object'],
+        ] as const
+      ).map(([label, value, given]) => [entry, label, value, given] as const),
+    ),
+  )(
+    '%s: a run store whose leases is %s is refused, naming store.leases, before any read',
+    async (entry, _label, value, given) => {
+      const { s, calls } = trapStore(true);
+      (s as { leases: unknown }).leases = value;
+      // (a) red when the row is dropped (7 is then admitted), or lets through an object without hold
+      //     and probe functions; (b) prints the code, the option named and the given type.
+      await expect(CALLS[entry](s, undefined, undefined)).rejects.toMatchObject({
+        code: 'VALIDATION_OPTION_INVALID',
+        details: { invalid: [{ option: 'store.leases', given_type: given }] },
+      });
+      expect(calls).toEqual([]);
+    },
+  );
+
+  it('a run store without leases, or whose leases is null or a lease port, is admitted', () => {
+    const port = {
+      hold: async () => ({ unavailable: 'io_error' }),
+      probe: async () => ({ state: 'absent', basis: 'kernel_lock' }),
+    };
+    const admitted = ['absent', null, port].map((leases) => {
+      const { s } = trapStore(true);
+      if (leases !== 'absent') (s as { leases: unknown }).leases = leases;
+      try {
+        admitEntry('executeStep', { store: s, storeKind: 'run store' });
+        return 'admitted';
+      } catch (err) {
+        return (err as { code?: string }).code ?? String(err);
+      }
+    });
+    // (a) red when the row refuses an absent leases (every store written before it), null (a store
+    //     that keeps no leases) or a lease port; (b) prints the refusal's code for each.
+    expect(admitted).toEqual(['admitted', 'admitted', 'admitted']);
+  });
 
   it('two defects — no release line and no clock: the release line is named first (the table is ordered)', async () => {
     const { s } = trapStore(false);

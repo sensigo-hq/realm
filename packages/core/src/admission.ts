@@ -71,12 +71,14 @@ export interface HostWiring {
 
 /**
  * The host-wiring rows' ids, in the table's order (D6-26 / framework rule 9: the vocabulary is an
- * `as const` in core, never a free string). #715 (b) adds `store_clock` and `store_settle_step`.
+ * `as const` in core, never a free string). #715 (b) adds `store_clock` and `store_settle_step`;
+ * #729's claim window (CW-1) adds `store_leases`.
  */
 export const HOST_WIRING_CHECK_IDS = [
   'store_release_line',
   'store_clock',
   'store_settle_step',
+  'store_leases',
   'registry_release_line',
   'driver_shape',
   'caller',
@@ -90,8 +92,20 @@ interface HostWiringCheck {
   readonly check: (entry: EngineEntry, wiring: HostWiring) => void;
 }
 
-/** The store as the two #715 (b) rows read it: duck-typed, since a host may hand in anything. */
-type MaybeStore = { clock?: { now?: unknown; at?: unknown }; settleStep?: unknown } | undefined;
+/** The store as the #715 (b) rows and the leases row read it: duck-typed, since a host may hand in anything. */
+type MaybeStore =
+  { clock?: { now?: unknown; at?: unknown }; settleStep?: unknown; leases?: unknown } | undefined;
+
+/**
+ * Whether a store's `leases` is what the interface allows: absent (`undefined`) or `null` — the store
+ * keeps no leases — or an object with `hold` and `probe` functions.
+ */
+function isLeasesValue(leases: unknown): boolean {
+  if (leases === undefined || leases === null) return true;
+  if (typeof leases !== 'object') return false;
+  const port = leases as { hold?: unknown; probe?: unknown };
+  return typeof port.hold === 'function' && typeof port.probe === 'function';
+}
 
 /** Tier 1, in order. Every check passes on an absent value, so an entry that takes none skips it. */
 export const HOST_WIRING_CHECKS: readonly HostWiringCheck[] = [
@@ -141,6 +155,25 @@ export const HOST_WIRING_CHECKS: readonly HostWiringCheck[] = [
             option: 'store.settleStep',
             expected: 'a function (required from #715 (b))',
             given_type: givenTypeOf(settleStep),
+          },
+        ]);
+      }
+    },
+  },
+  {
+    // #729, the claim window (CW-1): `leases` is optional — absent or `null`, the store keeps no claim
+    // leases (as every store did before it); otherwise its lease port. Anything else there is refused
+    // here, so no later unit meets a `leases` it cannot read as a port or as none.
+    id: 'store_leases',
+    check: (entry, w) => {
+      if (w.storeKind !== 'run store') return;
+      const leases = (w.store as MaybeStore)?.leases;
+      if (!isLeasesValue(leases)) {
+        throw optionInvalidError(entry, [
+          {
+            option: 'store.leases',
+            expected: 'null, or a lease port ({ hold(), probe(id) })',
+            given_type: givenTypeOf(leases),
           },
         ]);
       }

@@ -59,7 +59,7 @@ post_approval: when_false: confirm_review.choice == 'approve' [lhs → "request_
 
 - **It does not judge whether an answer is good.** It checks the shape of an answer, not its truth. A well-formed wrong answer is accepted.
 - **It does not check who answers a gate.** A gate is answered by one call, from the command line, from Slack, or through the same MCP connection the agent uses. Realm records the answer; it does not verify that a person gave it. If the agent must not be able to approve its own work, answer gates from a channel the agent cannot reach.
-- **It does not protect the record from later edits.** Run records are files on your machine. If someone changes a file by hand, `realm run inspect` shows the changed text without a warning. The hash tells you what the output was when the step ran; nothing re-checks it when you read the record.
+- **It does not fully protect the record from later edits.** Runs are kept in one SQLite file on your machine. The store refuses an SQL UPDATE of a record entry, and `realm db check` reports an entry that no longer matches its stored hash. But someone who edits the file by hand and also rewrites that hash goes unnoticed, and `realm run inspect` and `realm run export` show the changed text without a warning. Nothing is signed.
 - **It does not schedule work.** A run starts when something starts it: an agent, a command, or a webhook. There is no built-in timer.
 
 ## When to use it

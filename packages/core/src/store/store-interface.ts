@@ -6,6 +6,7 @@ import type { Attributed } from '../engine/holder.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 import type { Snapshot } from '../engine/snapshot.js';
 import type { Clock } from '../utils/clock.js';
+import type { LeasePort } from './lease-port.js';
 
 /**
  * The load-bearing `RunRecord` fields the engine treats specially enough that a store must
@@ -164,6 +165,18 @@ export interface RunStore {
    * store that never deletes a run (#616 PR-2c c4).
    */
   readonly purgesRuns: boolean;
+
+  /**
+   * The store's claim leases (#729, the claim window, CW-1). OPTIONAL: absent or `null`, the store
+   * keeps no leases, as every store did before this property (Amendment 1, the owner's compatibility
+   * policy e531209a; every later unit reads an absent `leases` as `null`). A claim lease is a lock the
+   * operating system keeps while the program holding it runs and lets go of when that program ends;
+   * `probe` says whether one is held, as a fact with how it is known. The engine's admission refuses a
+   * `leases` that is present and neither `null` nor an object with `hold` and `probe` functions
+   * (`store_leases`). The SQLite store keeps leases; `InMemoryStore` leaves it unset. Nothing in Realm
+   * takes a lease yet.
+   */
+  readonly leases?: LeasePort | null;
 
   /**
    * Which {@link LoadBearingRunRecordField}s this store guarantees to round-trip through
