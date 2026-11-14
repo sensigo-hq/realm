@@ -990,6 +990,25 @@ describe('U1b — exits, signals and the drain', () => {
   }, 60_000);
 
   it('(n2) a slow consumer → the relay’s memory stays bounded, the worker’s end waits for its writes, nothing lost', async () => {
+    const rssOf = (pid: number | undefined): number =>
+      Number(/VmRSS:\s+(\d+)/.exec(readFileSync(`/proc/${pid}/status`, 'utf8'))?.[1] ?? 0);
+    // The relay's own resident size in this layout, measured in the same run: a drive that prints one
+    // line and waits (`go`), its consumer paused for the same 3 s; then it is let finish.
+    const go = join(root, 'go-n2');
+    const quiet = spawn(process.execPath, agentArgs(oneStep('flood-baseline', 'go')), {
+      cwd,
+      env: env({ U1B_GO: go }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    onTestFinished(() => {
+      if (quiet.exitCode === null && quiet.signalCode === null) quiet.kill('SIGKILL');
+    });
+    quiet.stdout!.pause();
+    await new Promise((r) => setTimeout(r, 3000));
+    const baseline = rssOf(quiet.pid);
+    writeFileSync(go, '');
+    quiet.stdout!.resume();
+    await new Promise((r) => quiet.once('close', r));
     const child = spawn(process.execPath, agentArgs(oneStep('flood', 'flood')), {
       cwd,
       env: env(),
@@ -1000,9 +1019,7 @@ describe('U1b — exits, signals and the drain', () => {
     });
     child.stdout!.pause();
     await new Promise((r) => setTimeout(r, 3000));
-    const rss = (): number =>
-      Number(/VmRSS:\s+(\d+)/.exec(readFileSync(`/proc/${child.pid}/status`, 'utf8'))?.[1] ?? 0);
-    const whilePaused = rss();
+    const whilePaused = rssOf(child.pid);
     let bytes = 0;
     let tail = '';
     child.stdout!.on('data', (d: Buffer) => {
@@ -1011,17 +1028,18 @@ describe('U1b — exits, signals and the drain', () => {
     });
     child.stdout!.resume();
     const code = await new Promise<number | null>((r) => child.once('close', (c) => r(c)));
-    // (a) red when the relay buffers what it cannot write (its memory grows with the 64 MiB), or
-    //     the worker's end drops pending writes; (b) prints the relay's memory while paused, the
-    //     byte count's floor check and the code.
+    // (a) red when the relay buffers what it cannot write (its memory grows by the 64 MiB over its
+    //     own baseline; the bound is half the flood, so an honest relay's ~2% passes), or the
+    //     worker's end drops pending writes; (b) prints the relay's memory while paused and its
+    //     baseline, the byte count's floor check and the code.
     expect(
       {
         code,
-        bounded: whilePaused < 150_000,
+        bounded: whilePaused < baseline + 32 * 1024,
         everyLine: bytes >= 65536 * 1024,
         ended: tail.includes('flood done'),
       },
-      `relay VmRSS ${String(whilePaused)} KiB while paused; ${String(bytes)} bytes read`,
+      `relay VmRSS ${String(whilePaused)} KiB while paused (baseline ${String(baseline)} KiB); ${String(bytes)} bytes read`,
     ).toEqual({ code: 0, bounded: true, everyLine: true, ended: true });
   }, 90_000);
 
