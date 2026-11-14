@@ -8,7 +8,12 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { describeThrown, setClockErrorSink } from '@sensigo/realm';
 import { composeBinIdentity } from './bin-identity.js';
-import { gateAnswersStartLine, readBinDoorSettings } from './bin-settings.js';
+import {
+  gateAnswersAliasLines,
+  gateAnswersConnectLine,
+  gateAnswersStartLine,
+  readBinDoorSettings,
+} from './bin-settings.js';
 import { createRealmMcpServerOnHome } from './home-server.js';
 import { logMasked } from './render-reply.js';
 import { REALM_MCP_TAKES_NO_FLAGS } from './server.js';
@@ -25,6 +30,9 @@ if (!settings.ok) {
   console.error(settings.line);
   process.exit(1);
 }
+// The gate-answers default (2026-11-14): the old name `offered`, from this program's own reading of
+// its variable — once, on stderr.
+for (const line of gateAnswersAliasLines('realm-mcp', settings.answers)) console.error(line);
 // This program's name, which may itself refuse with one line.
 const driver = composeBinIdentity();
 // #715 (b) (03 §A.1, D-22): the program's waiter-error sink — a waiter on the store's clock that fails
@@ -38,11 +46,19 @@ setClockErrorSink((err: unknown): void => {
 // and exit 1 — the store's or core's own sentence, never a stack, and nothing on stdout — as
 // `realm mcp`'s `hostRefusalLine` does.
 let server: McpServer;
+let toldNoForms = false;
 try {
   // The handle's `close` is not kept: the process's exit ends the handle.
   ({ server } = await createRealmMcpServerOnHome({
     ...(driver !== undefined ? { driver } : {}),
     principal: { absent: 'door_authenticates_no_principal' },
+    // The gate-answers default (2026-11-14): under asked, a session whose app shows no forms is told
+    // once on stderr (one stdio session per process; a repeated `initialized` prints nothing more).
+    onSessionWithoutForms: () => {
+      if (toldNoForms) return;
+      toldNoForms = true;
+      console.error(gateAnswersConnectLine('realm-mcp'));
+    },
   }));
 } catch (err) {
   logMasked(`realm-mcp: ${describeThrown(err).replace(/\s*\n\s*/g, ' ')}`);

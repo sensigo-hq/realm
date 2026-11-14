@@ -1,9 +1,16 @@
 // gate-answers-setting.ts — #627 W (§5.1, §5.2b): the MCP door's two process settings, judged ONCE —
 // the gate-answers value (the most restrictive of the flag, the environment and the option wins;
-// default `asked`) and the form wait (the smallest value set wins; bounded 30…3600 s). Pure: every
-// value is passed in — the server and the bins read their own flags and environment and call these,
-// so `--check` judges exactly what the server will start with.
-import { GATE_ANSWERS_VALUES, type GateAnswers, type Source } from './ways.js';
+// default `asked`; `offered`, an old name, read as `permitted`) and the form wait (the smallest value
+// set wins; bounded 30…3600 s). Pure: every value is passed in — the server and the bins read their
+// own flags and environment and call these, so `--check` judges exactly what the server will start
+// with.
+import {
+  GATE_ANSWERS_ALIASES,
+  GATE_ANSWERS_VALUES,
+  type GateAnswers,
+  type GateAnswersGiven,
+  type Source,
+} from './ways.js';
 
 /** The environment variable the gate-answers value is read from. */
 export const GATE_ANSWERS_ENV = 'REALM_MCP_GATE_ANSWERS';
@@ -31,11 +38,17 @@ const SOURCE_REFS = {
 
 type SetKind = 'flag' | 'env' | 'option';
 
-/** The gate-answers value a server runs with: the winner, where it came from, every other set value. */
+/**
+ * The gate-answers value a server runs with: the winner (an old name read as its value), where it
+ * came from, every other set value as that source holds it, and — when any source gave an old name —
+ * which ones, so a program can say so once per source.
+ */
 export interface GateAnswersSetting {
   value: GateAnswers;
   source: Source;
-  alsoSet: { source: Source; value: GateAnswers }[];
+  alsoSet: { source: Source; value: GateAnswersGiven }[];
+  /** The sources that gave `offered` (read as `permitted`), in flag, environment, option order. */
+  offeredFrom?: Source[];
 }
 
 /** The places a gate-answers value can be set, as given (unchecked). */
@@ -48,10 +61,13 @@ export interface GateAnswersInput {
   option?: string | undefined;
 }
 
-const RANK: Record<GateAnswers, number> = { offered: 0, asked: 1, withheld: 2 };
+const RANK: Record<GateAnswers, number> = { permitted: 0, asked: 1, withheld: 2 };
 
 const isGateAnswers = (v: string): v is GateAnswers =>
   (GATE_ANSWERS_VALUES as readonly string[]).includes(v);
+
+const isAlias = (v: string): v is keyof typeof GATE_ANSWERS_ALIASES =>
+  Object.prototype.hasOwnProperty.call(GATE_ANSWERS_ALIASES, v);
 
 /** One source's `Source`. */
 const sourceOf = (kind: SetKind | 'default'): Source => ({ kind, ref: SOURCE_REFS[kind] });
@@ -59,25 +75,29 @@ const sourceOf = (kind: SetKind | 'default'): Source => ({ kind, ref: SOURCE_REF
 /**
  * The effective gate-answers value, judged: the most restrictive of the values set (ties go to the
  * flag, then the environment, then the option — the most direct place), else `asked` from the
- * default; or the first value that is not one of the three, with where it was set.
+ * default; or the first value that is not one of the three or an old name, with where it was set.
+ * An old name ranks and reads back as its value (`offered` as `permitted`); `alsoSet` keeps what each
+ * other source holds as written, and `offeredFrom` names every source that gave `offered`.
  */
 export function judgeGateAnswers(
   input: GateAnswersInput,
 ): { ok: true; setting: GateAnswersSetting } | { ok: false; kind: SetKind; raw: string } {
-  const set: { kind: SetKind; value: GateAnswers }[] = [];
+  const set: { kind: SetKind; value: GateAnswers; given: GateAnswersGiven }[] = [];
   for (const kind of ['flag', 'env', 'option'] as const) {
     const raw = input[kind];
     // Correction 1 (E1), correction 2 (4.3): an EMPTY flag or option is a value given, and not one
     // of the three — refused where it was given (a `--gate-answers "$MODE"` with `MODE` unset must
     // not start the default silently); an empty environment variable stays unset.
     if (raw === undefined || (raw === '' && kind === 'env')) continue;
-    if (!isGateAnswers(raw)) return { ok: false, kind, raw };
-    set.push({ kind, value: raw });
+    if (isGateAnswers(raw)) set.push({ kind, value: raw, given: raw });
+    else if (isAlias(raw)) set.push({ kind, value: GATE_ANSWERS_ALIASES[raw], given: raw });
+    else return { ok: false, kind, raw };
   }
   if (set.length === 0) {
     return { ok: true, setting: { value: 'asked', source: sourceOf('default'), alsoSet: [] } };
   }
   const winner = set.reduce((best, s) => (RANK[s.value] > RANK[best.value] ? s : best));
+  const offeredFrom = set.filter((s) => s.given === 'offered').map((s) => sourceOf(s.kind));
   return {
     ok: true,
     setting: {
@@ -85,7 +105,8 @@ export function judgeGateAnswers(
       source: sourceOf(winner.kind),
       alsoSet: set
         .filter((s) => s !== winner)
-        .map((s) => ({ source: sourceOf(s.kind), value: s.value })),
+        .map((s) => ({ source: sourceOf(s.kind), value: s.given })),
+      ...(offeredFrom.length > 0 ? { offeredFrom } : {}),
     },
   };
 }
@@ -156,7 +177,7 @@ export function judgeFormWait(
 
 /**
  * Correction 2 (4.2): the ONE predicate for "a form-wait value has no effect here" — no form is ever
- * sent, so the wait it sets never happens: under `withheld` or `offered`, or on a door that sends no
+ * sent, so the wait it sets never happens: under `withheld` or `permitted`, or on a door that sends no
  * forms (`realm serve`, `statelessHttp`). The bins and `createRealmMcpServer` refuse the setting
  * where it holds (the inert-config policy).
  */

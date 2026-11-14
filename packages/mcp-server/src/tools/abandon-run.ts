@@ -38,13 +38,13 @@ export interface HandleAbandonRunStores {
   door?: McpDoor;
 }
 
-/** The tool's description where the agent keeps an answer tool (`offered`, and `asked`'s fallback). */
+/** The tool's description where the agent keeps an answer tool (`permitted`). */
 export const ABANDON_RUN_DESCRIPTION =
   'Abandon a non-terminal workflow run (marks it terminal with phase "abandoned"). Refuses runs waiting on a human gate (resolve via submit_human_response) and already-terminal runs.';
 
 /**
- * #627 W (W-c8): the description where no answer tool is listed — `withheld`, and `asked` in a
- * session whose client shows forms. It names no answer tool.
+ * #627 W (W-c8): the description where no answer tool is listed — `withheld` and `asked` (with or
+ * without forms). It names no answer tool.
  */
 export const ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL =
   'Abandon a non-terminal workflow run (marks it terminal with phase "abandoned"). Refuses runs waiting on a human gate and runs that have already ended.';

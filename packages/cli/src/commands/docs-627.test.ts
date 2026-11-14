@@ -66,7 +66,8 @@ async function serveOrder(
     '/bin/sh',
     [
       '-c',
-      `exec "$0" "$1" serve --dev --port ${String(port)} --host 127.0.0.1 2>&1`,
+      // The gate-answers default (2026-11-14): the warning prints under permitted only.
+      `exec "$0" "$1" serve --dev --gate-answers permitted --port ${String(port)} --host 127.0.0.1 2>&1`,
       process.execPath,
       cli,
     ],
@@ -129,7 +130,7 @@ afterEach(async () => {
   for (const t of homes.splice(0)) await t.cleanup();
 });
 
-async function session(gateAnswers?: 'asked' | 'offered' | 'withheld', forms = false) {
+async function session(gateAnswers?: 'asked' | 'permitted' | 'withheld', forms = false) {
   const h = await makeTempHome();
   homes.push(h);
   const runStore = h.home.runStore;
@@ -158,7 +159,8 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
   it('the three values: what the agent gets, by tool name', async () => {
     claim(
       PAGE,
-      '| `offered` | The answer tool, for any client of the server, the agent included. |',
+      // The gate-answers default (2026-11-14): `offered` is `permitted`, its old name still read.
+      '| `permitted` | The answer tool, for any client of the server, the agent included. `offered`, its name until version 0.49.0, still works. |',
     );
     claim(
       PAGE,
@@ -180,26 +182,28 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     claim(PAGE, 'other step text and `quick_start` are forwarded as written.');
     claim(
       PAGE,
-      // Correction 1 (F1): the row ends with the HTTP doors' sentence (http-door-627 executes it).
-      "| `asked` | The default. In an app that shows forms, the question goes to the person in the app's own form, and the agent gets no tool that records an answer. In an app without forms, the agent keeps the answer tool, and the app is asked to have the person approve each call. On an HTTP server built per request — `realm serve`, or a program that builds a server per request or passes `statelessHttp` — no client gets forms: under `asked` every client keeps the answer tool, marked for approval. A program that keeps one server per HTTP session sends forms as stdio does. |",
+      // The gate-answers default (2026-11-14): the row's HTTP half is executed by http-door-627 ::
+      // "a server built per request …" and realm-mcp's gate-answers-default.test.ts AC2.
+      "| `asked` | The default. No agent gets a tool that records an answer, in any app. In an app that shows forms, the question goes to the person in the app's own form. In an app without forms, and on an HTTP server built per request (`realm serve`, or a program that builds a server per request or passes `statelessHttp`), no form is sent: a person answers in a terminal on the server's machine, as the user that runs the server, with `realm run respond`. Changed after version 0.49.0: before, the agent kept the answer tool in an app without forms. |",
     );
-    const has = async (g: 'asked' | 'offered' | 'withheld' | undefined, forms: boolean) =>
+    const has = async (g: 'asked' | 'permitted' | 'withheld' | undefined, forms: boolean) =>
       (await (await session(g, forms)).tools()).some((t) => t.name === 'submit_human_response');
-    // (a) red when a value lists the answer tool against the page; (b) prints each.
+    // (a) red when a value lists the answer tool against the page (the fallback row kept: asked
+    //     without forms); (b) prints each.
     expect([
       await has(undefined, true),
       await has(undefined, false),
-      await has('offered', true),
+      await has('permitted', true),
       await has('withheld', false),
-    ]).toEqual([false, true, true, false]);
+    ]).toEqual([false, false, true, false]);
   });
 
   it('three ways to set it; the most restrictive wins; a bad value stops the server', () => {
     claim(
       PAGE,
-      'There are three ways to set the value: the `--gate-answers` flag of `realm mcp` and `realm serve`, the `REALM_MCP_GATE_ANSWERS` environment variable, and the `gateAnswers` option of `createRealmMcpServer`. When more than one is set, the most restrictive value wins: `withheld`, then `asked`, then `offered`. A value that is not one of the three stops the server from starting.',
+      'There are three ways to set the value: the `--gate-answers` flag of `realm mcp` and `realm serve`, the `REALM_MCP_GATE_ANSWERS` environment variable, and the `gateAnswers` option of `createRealmMcpServer`. When more than one is set, the most restrictive value wins: `withheld`, then `asked`, then `permitted`. A value that is not one of the three, and not `offered`, stops the server from starting.',
     );
-    const r = judgeGateAnswers({ flag: 'offered', env: 'asked', option: 'withheld' });
+    const r = judgeGateAnswers({ flag: 'permitted', env: 'asked', option: 'withheld' });
     // (a) red when a less restrictive value wins, or a bad value starts; (b) prints the reading.
     expect({
       won: r.ok ? r.setting.value : 'bad',
@@ -268,7 +272,7 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       // Correction 2 (6.9): "when the gate declares `on_expiry`" — executed by form-627 :: "1.1 (a)"
       // and "1.1 (b)"; the refusal wherever no form is sent — executed here (the bins and the
       // library) and by gate-answers-door-627's 4.2 rows and door-627's 4.2 library cell.
-      "Realm waits for the form itself. The wait ends at the question's deadline when the gate declares `on_expiry`, or at the end of the call's own time: 240 seconds by default, counted from the start of the call. `--form-wait-seconds` (`REALM_MCP_FORM_WAIT_SECONDS`, the `formWaitSeconds` option) changes it, from 30 to 3600 seconds; when it is set in more than one place, the smallest value wins. The setting is refused at start wherever no form is sent: under `withheld` or `offered`, on `realm serve`, and with `statelessHttp`.",
+      "Realm waits for the form itself. The wait ends at the question's deadline when the gate declares `on_expiry`, or at the end of the call's own time: 240 seconds by default, counted from the start of the call. `--form-wait-seconds` (`REALM_MCP_FORM_WAIT_SECONDS`, the `formWaitSeconds` option) changes it, from 30 to 3600 seconds; when it is set in more than one place, the smallest value wins. The setting is refused at start wherever no form is sent: under `withheld` or `permitted`, on `realm serve`, and with `statelessHttp`.",
     );
     // Executed by form-627 :: "1.1 (a): a finding-only gate past its deadline still gets a form" and
     // :: "1.1 (b): … waits the form wait".
@@ -292,7 +296,8 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       serve: readBinDoorSettings('serve', { formWaitSeconds: '60' }, {}).ok,
       withheld: readBinDoorSettings('mcp', { gateAnswers: 'withheld', formWaitSeconds: '60' }, {})
         .ok,
-      offered: readBinDoorSettings('mcp', { gateAnswers: 'offered', formWaitSeconds: '60' }, {}).ok,
+      permitted: readBinDoorSettings('mcp', { gateAnswers: 'permitted', formWaitSeconds: '60' }, {})
+        .ok,
       stateless: (() => {
         try {
           // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
@@ -310,31 +315,24 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       high: false,
       serve: false,
       withheld: false,
-      offered: false,
+      permitted: false,
       stateless: false,
       cap: 3,
     });
   });
 
-  it('the await entry and the fallback’s prompt: sentences pinned by door-627.test.ts’s executed cells', () => {
+  it('the await entry, and letting an agent answer in an app without forms: sentences pinned by door-627.test.ts’s and gate-answers-default.test.ts’s executed cells', () => {
     claim(
       PAGE,
       "The agent never gets an answer call for such a question. Its reply's `next_actions` entry has `awaiting` instead of `instruction`: the question's run, gate, step and choices, with words that say whether a form was sent in this session.",
     );
+    // The gate-answers default (2026-11-14): the paragraph that named the fallback's mark (and its
+    // dated Claude Code observation) is replaced. Executed by realm-mcp's gate-answers-default.test.ts
+    // :: "offered given as %s" (the agent's answer recorded under permitted) and door-627 :: "row by
+    // row, by tool NAME" (permitted lists the answer tool whatever the client's forms).
     claim(
       PAGE,
-      'In an app without forms, the answer tool carries `_meta["anthropic/requiresUserInteraction"]`, which asks the app to have the person approve each call.',
-    );
-    claim(
-      PAGE,
-      'Realm cannot see whether anyone approved. A headless client that declares forms but cancels them leaves the question waiting: set `offered` for such a client.',
-    );
-    // Correction 1 (F6): ":33"'s Claude Code sentence is an attributed, dated observation of another
-    // program, which no cell here can run; the page says so in its words. Its record: the registry
-    // plans/facts-627.md, rows L1-1, L2-9 and MA-4 (October 2026; correction 2, 6.6 (e)).
-    claim(
-      PAGE,
-      'Some apps ask the person, some skip it (Claude Code asked in interactive sessions and refused the call in headless runs when this page was written, October 2026); other apps may not ask.',
+      'To let an agent answer in an app without forms, set `permitted`: the agent then records answers itself, and Realm cannot see whether a person agreed. A headless client that declares forms but cancels them leaves the question waiting: set `permitted` for such a client.',
     );
   });
 
@@ -477,7 +475,7 @@ describe('#627 W — the other pages W changed', () => {
   it('gates-and-trust.md, connect-an-mcp-client.md, human-gates.md, what-is-realm.md: who can answer follows the value', async () => {
     claim(
       'docs/concepts/gates-and-trust.md',
-      'Under `offered` the assistant has `submit_human_response`, and nothing stops it from answering on its own. Under `withheld` no tool on the server records an answer.',
+      '`--gate-answers permitted` gives the answer tool to every client, the agent included. `offered`, its name until version 0.49.0, still works. Under `withheld` no tool on the server records an answer.',
     );
     claim(
       'docs/concepts/gates-and-trust.md',
@@ -485,18 +483,18 @@ describe('#627 W — the other pages W changed', () => {
     );
     claim(
       'docs/guides/connect-an-mcp-client.md',
-      'Under the default `asked`, an app that shows forms asks you in its own form, and the assistant gets no tool that records an answer.',
+      "- By default, no agent gets a tool that records a gate answer through Realm's MCP server: in an app that shows forms the person answers in the app's form; elsewhere a person answers in a terminal on the server's machine with `realm run respond`.",
     );
     claim(
       'docs/guides/human-gates.md',
-      'Under `withheld`, or in an app that shows forms, the refusal names no answer, and `next_actions` holds the await entry instead of the answer call',
+      'That refusal is from a server started with `--gate-answers permitted`, whose sessions list the answer tool. Under the default `asked`, and under `withheld`, the refusal names no answer, and `next_actions` holds the await entry instead of the answer call',
     );
     claim(
       'docs/start/what-is-realm.md',
-      'That is a session whose assistant has the answer tool. Under `withheld`, or in an app that shows forms, the refusal names no answer',
+      'That is a session of a server started with `--gate-answers permitted`, whose assistant has the answer tool. Under the default `asked`, and under `withheld`, the refusal names no answer',
     );
     /** A step waiting on the open question, called by name: the refusal's answer words and entry. */
-    const refusalAt = async (g: 'asked' | 'offered' | 'withheld', forms: boolean) => {
+    const refusalAt = async (g: 'asked' | 'permitted' | 'withheld', forms: boolean) => {
       const s = await session(g, forms);
       const text = async (name: string, args: Record<string, unknown>) =>
         JSON.parse(
@@ -526,20 +524,24 @@ describe('#627 W — the other pages W changed', () => {
     expect({
       withheld: await refusalAt('withheld', false),
       forms: await refusalAt('asked', true),
-      fallback: await refusalAt('asked', false),
-      offered: await refusalAt('offered', false),
+      askedNoForms: await refusalAt('asked', false),
+      permitted: await refusalAt('permitted', false),
     }).toEqual({
       withheld: { tools: [], namesAnswer: false, firstEntry: 'await' },
       forms: { tools: ['present_question'], namesAnswer: false, firstEntry: 'await' },
-      fallback: { tools: ['submit_human_response'], namesAnswer: true, firstEntry: 'call' },
-      offered: { tools: ['submit_human_response'], namesAnswer: true, firstEntry: 'call' },
+      // The gate-answers default (2026-11-14): asked without forms reads as withheld does.
+      askedNoForms: { tools: [], namesAnswer: false, firstEntry: 'await' },
+      permitted: { tools: ['submit_human_response'], namesAnswer: true, firstEntry: 'call' },
     });
   });
 
-  it('tools.md: the gate example is the default session’s; error_details names the new typed facts', () => {
+  it('tools.md: the gate example is a permitted session’s; error_details names the new typed facts', () => {
+    // The gate-answers default (2026-11-14): executed by realm-mcp's docs-claims-625 :: "tools.md's
+    // \"A step with a gate\" example" (its server started with permitted) and gate-answers-default ::
+    // "AC1 — …" (the default's reply has the await entry, as withheld's does).
     claim(
       'docs/reference/mcp/tools.md',
-      'This reply came from a server with the default gate-answers value, `asked`, in a session whose client shows no forms: the entry ends with the approval sentence.',
+      'This reply came from a server started with `--gate-answers permitted`. Under the default `asked`, and under `withheld`, the agent gets no answer call: the entry has `awaiting` instead of `instruction`.',
     );
     claim(
       'docs/reference/mcp/tools.md',
@@ -550,7 +552,7 @@ describe('#627 W — the other pages W changed', () => {
   it('run-state-and-health.md and the MCP README: the read’s session; one answer tool per session (the README’s list is checked against the server by docs-sweep-625)', () => {
     claim(
       'docs/reference/mcp/run-state-and-health.md',
-      'This read came from a server with the default gate-answers value, `asked`, in a session whose client shows no forms.',
+      'This read came from a server started with `--gate-answers permitted`. Under the default `asked`, and under `withheld`, the entry has `awaiting` in place of `instruction`,',
     );
     claim(
       'packages/mcp-server/README.md',
@@ -563,7 +565,10 @@ describe('#627 W — the other pages W changed', () => {
       'docs/reference/workflow/top-level-fields.md',
       // #819 correction 1 (02 W1): realm-mcp door-627 :: the protocol rules' row (":481") and
       // "#819 correction 1 (02 W1): a reply whose gate carries no display …".
-      'Under `withheld` it reads: "When you receive status \'confirm_required\', read gate.agent_hint when the reply has one, present gate.display to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation."',
+      // The gate-answers default (2026-11-14): the page's six rules are the default's, which are
+      // withheld's (realm-mcp docs-pages-625-guides :: "… the six standard rules"); permitted's rule 2
+      // is door-627 :: "rule 2, the await rule …".
+      'The second rule above is the one a session gets from a server whose gate-answers value is `asked`, the default, when its client shows no forms, and under `withheld`. Under `permitted` it reads: "When you receive status \'confirm_required\', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim when the reply has one, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice."',
     );
     claim(
       'docs/reference/workflow/top-level-fields.md',
@@ -597,14 +602,14 @@ describe('#627 W — the other pages W changed', () => {
       '`realm` has seven commands: `workflow`, `run`, `db`, `agent`, `listen`, `mcp` and `serve`.',
     );
     // Correction 2 (6.9, 4.2): executed by gate-answers-door-627's 4.2 rows (serve, and mcp under
-    // withheld and offered) and this file's form-wait cell.
+    // withheld and permitted) and this file's form-wait cell.
     claim(
       'docs/reference/cli/realm-mcp-and-serve.md',
-      '`realm serve` sends no forms, so `--form-wait-seconds`, or `REALM_MCP_FORM_WAIT_SECONDS`, stops it from starting, as it stops `realm mcp` under `withheld` or `offered`: the setting is refused at start wherever no form is sent. Added after version 0.47.0.',
+      '`realm serve` sends no forms, so `--form-wait-seconds`, or `REALM_MCP_FORM_WAIT_SECONDS`, stops it from starting, as it stops `realm mcp` under `withheld` or `permitted`: the setting is refused at start wherever no form is sent. Added after version 0.47.0.',
     );
     claim(
       'docs/reference/cli/realm-mcp-and-serve.md',
-      'Refused at start under `withheld` or `offered`, which send no form. Added after version 0.47.0.',
+      'Refused at start under `withheld` or `permitted`, which send no form. Added after version 0.47.0.',
     );
     // Correction 2 (6.9, 4.1, 4.5): executed by door-627 :: "(A4) — `realm-mcp --gate-answers
     // withheld` refuses the start" and its 4.1 cells (the variables judged; the start line on stderr).
@@ -615,7 +620,7 @@ describe('#627 W — the other pages W changed', () => {
     // run of the paragraph, so the one claim pins its place too.
     claim(
       'docs/reference/cli/realm-mcp-and-serve.md',
-      'The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It opens `~/.realm` itself, the same home every `realm` command uses. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr.',
+      'The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It opens `~/.realm` itself, the same home every `realm` command uses. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr, and the same two lines as `realm mcp` for an app that shows no forms and for `offered`, each naming `REALM_MCP_GATE_ANSWERS`.',
     );
     // #616 PR-2a (ii-a): the CHANGELOG's line — "its own file" executed by docs-examples-625's cell
     // (the package's `bin` is the entry the CLI's tests resolve) and every spawn through
@@ -642,7 +647,7 @@ describe('#627 W — the other pages W changed', () => {
     // shape …" (no form, the answer tool stays) and door-627's tool list per session.
     claim(
       'docs/reference/cli/realm-mcp-and-serve.md',
-      '`present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms), and neither under `withheld`, which serves 10.',
+      '`present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms), and neither under `withheld`, or under `asked` with a client that shows no forms, which serve 10.',
     );
     claim(
       'docs/guides/connect-an-mcp-client.md',
@@ -682,25 +687,31 @@ describe('#627 W — the other pages W changed', () => {
 describe('#627 W correction 1 — the claims F asks for', () => {
   const F1 =
     'On an HTTP server built per request — `realm serve`, or a program that builds a server per request or passes `statelessHttp` — no client gets forms: under `asked` every client keeps the answer tool, marked for approval. A program that keeps one server per HTTP session sends forms as stdio does.';
+  // The gate-answers default (2026-11-14): the pages' sentence since then (the CHANGELOG keeps F1 in
+  // its 0.48.0 entry).
+  const F1_NOW =
+    'On an HTTP server built per request — `realm serve`, or a program that builds a server per request or passes `statelessHttp` — no client gets forms. A program that keeps one server per HTTP session sends forms as stdio does.';
 
   it('F1: the HTTP doors, on the four pages (executed by realm-mcp’s http-door-627.test.ts over real HTTP)', () => {
     // (a) red when a page drops or rewords the sentence; (b) prints it. Its behaviour: http-door-627
-    // :: "a server built per request …" and :: "a server kept per HTTP session …".
-    for (const page of [
-      'CHANGELOG.md',
-      PAGE,
-      'docs/concepts/gates-and-trust.md',
-      'docs/guides/human-gates.md',
-    ]) {
-      claim(page, F1);
+    // :: "a server built per request …" and :: "a server kept per HTTP session …". The CHANGELOG's
+    // 0.48.0 entry keeps F1; the pages say F1_NOW (the gate-answers default, 2026-11-14), and
+    // gate-answers.md's asked row the per-request half.
+    claim('CHANGELOG.md', F1);
+    for (const page of ['docs/concepts/gates-and-trust.md', 'docs/guides/human-gates.md']) {
+      claim(page, F1_NOW);
     }
+    claim(
+      PAGE,
+      'In an app without forms, and on an HTTP server built per request (`realm serve`, or a program that builds a server per request or passes `statelessHttp`), no form is sent',
+    );
     // The README's options row: `statelessHttp` by http-door-627, `principal` by principal-627 (cell
     // 25 through the real doors), the two values by w-627's judged-once cells.
     claim(
       'packages/mcp-server/README.md',
       // Correction 2 (6.9, 1.7): the JSON-reply transport — http-door-627 :: "a server kept per HTTP
       // session with enableJsonResponse: no form reaches the client …".
-      '`gateAnswers?` (`asked`, `offered` or `withheld`), `formWaitSeconds?`, `principal?` (what the transport authenticated, stamped on every answer), `statelessHttp?` (pass `true` when a server is built per HTTP request, or a per-session transport with `enableJsonResponse`: no form can be held open)',
+      '`gateAnswers?` (`asked`, `permitted` or `withheld`; `offered`, its name until version 0.49.0, still works), `onSessionWithoutForms?` (called once when a session whose client shows no forms starts under `asked`; the library prints nothing), `formWaitSeconds?`, `principal?` (what the transport authenticated, stamped on every answer), `statelessHttp?` (pass `true` when a server is built per HTTP request, or a per-session transport with `enableJsonResponse`: no form can be held open)',
     );
   });
 
@@ -713,7 +724,7 @@ describe('#627 W correction 1 — the claims F asks for', () => {
       'docs/reference/mcp/tools.md',
       'Follow `next_actions`; an open question is named there by its answer where this session has the answer tool; else by the await entry.',
     );
-    const stateAt = async (g: 'withheld' | 'offered') => {
+    const stateAt = async (g: 'withheld' | 'permitted') => {
       const s = await session(g);
       const call = async (name: string, args: Record<string, unknown>) =>
         JSON.parse(
@@ -736,9 +747,9 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     };
     // (a) red when a question handed to the person does not read as await, or the answer tool's
     //     session is not named the answer; (b) prints each reply's status, action and first entry.
-    expect({ withheld: await stateAt('withheld'), offered: await stateAt('offered') }).toEqual({
+    expect({ withheld: await stateAt('withheld'), permitted: await stateAt('permitted') }).toEqual({
       withheld: { status: 'ok', action: 'await', first: 'await' },
-      offered: { status: 'ok', action: undefined, first: 'submit_human_response' },
+      permitted: { status: 'ok', action: undefined, first: 'submit_human_response' },
     });
   });
 
@@ -747,11 +758,12 @@ describe('#627 W correction 1 — the claims F asks for', () => {
       'docs/reference/cli/realm-mcp-and-serve.md',
       'A gate-answers or form-wait value that is not valid stops it before it starts, with one line on standard error and exit code 1.',
     );
-    // Executed by gate-answers-door-627 :: "cell 19 — dev mode warns …" (the value line, and the
-    // warning iff not withheld); the order is serve.ts's (the listening lines, then these).
+    // Executed by gate-answers-door-627 :: "cell 19 — dev mode warns …" and gate-answers-default-
+    // programs :: "realm serve --dev warns …" (the warning under permitted only — the gate-answers
+    // default, 2026-11-14); the order is serve.ts's (the listening lines, then these).
     claim(
       'docs/reference/cli/realm-mcp-and-serve.md',
-      "After these lines, `realm serve` prints the gate-answers value it runs with, and, in dev mode when that value is not `withheld`, `Warning: dev mode — authentication is disabled: any process on this machine can call this server's tools, the gate answer tool included.` (added after version 0.47.0).",
+      "After these lines, `realm serve` prints the gate-answers value it runs with, and, in dev mode when that value is `permitted`, `Warning: dev mode — authentication is disabled: any process on this machine can call this server's tools, the gate answer tool included.` (added after version 0.47.0).",
     );
     const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
     // Correction 2 (6.6 (d)): the order, executed — `realm serve --dev`'s stdout, in order.
@@ -822,7 +834,7 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     const PLACES = [
       // answer-record-627 :: "`realm run respond` records route cli and the principal absence …"
       '- the command line: `realm run respond <run-id> --gate <gate-id> --choice <choice>`;',
-      // door-627 :: "cell 11 — … the answer records client_prompt_requested and route mcp"
+      // door-627 :: "cell 11 — … permitted’s tool is unmarked, and its answer records route mcp …"
       '- the MCP tool `submit_human_response`, on a server that lists it;',
       // form-627 :: "#627 W — the form path (cell 21)" (route mcp_form)
       '- the form a chat app shows the person, on an MCP server whose gate-answers value is `asked`, the default (added after version 0.47.0);',
@@ -834,12 +846,13 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     ];
     for (const place of PLACES) claim(TRUST, place);
     // "records the choice and how it arrived": answer-record-627 :: "`realm run respond` records
-    // route cli …" and form-627 cell 21 (route mcp_form). The asked sentence: this file's "who can
-    // answer follows the value" (the tools per session) and door-627's fallback _meta cell.
+    // route cli …" and form-627 cell 21 (route mcp_form). The default's sentence: this file's "who
+    // can answer follows the value" (the tools per session) and door-627 :: "cell 11 — …" (no
+    // session lists a marked answer tool).
     claim(TRUST, 'It records the choice and how it arrived.');
     claim(
       TRUST,
-      'Under the default `asked`, an app that shows forms asks the person in its own form, and the assistant gets no tool that records an answer; an app that shows no forms keeps `submit_human_response`, and the app is asked to have the person approve each call.',
+      "By default, no agent gets a tool that records a gate answer through Realm's MCP server: in an app that shows forms the person answers in the app's form; elsewhere a person answers in a terminal on the server's machine with `realm run respond`.",
     );
     const text = flat(readFileSync(join(ROOT, TRUST), 'utf8'));
     const list = text
@@ -860,7 +873,7 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     // session, neither tool under withheld) and its "the start lines" cell (the terminal route).
     claim(
       'docs/guides/connect-an-mcp-client.md',
-      'In an app that shows forms, under the default `asked`, `present_question` takes the place of `submit_human_response`; under `withheld` neither is listed (added after version 0.47.0).',
+      '`submit_human_response` is listed under `permitted` only. Under the default `asked`, in an app that shows forms, `present_question` takes its place; in an app without forms, and under `withheld`, neither is listed (added after version 0.47.0; changed after version 0.49.0: before, the agent kept `submit_human_response` in an app without forms).',
     );
     claim(
       'docs/guides/connect-an-mcp-client.md',
@@ -870,7 +883,7 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     // answer follows the value" (no tool under withheld).
     claim(
       'docs/guides/human-gates.md',
-      'Under the default, `asked`, a chat app that shows forms gets the question as a form, and the person answers there; under `withheld`, no tool answers.',
+      "By default, no agent gets a tool that records a gate answer through Realm's MCP server: in an app that shows forms the person answers in the app's form; elsewhere a person answers in a terminal on the server's machine with `realm run respond`. Under `withheld`, no tool answers.",
     );
   });
 
@@ -941,15 +954,16 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
   });
 
   it('6.6 (a): the root README’s four changed sentences', async () => {
-    // :21 and :148 — the count by session, executed here (one tool fewer under withheld).
+    // :21 and :148 — the count by session, executed here (one tool fewer where no answer tool is
+    // listed: under withheld, and under the default for a client that shows no forms).
     claim(
       'README.md',
-      '| `@sensigo/realm-mcp` | [![npm](https://img.shields.io/npm/v/@sensigo/realm-mcp)](https://www.npmjs.com/package/@sensigo/realm-mcp) | `realm-mcp` MCP server — 11 tools (10 under `withheld`) |',
+      '| `@sensigo/realm-mcp` | [![npm](https://img.shields.io/npm/v/@sensigo/realm-mcp)](https://www.npmjs.com/package/@sensigo/realm-mcp) | `realm-mcp` MCP server — 11 tools (10 without an answer tool) |',
     );
     // :148 (6.1): the per-request door's tools — http-door-627 :: "a server built per request …".
     claim(
       'README.md',
-      'Once connected the agent has access to 11 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `advance_run`, `submit_human_response` (or `present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms); neither under `withheld`, which lists 10), `get_run_state`, `abandon_run`, `create_workflow`, and `append_trace`',
+      'Once connected the agent has access to up to 11 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `advance_run`, `submit_human_response` (under `permitted` only; `present_question` in its place under the default `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms); neither under `withheld`, or under `asked` with a client that shows no forms, which list 10), `get_run_state`, `abandon_run`, `create_workflow`, and `append_trace`',
     );
     // :40 — the bin and `realm mcp` list the same tools: executed here, over stdio.
     claim(
@@ -961,7 +975,7 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
       'README.md',
       '- [MCP reference](docs/reference/mcp/tools.md) — the tools and their replies',
     );
-    const count = async (g: 'asked' | 'offered' | 'withheld', forms: boolean) =>
+    const count = async (g: 'asked' | 'permitted' | 'withheld', forms: boolean) =>
       (await (await session(g, forms)).tools()).length;
     const listed = async (entry: string, args: string[]) => {
       const client = new Client({ name: 'docs-627-readme', version: '0' });
@@ -991,11 +1005,11 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
       counts: [
         await count('asked', true),
         await count('asked', false),
-        await count('offered', false),
+        await count('permitted', false),
         await count('withheld', false),
       ],
       sameTools: { bin, cli },
-    }).toEqual({ counts: [11, 11, 11, 10], sameTools: { bin: cli, cli } });
+    }).toEqual({ counts: [11, 10, 11, 10], sameTools: { bin: cli, cli } });
   }, 60_000);
 
   it('6.6 (b): the CHANGELOG’s E8 quote (answer-record-627 :: "`realm run respond` records route cli …" prints it)', () => {

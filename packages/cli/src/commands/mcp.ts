@@ -15,6 +15,8 @@ import { cliOperatorRoute } from './ways-renderer.js';
 import { channelStdout, cliDisclosureProvider, writerCtx } from '../output/writer.js';
 import {
   checkValueLine,
+  gateAnswersAliasLines,
+  gateAnswersConnectLine,
   gateAnswersStartLine,
   readBinDoorSettings,
 } from '../lib/gate-answers-door.js';
@@ -38,7 +40,7 @@ export const mcpCommand = new Command('mcp')
   )
   .option(
     '--gate-answers <value>',
-    'How this server handles gate answers: asked (the default), offered or withheld. The most restrictive of this flag and REALM_MCP_GATE_ANSWERS wins.',
+    'How this server handles gate answers: asked (the default), permitted or withheld. The most restrictive of this flag and REALM_MCP_GATE_ANSWERS wins.',
   )
   .option(
     '--form-wait-seconds <seconds>',
@@ -67,6 +69,8 @@ export const mcpCommand = new Command('mcp')
         console.error(settings.line);
         process.exit(1);
       }
+      // The gate-answers default (2026-11-14): the old name `offered`, once per source that gave it.
+      for (const line of gateAnswersAliasLines('mcp', settings.answers)) console.error(line);
       if (options.check === true) {
         // W-s6 and the separation check (Part K): nothing is started.
         console.log(
@@ -94,6 +98,7 @@ export const mcpCommand = new Command('mcp')
       // as one line and the command exits 1 — never Node's uncaught-exception stack. A release-line
       // refusal here means this command's own install is split: `hostRefusalLine` says so.
       let server: ReturnType<typeof createRealmMcpServer>;
+      let toldNoForms = false;
       try {
         // #616 PR-2a (i, iii): the one door, opened inside the handler, so an unusable home or a
         // copied test location prints `realm mcp: …`. The library takes all four of its stores.
@@ -123,6 +128,13 @@ export const mcpCommand = new Command('mcp')
           principal: { absent: 'door_authenticates_no_principal' },
           // #729 PR-3 (M-3): every reply is masked with this process's set, declared part included.
           disclosureProvider: cliDisclosureProvider,
+          // The gate-answers default (2026-11-14): under asked, a session whose app shows no forms
+          // is told once on stderr (one stdio session per process).
+          onSessionWithoutForms: () => {
+            if (toldNoForms) return;
+            toldNoForms = true;
+            console.error(gateAnswersConnectLine('mcp'));
+          },
         });
       } catch (err) {
         console.error(hostRefusalLine('mcp', err));

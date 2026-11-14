@@ -139,10 +139,12 @@ const LIBRARY_DOOR: DoorPolicy = {
   source: SRC,
 };
 
+// The gate-answers default (2026-11-14): `offered` is `permitted`; `asked` without forms (the former
+// fallback) is on withheld's row.
 const ROWS = {
-  offered: answersOf('offered', true),
+  permitted: answersOf('permitted', true),
   asked_forms: answersOf('asked', true),
-  fallback: answersOf('asked', false),
+  asked_no_forms: answersOf('asked', false),
   withheld: answersOf('withheld', true),
 } as const;
 
@@ -157,7 +159,7 @@ function respondOf(ways: readonly (WayOn & { for: readonly string[] })[]) {
 // ─── B: the four-row table (cell 23, core half) ─────────────────────────────────────────────────
 
 describe('#627 W — narrowForDoor applies §5.2’s four-row table', () => {
-  it('row by row: the agent’s respond, its `for`, the fallback condition, the door’s listing and `present`', async () => {
+  it('row by row: the agent’s respond, its `for`, its conditions, the door’s listing and `present` (asked without forms on withheld’s row)', async () => {
     const { def, record } = await atGate();
     const composed = composeWaysOn(writtenSnapshot(record, new Date()), ctxOf(def));
     const row = (answers: DoorAnswers) => {
@@ -172,16 +174,16 @@ describe('#627 W — narrowForDoor applies §5.2’s four-row table', () => {
           : n.unavailable.find((u) => u.verb === 'present')?.code,
       };
     };
-    // (a) red when two rows swap (asked with forms and the fallback), a row keeps the agent where it
-    //     withholds answers, the fallback loses its condition, or `present` is offered off row 2;
-    //     (b) prints each row's parties, conditions, listing and `present`.
+    // (a) red when two rows swap (asked with forms and asked without), a row keeps the agent where it
+    //     withholds answers (the fallback row kept for asked without forms), or `present` is offered
+    //     off row 2; (b) prints each row's parties, conditions, listing and `present`.
     expect({
-      offered: row(ROWS.offered),
+      permitted: row(ROWS.permitted),
       asked_forms: row(ROWS.asked_forms),
-      fallback: row(ROWS.fallback),
+      asked_no_forms: row(ROWS.asked_no_forms),
       withheld: row(ROWS.withheld),
     }).toEqual({
-      offered: {
+      permitted: {
         respond: { for: ['agent', 'asked_person'], conditions: [] },
         withheld: [],
         present: 'no_form_here',
@@ -191,12 +193,9 @@ describe('#627 W — narrowForDoor applies §5.2’s four-row table', () => {
         withheld: [['respond', { party: 'agent' }]],
         present: 'offered',
       },
-      fallback: {
-        respond: {
-          for: ['agent', 'asked_person'],
-          conditions: [{ code: 'client_prompt', tag: 'client' }],
-        },
-        withheld: [],
+      asked_no_forms: {
+        respond: { for: ['asked_person'], conditions: [] },
+        withheld: [['respond', { party: 'agent' }]],
         present: 'no_form_here',
       },
       withheld: {
@@ -218,11 +217,11 @@ describe('#627 W — narrowForDoor applies §5.2’s four-row table', () => {
     // (a) red when the strip is removed (the token rides the person's kept way and the listing's
     //     remedy on rows 2 and 4); (b) prints, per row, whether the token is anywhere in Narrowed.
     expect({
-      offered: carries(ROWS.offered),
+      permitted: carries(ROWS.permitted),
       asked_forms: carries(ROWS.asked_forms),
-      fallback: carries(ROWS.fallback),
+      asked_no_forms: carries(ROWS.asked_no_forms),
       withheld: carries(ROWS.withheld),
-    }).toEqual({ offered: true, asked_forms: false, fallback: true, withheld: false });
+    }).toEqual({ permitted: true, asked_forms: false, asked_no_forms: false, withheld: false });
   });
 
   it('the asked person’s respond never becomes door_cannot_enact, on any row', async () => {
@@ -300,16 +299,16 @@ describe('#627 W — present: offered only on asked with forms, re-judged on the
     };
     // (a) red when the verdict ignores the row, an open form, or the asks left; (b) prints each.
     expect({
-      offered: v(ROWS.offered),
-      fallback: v(ROWS.fallback),
+      permitted: v(ROWS.permitted),
+      asked_no_forms: v(ROWS.asked_no_forms),
       withheld: v(ROWS.withheld),
       library: v(undefined),
       never: v(ROWS.asked_forms, NEVER),
       open: v(ROWS.asked_forms, { sent_here: 'open', came_back: 0, asks_left: 3, sent: 1 }),
       exhausted: v(ROWS.asked_forms, { sent_here: 'closed', came_back: 4, asks_left: 0, sent: 4 }),
     }).toEqual({
-      offered: 'no_form_here',
-      fallback: 'no_form_here',
+      permitted: 'no_form_here',
+      asked_no_forms: 'no_form_here',
       withheld: 'no_form_here',
       library: 'no_form_here',
       never: 'offered',
@@ -429,7 +428,7 @@ describe('#627 W correction 1 (C2) — present on another gate follows the open 
 // ─── D-8: a question this door hands off is a wait ──────────────────────────────────────────────
 
 describe('#627 W — a handed-off question is waited on (agent_action await)', () => {
-  it('under withheld, an ok reply at an open question with nothing else callable is await; under offered it is not', async () => {
+  it('under withheld, an ok reply at an open question with nothing else callable is await; under permitted it is not', async () => {
     const { def, record } = await atGate();
     const composed = composeWaysOn(writtenSnapshot(record, new Date()), ctxOf(def));
     const action = (answers: DoorAnswers) =>
@@ -440,9 +439,9 @@ describe('#627 W — a handed-off question is waited on (agent_action await)', (
       );
     // (a) red when the door's withholding is read as a blocker the agent must report, or the
     //     agent's own answer is read as a wait; (b) prints both actions.
-    expect({ withheld: action(ROWS.withheld), offered: action(ROWS.offered) }).toEqual({
+    expect({ withheld: action(ROWS.withheld), permitted: action(ROWS.permitted) }).toEqual({
       withheld: 'await',
-      offered: undefined,
+      permitted: undefined,
     });
   });
 });
@@ -1001,8 +1000,8 @@ describe('#627 W — the gate-answers value and the form wait, judged once', () 
     //     default is not asked; (b) prints value, source and the also-set clause.
     expect({
       none: j({}),
-      optionVsEnv: j({ env: 'withheld', option: 'offered' }),
-      flagVsEnv: j({ flag: 'offered', env: 'asked' }),
+      optionVsEnv: j({ env: 'withheld', option: 'permitted' }),
+      flagVsEnv: j({ flag: 'permitted', env: 'asked' }),
       tie: j({ flag: 'withheld', env: 'withheld' }),
       bad: j({ env: 'witheld' }),
     }).toEqual({
@@ -1010,12 +1009,12 @@ describe('#627 W — the gate-answers value and the form wait, judged once', () 
       optionVsEnv: [
         'withheld',
         'env',
-        '; also set: the program that started this server (gateAnswers option) = offered — the most restrictive value wins',
+        '; also set: the program that started this server (gateAnswers option) = permitted — the most restrictive value wins',
       ],
       flagVsEnv: [
         'asked',
         'env',
-        '; also set: --gate-answers = offered — the most restrictive value wins',
+        '; also set: --gate-answers = permitted — the most restrictive value wins',
       ],
       tie: [
         'withheld',

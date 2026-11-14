@@ -99,6 +99,8 @@ async function connect(
   const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
     ...h.stores,
+    // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+    gateAnswers: 'permitted',
     ...(wrap !== undefined ? { workflowStore: wrap(workflowStore) } : {}),
     ...(registry !== undefined ? { registry } : {}),
   });
@@ -847,22 +849,28 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163: the server has 11 tools, advance_run among them', async () => {
     claim(
       'mcp/tools.md',
-      "Realm's MCP server has 11 tools under `asked` and `offered` (in an app that shows forms, `present_question` takes the place of `submit_human_response`), and 10 under `withheld`, which lists no answer tool.",
+      "Realm's MCP server has 11 tools under `permitted`, and under `asked` in an app that shows forms (where `present_question` takes the place of `submit_human_response`); and 10 under `withheld`, and under the default `asked` in an app that shows no forms, which list no answer tool.",
     );
     claim(
       'core-library.md',
-      '`createRealmMcpServer` returns the MCP server that `realm mcp` runs, with 11 tools, 10 under `withheld`',
+      '`createRealmMcpServer` returns the MCP server that `realm mcp` runs, with 11 tools, or 10 where no answer tool is listed: under `withheld`, and under the default `asked` in a session whose client shows no forms',
     );
-    const h = await makeTempHome();
-    handles.push(h);
-    const server = createRealmMcpServer({ ...h.stores });
-    const [ct, st] = InMemoryTransport.createLinkedPair();
-    const client = new Client({ name: 'docs-claims-625', version: '0' });
-    await Promise.all([server.connect(st), client.connect(ct)]);
-    const tools = (await client.listTools()).tools.map((t) => t.name);
-    // (a) red when a tool is added or dropped without the page; (b) prints the list.
+    const listOf = async (options: { gateAnswers?: 'permitted' }) => {
+      const h = await makeTempHome();
+      handles.push(h);
+      const server = createRealmMcpServer({ ...h.stores, ...options });
+      const [ct, st] = InMemoryTransport.createLinkedPair();
+      const client = new Client({ name: 'docs-claims-625', version: '0' });
+      await Promise.all([server.connect(st), client.connect(ct)]);
+      return (await client.listTools()).tools.map((t) => t.name);
+    };
+    const tools = await listOf({ gateAnswers: 'permitted' });
+    const plain = await listOf({});
+    // (a) red when a tool is added or dropped without the page, or the default lists an answer tool
+    //     to a client with no forms; (b) prints the lists.
     expect(tools).toHaveLength(11);
     expect(tools).toContain('advance_run');
+    expect([plain.length, plain.includes('submit_human_response')]).toEqual([10, false]);
   });
 
   it.each([
@@ -3136,6 +3144,8 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
     const { runStore, workflowStore } = h.stores;
     const server = createRealmMcpServer({
       ...h.stores,
+      // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+      gateAnswers: 'permitted',
       registry,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -3343,6 +3353,8 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     const { runStore, workflowStore } = h.stores;
     const server = createRealmMcpServer({
       ...h.stores,
+      // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+      gateAnswers: 'permitted',
       registry,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();

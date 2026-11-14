@@ -50,6 +50,9 @@ import {
 } from './door.js';
 import type { ElicitFn } from './form-path.js';
 
+/** @deprecated `offered` is now called `permitted`; `offered` still works and reads back as `permitted`. */
+type GateAnswersOldName = 'offered';
+
 export interface RealmMcpServerOptions {
   /** Extension registry for resolving service adapters and step handlers at runtime. */
   registry?: ExtensionRegistry;
@@ -140,15 +143,17 @@ export interface RealmMcpServerOptions {
   /** #729 PR-3 (M-3): environment variable names the host shows (with `REALM_NOT_SECRET`). */
   disclosure?: { notSecret?: string[] };
   /**
-   * #627 W (§5.1): how this server handles gate answers. `asked` (the default): in a chat app that
-   * shows forms the question goes to the person in the app's own form and the agent gets no answer
-   * tool; in an app without forms the agent keeps the answer tool, and the app is asked to have the
-   * person approve each call. `offered`: the answer tool for any client, the agent included.
-   * `withheld`: no tool records a gate answer. Read with `REALM_MCP_GATE_ANSWERS` and the bins'
-   * `--gate-answers` flag; the MOST RESTRICTIVE value wins (`withheld` > `asked` > `offered`). A value
-   * that is not one of the three throws (no server is built). `effectiveGateAnswers()` logs it.
+   * #627 W (§5.1): how this server handles gate answers. `asked` (the default): no agent gets a tool
+   * that records a gate answer, in any app. In a chat app that shows forms the question goes to the
+   * person in the app's own form; in an app without forms, and on a server built per request
+   * (`statelessHttp`), no form is sent: a person answers in a terminal on the server's machine with
+   * `realm run respond`. `permitted`: the answer tool for any client, the agent included. `withheld`:
+   * no tool records a gate answer, and no form is sent. Read with `REALM_MCP_GATE_ANSWERS` and the
+   * bins' `--gate-answers` flag; the MOST RESTRICTIVE value wins (`withheld` > `asked` > `permitted`).
+   * `offered`, `permitted`'s name until version 0.49.0, still works and reads back as `permitted`. A
+   * value that is not one of these throws (no server is built). `effectiveGateAnswers()` logs it.
    */
-  gateAnswers?: 'asked' | 'offered' | 'withheld';
+  gateAnswers?: 'asked' | 'permitted' | 'withheld' | GateAnswersOldName;
   /**
    * #627 W: the value of the `--gate-answers` flag, as the `realm mcp` / `realm serve` bins pass it
    * (source `flag`). An embedder uses `gateAnswers`.
@@ -164,9 +169,18 @@ export interface RealmMcpServerOptions {
   formWaitSecondsFlag?: string;
   /**
    * #627 W: true for a server that answers one stateless HTTP request (`realm serve`): it sends no
-   * forms (the SDK 1.x HTTP transport cannot hold one open), so `asked` is its fallback.
+   * forms (the SDK 1.x HTTP transport cannot hold one open), so under `asked` no client gets a way to
+   * answer here.
    */
   statelessHttp?: boolean;
+  /**
+   * Called once when a session whose client shows no forms starts (its `initialize` is done) on a
+   * server running under `asked`: in that session the agent cannot answer gates and the person
+   * cannot answer in the app. The library prints nothing; a program passes this to print its own
+   * line (`realm mcp` and `realm-mcp` do, on stderr). Not called under `permitted` or `withheld`, or
+   * in a session whose client shows forms.
+   */
+  onSessionWithoutForms?: () => void;
   /**
    * #627 W (§5.8): the principal of this server's transport, stamped on every answer it records — an
    * API key's id, `realm serve`'s shared token, or a door's typed absence. Absent ⇒
@@ -242,8 +256,8 @@ export { createDefaultRegistry };
 /**
  * Creates and configures the Realm MCP server with its workflow tools. #627 W: which answer tool is
  * listed follows the gate-answers value and the session's forms (§5.2's table) — `submit_human_response`
- * under `offered` and on `asked`'s fallback, `present_question` under `asked` in a session whose
- * client shows forms, neither under `withheld`.
+ * under `permitted` only, `present_question` under `asked` in a session whose client shows forms,
+ * neither under `withheld` or in an `asked` session whose client shows no forms.
  *
  * When no `registry` is provided, `FileSystemAdapter` is pre-registered automatically
  * under the name `filesystem`. Pass a custom `registry` to add your own handlers and
@@ -276,7 +290,7 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
   });
   if (!waitJudged.ok) throw new Error(formWaitLibraryRefusal(waitJudged.raw));
   // Correction 2 (4.2): the same predicate as the bins — a form-wait value where no form is ever
-  // sent (`withheld`, `offered`, or a door that sends none: `statelessHttp`) builds no server.
+  // sent (`withheld`, `permitted`, or a door that sends none: `statelessHttp`) builds no server.
   const sendsForms = options?.statelessHttp !== true;
   if (
     waitJudged.setting.source.kind !== 'default' &&
@@ -433,18 +447,11 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
   registerExecuteStep(server, { ...effectiveOptions, traceBufferStore, failedAttemptStore });
   // issue #625 PR-2a: the one call that runs what the engine owes — beside execute_step, with its stores.
   registerAdvanceRun(server, { ...effectiveOptions, traceBufferStore });
-  // #627 W (§5.2's table): the answer tool is listed on the `offered` row and on `asked`'s fallback
-  // (a session whose client shows no forms — every session until `initialize` says otherwise, and
-  // always on HTTP); `present_question` on `asked` with forms; neither under `withheld`.
+  // #627 W (§5.2's table) and the gate-answers default (2026-11-14): the answer tool is listed under
+  // `permitted` only; `present_question` on `asked` with forms; neither under `withheld`, nor in an
+  // `asked` session whose client shows no forms (that session is on the `withheld` row).
   const value = door.gateAnswers.value;
-  const answerTool =
-    value === 'withheld'
-      ? undefined
-      : registerSubmitHumanResponse(
-          server,
-          effectiveOptions,
-          value === 'offered' ? 'offered' : 'fallback',
-        );
+  if (value === 'permitted') registerSubmitHumanResponse(server, effectiveOptions);
   const presentTool =
     value === 'asked' && door.sendsForms
       ? registerPresentQuestion(server, effectiveOptions)
@@ -457,8 +464,8 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
       withSourceNote(await loadPriceSource({}), 'no economics file is configured on this server'));
   registerGetRunState(server, { ...effectiveOptions, priceSourceProvider });
   const abandonTool = registerAbandonRun(server, effectiveOptions);
-  // W-c8: where no answer tool is listed, abandon's description names none.
-  if (value === 'withheld')
+  // W-c8: where no answer tool is listed — every value but `permitted` — abandon's description names none.
+  if (value !== 'permitted')
     abandonTool.update({ description: ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL });
   registerCreateWorkflow(server, effectiveOptions);
   registerAppendTrace(server, {
@@ -474,18 +481,15 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
 
   // #627 W (§5.2b): the session's forms, negotiated at `initialize` — form elicitation declared by
   // the client (SDK 1.31 normalises `elicitation: {}` to `{ form: {} }`). Read once per session, never
-  // module-level; on stateless HTTP there is no session to hold a form, so the row stays the
-  // fallback. Under `asked` with forms the answer tool goes and `present_question` comes, announced
-  // with `list_changed`.
+  // module-level; on stateless HTTP there is no session to hold a form, so the session stays on the
+  // `withheld` row. Under `asked` with forms `present_question` comes, announced with `list_changed`;
+  // under `asked` without forms nothing changes, and the program is told (`onSessionWithoutForms`).
   server.server.oninitialized = () => {
     const shown =
       door.sendsForms && server.server.getClientCapabilities()?.elicitation?.form !== undefined;
     door.forms = { ...door.forms, shown };
-    if (value === 'asked' && shown) {
-      answerTool?.disable();
-      presentTool?.enable();
-      abandonTool.update({ description: ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL });
-    }
+    if (value === 'asked' && shown) presentTool?.enable();
+    if (value === 'asked' && !shown) options.onSessionWithoutForms?.();
     // Correction 1 (B2): the first request a server sends a client has JSON-RPC id 0, and SDK 1.31's
     // client ignores a cancel for a falsy id (`shared/protocol.js` `_oncancel`), so a session's first
     // form could never be withdrawn on such a client. A ping spends id 0; `request()` takes its id
@@ -504,8 +508,8 @@ export const INVALID_PRINCIPAL_OPTION =
 
 /**
  * #627 W (correction 1, A4): the `realm-mcp` bin reads no flags. A flag given to it would be ignored —
- * `--gate-answers withheld` would start `asked`, the agent keeping an answer tool in apps without
- * forms, with nothing said — so any argument refuses the start, with one line and exit code 1
+ * `--gate-answers withheld` would start `asked`, a form still sent in apps that show forms, with
+ * nothing said — so any argument refuses the start, with one line and exit code 1
  * (correction 2, 4.5/4.6: the line names both variables, and this comment is the constant's own).
  */
 export const REALM_MCP_TAKES_NO_FLAGS =

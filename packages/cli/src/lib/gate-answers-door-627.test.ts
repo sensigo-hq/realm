@@ -1,7 +1,8 @@
 // gate-answers-door-627.test.ts — #627 W, Part A on the bins: `--gate-answers` and
 // `--form-wait-seconds` read as the server will read them; a bad value refuses the start (W-s4,
 // W-s8); the form wait on `realm serve` refuses it (W-s9); the start lines (W-s1, W-s3, W-s7; cell 12);
-// dev mode's W-s5 iff the value is not withheld (cell 19); `--check` (W-s6) prints the value and its
+// dev mode's W-s5 under permitted only (cell 19, since the gate-answers default, 2026-11-14);
+// `--check` (W-s6) prints the value and its
 // source and exits 0, or W-s4 and exit 1 (cell 4's bin half).
 //
 // The `--check` and dev-mode cells run the built `realm` command with a fresh HOME. Every assertion
@@ -59,8 +60,8 @@ describe('#627 W — the bins read the two settings as the server will', () => {
       withheldWait: line('mcp', { gateAnswers: 'withheld', formWaitSeconds: '30' }),
       ok: line('mcp', { gateAnswers: 'asked', formWaitSeconds: '30' }),
     }).toEqual({
-      flag: "realm mcp: invalid --gate-answers value 'witheld': expected asked, offered or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.",
-      env: "realm serve: invalid REALM_MCP_GATE_ANSWERS value 'open': expected asked, offered or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.",
+      flag: "realm mcp: invalid --gate-answers value 'witheld': expected asked, permitted or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.",
+      env: "realm serve: invalid REALM_MCP_GATE_ANSWERS value 'open': expected asked, permitted or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.",
       low: "realm mcp: invalid --form-wait-seconds value '10': expected a whole number of seconds from 30 to 3600 — refused at start: this server does not start while it is set, because a form must not wait less than a person needs, and the bound keeps a mistyped value from holding a call for hours. Fix the value or remove it; the default is 240. The server starts as soon as it is valid.",
       high: "realm mcp: invalid REALM_MCP_FORM_WAIT_SECONDS value '3601': expected a whole number of seconds from 30 to 3600 — refused at start: this server does not start while it is set, because a form must not wait less than a person needs, and the bound keeps a mistyped value from holding a call for hours. Fix the value or remove it; the default is 240. The server starts as soon as it is valid.",
       serveFlag:
@@ -90,7 +91,7 @@ describe('#627 W — the bins read the two settings as the server will', () => {
       serveBadWait: line('serve', { formWaitSeconds: '10' }),
     }).toEqual({
       emptyFlag:
-        "realm mcp: invalid --gate-answers value '': expected asked, offered or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.",
+        "realm mcp: invalid --gate-answers value '': expected asked, permitted or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.",
       emptyEnv: 'starts asked',
       serveBadWait:
         "realm serve: --form-wait-seconds has no effect on this server: its clients get no forms until Realm's HTTP server can hold a form open — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it. The server starts as soon as it is removed.",
@@ -101,22 +102,23 @@ describe('#627 W — the bins read the two settings as the server will', () => {
     const withheld = gateAnswersStartLine(setting({ flag: 'withheld', env: 'asked' }), false);
     const askedMcp = gateAnswersStartLine(setting({}), false);
     const askedServe = gateAnswersStartLine(setting({ env: 'asked' }), true);
-    const offered = gateAnswersStartLine(setting({ option: 'offered' }), false);
+    const permitted = gateAnswersStartLine(setting({ option: 'permitted' }), false);
     // (a) red when a placeholder is filled, the HTTP clause prints on stdio, or W-s3 gains a command;
     //     (b) prints each line.
-    expect({ withheld, askedMcp, askedServe, offered }).toEqual({
+    expect({ withheld, askedMcp, askedServe, permitted }).toEqual({
       withheld:
         'Gate answers over MCP: withheld (from --gate-answers; also set: REALM_MCP_GATE_ANSWERS = asked — the most restrictive value wins). No tool on this server records a gate answer, and its replies name no way to answer. To answer a waiting question, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id> (shows the question, its gate id and its choices), then realm run respond <run_id> --gate <gate_id> --choice <choice>. The agent tells the user the run id. Another Realm server or CLI on the same store can still record answers.',
+      // The gate-answers default (2026-11-14): no agent gets the answer tool under asked.
       askedMcp:
-        "Gate answers over MCP: asked (the default). In chat apps that show forms, questions go to the person in the app's own form, and the agent gets no tool that records a gate answer. In apps without forms, the agent keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that. To keep the agent from answering in every app, set --gate-answers withheld. To answer from a terminal: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>.",
+        "Gate answers over MCP: asked (the default). The agent gets no tool on this server that records a gate answer. In chat apps that show forms, questions go to the person in the app's own form. In apps without forms, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>; the agent tells the user the run id. Another Realm server or CLI on the same store can still record answers. To let the agent answer, set --gate-answers permitted.",
       askedServe:
         // Correction 2 (8.6 (i): the variable is the source, the default also asked; 4.7: no
         // backticks on a terminal line).
-        'Gate answers over MCP: asked (from REALM_MCP_GATE_ANSWERS; the default is also asked). On this server no chat app gets forms: under asked every client keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that. To keep the agent from answering in every app, set --gate-answers withheld. To answer from a terminal: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>.',
-      offered:
-        'Gate answers over MCP: offered (from the program that started this server (gateAnswers option); the default is asked). Any client of this server, the agent included, can record a gate answer; it is recorded as arriving through the MCP answer tool.',
+        'Gate answers over MCP: asked (from REALM_MCP_GATE_ANSWERS; the default is also asked). No tool on this server records a gate answer, and this server sends no forms. To answer a waiting question, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>; the agent tells the user the run id. Another Realm server or CLI on the same store can still record answers. To let the agent answer, set --gate-answers permitted.',
+      permitted:
+        'Gate answers over MCP: permitted (from the program that started this server (gateAnswers option); the default is asked). Any client of this server, the agent included, can record a gate answer; it is recorded as arriving through the MCP answer tool.',
     });
-    expect(offered.includes('realm run')).toBe(false);
+    expect(permitted.includes('realm run')).toBe(false);
   });
 
   it('correction 2 (4.2, 4.3): a form wait where no form is sent refuses the start; an empty flag is refused where it was given; an empty variable stays unset', () => {
@@ -130,19 +132,19 @@ describe('#627 W — the bins read the two settings as the server will', () => {
         ? `starts ${r.answers.value} ${r.formWait.seconds}`
         : r.line.split(':')[1]?.trim();
     };
-    // (a) red when a wait under withheld or offered starts (the predicate dropped), a wait under asked
+    // (a) red when a wait under withheld or permitted starts (the predicate dropped), a wait under asked
     //     is refused, an empty --form-wait-seconds starts with the default, or an empty variable is
     //     refused; (b) prints, per row, how it started or the refusal's subject.
     expect({
       flagWithheld: line('mcp', { gateAnswers: 'withheld', formWaitSeconds: '60' }),
-      flagOffered: line('mcp', { gateAnswers: 'offered', formWaitSeconds: '60' }),
+      flagPermitted: line('mcp', { gateAnswers: 'permitted', formWaitSeconds: '60' }),
       flagAsked: line('mcp', { gateAnswers: 'asked', formWaitSeconds: '60' }),
       envWithheld: line('mcp', { gateAnswers: 'withheld' }, { REALM_MCP_FORM_WAIT_SECONDS: '60' }),
       emptyWaitFlag: line('mcp', { formWaitSeconds: '' }),
       emptyWaitEnv: line('mcp', {}, { REALM_MCP_FORM_WAIT_SECONDS: '' }),
     }).toEqual({
       flagWithheld: '--form-wait-seconds has no effect under gate answers withheld',
-      flagOffered: '--form-wait-seconds has no effect under gate answers offered',
+      flagPermitted: '--form-wait-seconds has no effect under gate answers permitted',
       flagAsked: 'starts asked 60',
       envWithheld: 'REALM_MCP_FORM_WAIT_SECONDS has no effect under gate answers withheld',
       emptyWaitFlag: "invalid --form-wait-seconds value ''",
@@ -159,7 +161,7 @@ describe('#627 W — the bins read the two settings as the server will', () => {
 
   it('cell 4 (bin half) — `realm mcp --check` prints W-s6 with the winning source and exits 0; a bad value prints W-s4 and exits 1; nothing starts', () => {
     const ok = realm(['mcp', '--check', '--gate-answers', 'withheld'], {
-      REALM_MCP_GATE_ANSWERS: 'offered',
+      REALM_MCP_GATE_ANSWERS: 'permitted',
     });
     const bad = realm(['serve', '--check'], { REALM_MCP_GATE_ANSWERS: 'nope' });
     // (a) red when the check starts a server, loses the source, or exits 0 on a bad value; (b)
@@ -170,11 +172,11 @@ describe('#627 W — the bins read the two settings as the server will', () => {
     }).toEqual({
       ok: [
         0,
-        "Gate answers over MCP: withheld (from --gate-answers; also set: REALM_MCP_GATE_ANSWERS = offered — the most restrictive value wins) — as read from this shell's environment and flags. A server started another way (your MCP client's config, launchd, systemd, or a program that embeds Realm) reads its own environment: run --check with that same environment, or read that server's start line or its embedder's log of effectiveGateAnswers(). Nothing was started.",
+        "Gate answers over MCP: withheld (from --gate-answers; also set: REALM_MCP_GATE_ANSWERS = permitted — the most restrictive value wins) — as read from this shell's environment and flags. A server started another way (your MCP client's config, launchd, systemd, or a program that embeds Realm) reads its own environment: run --check with that same environment, or read that server's start line or its embedder's log of effectiveGateAnswers(). Nothing was started.",
       ],
       bad: [
         1,
-        "realm serve: invalid REALM_MCP_GATE_ANSWERS value 'nope': expected asked, offered or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.",
+        "realm serve: invalid REALM_MCP_GATE_ANSWERS value 'nope': expected asked, permitted or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.",
       ],
     });
   }, 60_000);
@@ -239,21 +241,26 @@ async function serveOutput(extraArgs: string[]): Promise<{ out: string; err: str
   return { out, err };
 }
 
-describe('#627 W — cell 19: dev mode warns that the answer tool is open, iff the value is not withheld', () => {
-  it('W-s5 under the default; none under withheld; the start line on stdout', async () => {
+describe('#627 W — cell 19: dev mode warns that the answer tool is open, under permitted only (the gate-answers default)', () => {
+  it('W-s5 under permitted; none under the default or withheld; the start line on stdout', async () => {
     const asked = await serveOutput([]);
+    const permitted = await serveOutput(['--gate-answers', 'permitted']);
     const withheld = await serveOutput(['--gate-answers', 'withheld']);
-    // (a) red when W-s5 prints under withheld, or not at all in dev mode; (b) prints whether each
-    //     output holds it.
+    // (a) red when W-s5 prints under the default (which lists no answer tool now) or withheld, or not
+    //     at all under permitted; (b) prints whether each output holds it.
     expect({
       asked: [
         asked.err.includes(DEV_MODE_ANSWER_WARNING),
         asked.out.includes('Gate answers over MCP: asked'),
       ],
+      permitted: [
+        permitted.err.includes(DEV_MODE_ANSWER_WARNING),
+        permitted.out.includes('Gate answers over MCP: permitted'),
+      ],
       withheld: [
         withheld.err.includes(DEV_MODE_ANSWER_WARNING),
         withheld.out.includes('Gate answers over MCP: withheld'),
       ],
-    }).toEqual({ asked: [true, true], withheld: [false, true] });
+    }).toEqual({ asked: [false, true], permitted: [true, true], withheld: [false, true] });
   }, 60_000);
 });

@@ -57,12 +57,18 @@ afterEach(async () => {
   for (const h of handles.splice(0).reverse()) await h.cleanup();
 });
 
-async function connect(registry?: ExtensionRegistry) {
+async function connect(
+  registry?: ExtensionRegistry,
+  answers: 'permitted' | 'default' = 'permitted',
+) {
   const h = await makeTempHome();
   handles.push(h);
   const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
     ...h.stores,
+    // The gate-answers default (2026-11-14): these pages' examples show the agent answering, on a
+    // server started with --gate-answers permitted; `'default'` is a server given no value.
+    ...(answers === 'permitted' ? { gateAnswers: 'permitted' as const } : {}),
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -191,19 +197,22 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     claim(
       'docs/guides/connect-an-mcp-client.md',
       // Correction 2 (6.5): by value.
-      "The assistant now has ten tools under `withheld` (the value step 1's example sets); eleven under `asked` or `offered` (`advance_run` was added after version 0.46.0, which has ten). The table lists the eleven:",
+      "The assistant now has ten tools under `withheld` (the value step 1's example sets), and under the default `asked` in an app that shows no forms; eleven under `asked` in an app that shows forms, and under `permitted` (`advance_run` was added after version 0.46.0, which has ten). The table lists the eleven of `permitted`:",
     );
     claim(
       'docs/reference/glossary.md',
-      'Realm is an MCP server with 11 tools, 10 under `withheld` (10 in version 0.46.0).',
+      'Realm is an MCP server with 11 tools, or 10 where no answer tool is listed (10 in version 0.46.0).',
     );
     claim(
       'packages/mcp-server/README.md',
       // Correction 2 (4.4): listed per value, and what is REGISTERED under asked.
-      "Creates the MCP server with its tools registered. A client is listed 11, or 10 under `withheld`; under `asked` both answer tools are registered, and the session's forms enable one.",
+      'Creates the MCP server with its tools registered. A client is listed 11 tools under `permitted`, and under `asked` in a session whose client shows forms; else 10. Under `asked` `present_question` is registered, and a session whose client shows forms enables it.',
     );
     const { client } = await connect();
     const listed = (await client.listTools()).tools.map((t) => t.name);
+    // The gate-answers default (2026-11-14): a default server's client with no forms is listed 10.
+    const { client: plain } = await connect(undefined, 'default');
+    const plainListed = (await plain.listTools()).tools.map((t) => t.name);
     const guide = readFileSync(join(ROOT, 'docs/guides/connect-an-mcp-client.md'), 'utf8');
     const rows = [...guide.matchAll(/^\| `([a-z_]+)` +\|/gm)].map((m) => m[1]!);
     // (a) red when a tool is added or removed without the pages, or the guide's table differs
@@ -213,10 +222,16 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       true,
       [...listed].sort(),
     ]);
+    // (a) red when the default lists the answer tool to a client with no forms (the fallback row
+    //     kept); (b) prints the default list's count and whether it holds an answer tool.
+    expect([
+      plainListed.length,
+      plainListed.some((n) => n === 'submit_human_response' || n === 'present_question'),
+    ]).toEqual([10, false]);
     // Correction 2 (4.4): the REGISTERED set per value — the SDK's own table of the server's tools.
     // #616 PR-2a (ii-a): each server is built on a temp home's four stores.
     const home = await makeTempHome();
-    const registered = (gateAnswers: 'asked' | 'offered' | 'withheld') =>
+    const registered = (gateAnswers: 'asked' | 'permitted' | 'withheld') =>
       Object.keys(
         (
           createRealmMcpServer({ ...home.stores, gateAnswers }) as unknown as {
@@ -226,15 +241,16 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       );
     const answerTools = (names: string[]) =>
       names.filter((n) => n === 'submit_human_response' || n === 'present_question').sort();
-    // (a) red when a value registers another set than the README says (both answer tools under
-    //     asked, one under offered, none under withheld); (b) prints each count and answer tools.
+    // (a) red when a value registers another set than the README says (present_question alone under
+    //     asked, the answer tool alone under permitted, none under withheld); (b) prints each count
+    //     and answer tools.
     expect({
       asked: [registered('asked').length, answerTools(registered('asked'))],
-      offered: [registered('offered').length, answerTools(registered('offered'))],
+      permitted: [registered('permitted').length, answerTools(registered('permitted'))],
       withheld: [registered('withheld').length, answerTools(registered('withheld'))],
     }).toEqual({
-      asked: [12, ['present_question', 'submit_human_response']],
-      offered: [11, ['submit_human_response']],
+      asked: [11, ['present_question']],
+      permitted: [11, ['submit_human_response']],
       withheld: [10, []],
     });
     await home.cleanup();
@@ -674,7 +690,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     claim(page, 'and the six standard rules are:');
     const opening = block(page, "Call start_run with workflow_id 'review-note'.")[0]!;
     const rules = block(page, 'Follow the instruction in each next_actions entry');
-    const { call, workflowStore } = await connect();
+    // The page shows the six rules a default server gives a client with no forms.
+    const { call, workflowStore } = await connect(undefined, 'default');
     await workflowStore.register(
       wf([
         'id: review-note',
@@ -696,10 +713,10 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     const page = 'docs/reference/workflow/top-level-fields.md';
     claim(
       page,
-      "| `rules` | list of strings | Replaces the six standard rules, after the line `Rules from the workflow's author:`. Realm's own rules are always added after yours: the rule for an `awaiting` entry, a line for the server's gate-answers value (none under `offered`), and two rules about concurrent attempts. |",
+      "| `rules` | list of strings | Replaces the six standard rules, after the line `Rules from the workflow's author:`. Realm's own rules are always added after yours: the rule for an `awaiting` entry, a line for the server's gate-answers value (none under `permitted`), and two rules about concurrent attempts. |",
     );
     const standard = block(page, 'Follow the instruction in each next_actions entry');
-    const { call, workflowStore } = await connect();
+    const { call, workflowStore } = await connect(undefined, 'default');
     await workflowStore.register(
       wf([
         'id: own-rules',
@@ -726,7 +743,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       count: got.length,
       standardLeft: got.filter((r) => standard.includes(r)),
       awaitRule: got[2]?.startsWith('When a next_actions entry has `awaiting`'),
-      valueLine: got[3]?.startsWith('Answers to gates go through submit_human_response'),
+      // The gate-answers default (2026-11-14): a client with no forms reads withheld's value line.
+      valueLine: got[3]?.startsWith('This server records no gate answers.'),
       attempts: got.slice(4).every((r) => /attempt/.test(r)),
     }).toEqual({
       label: "Rules from the workflow's author:",

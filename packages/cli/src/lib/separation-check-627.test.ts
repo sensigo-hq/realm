@@ -153,6 +153,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       ),
       trustRoot: await claim(machine({ canWrite: (p) => p === PROJECT })),
       asked: await claim(machine(), { value: 'asked', source: FLAG.source }),
+      permitted: await claim(machine(), { value: 'permitted', source: FLAG.source }),
       fromEnv: await claim(machine(), ENV),
     }).toEqual({
       // Correction 1 (D1); #819 (C3): a store this login owns is within its reach — the same login.
@@ -165,37 +166,100 @@ describe('#627 W — the separation check (cell 26)', () => {
       become: `${MAY} whether it can become Realm's service user without a password is unknown.`,
       docker: `${MAY} it can reach an engine that runs as root.`,
       trustRoot: `${MAY} it can change the files Realm executes.`,
-      asked: `${MAY} the gate-answers value: give it on this command line, and read the running server's start line.`,
+      // The gate-answers default (2026-11-14): a value other than withheld given on the line is
+      // measured, and the gap says what it leaves.
+      asked: `${MAY} the gate-answers value: only withheld, given on this command line, rules out an answer through a Realm server: under asked, an app that shows forms can be set to answer a form by itself; under permitted, the agent has the answer tool.`,
+      permitted: `${MAY} the gate-answers value: only withheld, given on this command line, rules out an answer through a Realm server: under asked, an app that shows forms can be set to answer a form by itself; under permitted, the agent has the answer tool.`,
       fromEnv: `${MAY} the gate-answers value: give it on this command line, and read the running server's start line.`,
     });
   });
 
-  it('the value line (F36): withheld measured only from this command line; from the env, configured not enforced; asked and offered keep an answer way', async () => {
+  it('the value line (F36): withheld and asked measured only from this command line; from elsewhere, configured not enforced; permitted keeps an answer way', async () => {
     const line = async (
       value: { value: GateAnswers; source: Source },
       door: 'mcp' | 'serve' = 'mcp',
     ) => valueLine(await measure(machine(), value, door));
-    // (a) red when an env value is called measured, or asked is read as withheld; (b) prints each.
+    // (a) red when an env value is called measured, or asked keeps the old "keeps an answer way"
+    //     words (the gate-answers default, 2026-11-14: asked takes withheld's two lines); (b) prints
+    //     each.
     expect({
       flag: await line(FLAG),
       env: await line(ENV),
       asked: await line({ value: 'asked', source: { kind: 'default', ref: 'the default' } }),
-      // Correction 1 (D5): on realm serve no client gets forms.
+      // Correction 1 (D5): on realm serve no client gets forms; the line is the same.
       askedServe: await line(
         { value: 'asked', source: { kind: 'default', ref: 'the default' } },
         'serve',
       ),
-      offered: await line({ value: 'offered', source: { kind: 'flag', ref: '--gate-answers' } }),
+      permitted: await line({
+        value: 'permitted',
+        source: { kind: 'flag', ref: '--gate-answers' },
+      }),
     }).toEqual({
       flag: 'The gate-answers value: withheld (given on this command line).',
       env: "The gate-answers value: withheld, configured, not enforced by Realm — from REALM_MCP_GATE_ANSWERS; the running server's value is not read.",
       asked:
-        'The gate-answers value: asked (from the default) — the agent keeps an answer way in apps without forms.',
+        "The gate-answers value: asked, configured, not enforced by Realm — from the default; the running server's value is not read.",
       askedServe:
-        'The gate-answers value: asked (from the default) — every client keeps an answer way (this server sends no forms).',
-      offered:
-        'The gate-answers value: offered (from --gate-answers) — the agent keeps an answer way.',
+        "The gate-answers value: asked, configured, not enforced by Realm — from the default; the running server's value is not read.",
+      permitted:
+        'The gate-answers value: permitted (from --gate-answers) — the agent keeps an answer way.',
     });
+  });
+
+  it('AC8 — the value line per value × door × given on the check line or not (the gate-answers default)', async () => {
+    const SOURCES = {
+      given: { kind: 'flag', ref: '--gate-answers' },
+      env: { kind: 'env', ref: 'REALM_MCP_GATE_ANSWERS' },
+    } as const;
+    const table: Record<string, string> = {};
+    for (const value of ['withheld', 'asked', 'permitted'] as const) {
+      for (const door of ['mcp', 'serve'] as const) {
+        for (const [how, source] of Object.entries(SOURCES)) {
+          table[`${value}/${door}/${how}`] = valueLine(
+            await measure(machine(), { value, source }, door),
+          );
+        }
+      }
+    }
+    const measured = (v: string) => `The gate-answers value: ${v} (given on this command line).`;
+    const configured = (v: string) =>
+      `The gate-answers value: ${v}, configured, not enforced by Realm — from REALM_MCP_GATE_ANSWERS; the running server's value is not read.`;
+    const keeps = (ref: string) =>
+      `The gate-answers value: permitted (from ${ref}) — the agent keeps an answer way.`;
+    // (a) red when asked keeps the old "keeps an answer way" words, asked or permitted are called
+    //     measured from the variable, or a door reads a value differently; (b) prints the table.
+    expect(table).toEqual({
+      'withheld/mcp/given': measured('withheld'),
+      'withheld/mcp/env': configured('withheld'),
+      'withheld/serve/given': measured('withheld'),
+      'withheld/serve/env': configured('withheld'),
+      'asked/mcp/given': measured('asked'),
+      'asked/mcp/env': configured('asked'),
+      'asked/serve/given': measured('asked'),
+      'asked/serve/env': configured('asked'),
+      'permitted/mcp/given': keeps('--gate-answers'),
+      'permitted/mcp/env': keeps('REALM_MCP_GATE_ANSWERS'),
+      'permitted/serve/given': keeps('--gate-answers'),
+      'permitted/serve/env': keeps('REALM_MCP_GATE_ANSWERS'),
+    });
+  });
+
+  it('AC8 — the claim with asked or permitted given on the check line: never "cannot record"; the value gap in its new words, on both doors', async () => {
+    const claimOf = async (value: 'asked' | 'permitted', door: 'mcp' | 'serve') =>
+      separationClaim(
+        await measure(machine(), { value, source: { kind: 'flag', ref: '--gate-answers' } }, door),
+      );
+    const GAP = `${MAY} the gate-answers value: only withheld, given on this command line, rules out an answer through a Realm server: under asked, an app that shows forms can be set to answer a form by itself; under permitted, the agent has the answer tool.`;
+    // (a) red when asked given on the line closes the value gap (the "cannot record" claim), or the
+    //     gap keeps today's "give it on this command line" words for a value that was given; (b)
+    //     prints each claim.
+    expect({
+      askedMcp: await claimOf('asked', 'mcp'),
+      askedServe: await claimOf('asked', 'serve'),
+      permittedMcp: await claimOf('permitted', 'mcp'),
+      permittedServe: await claimOf('permitted', 'serve'),
+    }).toEqual({ askedMcp: GAP, askedServe: GAP, permittedMcp: GAP, permittedServe: GAP });
   });
 
   it('each condition line in its states: measured yes / no, configured not enforced, unknown with its cause ("observed now")', async () => {

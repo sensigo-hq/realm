@@ -1,9 +1,11 @@
 // bin-settings.ts — #627 W (§5.1): the programs' side of the gate-answers setting — reading
 // `--gate-answers` and `--form-wait-seconds` with their environment variables exactly as the server
 // will (the most restrictive answers value wins; the smallest wait wins), refusing a bad value before
-// anything starts (W-s4, W-s8; W-s9 on the HTTP door), the start lines (W-s1, W-s3, W-s7, W-s5) and
-// `--check`'s value line (W-s6). Correction 2 (4.1): ONE home for the three programs' words — `realm
-// mcp`, `realm serve` (the CLI re-exports these) and this package's own `realm-mcp` bin.
+// anything starts (W-s4, W-s8; W-s9 on the HTTP door), the start lines (W-s1, W-s3, W-s7, W-s5),
+// `--check`'s value line (W-s6), and the gate-answers default's two lines (2026-11-14): the old name's
+// line and the line for a session without forms. Correction 2 (4.1): ONE home for the three
+// programs' words — `realm mcp`, `realm serve` (the CLI re-exports these) and this package's own
+// `realm-mcp` bin.
 import {
   alsoSetClause,
   formWaitInert,
@@ -29,7 +31,7 @@ function programOf(bin: BinName): string {
 /** W-s4 (bins): a bad value a bin was given — the server does not start. */
 export function gateAnswersBinRefusal(bin: BinName, kind: SetKind, raw: string): string {
   const where = kind === 'env' ? GATE_ANSWERS_ENV : '--gate-answers';
-  return `${programOf(bin)}: invalid ${where} value '${raw}': expected asked, offered or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.`;
+  return `${programOf(bin)}: invalid ${where} value '${raw}': expected asked, permitted or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.`;
 }
 
 /** W-s8 (bins): a form-wait value out of bounds — the server does not start. */
@@ -48,7 +50,7 @@ export function formWaitInertRefusal(where: '--form-wait-seconds' | typeof FORM_
 
 /**
  * Correction 2 (4.2): the form-wait setting under a gate-answers value that sends no form (`withheld`,
- * `offered`) on a door that sends forms — refused at start, the inert-config policy's four clauses.
+ * `permitted`) on a door that sends forms — refused at start, the inert-config policy's four clauses.
  */
 export function formWaitNoFormsRefusal(
   bin: Exclude<BinName, 'serve'>,
@@ -67,7 +69,7 @@ export interface BinDoorFlags {
 /**
  * The two settings as this bin will start with them, or the one line that refuses the start. A
  * form-wait value where no form is sent refuses the start (correction 2, 4.2: `formWaitInert` — under
- * `withheld` or `offered`, and on `realm serve`, which sends no forms: W-s9), tested for its presence
+ * `withheld` or `permitted`, and on `realm serve`, which sends no forms: W-s9), tested for its presence
  * before W-s8 judges it.
  */
 export function readBinDoorSettings(
@@ -110,7 +112,7 @@ function fromClause(setting: GateAnswersSetting): string {
 
 /**
  * The start line (`realm mcp` and `realm-mcp`: stderr; `realm serve`: stdout): W-s7 under `asked`,
- * W-s1 under `withheld`, W-s3 under `offered`. `http`: the HTTP door, whose clients get no forms yet.
+ * W-s1 under `withheld`, W-s3 under `permitted`. `http`: the HTTP door, whose clients get no forms yet.
  * `bin`: `realm-mcp` takes no flags, so its remedy names the variable.
  */
 export function gateAnswersStartLine(
@@ -127,24 +129,52 @@ export function gateAnswersStartLine(
           ? `the default${alsoSetClause(setting)}`
           : `${fromClause(setting)}; the default is also asked`;
       // Correction 1 (E3), correction 2 (4.7: no backticks on a terminal line): the HTTP door's
-      // first sentence is its own — no app gets forms there.
-      const forms = http
-        ? 'On this server no chat app gets forms: under asked every client keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that.'
-        : "In chat apps that show forms, questions go to the person in the app's own form, and the agent gets no tool that records a gate answer. In apps without forms, the agent keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that.";
-      const remedy =
-        bin === 'realm-mcp'
-          ? 'To keep the agent from answering in every app, set REALM_MCP_GATE_ANSWERS=withheld.'
-          : 'To keep the agent from answering in every app, set --gate-answers withheld.';
-      return `Gate answers over MCP: asked (${source}). ${forms} ${remedy} To answer from a terminal: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>.`;
+      // sentences are its own — no app gets forms there. The gate-answers default (2026-11-14): no
+      // agent gets the answer tool under asked, in any app.
+      const terminal =
+        'a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>; the agent tells the user the run id. Another Realm server or CLI on the same store can still record answers.';
+      const ways = http
+        ? `No tool on this server records a gate answer, and this server sends no forms. To answer a waiting question, ${terminal}`
+        : `The agent gets no tool on this server that records a gate answer. In chat apps that show forms, questions go to the person in the app's own form. In apps without forms, ${terminal}`;
+      return `Gate answers over MCP: asked (${source}). ${ways} To let the agent answer, set ${permittedSetting(bin)}.`;
     }
     case 'withheld':
       return `Gate answers over MCP: withheld (${fromClause(setting)}). No tool on this server records a gate answer, and its replies name no way to answer. To answer a waiting question, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id> (shows the question, its gate id and its choices), then realm run respond <run_id> --gate <gate_id> --choice <choice>. The agent tells the user the run id. Another Realm server or CLI on the same store can still record answers.`;
-    case 'offered':
-      return `Gate answers over MCP: offered (${fromClause(setting)}; the default is asked). Any client of this server, the agent included, can record a gate answer; it is recorded as arriving through the MCP answer tool.`;
+    case 'permitted':
+      return `Gate answers over MCP: permitted (${fromClause(setting)}; the default is asked). Any client of this server, the agent included, can record a gate answer; it is recorded as arriving through the MCP answer tool.`;
   }
 }
 
-/** W-s5: dev mode's warning, printed when the value is not `withheld` (an answer tool is listed). */
+/** The setting that lets the agent answer, as this program takes it (`realm-mcp` takes no flags). */
+function permittedSetting(bin: BinName): string {
+  return bin === 'realm-mcp' ? `${GATE_ANSWERS_ENV}=permitted` : '--gate-answers permitted';
+}
+
+/**
+ * The old name's line (the gate-answers default, 2026-11-14): one per source of this program's own
+ * reading that gave `offered`, on stderr — `<program>: --gate-answers offered is now called
+ * permitted; offered still works.`, naming the variable where it gave it. Never from the library's
+ * reading: the library prints nothing.
+ */
+export function gateAnswersAliasLines(bin: BinName, setting: GateAnswersSetting): string[] {
+  return (setting.offeredFrom ?? [])
+    .filter((s) => s.kind === 'flag' || s.kind === 'env')
+    .map(
+      (s) =>
+        `${programOf(bin)}: ${s.kind === 'env' ? `${GATE_ANSWERS_ENV}=offered` : '--gate-answers offered'} is now called permitted; offered still works.`,
+    );
+}
+
+/**
+ * The line for a session whose client shows no forms, under `asked` (the gate-answers default,
+ * 2026-11-14): printed once on stderr by `realm mcp` and `realm-mcp` when such a session starts, from
+ * the library's `onSessionWithoutForms`. `realm serve` prints none: its start line says this.
+ */
+export function gateAnswersConnectLine(bin: Exclude<BinName, 'serve'>): string {
+  return `Gate answers over MCP: this app shows no forms, so the agent cannot answer gates on this server and the person cannot answer in the app. A person answers in a terminal on this machine with realm run respond; to let the agent answer, set ${permittedSetting(bin)}.`;
+}
+
+/** W-s5: dev mode's warning, printed when the value is `permitted` (the answer tool is listed). */
 export const DEV_MODE_ANSWER_WARNING =
   "Warning: dev mode — authentication is disabled: any process on this machine can call this server's tools, the gate answer tool included.";
 

@@ -458,8 +458,10 @@ describe('#627 W correction 2 (3.2) — the repair command inspect prints for a 
         }),
       }).toEqual({
         printed: 'realm workflow validate --registered rec627',
+        // The gate-answers default (2026-11-14): a default session whose client shows no forms is on
+        // withheld's row, so the repair's words add the handing-off doors' sentence.
         person:
-          "Workflow 'rec627''s registered copy cannot be used; an operator repairs it, outside this conversation. The operator's command: realm workflow validate --registered rec627",
+          "Workflow 'rec627''s registered copy cannot be used; an operator repairs it, outside this conversation. Once the copy is repaired, the question waits for an answer outside this conversation. The operator's command: realm workflow validate --registered rec627",
         ...(run && { code: 1, namesCopy: true, wayOut: true, generic: false }),
       });
     },

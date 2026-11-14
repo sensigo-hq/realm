@@ -413,7 +413,7 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
     // on the reply whose own call opened the question.
     const token = way.proof !== undefined ? { claim_token: way.proof.claim_token } : {};
     const choices = way.choice.one_of;
-    const entry: McpNextAction = {
+    return {
       instruction: {
         tool: 'submit_human_response',
         params: { run_id: way.run_id, gate_id: way.gate_id, ...token },
@@ -435,11 +435,6 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
       // #729 PR-0 (Part B, W-CENSUS-06): the choices are the way's data; no prose repeats them.
       orientation: `Run is paused at gate '${way.gate_id}'.`,
     };
-    // #627 W (F30, §5.2 row 3): on the fallback the client is asked to have the person approve the
-    // call (the `client_prompt` condition); the entry says what a refusal leaves (W-g1).
-    return way.conditions.some((c) => c.code === 'client_prompt')
-      ? { ...entry, human_readable: `${entry.human_readable} ${approvalGuidance(way.step)}` }
-      : entry;
   },
   run_step: (way) => {
     const brief = way.brief;
@@ -531,14 +526,6 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
 /** #627 W (W-q1): `present_question`'s description, and the words of its call entry. */
 export const PRESENT_QUESTION_DESCRIPTION =
   "Send the waiting question to the user's app as a form. Call it when the question has not been sent in this session yet, or when the user asks to see it again. You cannot answer the question yourself.";
-
-/**
- * #627 W (W-g1): the approval prompt's guidance on the fallback — the client may ask the person to
- * approve the answer call, and a refused call leaves the run waiting.
- */
-export function approvalGuidance(step: string): string {
-  return `Your client may ask the user to approve this call (Claude Code does in interactive sessions and refuses it in headless runs; other clients may not ask). If the call is refused, the run keeps waiting at step '${step}': tell the user so.`;
-}
 
 /** #627 W (W-a3): the orientation of a question answered outside this conversation. */
 function handedOffOrientation(way: Pick<RespondWay, 'gate_id' | 'step'>): string {
