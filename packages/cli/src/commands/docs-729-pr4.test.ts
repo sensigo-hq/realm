@@ -637,9 +637,10 @@ describe('#964 — the Slack guide and the CHANGELOG on a reminder after the com
     // limit … has passed by the time a reminder would be posted …, no plain reminder and no escalation
     // are posted" — cells 6, 10 and 11; "and so is the reminder that says the time ran out, if its own
     // time has come by then" — cells 6 (withFinal) and 11; the closing line — the expiry's own,
-    // gate-expiry-timer's cells, unchanged here; "a question with no `on_expiry` is still open … its
-    // reminders follow the rules above" — cell 6b; "within a minute of waking" / "up to a minute after
-    // waking" — the store clock's own bound, core utils/clock.test.ts (its hop), not re-measured here;
+    // slack-question-post-729-pr6b.test.ts check 3, unchanged here; "a question with no `on_expiry` is
+    // still open … its reminders follow the rules above" — cell 6b; "within a minute of waking" / "up
+    // to a minute after waking" — the store clock's own bound, core utils/clock.test.ts (its hop), not
+    // re-measured here;
     // "a reminder more than a minute late is counted to the moment it is posted" — cells 1, 2 and
     // slack-reminder-late-fire-715b.test.ts's second cell. (a) red when the page or the CHANGELOG no
     // longer holds the words, or an old clause is back; (b) prints the sentence.
