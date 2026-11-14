@@ -25,7 +25,6 @@ import {
   agentRenderedList,
   composeWaysOn,
   narrowForDoor,
-  COND_TAGS,
   NO_REMEDY_CAUSES,
   UNAVAILABLE_CODES,
   type ComposedWays,
@@ -225,19 +224,6 @@ function refusalOf(
 }
 
 /** A way's identity: its verb and its target (the linking pass's terms). */
-/** #627 W: the MCP door on `asked`'s fallback row (a session whose client shows no forms). */
-const FALLBACK_DOOR: DoorPolicy = {
-  door: 'mcp',
-  serves: ['agent', 'asked_person'],
-  route: 'mcp',
-  source: { kind: 'default', ref: 'test' },
-  answers: {
-    value: 'asked',
-    source: { kind: 'default', ref: 'test' },
-    forms: { shown: false, source: { kind: 'negotiated', ref: 'test' } },
-  },
-};
-
 function keyOf(way: WayOn): string {
   switch (way.verb) {
     case 'respond':
@@ -1180,39 +1166,6 @@ describe('#729 PR-0 — the laws over curated run states', () => {
       // (a) red when a judge offers a way its admission refuses, or admits one it does not offer;
       //     (b) prints the state's name and both sets of keys (ids, verbs).
       expect(admitted.sort(), `[${state.name}] admitted vs offered`).toEqual(offered.sort());
-      // #627 W (cell 31): the same law at the MCP door's fallback row, where the agent's `respond`
-      // carries the `client_prompt` condition. No argument discharges it and admission does not
-      // wait on it — the client discharges it outside Realm (`tag: 'client'`) — so `client`-tagged
-      // conditions are filtered out of the compared set: then the door offers the agent exactly
-      // the ways (and the conditions) the composition offers. That admission never waits on the
-      // condition holds by STRUCTURE, not by this cell: `admitWay` takes no door policy, so no
-      // core red can make it wait (correction 1, C5d). The red this cell runs: (a) the door adds
-      // a Realm-judged condition beside `client_prompt` (break c37), or the filter is dropped (the
-      // fallback respond's extra condition shows); (b) prints the state's name and each way's key
-      // with its conditions.
-      const withConds = (w: WayOn): string =>
-        `${keyOf(w)}|${JSON.stringify(
-          w.conditions.filter(
-            (c) => !('tag' in c && (COND_TAGS as readonly string[]).includes(c.tag)),
-          ),
-        )}`;
-      const fallback = narrowForDoor(composed, FALLBACK_DOOR);
-      const atDoor = fallback.ways
-        .filter(
-          (w) =>
-            w.for.includes('agent') &&
-            w.verb !== 'register' &&
-            !(w.verb === 'run_step' && w.brief.execution !== 'agent'),
-        )
-        .map(withConds);
-      const composedOffered = composed.ways
-        .filter(
-          (w) => w.verb !== 'register' && !(w.verb === 'run_step' && w.brief.execution !== 'agent'),
-        )
-        .map(withConds);
-      expect(atDoor.sort(), `[${state.name}] fallback door vs composition`).toEqual(
-        composedOffered.sort(),
-      );
       // Q3 HELD: an eligible auto step a caller names is admitted as today, never offered (advance
       // is the act) — exactly the auto steps advance owes.
       const owed = composed.ways.flatMap((w) =>

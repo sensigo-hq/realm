@@ -58,7 +58,8 @@ async function connect() {
   const h = await makeTempHome();
   handles.push(h);
   const { runStore, workflowStore } = h.stores;
-  const server = createRealmMcpServer({ ...h.stores });
+  // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+  const server = createRealmMcpServer({ ...h.stores, gateAnswers: 'permitted' });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'operator-ending-625', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

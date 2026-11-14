@@ -26,11 +26,14 @@ import {
 import { answerHealth } from '../lib/health-address.js';
 import { bindFailureLine } from '../lib/bind-failure.js';
 import { cliDisclosureProvider, writerCtx, writerInstalled } from '../output/writer.js';
+import { warnDeprecated } from '../output/deprecations.js';
 import {
   checkValueLine,
   gateAnswersStartLine,
+  offeredGivenToProgram,
   readBinDoorSettings,
   DEV_MODE_ANSWER_WARNING,
+  OFFERED_DEPRECATION_ID,
 } from '../lib/gate-answers-door.js';
 import { measureSeparation, renderSeparation, systemProbes } from '../lib/separation-check.js';
 
@@ -143,7 +146,8 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
     // #729 PR-3 (M-3): under the CLI's writer, every reply is masked with this process's set,
     // declared part included; embedded without it, the server's own default applies.
     ...(writerInstalled() ? { disclosureProvider: cliDisclosureProvider } : {}),
-    // #627 W: one stateless request per server — it sends no forms, so `asked` is its fallback.
+    // #627 W: one stateless request per server — it sends no forms, so under `asked` no client gets a
+    // way to answer here (the start line says so; no connect line is passed).
     statelessHttp: true,
     ...(gateAnswersFlag !== undefined ? { gateAnswersFlag } : {}),
     // #627 W (§5.8): the principal this door authenticates — the shared token names no one; dev mode
@@ -306,7 +310,7 @@ export const serveCommand = new Command('serve')
   )
   .option(
     '--gate-answers <value>',
-    'How this server handles gate answers: asked (the default), offered or withheld. The most restrictive of this flag and REALM_MCP_GATE_ANSWERS wins.',
+    'How this server handles gate answers: asked (the default), permitted or withheld. The most restrictive of this flag and REALM_MCP_GATE_ANSWERS wins.',
   )
   .option(
     '--form-wait-seconds <seconds>',
@@ -331,6 +335,10 @@ export const serveCommand = new Command('serve')
       console.error(settings.line);
       process.exit(1);
     }
+    // The gate-answers default (2026-11-14; PR #1167 correction 1, item 11): the old name
+    // `offered`, given as the flag or the variable, through the deprecation channel (CP-W) — once
+    // per command, at start and under --check.
+    if (offeredGivenToProgram(settings.answers)) warnDeprecated(OFFERED_DEPRECATION_ID);
     if (options.check === true) {
       // W-s6 and the separation check (Part K): nothing is started.
       console.log(
@@ -421,9 +429,10 @@ export const serveCommand = new Command('serve')
     if (!devMode) {
       console.log('Authentication: Bearer token (REALM_SERVE_TOKEN)');
     }
-    // #627 W: the start line (stdout on this door), and W-s5 when dev mode leaves an answer tool open.
+    // #627 W: the start line (stdout on this door), and W-s5 when dev mode leaves the answer tool open
+    // (under `permitted` only: no other value lists it).
     console.log(gateAnswersStartLine(settings.answers, true));
-    if (devMode && settings.answers.value !== 'withheld') console.warn(DEV_MODE_ANSWER_WARNING);
+    if (devMode && settings.answers.value === 'permitted') console.warn(DEV_MODE_ANSWER_WARNING);
 
     // Issue #960: on Ctrl+C or SIGTERM `/health` answers 503 at once (U2); with `--shutdown-drain N`
     // the server goes on serving for N seconds; then it stops accepting, and each open connection

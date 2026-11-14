@@ -81,6 +81,9 @@ async function connect(registry?: ExtensionRegistry) {
   const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
     ...h.stores,
+    // The gate-answers default (2026-11-14): these pages' examples show the agent answering, on a
+    // server started with --gate-answers permitted.
+    gateAnswers: 'permitted',
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();

@@ -99,7 +99,12 @@ async function withServer<T>(
       new StdioClientTransport({
         command: process.execPath,
         args: [opts.withHandler === true ? handlerEntry(home) : SERVER_ENTRY],
-        env: { ...process.env, HOME: home } as Record<string, string>,
+        // The gate-answers default (2026-11-14): the follower answers with the answer tool, which
+        // only permitted lists (the handler entry reads the variable through the library).
+        env: { ...process.env, HOME: home, REALM_MCP_GATE_ANSWERS: 'permitted' } as Record<
+          string,
+          string
+        >,
         stderr: 'pipe',
       }),
     ),

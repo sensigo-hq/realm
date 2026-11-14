@@ -50,11 +50,11 @@ To choose how gate answers are handled, put the flag in the same config. For exa
 claude mcp add realm -- realm mcp --gate-answers withheld
 ```
 
-Set it here, or in the entry's `env` block as `REALM_MCP_GATE_ANSWERS`: a variable you export in a shell may not reach a server the assistant starts (the MCP SDK's client starts servers with a reduced environment). The default, `asked`, sends each question to the person as a form in an app that shows forms. See [Gate answers over MCP](../reference/mcp/gate-answers.md). Added after version 0.47.0.
+Set it here, or in the entry's `env` block as `REALM_MCP_GATE_ANSWERS`: a variable you export in a shell may not reach a server the assistant starts (the MCP SDK's client starts servers with a reduced environment). By default, no agent gets a tool that records a gate answer through Realm's MCP server: in an app that shows forms the person answers in the app's form; elsewhere a person answers in a terminal on the server's machine with `realm run respond`. See [Gate answers over MCP](../reference/mcp/gate-answers.md). Added after version 0.47.0.
 
 ## 2. Check what the assistant sees
 
-The assistant now has ten tools under `withheld` (the value step 1's example sets); eleven under `asked` or `offered` (`advance_run` was added after version 0.46.0, which has ten). The table lists the eleven:
+The assistant now has ten tools under `withheld` (the value step 1's example sets), and under the default `asked` in an app that shows no forms; eleven under `asked` in an app that shows forms, and under `permitted` (`advance_run` was added after version 0.46.0, which has ten). The table lists the eleven of `permitted`:
 
 | Tool                    | What it does                                                                                   |
 | ----------------------- | ---------------------------------------------------------------------------------------------- |
@@ -70,7 +70,7 @@ The assistant now has ten tools under `withheld` (the value step 1's example set
 | `create_workflow`       | Lets the assistant define a small workflow of its own and start it.                            |
 | `append_trace`          | Lets the assistant record notes while it works on a step.                                      |
 
-In an app that shows forms, under the default `asked`, `present_question` takes the place of `submit_human_response`; under `withheld` neither is listed (added after version 0.47.0).
+`submit_human_response` is listed under `permitted` only. Under the default `asked`, in an app that shows forms, `present_question` takes its place; in an app without forms, and under `withheld`, neither is listed (added after version 0.47.0; changed after version 0.49.0: before, the agent kept `submit_human_response` in an app without forms).
 
 Ask the assistant to list the Realm workflows. With one workflow registered, `list_workflows` returns:
 
@@ -120,8 +120,8 @@ agent_action: provide_input
 
 When the run reaches a gate, the reply has `status: confirm_required`, the text to show you, and the choices. What happens next follows the server's [gate-answers value](../reference/mcp/gate-answers.md):
 
-- Under the default `asked`, an app that shows forms asks you in its own form, and the assistant gets no tool that records an answer. An app that shows no forms keeps `submit_human_response`, and the app is asked to have you approve each call; some apps and settings skip that.
-- Under `offered`, the briefing instructs the assistant to show you that text, wait for your choice, and pass it on with `submit_human_response`.
+- By default, no agent gets a tool that records a gate answer through Realm's MCP server: in an app that shows forms the person answers in the app's form; elsewhere a person answers in a terminal on the server's machine with `realm run respond`.
+- Under `permitted`, the briefing instructs the assistant to show you that text, wait for your choice, and pass it on with `submit_human_response`. `offered`, its name until version 0.49.0, still works.
 - Under `withheld`, you answer from a terminal: `realm run inspect <run_id>`, then `realm run respond <run_id> --gate <gate_id> --choice <choice>`.
 
 Where it has the answer tool, the assistant answers by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. That call includes the `claim_token` of the reply that opened the gate, which shows the answer comes from the conversation that opened it. It is never required.
@@ -143,7 +143,7 @@ It prints:
 ```text
 Realm MCP server listening on http://127.0.0.1:3001/
 Authentication: Bearer token (REALM_SERVE_TOKEN)
-Gate answers over MCP: asked (the default). On this server no chat app gets forms: under asked every client keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that. To keep the agent from answering in every app, set --gate-answers withheld. To answer from a terminal: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>.
+Gate answers over MCP: asked (the default). No tool on this server records a gate answer, and this server sends no forms. To answer a waiting question, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>; the agent tells the user the run id. Another Realm server or CLI on the same store can still record answers. To let the agent answer, set --gate-answers permitted.
 ```
 
 Point the platform at that address and give it the token as a Bearer token. A request without the token gets `401`.

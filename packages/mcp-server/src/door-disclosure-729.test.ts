@@ -633,7 +633,7 @@ describe('#729 PR-3 correction 2 — the door', () => {
   it('G1-a: with no run store handed in, every tool that reads a run asks the provider with that run', async () => {
     const spy = providerSpy();
     const { call } = await connectNoRunStore(
-      { disclosureProvider: spy.disclosureProvider, gateAnswers: 'offered' },
+      { disclosureProvider: spy.disclosureProvider, gateAnswers: 'permitted' },
       undefined,
     );
     /** Whether the provider was asked with `runId` during `name`'s call. */
@@ -793,7 +793,7 @@ describe('#729 PR-3 correction 2 — the door', () => {
 
   it("G4: an outcome's `by.name` (a name the answerer typed) is hidden when it holds a value", async () => {
     vi.stubEnv(CANARY_NAME, CANARY);
-    const { call } = await connect({ gateAnswers: 'offered' }, [GATED]);
+    const { call } = await connect({ gateAnswers: 'permitted' }, [GATED]);
     const gated = await call('start_run', { workflow_id: GATED.id, params: {} });
     const answer = (
       gated['next_actions'] as Array<{ instruction: { call_with: Record<string, unknown> } }>

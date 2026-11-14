@@ -157,6 +157,8 @@ async function connect() {
   for (const d of [W3, WK, WK2, W3H, W2, WA, ...F1_WORKFLOWS]) await workflowStore.register(d);
   const server = createRealmMcpServer({
     ...h.stores,
+    // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+    gateAnswers: 'permitted',
     registry: registry(),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();

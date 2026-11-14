@@ -193,7 +193,7 @@ Started this way, the server's log shows:
 ```text
 Realm MCP server listening on http://127.0.0.1:3001/
 Authentication: Bearer token (REALM_SERVE_TOKEN)
-Gate answers over MCP: asked (the default). On this server no chat app gets forms: under asked every client keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that. To keep the agent from answering in every app, set --gate-answers withheld. To answer from a terminal: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>.
+Gate answers over MCP: asked (the default). No tool on this server records a gate answer, and this server sends no forms. To answer a waiting question, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>; the agent tells the user the run id. Another Realm server or CLI on the same store can still record answers. To let the agent answer, set --gate-answers permitted.
 ```
 
 Stopped with `kill -9`, the server was started again by systemd and answered the next request.

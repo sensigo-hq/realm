@@ -102,19 +102,21 @@ describe('#616 PR-2c c10b-3a — createRealmMcpServerOnHome', () => {
     });
   });
 
-  it('the rest of the options reach the server: gateAnswers withheld lists one tool fewer', async () => {
-    const withheld = await createRealmMcpServerOnHome({
+  it('the rest of the options reach the server: gateAnswers permitted lists one tool more', async () => {
+    // The gate-answers default (2026-11-14): the default lists no answer tool in a session without
+    // forms (10 tools), so the option that changes the count is permitted (11).
+    const permitted = await createRealmMcpServerOnHome({
       home: freshHome(),
-      gateAnswers: 'withheld',
+      gateAnswers: 'permitted',
     });
-    closers.push(withheld.close);
+    closers.push(permitted.close);
     const plain = await createRealmMcpServerOnHome({ home: freshHome() });
     closers.push(plain.close);
     // (a) red when the entry drops the options beside `home`; (b) prints both counts.
     expect({
-      withheld: await toolCount(withheld.server),
+      permitted: await toolCount(permitted.server),
       plain: await toolCount(plain.server),
-    }).toEqual({ withheld: 10, plain: 11 });
+    }).toEqual({ permitted: 11, plain: 10 });
   });
 });
 

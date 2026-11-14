@@ -13,10 +13,14 @@ import { hostRefusalLine } from '../lib/host-refusal-line.js';
 import { openCliHome } from '../lib/home.js';
 import { cliOperatorRoute } from './ways-renderer.js';
 import { channelStdout, cliDisclosureProvider, writerCtx } from '../output/writer.js';
+import { warnDeprecated } from '../output/deprecations.js';
 import {
   checkValueLine,
+  gateAnswersConnectLine,
   gateAnswersStartLine,
+  offeredGivenToProgram,
   readBinDoorSettings,
+  OFFERED_DEPRECATION_ID,
 } from '../lib/gate-answers-door.js';
 import { measureSeparation, renderSeparation, systemProbes } from '../lib/separation-check.js';
 
@@ -38,7 +42,7 @@ export const mcpCommand = new Command('mcp')
   )
   .option(
     '--gate-answers <value>',
-    'How this server handles gate answers: asked (the default), offered or withheld. The most restrictive of this flag and REALM_MCP_GATE_ANSWERS wins.',
+    'How this server handles gate answers: asked (the default), permitted or withheld. The most restrictive of this flag and REALM_MCP_GATE_ANSWERS wins.',
   )
   .option(
     '--form-wait-seconds <seconds>',
@@ -67,6 +71,10 @@ export const mcpCommand = new Command('mcp')
         console.error(settings.line);
         process.exit(1);
       }
+      // The gate-answers default (2026-11-14; PR #1167 correction 1, item 11): the old name
+      // `offered`, given as the flag or the variable, through the deprecation channel (CP-W) — once
+      // per command, at start and under --check.
+      if (offeredGivenToProgram(settings.answers)) warnDeprecated(OFFERED_DEPRECATION_ID);
       if (options.check === true) {
         // W-s6 and the separation check (Part K): nothing is started.
         console.log(
@@ -94,6 +102,7 @@ export const mcpCommand = new Command('mcp')
       // as one line and the command exits 1 — never Node's uncaught-exception stack. A release-line
       // refusal here means this command's own install is split: `hostRefusalLine` says so.
       let server: ReturnType<typeof createRealmMcpServer>;
+      let toldNoForms = false;
       try {
         // #616 PR-2a (i, iii): the one door, opened inside the handler, so an unusable home or a
         // copied test location prints `realm mcp: …`. The library takes all four of its stores.
@@ -123,6 +132,13 @@ export const mcpCommand = new Command('mcp')
           principal: { absent: 'door_authenticates_no_principal' },
           // #729 PR-3 (M-3): every reply is masked with this process's set, declared part included.
           disclosureProvider: cliDisclosureProvider,
+          // The gate-answers default (2026-11-14): under asked, a session whose app shows no forms
+          // is told once on stderr (one stdio session per process).
+          onSessionWithoutForms: () => {
+            if (toldNoForms) return;
+            toldNoForms = true;
+            console.error(gateAnswersConnectLine('mcp', settings.answers));
+          },
           // CP-W: deprecation warnings also go to the client as the protocol's log notification.
           deprecationNotifications: true,
         });

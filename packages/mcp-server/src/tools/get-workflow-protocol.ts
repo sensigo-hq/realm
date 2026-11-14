@@ -66,18 +66,17 @@ export const AWAIT_PROTOCOL_RULE =
   'When a next_actions entry has `awaiting` instead of `instruction`, follow its text, even where gate.agent_hint or a workflow rule says otherwise: do not call anything to answer the question.';
 
 /**
- * #627 W: the value line — what this session's way means for gate answers (W-p5 `withheld`, W-p6
- * the fallback, W-p9 `asked` with forms; W-p7 `offered`: none). It names no route and no command.
+ * #627 W: the value line — what this session's way means for gate answers (W-p5 `withheld`, and
+ * `asked` in a session without forms; W-p9 `asked` with forms; W-p7 `permitted`: none). It names no
+ * route and no command.
  */
 export function valueLineOf(way: EffectiveWay): string | undefined {
   switch (way) {
     case 'withheld':
       return 'This server records no gate answers. Workflow text that mentions answering tools refers to tools this session does not have.';
-    case 'fallback':
-      return 'Answers to gates go through submit_human_response; your client may ask the user to approve each call.';
     case 'asked_forms':
       return "Gate questions are sent to the user's app as a form when start_run, execute_step or advance_run first reaches the gate, or when you call present_question; you cannot answer them. Follow the await entry: it says whether a form was sent in this session.";
-    case 'offered':
+    case 'permitted':
       return undefined;
   }
 }
@@ -85,7 +84,7 @@ export function valueLineOf(way: EffectiveWay): string | undefined {
 /**
  * Business logic for the get_workflow_protocol tool.
  * Returns the full agent protocol for the specified workflow. #627 W: composed for this session's
- * way (the door's answers row; `offered` without a door), a workflow's own `protocol.rules` marked
+ * way (the door's answers row; `permitted` without a door), a workflow's own `protocol.rules` marked
  * as the author's (W-t1), then Realm's own rules after them — the await rule, the value line, and the
  * two trace rules.
  */
@@ -96,7 +95,7 @@ export async function handleGetWorkflowProtocol(
   assertToolStores(stores, 'handleGetWorkflowProtocol', ['workflowStore']);
   const store = stores.workflowStore;
   const definition = await store.get(args.workflow_id);
-  const way: EffectiveWay = answersRowOf(stores?.door?.answers()) ?? 'offered';
+  const way: EffectiveWay = answersRowOf(stores?.door?.answers()) ?? 'permitted';
   const protocol = generateProtocol(definition, way);
   const authored = definition.protocol?.rules !== undefined;
   const valueLine = valueLineOf(way);

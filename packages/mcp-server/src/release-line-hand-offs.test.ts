@@ -225,6 +225,8 @@ describe('a registry the server’s registry provider returned is named by the t
     } as never)) as { run_id: string };
     const server = createRealmMcpServer({
       ...h.stores,
+      // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+      gateAnswers: 'permitted',
       registryProvider: async () => reg as never,
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
