@@ -24,6 +24,7 @@ import {
   type QuestionView,
   type RespondWay,
   type Snapshot,
+  type Clock,
   judgedSnapshotOf,
   reminderScheduleOf,
 } from '@sensigo/realm';
@@ -526,11 +527,12 @@ function reminderFiring(
   isFinal: boolean,
   count: number,
   scheduledAt: Date,
+  now: Date,
   listens: boolean,
 ): string {
-  // #715 (b) (02 §D.3, D-29): the notice is composed at the occurrence's SCHEDULED instant — "open for
-  // (when − opened_at)", "expired (when − expires_at) ago" — never at the host's clock.
-  const now = scheduledAt;
+  // #715 (b) (02 §D.3, D-29) and #964: the notice is composed at `now` — the occurrence's scheduled
+  // instant when it fires at most REMINDER_GRACE_MS late, else the store clock's reading when it
+  // fires — "open for (now − opened_at)", "expired (now − expires_at) ago"; never the host's clock.
   const base = {
     run_id: runId,
     gate,
@@ -555,8 +557,11 @@ function reminderFiring(
   return renderSlack(notice, { mode: 'bot', listens }).text;
 }
 
-/** The longest delay Node's `setTimeout` keeps (2^31−1 ms, 24.8 days); a longer one runs after 1 ms. */
-const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+/**
+ * #964: a reminder or escalation that fires at most this late is composed at its scheduled instant,
+ * as when on time; a later one (the machine slept) is composed at the reading, so its age is true.
+ */
+const REMINDER_GRACE_MS = 60_000;
 
 /**
  * Starts reminder and escalation timers for an open gate.
@@ -570,12 +575,19 @@ const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
  * `reminder_max` and lands at or after `expires_at`, is the FINAL one, with the enforcement fact's
  * wording (never soliciting a doomed response). A notifier started late (a restarted `realm agent`)
  * registers only the occurrences its reading has not passed — missed ones are skipped, never sent in
- * a burst. Each notice is composed at its occurrence's scheduled instant. When the author declared NO
- * `reminder_seconds`, the OPERATOR fallback (`reminderIntervalMs`) stays SINGLE-SHOT ([F-A2-3]), as
- * the ESCALATION leg does: one each, `reminderIntervalMs` / `escalationThresholdMs` after the
- * snapshot's reading. The timers stay host timers (03 §A.6, D6-64: a duration from this process's
- * start). Returns a cleanup function that clears every pending timer — must be called when the gate
- * resolves. Exported for testing.
+ * a burst. When the author declared NO `reminder_seconds`, the OPERATOR fallback
+ * (`reminderIntervalMs`) stays SINGLE-SHOT ([F-A2-3]), as the ESCALATION leg does: one each,
+ * `reminderIntervalMs` / `escalationThresholdMs` after the snapshot's reading.
+ *
+ * #964: every one waits on the store's `clock`, which re-reads the wall clock at least once a minute,
+ * so after the machine sleeps the waits that came due fire together within a minute of waking. Each
+ * waiter reads the clock once when it fires: at most REMINDER_GRACE_MS late it is composed at its
+ * scheduled instant, later at the reading; an occurrence posts only when no later occurrence of the
+ * cycle (the final included) is due at that reading, so one post replaces a burst and the occurrences
+ * not yet due stay on their instants; and when the gate declares `on_expiry`, a firing at or after
+ * `expires_at` posts nothing but the final reminder (the expiry closes the question and says so).
+ * Returns a cleanup function that cancels every waiter — must be called when the gate resolves.
+ * Exported for testing.
  */
 export function startGateReminderTimers(
   botToken: string,
@@ -584,6 +596,7 @@ export function startGateReminderTimers(
   opened: Snapshot,
   reminderIntervalMs: number,
   escalationThresholdMs: number,
+  clock: Clock,
   runId = '',
   display?: string,
   listens = true,
@@ -591,68 +604,79 @@ export function startGateReminderTimers(
   const gate = opened.record.pending_gate;
   if (gate === undefined) return (): void => {};
   const startMs = opened.at.getTime();
-  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  const cancels: Array<() => void> = [];
   const post = (text: string, what: string): void => {
     postSlackReply(botToken, channelId, threadTs, text).catch((err) => {
       console.warn(`${what} post failed: ${err instanceof Error ? err.message : String(err)}`);
     });
   };
-  // Node runs a `setTimeout` longer than 2^31−1 ms (24.8 days) after 1 ms, so a timer further away
-  // than that is armed in hops: each hop waits at most that long and arms the next for what is left;
-  // only the last calls `fire`. `timers[slot]` always holds the chain's live hop, so the cleanup below
-  // clears the hop that is waiting, and no hop is left to arm another.
-  const at = (whenMs: number, fire: () => void): void => {
-    const slot = timers.length;
-    const hop = (remainingMs: number): void => {
-      const waitMs = Math.min(remainingMs, MAX_TIMER_DELAY_MS);
-      timers[slot] = setTimeout(() => {
-        if (remainingMs > waitMs) hop(remainingMs - waitMs);
-        else fire();
-      }, waitMs);
-    };
-    hop(Math.max(0, whenMs - startMs));
+  // #964: a waiter on the store's clock, given the clock's reading when it fires.
+  const at = (whenMs: number, fire: (nowMs: number) => void): void => {
+    cancels.push(clock.at(new Date(whenMs), () => fire(clock.now().getTime())));
   };
+  const composedAt = (whenMs: number, nowMs: number): Date =>
+    new Date(nowMs - whenMs > REMINDER_GRACE_MS ? nowMs : whenMs);
+  const expiresAtMs = gate.expires_at !== undefined ? parseStamp(gate.expires_at) : undefined;
+  // A question its expiry closes: from `expires_at` on, the expiry's own closing line tells the person.
+  const closedBy = (nowMs: number): boolean =>
+    gate.on_expiry !== undefined && expiresAtMs !== undefined && nowMs >= expiresAtMs;
 
   const schedule = reminderScheduleOf(opened);
   if (schedule !== undefined) {
     // The authored cycle: every scheduled occurrence this reading has not passed, then the final one.
+    const cycle: Array<{ k: number; whenMs: number; isFinal: boolean }> = [];
     for (const occurrence of schedule.occurrences) {
       if (schedule.next === undefined || occurrence.k < schedule.next.k) continue;
-      const whenMs = parseStamp(occurrence.at)!;
-      at(whenMs, () =>
-        post(
-          reminderFiring(gate, runId, display, false, occurrence.k, new Date(whenMs), listens),
-          'Reminder',
-        ),
-      );
+      cycle.push({ k: occurrence.k, whenMs: parseStamp(occurrence.at)!, isFinal: false });
     }
     const openedAtMs = parseStamp(gate.opened_at);
     const finalK = schedule.occurrences.length + 1;
     if (openedAtMs !== undefined && gate.expires_at !== undefined && finalK <= schedule.max) {
       const finalMs = openedAtMs + finalK * gate.reminder_seconds! * 1000;
-      if (finalMs >= startMs) {
-        at(finalMs, () =>
-          post(
-            reminderFiring(gate, runId, display, true, finalK, new Date(finalMs), listens),
-            'Reminder',
-          ),
+      if (finalMs >= startMs) cycle.push({ k: finalK, whenMs: finalMs, isFinal: true });
+    }
+    for (const { k, whenMs, isFinal } of cycle) {
+      at(whenMs, (nowMs) => {
+        if (cycle.some((later) => later.k > k && later.whenMs <= nowMs)) return;
+        if (!isFinal && closedBy(nowMs)) return;
+        const text = reminderFiring(
+          gate,
+          runId,
+          display,
+          isFinal,
+          k,
+          new Date(whenMs),
+          composedAt(whenMs, nowMs),
+          listens,
         );
-      }
+        post(text, 'Reminder');
+      });
     }
   } else {
     // [F-A2-3]: the operator fallback — one reminder, `reminderIntervalMs` after this reading.
     const whenMs = startMs + reminderIntervalMs;
-    const expiresAtMs = gate.expires_at !== undefined ? parseStamp(gate.expires_at) : undefined;
     const isFinal = gate.expires_at !== undefined && (expiresAtMs ?? NaN) <= whenMs;
-    at(whenMs, () =>
-      post(reminderFiring(gate, runId, display, isFinal, 1, new Date(whenMs), listens), 'Reminder'),
-    );
+    at(whenMs, (nowMs) => {
+      if (!isFinal && closedBy(nowMs)) return;
+      const text = reminderFiring(
+        gate,
+        runId,
+        display,
+        isFinal,
+        1,
+        new Date(whenMs),
+        composedAt(whenMs, nowMs),
+        listens,
+      );
+      post(text, 'Reminder');
+    });
   }
 
   const escalationMs = startMs + escalationThresholdMs;
-  at(escalationMs, () => {
-    // #729 PR-4 (02): the escalation is the `reminder` notice with its owner named, composed at its
-    // scheduled instant (#715 (b), D-29).
+  at(escalationMs, (nowMs) => {
+    if (closedBy(nowMs)) return;
+    // #729 PR-4 (02): the escalation is the `reminder` notice with its owner named, its own post,
+    // composed as a reminder is (#715 (b), D-29; #964).
     const text = renderSlack(
       composePersonNotice({
         kind: 'reminder',
@@ -663,7 +687,7 @@ export function startGateReminderTimers(
         scheduled_at: new Date(escalationMs).toISOString(),
         count: 1,
         escalation: true,
-        now: new Date(escalationMs),
+        now: composedAt(escalationMs, nowMs),
       }),
       { mode: 'bot', listens },
     ).text;
@@ -671,8 +695,8 @@ export function startGateReminderTimers(
   });
 
   return () => {
-    for (const timer of timers) clearTimeout(timer);
-    timers.length = 0;
+    for (const cancel of cancels) cancel();
+    cancels.length = 0;
   };
 }
 
@@ -1096,6 +1120,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           opened,
           gateReminderIntervalMs,
           gateEscalationThresholdMs,
+          store.clock,
           runId,
           definition.steps[gate.step_name]?.display,
           listens,

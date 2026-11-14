@@ -26,6 +26,7 @@ import type {
 } from '@sensigo/realm';
 import {
   ExtensionRegistry,
+  systemClock,
   executeStep,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   answerArrivalOf,
@@ -355,6 +356,7 @@ describe('startGateReminderTimers', () => {
       heldAt(gate),
       500, // reminderIntervalMs
       5000, // escalationThresholdMs
+      systemClock,
     );
 
     await vi.advanceTimersByTimeAsync(600);
@@ -388,6 +390,7 @@ describe('startGateReminderTimers', () => {
       heldAt(gate),
       10, // reminderIntervalMs — fires fast
       20, // escalationThresholdMs — fires even faster for escalation
+      systemClock,
     );
 
     await vi.advanceTimersByTimeAsync(50);
@@ -420,6 +423,7 @@ describe('startGateReminderTimers', () => {
       heldAt(gate),
       10,
       20,
+      systemClock,
     );
 
     await vi.advanceTimersByTimeAsync(50);
@@ -446,6 +450,7 @@ describe('startGateReminderTimers', () => {
       heldAt(gate),
       200,
       400,
+      systemClock,
     );
 
     // Clear before any timers fire.
