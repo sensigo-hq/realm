@@ -17,7 +17,9 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { writeSync } from 'node:fs';
 import type { Readable, Writable } from 'node:stream';
+import { saidIds } from '@sensigo/realm';
 import {
+  DEPRECATIONS_SAID_ENV,
   RELAY_CHILD_ENV,
   RELAY_KEY_ENV,
   addDeclaredDisclosure,
@@ -137,6 +139,8 @@ function startRelay(deps: RelayDeps): void {
           ...process.env,
           [RELAY_CHILD_ENV]: String(process.pid),
           [RELAY_KEY_ENV]: spanKeyHex(),
+          // CP-W (W3): the deprecation ids this process has said, so the worker does not say them again.
+          [DEPRECATIONS_SAID_ENV]: `${process.pid}:${saidIds().join(',')}`,
         },
       },
     );

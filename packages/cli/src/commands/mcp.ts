@@ -135,6 +135,8 @@ export const mcpCommand = new Command('mcp')
             toldNoForms = true;
             console.error(gateAnswersConnectLine('mcp', settings.answers));
           },
+          // CP-W: deprecation warnings also go to the client as the protocol's log notification.
+          deprecationNotifications: true,
         });
       } catch (err) {
         console.error(hostRefusalLine('mcp', err));

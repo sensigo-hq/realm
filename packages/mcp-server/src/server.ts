@@ -36,6 +36,7 @@ import { registerCreateWorkflow } from './tools/create-workflow.js';
 import { registerAppendTrace } from './tools/append-trace.js';
 import { registerStartRunBatch } from './tools/start-run-batch.js';
 import { doorDisclosureOf, type DoorDisclosure, type OperatorRoute } from './render-reply.js';
+import { setDeprecationSink } from './deprecations.js';
 import { registerPresentQuestion } from './tools/present-question.js';
 import { ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL } from './tools/abandon-run.js';
 import {
@@ -181,6 +182,13 @@ export interface RealmMcpServerOptions {
    * in a session whose client shows forms.
    */
   onSessionWithoutForms?: () => void;
+  /**
+   * CP-W: declare the `logging` capability and send deprecation warnings as the protocol's log
+   * notifications (level `warning`), through this server — the stdio server sets it; `realm serve`
+   * (a server per request) does not, and gets the stderr line only. The process's last server built
+   * with it is the one the door sends through.
+   */
+  deprecationNotifications?: boolean;
   /**
    * #627 W (§5.8): the principal of this server's transport, stamped on every answer it records — an
    * API key's id, `realm serve`'s shared token, or a door's typed absence. Absent ⇒
@@ -386,9 +394,13 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
             source_kind: door.gateAnswers.source.kind,
           },
         },
+        // CP-W: so the SDK delivers a deprecation's log notification, dropped below the client's level.
+        ...(options.deprecationNotifications === true ? { logging: {} } : {}),
       },
     },
   );
+  // CP-W: the deprecation door sends its notification through this server.
+  if (options.deprecationNotifications === true) setDeprecationSink(server);
 
   // When no registry is provided, use the default registry that pre-registers built-in
   // adapters. When a registry is provided, the caller is responsible for its contents.

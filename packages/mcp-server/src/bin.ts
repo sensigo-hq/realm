@@ -59,6 +59,8 @@ try {
       toldNoForms = true;
       console.error(gateAnswersConnectLine('realm-mcp', settings.answers));
     },
+    // CP-W: deprecation warnings also go to the client as the protocol's log notification.
+    deprecationNotifications: true,
   }));
 } catch (err) {
   logMasked(`realm-mcp: ${describeThrown(err).replace(/\s*\n\s*/g, ' ')}`);

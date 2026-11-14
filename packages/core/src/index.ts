@@ -1185,3 +1185,15 @@ export type {
   FormWaitSetting,
   FormWaitInput,
 } from './engine/gate-answers-setting.js';
+
+// CP-W: the deprecation channel's data — the table, its validator, the line, and the ids said in
+// this process. Data only; the CLI and the MCP server print.
+export {
+  DEPRECATIONS,
+  validateDeprecations,
+  deprecationLine,
+  markSaid,
+  saidIds,
+  seedSaid,
+} from './deprecations/deprecations.js';
+export type { DeprecationEntry } from './deprecations/deprecations.js';
