@@ -83,8 +83,9 @@ describe('U1b Unit 2 — the docs say what the four doors do', () => {
   });
 
   it('realm-workflow.md, the last paragraph of the `realm workflow run` section', () => {
-    // (s4) the masking and the prompt on the terminal; (sig-s) `kill` on the first process; (z)
-    // and (z2) Ctrl-Z and `fg`.
+    // (s4) the masking and the prompt on the terminal; (s4b) both outputs in a file, the answer
+    // typed without seeing the prompt; (sig-s) `kill` on the first process; (z) and (z2) Ctrl-Z and
+    // `fg`.
     claim(
       'docs/reference/cli/realm-workflow.md',
       'When its output goes to a file or a pipe, `realm workflow run` runs its work in a second process and keeps the first to mask what reaches the file or pipe, as `realm agent` does; `kill` on the first process stops both. Its prompts still reach your terminal when your error output is one; with both outputs in a file you type without seeing the prompt, as before. Ctrl-Z at a prompt and `fg` work as on a terminal.',

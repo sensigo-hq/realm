@@ -127,7 +127,8 @@ print(json.dumps({'pid': p.pid, 'code': code, 'tty': fds[master].decode('utf-8',
  * times on the terminal, within a time), `send` (bytes typed; `\\x1a` is Ctrl-Z), `stopped` (the
  * command's stop read with waitpid(WUNTRACED), its signal), `state` (the `/proc` state of the first
  * process and of its child, the worker), `fg` (SIGCONT to the command's group, as a shell's `fg`),
- * `kill`, `touch`, `sleep`, `worker`, `mark` and `since` (what the terminal received after a mark).
+ * `kill`, `touch`, `sleep`, `worker`, `mark` and `since` (what the terminal received after a mark),
+ * `expectlog` (as `expect`, in the log file).
  * Prints what it saw as JSON; a command still running after `exitTimeout` is killed and reported
  * `timedOut`.
  */
@@ -203,6 +204,16 @@ for step in cfg['script']:
         seen_worker = worker()
         events[step[1]] = seen_worker
     elif op == 'touch': open(step[1], 'w').close()
+    elif op == 'expectlog':
+        _, name, text, nth, timeout = step
+        end = time.time() + timeout
+        ok = False
+        while time.time() < end:
+            try: seen = open(cfg['log'], 'rb').read()
+            except OSError: seen = b''
+            if seen.count(text.encode()) >= nth: ok = True; break
+            pump(0.05)
+        events[name] = ok
     elif op == 'mark': events[step[1]] = len(buf)
     elif op == 'since': events[step[1]] = buf[events[step[2]]:].decode('utf-8', 'replace')
 end = time.time() + cfg.get('exitTimeout', 30)
@@ -483,7 +494,7 @@ describe('U1b Unit 2 — a program a handler starts is masked in a log, at each 
     //     when the door prints a receipt (D3); (b) prints the code, the line, the counts.
     expect({
       code: ran.code,
-      line: grandLine(ran.text),
+      line: grandLine(ran.text)?.replace(DECLARED, '<fake>'),
       fake: shown(ran.text),
       disclosure: disclosureLines(ran.text),
     }).toEqual({ code: 0, line: 'grandchild: [REDACTED] end', fake: 0, disclosure: 0 });
@@ -502,7 +513,7 @@ describe('U1b Unit 2 — a program a handler starts is masked in a log, at each 
     // (a) red on the base (the fake whole); (b) prints the code, the line, the counts.
     expect({
       code: ran.code,
-      line: grandLine(ran.text),
+      line: grandLine(ran.text)?.replace(DECLARED, '<fake>'),
       fake: shown(ran.text),
       disclosure: disclosureLines(ran.text),
     }).toEqual({ code: 0, line: 'grandchild: [REDACTED] end', fake: 0, disclosure: 0 });
@@ -551,7 +562,7 @@ describe('U1b Unit 2 — a program a handler starts is masked in a log, at each 
     // (a) red on the base (the fake whole); (b) prints the code, the line, the counts.
     expect({
       code: ran.code,
-      line: grandLine(ran.text),
+      line: grandLine(ran.text)?.replace(DECLARED, '<fake>'),
       fake: shown(ran.text),
       disclosure: disclosureLines(ran.text),
     }).toEqual({ code: 0, line: 'grandchild: [REDACTED] end', fake: 0, disclosure: 0 });
@@ -573,7 +584,7 @@ describe('U1b Unit 2 — a program a handler starts is masked in a log, at each 
       timedOut: r.timedOut,
       promptOnTerminal: r.events['prompt'],
       worker: typeof r.events['worker'] === 'number',
-      line: grandLine(r.log),
+      line: grandLine(r.log)?.replace(DECLARED, '<fake>'),
       completed: r.log.includes('Run complete. Phase: completed'),
       fake: shown(r.log + r.tty),
       disclosure: disclosureLines(r.log),
@@ -586,6 +597,37 @@ describe('U1b Unit 2 — a program a handler starts is masked in a log, at each 
       completed: true,
       fake: 0,
       disclosure: 0,
+    });
+  }, 60_000);
+
+  it('(s4b) `realm workflow run` with stdout and stderr both in a file, stdin a terminal: the answer typed without seeing the prompt is taken, the prompt is in the file, the step’s program prints the fake → [REDACTED]', () => {
+    const wf = wfFile('s4b', autoStep('s', 'grand'));
+    const r = talk('errlog', runArgs(wf), [
+      ['expectlog', 'promptInFile', MOCK_PROMPT, 1, 20],
+      ['worker', 'worker'],
+      ['send', '\r'],
+    ]);
+    // (a) red without the door's call site (one process: the grandchild's bytes land whole in the
+    //     file, fake 1, no worker); (b) prints the code, whether the prompt reached the file, whether
+    //     anything reached the terminal, whether a worker ran, the line and the counts.
+    expect({
+      code: r.code,
+      timedOut: r.timedOut,
+      promptInFile: r.events['promptInFile'],
+      onTerminal: r.tty.includes(MOCK_PROMPT),
+      worker: typeof r.events['worker'] === 'number',
+      line: grandLine(r.log)?.replace(DECLARED, '<fake>'),
+      completed: r.log.includes('Run complete. Phase: completed'),
+      fake: shown(r.log + r.tty),
+    }).toEqual({
+      code: 0,
+      timedOut: false,
+      promptInFile: true,
+      onTerminal: false,
+      worker: true,
+      line: 'grandchild: [REDACTED] end',
+      completed: true,
+      fake: 0,
     });
   }, 60_000);
 
@@ -752,9 +794,9 @@ describe('U1b Unit 2 — what the doors keep', () => {
     );
     const runId = /Run ID: (\S+)/.exec(r.log)?.[1];
     const record = runId === undefined ? undefined : (await home.home.runStore.get(runId)).record;
-    // KEEP: the forward is Unit 1's; this pins the door's wiring — the signal exit goes through
-    // `exitProcess` after the claim's release; (b) prints the code, whether both processes are
-    // gone, and the step's claim and in-progress mark.
+    // KEEP: Unit 1's forward and the claim's release; the exit path is uniform with the other
+    // doors, not discriminated here; (b) prints the code, whether both processes are gone, and the
+    // step's claim and in-progress mark.
     expect({
       code: r.code,
       signal: r.signal,
@@ -849,7 +891,7 @@ describe('U1b Unit 2 — Ctrl-Z at a `realm workflow run` prompt (D5)', () => {
     });
   }, 60_000);
 
-  it('(z3) GROUNDING — Ctrl-Z while a handler runs between prompts, then `fg`: the run goes on, no prompt redrawn; Ctrl-Z at the next prompt works again', () => {
+  it('(z3) Ctrl-Z while a handler runs between prompts, then `fg`: the run goes on, no prompt redrawn; Ctrl-Z at the next prompt works again', () => {
     const go = join(root, 'z3-go');
     const wf = wfFile('z3', [...autoStep('first', 'slow'), ...agentStep('second', 'first')]);
     const r = talk(
@@ -878,10 +920,10 @@ describe('U1b Unit 2 — Ctrl-Z at a `realm workflow run` prompt (D5)', () => {
     );
     const running = (s: unknown) => ['R', 'S'].includes(String(s));
     const after = r.events['afterFg1'] as { first: unknown; worker: unknown };
-    // GROUNDING: the redraw is D5's, only while a question is open — red when the listener redraws
-    //     after every `fg` (readline's idle prompt `> ` drawn mid-step); (b) prints both stops, the
-    //     states after the first `fg`, what the terminal received after it, the prompts' counts and
-    //     the ending.
+    // (a) red when the listener redraws after every `fg` (D5's `if (asking)`: readline's idle
+    //     prompt `> ` drawn mid-step), and without D5's listener; (b) prints both stops, the states
+    //     after the first `fg`, what the terminal received after it, the prompts' counts and the
+    //     ending.
     expect({
       stop1: r.events['stop1'],
       bothRunningAfterFg: running(after.first) && running(after.worker),
