@@ -34,7 +34,9 @@ import {
   createDefaultRegistry,
   loadWorkflowFromString,
   type ClaimRecord,
+  type LeaseHold,
   type RunRecord,
+  type RunStore,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
@@ -61,6 +63,14 @@ const claimNaming = (id: string, step: string): ClaimRecord => ({
   since: PAST,
   lease: { id },
 });
+
+/** Takes one lease through `store`'s own lease port (a fixture: a port that cannot hold throws). */
+async function holdLease(store: Pick<RunStore, 'leases'>): Promise<LeaseHold> {
+  const taken = await store.leases!.hold();
+  if (!('held' in taken))
+    throw new Error(`fixture: the home could not hold a lease: ${taken.unavailable}`);
+  return taken.held;
+}
 
 /** A store whose lease port is the double, with `LEASE` in `state`. */
 function leasedStore(state: 'live' | 'dead'): InMemoryStore {
@@ -171,8 +181,7 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
 
     it('(d) realm run reclaim: a claim whose lease the home holds reads healthy, past its deadline', async () => {
       const store = h.home.runStore;
-      const taken = await store.leases!.hold();
-      const held = taken.held!;
+      const held = await holdLease(store);
       try {
         const { record: run } = await store.create({
           workflowId: AGENT.id,
@@ -228,8 +237,7 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
         if (prompt.startsWith('  Agent output')) {
           const runId = (await runIds(store))[0]!;
           const { record } = await store.claimStep(runId, 'sleep', def);
-          const taken = await store.leases!.hold();
-          const held = taken.held!;
+          const held = await holdLease(store);
           const { record: named } = await store.update({
             ...record,
             claims: { ...record.claims, sleep: claimNaming(held.id, 'sleep') },
