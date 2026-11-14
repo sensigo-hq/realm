@@ -7,6 +7,8 @@
     "live:build": "node scripts/live/build.mjs && node --experimental-vm-modules --no-warnings=ExperimentalWarning scripts/live/smoke.mjs",
     "dev": "npm run live:build && npm run sync-docs && astro dev",
     "build": "npm run live:build && npm run sync-docs && astro build",
+    "build:deploy": "node scripts/deploy-build.mjs",
+    "test:deploy-build": "node --test scripts/deploy-build.test.mjs",
     "preview": "astro preview"
   },
   "dependencies": {

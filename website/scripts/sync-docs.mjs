@@ -20,7 +20,8 @@ import { fileURLToPath } from 'node:url';
 import { nav } from '../src/data/nav.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-// REALM_DOCS_SRC points the site at another checkout's docs (the docs-rebuild preview).
+// REALM_DOCS_SRC points the site at other docs: the deploy build's copy of a release branch's docs
+// (scripts/deploy-build.mjs), or another checkout's (the docs-rebuild preview).
 const SRC = process.env.REALM_DOCS_SRC ?? join(here, '..', '..', 'docs');
 const OUT = join(here, '..', 'src', 'content', 'docs', 'docs');
 
