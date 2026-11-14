@@ -9,6 +9,7 @@
 // own `update`. Each case reads the facts through core's one reader, `leaseFactOf`.
 import {
   leaseFactOf,
+  LeaseFactsClass,
   type ClaimRecord,
   type LeaseFact,
   type RunRecord,
@@ -17,6 +18,7 @@ import {
   type StoreSettlement,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import { crossCopyNote } from './cross-copy-note.js';
 
 /**
  * The laws, by name. Each returning method of a store with a lease port gives, for every in-progress
@@ -122,6 +124,20 @@ async function leasedRun(t: LeaseFactsTestStore): Promise<Leased> {
   return { t, run, held };
 }
 
+/**
+ * What a failure says of the `lease_facts` a result carries: none; or facts the reader does not read
+ * (made by another copy of `@sensigo/realm` of another release, or built by the store itself), with
+ * the cross-copy note the other contracts give; or nothing more, when it reads them.
+ */
+function carried(facts: unknown): string {
+  if (facts === undefined) return ' (it carries no lease_facts)';
+  if (facts instanceof LeaseFactsClass) return '';
+  return (
+    " (it carries lease_facts this copy of @sensigo/realm does not read: a copy of another release's, " +
+    `or an object the store built${crossCopyNote(facts, LeaseFactsClass)})`
+  );
+}
+
 /** Checks that `result` carries `held` for the held lease and `absent` for the other. */
 function checkFacts(
   law: LeaseFactsLaw,
@@ -135,7 +151,7 @@ function checkFacts(
     throw new Error(
       `${law}: ${what} returned ${seen[0]} for the claim on the held lease and ${seen[1]} for the ` +
         `claim on a lease no program held, not held and absent` +
-        (result.lease_facts === undefined ? ' (it carries no lease_facts)' : ''),
+        carried(result.lease_facts),
     );
   }
 }

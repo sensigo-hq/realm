@@ -178,7 +178,7 @@ export interface RunStore {
    * operating system keeps while the program holding it runs and lets go of when that program ends;
    * `probe` says whether one is held, as a fact with how it is known. The engine's admission refuses a
    * `leases` that is present and neither `null` nor an object with `hold` and `probe` functions
-   * (`store_leases`). The SQLite store keeps leases; `InMemoryStore` leaves it unset. Nothing in Realm
+   * (`store_leases`). The SQLite store keeps leases; `InMemoryStore` leaves it unset unless it is given a lease port. Nothing in Realm
    * takes a lease yet.
    */
   readonly leases?: LeasePort | null;

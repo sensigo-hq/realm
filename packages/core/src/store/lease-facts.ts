@@ -6,14 +6,17 @@
 // A fact is never invented. `LeaseFacts` is made only here: by `leaseFactsOf`, which asks the store's
 // lease port, and as the empty `NO_LEASE_FACTS`. This module is the one place in Realm that calls a
 // lease port's `probe` (the source witness `lease-facts-witness-cw1b.test.ts` holds it). The reader
-// reads only facts this module made, so a store that builds its own object, or a copy of a snapshot
-// (`structuredClone`, JSON), reads `unknown('not_checked')`: never `not_held`. Core stays I/O-free
-// (R19): the port does the I/O.
+// reads only facts a copy of this release made: each carries its maker's release mark (brand.ts), so
+// copies of one release read each other's facts, as copies of one version work together, and a store
+// that builds its own object, a copy of a snapshot (`structuredClone`, a spread, JSON) or another
+// release's facts read `unknown('not_checked')`: never `not_held`. Core stays I/O-free (R19): the
+// port does the I/O.
 //
 // Nothing writes a claim's lease yet (CW-2 will), so today every claim reads `unleased` and every
 // store returns no facts: nothing anyone sees changes.
 import type { ClaimRecord, RunRecord } from '../types/run-record.js';
 import type { Snapshot } from '../engine/snapshot.js';
+import { brandClass, REALM_BRAND } from '../brand.js';
 import {
   LEASE_PROBE_REASONS,
   type LeaseFact,
@@ -29,7 +32,8 @@ import {
  * The brand is a key no object has (`never`), so a plain object is not a `LeaseFacts` without a cast;
  * it is a string key, not a `unique symbol`, so the type is the same in the built package as in its
  * source (a store type-checked against one and used against the other). What makes the rule hold at
- * run time is the reader: it reads only objects this module made.
+ * run time is the reader: it reads only objects that carry the release mark of a copy of this release
+ * ({@link LeaseFactsClass}).
  */
 export type LeaseFacts = { readonly [leaseId: string]: LeaseFact } & {
   readonly '#LeaseFacts': never;
@@ -41,8 +45,32 @@ export type Unleased = { readonly absent: 'unleased' };
 const BASIS = 'kernel_lock';
 const UNLEASED: Unleased = Object.freeze({ absent: 'unleased' });
 
-/** The facts objects this copy of core made: the only ones its reader reads. */
-const MADE = new WeakSet<object>();
+/**
+ * The key a facts object carries its maker's release mark under: one key for every copy of
+ * `@sensigo/realm`, as every realm class's own key is (brand.ts).
+ */
+const LEASE_FACTS_KEY: symbol = Symbol.for('@sensigo/realm/LeaseFacts');
+
+/**
+ * What a lease-facts object answers to: `facts instanceof LeaseFactsClass` is true for facts any copy
+ * of this release of `@sensigo/realm` made (the release mark's generation rule, brand.ts: copies of
+ * one release share a generation), and false for another release's facts, a copy (`structuredClone`,
+ * a spread, JSON) or an object a store built. It is never constructed: a facts object has no
+ * prototype and carries the mark itself, under the class's key. A test contract names another
+ * release's facts with `describeUnrecognised(facts, LeaseFactsClass)`.
+ */
+export const LeaseFactsClass: abstract new () => object = class LeaseFacts {};
+brandClass(LeaseFactsClass, LEASE_FACTS_KEY, REALM_BRAND);
+
+/** Whether `facts` was made by a copy of this release: it carries the mark ({@link LeaseFactsClass}). */
+function madeByThisRelease(facts: object): boolean {
+  try {
+    return facts instanceof LeaseFactsClass;
+  } catch {
+    // A value that throws when checked (a revoked proxy) is no facts this release made.
+    return false;
+  }
+}
 
 function made(entries: ReadonlyArray<readonly [string, LeaseFact]>): LeaseFacts {
   const facts: Record<string, LeaseFact> = Object.create(null) as Record<string, LeaseFact>;
@@ -51,7 +79,14 @@ function made(entries: ReadonlyArray<readonly [string, LeaseFact]>): LeaseFacts 
   for (const [id, fact] of entries) {
     Object.defineProperty(facts, id, { value: fact, enumerable: true });
   }
-  MADE.add(facts);
+  // The maker's release mark, under a symbol: no lease id (a string) can be it, it is not
+  // enumerable, and a copy of the object (a spread, `structuredClone`, JSON) leaves it behind.
+  Object.defineProperty(facts, LEASE_FACTS_KEY, {
+    value: REALM_BRAND,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
   return Object.freeze(facts) as LeaseFacts;
 }
 
@@ -99,6 +134,9 @@ async function probeOnce(port: LeasePort, id: string): Promise<LeaseFact> {
  * run, outside its write transaction and its lock.
  *
  * - No port (absent or `null`) ⇒ {@link NO_LEASE_FACTS}, and no claim is read.
+ * - A run whose stored `claims` is `null`, or anything but an object, has no claims; any error while
+ *   the lease ids are collected (a record that throws when read) gives {@link NO_LEASE_FACTS}, so its
+ *   claims read `not_checked`, never `not_held`.
  * - A claim whose stored `lease` is `null`, not an object, or has no string `id` is skipped: no probe,
  *   no entry ({@link leaseFactOf} answers `not_a_lease` for it from the claim itself).
  * - A probe that rejects or throws, or answers something that is not a `LeaseFact`, gives
@@ -110,19 +148,32 @@ export async function leaseFactsOf(
   record: RunRecord,
 ): Promise<LeaseFacts> {
   if (port === undefined || port === null) return NO_LEASE_FACTS;
-  const claims = record.claims;
-  const ids: string[] = [];
-  const steps: readonly unknown[] = Array.isArray(record.in_progress_steps)
-    ? record.in_progress_steps
-    : [];
-  for (const step of steps) {
-    if (typeof step !== 'string' || claims === undefined || !Object.hasOwn(claims, step)) continue;
-    const id = leaseIdOf(claims[step]);
-    if (id !== undefined && !ids.includes(id)) ids.push(id);
+  let ids: string[];
+  try {
+    ids = leasedIdsOf(record);
+  } catch {
+    return NO_LEASE_FACTS;
   }
   if (ids.length === 0) return NO_LEASE_FACTS;
   const facts = await Promise.all(ids.map((id) => probeOnce(port, id)));
   return made(ids.map((id, i) => [id, facts[i]!] as const));
+}
+
+/** The distinct lease ids `record`'s in-progress claims name, in the order the steps list them. */
+function leasedIdsOf(record: RunRecord): string[] {
+  const claims: unknown = record.claims;
+  // A stored `claims` that is `null`, or anything but an object (an imported record): no claims.
+  if (typeof claims !== 'object' || claims === null) return [];
+  const steps: readonly unknown[] = Array.isArray(record.in_progress_steps)
+    ? record.in_progress_steps
+    : [];
+  const ids: string[] = [];
+  for (const step of steps) {
+    if (typeof step !== 'string' || !Object.hasOwn(claims, step)) continue;
+    const id = leaseIdOf((claims as Record<string, ClaimRecord | undefined>)[step]);
+    if (id !== undefined && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
 }
 
 /**
@@ -133,7 +184,8 @@ export async function leaseFactsOf(
  *   `unknown('not_a_lease')`;
  * - a lease the snapshot carries a fact for ⇒ that fact;
  * - a lease it carries none for (a store without leases holding a record saved by one with leases, a
- *   snapshot built without facts, or a copy of one) ⇒ `unknown('not_checked')`.
+ *   snapshot built without facts, a copy of one, or facts another release made) ⇒
+ *   `unknown('not_checked')`.
  *
  * `not_held` comes only from a probe.
  */
@@ -145,7 +197,8 @@ export function leaseFactOf(
   const id = leaseIdOf(claim);
   if (id === undefined) return unknown('not_a_lease');
   const facts = snapshot.lease_facts;
-  if (facts !== undefined && MADE.has(facts) && Object.hasOwn(facts, id)) return facts[id]!;
+  if (facts !== undefined && madeByThisRelease(facts) && Object.hasOwn(facts, id))
+    return facts[id]!;
   return unknown('not_checked');
 }
 

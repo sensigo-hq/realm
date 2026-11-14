@@ -6,6 +6,10 @@
 // CW-1b (no `leases`, a plain `{ record, at }` from `get`) still works.
 //
 // Each cell names the change that turns it red and what it prints when it fails.
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { leaseFactOf, leaseFactsOf, NO_LEASE_FACTS, type LeaseFacts } from './lease-facts.js';
 import type { LeaseFact, LeasePort } from './lease-port.js';
@@ -24,6 +28,7 @@ import { admitEntry } from '../admission.js';
 import { declareReleaseLine } from '../release-line.js';
 import type { ClaimRecord, RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { VERSION } from '../version.js';
 
 const BASIS = 'kernel_lock' as const;
 const HELD: LeaseFact = { state: 'held', basis: BASIS };
@@ -527,6 +532,102 @@ describe('#729 CW-1b — a store written before CW-1b works unchanged', () => {
           lease: unknown('not_checked'),
         },
       ],
+    });
+  });
+});
+
+/** Core's built folder: the files a copy of the lease-facts module is made from. */
+const CORE_DIST = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
+
+type LeaseFactsModule = {
+  leaseFactsOf: typeof leaseFactsOf;
+  leaseFactOf: typeof leaseFactOf;
+};
+
+/**
+ * Another loaded copy of core's lease-facts module, as a nested copy of `@sensigo/realm` is: its four
+ * built files (the module, the lease port, the release mark and the version) in a folder of their
+ * own, with `version` written into its version line (`VERSION` itself: a copy of this release).
+ */
+async function copyOfLeaseFacts(version: string, root: string): Promise<LeaseFactsModule> {
+  for (const file of ['store/lease-facts.js', 'store/lease-port.js', 'brand.js', 'version.js']) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    // Without its source-map line: the maps are not copied, so the loader would look for them.
+    const built = readFileSync(join(CORE_DIST, file), 'utf8');
+    writeFileSync(join(root, file), built.replace(/^\/\/# sourceMappingURL=.*$/m, ''));
+  }
+  const versionJs = join(root, 'version.js');
+  const text = readFileSync(versionJs, 'utf8');
+  const line = /^export const VERSION = '[^']+';$/m;
+  if (!line.test(text)) throw new Error(`${versionJs} has no VERSION line`);
+  writeFileSync(versionJs, text.replace(line, `export const VERSION = '${version}';`));
+  return (await import(
+    pathToFileURL(join(root, 'store', 'lease-facts.js')).href
+  )) as LeaseFactsModule;
+}
+
+describe('#729 CW-1b correction 1 — copies of one release read each other’s lease facts', () => {
+  it('a fact one copy of this release made is read by another; one another release made reads not_checked', async () => {
+    const roots = [
+      mkdtempSync(join(tmpdir(), 'realm-cw1b-same-')),
+      mkdtempSync(join(tmpdir(), 'realm-cw1b-other-')),
+    ];
+    try {
+      const same = await copyOfLeaseFacts(VERSION, roots[0]!);
+      const other = await copyOfLeaseFacts(`${VERSION}-other`, roots[1]!);
+      const { port } = portOf(() => NOT_HELD);
+      const record = runWith({ a: claimOn('lease-1') }, ['a']);
+      const claim = record.claims!['a'];
+      const here = await snapshotWith(record, port);
+      const fromSame = writtenSnapshot(record, AT, await same.leaseFactsOf(port, record));
+      const fromOther = writtenSnapshot(record, AT, await other.leaseFactsOf(port, record));
+      // (1) red when the reader trusts only the facts its own loaded copy made (a copy of the same
+      //     release then reads not_checked), or trusts another release's facts (they then read
+      //     not_held without this release's probe rules); (2) prints each answer.
+      expect({
+        sameReadHere: leaseFactOf(fromSame, claim),
+        hereReadBySame: same.leaseFactOf(here, claim),
+        otherReadHere: leaseFactOf(fromOther, claim),
+        hereReadByOther: other.leaseFactOf(here, claim),
+      }).toEqual({
+        sameReadHere: NOT_HELD,
+        hereReadBySame: NOT_HELD,
+        otherReadHere: unknown('not_checked'),
+        hereReadByOther: unknown('not_checked'),
+      });
+    } finally {
+      for (const root of roots) rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('#729 CW-1b correction 1 — a run whose claims are not an object', () => {
+  it('claims null, a number or a string, or a record that throws when read: NO_LEASE_FACTS, no probe, never a rejection', async () => {
+    const { port, probed } = portOf(() => HELD);
+    const throwing = new Proxy(runWith({}, ['a']), {
+      get(target, key, receiver) {
+        if (key === 'claims') throw new Error('a record that throws when read');
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    const records = [null, 5, 'text'].map((claims) => {
+      const record = runWith({}, ['a']) as unknown as Record<string, unknown>;
+      record['claims'] = claims;
+      return record as unknown as RunRecord;
+    });
+    const outcomes = await Promise.all(
+      [...records, throwing].map((record) =>
+        leaseFactsOf(port, record).then(
+          (facts) => (facts === NO_LEASE_FACTS ? 'none' : 'facts'),
+          (err: unknown) => `rejected: ${String(err)}`,
+        ),
+      ),
+    );
+    // (1) red when a stored `claims` that is not an object, or a record that throws when read, makes
+    //     the call reject (a store's get and scan then throw) or probe; (2) prints each outcome.
+    expect({ outcomes, probed }).toEqual({
+      outcomes: ['none', 'none', 'none', 'none'],
+      probed: [],
     });
   });
 });

@@ -118,11 +118,12 @@ export class InMemoryStore implements RunStore {
 
   /**
    * #729 CW-1b: the lease port this store was given (`options.leases`), or unset: a store built
-   * without one keeps no claim leases, as before. With one (the lease double, for example), every run
-   * a call returns carries the facts about its in-progress claims' leases (`lease_facts`), asked of
-   * the port after the call's write.
+   * without one keeps no claim leases, as before, and has no own `leases` property (`declare` emits
+   * no class field; the constructor defines it only when given a port). With one (the lease double,
+   * for example), a run a call returns carries `lease_facts` for each in-progress claim that names a
+   * lease, asked of the port after the call's write.
    */
-  readonly leases?: LeasePort | null;
+  declare readonly leases?: LeasePort | null;
 
   /**
    * @param options.clock The store's clock (#715 (a), D-3); defaults to core's shared

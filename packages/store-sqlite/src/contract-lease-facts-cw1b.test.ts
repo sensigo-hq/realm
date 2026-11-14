@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { systemClock, type LeasePort } from '@sensigo/realm';
+import { systemClock, type LeasePort, type RunRecord } from '@sensigo/realm';
 import {
   LEASE_FACTS_LAWS,
   leaseFactsContract,
@@ -26,6 +26,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import { createLeasePort } from './claim-lease.js';
 import { RealmDb } from './connection.js';
+import { openRealmHome } from './open-realm-home.js';
 import { SqliteRunStore } from './run-store.js';
 
 /** The laws this file does not run, each with its reason. None: every law runs on the real port. */
@@ -137,4 +138,59 @@ describe('#729 CW-1b — the SQLite store runs the lease-facts contract (a holde
       await target!.run();
     });
   }
+});
+
+describe('#729 CW-1b correction 1 — a malformed run stays readable', () => {
+  it('a run imported with claims: null is read by get and by a scan page, and so is every other run', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'realm-cw1b-null-claims-'));
+    const handle = await openRealmHome({ home: join(root, 'home') });
+    try {
+      const store = handle.runStore;
+      const { record: other } = await store.create({
+        workflowId: 'w',
+        workflowVersion: 1,
+        params: {},
+      });
+      const now = new Date().toISOString();
+      // An imported record: a run another store exported, its claims stored as null, a step in
+      // progress (core's record-shape check does not look at `claims`, CW-RD1B-02).
+      const odd = {
+        ...other,
+        id: '11111111-2222-4333-8444-555555555555',
+        in_progress_steps: ['a'],
+        claims: null,
+        created_at: now,
+        updated_at: now,
+      } as unknown as RunRecord;
+      const saved = await store.save(odd);
+      const read = await store.get(odd.id).then(
+        (snapshot) => ({ claims: snapshot.record.claims, facts: snapshot.lease_facts }),
+        (err: unknown) => `rejected: ${String(err)}`,
+      );
+      const pages = store.scan({}, { pageSize: 10 });
+      const page = await pages.next().then(
+        (p) =>
+          p.done
+            ? 'no page'
+            : p.value.items.map((i) => (i.kind === 'run' ? i.run.record.id : i.kind)).sort(),
+        (err: unknown) => `rejected: ${String(err)}`,
+      );
+      await pages.return(undefined);
+      const otherRead = await store.get(other.id).then(
+        (snapshot) => snapshot.record.id,
+        (err: unknown) => `rejected: ${String(err)}`,
+      );
+      // (1) red when the store's facts step throws on a stored `claims: null` (get and every scan page
+      //     holding the run then reject, `Object.hasOwn(null, …)`); (2) prints what each read gave.
+      expect({ saved: saved.outcome, read, page, otherRead }).toEqual({
+        saved: 'imported',
+        read: { claims: null, facts: undefined },
+        page: [odd.id, other.id].sort(),
+        otherRead: other.id,
+      });
+    } finally {
+      handle.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
