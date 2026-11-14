@@ -291,9 +291,9 @@ const LLMS_CLAUSES = {
       '. Realm stores a hash of each record entry, and `realm db check` finds an entry someone edited by hand. It does not find one whose hash was recomputed too. Nothing is signed.',
   },
   crash: {
-    fingerprint: '8d64bd543d3b',
+    fingerprint: 'd9db2c92a734',
     clause:
-      '. The run is kept, but a person restarts it; a crash during an agent step needs `realm run reclaim --force`, which may repeat that step.',
+      '. The run is kept, but a person restarts it; after a crash during an agent step, the next drive asks the model again, and only a crash while its answer is being saved needs `realm run reclaim --force` first.',
   },
   mcpserver: { fingerprint: '78251d436176', clause: '.' },
   mcpclient: {
