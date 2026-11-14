@@ -68,7 +68,7 @@ deploy `website/dist/` in the three steps of the
 A fix that is true of the release lands on main first, as usual. Then it is copied onto the branch:
 
 ```sh
-git fetch origin refs/heads/docs/v<version>:refs/remotes/origin/docs/v<version>
+git fetch origin +refs/heads/docs/v<version>:refs/remotes/origin/docs/v<version>
 git worktree add ../realm-docs-fix origin/docs/v<version>
 cd ../realm-docs-fix
 git cherry-pick -x <main commit>      # one main commit per copy, in main's order, with no hand edits
