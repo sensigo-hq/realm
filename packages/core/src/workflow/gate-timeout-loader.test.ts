@@ -422,9 +422,15 @@ steps:
     }
   });
 
-  it('C7 member (a) on an UNGATED step (gate: {choices: []}, no trust) — refused, SAME message (population-invariant)', () => {
-    expectThrows(
-      `
+  it('C7 (fix 2) an UNGATED step (no trust) whose block has choices: [] and an unknown key — exactly ONE error, the block refusal; no choices error, no UNKNOWN_GATE_KEY warning', () => {
+    // Before fix 2 this block got the #433 member (a) error AND the #524 block advisory (and an
+    // UNKNOWN_GATE_KEY warning for the typo). Since fix 2 the block itself is refused at load, and
+    // a refused block gets no other finding about its keys — the empty-choices check sits outside
+    // the `gate` region, so the suppression has to reach it too.
+    let errors: string[] = [];
+    let warningCodes: string[] = [];
+    try {
+      loadWorkflowFromString(`
 id: g433f-wf
 name: G433f
 version: 1
@@ -435,9 +441,19 @@ steps:
     handler: h
     gate:
       choices: []
-`,
-      "'gate.choices', when declared, must be non-empty",
-    );
+      choises: [approve]
+`);
+    } catch (err) {
+      errors = [...((err as WorkflowError).errors ?? [(err as WorkflowError).message])];
+      warningCodes = ((err as WorkflowError).warnings ?? []).map((w) => w.code);
+    }
+    // (1) red when the block's key checks still run on a refused block (the choices error makes
+    //     two); (2) prints the error list.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("Step 'step1': the 'gate:' block is refused at load");
+    expect(errors[0]).toContain('(line 10)');
+    // (1) red when the unknown-key check still runs on a refused block; (2) prints the codes.
+    expect(warningCodes).toEqual([]);
   });
 
   // The both-declared-empty composition (`gate.choices: []` + `enum: []`): member (a) fires

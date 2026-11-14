@@ -43,17 +43,18 @@ For the fields at the top of the file, see [Top-level fields](top-level-fields.m
 | `trace_schema`          | no     | yes     | no      | no          |
 | `trace_validation_mode` | no     | yes     | no      | no          |
 | `trust`                 | yes    | yes     | no      | no          |
-| `gate`                  | yes    | yes     | –       | –           |
+| `gate`                  | yes    | yes     | no      | no          |
 | `display`               | yes    | yes     | –       | –           |
 | `abort_unless`          | no     | no      | yes     | no          |
 | `abort_message`         | no     | no      | yes     | no          |
 | `on_outcome`            | no     | no      | no      | yes         |
 
-Three fields have a further condition:
+Four fields have a further condition:
 
 - `tools` needs `input_schema` on the same step, and `mcp_servers` at the top of the file.
 - `tool_timeout` needs `tools` on the same step.
 - `structured_output` needs an `input_schema` or `output_schema` that the model provider can enforce.
+- `gate` needs `trust: human_confirmed` or `trust: human_reviewed` on the same step.
 
 ## What the step is
 

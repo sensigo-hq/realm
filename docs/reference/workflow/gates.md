@@ -28,6 +28,14 @@ Invalid workflow: Step 'approve': 'trust: "human_confirmd"' is not a recognized 
 
 The block is read only on a step whose `trust` is `human_confirmed` or `human_reviewed`. All nine keys are optional.
 
+A `gate` block on a step whose `trust` opens no gate is refused when the file is loaded, because Realm would never open that gate and nobody would be asked:
+
+```text
+Invalid workflow: Step 'approve': the 'gate:' block is refused at load — this step declares no gate trust … (line 9)
+```
+
+This changed after version 0.49.0, which accepted the block with a warning.
+
 | Key                                           | Type                        | Default             | What it does                                     |
 | --------------------------------------------- | --------------------------- | ------------------- | ------------------------------------------------ |
 | [`choices`](#choices)                         | list of text                | `approve`, `reject` | The answers a person can give.                   |
@@ -137,7 +145,6 @@ These are accepted, with a warning that says the setting has no effect:
 
 | The step has                                          | Warning                                                                                                                      |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| A `gate` block, and `trust` that opens no gate        | `the 'gate:' block is inert — this step declares no gate trust …`                                                            |
 | `on_expiry` without `timeout_seconds`                 | `'gate.on_expiry' is ignored without 'gate.timeout_seconds' — set a timeout, or remove 'gate.on_expiry'.`                    |
 | `default_choice` without `on_expiry: settle_default`  | `'gate.default_choice' is ignored without 'gate.on_expiry: settle_default' — set it, or remove 'gate.default_choice'.`       |
 | `reminder_seconds` not shorter than `timeout_seconds` | `'gate.reminder_seconds' (90) >= 'gate.timeout_seconds' (60) — the first reminder would never fire before the gate expires.` |

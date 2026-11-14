@@ -2417,6 +2417,29 @@ function parseWorkflowString(
         'choice'
       ]?.enum;
 
+      // Fix 2 (agent-written workflows): a `gate:` block on a step that can never open a gate is
+      // REFUSED at load. 0.42.0 to 0.49.0 accepted it with a DEAD_GATE_CONFIG warning, and a run
+      // then asked nobody: the gate is minted only where `isGateTrust(trust)` holds (Step 5b,
+      // execution-loop.ts). ONE error per block, and no other finding about the block's keys:
+      //   - auto/agent: exactly where the trust verdict is `lawful_no_gate` (trust absent, or
+      //     `auto`): the hand-written refusal below. A trust the loader refuses (a typo, a service
+      //     literal) keeps its own refusal alone, because fixing that value decides whether the
+      //     block is live.
+      //   - guard/finalizer: no trust value opens a gate there, so the registry's prohibited
+      //     gate×guard / gate×finalizer cells mint the refusal in the #517 walk above, whatever
+      //     `trust` says (a refused trust keeps its own error beside it).
+      //   - a missing or malformed `execution`: neither; the kind error is the verdict (the #517
+      //     rule), and the block's own key checks run as before.
+      // `gateObj` is the object-shaped block only: on auto/agent, `gate:` null or a scalar keeps
+      // its own "'gate' must be an object" error.
+      const gateWithoutTrust =
+        gateObj !== undefined &&
+        (stepKind === 'auto' || stepKind === 'agent') &&
+        classifyStepTrust(stepKind, step['trust']) === 'lawful_no_gate';
+      const gateBlockRefused =
+        gateWithoutTrust ||
+        (step['gate'] !== undefined && (stepKind === 'guard' || stepKind === 'finalizer'));
+
       // Renders the OFFENDING KEY's own line via its full nested path, falling back to the
       // step's line and then to no position — the same two-rung univocal vocabulary
       // `withKeyLine` documents above (issue #420: `(line N)` for the key, `(step at line N)`
@@ -2438,8 +2461,13 @@ function parseWorkflowString(
       // list on a gate-trusted step mints an unanswerable gate (every response is refused against
       // an empty expected set) with no disposal path short of an authored expiry — on an ungated
       // step it is dead weight either way, so the message is deliberately population-invariant
-      // rather than false for the ungated population.
-      if (Array.isArray(declaredGateChoices) && declaredGateChoices.length === 0) {
+      // rather than false for the ungated population. Fix 2: not on a refused block (above),
+      // whose one error is the refusal itself.
+      if (
+        !gateBlockRefused &&
+        Array.isArray(declaredGateChoices) &&
+        declaredGateChoices.length === 0
+      ) {
         errors.push(
           withPathLine(
             ['steps', stepName, 'gate', 'choices'],
@@ -2490,7 +2518,8 @@ function parseWorkflowString(
       // `isGateTrust` (issue #524): the engine mints a gate only where trust requires human
       // confirmation (Step 5b, `execution-loop.ts`) — on any other step the WHOLE block is inert,
       // so a per-member remedy ("set a timeout") would be false: following it never makes the key
-      // live, it only silences the one diagnostic that said so.
+      // live, it only silences the one diagnostic that said so. Since fix 2 such a block is
+      // refused before this region (`gateBlockRefused`), so the region never sees it.
       // #627 W (F31, W-l1): a gated step's `instructions` reach the agent as the reply's
       // `gate.agent_hint` and as the protocol's step text, both forwarded labelled as the author's
       // (W-t1). Text there that names an answer tool is NOTED, never refused. Gate-trusted steps only
@@ -2525,7 +2554,26 @@ function parseWorkflowString(
         }
       }
 
-      if (step['gate'] !== undefined) {
+      // Fix 2: the auto/agent refusal (the predicate and its states are documented at
+      // `gateWithoutTrust` above). Four clauses: refused at load; nobody would be asked; set the
+      // trust or remove the block; loads as soon as either is done.
+      if (gateWithoutTrust) {
+        errors.push(
+          withKeyLine(
+            stepName,
+            'gate',
+            `Step '${stepName}': the 'gate:' block is refused at load — this step declares no ` +
+              "gate trust ('trust: human_confirmed' or 'trust: human_reviewed'), so Realm would " +
+              'never open this gate: nobody would be asked, and the run would go on exactly as ' +
+              "if the block were not there. Set 'trust: human_confirmed' on this step if a " +
+              "person must approve its result, or remove the 'gate:' block. The workflow loads " +
+              'as soon as either is done.',
+          ),
+        );
+      }
+
+      // A refused block (fix 2) gets no other finding about its keys.
+      if (step['gate'] !== undefined && !gateBlockRefused) {
         if (typeof step['gate'] !== 'object' || step['gate'] === null) {
           errors.push(withStepLine(stepName, `Step '${stepName}': 'gate' must be an object`));
         } else {
@@ -2656,7 +2704,8 @@ function parseWorkflowString(
           } else if (hasDefaultChoice && gateTrusted) {
             // default_choice with on_expiry:'abort' or with no on_expiry at all — inert, not an
             // error: WARN as dead config (the #220 DEAD_VALIDATION_EXHAUSTION_CONFIG precedent).
-            // Gate-trusted only (issue #524) — off gate trust the block advisory below covers it.
+            // Gate-trusted only (issue #524) — off gate trust the block is refused (fix 2), or
+            // its trust is.
             warnings.push({
               code: 'DEAD_GATE_CONFIG',
               severity: resolveSeverity('DEAD_GATE_CONFIG'),
@@ -2671,7 +2720,7 @@ function parseWorkflowString(
           if (gateTrusted) {
             // Dead config: on_expiry declared but no timeout_seconds — nothing will ever trigger
             // the enforce clock, so the declared disposition can never enact. Gate-trusted only
-            // (issue #524): off gate trust the block advisory below covers it.
+            // (issue #524): off gate trust the block is refused (fix 2), or its trust is.
             if (onExpiry !== undefined && gate['timeout_seconds'] === undefined) {
               warnings.push({
                 code: 'DEAD_GATE_CONFIG',
@@ -2686,7 +2735,7 @@ function parseWorkflowString(
 
             // Dead notification ([F-A2-5]): reminder_seconds >= timeout_seconds means the FIRST
             // reminder occurrence would never fire before the enforce clock expires. Gate-trusted
-            // only (issue #524): off gate trust the block advisory below covers it.
+            // only (issue #524): off gate trust the block is refused (fix 2), or its trust is.
             if (
               typeof gate['reminder_seconds'] === 'number' &&
               typeof gate['timeout_seconds'] === 'number' &&
@@ -2703,41 +2752,11 @@ function parseWorkflowString(
                   `reminder would never fire before the gate expires.`,
               });
             }
-          } else {
-            // issue #524 (the gate-remedy silence): without gate trust the mint never reads ANY
-            // key in this block, so a per-member remedy ("set a timeout") is false — following it
-            // would silence the diagnostic while the whole block stays exactly as dead. ONE
-            // advisory naming the true cause, unconditional on which keys are set (the block is
-            // equally inert whichever ones are). Position on the STRUCTURED channel only
-            // (`withKeyLine`/`withPathLine` are the ERROR-string helpers, consumed only by
-            // `errors.push` — no loader advisory carries a position today, and this one follows
-            // that convention: `renderLoaderWarning` prints `⚠ ${message}` alone). The kind list
-            // is DERIVED from the registry (`consumedKindsFor('trust')`, the #517
-            // `consumed_home.kinds` pattern) so the remedy can never drift from the vocabulary
-            // that actually gates it.
-            const gatePos = sourceMap.posOf(['steps', stepName, 'gate']);
-            const trustKinds = consumedKindsFor('trust');
-            warnings.push({
-              code: 'DEAD_GATE_CONFIG',
-              severity: resolveSeverity('DEAD_GATE_CONFIG'),
-              scope: 'step',
-              step: stepName,
-              key: 'gate',
-              ...(gatePos !== undefined
-                ? {
-                    line: gatePos.line,
-                    column: gatePos.column,
-                    endLine: gatePos.endLine,
-                    endColumn: gatePos.endColumn,
-                  }
-                : {}),
-              message:
-                `Step '${stepName}': the 'gate:' block is inert — this step declares no gate ` +
-                `trust ('trust: human_confirmed' or 'trust: human_reviewed'), so no gate is ever ` +
-                `minted and none of its keys are read. Remove the block, or (on an ` +
-                `${trustKinds.join(' or ')} step) declare that trust.`,
-            });
           }
+          // Not gate-trusted here means a trust the loader refuses, or a malformed kind: that
+          // refusal is the verdict, so no member advisory is added beside it. (The #524 block
+          // advisory that used to sit in an else branch here is gone: fix 2 refuses that
+          // population above.)
         }
       }
 

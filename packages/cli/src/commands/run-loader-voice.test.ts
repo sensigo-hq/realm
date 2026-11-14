@@ -184,6 +184,45 @@ steps:
     }
   });
 
+  it('fix 2: a gate: block with no gate trust is refused at load — no run is created, even from a terminal', async () => {
+    // The step can never open its gate (no trust), so the loader refuses the file. The terminal
+    // flag is set as in the cell above so the dev-mode guard cannot be what stops this run, and
+    // the `when` that is never true keeps the loop from prompting if the file did load.
+    const file = join(dir, 'workflow.yaml');
+    writeFileSync(
+      file,
+      `id: run-gate-no-trust
+name: Run Gate No Trust
+version: 1
+steps:
+  work:
+    description: work
+    execution: agent
+    when:
+      - 'run.params.never_true == true'
+    gate:
+      timeout_seconds: 300
+`,
+      'utf8',
+    );
+
+    const savedIsTTY = process.stdin.isTTY;
+    try {
+      process.stdin.isTTY = true;
+      await expect(runCommand.parseAsync([file], { from: 'user' })).rejects.toThrow('process.exit');
+      const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+      // (1) red when the refusal is pushed to the warnings: the file loads and the run starts, so
+      //     the first error line is no longer the loader's; (2) prints everything on stderr.
+      expect(errored.split('\n')[0]).toContain(
+        "Invalid workflow: Step 'work': the 'gate:' block is refused at load",
+      );
+      // (1) red under the same break: the loaded file creates a run; (2) prints the run ids.
+      expect(await runRecords()).toEqual([]);
+    } finally {
+      process.stdin.isTTY = savedIsTTY;
+    }
+  });
+
   it('--params is validated BEFORE the terminal check — the specific error wins', async () => {
     const file = join(dir, 'workflow.yaml');
     writeFileSync(file, VALID, 'utf8');
