@@ -41,21 +41,9 @@ import {
 import { boundedLines, boundedRefusal, moreUnknownKeys } from './refusal-format.js';
 import { ASSISTANT_DOOR_WORDS, renderOutcome } from '../form-path.js';
 
-/** The answer tool's description where the agent keeps it under `offered`. */
+/** The answer tool's description: the server lists the tool under `permitted` only. */
 export const SUBMIT_HUMAN_RESPONSE_DESCRIPTION =
   "Advance a gate-waiting run by submitting the human's choice.";
-
-/**
- * #627 W (F30, W-g1 in the tool's own words): the description on `asked`'s fallback — a client that
- * shows no forms is asked to have the person approve each call. A tool description names no step, so
- * W-g1's "at step '⟨s⟩'" reads "at the gate" (W-p2's words).
- */
-export const SUBMIT_HUMAN_RESPONSE_FALLBACK_DESCRIPTION = `${SUBMIT_HUMAN_RESPONSE_DESCRIPTION} Your client may ask the user to approve this call (Claude Code does in interactive sessions and refuses it in headless runs; other clients may not ask). If the call is refused, the run keeps waiting at the gate: tell the user so.`;
-
-/** #627 W (F30): the `_meta` key that asks a client to have its user approve each call. */
-export const REQUIRES_USER_INTERACTION_META = {
-  'anthropic/requiresUserInteraction': true,
-} as const;
 
 /** The arguments this tool takes. Anything else is named in the reply's `warnings`, not dropped. */
 const KNOWN_ARGS = ['run_id', 'gate_id', 'choice', 'responded_by', 'claim_token'] as const;
@@ -202,11 +190,11 @@ export async function handleSubmitHumanResponse(
     ...(args.claim_token !== undefined ? { claimToken: args.claim_token } : {}),
     ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
     // #627 W (§5.8): the door declares its own route and the transport's principal — never values a
-    // tool caller sends (a `principal` argument is ignored, as every unknown argument is) — and, on
-    // `asked`'s fallback, that the client was asked to have the person approve the call.
+    // tool caller sends (a `principal` argument is ignored, as every unknown argument is). The
+    // gate-answers default (2026-11-14): no door asks a client to have the person approve the call any
+    // more, so `client_prompt_requested` is never written from here.
     route: 'mcp',
     principal: principalOfStores(stores),
-    ...(onFallback(stores) ? { clientPromptRequested: true } : {}),
   });
   const reply = withOutcomeWords(engineReply);
   // decision C211 (walk c14 W3-4's class): an answer that ended the run with cleanup steps left
@@ -270,22 +258,13 @@ function withOutcomeWords(reply: EngineReply): EngineReply {
   return reply;
 }
 
-/** #627 W: whether this server's door is on `asked`'s fallback (`asked`, and no forms in this session). */
-function onFallback(stores: HandleRunStores | undefined): boolean {
-  const answers = stores?.door?.answers();
-  return answers !== undefined && answers.value === 'asked' && !answers.forms.shown;
-}
-
 /**
- * Registers the submit_human_response MCP tool on the server, and returns it. `config`: `offered`
- * (today's tool, annotated) or `fallback` (#627 W, F30: `asked` in a session without forms — the
- * client is asked to have its user approve each call, and the description says what a refusal
- * leaves). The server registers it only on those two rows (§5.2's table).
+ * Registers the submit_human_response MCP tool on the server, and returns it. The server registers it
+ * under `permitted` only (§5.2's table; the gate-answers default, 2026-11-14).
  */
 export function registerSubmitHumanResponse(
   server: McpServer,
   opts: HandleRunStores & WithDoorDisclosure,
-  config: 'offered' | 'fallback' = 'offered',
 ): RegisteredTool {
   markServedByTool(opts);
   const door = disclosureOfTool(opts);
@@ -296,12 +275,8 @@ export function registerSubmitHumanResponse(
     'submit_human_response',
     {
       ...toolMeta('submit_human_response'),
-      description:
-        config === 'fallback'
-          ? SUBMIT_HUMAN_RESPONSE_FALLBACK_DESCRIPTION
-          : SUBMIT_HUMAN_RESPONSE_DESCRIPTION,
+      description: SUBMIT_HUMAN_RESPONSE_DESCRIPTION,
       inputSchema: boundedRefusal(submitHumanResponseArgsSchema),
-      ...(config === 'fallback' ? { _meta: { ...REQUIRES_USER_INTERACTION_META } } : {}),
     },
     safeTool(
       async (rawArgs) => {

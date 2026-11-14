@@ -678,7 +678,8 @@ export type { StepDiagnostics } from './types/run-record.js';
 // wildcard is the export; this comment exists so a reader checking D4's requirement finds it. Issue
 // #600 PR 2's vocabularies — PROMPT_CACHE_SETTINGS, CACHE_REQUESTS, CACHE_REQUEST_SOURCES,
 // REQUEST_ENDPOINTS, REQUEST_FACT_ABSENT_CAUSES and their types — and the lifetime unit's
-// CACHE_AUTO_BASES are re-exported the same way, beside CACHE_STATES.
+// CACHE_AUTO_BASES are re-exported the same way, beside CACHE_STATES; so is CACHE_REQUESTERS, the
+// runners' words in `cache_requested_by`, beside CACHE_REQUESTS.
 // issue #600 (the lifetime unit): which cache lifetime `--prompt-cache auto` asks for — pure. Issue
 // #898: priced from the runner's price file (`chooseAutoLifetime`), else the owner's fallback.
 export {

@@ -414,7 +414,7 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
     // on the reply whose own call opened the question.
     const token = way.proof !== undefined ? { claim_token: way.proof.claim_token } : {};
     const choices = way.choice.one_of;
-    const entry: McpNextAction = {
+    return {
       instruction: {
         tool: 'submit_human_response',
         params: { run_id: way.run_id, gate_id: way.gate_id, ...token },
@@ -436,11 +436,6 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
       // #729 PR-0 (Part B, W-CENSUS-06): the choices are the way's data; no prose repeats them.
       orientation: `Run is paused at gate '${way.gate_id}'.`,
     };
-    // #627 W (F30, §5.2 row 3): on the fallback the client is asked to have the person approve the
-    // call (the `client_prompt` condition); the entry says what a refusal leaves (W-g1).
-    return way.conditions.some((c) => c.code === 'client_prompt')
-      ? { ...entry, human_readable: `${entry.human_readable} ${approvalGuidance(way.step)}` }
-      : entry;
   },
   run_step: (way) => {
     const brief = way.brief;
@@ -533,14 +528,6 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
 export const PRESENT_QUESTION_DESCRIPTION =
   "Send the waiting question to the user's app as a form. Call it when the question has not been sent in this session yet, or when the user asks to see it again. You cannot answer the question yourself.";
 
-/**
- * #627 W (W-g1): the approval prompt's guidance on the fallback — the client may ask the person to
- * approve the answer call, and a refused call leaves the run waiting.
- */
-export function approvalGuidance(step: string): string {
-  return `Your client may ask the user to approve this call (Claude Code does in interactive sessions and refuses it in headless runs; other clients may not ask). If the call is refused, the run keeps waiting at step '${step}': tell the user so.`;
-}
-
 /** #627 W (W-a3): the orientation of a question answered outside this conversation. */
 function handedOffOrientation(way: Pick<RespondWay, 'gate_id' | 'step'>): string {
   return `Run is paused at gate '${way.gate_id}' on step '${way.step}', waiting for an answer outside this conversation.`;
@@ -591,7 +578,9 @@ const times = (n: number): string => `${n} ${n === 1 ? 'time' : 'times'}`;
  * #627 W: the await entry — a question this door hands to the person (its `respond` serves the asked
  * person, never the agent). Under `asked` with forms it says what this server SENT (W-a1f, from the
  * door's facts, never what the person saw); under `withheld`, W-a1 on a reply that carries the
- * question's `gate`, else W-a2. No text names a tool that answers, or a person; no claim token.
+ * question's `gate`, else W-a2. No text names a tool that answers, or a command; no claim token.
+ * Under `asked` without forms one sentence more names the place a person answers (PR #1167
+ * correction 1, item 10).
  */
 function awaitEntryOf(
   way: RespondWay,
@@ -637,7 +626,14 @@ function awaitEntryOf(
     // #819 (T2): the start line's "the agent tells the user the run id" is asked for here; #819
     // correction 1 (02 W3): a Slack thread's answer needs no run id — a terminal's does. #819
     // follow-up 2 (reader B's M2): "may", and no place named (K1: no text naming an answer way).
-    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation. ${show}; an answer they give here is not recorded. Give the user this run id (${way.run_id}); they may need it to answer.`;
+    // PR #1167 correction 1 (item 10; the owner's (a), c9e89f1a): under `asked` without forms the
+    // entry names where a person answers — the place, never the command (an agent with a shell would
+    // run it). `withheld`'s entry is unchanged.
+    const where =
+      host.answers?.value === 'asked'
+        ? ' A person answers it in a terminal on the computer that runs the Realm server.'
+        : '';
+    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation.${where} ${show}; an answer they give here is not recorded. Give the user this run id (${way.run_id}); they may need it to answer.`;
   }
   return {
     instruction: null,

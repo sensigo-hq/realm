@@ -14,12 +14,12 @@ You define workflows in YAML. The engine enforces step order, checks each agent 
 
 ## Packages
 
-| Package                  | npm                                                                                                                 | Description                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `@sensigo/realm`         | [![npm](https://img.shields.io/npm/v/@sensigo/realm)](https://www.npmjs.com/package/@sensigo/realm)                 | Core engine — state guard, execution loop, evidence capture |
-| `@sensigo/realm-cli`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-cli)](https://www.npmjs.com/package/@sensigo/realm-cli)         | `realm` CLI for building, operating, and serving workflows  |
-| `@sensigo/realm-mcp`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-mcp)](https://www.npmjs.com/package/@sensigo/realm-mcp)         | `realm-mcp` MCP server — 11 tools (10 under `withheld`)     |
-| `@sensigo/realm-testing` | [![npm](https://img.shields.io/npm/v/@sensigo/realm-testing)](https://www.npmjs.com/package/@sensigo/realm-testing) | Testing utilities — fixtures, assertions, in-memory store   |
+| Package                  | npm                                                                                                                 | Description                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `@sensigo/realm`         | [![npm](https://img.shields.io/npm/v/@sensigo/realm)](https://www.npmjs.com/package/@sensigo/realm)                 | Core engine — state guard, execution loop, evidence capture   |
+| `@sensigo/realm-cli`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-cli)](https://www.npmjs.com/package/@sensigo/realm-cli)         | `realm` CLI for building, operating, and serving workflows    |
+| `@sensigo/realm-mcp`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-mcp)](https://www.npmjs.com/package/@sensigo/realm-mcp)         | `realm-mcp` MCP server — 11 tools (10 without an answer tool) |
+| `@sensigo/realm-testing` | [![npm](https://img.shields.io/npm/v/@sensigo/realm-testing)](https://www.npmjs.com/package/@sensigo/realm-testing) | Testing utilities — fixtures, assertions, in-memory store     |
 
 ## Installation
 
@@ -147,7 +147,7 @@ REALM_SERVE_TOKEN=<secret> realm serve --port 3001
 
 This starts an HTTP MCP server protected by Bearer token authentication. Use `--dev` to skip auth during local development.
 
-Once connected the agent has access to 11 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `advance_run`, `submit_human_response` (or `present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms); neither under `withheld`, which lists 10), `get_run_state`, `abandon_run`, `create_workflow`, and `append_trace` (`advance_run` was added after version 0.46.0).
+Once connected the agent has access to up to 11 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `advance_run`, `submit_human_response` (under `permitted` only; `present_question` in its place under the default `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms); neither under `withheld`, or under `asked` with a client that shows no forms, which list 10), `get_run_state`, `abandon_run`, `create_workflow`, and `append_trace` (`advance_run` was added after version 0.46.0).
 
 The agent calls `list_workflows` to discover registered workflows, then `get_workflow_protocol` for the matched workflow to receive explicit step-by-step instructions. It cannot execute a step out of order or submit output that fails schema validation.
 

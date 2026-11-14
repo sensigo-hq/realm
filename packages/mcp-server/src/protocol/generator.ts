@@ -11,13 +11,10 @@ import {
 
 /**
  * #627 W (§5.4d): the session's effective way with gate answers — the row of §5.2's table the door
- * is on: `offered`; `asked` with forms (`asked_forms`); `asked` without (`fallback`); `withheld`.
+ * is on: `permitted`; `asked` with forms (`asked_forms`); `withheld` (`asked` without forms included,
+ * since the gate-answers default, 2026-11-14).
  */
 export type EffectiveWay = AnswersRow;
-
-/** #627 W (W-p2): the approval sentence `asked`'s fallback adds to PR-0's answer texts. */
-const APPROVAL_SENTENCE =
-  ' Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.';
 
 export interface ProtocolStepGate {
   choices: string[];
@@ -57,7 +54,7 @@ export interface WorkflowProtocol {
 }
 
 /**
- * W-p1: PR-0's rule 2, the `offered` variant — byte-identical but for correction 2's words (8.6 (g)):
+ * W-p1: PR-0's rule 2, the `permitted` variant — byte-identical but for correction 2's words (8.6 (g)):
  * `gate.agent_hint` exists only when the author wrote `instructions`, so it is read "when the reply
  * has one". #819 follow-up 2 (reader B's M4(b)): so is `gate.display`, which a gate with no message
  * does not carry (#729 PR-4: no surface invents a question from the step's prompt).
@@ -66,28 +63,25 @@ const CONFIRM_RULE_OFFERED =
   "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim when the reply has one, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.";
 
 /**
- * #627 W (§5.4d): rule 2 by the session's effective way — W-p1 (`offered`), W-p2 (the fallback:
- * PR-0's text plus the approval sentence), W-p3 (`withheld` and `asked` with forms: no answer act).
- * Correction 2 (8.6 (h)): under `asked` with forms the user's app shows the question as a form, so
- * the agent is not told to present it; `withheld` keeps the words.
+ * #627 W (§5.4d): rule 2 by the session's effective way — W-p1 (`permitted`), W-p3 (`withheld` and
+ * `asked` with forms: no answer act). Correction 2 (8.6 (h)): under `asked` with forms the user's app
+ * shows the question as a form, so the agent is not told to present it; `withheld` keeps the words.
  */
 function confirmRuleOf(way: EffectiveWay): string {
-  if (way === 'offered') return CONFIRM_RULE_OFFERED;
-  if (way === 'fallback') return `${CONFIRM_RULE_OFFERED}${APPROVAL_SENTENCE}`;
+  if (way === 'permitted') return CONFIRM_RULE_OFFERED;
   if (way === 'asked_forms')
     return "When you receive status 'confirm_required', read gate.agent_hint when the reply has one; the user's app shows them the question as a form; follow next_actions.";
   // #819 correction 1 (02 W1): a gate with no message carries no display (#729 PR-4)
   return "When you receive status 'confirm_required', read gate.agent_hint when the reply has one, present gate.display to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation.";
 }
 
-/** PR-0's auto+gate step text, the `offered` variant (W-p8's base); correction 2 (8.6 (g)) adds "when the reply has one". */
+/** PR-0's auto+gate step text, the `permitted` variant (W-p8's base); correction 2 (8.6 (g)) adds "when the reply has one". */
 const AUTO_GATE_INVOLVEMENT_OFFERED =
   'YOU will receive `status: confirm_required` after this step runs — the engine runs it (when next_actions names advance_run, call it), then opens a gate. Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim when the reply has one, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.';
 
 /** #627 W (W-p8): the auto+gate step's text by the session's effective way (correction 2, 8.6 (h): `asked` with forms on its own). */
 function autoGateInvolvementOf(way: EffectiveWay): string {
-  if (way === 'offered') return AUTO_GATE_INVOLVEMENT_OFFERED;
-  if (way === 'fallback') return `${AUTO_GATE_INVOLVEMENT_OFFERED}${APPROVAL_SENTENCE}`;
+  if (way === 'permitted') return AUTO_GATE_INVOLVEMENT_OFFERED;
   if (way === 'asked_forms')
     return "YOU will receive `status: confirm_required` after this step runs — the engine runs it (when next_actions names advance_run, call it), then opens a gate. Read `gate.agent_hint` for presentation instructions when the reply has one; the user's app shows them the question as a form; follow next_actions.";
   return 'YOU will receive `status: confirm_required` after this step runs — the engine runs it (when next_actions names advance_run, call it), then opens a gate. Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation.';
@@ -132,11 +126,11 @@ const ERROR_HANDLING = {
 /**
  * Generates the full agent protocol briefing from a WorkflowDefinition. #627 W: `way` is the
  * session's effective way with gate answers (the server passes it); the one-argument call is PR-0's
- * `offered` text. The protocol is built with no run, so nothing in it is narrowed.
+ * text, the `permitted` row's. The protocol is built with no run, so nothing in it is narrowed.
  */
 export function generateProtocol(
   definition: WorkflowDefinition,
-  way: EffectiveWay = 'offered',
+  way: EffectiveWay = 'permitted',
 ): WorkflowProtocol {
   const steps: ProtocolStep[] = [];
   let agentStepCount = 0;

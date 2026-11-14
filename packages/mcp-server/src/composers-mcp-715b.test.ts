@@ -46,6 +46,8 @@ async function server() {
   const workflowStore = h.stores.workflowStore;
   await workflowStore.register(DEF);
   const s = createRealmMcpServer({
+    // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+    gateAnswers: 'permitted',
     runStore,
     workflowStore,
     traceBufferStore: new InMemoryTraceBufferStore(runStore),
@@ -143,6 +145,8 @@ describe('#715 (b) §B.2 — the MCP composers judge at the record’s reading',
     const workflowStore = h.stores.workflowStore;
     await workflowStore.register(ONE_Q);
     const s2 = createRealmMcpServer({
+      // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+      gateAnswers: 'permitted',
       runStore: counting,
       workflowStore,
       traceBufferStore: new InMemoryTraceBufferStore(counting),

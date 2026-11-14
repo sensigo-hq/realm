@@ -476,3 +476,89 @@ describe('#729 CW-1 correction 1 — a claim’s lease is a table of its own', (
     });
   });
 });
+
+// U3: the four usage fields that carry Realm's closed words choose their class by value. Each of
+// Realm's own words is planted as a DECLARED member of the walk's set (the door cell's way): a fact
+// is never checked, so the word stays whole. A case variant of each word, also a member, is not one
+// of Realm's words: it is checked as text and hidden. (A word that is no member shows whole under
+// either class, so only members tell the two classes apart.) The words are Realm's; no fake value.
+describe('U3 — the usage fields with closed words are chosen by value', () => {
+  it("each of Realm's own words, a declared member, is shown whole; its case variant, a member too, is checked and hidden", () => {
+    const OWN = {
+      cache_requested: 'lifetime',
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      endpoint: 'custom',
+    };
+    const VARIANT = {
+      cache_requested: 'Lifetime',
+      cache_requested_source: 'Stated',
+      cache_requested_by: 'Realm agent',
+      endpoint: 'Custom',
+    };
+    const request = (words: typeof OWN, index: number) => ({
+      request_index: index,
+      request_start: '2026-11-14T00:00:00.000Z',
+      ...words,
+      reference: {
+        from: 'run',
+        request_start: '2026-11-13T00:00:00.000Z',
+        cache_requested: words.cache_requested,
+        endpoint: words.endpoint,
+      },
+    });
+    const record = {
+      id: 'run-u3-words',
+      evidence: [
+        {
+          step_id: 'ask',
+          diagnostics: {
+            cache: {
+              state: 'engaged',
+              basis: 'provider_reported',
+              requests: [request(OWN, 0), request(VARIANT, 1)],
+            },
+          },
+        },
+      ],
+    } as unknown as RunRecord;
+    // Each own word is at least 4 characters, the declared floor: a shorter one (`off`) is never a
+    // member, so it cannot tell the classes apart.
+    const set = compileDisclosure(
+      [...Object.values(OWN), ...Object.values(VARIANT)].map((value, i) => ({
+        value,
+        source: `declared:U3_WORD_${i}` as const,
+      })),
+      { declared: 'resolved', audience: 'file', environment: 'swept' },
+    ).set;
+    const { record: shown, receipt } = discloseRecord(record, set, 'file');
+    const requests = (shown as unknown as { evidence: Array<Record<string, unknown>> }).evidence[0]!
+      .diagnostics as { cache: { requests: Array<Record<string, unknown>> } };
+    const [own, variant] = requests.cache.requests;
+    const pick = (r: Record<string, unknown> | undefined) => ({
+      cache_requested: r?.['cache_requested'],
+      cache_requested_source: r?.['cache_requested_source'],
+      cache_requested_by: r?.['cache_requested_by'],
+      endpoint: r?.['endpoint'],
+      reference: [
+        (r?.['reference'] as Record<string, unknown> | undefined)?.['cache_requested'],
+        (r?.['reference'] as Record<string, unknown> | undefined)?.['endpoint'],
+      ],
+    });
+    const HIDDEN = '[REDACTED]';
+    // (a) red when a row is `bounded` (an own word hidden) or `fact` (a variant whole), or when the
+    //     chooser compares without case (each variant whole); (b) prints the words as shown and the
+    //     hidden count (Realm's words and the marker, no fake value).
+    expect({ own: pick(own), variant: pick(variant), hidden: receipt.hidden }).toEqual({
+      own: { ...OWN, reference: [OWN.cache_requested, OWN.endpoint] },
+      variant: {
+        cache_requested: HIDDEN,
+        cache_requested_source: HIDDEN,
+        cache_requested_by: HIDDEN,
+        endpoint: HIDDEN,
+        reference: [HIDDEN, HIDDEN],
+      },
+      hidden: { declared: 6, environment: 0, pattern: 0 },
+    });
+  });
+});

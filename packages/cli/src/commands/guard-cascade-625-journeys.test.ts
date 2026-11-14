@@ -80,7 +80,12 @@ async function mcpClient(home: string, name: string): Promise<Client> {
     new StdioClientTransport({
       command: process.execPath,
       args: [resolveMcpServerEntry()],
-      env: { ...process.env, HOME: home } as Record<string, string>,
+      // The gate-answers default (2026-11-14): the journey answers with the answer tool, which only
+      // permitted lists.
+      env: { ...process.env, HOME: home, REALM_MCP_GATE_ANSWERS: 'permitted' } as Record<
+        string,
+        string
+      >,
     }),
   );
   return client;

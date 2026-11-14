@@ -34,7 +34,7 @@ import {
 } from './snapshot.js';
 import { renderTemplateWithBoundary, type StableBoundary } from './render-template.js';
 import type { LeaseFact } from '../store/lease-port.js';
-import { isLeaseFact, leaseFactOf } from '../store/lease-facts.js';
+import { isLeaseFact, leaseFactOf, type LeaseFacts } from '../store/lease-facts.js';
 import { clockBasis, type Clock } from '../utils/clock.js';
 import { buildEvidenceByStep, deriveRunPhase, findEligibleSteps } from './eligibility.js';
 import {
@@ -70,8 +70,10 @@ export type Slot<T> = { readonly one_of: readonly T[] };
  * observer passed no registry — C33: a read surface never executes project code), `load_failed` (this
  * program's project code failed to load).
  *
- * W adds `client_prompt`; PR-1 adds `confirm_after_preview`, `erases_operator_ending`,
- * `override_claim_unknown_age` — each with its producer, never reserved here.
+ * W added `client_prompt`; PR-1 adds `confirm_after_preview`, `erases_operator_ending`,
+ * `override_claim_unknown_age` — each with its producer, never reserved here. The gate-answers default
+ * (2026-11-14) removed `client_prompt`'s one producer, the MCP door's fallback row; the member and its
+ * tag stay, as exported names, and nothing composes it now.
  */
 export type Cond =
   | {
@@ -81,11 +83,12 @@ export type Cond =
       basis: 'marker' | 'unjudged' | 'load_failed';
     }
   /**
-   * #627 W (Part B, §5.2 row 3): the MCP door's fallback — a client that shows no forms keeps the
-   * answer tool, marked so the app asks the person to approve each call. The CLIENT discharges it,
-   * outside Realm: no argument discharges it (it is in no `ArgSpec.discharges` list — discharge is
+   * #627 W (Part B, §5.2 row 3): the MCP door's former fallback — a client that showed no forms kept
+   * the answer tool, marked so the app asked the person to approve each call. The CLIENT discharged
+   * it, outside Realm: no argument discharges it (it is in no `ArgSpec.discharges` list — discharge is
    * declared on the argument, the one home, PR0-CONTRACT Amendment 17 item 9), and admission never
-   * waits on it, since Realm cannot see the prompt (cell 31). Its `tag` names the outside discharger.
+   * waited on it, since Realm cannot see the prompt. Its `tag` names the outside discharger. Since the
+   * gate-answers default (2026-11-14) no door composes it: that row is gone.
    */
   | { code: 'client_prompt'; tag: CondTag };
 
@@ -559,14 +562,25 @@ export type Source = {
 };
 
 /**
- * #627 W (§5.1, F21): how the MCP door handles gate answers. `asked` (the default): the question goes
- * to the person in the chat app's own form, and the agent gets no answer tool — or, in a client that
- * shows no forms, keeps it with the app's approval prompt (F30); `offered` (opt-in): today's answer
- * tool; `withheld`: no answer way at all. The most restrictive value wins: `withheld` > `asked` >
- * `offered`.
+ * #627 W (§5.1, F21) and the gate-answers default (2026-11-14): how the MCP door handles gate answers.
+ * `asked` (the default): no agent gets a tool that records an answer, in any app — the question goes
+ * to the person in the chat app's own form where the app shows forms, and elsewhere a person answers
+ * outside the conversation; `permitted` (opt-in): the answer tool for any client, the agent included;
+ * `withheld`: no answer way at all. The most restrictive value wins: `withheld` > `asked` >
+ * `permitted`. `offered`, `permitted`'s name until version 0.49.0, is accepted where a value is given
+ * ({@link GATE_ANSWERS_ALIASES}) and never read back.
  */
-export const GATE_ANSWERS_VALUES = ['asked', 'offered', 'withheld'] as const;
+export const GATE_ANSWERS_VALUES = ['asked', 'permitted', 'withheld'] as const;
 export type GateAnswers = (typeof GATE_ANSWERS_VALUES)[number];
+
+/**
+ * The old names a gate-answers value is still accepted under where it is given (the flag, the
+ * environment variable, the `gateAnswers` option), each with the value it reads as: `offered` is
+ * `permitted`'s name until version 0.49.0. Core's judge is the one place that reads it.
+ */
+export const GATE_ANSWERS_ALIASES = { offered: 'permitted' } as const;
+/** A gate-answers value as a source can hold it: one of the three, or an old name. */
+export type GateAnswersGiven = GateAnswers | keyof typeof GATE_ANSWERS_ALIASES;
 
 /**
  * #627 W: the door's gate-answers setting, as `narrowForDoor` reads it — the value and where it came
@@ -665,16 +679,19 @@ function partiesAt(way: WayOn, serves: readonly Party[], row?: AnswersRow): Part
 }
 
 /**
- * #627 W: which row of §5.2's table a door's answers setting puts it on — `offered`; `asked` with a
- * client that shows forms; `asked` without (F30's fallback); `withheld`. `undefined` for a door with
- * no answers setting (the CLI, the library): it narrows as PR-0 did.
+ * #627 W: which row of §5.2's table a door's answers setting puts it on — `permitted`; `asked` with a
+ * client that shows forms; `withheld`. `undefined` for a door with no answers setting (the CLI, the
+ * library): it narrows as PR-0 did. The gate-answers default (2026-11-14): `asked` in a session whose
+ * client shows no forms (and on a door that sends none) is on the `withheld` row — the same tools,
+ * replies and protocol rules; F30's fallback row, which kept the agent's answer tool there, is gone.
+ * A row is never printed as the value: the value is `answers.value`.
  */
-export type AnswersRow = 'offered' | 'asked_forms' | 'fallback' | 'withheld';
+export type AnswersRow = 'permitted' | 'asked_forms' | 'withheld';
 export function answersRowOf(answers: DoorAnswers | undefined): AnswersRow | undefined {
   if (answers === undefined) return undefined;
-  if (answers.value === 'offered') return 'offered';
-  if (answers.value === 'withheld') return 'withheld';
-  return answers.forms.shown ? 'asked_forms' : 'fallback';
+  if (answers.value === 'permitted') return 'permitted';
+  if (answers.value === 'asked' && answers.forms.shown) return 'asked_forms';
+  return 'withheld';
 }
 
 /** #627 W: the rows where the door removes the agent's `respond` (§5.2's rows 2 and 4). */
@@ -691,9 +708,6 @@ function withholdsAnswers(row: AnswersRow | undefined): boolean {
 export function doorWithholdsAnswers(policy: DoorPolicy): boolean {
   return policy.serves.includes('agent') && withholdsAnswers(answersRowOf(policy.answers));
 }
-
-/** #627 W, §5.2 row 3: the fallback's condition — the client asks the person; Realm cannot see it. */
-const CLIENT_PROMPT: Cond = { code: 'client_prompt', tag: 'client' };
 
 /**
  * #627 W (§5.2b; Amendment 2): the door's verdict on showing the question again — the ONE predicate
@@ -726,11 +740,11 @@ export function presentDoorVerdict(
  * `unavailable` with `door_cannot_enact` (per verb); every remedy is narrowed by the same law. The
  * conservation law: every way a door removes is listed, with why.
  *
- * #627 W: a door with an answers setting applies §5.2's four-row table exactly. `offered`: the
- * agent's `respond` kept. `asked` with forms and `withheld`: the agent removed from every `respond`
- * — top-level and nested in a remedy — and each listed once per question as `door_withholds_answers`
- * with party `agent`; the asked person's `respond` stays (its `for` never empties, so it never
- * becomes `door_cannot_enact`). `asked` without forms: kept, with the `client_prompt` condition.
+ * #627 W: a door with an answers setting applies §5.2's table exactly. `permitted`: the agent's
+ * `respond` kept. `asked` with forms and `withheld` (`asked` without forms included): the agent
+ * removed from every `respond` — top-level and nested in a remedy — and each listed once per question
+ * as `door_withholds_answers` with party `agent`; the asked person's `respond` stays (its `for` never
+ * empties, so it never becomes `door_cannot_enact`).
  * `present`, composed by core as `no_form_here` at an open question, is re-judged by the door's own
  * facts (`formFacts`, per gate) on the `asked`-with-forms row only.
  */
@@ -818,12 +832,7 @@ function withoutProof(way: ForWay): ForWay {
 
 /** A remedy narrowed for a door: its parties, minted by the same law — and #627 W's row. */
 function withParties(way: WayOn, serves: readonly Party[], row?: AnswersRow): ForWay {
-  const forParties = partiesAt(way, serves, row);
-  if (way.verb === 'respond' && row === 'fallback' && forParties.includes('agent')) {
-    // #627 W, §5.2 row 3: kept for the agent with the client's approval prompt (F30).
-    return { ...way, conditions: [...way.conditions, CLIENT_PROMPT], for: forParties };
-  }
-  return { ...way, for: forParties };
+  return { ...way, for: partiesAt(way, serves, row) };
 }
 
 /** The entry a door lists for a way it cannot enact (the conservation law). */
@@ -1419,11 +1428,12 @@ export function heldFacts(snap: Snapshot, step: string): FactsOf<'held_elsewhere
  */
 function refusedEntry(
   entry: EngineRunnable,
-  run: RunRecord,
+  // #715 (b) (02 §D.4): the record and the reading it is judged at — a remedy's step brief renders
+  // there (#729 CW-1b part 2: the snapshot itself, its lease facts included).
+  snap: Snapshot,
   definition: WorkflowDefinition,
-  // #715 (b) (02 §D.4): the reading the record is judged at — a remedy's step brief renders there.
-  at: Date,
 ): Unavailable {
+  const run = snap.record;
   const def = definition.steps[entry.step];
   if (entry.refused_by === 'capability') {
     const requirement =
@@ -1454,7 +1464,7 @@ function refusedEntry(
       conditions: [],
       run_id: run.id,
       step: entry.step,
-      brief: stepBrief(definition, writtenSnapshot(run, at), entry.step),
+      brief: stepBrief(definition, snap, entry.step),
     });
   }
   const param =
@@ -1637,7 +1647,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
     });
   }
   for (const entry of pending.cannot_run) {
-    unavailable.push(refusedEntry(entry, run, definition, snap.at));
+    unavailable.push(refusedEntry(entry, snap, definition));
   }
   if (respond !== undefined && pending.expiry_due === undefined) {
     for (const step of pending.waiting_on_answer ?? []) {
@@ -1716,14 +1726,21 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
  * The ways of a record a caller already holds (a host that read the run, or wrote it), judged at the
  * caller's reading — `composeWaysOn` on the snapshot the record and that reading make. The judges
  * read the definition, this program's registry (an observer when none is passed: C33) and whether
- * the store keeps claims.
+ * the store keeps claims. #729 CW-1b part 2: `input.lease_facts` takes the lease facts of the store
+ * snapshot the record came from (`snapshot.lease_facts`), so a step held elsewhere carries its
+ * lease's fact; without them a claim that names a lease reads `not_checked`.
  */
 export function composeWaysAt(
   record: RunRecord,
   at: Date,
-  input: { definition: WorkflowDefinition; registry?: ExtensionRegistry; persistsClaims?: boolean },
+  input: {
+    definition: WorkflowDefinition;
+    registry?: ExtensionRegistry;
+    persistsClaims?: boolean;
+    lease_facts?: LeaseFacts | undefined;
+  },
 ): ComposedWays {
-  return composeWaysOn(writtenSnapshot(record, at), {
+  return composeWaysOn(writtenSnapshot(record, at, input.lease_facts), {
     definition: { ok: input.definition },
     enactor:
       input.registry !== undefined
@@ -1750,7 +1767,6 @@ function advanceUnavailable(
   // CW-1b: the held step's lease fact).
   snap: Snapshot,
 ): Unavailable {
-  const { at } = snap;
   if (respond !== undefined) {
     return {
       verb: 'advance',
@@ -1782,11 +1798,11 @@ function advanceUnavailable(
   // remedies (correct the workflow; the operator's lever; a new run only where one can help).
   const refused = pending.cannot_run.find((e) => e.refused_by !== 'capability');
   if (offeredSteps.length === 0 && refused !== undefined) {
-    return { ...refusedEntry(refused, run, definition, at), verb: 'advance' };
+    return { ...refusedEntry(refused, snap, definition), verb: 'advance' };
   }
   const missing = pending.cannot_run.find((e) => e.refused_by === 'capability');
   if (offeredSteps.length === 0 && missing !== undefined) {
-    const entry = refusedEntry(missing, run, definition, at);
+    const entry = refusedEntry(missing, snap, definition);
     return { ...entry, verb: 'advance' };
   }
   // Amendment 15: the agent's steps are the way on; else nothing is left to do.

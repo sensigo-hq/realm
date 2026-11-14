@@ -732,26 +732,31 @@ export function conditionLine(
   }
 }
 
-/** The value condition's line (F36): measured only when given on this command line. */
+/**
+ * The value condition's line (F36): measured only when given on this command line. The gate-answers
+ * default (2026-11-14): `asked` takes `withheld`'s two lines (no agent gets the answer tool under it);
+ * `permitted` keeps an answer way on either door. Only `withheld` closes the value gap (the claim).
+ */
 export function valueLine(e: CheckEvidence, ctx: RenderCtx = PLAIN): string {
   const v = e.value;
-  if (v.value === 'withheld') {
+  if (v.value === 'withheld' || v.value === 'asked') {
     // Correction 3 (H-8): the value stands alone before its parenthesis or comma, so it prints whole.
     const word = ctx.word(v.value, GATE_ANSWERS_VALUES);
-    return valueMeasuredWithheld(e)
-      ? `The gate-answers value: ${word} (given on this command line).`
+    if (valueMeasuredWithheld(e) || (v.value === 'asked' && givenOnCheckLine(e))) {
+      return `The gate-answers value: ${word} (given on this command line).`;
+    }
+    // PR #1167 correction 1 (item 4): `asked` from the default was configured by no one.
+    return v.source.kind === 'default'
+      ? `The gate-answers value: ${word}, the default (nothing on this command line or in this shell's environment sets it), not enforced by Realm — the running server's value is not read.`
       : `The gate-answers value: ${word}, configured, not enforced by Realm — from ${v.source.ref}; the running server's value is not read.`;
   }
-  // Correction 1 (D5): under `asked` the answer way depends on the door — `realm mcp` sends forms to
-  // apps that show them; `realm serve` sends none.
-  const keeps =
-    v.value === 'offered'
-      ? 'the agent keeps an answer way'
-      : e.door === 'serve'
-        ? 'every client keeps an answer way (this server sends no forms)'
-        : 'the agent keeps an answer way in apps without forms';
   // C1: the value stands alone here (the `withheld` sentences above hold it inside prose: R33).
-  return `The gate-answers value: ${ctx.word(v.value, GATE_ANSWERS_VALUES)} (from ${v.source.ref}) — ${keeps}.`;
+  return `The gate-answers value: ${ctx.word(v.value, GATE_ANSWERS_VALUES)} (from ${v.source.ref}) — the agent keeps an answer way.`;
+}
+
+/** Whether the winning gate-answers value was given on the `--check` line's own `--gate-answers` flag. */
+function givenOnCheckLine(e: Pick<SeparationEvidence, 'value'>): boolean {
+  return e.value.source.kind === 'flag';
 }
 
 const MODE_WORDS: Record<SeparationMode, string> = {
@@ -773,9 +778,17 @@ const GAP_SUBJECT: Record<Exclude<SeparationGap['gap'], 'value'>, string> = {
 /** One gap's words, by its reading (correction 1 D1: an unknown never reads "it can"; #819 Unit B:
  *  it reads as its condition line does — "is unknown", or "was not measured" when nothing was read
  *  for it, its condition in `not_observed`). */
-function gapWords(g: SeparationGap, notObserved: readonly SeparationCondition[]): string {
+function gapWords(
+  g: SeparationGap,
+  notObserved: readonly SeparationCondition[],
+  value: Pick<SeparationEvidence, 'value'>,
+): string {
   if (g.gap === 'value') {
-    return "the gate-answers value: give it on this command line, and read the running server's start line";
+    // The gate-answers default (2026-11-14): a value other than `withheld` given on this line is
+    // measured, and still leaves a way — the gap says which.
+    return givenOnCheckLine(value)
+      ? 'the gate-answers value: only withheld, given on this command line, rules out an answer through a Realm server: under asked, an app that shows forms can be set to answer a form by itself; under permitted, the agent has the answer tool'
+      : "the gate-answers value: give it on this command line, and read the running server's start line";
   }
   const r = g.reading;
   const subject = GAP_SUBJECT[g.gap];
@@ -890,7 +903,7 @@ export function separationClaim(
     return "An agent running as this login could answer a gate through the terminal or by editing Realm's files; Realm records how each answer arrived but cannot stop it.";
   }
   return `An agent running as ${e.login} may still be able to answer a gate: ${separationGaps(e)
-    .map((g) => gapWords(g, e.not_observed ?? []))
+    .map((g) => gapWords(g, e.not_observed ?? [], e))
     .join('; ')}.`;
 }
 

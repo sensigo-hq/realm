@@ -168,7 +168,9 @@ describe('#625 PR-2a — L4 Follower on examples 01–09 (realm mcp --project, r
             'realm mcp',
             new StdioClientTransport({
               command: process.execPath,
-              args: [CLI, 'mcp', '--project', proj],
+              // The gate-answers default (2026-11-14): the follower answers each gate with the
+              // answer tool, which only permitted lists.
+              args: [CLI, 'mcp', '--project', proj, '--gate-answers', 'permitted'],
               cwd: proj,
               env: { ...process.env, HOME: home } as Record<string, string>,
               stderr: 'pipe',

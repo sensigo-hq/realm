@@ -118,8 +118,7 @@ export const reclaimCommand = new Command('reclaim')
         olderThan?: string;
       },
     ) => {
-      const { reclaimStep, classifyInProgressClaims, shellWord, writtenSnapshot } =
-        await import('@sensigo/realm');
+      const { reclaimStep, classifyInProgressClaims, shellWord } = await import('@sensigo/realm');
       // #616 PR-2a (iii): the one door, opened once; the registry is built on its first use.
       const home = await openCliHome();
       const store = home.runStore;
@@ -170,9 +169,11 @@ export const reclaimCommand = new Command('reclaim')
           for await (const page of store.scan(filter, { pageSize: 1000, projection: 'record' })) {
             for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
           }
-          for (const { record: run, at } of snapshots) {
+          for (const snapshot of snapshots) {
+            const { record: run, at } = snapshot;
             if (run.terminal_state) continue;
-            const claims = classifyInProgressClaims(writtenSnapshot(run, at));
+            // #729 CW-1b part 2: judged on the scan's snapshot, with its lease facts.
+            const claims = classifyInProgressClaims(snapshot);
             if (claims.length === 0) continue;
             // Resolve the definition to read the `idempotent` hint. Unresolvable → cannot confirm
             // idempotent → exclude every claim (safe: never auto-reclaim an unverifiable step).
@@ -264,7 +265,9 @@ export const reclaimCommand = new Command('reclaim')
       }
 
       try {
-        const { record: run, at: runAt } = await store.get(runId);
+        // #729 CW-1b part 2: the read whole, with the lease facts the store attached.
+        const read = await store.get(runId);
+        const { record: run } = read;
 
         // --- Reclaim path: --step (+ --force) ---
         if (opts.step !== undefined) {
@@ -275,9 +278,7 @@ export const reclaimCommand = new Command('reclaim')
             );
             process.exit(1);
           }
-          const info = classifyInProgressClaims(writtenSnapshot(run, runAt)).find(
-            (c) => c.step === opts.step,
-          );
+          const info = classifyInProgressClaims(read).find((c) => c.step === opts.step);
           if (info?.state === 'healthy') {
             console.warn(
               `⚠ '${opts.step}' currently has a HEALTHY claim (a live runner is presumed on it). ` +
@@ -303,7 +304,7 @@ export const reclaimCommand = new Command('reclaim')
           );
           return;
         }
-        const infos = classifyInProgressClaims(writtenSnapshot(run, runAt));
+        const infos = classifyInProgressClaims(read);
         if (infos.length === 0) {
           console.log(
             `Run '${runId}' (${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}) has no in-progress claims. Nothing to reclaim.`,

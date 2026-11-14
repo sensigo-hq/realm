@@ -11,8 +11,8 @@ import {
   capabilityWarning,
   createDefaultRegistry,
   deriveRunPhase,
-  writtenSnapshot,
   type RunPhase,
+  type RunStore,
   type DisclosureClass,
   persistsField,
   startIdentityEntry,
@@ -237,15 +237,10 @@ export async function handleStartRunBatch(
   let dedupHits = 0;
   for (let i = 0; i < args.items.length; i++) {
     const item = args.items[i]!;
-    let run;
-    let createdAt: Date;
-    let created;
+    // #729 CW-1b part 2: the create's snapshot whole (its record and its lease facts).
+    let made: Awaited<ReturnType<RunStore['create']>>;
     try {
-      ({
-        record: run,
-        at: createdAt,
-        created,
-      } = await runStore.create({
+      made = await runStore.create({
         workflowId: definition.id,
         workflowVersion: definition.version,
         params: item.params,
@@ -260,7 +255,7 @@ export async function handleStartRunBatch(
         persistsField(runStore, 'extension_identity')
           ? { extensionIdentity: [startIdentityEntry(registry)!] }
           : {}),
-      }));
+      });
     } catch (err) {
       // A policy rejection (`reject` / `fail`) must NOT sink the batch — record and continue.
       const we = err instanceof WorkflowError ? err : undefined;
@@ -273,6 +268,7 @@ export async function handleStartRunBatch(
       });
       continue;
     }
+    const { record: run, created } = made;
 
     // The store reports `created`; the batch surfaces its inverse, `deduped`, per item.
     const deduped = !created;
@@ -300,9 +296,9 @@ export async function handleStartRunBatch(
     // decision C117: one clock for the entry's ways and its hint. #729 PR-0: the ways composed by
     // core, rendered by the MCP door (next_actions, and on a live run the sentence of what comes next).
     // #715 (b) (02 §B.2, D6-17): that one reading is the create's — the snapshot the item describes.
-    const handedBack = writtenSnapshot(run, createdAt);
+    const handedBack = made;
     const rendered = renderWaysOf(
-      composeToolWays(runStore, definition, run, registry, handedBack.at),
+      composeToolWays(runStore, definition, handedBack, registry),
       mcpHostOf(stores),
     );
     started.push({

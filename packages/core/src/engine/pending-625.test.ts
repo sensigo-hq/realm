@@ -1123,7 +1123,8 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
     // decision C82: the pick is the view's offered agent steps — a refused one is never picked.
     expect(ra).toContain(
       // #715 (b) (02 §A.1): the view judges the held snapshot — the record and its own reading.
-      'describePending(definition, writtenSnapshot(currentRun, currentAt!), deps.registry) .agent_steps',
+      // #729 CW-1b part 2: the held snapshot whole, with its lease facts.
+      'describePending(definition, currentSnap, deps.registry).agent_steps',
     );
     expect(ra).not.toContain("execution === 'auto'");
     expect(ra).not.toContain('executeStep(');

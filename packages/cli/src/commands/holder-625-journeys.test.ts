@@ -98,7 +98,9 @@ async function stdioClient(
     new StdioClientTransport({
       command: process.execPath,
       args: [entry, ...args],
-      env: childEnv({ REALM_OPERATOR: operator }),
+      // The gate-answers default (2026-11-14): these rows answer with the answer tool, which only
+      // permitted lists.
+      env: childEnv({ REALM_OPERATOR: operator, REALM_MCP_GATE_ANSWERS: 'permitted' }),
     }),
   );
   return client;

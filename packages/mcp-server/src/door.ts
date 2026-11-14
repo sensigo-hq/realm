@@ -1,7 +1,7 @@
 // door.ts — #627 W (§5.1, §5.2b): the MCP door's gate answers. One value per server, read once from
 // the bins' `--gate-answers` flag, the `REALM_MCP_GATE_ANSWERS` environment variable and the
-// `gateAnswers` option — the MOST RESTRICTIVE wins (`withheld` > `asked` > `offered`), default `asked`
-// — plus the form-wait setting, and what this server process has SENT for each question (never what
+// `gateAnswers` option — the MOST RESTRICTIVE wins (`withheld` > `asked` > `permitted`; `offered`, an
+// old name, read as `permitted`), default `asked` — plus the form-wait setting, and what this server process has SENT for each question (never what
 // the person saw, never on the run record: Amendment 4).
 import {
   judgeGateAnswers,
@@ -51,13 +51,14 @@ type SetKind = 'flag' | 'env' | 'option';
 export function gateAnswersLibraryRefusal(kind: SetKind, raw: string): string {
   const where =
     kind === 'env' ? GATE_ANSWERS_ENV : kind === 'flag' ? '--gate-answers' : 'gateAnswers option';
-  return `createRealmMcpServer: invalid ${where} value '${raw}': expected asked, offered or withheld — refused: no server is built while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value where this program reads it, or remove it; a program that reads its environment only at start must be restarted.`;
+  return `createRealmMcpServer: invalid ${where} value '${raw}': expected asked, permitted or withheld — refused: no server is built while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value where this program reads it, or remove it; a program that reads its environment only at start must be restarted.`;
 }
 
 /**
  * The effective gate-answers value for embedders' logs (§5.1): the same reading
- * `createRealmMcpServer` makes from these options and this environment. Throws W-s4 (library) on a
- * value that is not one of the three.
+ * `createRealmMcpServer` makes from these options and this environment. `value` reads `permitted`
+ * where a source gave its old name `offered`; `alsoSet` quotes each other source as written. Throws
+ * W-s4 (library) on a value that is not one of the three or the old name.
  */
 export function effectiveGateAnswers(
   options?: { gateAnswers?: string | undefined; gateAnswersFlag?: string | undefined },

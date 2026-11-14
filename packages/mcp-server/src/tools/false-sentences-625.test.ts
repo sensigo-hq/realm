@@ -50,12 +50,18 @@ afterEach(async () => {
   for (const h of handles.splice(0).reverse()) await h.cleanup();
 });
 
-async function connect(registry?: ExtensionRegistry) {
+async function connect(
+  registry?: ExtensionRegistry,
+  answers: 'permitted' | 'default' = 'permitted',
+) {
   const h = await makeTempHome();
   handles.push(h);
   const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
     ...h.stores,
+    // The gate-answers default (2026-11-14): these pages' examples show the agent answering, on a
+    // server started with --gate-answers permitted; `'default'` is a server given no value.
+    ...(answers === 'permitted' ? { gateAnswers: 'permitted' as const } : {}),
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -248,9 +254,10 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
   it('F-R1: without protocol.rules, six standard rules and the four always added on this server — ten (#627 W: the await rule and the value line join the two)', async () => {
     claim(
       TOOLS,
-      "| `rules` | The rules to follow. The workflow's `protocol.rules`, after the line `Rules from the workflow's author:`, or six standard rules. Realm's own rules are always added after either: the rule for an `awaiting` entry, a line for the server's gate-answers value (none under `offered`), and two rules about concurrent attempts. The line, the `awaiting` rule and the value line were added after version 0.47.0. |",
+      "| `rules` | The rules to follow. The workflow's `protocol.rules`, after the line `Rules from the workflow's author:`, or six standard rules. Realm's own rules are always added after either: the rule for an `awaiting` entry, a line for the server's gate-answers value (none under `permitted`), and two rules about concurrent attempts. The line, the `awaiting` rule and the value line were added after version 0.47.0. |",
     );
-    const { call, workflowStore } = await connect();
+    // A default server and a client with no forms: the value line is withheld's.
+    const { call, workflowStore } = await connect(undefined, 'default');
     const steps = {
       a: { description: 'A.', execution: 'agent', depends_on: [] } as StepDefinition,
     };
@@ -263,7 +270,7 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
       'rules'
     ] as string[];
     // (a) red when the count is not six plus Realm's four (the default server, a client with no
-    //     forms: the await rule, the fallback's value line, the two about concurrent attempts), or
+    //     forms: the await rule, withheld's value line, the two about concurrent attempts), or
     //     they are not added after the workflow's own, or its own lose the author's label; (b) prints
     //     the counts and the shared tail.
     expect({
