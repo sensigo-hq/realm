@@ -832,16 +832,19 @@ export const runCommand = new Command('run')
           asking = false;
         }
       };
-      rl.on('SIGTSTP', () => {
-        process.once('SIGCONT', () => {
-          process.stdin.setRawMode(true);
-          rl.resume();
-          if (asking) rl.prompt(true);
+      // Node's readline always carries the listener; a stand-in with only `question` and `close` (an
+      // in-process test's) gets none.
+      if (typeof rl.on === 'function')
+        rl.on('SIGTSTP', () => {
+          process.once('SIGCONT', () => {
+            process.stdin.setRawMode(true);
+            rl.resume();
+            if (asking) rl.prompt(true);
+          });
+          rl.pause();
+          process.stdin.setRawMode(false);
+          process.kill(drivePid(), 'SIGTSTP');
         });
-        rl.pause();
-        process.stdin.setRawMode(false);
-        process.kill(drivePid(), 'SIGTSTP');
-      });
 
       // 5. Execution loop
       let { record: run, at: runAt } = await store.get(runId);
