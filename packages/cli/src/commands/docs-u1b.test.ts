@@ -29,10 +29,12 @@ function claimChangelog(sentence: string): void {
 describe('U1b Unit 1 — the docs say what the relay does', () => {
   it('operate-runs.md, "What the output hides": a handler’s programs are hidden; the five seconds', () => {
     // (a) the grandchild masked; (h) the bound and the drain line; (h3) the line under --log-mode;
-    // (x8) "is stopped": the program holding the output is gone once the command returns.
+    // (x8) "is stopped": the program holding the output is gone once the command returns. Unit 2:
+    // the four doors, (s1)–(s4) of `four-doors-relay-u1b2.test.ts`; "did not wait for" (amendment
+    // B1): (h-s), its released program stopped at the bound, its kept program waited for.
     claim(
       'docs/guides/operate-runs.md',
-      "When the output goes to a file or a pipe, what a program started by a step's handler writes there is hidden as the handler's own prints are — under `realm agent`. After the command's work ends, the log keeps what reached it within five seconds; a program that still holds the output open then is stopped, and Realm says so on its error output.",
+      "When the output goes to a file or a pipe, what a program started by a step's handler writes there is hidden as the handler's own prints are — under `realm agent`, `realm run drain`, `realm run advance`, `realm run respond` and `realm workflow run`. After the command's work ends, the log keeps what reached it within five seconds; a program the command did not wait for that still holds the output open then is stopped, and Realm says so on its error output.",
     );
   });
 
@@ -57,9 +59,42 @@ describe('U1b Unit 1 — the docs say what the relay does', () => {
   });
 
   it('the CHANGELOG entry', () => {
-    // (a), (b) the grandchild masked; (h) the five seconds and the line; (x8) "is stopped".
+    // (a), (b) the grandchild masked; (h) the five seconds and the line; (x8) "is stopped". Unit 2:
+    // the four doors, (s1)–(s4); "did not wait for" (B1): (h-s).
     claimChangelog(
-      "- Hardening: when the output goes to a file or a pipe, what a program started by a step's handler prints there is hidden as the handler's own prints are: `realm agent` runs its drive in a second process and keeps the first to do the hiding. A program that still holds the output open five seconds after the drive's work ends is stopped, and Realm says so on its error output.",
+      "- Hardening: when the output goes to a file or a pipe, what a program started by a step's handler prints there is hidden as the handler's own prints are: `realm agent`, `realm run drain`, `realm run advance`, `realm run respond` and `realm workflow run` run their work in a second process and keep the first to do the hiding. A program the command did not wait for that still holds the output open five seconds after the command's work ends is stopped, and Realm says so on its error output.",
+    );
+  });
+});
+
+/** U1b Unit 2's sentence for `realm run <name>` on the acting page. */
+const actingSentence = (name: string): string =>
+  `When its output goes to a file or a pipe, \`realm run ${name}\` runs its work in a second process and keeps the first to mask what reaches the file or pipe, as \`realm agent\` does; \`kill\` on the first process stops both.`;
+
+describe('U1b Unit 2 — the docs say what the four doors do', () => {
+  it.each([
+    ['respond', '(s3)'],
+    ['advance', '(s2)'],
+    ['drain', '(s1), (t-s)'],
+  ] as const)('realm-run-acting.md, the last paragraph of the `%s` section: %s', (name) => {
+    // The masking: (s1)–(s3) of `four-doors-relay-u1b2.test.ts`; on a terminal, today's path:
+    // (t-s); the `kill` clause: Unit 1's (f), the forward these doors reuse.
+    claim('docs/reference/cli/realm-run-acting.md', actingSentence(name));
+  });
+
+  it('realm-workflow.md, the last paragraph of the `realm workflow run` section', () => {
+    // (s4) the masking and the prompt on the terminal; (sig-s) `kill` on the first process; (z)
+    // and (z2) Ctrl-Z and `fg`.
+    claim(
+      'docs/reference/cli/realm-workflow.md',
+      'When its output goes to a file or a pipe, `realm workflow run` runs its work in a second process and keeps the first to mask what reaches the file or pipe, as `realm agent` does; `kill` on the first process stops both. Its prompts still reach your terminal when your error output is one; with both outputs in a file you type without seeing the prompt, as before. Ctrl-Z at a prompt and `fg` work as on a terminal.',
+    );
+  });
+
+  it('the CHANGELOG’s Ctrl-Z line', () => {
+    // (z2): on a terminal the prompt takes keys after `fg` (red on the base); (z) in log mode.
+    claimChangelog(
+      '- `realm workflow run`: after Ctrl-Z and `fg` at a prompt, the prompt takes keys again (it was redrawn but took none).',
     );
   });
 });
