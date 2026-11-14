@@ -82,11 +82,14 @@ import {
   PLAIN,
   RUN_PHASE_WORDS,
   digestSpan,
+  drivePid,
+  exitProcess,
   questionSpan,
   writerCtx,
   writerSetFor,
   type RenderCtx,
 } from '../output/writer.js';
+import { relayIfLogged } from '../output/relay.js';
 import { openCliHome, type CliHome } from '../lib/home.js';
 
 /**
@@ -536,7 +539,7 @@ async function holdStepClaim(
   const token = claimed.claims?.[step]?.token;
   let released = false;
   const onSignal = (signal: NodeJS.Signals): void => {
-    void release().finally(() => process.exit(128 + (osConstants.signals[signal] ?? 0)));
+    void release().finally(() => exitProcess(128 + (osConstants.signals[signal] ?? 0)));
   };
   const signals: NodeJS.Signals[] = ['SIGHUP', 'SIGINT', 'SIGTERM'];
   for (const signal of signals) process.once(signal, onSignal);
@@ -628,6 +631,10 @@ export const runCommand = new Command('run')
       },
       command: Command,
     ) => {
+      // U1b Unit 2 (D1): in log mode the work runs in a second process, which this one relays and
+      // masks — decided before the identity and the store; this process then never returns from it.
+      // The stdin refusal below runs in that process (stdin is passed on) and prints once.
+      await relayIfLogged();
       // issue #625 (holder slice): this program's name, made once, before any other output. A name
       // that cannot be used prints one line and exits 1 here; nothing has been started.
       const driver = resolveProgramIdentity('run');
@@ -661,7 +668,7 @@ export const runCommand = new Command('run')
         // No `err.warnings` render here: surfacing the lenient path's warnings on run/agent/
         // listen stays out of scope (#424's stated non-goal).
         console.error(renderLoadFailure(err instanceof WorkflowError ? err : String(err)));
-        process.exit(1);
+        exitProcess(1);
       }
 
       // 1b. Load project extensions BEFORE run creation (fail-before-create).
@@ -677,7 +684,7 @@ export const runCommand = new Command('run')
         console.error(
           `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
         );
-        process.exit(1);
+        exitProcess(1);
       }
 
       // #616 PR-2a (iii): the one door, opened once, where the first store was built before: the
@@ -694,7 +701,7 @@ export const runCommand = new Command('run')
         // where Commander took the value from — never by comparing it with the default.
         if (command.getOptionValueSource('params') !== 'default') {
           console.error('Error: give --params or --params-from-run, not both.');
-          process.exit(1);
+          exitProcess(1);
         }
         try {
           const { record: earlier } = await (await home()).runStore.get(options.paramsFromRun);
@@ -702,21 +709,21 @@ export const runCommand = new Command('run')
             console.error(
               `Error: run '${options.paramsFromRun}' is a run of workflow '${earlier.workflow_id}', not '${definition.id}'; its params are not this workflow's.`,
             );
-            process.exit(1);
+            exitProcess(1);
           }
           params = earlier.params;
         } catch (err) {
           console.error(
             `Error: --params-from-run: ${err instanceof Error ? err.message : String(err)}`,
           );
-          process.exit(1);
+          exitProcess(1);
         }
       } else {
         try {
           params = JSON.parse(options.params) as Record<string, unknown>;
         } catch {
           console.error('Error: --params is not valid JSON');
-          process.exit(1);
+          exitProcess(1);
         }
         // #729 PR-3 (D1 D5): params typed with a marker in them were copied from masked output.
         const markers = markersIn(params);
@@ -747,7 +754,7 @@ export const runCommand = new Command('run')
             "'realm listen' / 'realm agent' are the production drives. " +
             'To run this workflow by hand, use a real terminal.',
         );
-        process.exit(1);
+        exitProcess(1);
       }
 
       // issue #586: a declared `params_schema` is applied AFTER the #426 guard above and before
@@ -758,7 +765,7 @@ export const runCommand = new Command('run')
           validateRunParams(params, definition.params_schema, definition.id);
         } catch (err) {
           console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-          process.exit(1);
+          exitProcess(1);
         }
       }
 
@@ -810,6 +817,34 @@ export const runCommand = new Command('run')
         output: process.stdout.isTTY ? process.stdout : process.stderr,
         terminal: process.stdin.isTTY,
       });
+      // U1b Unit 2 (D5): Ctrl-Z at a prompt stops the command as a terminal's Ctrl-Z does, and `fg`
+      // gives the prompt back taking keys. readline's own path stops only this process (in a relay's
+      // worker, a session of its own, the relay would keep the terminal) and leaves the input paused
+      // after SIGCONT. So the stop goes to the drive's pid as the operator sees it — in a worker the
+      // relay's, which stops this group and then itself (the sudo way) — and on SIGCONT the input
+      // flows again, the prompt redrawn only while a question is open.
+      let asking = false;
+      const ask = async (query: string, options?: { signal?: AbortSignal }): Promise<string> => {
+        asking = true;
+        try {
+          return await rl.question(query, options ?? {});
+        } finally {
+          asking = false;
+        }
+      };
+      // Node's readline always carries the listener; a stand-in with only `question` and `close` (an
+      // in-process test's) gets none.
+      if (typeof rl.on === 'function')
+        rl.on('SIGTSTP', () => {
+          process.once('SIGCONT', () => {
+            process.stdin.setRawMode(true);
+            rl.resume();
+            if (asking) rl.prompt(true);
+          });
+          rl.pause();
+          process.stdin.setRawMode(false);
+          process.kill(drivePid(), 'SIGTSTP');
+        });
 
       // 5. Execution loop
       let { record: run, at: runAt } = await store.get(runId);
@@ -873,7 +908,7 @@ export const runCommand = new Command('run')
             promptStep = g.step_name;
             let raw: string;
             try {
-              raw = await rl.question(`  Choice [${g.choices.join('/')}]: `, {
+              raw = await ask(`  Choice [${g.choices.join('/')}]: `, {
                 signal: settledElsewhere.signal,
               });
             } catch (err) {
@@ -1060,7 +1095,7 @@ export const runCommand = new Command('run')
             console.error(renderInFlightHandBack(record, inFlight));
             // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
             rl.close();
-            process.exit(1);
+            exitProcess(1);
           }
 
           if (eligibleSteps.length === 0 && cannotPrompt.size > 0) {
@@ -1081,7 +1116,7 @@ export const runCommand = new Command('run')
               console.error('\nWorkflow stalled: nothing else can run.');
               for (const line of cannotGoOn) console.error(line);
               rl.close();
-              process.exit(1);
+              exitProcess(1);
             }
           }
           if (eligibleSteps.length === 0) {
@@ -1118,7 +1153,7 @@ export const runCommand = new Command('run')
             );
             // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
             rl.close();
-            process.exit(1);
+            exitProcess(1);
           }
 
           // Take the first eligible step (linear workflow for dev mode)
@@ -1176,7 +1211,7 @@ export const runCommand = new Command('run')
           try {
             if (stepDef.execution === 'agent') {
               userOutput = await askJsonObject(
-                rl,
+                { question: ask },
                 '  Agent output JSON (Enter for {}): ',
                 stepGone.signal,
               );
@@ -1189,7 +1224,7 @@ export const runCommand = new Command('run')
                     ? `service: ${stepDef.uses_service}`
                     : 'auto';
               userOutput = await askJsonObject(
-                rl,
+                { question: ask },
                 `  Mock output (${hint}) — JSON (Enter for {}): `,
                 stepGone.signal,
               );
@@ -1400,7 +1435,7 @@ export const runCommand = new Command('run')
               `Prompt cancelled — detached from run '${runId}'; its record could not be re-read. To read it: ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: runId }, undefined, writerHost())}\n  Error: ${message}`,
             );
             rl.close();
-            process.exit(1);
+            exitProcess(1);
           }
           console.error(
             renderDetachMap(
@@ -1419,7 +1454,7 @@ export const runCommand = new Command('run')
           rl.close();
           // Exit 1, not 130: readline consumed the keypress and the process was never signalled,
           // so 130 would claim a death that did not happen.
-          process.exit(1);
+          exitProcess(1);
         }
         await releaseHeldClaim();
         throw err;
@@ -1451,6 +1486,6 @@ export const runCommand = new Command('run')
       const resume = resumeLine(run, definition, writerCtx());
       if (resume !== undefined) console.log(resume);
       if (cleanup !== undefined) console.log(cleanup);
-      process.exit(1);
+      exitProcess(1);
     },
   );

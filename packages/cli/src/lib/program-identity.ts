@@ -8,6 +8,7 @@
 // person who answered a question.
 import { hostname, userInfo } from 'node:os';
 import { composeProgramIdentity, identityRefusalLine, type Attributed } from '@sensigo/realm';
+import { exitProcess } from '../output/writer.js';
 
 /**
  * #627 W (§5.9): the OS login this process runs as — its name, uid and passwd home — for the
@@ -69,6 +70,7 @@ export function resolveProgramIdentity(
     return composed.driver;
   } catch (err) {
     console.error(identityRefusalLine('REALM_OPERATOR', err, consequence));
-    process.exit(1);
+    // U1b: in a relay's worker its end message goes first; elsewhere `process.exit(1)`.
+    exitProcess(1);
   }
 }

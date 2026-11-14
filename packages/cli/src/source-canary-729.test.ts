@@ -1244,6 +1244,131 @@ describe('#729 PR-3 — no canary leaves any door', () => {
       child.kill();
     }
   }, 120_000);
+
+  it("G4b (R1.2): realm listen's reply to a request that waits (`Prefer: wait=N`) for a completed run", async () => {
+    // G4's run and map, posted with `Prefer: wait=20`: the reply to the POST itself carries the
+    // result (the read address's producer, the wait's own door), so it is walked as G4's read is.
+    const readDir = join(root, 'listen-wait');
+    mkdirSync(readDir, { recursive: true });
+    writeFileSync(join(readDir, 'realm.yaml'), readFileSync(join(project, 'realm.yaml'), 'utf8'));
+    writeFileSync(join(readDir, '.env'), readFileSync(join(project, '.env'), 'utf8'));
+    writeFileSync(
+      join(readDir, 'workflow.yaml'),
+      [
+        'id: canary-wait',
+        'name: canary-wait',
+        'version: 1',
+        'trigger:',
+        '  type: webhook',
+        '  path: /wait',
+        '  auth:',
+        '    mode: shared_secret',
+        '    header: X-Token',
+        '    secret_from: R11_HOOK_SECRET',
+        '  params_map:',
+        '    text: body.text',
+        '    api_token: body.api_token',
+        '    auth: body.auth',
+        '    meta: body.meta',
+        '    secrets: body.secrets',
+        '  result_map:',
+        '    whole: context.resources.capture',
+        '    text: context.resources.capture.text',
+        '    anchor: context.resources.capture.auth',
+        '    nested: context.resources.capture.meta.token',
+        '    deep: context.resources.capture.secrets.a',
+        'steps:',
+        '  capture:',
+        '    description: Capture.',
+        '    execution: auto',
+        '',
+      ].join('\n'),
+    );
+    const hookSecret = 'fake-r11-hook-secret-0729';
+    const child = spawn(
+      process.execPath,
+      [CLI_ENTRY, 'listen', '--port', '0', '--provider', 'anthropic', '--model', 'fake-model'],
+      {
+        cwd: readDir,
+        env: {
+          ...childEnv,
+          ANTHROPIC_API_KEY: 'fake-canary-key-0000',
+          R11_HOOK_SECRET: hookSecret,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    let output = '';
+    child.stdout.on('data', (d: Buffer) => (output += d.toString()));
+    child.stderr.on('data', (d: Buffer) => (output += d.toString()));
+    try {
+      const port = await new Promise<number>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('listen never listened')), 30_000);
+        const check = (): void => {
+          const m = /realm listen on 127\.0\.0\.1:(\d+)/.exec(output);
+          if (m !== null) {
+            clearTimeout(timer);
+            resolve(Number(m[1]));
+          }
+        };
+        child.stdout.on('data', check);
+        child.stderr.on('data', check);
+        child.on('close', () => reject(new Error(`listen exited: ${output.slice(0, 800)}`)));
+      });
+      const posted = await fetch(`http://127.0.0.1:${port}/wait`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-token': hookSecret, prefer: 'wait=20' },
+        body: JSON.stringify({
+          ...planted('OUTPUT'),
+          meta: { token: canary('NAME', 'WEBHOOK') },
+          secrets: { a: canary('NAME', 'PROMPT') },
+        }),
+      });
+      const body = await posted.text();
+      const applied = posted.headers.get('preference-applied');
+      const stored = (await runsOf(h.home.runStore))
+        .map((s) => s.record)
+        .find((r) => r.workflow_id === 'canary-wait');
+      const reply = JSON.parse(body) as {
+        result?: Record<string, unknown> & { whole?: Record<string, Record<string, unknown>> };
+        result_masked?: Record<string, number>;
+      };
+      const masked = reply.result_masked;
+      // (a) red when the wait's 200 is built by a second producer that skips the disclosure walk
+      //     (each tier's canary then shows), walks with the start-up snapshot, or walks the built
+      //     result; (b) prints the phase, the header, whether the run holds the canaries raw
+      //     (non-vacuity), the counts (the control), each verdict by its path and the leaked labels.
+      expect({
+        door: 'listen wait reply',
+        applied,
+        completed: body.includes('"run_phase":"completed"'),
+        outputRaw: JSON.stringify(stored?.evidence ?? []).includes(canary('ANCH', 'OUTPUT')),
+        maskedEach: masked === undefined ? undefined : Object.values(masked).every((n) => n > 0),
+        verdicts: {
+          'whole.meta.token': reply.result?.whole?.['meta']?.['token'],
+          nested: reply.result?.['nested'],
+          'whole.secrets': reply.result?.whole?.['secrets'],
+          deep: reply.result?.['deep'],
+        },
+        leaked: leaked(body),
+      }).toEqual({
+        door: 'listen wait reply',
+        applied: 'wait=20',
+        completed: true,
+        outputRaw: true,
+        maskedEach: true,
+        verdicts: {
+          'whole.meta.token': '[REDACTED]',
+          nested: '[REDACTED]',
+          'whole.secrets': '[REDACTED]',
+          deep: '[REDACTED]',
+        },
+        leaked: [],
+      });
+    } finally {
+      child.kill();
+    }
+  }, 120_000);
 });
 
 // F2 — the working directory is never a secret: under `npx realm`, npm sets INIT_CWD and
@@ -1427,10 +1552,10 @@ describe(
     });
 
     it('every caller of buildDisclosureSet that passes an environment passes the working directory — the list is derived from the source (B2)', () => {
-      // The rule: a caller that passes an environment (`env: process.env`) must pass
-      // `cwd: process.cwd()`; a caller with `env: undefined` builds a set with no environment, so
-      // there is nothing for the working-directory rule to exempt, and core (question-view.ts) must
-      // not read the working directory at all.
+      // The rule: a caller that passes an environment (an `env:` key) must pass the working
+      // directory (a `cwd:` key); a caller with `env: undefined` builds a set with no environment,
+      // so there is nothing for the working-directory rule to exempt, and core (question-view.ts)
+      // must not read the working directory at all.
       const root = fileURLToPath(new URL('../../../', import.meta.url));
       const files: string[] = [];
       const walk = (dir: string): void => {
@@ -1456,14 +1581,16 @@ describe(
           const at = `${file.slice(root.length)}`;
           const call = lines.slice(i, i + 4);
           calls.push(at);
-          if (call.some((l) => l.includes('env: process.env,'))) withEnv.push(at);
+          if (call.some((l) => l.trim().startsWith('env:') && l.trim() !== 'env: undefined,'))
+            withEnv.push(at);
           if (call.some((l) => l.includes('env: undefined,'))) withoutEnv.push(at);
-          if (call.some((l) => l.includes('cwd: process.cwd(),'))) withCwd.push(at);
+          if (call.some((l) => l.trim().startsWith('cwd:'))) withCwd.push(at);
         });
       }
       // (a) red when a caller that passes an environment stops passing `cwd`, a caller passes `cwd`
-      //     with no environment (core among them), a caller's `env` is neither of the two spellings
-      //     (the derivation would miss it), or no caller passing an environment is found at all;
+      //     with no environment (core among them), a caller's env or cwd is not written as a key
+      //     `env:` / `cwd:` on its own line (the derivation would miss it), or no caller passing an
+      //     environment is found at all;
       //     (b) prints the callers' file names (repository paths) and a boolean.
       expect({
         found: withEnv.length > 0,

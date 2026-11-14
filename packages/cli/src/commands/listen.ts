@@ -27,6 +27,9 @@
 //     workflow with `trigger.result_map`, the run's phase and declared result to the holder of the
 //     run's code; the same `403` for every refusal (an id that is not a lowercase UUID is no read
 //     request: `405`, as before); no `--max-concurrent` slot
+//   - a POST that creates a run of such a workflow with `Prefer: wait=N` → held until the run ends,
+//     reaches a gate or N seconds pass (`result-wait.ts`, R1.2), within `--max-wait` and
+//     `--max-waiting`; it keeps its `--max-concurrent` slot, and the first signal answers it
 import {
   createServer,
   maxHeaderSize,
@@ -114,6 +117,7 @@ import {
   readRequestOf,
   type ReadContext,
 } from '../lib/run-read-address.js';
+import { answerWait, parseWaitPreference } from '../lib/result-wait.js';
 import {
   loadProjectExtensions,
   onceReleaseLineSink,
@@ -134,8 +138,13 @@ export interface Logger {
   error(msg: string, data?: unknown): void;
 }
 
-/** Result of an agent spawn — a pid on success, or an error to record as spawn_failed. */
-export type SpawnResult = { pid: number; error?: never } | { error: Error; pid?: never };
+/**
+ * Result of an agent spawn — a pid on success, or an error to record as spawn_failed. R1.2: with a
+ * pid, `exited` (when the spawner gives one) settles once the agent's process has exited.
+ */
+export type SpawnResult =
+  | { pid: number; error?: never; exited?: Promise<void> }
+  | { error: Error; pid?: never; exited?: never };
 
 /** Injected I/O dependencies — everything that touches disk, the clock, or child processes. */
 export interface ListenDeps {
@@ -200,6 +209,17 @@ export interface HandlerOptions {
    * by the health address. `startListen` owns it; absent, the server is never stopping.
    */
   isStopping?: () => boolean;
+  /** R1.2: the longest a request that sends `Prefer: wait=N` is held, in seconds; 0 turns it off. */
+  maxWaitSeconds: number;
+  /** R1.2: how many requests may wait at once; the handler never lets more than `maxConcurrent` − 1. */
+  maxWaiting: number;
+  /** R1.2: aborted at the first signal (`startListen` owns it); every wait is answered then. */
+  stopSignal?: AbortSignal;
+  /**
+   * R1.2: each wait under way, while it lasts. `startListen`'s stop awaits them before it resolves:
+   * a wait the stop cuts ends when its connection closes, a turn after the cut, and logs its line.
+   */
+  waits?: Set<Promise<void>>;
 }
 
 const DEFAULT_HANDLER_OPTIONS: HandlerOptions = {
@@ -207,6 +227,8 @@ const DEFAULT_HANDLER_OPTIONS: HandlerOptions = {
   maxBodyBytes: 1_048_576,
   bodyTimeoutMs: 5000,
   lingerMs: 2000,
+  maxWaitSeconds: 25,
+  maxWaiting: 5,
 };
 
 /** #744 E2: requests ignored on one connection after its unsent refusal, before it is destroyed. */
@@ -399,6 +421,10 @@ export function makeListenHandler(
   const opts: HandlerOptions = { ...DEFAULT_HANDLER_OPTIONS, ...options };
   const isStopping = opts.isStopping ?? (() => false);
   let inFlight = 0;
+  // R1.2: the requests waiting now, and how many may: each keeps its `--max-concurrent` slot, so at
+  // least one slot is always left for a new event.
+  let waiting = 0;
+  const waitBudget = Math.min(opts.maxWaiting, opts.maxConcurrent - 1);
   // #744 E2: every socket closing after a refusal, mapped to that refusal's reply and the number of
   // later requests ignored on it; and how many of them linger (close in stages).
   const closingSockets = new WeakMap<Socket, { refusal: ServerResponse; ignored: number }>();
@@ -897,12 +923,50 @@ export function makeListenHandler(
       // the run; without its key (never derived) it says nothing more, as an un-opted one.
       const read = readFields(entry, run.id);
       if (read.status_path !== undefined) {
-        respond(
-          res,
-          202,
-          { run_id: run.id, status: 'accepted', run_phase: 'running', ...read },
-          { Location: read.status_path, 'Retry-After': '5' },
-        );
+        const location = read.status_path;
+        const accepted = (runPhase: string, extra: Record<string, string> = {}): void =>
+          respond(
+            res,
+            202,
+            { run_id: run.id, status: 'accepted', run_phase: runPhase, ...read },
+            { Location: location, 'Retry-After': '5', ...extra },
+          );
+        // R1.2: `Prefer: wait=N` is honoured only here, on the request that created the run, while
+        // the server is not stopping, a waiting place is free and the caller is still there.
+        const asked = parseWaitPreference(req.headers.prefer);
+        if (
+          asked !== undefined &&
+          opts.maxWaitSeconds > 0 &&
+          !isStopping() &&
+          waiting < waitBudget &&
+          !res.destroyed &&
+          !req.socket.destroyed
+        ) {
+          waiting += 1;
+          const ended = answerWait({
+            req,
+            res,
+            entry,
+            runId: run.id,
+            seconds: Math.min(asked, opts.maxWaitSeconds),
+            read: async () => (await deps.runStore.get(run.id)).record,
+            ...(spawnResult.exited !== undefined ? { exited: spawnResult.exited } : {}),
+            ...(opts.stopSignal !== undefined ? { stopSignal: opts.stopSignal } : {}),
+            disclosureProvider: readCtx.disclosureProvider,
+            accepted,
+            logger: deps.logger,
+            path,
+          });
+          opts.waits?.add(ended);
+          try {
+            await ended;
+          } finally {
+            opts.waits?.delete(ended);
+            waiting -= 1;
+          }
+        } else {
+          accepted('running');
+        }
       } else {
         respond(res, 202, { run_id: run.id, status: 'accepted' });
       }
@@ -1076,6 +1140,10 @@ export interface ListenOptions {
    * 503, before the stop begins (`--shutdown-drain`); default 0.
    */
   shutdownDrainSeconds?: number;
+  /** R1.2: `--max-wait`, in seconds; default 25. */
+  maxWaitSeconds?: number;
+  /** R1.2: `--max-waiting`; default 5, and never more than `maxConcurrent` − 1. */
+  maxWaiting?: number;
 }
 
 /** Per-pass sweep outcome (issue #291) — returned for tests/logging; the CLI action itself only
@@ -1281,12 +1349,19 @@ export function startListen(
   // #960 U2: this server's own stopping state (never a module variable: one process can hold many
   // servers), set in the first signal's turn; the health address reads it per request.
   let stopping = false;
+  // R1.2: aborted in the first signal's turn, with the flip above; every wait is answered then.
+  const stop = new AbortController();
+  const waits = new Set<Promise<void>>();
   const handler = makeListenHandler(routes, deps, {
     maxConcurrent: options.maxConcurrent,
     maxBodyBytes: options.maxBodyBytes,
     bodyTimeoutMs: options.bodyTimeoutMs,
     lingerMs,
     isStopping: () => stopping,
+    maxWaitSeconds: options.maxWaitSeconds ?? DEFAULT_HANDLER_OPTIONS.maxWaitSeconds,
+    maxWaiting: options.maxWaiting ?? DEFAULT_HANDLER_OPTIONS.maxWaiting,
+    stopSignal: stop.signal,
+    waits,
   });
   // #744: the last request handed to the handler on each socket; the 'clientError' listener reads
   // it.
@@ -1485,6 +1560,8 @@ export function startListen(
     if (sweepTimer !== undefined) clearInterval(sweepTimer);
     for (const cancel of gateWaits.values()) cancel();
     gateWaits.clear();
+    // R1.2: the waits too, in this turn and before any drain: none is held through `--shutdown-drain`.
+    stop.abort();
     let outcome: Promise<StopOutcome>;
     if (drainSeconds > 0) {
       deps.logger.info('listen: draining', { seconds: drainSeconds });
@@ -1502,7 +1579,7 @@ export function startListen(
     } else {
       outcome = tracker.stop(graceSeconds * 1000);
     }
-    stopped = outcome.then((result) => {
+    stopped = outcome.then(async (result) => {
       cut = result.cut;
       if (result.cut > 0) {
         deps.logger.error('listen: shutdown cut requests', {
@@ -1511,6 +1588,8 @@ export function startListen(
           grace_seconds: graceSeconds,
         });
       }
+      // R1.2: a wait the stop cut ends once its connection has closed; its line comes first.
+      await Promise.allSettled([...waits]);
     });
     return stopped;
   };
@@ -1598,7 +1677,7 @@ export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] 
  * this resolves `{pid}` on `'spawn'`, `{error}` on `'error'` or on a synchronous throw (a `cwd`
  * that is a file, ENOTDIR), and keeps its `'error'` listener for the child's whole life: a later
  * error goes to `onLateError`, and never ends listen. `spawnFn` lets a test hand in a real spawn or
- * a fake child.
+ * a fake child. R1.2: `{pid}` also carries `exited`, which settles when the child exits.
  */
 export function defaultSpawnAgent(
   runId: string,
@@ -1621,6 +1700,9 @@ export function defaultSpawnAgent(
         stdio: 'inherit',
         cwd,
       });
+      // R1.2: made here, at the spawn, so an exit before any wait begins is still seen: a listener
+      // added after the child has exited never fires.
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
       child.on('error', (err: Error) => {
         if (!settled) {
           settle({ error: err });
@@ -1632,7 +1714,7 @@ export function defaultSpawnAgent(
         const pid = child.pid;
         settle(
           pid !== undefined
-            ? { pid }
+            ? { pid, exited }
             : { error: new Error("Node reported the agent's start without a process id") },
         );
       });
@@ -1777,6 +1859,22 @@ export function parseListenLimit(flag: string): (value: string) => number {
 }
 
 /**
+ * R1.2: `--max-waiting`'s parser. Commander reads each option alone, so the bound that depends on
+ * `--max-concurrent` (one less than it) is checked in the action; here a word that is not digits,
+ * 0, or a number above 2147483646 (one less than `--max-concurrent`'s largest) is refused with a
+ * sentence that names the range as the help does.
+ */
+export function parseMaxWaiting(value: string): number {
+  const n = /^[0-9]+$/.test(value) ? Number(value) : Number.NaN;
+  if (!(n >= 1 && n <= 2_147_483_646)) {
+    throw new InvalidArgumentError(
+      '--max-waiting must be a whole number from 1 to one less than --max-concurrent.',
+    );
+  }
+  return n;
+}
+
+/**
  * issue #944: the sweeper's timer delay for `--sweep-expired-gates <seconds>`. The option's parser
  * accepts 1 to 2147483 seconds, so the delay is a whole number of milliseconds below 2^31 − 1, the
  * largest a Node timer holds (above it, or at 0 or NaN, a timer fires about every millisecond).
@@ -1829,6 +1927,19 @@ export const listenCommand = new Command('listen')
     'Max in-flight requests before 503; also the max refused connections closed in stages at a time',
     parseListenLimit('--max-concurrent'),
     20,
+  )
+  // R1.2: checked when the command line is read; `--max-waiting` against `--max-concurrent` in the
+  // action, and only when given (absent, it is derived: the smaller of 5 and one less).
+  .option(
+    '--max-wait <seconds>',
+    'Longest a request that sends Prefer: wait=N is held before it is answered, in seconds, a whole number from 0 to 300; 0 turns waiting off. A workflow without result_map ignores the header.',
+    parseWholeNumber('--max-wait', 0, 300),
+    25,
+  )
+  .option(
+    '--max-waiting <n>',
+    'How many requests may be held waiting at once, a whole number from 1 to one less than --max-concurrent; the default is 5, or one less than --max-concurrent if that is smaller. A waiting request keeps its place among --max-concurrent.',
+    parseMaxWaiting,
   )
   .option(
     '--dedup-store <kind>',
@@ -1910,6 +2021,8 @@ export const listenCommand = new Command('listen')
         bodyTimeoutMs?: number;
         maxBodyBytes?: number;
         maxConcurrent?: number;
+        maxWait?: number;
+        maxWaiting?: number;
         dedupStore?: 'file' | 'memory';
         logLevel?: string;
         sweepExpiredGates?: number;
@@ -1940,6 +2053,18 @@ export const listenCommand = new Command('listen')
       const model = opts.model;
       if (!hasText(model)) {
         console.error(listenModelRefusal(opts.provider));
+        process.exit(1);
+        return;
+      }
+      // R1.2: a `--max-waiting` given must leave one `--max-concurrent` place for a new event; a
+      // derived one never is refused. Before any workflow is loaded or the home is opened.
+      const maxConcurrent = opts.maxConcurrent ?? 20;
+      if (opts.maxWaiting !== undefined && opts.maxWaiting >= maxConcurrent) {
+        console.error(
+          maxConcurrent === 1
+            ? 'Error: --max-concurrent is 1, so no request can wait and still leave a place for a new event. Remove --max-waiting, or raise --max-concurrent.'
+            : `Error: --max-waiting ${opts.maxWaiting} must be below --max-concurrent ${maxConcurrent}: a request that waits keeps one of its places, and this many waiting could leave none for a new event. Give --max-waiting a number from 1 to ${maxConcurrent - 1}, or raise --max-concurrent.`,
+        );
         process.exit(1);
         return;
       }
@@ -2000,6 +2125,12 @@ export const listenCommand = new Command('listen')
           `listen: binding to non-loopback host '${host}' — this server serves plaintext HTTP. Terminate TLS at a reverse proxy before exposing it.`,
         );
       }
+      const maxWait = opts.maxWait ?? 25;
+      if (maxWait > 0 && maxConcurrent === 1 && [...routes.values()].some((e) => optedIn(e))) {
+        logger.warn(
+          'listen: --max-concurrent is 1, so a request that asks to wait is answered at once.',
+        );
+      }
 
       const dedupKind = opts['dedupStore'] ?? 'file';
       // #616 PR-2a (iii): the one door, opened once, after every refusal above; its dedup marks are
@@ -2048,7 +2179,9 @@ export const listenCommand = new Command('listen')
             host,
             bodyTimeoutMs: opts['bodyTimeoutMs'] ?? 5000,
             maxBodyBytes: opts['maxBodyBytes'] ?? 1048576,
-            maxConcurrent: opts['maxConcurrent'] ?? 20,
+            maxConcurrent,
+            maxWaitSeconds: maxWait,
+            ...(opts.maxWaiting !== undefined ? { maxWaiting: opts.maxWaiting } : {}),
             ...(sweepExpiredGatesSeconds !== undefined
               ? { sweepExpiredGatesIntervalMs: sweepIntervalMs(sweepExpiredGatesSeconds) }
               : {}),
