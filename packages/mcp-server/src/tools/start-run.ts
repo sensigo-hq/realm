@@ -9,7 +9,6 @@ import {
   judgedSnapshotOf,
   composeWaysOn,
   waysStoreOf,
-  writtenSnapshot,
   hashParams,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
@@ -65,11 +64,11 @@ import {
 export function composeToolWays(
   runStore: Pick<RunStore, 'persistsClaims'>,
   definition: WorkflowDefinition,
-  run: RunRecord,
+  // #729 CW-1b part 2: the snapshot the tool last read or wrote, with its lease facts.
+  snapshot: Snapshot,
   registry: ExtensionRegistry | undefined,
-  at: Date,
 ): Pick<EngineReply, 'ways' | 'unavailable' | 'basis'> {
-  return composeWaysOn(writtenSnapshot(run, at), {
+  return composeWaysOn(snapshot, {
     definition: { ok: definition },
     enactor: registry !== undefined ? { kind: 'this_program', registry } : { kind: 'observer' },
     // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
@@ -295,11 +294,7 @@ export async function handleStartRun(
     RealmExtensionRegistry,
   );
 
-  const {
-    record: run,
-    at: createdAt,
-    created,
-  } = await runStore.create({
+  const made = await runStore.create({
     workflowId: definition.id,
     workflowVersion: definition.version,
     params,
@@ -312,6 +307,7 @@ export async function handleStartRun(
       ? { extensionIdentity: [startIdentityEntry(registry)!] }
       : {}),
   });
+  const { record: run, created } = made;
   // The store reports `created`; the tool surfaces its inverse, `deduped`.
   const deduped = !created;
   // issue #279 (increment 2, PR-C — D-3 leg vi): the start_run REUSE surfaces — a deduped match
@@ -374,10 +370,15 @@ export async function handleStartRun(
   // (the agent steps, the advance act) through `buildNextActions` below.
   // decision C52: the record the creation reply is composed from — the created record, or the one a
   // capability block left (its attempt wrote the marker and an entry).
-  let createdRun = run;
-  // #715 (b) (02 §B.2): the reading `createdRun` was written or judged at — the create's, or the
-  // snapshot the block's reply was judged on.
-  let createdRunAt = createdAt;
+  // #715 (b) (02 §B.2): judged at the reading it was written or judged at — the create's, or the
+  // snapshot the block's reply was judged on. #729 CW-1b part 2: held as one snapshot (its lease
+  // facts too); `createdRun` is set only through `holdCreated`.
+  let createdSnap: Snapshot = made;
+  let createdRun = made.record;
+  const holdCreated = (next: Snapshot): void => {
+    createdSnap = next;
+    createdRun = next.record;
+  };
   let capabilityBlock: EngineReply | undefined;
   if (!deduped) {
     const result = await advanceRun(runStore, definition, {
@@ -410,8 +411,7 @@ export async function handleStartRun(
       classifyStop(result, undefined, afterAdvance)?.kind === 'capability_missing'
     ) {
       capabilityBlock = result;
-      createdRun = afterAdvance;
-      createdRunAt = judged!.at;
+      holdCreated(judged!);
     } else if (ranSomething) {
       // decision C10: the phase is derived from the record advanceRun leaves.
       const finalRun = judged?.record;
@@ -459,7 +459,7 @@ export async function handleStartRun(
   // decision C95: with the clock, a run the key matched whose open question is due (its time is up,
   // `on_expiry` declared) is handed back with the `advance_run` act that carries it out. #715 (b)
   // (02 §B.2): judged at the reading of the record the hand-back describes — never a fresh clock.
-  const handedBack = writtenSnapshot(createdRun, createdRunAt);
+  const handedBack = createdSnap;
   // decision C58: the block happened, so the pre-flight warning for the same step ("If reached it
   // will block") is dropped beside it. The blocked steps are the ones whose `capability_blocks`
   // marker this call's attempt wrote — a created run carries none before it.
@@ -497,7 +497,7 @@ export async function handleStartRun(
     context_hint: handBackHint({ run, current: handedBack, definition, deduped }),
     run_phase: deriveRunPhase(createdRun),
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
-    ...composeToolWays(runStore, definition, createdRun, registry, handedBack.at),
+    ...composeToolWays(runStore, definition, handedBack, registry),
     // decisions C45, C57, C64: the hand-back says what comes next on a live run (the renderer's).
     ...(createdRun.terminal_state ? {} : { names_next: true as const }),
   };

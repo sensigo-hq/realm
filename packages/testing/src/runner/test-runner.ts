@@ -8,10 +8,10 @@ import {
   advanceRun,
   propagateSkips,
   describePending,
-  writtenSnapshot,
   judgedSnapshotOf,
   withFullStop,
   type EngineReply,
+  type Snapshot,
   type WorkflowDefinition,
   type ExtensionManifest,
   type StepHandler,
@@ -211,7 +211,7 @@ async function runSingleFixture(
       fixture.agent_errors,
     );
 
-    const { record: run, at: runAt } = await store.create({
+    const made = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: fixture.params,
@@ -222,13 +222,22 @@ async function runSingleFixture(
         ? { extensionIdentity: [startIdentityEntry(options.extensions?.registry)!] }
         : {}),
     });
+    const run = made.record;
     const runId = run.id;
 
     const maxIterations = Object.keys(definition.steps).length * 2 + 10;
     let iterations = 0;
-    let currentRun = run;
     // #715 (b) (D6-17): the reading `currentRun` was read or written at — its view is judged there.
-    let currentAt = runAt;
+    // #729 CW-1b part 2: held as one snapshot (its lease facts too); `currentRun` and `currentAt`
+    // are set only through `hold`.
+    let currentSnap: Snapshot = made;
+    let currentRun = made.record;
+    let currentAt = made.at;
+    const hold = (next: Snapshot): void => {
+      currentSnap = next;
+      currentRun = next.record;
+      currentAt = next.at;
+    };
     // Tracks how many times each step has been resumed after a mock error.
     const stepResumeCount: Record<string, number> = {};
     // #715 (b) (D6-17, Amendment 4): after an engine call, the snapshot the engine judged its reply
@@ -239,7 +248,7 @@ async function runSingleFixture(
       if (judged === undefined) {
         return reply.errors[0] ?? reply.context_hint;
       }
-      ({ record: currentRun, at: currentAt } = judged);
+      hold(judged);
       return undefined;
     };
 
@@ -292,17 +301,14 @@ async function runSingleFixture(
       // it, and the fixture fails with the engine's own message, as a chained step that needs it does. Beside a step
       // refused before its claim, it is named here too, with the other steps that cannot run.
       const viewAt = currentAt;
-      const pending = describePending(
-        definition,
-        writtenSnapshot(currentRun, viewAt),
-        fixtureRegistry,
-      );
+      const pending = describePending(definition, currentSnap, fixtureRegistry);
       // #729 PR-0 (Part C, F10): the runner is a library door — it reads the run's ways, composed by
       // core, and words them with the library's words (`libraryCannotRunWords`).
       const ways = composeWaysAt(currentRun, viewAt, {
         definition,
         registry: fixtureRegistry,
         persistsClaims: store.persistsClaims === true,
+        lease_facts: currentSnap.lease_facts,
       });
       if (cannotGoOnUntilCorrected(ways)) {
         return {
@@ -391,12 +397,14 @@ async function runSingleFixture(
           // the implementation report as a discovered anchor discrepancy.
           const { skipped: newSkippedSteps } = propagateSkips(tempRun, definition);
           // #715 (b): the held snapshot is the write's own — never a read after it.
-          ({ record: currentRun, at: currentAt } = await store.update({
-            ...rest,
-            failed_steps: newFailedSteps,
-            skipped_steps: newSkippedSteps,
-            terminal_state: false,
-          }));
+          hold(
+            await store.update({
+              ...rest,
+              failed_steps: newFailedSteps,
+              skipped_steps: newSkippedSteps,
+              terminal_state: false,
+            }),
+          );
           continue;
         }
         return {

@@ -19,6 +19,7 @@ import {
   dueExpiry,
   composeWaysAt,
   writtenSnapshot,
+  leaseFactOf,
   narrowForDoor,
   DOOR_SERVES,
   CACHE_BASES,
@@ -70,6 +71,7 @@ import { agentReadyReason } from './run-advance.js';
 import type {
   RunStore,
   RunRecord,
+  Snapshot,
   WayOn,
   WorkflowRegistrar,
   WorkflowDefinition,
@@ -139,12 +141,12 @@ import { openCliHome } from '../lib/home.js';
  * read from the workflow as registered now (R14; V-1 freezes it at open); else none.
  */
 function openQuestionLine(
-  run: RunRecord,
+  // #715 (b) (02 §D.4): the read, judged at its reading — the fallback's prompt renders there.
+  snap: Snapshot,
   gate: NonNullable<RunRecord['pending_gate']>,
   definition: WorkflowDefinition | undefined,
-  // #715 (b) (02 §D.4): the reading this read is judged at — the fallback's prompt renders there.
-  at: Date,
 ): string {
+  const run = snap.record;
   // #729 PR-3 correction 2 (C2): a question is shown at the declared tier, as every surface shows it
   // (P-9), and the receipt line says so.
   // #729 PR-4 (03 #5): through core's ONE composer, over the gate disclosed for this terminal — the
@@ -170,7 +172,7 @@ function openQuestionLine(
     try {
       question = pendingGateQuestion(
         definition,
-        writtenSnapshot({ ...run, pending_gate: gate }, at),
+        writtenSnapshot({ ...run, pending_gate: gate }, snap.at, snap.lease_facts),
       );
     } catch {
       return "  Question: not shown — the step's prompt could not be rendered";
@@ -187,13 +189,13 @@ function openQuestionLine(
  * definition, the question's time is up).
  */
 function cliRespondWay(
-  run: RunRecord,
-  // #715 (b) (D6-17): the reading `run` was read at — the ways are judged at it.
-  at: Date,
+  // #715 (b) (D6-17): the read — the ways are judged at its reading, with its lease facts.
+  snap: Snapshot,
   definition: WorkflowDefinition | undefined,
 ): Extract<WayOn, { verb: 'respond' }> | undefined {
+  const run = snap.record;
   if (definition === undefined || run.terminal_state) return undefined;
-  const composed = composeWaysAt(run, at, { definition });
+  const composed = composeWaysAt(run, snap.at, { definition, lease_facts: snap.lease_facts });
   const narrowed = narrowForDoor(composed, {
     door: 'cli',
     serves: DOOR_SERVES.cli,
@@ -1348,8 +1350,10 @@ export async function inspectRun(
     priceSourceFor?: (definition: WorkflowDefinition | undefined) => Promise<PriceSource>;
   },
 ): Promise<string> {
-  // #715 (b) (D6-17): the one read; every statement below judges `run` at its reading.
-  const { record: run, at: runAt } = await store.get(runId);
+  // #715 (b) (D6-17): the one read; every statement below judges `run` at its reading. #729 CW-1b
+  // part 2: `read` is that read whole, with the lease facts the store attached.
+  const read = await store.get(runId);
+  const { record: run, at: runAt } = read;
 
   // Try to load workflow definition; gracefully handle missing definition. `definition` is
   // hoisted (issue #221) so classifyRunHealth below can reuse it when resolved — the try/catch
@@ -1537,10 +1541,10 @@ export async function inspectRun(
     !run.terminal_state &&
     (run.pending_gate === undefined || dueExpiry(run.pending_gate, inspectNow) !== undefined)
   ) {
-    const pending = describePending(definition, writtenSnapshot(run, inspectNow), undefined);
+    const pending = describePending(definition, read, undefined);
     // #729 PR-0 (A-10): the run's ways, composed by core with no registry (an observer, C33), and
     // rendered by the CLI's one renderer.
-    const ways = composeWaysAt(run, inspectNow, { definition });
+    const ways = composeWaysAt(run, inspectNow, { definition, lease_facts: read.lease_facts });
     const advance = ways.ways.find((w) => w.verb === 'advance');
     if (advance !== undefined && advance.verb === 'advance') {
       // decision C207: with several owed, where the call stops — the clause the preview ends with.
@@ -1585,9 +1589,10 @@ export async function inspectRun(
     dueExpiry(run.pending_gate, inspectNow) === undefined
   ) {
     // #729 PR-0 (Part B): the steps the question holds are its `respond` way's, in the CLI's words.
-    const respond = composeWaysAt(run, inspectNow, { definition }).ways.find(
-      (w) => w.verb === 'respond',
-    );
+    const respond = composeWaysAt(run, inspectNow, {
+      definition,
+      lease_facts: read.lease_facts,
+    }).ways.find((w) => w.verb === 'respond');
     const waiting = heldByAnswerWords(respond?.verb === 'respond' ? respond.holds : []);
     if (waiting !== undefined) {
       lines.push(`Question open on '${run.pending_gate.step_name}': ${waiting}.`);
@@ -1665,7 +1670,11 @@ export async function inspectRun(
   // question is open or answered reads "question opened through": that claim names the program
   // through which the question was OPENED, never who is working on it now.
   for (const step of run.in_progress_steps) {
-    const described = describeClaimHolder(run.claims?.[step], store.persistsClaims === true);
+    const described = describeClaimHolder(
+      run.claims?.[step],
+      store.persistsClaims === true,
+      leaseFactOf(read, run.claims?.[step]),
+    );
     const verb = isQuestionStepId(step) ? 'question opened through' : 'taken by';
     // #715 (b) (03 §B.2 A1): the claim's age through the one formatter, at this read's reading, with
     // its instant beside it; a stamp that does not parse prints no age.
@@ -1724,7 +1733,7 @@ export async function inspectRun(
     }
     // #715 (b) (02 §D.3, Amendment 9): the authored reminder SCHEDULE, from the one core function, at
     // this read's reading — never "due" or "overdue": no send is recorded on the run.
-    const reminders = reminderScheduleOf(writtenSnapshot(run, runAt));
+    const reminders = reminderScheduleOf(read);
     if (reminders !== undefined) gateLine += `, ${reminderScheduleWords(reminders, runAt)}`;
     lines.push(gateLine);
     // issue #406: the OTHER argument `realm run respond` requires. Rendered from
@@ -1742,13 +1751,13 @@ export async function inspectRun(
     // #627 W (§5.4b): the question as it was frozen when the gate opened — never the live
     // definition's message, which may have been edited since. A gate with no message, and one an
     // earlier version opened without keeping it, each say so.
-    lines.push(openQuestionLine(run, gate, definition, runAt));
+    lines.push(openQuestionLine(read, gate, definition));
     if (gate.choices.length > 0) {
       lines.push(`  Choices: ${gate.choices.join(', ')}`);
     }
     // #627 W (§5.4b): the person's route — whenever the CLI door's narrowed list holds a callable
     // `respond` (W-s1 says `realm run inspect` shows the question, its gate id and its choices).
-    const respond = cliRespondWay(run, runAt, definition);
+    const respond = cliRespondWay(read, definition);
     if (respond !== undefined) {
       lines.push(`  To answer: ${CLI_COMMANDS.respond(respond, undefined, { driveFlags: '' })}`);
     }
@@ -1762,7 +1771,7 @@ export async function inspectRun(
   // Note: `realm run reclaim` is a separate, independent consumer of the underlying record facts
   // (settle sets, capability_blocks, reclaim-audit evidence) — it does NOT call this function; see
   // its own classifyNoActiveClaim discriminator in reclaim-step.ts.
-  const runHealth = classifyRunHealth(writtenSnapshot(run, runAt), {
+  const runHealth = classifyRunHealth(read, {
     ...(definition !== undefined ? { definition } : {}),
     ...(definitionError !== undefined ? { definitionError } : {}),
   });

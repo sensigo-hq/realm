@@ -110,7 +110,8 @@ const needsClause = (composed: ComposedWays | undefined): string => {
   return words === '' ? '' : `, ${words}`;
 };
 
-const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView): string[] => {
+const wayOutOf = (runId: string, snap: Snapshot, pending?: OwedView): string[] => {
+  const { record: run, at: now } = snap;
   const gate = run.pending_gate;
   if (gate === undefined) {
     // decision C64: when nothing can run from here, each engine step that cannot run and the way
@@ -118,7 +119,12 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView):
     // #729 PR-0 (A-10): the CLI renderer's lines over the ways core composes — composed once, with
     // no registry (an observer, C33), for this reply's lines.
     const composed =
-      pending === undefined ? undefined : composeWaysAt(run, now, { definition: pending.workflow });
+      pending === undefined
+        ? undefined
+        : composeWaysAt(run, now, {
+            definition: pending.workflow,
+            lease_facts: snap.lease_facts,
+          });
     const cannotGoOn =
       composed === undefined
         ? []
@@ -203,7 +209,13 @@ async function enactGateExpiry(
   runStore: RunStore,
   definition: WorkflowDefinition,
   run: RunRecord,
-): Promise<{ run: RunRecord; at: Date; applied: boolean; guardLines: string[] }> {
+): Promise<{
+  run: RunRecord;
+  at: Date;
+  snapshot: Snapshot;
+  applied: boolean;
+  guardLines: string[];
+}> {
   const gateId = run.pending_gate!.gate_id;
   const outcome = await runStore.settleStep(run.id, { kind: 'expire_gate', gateId }, definition);
   // issue #625: the expiry's write also settled the guards its default made eligible — the ending
@@ -212,6 +224,8 @@ async function enactGateExpiry(
   return {
     run: outcome.run,
     at: outcome.at,
+    // #729 CW-1b part 2: the write's run with the lease facts the store attached.
+    snapshot: writtenSnapshot(outcome.run, outcome.at, outcome.lease_facts),
     applied: outcome.applied,
     guardLines: describeGuardLines(outcome),
   };
@@ -398,17 +412,17 @@ function renderGateExpiryDryRun(
 
 function renderDryRun(
   runId: string,
-  run: RunRecord,
-  now: Date,
+  snap: Snapshot,
   expiredFlag = false,
   declared?: ReadonlySet<string>,
   predictedGuards: readonly string[] = [],
   pending?: OwedView,
 ): void {
+  const { record: run, at: now } = snap;
   const gateReported = renderGateExpiryDryRun(runId, run, now, expiredFlag, predictedGuards);
   if (!run.terminal_state) {
     if (!gateReported) {
-      const [first, ...more] = wayOutOf(runId, run, now, pending);
+      const [first, ...more] = wayOutOf(runId, snap, pending);
       console.log(
         `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}') — nothing to drain. ${first}`,
       );
@@ -774,18 +788,20 @@ export async function runDrainAction(
   }
 
   try {
-    const { record: run, at: runAt } = await runStore.get(runId);
+    const read = await runStore.get(runId);
+    const { record: run, at: runAt } = read;
     // issue #625 PR-2a: what the engine owes on a live run with no open question — a JSON read of
     // the registered copy; when it cannot be read, nothing is added to the line.
     // #715 (b) (D6-17): `r` judged at `at` — the reading its record was read or written at.
-    const ownedWork = async (r: RunRecord, at: Date): Promise<OwedView | undefined> => {
+    const ownedWork = async (snap: Snapshot): Promise<OwedView | undefined> => {
+      const r = snap.record;
       if (r.terminal_state || r.pending_gate !== undefined) return undefined;
       try {
         const wf = await getWorkflowForRun(workflowStore, r, {
           retryVerb: 'drain again',
           verb: 'drain',
         });
-        return { ...describePending(wf, writtenSnapshot(r, at), undefined), workflow: wf };
+        return { ...describePending(wf, snap, undefined), workflow: wf };
       } catch (err) {
         if (!(err instanceof WorkflowError)) throw err;
         return undefined;
@@ -833,18 +849,17 @@ export async function runDrainAction(
       }
       renderDryRun(
         runId,
-        run,
-        runAt,
+        read,
         opts.expired === true,
         declared,
         predictedGuards,
-        await ownedWork(run, runAt),
+        await ownedWork(read),
       );
       return;
     }
 
     if (!run.terminal_state && !hasEnactableGate) {
-      const [first, ...more] = wayOutOf(runId, run, runAt, await ownedWork(run, runAt));
+      const [first, ...more] = wayOutOf(runId, read, await ownedWork(read));
       console.error(
         `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}') — nothing to drain. ${first}`,
       );
@@ -852,8 +867,8 @@ export async function runDrainAction(
       exitProcess(1);
     }
 
-    let workingRun = run;
-    let workingAt = runAt;
+    // #729 CW-1b part 2: the run this drive works on, held as one snapshot (its lease facts too).
+    let working: Snapshot = read;
     if (hasEnactableGate) {
       // issue #456: this run may be non-terminal (an enactable expired gate bypasses the
       // terminal refusal above) — a LIVE dev-run the operator walked away from, the class's
@@ -864,13 +879,12 @@ export async function runDrainAction(
         verb: 'drain',
         terminalOk: true,
       });
-      const {
-        run: enactedRun,
-        at: enactedAt,
-        applied,
-        guardLines,
-      } = await enactGateExpiry(runStore, workflowForGate, run);
-      workingAt = enactedAt;
+      const { snapshot, applied, guardLines } = await enactGateExpiry(
+        runStore,
+        workflowForGate,
+        run,
+      );
+      working = snapshot;
       if (applied) {
         console.log(
           `✓ gate enacted (${gateClass.kind === 'enactable' ? describeEnactment(run, gateClass.disposition) : ''}).`,
@@ -879,29 +893,30 @@ export async function runDrainAction(
         // ending sentence and its `Reason:` when one of them ended the run, otherwise a passed
         // line per guard.
         for (const line of guardLines) console.log(line);
-        workingRun = enactedRun;
       } else {
         console.log(`• gate expiry already resolved (race) — skipped.`);
-        workingRun = enactedRun;
       }
     }
 
-    if (!workingRun.terminal_state) {
+    if (!working.record.terminal_state) {
       // The enactment (settle_default) did not terminalize this run — nothing further to drain.
       // issue #558 PR-C: the derived phase, and NO disposal clause — a run that went non-terminal
       // mid-drain is a race (a live writer advanced it), not a disposal case; pointing the
       // operator at `abandon` here would recommend killing a run somebody just advanced.
       console.log(
-        `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(workingRun), RUN_PHASE_WORDS)}') — nothing further to drain.`,
+        `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(working.record), RUN_PHASE_WORDS)}') — nothing further to drain.`,
       );
       // issue #625 PR-2a (decision C7): the expiry left steps owed to the engine — name the call.
-      const owed = await ownedWork(workingRun, workingAt);
+      const owed = await ownedWork(working);
       // #729 PR-0 (A-10): the run's ways, composed once by core with no registry (an observer,
       // C33), for both lines below. #715 (b): at the working record's own reading.
       const composed =
         owed === undefined
           ? undefined
-          : composeWaysAt(workingRun, workingAt, { definition: owed.workflow });
+          : composeWaysAt(working.record, working.at, {
+              definition: owed.workflow,
+              lease_facts: working.lease_facts,
+            });
       if (owed !== undefined && owed.owed.length > 0) {
         // decision C207: with several owed, where the call stops.
         const { steps, until } = owedWords(owed);
@@ -915,19 +930,19 @@ export async function runDrainAction(
       const cannotGoOn =
         composed === undefined
           ? []
-          : cannotGoOnLines(composed, runId, deriveRunPhase(workingRun), writerCtx());
+          : cannotGoOnLines(composed, runId, deriveRunPhase(working.record), writerCtx());
       for (const line of cannotGoOn) console.log(line);
       // decision C205: with no engine work and nothing that cannot run, an agent step ready (the
       // drive) or a step in flight in another program (wait for it).
       if (owed !== undefined && owed.owed.length === 0 && cannotGoOn.length === 0) {
-        for (const line of waysOnWithoutEngineWork(runId, workingRun, owed)) console.log(line);
+        for (const line of waysOnWithoutEngineWork(runId, working.record, owed)) console.log(line);
       }
       return;
     }
 
     // issue #456 / #558 PR-T (review fold C5): the definition FIRST — its failure renders as its
     // own composed sentence through the outer catch below, never under the extensions heading.
-    const workflow = await getWorkflowForRun(workflowStore, workingRun, {
+    const workflow = await getWorkflowForRun(workflowStore, working.record, {
       retryVerb: 'drain again',
       verb: 'drain',
       terminalOk: true,

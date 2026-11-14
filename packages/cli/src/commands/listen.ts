@@ -1186,18 +1186,23 @@ async function enactSweptGate(
     );
     if (outcome.applied) {
       result.enacted += 1;
+      // #729 CW-1b part 2: the write's run, with the lease facts the store attached.
+      const written = writtenSnapshot(outcome.run, outcome.at, outcome.lease_facts);
       // issue #625 PR-2a (D7.7): an expiry that leaves the run open with engine work owed names
       // it — nothing else is attending a run the sweeper just moved on.
       const owedView = outcome.run.terminal_state
         ? undefined
-        : describePending(definition, writtenSnapshot(outcome.run, outcome.at), undefined);
+        : describePending(definition, written, undefined);
       // decision C64: an expiry that leaves nothing able to run from here names the steps and the
       // way out — the CLI renderer's lines over the ways core composes (#729 PR-0, A-10).
       const cannotGoOn =
         owedView === undefined
           ? []
           : cannotGoOnLines(
-              composeWaysAt(outcome.run, outcome.at, { definition }),
+              composeWaysAt(outcome.run, outcome.at, {
+                definition,
+                lease_facts: written.lease_facts,
+              }),
               outcome.run.id,
               deriveRunPhase(outcome.run),
             );
@@ -1212,7 +1217,10 @@ async function enactSweptGate(
         ...(cannotGoOn.length > 0
           ? {
               cannot_go_on: cannotGoOnLines(
-                composeWaysAt(outcome.run, outcome.at, { definition }),
+                composeWaysAt(outcome.run, outcome.at, {
+                  definition,
+                  lease_facts: written.lease_facts,
+                }),
                 outcome.run.id,
                 deriveRunPhase(outcome.run),
                 writerCtx(),
