@@ -69,6 +69,8 @@ import { resolveManifestSecrets, type SecretMode } from './manifest-secrets.js';
 import {
   addDeclaredDisclosure,
   noteDeclaredStanding,
+  noteLoadedEnvironment,
+  writerSynced,
   warnManifestNotSecretUnset,
 } from '../output/writer.js';
 
@@ -466,6 +468,10 @@ export async function loadProjectExtensions(
       manifest,
     );
   }
+  // U1b correction 1 (C1): in a relay's worker, what these modules' top-level code put into the
+  // environment reaches the relay before this process prints next.
+  noteLoadedEnvironment();
+  await writerSynced();
 
   const sentinelWarnings: string[] = [];
   let notifiers: LoadedProjectExtensions['notifiers'];
@@ -673,6 +679,9 @@ async function applyDeploymentManifest(
     ctx.document.disclosure?.not_secret,
   );
   noteDeclaredStanding(ctx.path, { declared: 'resolved' });
+  // U1b: in a relay's worker, the relay holds these declared values before a project module is
+  // imported (a module's top-level code may print one, or start a program that does).
+  await writerSynced();
   const useFormats = new Map<string, 'esm' | 'cjs' | 'ts-jiti'>();
   const secretBearingHandlers: string[] = [];
   const secretBearingProcessors: string[] = [];
@@ -753,6 +762,10 @@ async function applyDeploymentManifest(
       manifest[section.key].push(name);
     }
   }
+  // U1b correction 1 (C1): in a relay's worker, what the `use:` modules' top-level code (and their
+  // factories) put into the environment reaches the relay before this process prints next.
+  noteLoadedEnvironment();
+  await writerSynced();
 
   if (secretBearingHandlers.length > 0) manifest.secret_bearing_handlers = secretBearingHandlers;
   if (secretBearingProcessors.length > 0)

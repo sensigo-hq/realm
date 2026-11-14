@@ -23,6 +23,7 @@ import {
   inboundMarkerWarning,
   NOT_SECRET_ENV,
   REALM_CREDENTIAL_VARIABLES,
+  REALM_INTERNAL_VARIABLES,
   REALM_SETTING_VARIABLES,
   type DisclosureEntry,
 } from './redaction.js';
@@ -1040,12 +1041,14 @@ describe("#729 PR-3 correction 1 — D-14: realm's own settings are not secrets;
     const NOT_VARIABLES = new Set(['REALM_RELEASE_LINE_MISMATCH']);
     const unaccounted = [...quoted].filter((n) => !read.has(n) && !NOT_VARIABLES.has(n));
     // (a) red when a REALM_* variable is read and in neither list (a new setting would be swept,
-    //     a new credential shown), a listed name is no longer read, or a name is read some way the
-    //     scan cannot see; (b) prints the names (never values) and whether 200+ files were read.
+    //     a new credential shown), an internal name is read but not listed (U1b's relay markers),
+    //     a listed name is no longer read, or a name is read some way the scan cannot see; (b)
+    //     prints the names (never values) and whether 200+ files were read.
     // REALM_NOT_SECRET names other variables; the walk exempts it by name.
     const classified = [
       ...REALM_SETTING_VARIABLES,
       ...REALM_CREDENTIAL_VARIABLES,
+      ...REALM_INTERNAL_VARIABLES,
       NOT_SECRET_ENV,
     ].sort();
     expect({ read: [...read].sort(), unaccounted, scanned: sources.length > 200 }).toEqual({
