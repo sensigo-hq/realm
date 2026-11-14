@@ -6,3 +6,5 @@ src/content/
 # the live demo bundle and its manifest, written by `npm run live:build`
 public/live/
 src/live/manifest.json
+# the deploy build's test fixtures (scripts/deploy-build.test.mjs)
+.deploy-fixtures/

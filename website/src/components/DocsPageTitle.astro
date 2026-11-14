@@ -1,0 +1,28 @@
+---
+// Starlight's page title (the <h1>), then, on a docs page, the line that says which Realm the docs
+// describe (src/lib/docs-version.mjs). It replaces Starlight's PageTitle (astro.config.mjs ->
+// components), so the line sits right under the heading, before the page's text. The docs search does
+// not index it: like Starlight's own banner, it carries data-pagefind-ignore.
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import { isDocsPageId } from '../data/docs-sidebar.mjs';
+import { docsVersionParts } from '../lib/docs-version.mjs';
+
+const parts = isDocsPageId(Astro.locals.starlightRoute.id) ? docsVersionParts() : null;
+---
+
+<Default />
+{
+  parts && (
+    <p class="docs-version" data-pagefind-ignore>
+      {parts.map((p) => (typeof p === 'string' ? p : <a href={p.href}>{p.text}</a>))}
+    </p>
+  )
+}
+
+<style>
+  .docs-version {
+    margin-top: 0.5rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+  }
+</style>
