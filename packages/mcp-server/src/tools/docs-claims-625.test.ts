@@ -849,7 +849,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163: the server has 11 tools, advance_run among them', async () => {
     claim(
       'mcp/tools.md',
-      "Realm's MCP server has 11 tools under `permitted`, and under `asked` in an app that shows forms (where `present_question` takes the place of `submit_human_response`); and 10 under `withheld`, and under the default `asked` in an app that shows no forms, which list no answer tool.",
+      "Realm's MCP server has 11 tools under `permitted`, and, on `realm mcp`, under `asked` in an app that shows forms (where `present_question` takes the place of `submit_human_response`); and 10 under `withheld`, and under the default `asked` in an app that shows no forms, which list no answer tool.",
     );
     claim(
       'core-library.md',

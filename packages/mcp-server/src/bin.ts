@@ -57,7 +57,7 @@ try {
     onSessionWithoutForms: () => {
       if (toldNoForms) return;
       toldNoForms = true;
-      console.error(gateAnswersConnectLine('realm-mcp'));
+      console.error(gateAnswersConnectLine('realm-mcp', settings.answers));
     },
   }));
 } catch (err) {

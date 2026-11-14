@@ -113,8 +113,9 @@ describe('#627 W — the bins read the two settings as the server will', () => {
         "Gate answers over MCP: asked (the default). The agent gets no tool on this server that records a gate answer. In chat apps that show forms, questions go to the person in the app's own form. In apps without forms, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>; the agent tells the user the run id. Another Realm server or CLI on the same store can still record answers. To let the agent answer, set --gate-answers permitted.",
       askedServe:
         // Correction 2 (8.6 (i): the variable is the source, the default also asked; 4.7: no
-        // backticks on a terminal line).
-        'Gate answers over MCP: asked (from REALM_MCP_GATE_ANSWERS; the default is also asked). No tool on this server records a gate answer, and this server sends no forms. To answer a waiting question, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>; the agent tells the user the run id. Another Realm server or CLI on the same store can still record answers. To let the agent answer, set --gate-answers permitted.',
+        // backticks on a terminal line). PR #1167 correction 1 (item 2): the remedy names the
+        // variable that holds asked.
+        'Gate answers over MCP: asked (from REALM_MCP_GATE_ANSWERS; the default is also asked). No tool on this server records a gate answer, and this server sends no forms. To answer a waiting question, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>; the agent tells the user the run id. Another Realm server or CLI on the same store can still record answers. To let the agent answer, set permitted in place of asked in REALM_MCP_GATE_ANSWERS.',
       permitted:
         'Gate answers over MCP: permitted (from the program that started this server (gateAnswers option); the default is asked). Any client of this server, the agent included, can record a gate answer; it is recorded as arriving through the MCP answer tool.',
     });

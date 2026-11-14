@@ -2,12 +2,15 @@
 // no agent gets a tool that records a gate answer through Realm's MCP server, in any app.
 //
 // - AC1: `asked` in a stdio session whose client shows no forms lists, replies, briefs and describes
-//   `abandon_run` exactly as `withheld` does.
+//   `abandon_run` exactly as `withheld` does, but for the await entry's one sentence naming where a
+//   person answers (PR #1167 correction 1, item 10).
 // - AC2: so does `asked` on a server built per HTTP request, with `statelessHttp` and without it.
 // - AC3 (library half): `offered`, given as the option, the flag or the variable, is `permitted`: the
 //   agent's answer is recorded, and the value reads back as `permitted` in `effectiveGateAnswers()`
-//   and the `realm/gate_answers` capability; `alsoSet` quotes another source as written.
-// - AC4: the most restrictive value wins, one cell per pair of sources.
+//   and the `realm/gate_answers` capability; `alsoSet` quotes another source as written, and
+//   `offered` ranks as `permitted`. (The ranking of the three values is core's w-627 cell.)
+// - Correction 1, item 10: the await entry under `asked` without forms names the place a person
+//   answers; `withheld`'s entry is unchanged, byte for byte.
 // - AC6 (library half): `onSessionWithoutForms` is called once for an `asked` session without forms,
 //   never with forms or under `permitted` or `withheld`, and the library alone prints nothing.
 //
@@ -100,6 +103,21 @@ async function seenBy(client: Client): Promise<Seen> {
   };
 }
 
+/** The await entry's sentence under `asked` without forms (correction 1, item 10). */
+const PLACE = ' A person answers it in a terminal on the computer that runs the Realm server.';
+
+/**
+ * Correction 1 (item 10): `asked` without forms is withheld's row but for one sentence — the session's
+ * four parts with that sentence taken out of the reply, and how many times it was there.
+ */
+function withoutPlace(seen: Seen): { seen: Seen; placed: number } {
+  const text = JSON.stringify(seen.reply);
+  return {
+    seen: { ...seen, reply: JSON.parse(text.split(PLACE).join('')) as Reply },
+    placed: text.split(PLACE).length - 1,
+  };
+}
+
 /** A stdio-shaped session (in-memory transports) on a fresh home: a client with forms or without. */
 async function stdioSession(options: ServerExtras, forms = false) {
   const h = await makeTempHome();
@@ -174,8 +192,9 @@ describe('the gate-answers default — asked without forms is withheld’s row (
     const withheld = await seenBy((await stdioSession({ gateAnswers: 'withheld' })).client);
     // (a) red when the fallback row is kept: the answer tool listed (with its approval mark), the
     //     answer call in the reply, the approval sentence in the protocol, or today's abandon text;
-    //     (b) prints the asked session's four parts against withheld's.
-    expect(asked).toEqual(withheld);
+    //     or when the await entry's place sentence is missing or repeated (correction 1, item 10);
+    //     (b) prints the asked session's four parts, its sentence taken out, against withheld's.
+    expect(withoutPlace(asked)).toEqual({ seen: withheld, placed: 1 });
     // Grounding for the comparison: withheld's own parts are the no-answer-tool ones.
     expect({
       answerTool: (withheld.tools as Array<{ name: string }>).some(
@@ -195,12 +214,38 @@ describe('the gate-answers default — asked without forms is withheld’s row (
       const withheld = await seenBy(
         (await perRequestSession({ gateAnswers: 'withheld' }, statelessHttp)).client,
       );
-      // (a) red when the HTTP door keeps the answer tool under asked (its sessions never show forms);
-      //     (b) prints the asked door's four parts against withheld's.
-      expect(asked).toEqual(withheld);
+      // (a) red when the HTTP door keeps the answer tool under asked (its sessions never show forms),
+      //     or its await entry lacks the place sentence (correction 1, item 10); (b) prints the asked
+      //     door's four parts, its sentence taken out, against withheld's.
+      expect(withoutPlace(asked)).toEqual({ seen: withheld, placed: 1 });
     },
     60_000,
   );
+});
+
+describe('the gate-answers default — the await entry names where a person answers (correction 1, item 10)', () => {
+  /** The await entry's words in start_run's reply, run id masked. */
+  const awaitWords = (seen: Seen): unknown =>
+    (seen.reply['next_actions'] as Array<Reply>)
+      .filter((a) => a['awaiting'] !== undefined)
+      .map((a) => a['human_readable']);
+  const WITHHELD_WORDS =
+    "The question on step 'q' of run <run> is answered outside this conversation. Show the user gate.display and tell them it is waiting for their answer; an answer they give here is not recorded. Give the user this run id (<run>); they may need it to answer. Check again no sooner than poll_after_ms.";
+
+  it('asked, a client that shows no forms: the entry says a person answers in a terminal on the computer that runs the Realm server', async () => {
+    const asked = await seenBy((await stdioSession({})).client);
+    // (a) red when the sentence is not added under asked (the owner's (a), c9e89f1a), or names the
+    //     command; (b) prints the entry's words.
+    expect(awaitWords(asked)).toEqual([
+      "The question on step 'q' of run <run> is answered outside this conversation. A person answers it in a terminal on the computer that runs the Realm server. Show the user gate.display and tell them it is waiting for their answer; an answer they give here is not recorded. Give the user this run id (<run>); they may need it to answer. Check again no sooner than poll_after_ms.",
+    ]);
+  }, 60_000);
+
+  it('withheld: the entry is unchanged, byte for byte — no place named', async () => {
+    const withheld = await seenBy((await stdioSession({ gateAnswers: 'withheld' })).client);
+    // (a) red when the sentence is added under withheld too; (b) prints the entry's words.
+    expect(awaitWords(withheld)).toEqual([WITHHELD_WORDS]);
+  }, 60_000);
 });
 
 describe('the gate-answers default — offered is permitted (AC3, library half)', () => {
@@ -247,16 +292,26 @@ describe('the gate-answers default — offered is permitted (AC3, library half)'
     60_000,
   );
 
-  it('alsoSet quotes another source as written; offeredFrom names each source that gave offered', () => {
-    // (a) red when an old name is rewritten in alsoSet, or not named in offeredFrom; (b) prints the
-    //     readings.
+  it('alsoSet quotes another source as written; offeredFrom names each source that gave offered; offered ranks as permitted', () => {
+    const win = (input: Parameters<typeof judgeGateAnswers>[0]) => {
+      const r = judgeGateAnswers(input);
+      return r.ok ? `${r.setting.value} from ${r.setting.source.kind}` : `refused ${r.kind}`;
+    };
+    // (a) red when an old name is rewritten in alsoSet, or not named in offeredFrom, or offered ranks
+    //     other than permitted (above asked; or below permitted, so the tie leaves the more direct
+    //     source); (b) prints the readings and each pair's winner.
     expect({
+      oldName: [
+        win({ flag: 'offered', env: 'asked' }),
+        win({ env: 'offered', option: 'permitted' }),
+      ],
       both: effectiveGateAnswers({ gateAnswers: 'offered' }, { REALM_MCP_GATE_ANSWERS: 'asked' }),
       flagAndOption: effectiveGateAnswers(
         { gateAnswers: 'offered', gateAnswersFlag: 'offered' },
         {},
       ),
     }).toEqual({
+      oldName: ['asked from env', 'permitted from env'],
       both: {
         value: 'asked',
         source: { kind: 'env', ref: 'REALM_MCP_GATE_ANSWERS' },
@@ -290,41 +345,6 @@ describe('the gate-answers default — offered is permitted (AC3, library half)'
           { kind: 'option', ref: 'the program that started this server (gateAnswers option)' },
         ],
       },
-    });
-  });
-});
-
-describe('the gate-answers default — the most restrictive value wins (AC4)', () => {
-  const win = (input: Parameters<typeof judgeGateAnswers>[0]) => {
-    const r = judgeGateAnswers(input);
-    return r.ok ? `${r.setting.value} from ${r.setting.source.kind}` : `refused ${r.kind}`;
-  };
-  it('one cell per pair of sources: asked beats permitted, withheld beats asked, whichever source holds it', () => {
-    // (a) red when permitted is ranked above asked (or asked above withheld), or a tie stops going to
-    //     the more direct source; (b) prints each pair's winner.
-    expect({
-      flagEnv: [win({ flag: 'permitted', env: 'asked' }), win({ flag: 'asked', env: 'withheld' })],
-      flagOption: [
-        win({ flag: 'asked', option: 'permitted' }),
-        win({ flag: 'withheld', option: 'asked' }),
-      ],
-      envOption: [
-        win({ env: 'permitted', option: 'asked' }),
-        win({ env: 'asked', option: 'withheld' }),
-      ],
-      oldName: [
-        win({ flag: 'offered', env: 'asked' }),
-        win({ env: 'offered', option: 'permitted' }),
-      ],
-      none: win({}),
-      unknown: win({ env: 'open' }),
-    }).toEqual({
-      flagEnv: ['asked from env', 'withheld from env'],
-      flagOption: ['asked from flag', 'withheld from flag'],
-      envOption: ['asked from option', 'withheld from option'],
-      oldName: ['asked from env', 'permitted from env'],
-      none: 'asked from default',
-      unknown: 'refused env',
     });
   });
 });

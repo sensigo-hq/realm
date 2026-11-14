@@ -50,7 +50,7 @@ import {
 } from './door.js';
 import type { ElicitFn } from './form-path.js';
 
-/** @deprecated `offered` is now called `permitted`; `offered` still works and reads back as `permitted`. */
+/** `offered`, the old name of `permitted`: the `gateAnswers` option's TSDoc says so. */
 type GateAnswersOldName = 'offered';
 
 export interface RealmMcpServerOptions {
@@ -150,7 +150,7 @@ export interface RealmMcpServerOptions {
    * `realm run respond`. `permitted`: the answer tool for any client, the agent included. `withheld`:
    * no tool records a gate answer, and no form is sent. Read with `REALM_MCP_GATE_ANSWERS` and the
    * bins' `--gate-answers` flag; the MOST RESTRICTIVE value wins (`withheld` > `asked` > `permitted`).
-   * `offered`, `permitted`'s name until version 0.49.0, still works and reads back as `permitted`. A
+   * `'offered'` is the old name of `'permitted'`, and still works. It reads back as `permitted`. A
    * value that is not one of these throws (no server is built). `effectiveGateAnswers()` logs it.
    */
   gateAnswers?: 'asked' | 'permitted' | 'withheld' | GateAnswersOldName;

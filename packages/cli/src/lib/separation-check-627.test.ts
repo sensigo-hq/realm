@@ -174,14 +174,15 @@ describe('#627 W — the separation check (cell 26)', () => {
     });
   });
 
-  it('the value line (F36): withheld and asked measured only from this command line; from elsewhere, configured not enforced; permitted keeps an answer way', async () => {
+  it('the value line (F36): withheld and asked measured only from this command line; from elsewhere, configured not enforced; asked from the default says so; permitted keeps an answer way', async () => {
     const line = async (
       value: { value: GateAnswers; source: Source },
       door: 'mcp' | 'serve' = 'mcp',
     ) => valueLine(await measure(machine(), value, door));
     // (a) red when an env value is called measured, or asked keeps the old "keeps an answer way"
-    //     words (the gate-answers default, 2026-11-14: asked takes withheld's two lines); (b) prints
-    //     each.
+    //     words (the gate-answers default, 2026-11-14: asked takes withheld's two lines), or asked
+    //     from the default is called configured (PR #1167 correction 1, item 4: nothing set it; an
+    //     asked from the variable keeps "configured", AC8's table); (b) prints each.
     expect({
       flag: await line(FLAG),
       env: await line(ENV),
@@ -199,9 +200,9 @@ describe('#627 W — the separation check (cell 26)', () => {
       flag: 'The gate-answers value: withheld (given on this command line).',
       env: "The gate-answers value: withheld, configured, not enforced by Realm — from REALM_MCP_GATE_ANSWERS; the running server's value is not read.",
       asked:
-        "The gate-answers value: asked, configured, not enforced by Realm — from the default; the running server's value is not read.",
+        "The gate-answers value: asked, the default (nothing on this command line or in this shell's environment sets it), not enforced by Realm — the running server's value is not read.",
       askedServe:
-        "The gate-answers value: asked, configured, not enforced by Realm — from the default; the running server's value is not read.",
+        "The gate-answers value: asked, the default (nothing on this command line or in this shell's environment sets it), not enforced by Realm — the running server's value is not read.",
       permitted:
         'The gate-answers value: permitted (from --gate-answers) — the agent keeps an answer way.',
     });

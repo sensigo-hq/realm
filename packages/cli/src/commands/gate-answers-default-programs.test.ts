@@ -3,12 +3,14 @@
 //
 // - AC5: the start line under each value, per program, word for word.
 // - AC6: the connect line — once for an `asked` session whose client shows no forms on `realm mcp`
-//   and `realm-mcp`; never for a client that shows forms, under `permitted` or `withheld`, or on
-//   `realm serve`.
+//   and `realm-mcp`; never for a client that shows forms, or under `permitted` or `withheld`.
+// - PR #1167 correction 1, item 2: when a flag or the variable set `asked`, the start line's and the
+//   connect line's remedy names each place that holds it.
 // - AC7: dev mode's warning on `realm serve`, under `permitted` only.
+// - Correction 1, item 5: both commands' `--help` name the three values (the CHANGELOG says it changed).
 // - AC3 (programs' half): `offered` given as the flag or the variable prints the old name's line
-//   once, on stderr, and every read-back says `permitted` (the start line, `--check`'s value lines,
-//   the form-wait refusal).
+//   once, on stderr, and every read-back says `permitted` (the start line, `--check`'s value lines);
+//   the form-wait refusal says `permitted (given as offered)` (correction 1, item 6).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // lines a program printed and its exit code — never an environment.
@@ -86,13 +88,12 @@ async function stdioSession(
 }
 
 /**
- * `realm serve` on a free port, until its gate-answers line is out; with `initialize`, one client's
- * initialize request is sent first. Its stdout and stderr lines; the process is then stopped.
+ * `realm serve` on a free port, until its gate-answers line is out. Its stdout and stderr lines; the
+ * process is then stopped.
  */
 async function serveLines(
   args: string[],
   extra: Record<string, string> = {},
-  initialize = false,
 ): Promise<{ stdout: string[]; stderr: string[] }> {
   const child = spawn(process.execPath, [CLI, 'serve', '--port', '0', ...args], {
     env: envOf({ REALM_SERVE_TOKEN: 'gad-programs-token', ...extra }),
@@ -107,28 +108,6 @@ async function serveLines(
   while (!stdout.includes('Gate answers over MCP:') && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 25));
   }
-  if (initialize) {
-    const port = /listening on http:\/\/127\.0\.0\.1:(\d+)\//.exec(stdout)?.[1];
-    await fetch(`http://127.0.0.1:${port}/`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json, text/event-stream',
-        Authorization: 'Bearer gad-programs-token',
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: LATEST_PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: 'gad-programs', version: '0' },
-        },
-      }),
-    }).then((r) => r.text());
-    await new Promise((r) => setTimeout(r, 300));
-  }
   child.kill('SIGTERM');
   await exited;
   return {
@@ -139,10 +118,13 @@ async function serveLines(
 
 const gateLine = (lines: string[]) => lines.find((l) => l.startsWith('Gate answers over MCP: '));
 
+/** A command's --help with its wrapping undone: one space for every run of white space. */
+const flatHelp = (text: string) => text.replace(/\s+/g, ' ');
+
 const TERMINAL =
   'a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>; the agent tells the user the run id. Another Realm server or CLI on the same store can still record answers.';
-const ASKED_STDIO = (remedy: string) =>
-  `Gate answers over MCP: asked (the default). The agent gets no tool on this server that records a gate answer. In chat apps that show forms, questions go to the person in the app's own form. In apps without forms, ${TERMINAL} To let the agent answer, set ${remedy}.`;
+const ASKED_STDIO = (remedy: string, source = 'the default') =>
+  `Gate answers over MCP: asked (${source}). The agent gets no tool on this server that records a gate answer. In chat apps that show forms, questions go to the person in the app's own form. In apps without forms, ${TERMINAL} To let the agent answer, set ${remedy}.`;
 const ASKED_SERVE = `Gate answers over MCP: asked (the default). No tool on this server records a gate answer, and this server sends no forms. To answer a waiting question, ${TERMINAL} To let the agent answer, set --gate-answers permitted.`;
 const PERMITTED = (from: string) =>
   `Gate answers over MCP: permitted (from ${from}; the default is asked). Any client of this server, the agent included, can record a gate answer; it is recorded as arriving through the MCP answer tool.`;
@@ -231,14 +213,64 @@ describe('the gate-answers default — the line for an app without forms (AC6)',
       realmMcpPermitted: 0,
     });
   }, 180_000);
+});
 
-  it('realm serve prints no such line when a client connects: its start line says it', async () => {
-    const { stdout, stderr } = await serveLines([], {}, true);
-    // (a) red when serve passes the connect line's option; (b) prints serve's lines.
+describe('the gate-answers default — the remedy names where asked was set (correction 1, item 2)', () => {
+  it('the variable sets asked and the flag permitted: the start and connect lines name the variable; both set asked: both named', async () => {
+    const lines = async (args: string[]) => {
+      const stderr = await stdioSession('realm mcp', args, false, {
+        REALM_MCP_GATE_ANSWERS: 'asked',
+      });
+      return {
+        start: gateLine(stderr),
+        connect: stderr.filter((l) => l.includes('this app shows no forms')),
+      };
+    };
+    // (a) red when the remedy names --gate-answers permitted whatever the source (setting it then
+    //     changes nothing: asked outranks permitted), or misses a place that holds asked; (b) prints
+    //     each session's start and connect lines.
     expect({
-      started: gateLine(stdout) === ASKED_SERVE,
-      connectLines: [...stdout, ...stderr].filter((l) => l.includes('this app shows no forms')),
-    }).toEqual({ started: true, connectLines: [] });
+      envAskedFlagPermitted: await lines(['--gate-answers', 'permitted']),
+      bothAsked: await lines(['--gate-answers', 'asked']),
+    }).toEqual({
+      envAskedFlagPermitted: {
+        start: ASKED_STDIO(
+          'permitted in place of asked in REALM_MCP_GATE_ANSWERS',
+          'from REALM_MCP_GATE_ANSWERS; also set: --gate-answers = permitted — the most restrictive value wins; the default is also asked',
+        ),
+        connect: [CONNECT('permitted in place of asked in REALM_MCP_GATE_ANSWERS')],
+      },
+      bothAsked: {
+        start: ASKED_STDIO(
+          'permitted in place of asked in --gate-answers and REALM_MCP_GATE_ANSWERS',
+          'from --gate-answers; also set: REALM_MCP_GATE_ANSWERS = asked — the most restrictive value wins; the default is also asked',
+        ),
+        connect: [
+          CONNECT('permitted in place of asked in --gate-answers and REALM_MCP_GATE_ANSWERS'),
+        ],
+      },
+    });
+  }, 120_000);
+});
+
+describe('the gate-answers default — both commands’ --help (correction 1, item 5: the CHANGELOG names it)', () => {
+  it('realm mcp --help and realm serve --help name asked (the default), permitted or withheld', () => {
+    const help = (command: string) =>
+      flatHelp(
+        spawnSync(process.execPath, [CLI, command, '--help'], {
+          env: envOf(),
+          encoding: 'utf8',
+          timeout: 60_000,
+        }).stdout,
+      );
+    const said =
+      'How this server handles gate answers: asked (the default), permitted or withheld. The most restrictive of this flag and REALM_MCP_GATE_ANSWERS wins.';
+    // (a) red when either command's --help keeps offered, or drops the value list; (b) prints whether
+    //     each says it.
+    expect({ mcp: help('mcp').includes(said), serve: help('serve').includes(said) }).toEqual({
+      mcp: true,
+      serve: true,
+    });
   }, 120_000);
 });
 
@@ -322,24 +354,32 @@ describe('the gate-answers default — offered is permitted, and says so (AC3, p
     });
   }, 120_000);
 
-  it('the form-wait refusal reads permitted for offered; the bad-value refusal lists asked, permitted or withheld', () => {
+  it('the form-wait refusal reads permitted, given as offered, for offered (correction 1, item 6); the bad-value refusal lists asked, permitted or withheld', () => {
     const wait = stdioStart('realm mcp', [
       '--gate-answers',
       'offered',
       '--form-wait-seconds',
       '60',
     ]);
+    const permittedWait = stdioStart('realm mcp', [
+      '--gate-answers',
+      'permitted',
+      '--form-wait-seconds',
+      '60',
+    ]);
     const bad = stdioStart('realm mcp', ['--gate-answers', 'open']);
-    // (a) red when the refusal names offered, or the bad-value list keeps offered; (b) prints both
-    //     programs' stderr and exit codes.
+    const refusal = (value: string) =>
+      `realm mcp: --form-wait-seconds has no effect under gate answers ${value}: this server sends no forms then — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it, or set gate answers to asked. The server starts as soon as it is removed or gate answers is asked.`;
+    // (a) red when the refusal names offered alone, or names permitted without "given as offered"
+    //     for offered, or says "given as offered" for permitted; or the bad-value list keeps offered;
+    //     (b) prints each program's stderr and exit code.
     expect({
       wait: [wait.code, wait.stderr.trim()],
+      permittedWait: [permittedWait.code, permittedWait.stderr.trim()],
       bad: [bad.code, bad.stderr.trim()],
     }).toEqual({
-      wait: [
-        1,
-        'realm mcp: --form-wait-seconds has no effect under gate answers permitted: this server sends no forms then — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it, or set gate answers to asked. The server starts as soon as it is removed or gate answers is asked.',
-      ],
+      wait: [1, refusal('permitted (given as offered)')],
+      permittedWait: [1, refusal('permitted')],
       bad: [
         1,
         "realm mcp: invalid --gate-answers value 'open': expected asked, permitted or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.",

@@ -55,7 +55,7 @@ Do this, in this order:
 
 ## The agent no longer answers gates by default
 
-From the version after 0.49.0, the agent no longer answers gates by default in an app without forms or through `realm serve`. If an agent answered gates for you there, start the server with `--gate-answers permitted` (`REALM_MCP_GATE_ANSWERS=permitted` for `realm-mcp`; `gateAnswers: 'permitted'` in a program that embeds Realm). The tool the agent then gets no longer asks the app to have you approve each call, as the old default's tool did. Code that reads `offered` from `GATE_ANSWERS_VALUES`, `GateAnswers`, `AnswersRow` or the `realm/gate_answers` capability reads `permitted` now. See [Gate answers over MCP](../reference/mcp/gate-answers.md).
+From the version after 0.49.0, the agent no longer answers gates by default in an app without forms, through `realm serve`, or through a program that builds its server per HTTP request or passes `statelessHttp`. If an agent answered gates for you there, start the server with `--gate-answers permitted` (`REALM_MCP_GATE_ANSWERS=permitted` for `realm-mcp`; `gateAnswers: 'permitted'` in a program that embeds Realm). The tool the agent then gets no longer asks the app to have you approve each call, as the old default's tool did. Code that reads `offered` from `GATE_ANSWERS_VALUES`, `GateAnswers`, `AnswersRow` or the `realm/gate_answers` capability reads `permitted` now. See [Gate answers over MCP](../reference/mcp/gate-answers.md).
 
 ## 1. Read what changed
 

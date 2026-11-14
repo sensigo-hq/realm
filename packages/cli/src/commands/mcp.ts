@@ -133,7 +133,7 @@ export const mcpCommand = new Command('mcp')
           onSessionWithoutForms: () => {
             if (toldNoForms) return;
             toldNoForms = true;
-            console.error(gateAnswersConnectLine('mcp'));
+            console.error(gateAnswersConnectLine('mcp', settings.answers));
           },
         });
       } catch (err) {

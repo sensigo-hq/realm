@@ -225,18 +225,26 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     expect('REALM_MCP_GATE_ANSWERS' in passed).toBe(false);
   });
 
-  it('the start lines name the value, and under withheld the person’s route', () => {
+  it('the start lines name the value, and under withheld and asked the person’s route', () => {
     claim(
       PAGE,
-      '`realm mcp` and `realm serve` print the value they run with when they start. Under `withheld` they also print how a person answers from a terminal: `realm run inspect <run_id>`, then `realm run respond <run_id> --gate <gate_id> --choice <choice>`.',
+      '`realm mcp` and `realm serve` print the value they run with when they start. Under `withheld`, and under `asked`, they also print how a person answers from a terminal: `realm run inspect <run_id>`, then `realm run respond <run_id> --gate <gate_id> --choice <choice>`.',
     );
-    const r = judgeGateAnswers({ flag: 'withheld' });
-    const line = r.ok ? gateAnswersStartLine(r.setting, false) : '';
-    // (a) red when the start line drops the route; (b) prints the line.
-    expect(
-      line.includes('realm run inspect <run_id>') &&
-        line.includes('realm run respond <run_id> --gate <gate_id> --choice <choice>'),
-    ).toBe(true);
+    const route = (input: Parameters<typeof judgeGateAnswers>[0], http: boolean) => {
+      const r = judgeGateAnswers(input);
+      const line = r.ok ? gateAnswersStartLine(r.setting, http) : '';
+      return (
+        line.includes('realm run inspect <run_id>') &&
+        line.includes('realm run respond <run_id> --gate <gate_id> --choice <choice>')
+      );
+    };
+    // (a) red when a start line drops the route (PR #1167 correction 1, item 9: asked's too, on
+    //     both doors); (b) prints each.
+    expect({
+      withheld: route({ flag: 'withheld' }, false),
+      askedMcp: route({}, false),
+      askedServe: route({}, true),
+    }).toEqual({ withheld: true, askedMcp: true, askedServe: true });
   });
 
   it('another server or CLI on the same store can still record answers', async () => {

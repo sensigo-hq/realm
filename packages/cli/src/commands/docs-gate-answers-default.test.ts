@@ -29,7 +29,12 @@ const AC3_ALSO: Cell = [
   `${MCP}/gate-answers-default.test.ts`,
   'alsoSet quotes another source as written',
 ];
-const AC4: Cell = [`${MCP}/gate-answers-default.test.ts`, 'one cell per pair of sources'];
+// PR #1167 correction 1 (item 8): the ranking of the three values is core's own cell; offered's
+// ranking is in AC3's alsoSet cell.
+const RANK: Cell = [
+  'packages/core/src/engine/w-627.test.ts',
+  'the most restrictive value wins, whichever place sets it',
+];
 const AC6_LIB: Cell = [
   `${MCP}/gate-answers-default.test.ts`,
   'onSessionWithoutForms: once for asked',
@@ -56,8 +61,21 @@ const AC7: Cell = [
 ];
 const WAIT: Cell = [
   `${CLI}/commands/gate-answers-default-programs.test.ts`,
-  'the form-wait refusal reads permitted for offered',
+  'the form-wait refusal reads permitted, given as offered, for offered',
 ];
+const HELP: Cell = [
+  `${CLI}/commands/gate-answers-default-programs.test.ts`,
+  'realm mcp --help and realm serve --help name asked (the default), permitted or withheld',
+];
+const REMEDY: Cell = [
+  `${CLI}/commands/gate-answers-default-programs.test.ts`,
+  'the variable sets asked and the flag permitted',
+];
+const CHECK_DEFAULT: Cell = [
+  `${CLI}/lib/separation-check-627.test.ts`,
+  'asked from the default says so',
+];
+
 const ROWS: Cell = [
   `${MCP}/door-627.test.ts`,
   'row by row, by tool NAME: permitted → the answer tool',
@@ -134,7 +152,7 @@ const SENTENCES: ReadonlyArray<readonly [page: string, sentence: string, cells: 
   [
     'docs/reference/mcp/gate-answers.md',
     'the most restrictive value wins: `withheld`, then `asked`, then `permitted`. A value that is not one of the three, and not `offered`, stops the server from starting.',
-    [AC4],
+    [RANK, AC3_ALSO],
   ],
   [
     'docs/reference/mcp/gate-answers.md',
@@ -199,7 +217,7 @@ const SENTENCES: ReadonlyArray<readonly [page: string, sentence: string, cells: 
   [
     'docs/reference/cli/realm-mcp-and-serve.md',
     `How the server handles gate answers: \`asked\`, \`permitted\` or \`withheld\`. ${S3} With \`REALM_MCP_GATE_ANSWERS\` also set, the most restrictive wins.`,
-    [AC4, AC3_BINS],
+    [RANK, AC3_ALSO, AC3_BINS],
   ],
   [
     'docs/reference/cli/realm-mcp-and-serve.md',
@@ -228,8 +246,8 @@ const SENTENCES: ReadonlyArray<readonly [page: string, sentence: string, cells: 
   ],
   [
     'docs/reference/mcp/tools.md',
-    "Realm's MCP server has 11 tools under `permitted`, and under `asked` in an app that shows forms (where `present_question` takes the place of `submit_human_response`); and 10 under `withheld`, and under the default `asked` in an app that shows no forms, which list no answer tool. A reply on this page that shows the answer call came from a server started with `--gate-answers permitted`.",
-    [COUNT_TOOLS_MD, ROWS],
+    "Realm's MCP server has 11 tools under `permitted`, and, on `realm mcp`, under `asked` in an app that shows forms (where `present_question` takes the place of `submit_human_response`); and 10 under `withheld`, and under the default `asked` in an app that shows no forms, which list no answer tool. A reply on this page that shows the answer call came from a server started with `--gate-answers permitted`.",
+    [COUNT_TOOLS_MD, ROWS, HTTP_PER_REQUEST],
   ],
   [
     'docs/reference/mcp/tools.md',
@@ -279,8 +297,8 @@ const SENTENCES: ReadonlyArray<readonly [page: string, sentence: string, cells: 
   ],
   [
     'packages/mcp-server/README.md',
-    'A client is listed 11 tools under `permitted`, and under `asked` in a session whose client shows forms; else 10. Under `asked` `present_question` is registered, and a session whose client shows forms enables it.',
-    [COUNT_GUIDE],
+    'A client is listed 11 tools under `permitted`, and under `asked` in a session whose client shows forms (never with `statelessHttp`); else 10. Under `asked` `present_question` is registered, and a session whose client shows forms enables it.',
+    [COUNT_GUIDE, HTTP_PER_REQUEST],
   ],
   [
     'packages/mcp-server/README.md',
@@ -314,18 +332,37 @@ const SENTENCES: ReadonlyArray<readonly [page: string, sentence: string, cells: 
   ],
   [
     'docs/guides/upgrade.md',
-    "From the version after 0.49.0, the agent no longer answers gates by default in an app without forms or through `realm serve`. If an agent answered gates for you there, start the server with `--gate-answers permitted` (`REALM_MCP_GATE_ANSWERS=permitted` for `realm-mcp`; `gateAnswers: 'permitted'` in a program that embeds Realm). The tool the agent then gets no longer asks the app to have you approve each call, as the old default's tool did. Code that reads `offered` from `GATE_ANSWERS_VALUES`, `GateAnswers`, `AnswersRow` or the `realm/gate_answers` capability reads `permitted` now.",
+    "From the version after 0.49.0, the agent no longer answers gates by default in an app without forms, through `realm serve`, or through a program that builds its server per HTTP request or passes `statelessHttp`. If an agent answered gates for you there, start the server with `--gate-answers permitted` (`REALM_MCP_GATE_ANSWERS=permitted` for `realm-mcp`; `gateAnswers: 'permitted'` in a program that embeds Realm). The tool the agent then gets no longer asks the app to have you approve each call, as the old default's tool did. Code that reads `offered` from `GATE_ANSWERS_VALUES`, `GateAnswers`, `AnswersRow` or the `realm/gate_answers` capability reads `permitted` now.",
     [AC1, AC2, AC3_LIB, AC3_BINS, ROWS],
   ],
   [
     'CHANGELOG.md',
-    "**1. The agent no longer answers gates by default in an app without forms or through `realm serve`.** If an agent answered gates for you there, start the server with `--gate-answers permitted` (`REALM_MCP_GATE_ANSWERS=permitted` for `realm-mcp`; `gateAnswers: 'permitted'` in a program that embeds Realm). The tool the agent then gets no longer asks the app to have you approve each call, as the old default's tool did. Code that reads `offered` from `GATE_ANSWERS_VALUES`, `GateAnswers`, `AnswersRow` or the `realm/gate_answers` capability reads `permitted` now. See [The agent no longer answers gates by default](docs/guides/upgrade.md#the-agent-no-longer-answers-gates-by-default).",
+    "**1. The agent no longer answers gates by default in an app without forms, through `realm serve`, or through a program that builds its server per HTTP request or passes `statelessHttp`.** If an agent answered gates for you there, start the server with `--gate-answers permitted` (`REALM_MCP_GATE_ANSWERS=permitted` for `realm-mcp`; `gateAnswers: 'permitted'` in a program that embeds Realm). The tool the agent then gets no longer asks the app to have you approve each call, as the old default's tool did. Code that reads `offered` from `GATE_ANSWERS_VALUES`, `GateAnswers`, `AnswersRow` or the `realm/gate_answers` capability reads `permitted` now. See [The agent no longer answers gates by default](docs/guides/upgrade.md#the-agent-no-longer-answers-gates-by-default).",
     [AC1, AC2, AC3_LIB, AC3_BINS, ROWS],
   ],
   [
     'CHANGELOG.md',
-    "- **By default, an agent can no longer answer a gate through Realm's MCP server, in any app.** In an app that shows forms nothing changes: the person answers in the app's form. In an app without forms, and on `realm serve`, the agent no longer gets the answer tool: a person answers in a terminal on the server's machine with `realm run respond`, and the start line, and a line when such an app connects, say so. `--gate-answers permitted` (`REALM_MCP_GATE_ANSWERS=permitted`, `gateAnswers: 'permitted'`) lets the agent answer, as `offered` did; `offered` still works and prints a line saying it is now called `permitted`. Changed lines: the start lines, `--check`'s value lines and the words of its value gap, and the bad-value refusal. Library: `GATE_ANSWERS_VALUES`, `GateAnswers` and `AnswersRow` name `permitted` in place of `offered`; `AnswersRow` has no `fallback`; `effectiveGateAnswers()` and the `realm/gate_answers` capability read `permitted`.",
-    [AC1, AC2, AC5_STDIO, AC5_SERVE, AC6_BINS, AC3_BINS, AC3_LIB, ROWS],
+    "- **By default, an agent can no longer answer a gate through Realm's MCP server, in any app.** In an app that shows forms nothing changes: the person answers in the app's form. In an app without forms, on `realm serve`, and in a program that builds its server per HTTP request or passes `statelessHttp`, the agent no longer gets the answer tool: a person answers in a terminal on the server's machine with `realm run respond`, and the start line, and a line when such an app connects, say so. `--gate-answers permitted` (`REALM_MCP_GATE_ANSWERS=permitted`, `gateAnswers: 'permitted'`) lets the agent answer, as `offered` did; `offered` still works and prints a line saying it is now called `permitted`. Changed lines: the start lines, `--check`'s value lines and the words of its value gap, the bad-value refusal, the form-wait refusal's value, both commands' `--help`, and `realm serve --dev`'s answer-tool warning, which now prints only under `permitted`. Library: `GATE_ANSWERS_VALUES`, `GateAnswers` and `AnswersRow` name `permitted` in place of `offered`; `AnswersRow` has no `fallback`; `effectiveGateAnswers()` and the `realm/gate_answers` capability read `permitted`.",
+    [
+      AC1,
+      AC2,
+      AC5_STDIO,
+      AC5_SERVE,
+      AC6_BINS,
+      AC3_BINS,
+      AC3_LIB,
+      ROWS,
+      WAIT,
+      HELP,
+      AC7,
+      REMEDY,
+      CHECK_DEFAULT,
+    ],
+  ],
+  [
+    'docs/reference/mcp/gate-answers.md',
+    '`realm mcp` and `realm serve` print the value they run with when they start. Under `withheld`, and under `asked`, they also print how a person answers from a terminal: `realm run inspect <run_id>`, then `realm run respond <run_id> --gate <gate_id> --choice <choice>`.',
+    [AC5_STDIO, AC5_SERVE],
   ],
 ];
 

@@ -577,7 +577,9 @@ const times = (n: number): string => `${n} ${n === 1 ? 'time' : 'times'}`;
  * #627 W: the await entry — a question this door hands to the person (its `respond` serves the asked
  * person, never the agent). Under `asked` with forms it says what this server SENT (W-a1f, from the
  * door's facts, never what the person saw); under `withheld`, W-a1 on a reply that carries the
- * question's `gate`, else W-a2. No text names a tool that answers, or a person; no claim token.
+ * question's `gate`, else W-a2. No text names a tool that answers, or a command; no claim token.
+ * Under `asked` without forms one sentence more names the place a person answers (PR #1167
+ * correction 1, item 10).
  */
 function awaitEntryOf(
   way: RespondWay,
@@ -623,7 +625,14 @@ function awaitEntryOf(
     // #819 (T2): the start line's "the agent tells the user the run id" is asked for here; #819
     // correction 1 (02 W3): a Slack thread's answer needs no run id — a terminal's does. #819
     // follow-up 2 (reader B's M2): "may", and no place named (K1: no text naming an answer way).
-    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation. ${show}; an answer they give here is not recorded. Give the user this run id (${way.run_id}); they may need it to answer.`;
+    // PR #1167 correction 1 (item 10; the owner's (a), c9e89f1a): under `asked` without forms the
+    // entry names where a person answers — the place, never the command (an agent with a shell would
+    // run it). `withheld`'s entry is unchanged.
+    const where =
+      host.answers?.value === 'asked'
+        ? ' A person answers it in a terminal on the computer that runs the Realm server.'
+        : '';
+    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation.${where} ${show}; an answer they give here is not recorded. Give the user this run id (${way.run_id}); they may need it to answer.`;
   }
   return {
     instruction: null,

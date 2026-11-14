@@ -56,8 +56,11 @@ export function formWaitNoFormsRefusal(
   bin: Exclude<BinName, 'serve'>,
   where: '--form-wait-seconds' | typeof FORM_WAIT_ENV,
   value: Exclude<GateAnswers, 'asked'>,
+  asOffered = false,
 ): string {
-  return `${programOf(bin)}: ${where} has no effect under gate answers ${value}: this server sends no forms then — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it, or set gate answers to asked. The server starts as soon as it is removed or gate answers is asked.`;
+  // PR #1167 correction 1 (item 6): the value as the person gave it, when its source gave the old name.
+  const named = asOffered ? `${value} (given as offered)` : value;
+  return `${programOf(bin)}: ${where} has no effect under gate answers ${named}: this server sends no forms then — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it, or set gate answers to asked. The server starts as soon as it is removed or gate answers is asked.`;
 }
 
 /** What a bin was given for the two settings: its flags (unchecked). */
@@ -96,13 +99,18 @@ export function readBinDoorSettings(
       line:
         bin === 'serve' || value === 'asked'
           ? formWaitInertRefusal(given)
-          : formWaitNoFormsRefusal(bin, given, value),
+          : formWaitNoFormsRefusal(bin, given, value, givenAsOffered(answers.setting)),
     };
   }
   const formWait = judgeFormWait({ flag: flags.formWaitSeconds, env: env[FORM_WAIT_ENV] });
   if (!formWait.ok)
     return { ok: false, line: formWaitBinRefusal(bin, formWait.kind, formWait.raw) };
   return { ok: true, answers: answers.setting, formWait: formWait.setting };
+}
+
+/** Whether the source the value in force came from gave it as `offered` (its old name). */
+function givenAsOffered(setting: GateAnswersSetting): boolean {
+  return setting.offeredFrom?.some((s) => s.kind === setting.source.kind) === true;
 }
 
 /** `from <source>` with the "also set" clause, as the start lines and `--check` print it. */
@@ -136,7 +144,7 @@ export function gateAnswersStartLine(
       const ways = http
         ? `No tool on this server records a gate answer, and this server sends no forms. To answer a waiting question, ${terminal}`
         : `The agent gets no tool on this server that records a gate answer. In chat apps that show forms, questions go to the person in the app's own form. In apps without forms, ${terminal}`;
-      return `Gate answers over MCP: asked (${source}). ${ways} To let the agent answer, set ${permittedSetting(bin)}.`;
+      return `Gate answers over MCP: asked (${source}). ${ways} To let the agent answer, ${permittedRemedy(setting, bin)}.`;
     }
     case 'withheld':
       return `Gate answers over MCP: withheld (${fromClause(setting)}). No tool on this server records a gate answer, and its replies name no way to answer. To answer a waiting question, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id> (shows the question, its gate id and its choices), then realm run respond <run_id> --gate <gate_id> --choice <choice>. The agent tells the user the run id. Another Realm server or CLI on the same store can still record answers.`;
@@ -148,6 +156,35 @@ export function gateAnswersStartLine(
 /** The setting that lets the agent answer, as this program takes it (`realm-mcp` takes no flags). */
 function permittedSetting(bin: BinName): string {
   return bin === 'realm-mcp' ? `${GATE_ANSWERS_ENV}=permitted` : '--gate-answers permitted';
+}
+
+/** Each place's name in the remedy (no backticks on a terminal line). */
+const PLACE_NAMES = {
+  flag: '--gate-answers',
+  env: GATE_ANSWERS_ENV,
+  option: 'the gateAnswers option',
+} as const;
+
+/**
+ * The remedy under `asked`, after "To let the agent answer, " (PR #1167 correction 1, item 2): from
+ * the default, the setting this program takes; when a flag, the variable or the option set `asked`,
+ * every place that holds it, in flag, variable, option order — the most restrictive value wins, so
+ * setting `permitted` beside them changes nothing.
+ */
+function permittedRemedy(setting: GateAnswersSetting, bin: BinName): string {
+  if (setting.source.kind === 'default') return `set ${permittedSetting(bin)}`;
+  const holding = [
+    setting.source,
+    ...setting.alsoSet.filter((a) => a.value === 'asked').map((a) => a.source),
+  ];
+  const places = (['flag', 'env', 'option'] as const)
+    .filter((kind) => holding.some((s) => s.kind === kind))
+    .map((kind) => PLACE_NAMES[kind]);
+  const list =
+    places.length === 1
+      ? places[0]
+      : `${places.slice(0, -1).join(', ')} and ${places[places.length - 1]}`;
+  return `set permitted in place of asked in ${list}`;
 }
 
 /**
@@ -168,10 +205,14 @@ export function gateAnswersAliasLines(bin: BinName, setting: GateAnswersSetting)
 /**
  * The line for a session whose client shows no forms, under `asked` (the gate-answers default,
  * 2026-11-14): printed once on stderr by `realm mcp` and `realm-mcp` when such a session starts, from
- * the library's `onSessionWithoutForms`. `realm serve` prints none: its start line says this.
+ * the library's `onSessionWithoutForms`. `realm serve` prints none: its start line says this. Its
+ * remedy names where `asked` was set, as the start line's does.
  */
-export function gateAnswersConnectLine(bin: Exclude<BinName, 'serve'>): string {
-  return `Gate answers over MCP: this app shows no forms, so the agent cannot answer gates on this server and the person cannot answer in the app. A person answers in a terminal on this machine with realm run respond; to let the agent answer, set ${permittedSetting(bin)}.`;
+export function gateAnswersConnectLine(
+  bin: Exclude<BinName, 'serve'>,
+  setting: GateAnswersSetting,
+): string {
+  return `Gate answers over MCP: this app shows no forms, so the agent cannot answer gates on this server and the person cannot answer in the app. A person answers in a terminal on this machine with realm run respond; to let the agent answer, ${permittedRemedy(setting, bin)}.`;
 }
 
 /** W-s5: dev mode's warning, printed when the value is `permitted` (the answer tool is listed). */

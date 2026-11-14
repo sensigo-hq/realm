@@ -742,8 +742,12 @@ export function valueLine(e: CheckEvidence, ctx: RenderCtx = PLAIN): string {
   if (v.value === 'withheld' || v.value === 'asked') {
     // Correction 3 (H-8): the value stands alone before its parenthesis or comma, so it prints whole.
     const word = ctx.word(v.value, GATE_ANSWERS_VALUES);
-    return valueMeasuredWithheld(e) || (v.value === 'asked' && givenOnCheckLine(e))
-      ? `The gate-answers value: ${word} (given on this command line).`
+    if (valueMeasuredWithheld(e) || (v.value === 'asked' && givenOnCheckLine(e))) {
+      return `The gate-answers value: ${word} (given on this command line).`;
+    }
+    // PR #1167 correction 1 (item 4): `asked` from the default was configured by no one.
+    return v.source.kind === 'default'
+      ? `The gate-answers value: ${word}, the default (nothing on this command line or in this shell's environment sets it), not enforced by Realm — the running server's value is not read.`
       : `The gate-answers value: ${word}, configured, not enforced by Realm — from ${v.source.ref}; the running server's value is not read.`;
   }
   // C1: the value stands alone here (the `withheld` sentences above hold it inside prose: R33).

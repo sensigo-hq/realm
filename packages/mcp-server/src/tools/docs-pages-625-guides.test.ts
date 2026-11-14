@@ -206,7 +206,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     claim(
       'packages/mcp-server/README.md',
       // Correction 2 (4.4): listed per value, and what is REGISTERED under asked.
-      'Creates the MCP server with its tools registered. A client is listed 11 tools under `permitted`, and under `asked` in a session whose client shows forms; else 10. Under `asked` `present_question` is registered, and a session whose client shows forms enables it.',
+      'Creates the MCP server with its tools registered. A client is listed 11 tools under `permitted`, and under `asked` in a session whose client shows forms (never with `statelessHttp`); else 10. Under `asked` `present_question` is registered, and a session whose client shows forms enables it.',
     );
     const { client } = await connect();
     const listed = (await client.listTools()).tools.map((t) => t.name);

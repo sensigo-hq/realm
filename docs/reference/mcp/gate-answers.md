@@ -16,7 +16,7 @@ There are three ways to set the value: the `--gate-answers` flag of `realm mcp` 
 
 Set the value in your MCP client's own config, as an argument (`"args": ["mcp", "--gate-answers", "withheld"]`) or in its `env` block. A variable you export in a shell may not reach a server your client starts (the MCP SDK's client starts servers with a reduced environment).
 
-`realm mcp` and `realm serve` print the value they run with when they start. Under `withheld` they also print how a person answers from a terminal: `realm run inspect <run_id>`, then `realm run respond <run_id> --gate <gate_id> --choice <choice>`.
+`realm mcp` and `realm serve` print the value they run with when they start. Under `withheld`, and under `asked`, they also print how a person answers from a terminal: `realm run inspect <run_id>`, then `realm run respond <run_id> --gate <gate_id> --choice <choice>`.
 
 Another Realm server or CLI that uses the same store can still record answers. The value holds only for the server it is given to.
 
