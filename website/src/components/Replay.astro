@@ -29,7 +29,7 @@ const parts = (s: string) => s.split('_');
 // Recorded mode's sentences, from the state after the answer derived from each ending.
 const SR = (e: any) => stageSentences('recorded', recordedState(r, e));
 const S = SR(endings[0]);
-const swapped = swappedLines(manifest);
+const swapped = swappedLines();
 // Live-mode inputs, read at build: the bundle's URL, the start call, the five presets (inputs only)
 // and the texts the page needs before the bundle has loaded.
 const liveBundle = '/live/' + manifest.file;
@@ -178,7 +178,7 @@ const liveNotes = JSON.stringify(S.notes);
     {endings.map((e) => (
       <div class="rp-end" data-end={e.choice} data-rec>
         <h3 tabindex="-1">{ticks(SR(e).branch).map((p, i) => (i % 2 ? <code>{p}</code> : p))}</h3>
-        <p>{SR(e).agentSends}</p>
+        <p>{ticks(SR(e).agentSends).map((p, i) => (i % 2 ? <code>{p}</code> : p))}</p>
         <div class="rp-cols">
           <div>
             <p class="rp-k">The reviewer answers</p>
@@ -216,10 +216,6 @@ const liveNotes = JSON.stringify(S.notes);
             <div class="rp-picks" data-in="C"><button type="button" class="ok" data-act="post">{S.sendLabel}</button></div>
             <p class="rp-k good" data-say="ran" hidden></p>
             <div class="rp-out" aria-live="polite" data-box="post"></div>
-            <div class="rp-group" data-l="sent2" hidden>
-              <p data-say="sentFrom2" hidden></p>
-              <div class="rp-table" role="table" data-l="sent2-row"></div>
-            </div>
             <p class="rp-k" data-say="skippedLabel" hidden></p>
             <pre data-l="skip" hidden></pre>
           </div>
@@ -416,8 +412,6 @@ const liveNotes = JSON.stringify(S.notes);
     const tryB = q('[data-live-try]'), note = q('[data-live-note]'), ed = q('[data-l=box]'), sel = q('[data-l=step]'), hint = q('[data-l=hint]');
     const box = (k: string) => q(`[data-box=${k}]`);
     let SS: any, M: any, E: any, rid: string, st: any, open: any, thr: any, T: any, gen = 0, busy = false, live = false, dead = false;
-    // True once the stage-4 post box holds this run's accepted reply (a new run clears it).
-    let postOk = false;
     const show = (n?: number, focus?: boolean) => root.dispatchEvent(new CustomEvent('rp-show', { detail: { n, focus } }));
     // The second click of a double-click (detail 2) is ignored, so a double-click sends one call even
     // when the first call has already returned.
@@ -493,13 +487,6 @@ const liveNotes = JSON.stringify(S.notes);
       const sk = q('[data-l=skip]');
       sk.textContent = S.skipped ?? '';
       sk.hidden = S.skipped == null;
-      // D: "Ran:" shows the stage-4 post box when it holds this run's accepted reply; otherwise the
-      // step was sent from stage 2, so that sentence and the step's row from the record show instead.
-      const from2 = L == 'D' && !postOk;
-      box('post').hidden = from2;
-      q('[data-l=sent2]').hidden = !from2;
-      const sent = from2 ? M.evidenceRows(run).find((x: any) => x.step == M.chosenStep(vs)) : null;
-      q('[data-l=sent2-row]').replaceChildren(...(sent ? [row(sent.step, sent.label, sent.hash)] : []));
       q('[data-l=gate]').textContent = M.gateText(open) ?? '';
       q('[data-l=table]').replaceChildren(
         ...M.evidenceRows(run).map((x: any) => row(x.step, x.label, x.hash)),
@@ -522,7 +509,6 @@ const liveNotes = JSON.stringify(S.notes);
       const v = M.replyView({ tool, ...args }, r, before, st);
       if (noCall) v.who = null;
       else if (who) v.who = who;
-      if (b == box('post')) postOk = v.tone == 'good';
       const l = paint(b, v);
       await render();
       setBusy(false);
@@ -547,7 +533,6 @@ const liveNotes = JSON.stringify(S.notes);
       E = e;
       rid = v.run_id;
       open = thr = null;
-      postOk = false;
       qa('[data-box]').forEach((x: any) => x.replaceChildren());
       hint.hidden = true;
       st = await state();
@@ -619,10 +604,11 @@ const liveNotes = JSON.stringify(S.notes);
         })),
     );
     qa('[data-act=skip]').forEach((b: any) => (b.onclick = one(() => act('execute_step', { command: b.dataset.step, params: {} }, box('skip')))));
-    // "Ran:" shows the reply without the call, as the recording does; focus goes to stage 4's heading
-    // because the button that had it is gone once the step is sent.
+    // The run owes the chosen step to the engine (0.49.0): the button calls advance_run with run_id
+    // only, and Realm runs the step. "Ran:" shows the reply without the call, as the recording does;
+    // focus goes to stage 4's heading because the button that had it is gone once the step has run.
     q('[data-act=post]').onclick = one(async () => {
-      const l = await act('execute_step', { command: M.nextActions(st).send, params: {} }, box('post'), true);
+      const l = await act('advance_run', {}, box('post'), true);
       if (l) show(3, true);
     });
     q('[data-act=other]').onclick = one(() =>

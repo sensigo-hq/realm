@@ -1,10 +1,28 @@
 // Distils $WORK/recording.json (from record.mjs) into src/data/replay.json — only what the
-// home page renders. Every string under `response`/`cli`/`inspect` is copied from the recording.
+// home page renders. Every string under `response`/`cli`/`inspect` is copied from the recording,
+// with one change: the recorder's folder, path.resolve(WORK), is replaced by the fixed folder name
+// ~/pr-review wherever it appears in a copied string (followed by "/" or ending the string). On
+// 0.49.0 `realm run respond` names it mid-sentence ("the project code under <WORK>/project"), and
+// the home page shows that output word for word. The build guard refuses a replay.json that still
+// holds a local folder.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const FOLDER = '~/pr-review';
 const rec = JSON.parse(fs.readFileSync(process.env.WORK + '/recording.json', 'utf8'));
+const WORK_RE = new RegExp(
+  path.resolve(process.env.WORK).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=/|$)',
+  'g',
+);
+const noFolder = (x) =>
+  typeof x === 'string'
+    ? x.replace(WORK_RE, FOLDER)
+    : Array.isArray(x)
+      ? x.map(noFolder)
+      : x && typeof x === 'object'
+        ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, noFolder(v)]))
+        : x;
 const pick = (o, keys) =>
   Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
 const env = (r) => {
@@ -70,7 +88,8 @@ const ending = (run) => {
     },
     other_branch: other ? attempt(run, 'wrong:other_branch', '', '') : null,
     posted: {
-      step: drive.arguments.command,
+      // advance_run has no `command`: the step it ran is the export's last evidence entry.
+      step: x.evidence.at(-1).step_id,
       response: env(drive.response),
       body: x.evidence.at(-1).resolved_params.body,
     },
@@ -156,7 +175,7 @@ const out = {
   },
   endings: { request_changes: ending(A), approve: ending(B) },
 };
-fs.writeFileSync(HERE + '/../../src/data/replay.json', JSON.stringify(out, null, 1));
+fs.writeFileSync(HERE + '/../../src/data/replay.json', JSON.stringify(noFolder(out), null, 1));
 console.log(
   'wrote src/data/replay.json',
   fs.statSync(HERE + '/../../src/data/replay.json').size,
