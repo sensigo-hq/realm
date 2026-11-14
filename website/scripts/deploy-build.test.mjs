@@ -421,7 +421,7 @@ test('5: stop 2 checks every built file and the redirects, in the same run as st
   f.edit(
     'website/src/pages/index.astro',
     'href="/docs/start/install-and-first-run/">Get started</a>',
-    'href="/docs/start/install-and-first-run/">Get started</a>\n      <a href="/docs/guides/gone-home/">Gone</a>',
+    'href="/docs/start/install-and-first-run/">Get started</a>\n      <a href="/docs/guides/gone-home/">Gone</a>\n      <a href="/og/docs-old.png">An address under /og/docs that fits no form</a>',
   );
   fs.appendFileSync(
     path.join(f.work, 'website/deploy/nginx-site.conf'),
@@ -454,6 +454,7 @@ test('5: stop 2 checks every built file and the redirects, in the same run as st
       `deploy build: commit ${direct.slice(0, 8)} on docs/v0.10.0 ("docs: written on the branch") is not a copy of a commit on main: it has no "(cherry picked from commit …)" line. A fix reaches the live docs by landing on main first, then being copied with git cherry-pick -x and no hand edits; one that cannot be copied cleanly stays off the live docs until the next release.`,
       s2('examples/index.html', '/docs/guides/gone-page/'),
       s2('index.html', '/docs/guides/gone-home/'),
+      s2('index.html', '/og/docs-old.png'),
       s2('llms.txt', 'https://realmengine.dev/docs/guides/gone-llms.md'),
       s2('website/deploy/nginx-site.conf', 'https://realmengine.dev/docs/guides/gone-nginx/'),
       X,
