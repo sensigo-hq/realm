@@ -12,6 +12,8 @@ import {
   LABEL_MEANINGS,
   pageTitle,
   checkedRange,
+  releaseLine,
+  olderNote,
   lede,
   difference,
   orderLine,
@@ -57,6 +59,8 @@ export function GET() {
     '',
     `Checked ${esc(checkedRange)}. This is the Markdown copy of ${absolute('/compare/')}.`,
     '',
+    esc(releaseLine),
+    '',
     esc(lede),
     '',
     esc(difference),
@@ -81,7 +85,18 @@ export function GET() {
     '',
     table(
       ['Fact', ...names],
-      facts.map((f) => [cell(esc(f.title)), ...tools.map((t) => cell(esc(f.cells[t.key])))]),
+      facts.map((f) => [
+        cell(esc(f.title)),
+        ...tools.map((t) =>
+          cell(
+            esc(
+              t.key === 'realm' && olderNote(f.release)
+                ? `${f.cells[t.key]} ${olderNote(f.release)}`
+                : f.cells[t.key],
+            ),
+          ),
+        ),
+      ]),
     ),
     '',
     `## ${esc(HEADINGS.answers)}`,
@@ -105,29 +120,36 @@ export function GET() {
             esc(t.name),
             esc(c.value),
             cell(withIssueLinks(c.note)),
-            cell(esc(`${c.label}: ${c.source}`)),
+            cell(
+              esc(
+                t.key === 'realm' && olderNote(c.release)
+                  ? `${c.label}: ${c.source}. ${olderNote(c.release)}`
+                  : `${c.label}: ${c.source}`,
+              ),
+            ),
           ];
         }),
       ),
       '',
     );
   }
+  // One section per tool, in the table's order: Realm first, under its name, then each other tool
+  // under "Realm vs <tool>", the page's place for it.
+  out.push(`## ${esc(HEADINGS.tools)}`, '', esc(toolsIntro), '');
+  for (const t of tools) {
+    const older = t.key === 'realm' ? olderNote(strengths.realm.release) : null;
+    out.push(
+      `### ${esc(t.key === 'realm' ? t.name : `Realm vs ${t.name}`)}`,
+      '',
+      `- Kind: ${esc(t.group)}`,
+      `- Release checked: ${esc(`${t.version}, on ${t.checked}`)}`,
+      `- ${esc(t.name)} is stronger at: ${withIssueLinks(strengths[t.key].stronger)}`,
+      `- ${esc(t.name)} falls short at: ${withIssueLinks(strengths[t.key].weaker)}`,
+      ...(older === null ? [] : [`- ${esc(older)}`]),
+      '',
+    );
+  }
   out.push(
-    `## ${esc(HEADINGS.tools)}`,
-    '',
-    esc(toolsIntro),
-    '',
-    table(
-      ['Tool', 'Kind', 'Release checked', 'Stronger at', 'Weaker at'],
-      tools.map((t) => [
-        esc(t.name),
-        esc(t.group),
-        esc(`${t.version}, on ${t.checked}`),
-        cell(withIssueLinks(strengths[t.key].stronger)),
-        cell(withIssueLinks(strengths[t.key].weaker)),
-      ]),
-    ),
-    '',
     `## ${esc(HEADINGS.how)}`,
     '',
     ...howChecked.map(
