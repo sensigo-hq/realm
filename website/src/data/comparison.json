@@ -545,7 +545,7 @@
       "cells": {
         "realm": {
           "value": "Partial",
-          "note": "State is saved after every step and synced to disk, but nothing resumes it: someone starts a driver again, or runs realm run advance for the steps the engine owes. Claims name a holder and a time, but nothing checks that the holder is alive. A crash mid agent step needs realm run reclaim --force, which may repeat the work.",
+          "note": "State is saved after every step and synced to disk, but nothing resumes it: someone starts a driver again, or runs realm run advance for the steps the engine owes. Claims name a holder and a time, but nothing checks that the holder is alive. After a crash during an agent step, the next realm agent drive asks the model again; only a crash while the answer is being saved leaves the step marked in progress, and then realm run reclaim --force frees it first.",
           "source": "store-sqlite open-file.ts:184-202; claim-liveness.ts:153-176; run-record-and-export.md:205-214; operate-runs.md:82-98, :236",
           "label": "CODE + DOCS",
           "release": "0.49.0"
