@@ -141,28 +141,32 @@ export class InMemoryStore implements RunStore {
    * #729 CW-1b: `snapshot` with the facts about its in-progress claims' leases (core's
    * `leaseFactsOf`), asked of the port after the call's write: no `await` comes before a write. A
    * run with no leased claim is returned as it is, unprobed. Called only when the store has a port,
-   * so a store without one returns exactly what it returned before, with no extra `await`.
+   * so a store without one returns exactly what it returned before, with no extra `await`. These
+   * helpers are TypeScript-private, not `#` members: tests call this store's methods through a
+   * `Proxy` or on `Object.create(store)`, where reading a `#` member throws.
    */
-  async #withFacts<S extends Snapshot>(snapshot: S): Promise<S> {
+  private async withLeaseFacts<S extends Snapshot>(snapshot: S): Promise<S> {
     const facts = await leaseFactsOf(this.leases, snapshot.record);
     if (facts === NO_LEASE_FACTS) return snapshot;
     return { ...snapshot, ...writtenSnapshot(snapshot.record, snapshot.at, facts) };
   }
 
-  /** #729 CW-1b: a settlement's result with its run's lease facts, as {@link #withFacts} does. */
-  async #settlementWithFacts(result: StoreSettlement): Promise<StoreSettlement> {
+  /** #729 CW-1b: a settlement's result with its run's lease facts, as {@link withLeaseFacts} does. */
+  private async settlementWithLeaseFacts(result: StoreSettlement): Promise<StoreSettlement> {
     const facts = await leaseFactsOf(this.leases, result.run);
     return facts === NO_LEASE_FACTS ? result : { ...result, lease_facts: facts };
   }
 
-  /** #729 CW-1b: a record page with each run's lease facts, as {@link #withFacts} does. */
-  async #pageWithFacts(page: ScanPage<'record' | 'row'>): Promise<ScanPage<'record' | 'row'>> {
+  /** #729 CW-1b: a record page with each run's lease facts, as {@link withLeaseFacts} does. */
+  private async pageWithLeaseFacts(
+    page: ScanPage<'record' | 'row'>,
+  ): Promise<ScanPage<'record' | 'row'>> {
     let changed = false;
     const items = await Promise.all(
       page.items.map(async (item) => {
         if (item.kind !== 'run') return item;
         const run = item.run as Snapshot;
-        const withFacts = await this.#withFacts(run);
+        const withFacts = await this.withLeaseFacts(run);
         if (withFacts === run) return item;
         changed = true;
         return { ...item, run: withFacts };
@@ -172,7 +176,7 @@ export class InMemoryStore implements RunStore {
   }
 
   /** Whether the store has a lease port, so its results carry lease facts. */
-  get #keepsLeases(): boolean {
+  private get keepsLeases(): boolean {
     return this.leases !== undefined && this.leases !== null;
   }
 
@@ -209,7 +213,7 @@ export class InMemoryStore implements RunStore {
               ...writtenSnapshot(existing, floorAtRecord(r, existing)),
               created: false,
             };
-            return this.#keepsLeases ? this.#withFacts(reused) : reused;
+            return this.keepsLeases ? this.withLeaseFacts(reused) : reused;
           }
           // Not `reuse` → this fresh create supersedes `existing`; stamp the link.
           supersededId = existing.id;
@@ -257,7 +261,7 @@ export class InMemoryStore implements RunStore {
       this.keyIndex.set(`${options.workflowId}\0${options.idempotencyKey}`, record.id);
     }
     const created = { ...writtenSnapshot(record, at), created: true };
-    return this.#keepsLeases ? this.#withFacts(created) : created;
+    return this.keepsLeases ? this.withLeaseFacts(created) : created;
   }
 
   /**
@@ -276,7 +280,7 @@ export class InMemoryStore implements RunStore {
       });
     }
     const read = writtenSnapshot(record, floorAtRecord(r, record));
-    return this.#keepsLeases ? this.#withFacts(read) : read;
+    return this.keepsLeases ? this.withLeaseFacts(read) : read;
   }
 
   async update(record: RunRecord): Promise<Snapshot> {
@@ -312,7 +316,7 @@ export class InMemoryStore implements RunStore {
     };
     this.runs.set(updated.id, updated);
     const written = writtenSnapshot(updated, at);
-    return this.#keepsLeases ? this.#withFacts(written) : written;
+    return this.keepsLeases ? this.withLeaseFacts(written) : written;
   }
 
   /** issue #715 (a) (M4): the newest PARSEABLE `created_at` among this store's runs under the key. */
@@ -405,7 +409,7 @@ export class InMemoryStore implements RunStore {
     };
     this.runs.set(updated.id, updated);
     const claimed = writtenSnapshot(updated, at);
-    return this.#keepsLeases ? this.#withFacts(claimed) : claimed;
+    return this.keepsLeases ? this.withLeaseFacts(claimed) : claimed;
   }
 
   /**
@@ -458,7 +462,7 @@ export class InMemoryStore implements RunStore {
       }
       // refusal/noop — fresh state, NO write (version unchanged)
       const refused: StoreSettlement = { ...outcome, at };
-      return this.#keepsLeases ? this.#settlementWithFacts(refused) : refused;
+      return this.keepsLeases ? this.settlementWithLeaseFacts(refused) : refused;
     }
     // issue #367: the boundary on the settle tail too (both stores, both tails).
     // `assertSealIntegrity` is pure and synchronous — the documented no-await stretch above holds.
@@ -470,7 +474,7 @@ export class InMemoryStore implements RunStore {
     };
     this.runs.set(updated.id, updated);
     const applied: StoreSettlement = { ...outcome, run: updated, at };
-    return this.#keepsLeases ? this.#settlementWithFacts(applied) : applied;
+    return this.keepsLeases ? this.settlementWithLeaseFacts(applied) : applied;
   }
 
   /**
@@ -601,7 +605,7 @@ export class InMemoryStore implements RunStore {
       };
       if (cut.length === pageSize) page.next_after = cut[cut.length - 1]!.id;
       // #729 CW-1b: each run's lease facts, asked after the page's cut.
-      yield rows || !this.#keepsLeases ? page : await this.#pageWithFacts(page);
+      yield rows || !this.keepsLeases ? page : await this.pageWithLeaseFacts(page);
       if (page.next_after === undefined) return;
       after = Buffer.from(page.next_after, 'utf8');
     }
