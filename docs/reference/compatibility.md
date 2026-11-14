@@ -20,10 +20,9 @@ A change to what a file may contain or means, to a command, a flag, an exit code
 
 When a release retires a flag, a key, a command or a reply field, Realm says so before it goes: one line on the error output, once per retired thing in a command's run — `Warning: [REALM-D001] …`, saying what you used, what it means now, what to write instead and the release it goes away in — never in the main output or in a `--json` document. A script that merges the two streams sees it; one that reads only the main output does not. Over the stdio MCP server, the same line goes to the server's error output and, unless the client set its log level above warning, to the protocol's log notification. The identifier never changes, and the changelog's Upgrading section names the release the thing goes away in.
 
-| id  | since | goes away | what |
-| --- | ----- | --------- | ---- |
-
-None today.
+| id         | since  | goes away     | what                                      |
+| ---------- | ------ | ------------- | ----------------------------------------- |
+| REALM-D001 | 0.50.0 | not scheduled | The gate-answers value offered was given. |
 
 ## The record so far
 

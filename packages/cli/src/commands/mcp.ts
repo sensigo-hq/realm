@@ -13,12 +13,14 @@ import { hostRefusalLine } from '../lib/host-refusal-line.js';
 import { openCliHome } from '../lib/home.js';
 import { cliOperatorRoute } from './ways-renderer.js';
 import { channelStdout, cliDisclosureProvider, writerCtx } from '../output/writer.js';
+import { warnDeprecated } from '../output/deprecations.js';
 import {
   checkValueLine,
-  gateAnswersAliasLines,
   gateAnswersConnectLine,
   gateAnswersStartLine,
+  offeredGivenToProgram,
   readBinDoorSettings,
+  OFFERED_DEPRECATION_ID,
 } from '../lib/gate-answers-door.js';
 import { measureSeparation, renderSeparation, systemProbes } from '../lib/separation-check.js';
 
@@ -69,8 +71,10 @@ export const mcpCommand = new Command('mcp')
         console.error(settings.line);
         process.exit(1);
       }
-      // The gate-answers default (2026-11-14): the old name `offered`, once per source that gave it.
-      for (const line of gateAnswersAliasLines('mcp', settings.answers)) console.error(line);
+      // The gate-answers default (2026-11-14; PR #1167 correction 1, item 11): the old name
+      // `offered`, given as the flag or the variable, through the deprecation channel (CP-W) — once
+      // per command, at start and under --check.
+      if (offeredGivenToProgram(settings.answers)) warnDeprecated(OFFERED_DEPRECATION_ID);
       if (options.check === true) {
         // W-s6 and the separation check (Part K): nothing is started.
         console.log(

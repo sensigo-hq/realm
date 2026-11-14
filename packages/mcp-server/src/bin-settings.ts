@@ -2,8 +2,8 @@
 // `--gate-answers` and `--form-wait-seconds` with their environment variables exactly as the server
 // will (the most restrictive answers value wins; the smallest wait wins), refusing a bad value before
 // anything starts (W-s4, W-s8; W-s9 on the HTTP door), the start lines (W-s1, W-s3, W-s7, W-s5),
-// `--check`'s value line (W-s6), and the gate-answers default's two lines (2026-11-14): the old name's
-// line and the line for a session without forms. Correction 2 (4.1): ONE home for the three
+// `--check`'s value line (W-s6), and the gate-answers default's line for a session without forms
+// (2026-11-14); whether the old name `offered` was given, which the programs raise as REALM-D001. Correction 2 (4.1): ONE home for the three
 // programs' words — `realm mcp`, `realm serve` (the CLI re-exports these) and this package's own
 // `realm-mcp` bin.
 import {
@@ -187,19 +187,17 @@ function permittedRemedy(setting: GateAnswersSetting, bin: BinName): string {
   return `set permitted in place of asked in ${list}`;
 }
 
+/** CP-W's id for the gate-answers value `offered`, its old name (REALM-D001 in core's table). */
+export const OFFERED_DEPRECATION_ID = 'REALM-D001';
+
 /**
- * The old name's line (the gate-answers default, 2026-11-14): one per source of this program's own
- * reading that gave `offered`, on stderr — `<program>: --gate-answers offered is now called
- * permitted; offered still works.`, naming the variable where it gave it. Never from the library's
- * reading: the library prints nothing.
+ * Whether this program's own reading of its flag or variable gave `offered` (PR #1167 correction 1,
+ * item 11): the program then raises {@link OFFERED_DEPRECATION_ID} through its own deprecation
+ * door, once per command — the CLI's `warnDeprecated` for `realm mcp` and `realm serve`, the MCP
+ * server's for `realm-mcp`. Never the library's option: the library prints nothing.
  */
-export function gateAnswersAliasLines(bin: BinName, setting: GateAnswersSetting): string[] {
-  return (setting.offeredFrom ?? [])
-    .filter((s) => s.kind === 'flag' || s.kind === 'env')
-    .map(
-      (s) =>
-        `${programOf(bin)}: ${s.kind === 'env' ? `${GATE_ANSWERS_ENV}=offered` : '--gate-answers offered'} is now called permitted; offered still works.`,
-    );
+export function offeredGivenToProgram(setting: GateAnswersSetting): boolean {
+  return (setting.offeredFrom ?? []).some((s) => s.kind === 'flag' || s.kind === 'env');
 }
 
 /**

@@ -9,11 +9,13 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { describeThrown, setClockErrorSink } from '@sensigo/realm';
 import { composeBinIdentity } from './bin-identity.js';
 import {
-  gateAnswersAliasLines,
   gateAnswersConnectLine,
   gateAnswersStartLine,
+  offeredGivenToProgram,
   readBinDoorSettings,
+  OFFERED_DEPRECATION_ID,
 } from './bin-settings.js';
+import { warnDeprecated } from './deprecations.js';
 import { createRealmMcpServerOnHome } from './home-server.js';
 import { logMasked } from './render-reply.js';
 import { REALM_MCP_TAKES_NO_FLAGS } from './server.js';
@@ -30,9 +32,9 @@ if (!settings.ok) {
   console.error(settings.line);
   process.exit(1);
 }
-// The gate-answers default (2026-11-14): the old name `offered`, from this program's own reading of
-// its variable — once, on stderr.
-for (const line of gateAnswersAliasLines('realm-mcp', settings.answers)) console.error(line);
+// The gate-answers default (2026-11-14; PR #1167 correction 1, item 11): the old name `offered`, from
+// this program's own reading of its variable, through the MCP server's deprecation door (CP-W) — once.
+if (offeredGivenToProgram(settings.answers)) warnDeprecated(OFFERED_DEPRECATION_ID);
 // This program's name, which may itself refuse with one line.
 const driver = composeBinIdentity();
 // #715 (b) (03 §A.1, D-22): the program's waiter-error sink — a waiter on the store's clock that fails

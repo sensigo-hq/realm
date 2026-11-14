@@ -41,7 +41,15 @@ const AC6_LIB: Cell = [
 ];
 const AC3_BINS: Cell = [
   `${CLI}/commands/gate-answers-default-programs.test.ts`,
-  'the flag and the variable: the old name’s line once on stderr',
+  'the flag, the variable and both: the REALM-D001 line once on stderr',
+];
+const OPTION_SILENT: Cell = [
+  `${MCP}/gate-answers-default.test.ts`,
+  'the option given as offered raises no deprecation',
+];
+const COMPAT_TABLE: Cell = [
+  'packages/core/src/deprecations/deprecations.test.ts',
+  'the section holds a row per entry (id, since, goes away, what)',
 ];
 const AC5_STDIO: Cell = [
   `${CLI}/commands/gate-answers-default-programs.test.ts`,
@@ -231,12 +239,12 @@ const SENTENCES: ReadonlyArray<readonly [page: string, sentence: string, cells: 
   ],
   [
     'docs/reference/cli/realm-mcp-and-serve.md',
-    'Under `asked`, when an app that shows no forms connects, it prints one more: `Gate answers over MCP: this app shows no forms, so the agent cannot answer gates on this server and the person cannot answer in the app. A person answers in a terminal on this machine with realm run respond; to let the agent answer, set --gate-answers permitted.` A value given as `offered` prints `realm mcp: --gate-answers offered is now called permitted; offered still works.` (or `REALM_MCP_GATE_ANSWERS=offered` in place of `--gate-answers offered`). Both were added after version 0.49.0.',
+    'Under `asked`, when an app that shows no forms connects, it prints one more: `Gate answers over MCP: this app shows no forms, so the agent cannot answer gates on this server and the person cannot answer in the app. A person answers in a terminal on this machine with realm run respond; to let the agent answer, set --gate-answers permitted.` A value given as `offered`, as the flag or the variable, prints `Warning: [REALM-D001] The gate-answers value offered was given. It is now called permitted, and works the same. Write permitted in its place. offered keeps working: no removal is scheduled.` once, as every [deprecation](../compatibility.md#deprecations) does. Both were added after version 0.49.0.',
     [AC6_BINS, AC3_BINS],
   ],
   [
     'docs/reference/cli/realm-mcp-and-serve.md',
-    'and prints its start line on stderr, and the same two lines as `realm mcp` for an app that shows no forms and for `offered`, each naming `REALM_MCP_GATE_ANSWERS`.',
+    'and prints its start line on stderr, and the same two lines as `realm mcp` for an app that shows no forms (its remedy naming `REALM_MCP_GATE_ANSWERS`) and for `offered`.',
     [AC6_BINS, AC3_BINS],
   ],
   [
@@ -364,6 +372,11 @@ const SENTENCES: ReadonlyArray<readonly [page: string, sentence: string, cells: 
     '`realm mcp` and `realm serve` print the value they run with when they start. Under `withheld`, and under `asked`, they also print how a person answers from a terminal: `realm run inspect <run_id>`, then `realm run respond <run_id> --gate <gate_id> --choice <choice>`.',
     [AC5_STDIO, AC5_SERVE],
   ],
+  [
+    'docs/reference/compatibility.md',
+    '| REALM-D001 | 0.50.0 | not scheduled | The gate-answers value offered was given. |',
+    [COMPAT_TABLE, AC3_BINS, OPTION_SILENT],
+  ],
 ];
 
 describe('the gate-answers default — every changed docs sentence, with the cell that runs it (AC9)', () => {
@@ -391,6 +404,7 @@ describe('the gate-answers default — every changed docs sentence, with the cel
       '`asked`, `offered` or `withheld`',
       'asked, offered or withheld',
       'To keep the agent from answering in every app',
+      'is now called permitted; offered still works',
     ];
     // (a) red when one of the pages keeps an old default sentence; (b) prints each page and phrase.
     expect(

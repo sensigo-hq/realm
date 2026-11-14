@@ -26,12 +26,14 @@ import {
 import { answerHealth } from '../lib/health-address.js';
 import { bindFailureLine } from '../lib/bind-failure.js';
 import { cliDisclosureProvider, writerCtx, writerInstalled } from '../output/writer.js';
+import { warnDeprecated } from '../output/deprecations.js';
 import {
   checkValueLine,
-  gateAnswersAliasLines,
   gateAnswersStartLine,
+  offeredGivenToProgram,
   readBinDoorSettings,
   DEV_MODE_ANSWER_WARNING,
+  OFFERED_DEPRECATION_ID,
 } from '../lib/gate-answers-door.js';
 import { measureSeparation, renderSeparation, systemProbes } from '../lib/separation-check.js';
 
@@ -333,8 +335,10 @@ export const serveCommand = new Command('serve')
       console.error(settings.line);
       process.exit(1);
     }
-    // The gate-answers default (2026-11-14): the old name `offered`, once per source that gave it.
-    for (const line of gateAnswersAliasLines('serve', settings.answers)) console.error(line);
+    // The gate-answers default (2026-11-14; PR #1167 correction 1, item 11): the old name
+    // `offered`, given as the flag or the variable, through the deprecation channel (CP-W) — once
+    // per command, at start and under --check.
+    if (offeredGivenToProgram(settings.answers)) warnDeprecated(OFFERED_DEPRECATION_ID);
     if (options.check === true) {
       // W-s6 and the separation check (Part K): nothing is started.
       console.log(

@@ -8,8 +8,9 @@
 //   connect line's remedy names each place that holds it.
 // - AC7: dev mode's warning on `realm serve`, under `permitted` only.
 // - Correction 1, item 5: both commands' `--help` name the three values (the CHANGELOG says it changed).
-// - AC3 (programs' half): `offered` given as the flag or the variable prints the old name's line
-//   once, on stderr, and every read-back says `permitted` (the start line, `--check`'s value lines);
+// - AC3 (programs' half): `offered` given as the flag, the variable or both prints CP-W's REALM-D001
+//   line once, on stderr (correction 1, item 11), and every read-back says `permitted` (the start
+//   line, `--check`'s value lines);
 //   the form-wait refusal says `permitted (given as offered)` (correction 1, item 6).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
@@ -24,8 +25,6 @@ import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const REALM_MCP = fileURLToPath(new URL('../../../mcp-server/dist/bin.js', import.meta.url));
-
-type Program = 'realm mcp' | 'realm-mcp' | 'realm serve';
 
 /** A fresh HOME, the PATH, and only the variables named. */
 function envOf(extra: Record<string, string> = {}): Record<string, string> {
@@ -289,20 +288,38 @@ describe('the gate-answers default — dev mode’s warning (AC7)', () => {
 });
 
 describe('the gate-answers default — offered is permitted, and says so (AC3, programs’ half)', () => {
-  const ALIAS = (program: Program, given: string) =>
-    `${program}: ${given} is now called permitted; offered still works.`;
+  // PR #1167 correction 1 (item 11): the old name's notice is CP-W's REALM-D001 line, raised by each
+  // program from its own reading of its flag and variable, once per command.
+  const DEPRECATION =
+    'Warning: [REALM-D001] The gate-answers value offered was given. It is now called permitted, and works the same. Write permitted in its place. offered keeps working: no removal is scheduled.';
 
-  it('the flag and the variable: the old name’s line once on stderr; the start line and --check read permitted', async () => {
+  it('the flag, the variable and both: the REALM-D001 line once on stderr, at start and under --check; the start line and --check read permitted', async () => {
     const mcpFlag = stdioStart('realm mcp', ['--check', '--gate-answers', 'offered']);
     const mcpEnv = stdioStart('realm mcp', ['--check'], { REALM_MCP_GATE_ANSWERS: 'offered' });
+    const mcpBoth = stdioStart('realm mcp', ['--check', '--gate-answers', 'offered'], {
+      REALM_MCP_GATE_ANSWERS: 'offered',
+    });
+    const mcpStart = stdioStart('realm mcp', ['--gate-answers', 'offered'], {
+      REALM_MCP_GATE_ANSWERS: 'offered',
+    });
     const serveFlag = spawnSync(
       process.execPath,
       [CLI, 'serve', '--check', '--gate-answers', 'offered'],
       { env: envOf(), encoding: 'utf8', timeout: 60_000 },
     );
+    const serveStart = await serveLines(['--gate-answers', 'offered'], {
+      REALM_MCP_GATE_ANSWERS: 'offered',
+    });
     const realmMcpEnv = stdioStart('realm-mcp', [], { REALM_MCP_GATE_ANSWERS: 'offered' });
-    const aliasLines = (stderr: string) =>
-      stderr.split('\n').filter((l) => l.includes('is now called permitted'));
+    /** The REALM-D001 lines, and how many lines still carry the old words. */
+    const said = (stderr: string | string[]) => {
+      const lines = Array.isArray(stderr) ? stderr : stderr.split('\n');
+      return {
+        lines: lines.filter((l) => l.includes('REALM-D001')),
+        old: lines.filter((l) => l.includes('is now called permitted;')).length,
+      };
+    };
+    const once = { lines: [DEPRECATION], old: 0 };
     const valueLines = (stdout: string) =>
       stdout
         .split('\n')
@@ -310,21 +327,25 @@ describe('the gate-answers default — offered is permitted, and says so (AC3, p
           (l) => l.startsWith('Gate answers over MCP: ') || l.includes('The gate-answers value:'),
         )
         .map((l) => l.trim().split(' — as read from')[0]);
-    // (a) red when offered is refused, reads back as offered, or its line is missing or doubled;
-    //     (b) prints each program's old-name lines and read-backs.
+    // (a) red when offered is refused or reads back as offered, when the line is missing, doubled
+    //     (flag and variable both given), or printed in the old words; (b) prints each program's
+    //     REALM-D001 lines, its old-words count and its read-backs.
     expect({
-      mcpFlag: [mcpFlag.code, aliasLines(mcpFlag.stderr), valueLines(mcpFlag.stdout)],
-      mcpEnv: [mcpEnv.code, aliasLines(mcpEnv.stderr), valueLines(mcpEnv.stdout)],
-      serveFlag: [serveFlag.status, aliasLines(serveFlag.stderr), valueLines(serveFlag.stdout)],
+      mcpFlag: [mcpFlag.code, said(mcpFlag.stderr), valueLines(mcpFlag.stdout)],
+      mcpEnv: [mcpEnv.code, said(mcpEnv.stderr), valueLines(mcpEnv.stdout)],
+      mcpBoth: [mcpBoth.code, said(mcpBoth.stderr)],
+      mcpStart: [mcpStart.code, said(mcpStart.stderr)],
+      serveFlag: [serveFlag.status, said(serveFlag.stderr), valueLines(serveFlag.stdout)],
+      serveStart: said(serveStart.stderr),
       realmMcpEnv: [
         realmMcpEnv.code,
-        aliasLines(realmMcpEnv.stderr),
+        said(realmMcpEnv.stderr),
         gateLine(realmMcpEnv.stderr.split('\n')),
       ],
     }).toEqual({
       mcpFlag: [
         0,
-        [ALIAS('realm mcp', '--gate-answers offered')],
+        once,
         [
           'Gate answers over MCP: permitted (from --gate-answers)',
           'The gate-answers value: permitted (from --gate-answers) — the agent keeps an answer way.',
@@ -332,27 +353,26 @@ describe('the gate-answers default — offered is permitted, and says so (AC3, p
       ],
       mcpEnv: [
         0,
-        [ALIAS('realm mcp', 'REALM_MCP_GATE_ANSWERS=offered')],
+        once,
         [
           'Gate answers over MCP: permitted (from REALM_MCP_GATE_ANSWERS)',
           'The gate-answers value: permitted (from REALM_MCP_GATE_ANSWERS) — the agent keeps an answer way.',
         ],
       ],
+      mcpBoth: [0, once],
+      mcpStart: [0, once],
       serveFlag: [
         0,
-        [ALIAS('realm serve', '--gate-answers offered')],
+        once,
         [
           'Gate answers over MCP: permitted (from --gate-answers)',
           'The gate-answers value: permitted (from --gate-answers) — the agent keeps an answer way.',
         ],
       ],
-      realmMcpEnv: [
-        0,
-        [ALIAS('realm-mcp', 'REALM_MCP_GATE_ANSWERS=offered')],
-        PERMITTED('REALM_MCP_GATE_ANSWERS'),
-      ],
+      serveStart: once,
+      realmMcpEnv: [0, once, PERMITTED('REALM_MCP_GATE_ANSWERS')],
     });
-  }, 120_000);
+  }, 180_000);
 
   it('the form-wait refusal reads permitted, given as offered, for offered (correction 1, item 6); the bad-value refusal lists asked, permitted or withheld', () => {
     const wait = stdioStart('realm mcp', [

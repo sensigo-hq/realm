@@ -8,7 +8,8 @@
 // - AC3 (library half): `offered`, given as the option, the flag or the variable, is `permitted`: the
 //   agent's answer is recorded, and the value reads back as `permitted` in `effectiveGateAnswers()`
 //   and the `realm/gate_answers` capability; `alsoSet` quotes another source as written, and
-//   `offered` ranks as `permitted`. (The ranking of the three values is core's w-627 cell.)
+//   `offered` ranks as `permitted`. (The ranking of the three values is core's w-627 cell.) The
+//   option given as `offered` raises no REALM-D001: the library prints nothing (correction 1, item 11).
 // - Correction 1, item 10: the await entry under `asked` without forms names the place a person
 //   answers; `withheld`'s entry is unchanged, byte for byte.
 // - AC6 (library half): `onSessionWithoutForms` is called once for an `asked` session without forms,
@@ -20,7 +21,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { judgeGateAnswers, loadWorkflowFromString } from '@sensigo/realm';
+import { judgeGateAnswers, loadWorkflowFromString, saidIds } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -291,6 +292,19 @@ describe('the gate-answers default — offered is permitted (AC3, library half)'
     },
     60_000,
   );
+
+  it('the option given as offered raises no deprecation: the library prints nothing (correction 1, item 11)', async () => {
+    const stderr = vi.spyOn(process.stderr, 'write');
+    const consoleError = vi.spyOn(console, 'error');
+    await stdioSession({ gateAnswers: 'offered' });
+    const written = [...stderr.mock.calls, ...consoleError.mock.calls].map((c) => String(c[0]));
+    // (a) red when the library raises REALM-D001 for its option (its TSDoc is the option's notice);
+    //     (b) prints the lines written and whether the id was recorded as said.
+    expect({
+      lines: written.filter((l) => l.includes('REALM-D001') || l.includes('offered')),
+      said: saidIds().includes('REALM-D001'),
+    }).toEqual({ lines: [], said: false });
+  }, 60_000);
 
   it('alsoSet quotes another source as written; offeredFrom names each source that gave offered; offered ranks as permitted', () => {
     const win = (input: Parameters<typeof judgeGateAnswers>[0]) => {
