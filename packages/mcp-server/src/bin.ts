@@ -43,6 +43,8 @@ try {
   ({ server } = await createRealmMcpServerOnHome({
     ...(driver !== undefined ? { driver } : {}),
     principal: { absent: 'door_authenticates_no_principal' },
+    // CP-W: deprecation warnings also go to the client as the protocol's log notification.
+    deprecationNotifications: true,
   }));
 } catch (err) {
   logMasked(`realm-mcp: ${describeThrown(err).replace(/\s*\n\s*/g, ' ')}`);

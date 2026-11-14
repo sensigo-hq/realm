@@ -122,7 +122,8 @@ import {
   onceReleaseLineSink,
 } from '../extensions/load-project-extensions.js';
 import { RUN_PHASE_WORDS, cliDisclosureProvider, writerCtx } from '../output/writer.js';
-import { addDeclaredValues } from '../output/writer.js';
+import { DEPRECATIONS_SAID_ENV, addDeclaredValues } from '../output/writer.js';
+import { saidIds } from '@sensigo/realm';
 import { openCliHome } from '../lib/home.js';
 
 const DEFAULT_TTL_MINUTES = 60;
@@ -1765,6 +1766,9 @@ export function defaultSpawnAgent(
         detached: true,
         stdio: 'inherit',
         cwd,
+        // CP-W (W3): the deprecation ids listen has said, so a flag it forwards is warned once per
+        // `realm listen`, not once per delivery.
+        env: { ...process.env, [DEPRECATIONS_SAID_ENV]: `${process.pid}:${saidIds().join(',')}` },
       });
       // R1.2: made here, at the spawn, so an exit before any wait begins is still seen: a listener
       // added after the child has exited never fires.

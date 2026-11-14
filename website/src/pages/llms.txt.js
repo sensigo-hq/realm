@@ -292,7 +292,7 @@ const WORKED_EXAMPLE_ON = [
   "- **`check_quotes`:** a built-in handler for an `auto` step. It records whether each value's quote from a source document really appears there. A guard on its result can stop the run.",
   "- **Evidence:** the run's record. Each entry names a step and its status: `success`, `error` or `skipped`.",
   "- **Register:** `realm workflow register` stores a workflow in Realm's store (`~/.realm/realm.db`), so runs can start by its `id`.",
-  '- **`realm run reclaim`:** if the process running a step dies, the step stays marked in progress and the run cannot move. `realm run reclaim <run-id>` reports it; with `--step <name> --force` it frees the step to run again, which may repeat its work.',
+  '- **`realm run reclaim`:** if the process running a step dies while the step is marked in progress (an automatic step while it runs, or an agent step while its answer is being saved), the run cannot move. `realm run reclaim <run-id>` reports it; with `--step <name> --force` it frees the step to run again, which may repeat its work.',
   '',
   '## What you can build with it',
   '',
