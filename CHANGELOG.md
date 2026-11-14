@@ -13,6 +13,7 @@ All notable changes to this project are documented here.
 - **`--shutdown-drain <seconds>` on `realm serve` and `realm listen`**: how long the program keeps serving, with `/health` answering 503, after Ctrl+C or `SIGTERM` before it stops accepting connections; 0 by default.
 - **A caller of `realm listen` can read a finished run's declared result**: `result_map` in the `trigger:` block (`shared_secret` workflows only), `status_path` and `token` in the `202` and in a repeated event's reply, and `GET`/`HEAD` `<path>/runs/<run id>` with `Authorization: Bearer <token>`.
 - **A caller of `realm listen` can ask the reply to wait for the run**: a `POST` that starts a run of a workflow with `result_map` and sends `Prefer: wait=N` is answered `200` with the result once the run ends, or with the `202` and the phase reached when the run stops at a person's gate, its process exits, N seconds pass or `realm listen` is stopped; the wait never stops the run. `--max-wait <seconds>` caps N (25 by default; 0 turns waiting off), and `--max-waiting <n>` how many requests wait at once (5 by default, and always fewer than `--max-concurrent`). Waiting requests are answered at the first Ctrl+C or `SIGTERM`, before any `--shutdown-drain` (with `--shutdown-grace 0` and no drain they are cut, as every request being answered is).
+- Docs: a compatibility page, [what a release keeps, how a change is announced, and the road to 1.0](docs/reference/compatibility.md).
 
 ### Changed
 
@@ -27,6 +28,8 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - **`realm serve` and `realm listen` stop when asked (issue #960).** Before, one connection that had sent nothing kept either program running after Ctrl+C or `SIGTERM` until it was killed. Now a connection waiting between requests is closed at once, a connection that has not sent a request yet gets up to 5 seconds, and requests being answered get time to finish before they are cut. A second signal cuts everything at once, and a connected MCP client's notification stream is closed at once; that is not a cut request.
+- Hardening: when the output goes to a file or a pipe, what a program started by a step's handler prints there is hidden as the handler's own prints are: `realm agent`, `realm run drain`, `realm run advance`, `realm run respond` and `realm workflow run` run their work in a second process and keep the first to do the hiding. A program the command did not wait for that still holds the output open five seconds after the command's work ends is stopped, and Realm says so on its error output.
+- `realm workflow run`: after Ctrl-Z and `fg` at a prompt, the prompt takes keys again (it was redrawn but took none).
 
 ## [0.49.0] — 2026-11-11
 

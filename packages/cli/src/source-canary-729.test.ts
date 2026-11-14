@@ -1552,10 +1552,10 @@ describe(
     });
 
     it('every caller of buildDisclosureSet that passes an environment passes the working directory — the list is derived from the source (B2)', () => {
-      // The rule: a caller that passes an environment (`env: process.env`) must pass
-      // `cwd: process.cwd()`; a caller with `env: undefined` builds a set with no environment, so
-      // there is nothing for the working-directory rule to exempt, and core (question-view.ts) must
-      // not read the working directory at all.
+      // The rule: a caller that passes an environment (an `env:` key) must pass the working
+      // directory (a `cwd:` key); a caller with `env: undefined` builds a set with no environment,
+      // so there is nothing for the working-directory rule to exempt, and core (question-view.ts)
+      // must not read the working directory at all.
       const root = fileURLToPath(new URL('../../../', import.meta.url));
       const files: string[] = [];
       const walk = (dir: string): void => {
@@ -1581,14 +1581,16 @@ describe(
           const at = `${file.slice(root.length)}`;
           const call = lines.slice(i, i + 4);
           calls.push(at);
-          if (call.some((l) => l.includes('env: process.env,'))) withEnv.push(at);
+          if (call.some((l) => l.trim().startsWith('env:') && l.trim() !== 'env: undefined,'))
+            withEnv.push(at);
           if (call.some((l) => l.includes('env: undefined,'))) withoutEnv.push(at);
-          if (call.some((l) => l.includes('cwd: process.cwd(),'))) withCwd.push(at);
+          if (call.some((l) => l.trim().startsWith('cwd:'))) withCwd.push(at);
         });
       }
       // (a) red when a caller that passes an environment stops passing `cwd`, a caller passes `cwd`
-      //     with no environment (core among them), a caller's `env` is neither of the two spellings
-      //     (the derivation would miss it), or no caller passing an environment is found at all;
+      //     with no environment (core among them), a caller's env or cwd is not written as a key
+      //     `env:` / `cwd:` on its own line (the derivation would miss it), or no caller passing an
+      //     environment is found at all;
       //     (b) prints the callers' file names (repository paths) and a boolean.
       expect({
         found: withEnv.length > 0,
