@@ -111,6 +111,7 @@ const SIDEBAR = [
       'docs/reference/run-record-and-export',
       'docs/reference/environment-and-files',
       'docs/reference/glossary',
+      'docs/reference/compatibility',
     ],
   },
 ];
