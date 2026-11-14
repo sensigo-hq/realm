@@ -47,6 +47,14 @@ const OPTION_SILENT: Cell = [
   `${MCP}/gate-answers-default.test.ts`,
   'the option given as offered raises no deprecation',
 ];
+const NO_LATE_NOTE: Cell = [
+  `${CLI}/commands/gate-answers-default-programs.test.ts`,
+  'realm-mcp says REALM-D001 as it starts: on stderr once, and never as a log notification',
+];
+const CPW_MCP_DOOR: Cell = [
+  `${MCP}/deprecations-cpw.test.ts`,
+  'with the option: the line once on stderr; the notification received with no level set',
+];
 const COMPAT_TABLE: Cell = [
   'packages/core/src/deprecations/deprecations.test.ts',
   'the section holds a row per entry (id, since, goes away, what)',
@@ -376,6 +384,18 @@ const SENTENCES: ReadonlyArray<readonly [page: string, sentence: string, cells: 
     'docs/reference/compatibility.md',
     '| REALM-D001 | 0.50.0 | not scheduled | The gate-answers value offered was given. |',
     [COMPAT_TABLE, AC3_BINS, OPTION_SILENT],
+  ],
+  // PR #1167, MA 2's wording slips after correction 1 (W1, W2): REALM-D001 is said before any app
+  // connects, so its line goes to the error output only.
+  [
+    'CHANGELOG.md',
+    "over the stdio MCP server also the protocol's log notification. The first is REALM-D001, the gate-answers value `offered`: the program says it as it starts, before any app connects, so its line goes to the error output only (see [Compatibility](docs/reference/compatibility.md)).",
+    [AC3_BINS, NO_LATE_NOTE, CPW_MCP_DOOR],
+  ],
+  [
+    'docs/reference/compatibility.md',
+    "to the protocol's log notification. A value read as the program starts, such as REALM-D001's, is said before any app connects, so its line goes to the error output only. The identifier never changes",
+    [AC3_BINS, NO_LATE_NOTE, CPW_MCP_DOOR],
   ],
 ];
 

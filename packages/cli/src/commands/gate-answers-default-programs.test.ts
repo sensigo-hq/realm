@@ -52,6 +52,16 @@ async function stdioSession(
   forms: boolean,
   extra: Record<string, string> = {},
 ): Promise<string[]> {
+  return (await stdioSessionOutput(program, args, forms, extra)).stderr;
+}
+
+/** {@link stdioSession}'s session: the lines on stdout (the protocol's messages) and on stderr. */
+async function stdioSessionOutput(
+  program: 'realm mcp' | 'realm-mcp',
+  args: string[],
+  forms: boolean,
+  extra: Record<string, string> = {},
+): Promise<{ stdout: string[]; stderr: string[] }> {
   const child = spawn(
     process.execPath,
     program === 'realm mcp' ? [CLI, 'mcp', ...args] : [REALM_MCP, ...args],
@@ -83,7 +93,10 @@ async function stdioSession(
   await new Promise((r) => setTimeout(r, 300));
   child.stdin.end();
   await exited;
-  return stderr.split('\n').filter((l) => l !== '');
+  return {
+    stdout: stdout.split('\n').filter((l) => l !== ''),
+    stderr: stderr.split('\n').filter((l) => l !== ''),
+  };
 }
 
 /**
@@ -373,6 +386,25 @@ describe('the gate-answers default — offered is permitted, and says so (AC3, p
       realmMcpEnv: [0, once, PERMITTED('REALM_MCP_GATE_ANSWERS')],
     });
   }, 180_000);
+
+  it('realm-mcp says REALM-D001 as it starts: on stderr once, and never as a log notification to the app that connects later', async () => {
+    const { stdout, stderr } = await stdioSessionOutput('realm-mcp', [], false, {
+      REALM_MCP_GATE_ANSWERS: 'offered',
+    });
+    /** The protocol's log notifications the client received, by their data. */
+    const notified = stdout
+      .map((l) => JSON.parse(l) as { method?: string; params?: { data?: unknown } })
+      .filter((m) => m.method === 'notifications/message')
+      .map((m) => String(m.params?.data));
+    // (a) red when the program raises the id once an app is connected (the door then sends the
+    //     protocol's log notification), or when the door sends a line said before connect later;
+    //     (b) prints the stderr lines carrying the id, and every log notification's data.
+    expect({
+      stderr: stderr.filter((l) => l.includes('REALM-D001')),
+      initialized: stdout.some((l) => l.includes('"id":1')),
+      notified,
+    }).toEqual({ stderr: [DEPRECATION], initialized: true, notified: [] });
+  }, 120_000);
 
   it('the form-wait refusal reads permitted, given as offered, for offered (correction 1, item 6); the bad-value refusal lists asked, permitted or withheld', () => {
     const wait = stdioStart('realm mcp', [
