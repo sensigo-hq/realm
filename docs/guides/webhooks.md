@@ -84,6 +84,7 @@ It prints:
 
 ```text
 listen: mounted {"workflow":"tickets","path":"/tickets","mode":"shared_secret"}
+listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each step without tools, by that step's own earlier runs and the prices in runner.cache.economics; 5 minutes for a step that calls tools","set_by":"realm listen's default"}
 realm listen on 127.0.0.1:3000 — 1 workflow(s) mounted
 ```
 
@@ -106,8 +107,8 @@ curl -X POST http://127.0.0.1:3000/tickets \
 
 It prints:
 
-```json
-{ "run_id": "ed876b82-9365-4c63-9c6e-42ffed4d617e", "status": "accepted" }
+```text
+{"run_id":"ed876b82-9365-4c63-9c6e-42ffed4d617e","status":"accepted"}
 ```
 
 The status code is `202`. The run now exists, and `realm listen` logs that it handed the run over:
@@ -123,7 +124,7 @@ realm run list
 ```
 
 ```text
-ed876b82-9365-4c63-9c6e-42ffed4d617e  tickets v1  completed  10/2/2026, 12:30:21 AM  1 step(s)
+ed876b82-9365-4c63-9c6e-42ffed4d617e  tickets v1  completed  2026-10-02T00:30:21.517Z  1 step(s)
 ```
 
 ## 4. See what is turned away
