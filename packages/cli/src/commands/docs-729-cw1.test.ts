@@ -59,7 +59,7 @@ describe('#729 CW-1 — the claim lease’s words', () => {
     // The two counts (40 values, 39 types) are docs-616-c12's C10 and docs-715a's type-count cell.
     claim(
       TESTING,
-      '`storeClockContract`, `STORE_CLOCK_LAWS`, `leasePortContract`, `LEASE_PORT_LAWS`, `createLeaseDouble` |',
+      '`storeClockContract`, `STORE_CLOCK_LAWS`, `leasePortContract`, `LEASE_PORT_LAWS`, `createLeaseDouble`, `leaseFactsContract`, `LEASE_FACTS_LAWS` |',
     );
     // The section: each law's line is the law the contract checks (lease-port-contract.ts, run in
     // contract-leases-cw1); the evidence line is the contract's own print; the refusal of an
@@ -91,9 +91,14 @@ describe('#729 CW-1 — the claim lease’s words', () => {
       TESTING,
       'Types: `LeaseDouble`, `LeaseDoubleState`, `LeaseHolder`, `LeaseHomeFiles`, `LeasePortContractAdapter`, `LeasePortContractCase`, `LeasePortLaw`, `LeaseTestHome`.',
     );
-    // InMemoryStore's sentence, and the property it states.
-    claim(TESTING, "It keeps every field of a run's record. It keeps no claim leases.");
-    // (1) red when InMemoryStore keeps leases (it leaves `leases` unset, Amendment 1); (2) prints what it holds.
+    // InMemoryStore's sentence, and the property it states. #729 CW-1b rewrote it: a store given a
+    // lease port carries lease_facts (the testing package's lease-facts-in-memory-cw1b runs it).
+    claim(
+      TESTING,
+      "It keeps every field of a run's record. It keeps no claim leases unless it is given a lease port, `new InMemoryStore({ leases })` (the lease double, for example); then every run it returns carries `lease_facts`.",
+    );
+    // (1) red when InMemoryStore built without a port keeps leases (it leaves `leases` unset,
+    //     Amendment 1); (2) prints what it holds.
     const store: RunStore = new InMemoryStore();
     expect(store.leases).toBeUndefined();
   });

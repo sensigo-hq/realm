@@ -14,6 +14,8 @@ import {
   takeRawReading,
   floorAtRecord,
   floorAtHolder,
+  leaseFactsOf,
+  NO_LEASE_FACTS,
   parseStamp,
   writtenSnapshot,
   SCAN_MAX_PAGE_SIZE,
@@ -35,6 +37,7 @@ import {
   type LoadBearingRunRecordField,
   type SettlementDelta,
   type Attributed,
+  type LeasePort,
 } from '@sensigo/realm';
 import { REALM_TESTING_BRAND } from '../brand.js';
 
@@ -114,13 +117,63 @@ export class InMemoryStore implements RunStore {
   readonly clock: Clock;
 
   /**
+   * #729 CW-1b: the lease port this store was given (`options.leases`), or unset: a store built
+   * without one keeps no claim leases, as before. With one (the lease double, for example), every run
+   * a call returns carries the facts about its in-progress claims' leases (`lease_facts`), asked of
+   * the port after the call's write.
+   */
+  readonly leases?: LeasePort | null;
+
+  /**
    * @param options.clock The store's clock (#715 (a), D-3); defaults to core's shared
    *   `systemClock`. This is a defaulted AUTHORITY — it reads nothing at construction — not a
    *   parameter default that reads a clock at the call (`now = new Date()`), which is what #715's
    *   clock-reading lint forbids.
+   * @param options.leases #729 CW-1b: a lease port (`createLeaseDouble()`, for example); unset or
+   *   `null`, the store keeps no claim leases.
    */
-  constructor(options?: { clock?: Clock }) {
+  constructor(options?: { clock?: Clock; leases?: LeasePort | null }) {
     this.clock = options?.clock ?? systemClock;
+    if (options?.leases !== undefined) this.leases = options.leases;
+  }
+
+  /**
+   * #729 CW-1b: `snapshot` with the facts about its in-progress claims' leases (core's
+   * `leaseFactsOf`), asked of the port after the call's write: no `await` comes before a write. A
+   * run with no leased claim is returned as it is, unprobed. Called only when the store has a port,
+   * so a store without one returns exactly what it returned before, with no extra `await`.
+   */
+  async #withFacts<S extends Snapshot>(snapshot: S): Promise<S> {
+    const facts = await leaseFactsOf(this.leases, snapshot.record);
+    if (facts === NO_LEASE_FACTS) return snapshot;
+    return { ...snapshot, ...writtenSnapshot(snapshot.record, snapshot.at, facts) };
+  }
+
+  /** #729 CW-1b: a settlement's result with its run's lease facts, as {@link #withFacts} does. */
+  async #settlementWithFacts(result: StoreSettlement): Promise<StoreSettlement> {
+    const facts = await leaseFactsOf(this.leases, result.run);
+    return facts === NO_LEASE_FACTS ? result : { ...result, lease_facts: facts };
+  }
+
+  /** #729 CW-1b: a record page with each run's lease facts, as {@link #withFacts} does. */
+  async #pageWithFacts(page: ScanPage<'record' | 'row'>): Promise<ScanPage<'record' | 'row'>> {
+    let changed = false;
+    const items = await Promise.all(
+      page.items.map(async (item) => {
+        if (item.kind !== 'run') return item;
+        const run = item.run as Snapshot;
+        const withFacts = await this.#withFacts(run);
+        if (withFacts === run) return item;
+        changed = true;
+        return { ...item, run: withFacts };
+      }),
+    );
+    return changed ? { ...page, items } : page;
+  }
+
+  /** Whether the store has a lease port, so its results carry lease facts. */
+  get #keepsLeases(): boolean {
+    return this.leases !== undefined && this.leases !== null;
   }
 
   async create(options: CreateRunOptions): Promise<CreateResult> {
@@ -152,7 +205,11 @@ export class InMemoryStore implements RunStore {
             ) === 'reuse'
           ) {
             // #715 (b): the reading it spent, floored by the existing run's own stamp (pure).
-            return { ...writtenSnapshot(existing, floorAtRecord(r, existing)), created: false };
+            const reused = {
+              ...writtenSnapshot(existing, floorAtRecord(r, existing)),
+              created: false,
+            };
+            return this.#keepsLeases ? this.#withFacts(reused) : reused;
           }
           // Not `reuse` → this fresh create supersedes `existing`; stamp the link.
           supersededId = existing.id;
@@ -199,7 +256,8 @@ export class InMemoryStore implements RunStore {
     if (options.idempotencyKey !== undefined) {
       this.keyIndex.set(`${options.workflowId}\0${options.idempotencyKey}`, record.id);
     }
-    return { ...writtenSnapshot(record, at), created: true };
+    const created = { ...writtenSnapshot(record, at), created: true };
+    return this.#keepsLeases ? this.#withFacts(created) : created;
   }
 
   /**
@@ -217,7 +275,8 @@ export class InMemoryStore implements RunStore {
         retryable: false,
       });
     }
-    return writtenSnapshot(record, floorAtRecord(r, record));
+    const read = writtenSnapshot(record, floorAtRecord(r, record));
+    return this.#keepsLeases ? this.#withFacts(read) : read;
   }
 
   async update(record: RunRecord): Promise<Snapshot> {
@@ -252,7 +311,8 @@ export class InMemoryStore implements RunStore {
       updated_at: at.toISOString(),
     };
     this.runs.set(updated.id, updated);
-    return writtenSnapshot(updated, at);
+    const written = writtenSnapshot(updated, at);
+    return this.#keepsLeases ? this.#withFacts(written) : written;
   }
 
   /** issue #715 (a) (M4): the newest PARSEABLE `created_at` among this store's runs under the key. */
@@ -344,7 +404,8 @@ export class InMemoryStore implements RunStore {
       updated_at: at.toISOString(),
     };
     this.runs.set(updated.id, updated);
-    return writtenSnapshot(updated, at);
+    const claimed = writtenSnapshot(updated, at);
+    return this.#keepsLeases ? this.#withFacts(claimed) : claimed;
   }
 
   /**
@@ -395,7 +456,9 @@ export class InMemoryStore implements RunStore {
           details: { runId, expected: outcome.expected, actual: outcome.stored },
         });
       }
-      return { ...outcome, at }; // refusal/noop — fresh state, NO write (version unchanged)
+      // refusal/noop — fresh state, NO write (version unchanged)
+      const refused: StoreSettlement = { ...outcome, at };
+      return this.#keepsLeases ? this.#settlementWithFacts(refused) : refused;
     }
     // issue #367: the boundary on the settle tail too (both stores, both tails).
     // `assertSealIntegrity` is pure and synchronous — the documented no-await stretch above holds.
@@ -406,7 +469,8 @@ export class InMemoryStore implements RunStore {
       version: fresh.version + 1,
     };
     this.runs.set(updated.id, updated);
-    return { ...outcome, run: updated, at };
+    const applied: StoreSettlement = { ...outcome, run: updated, at };
+    return this.#keepsLeases ? this.#settlementWithFacts(applied) : applied;
   }
 
   /**
@@ -536,7 +600,8 @@ export class InMemoryStore implements RunStore {
         derived_at_read: cut.filter((record) => record.run_phase !== deriveRunPhase(record)).length,
       };
       if (cut.length === pageSize) page.next_after = cut[cut.length - 1]!.id;
-      yield page;
+      // #729 CW-1b: each run's lease facts, asked after the page's cut.
+      yield rows || !this.#keepsLeases ? page : await this.#pageWithFacts(page);
       if (page.next_after === undefined) return;
       after = Buffer.from(page.next_after, 'utf8');
     }

@@ -2,7 +2,7 @@
 
 <!-- description: Reference for @sensigo/realm-testing, the package for testing workflows, handlers, adapters and stores: every value and type it exports. -->
 
-`@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 40 values and 39 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
+`@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 42 values and 43 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
 
 ```bash
 npm install --save-dev @sensigo/realm-testing
@@ -16,18 +16,18 @@ To test a workflow from the command line, with no test file, see [Test a workflo
 
 ## The exports
 
-| Group                                                   | Values                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Fixtures](#fixtures)                                   | `loadFixtureFromFile`, `loadFixtureFromString`, `loadFixturesFromDir`, `runFixtureTests`                                                                                                                                                                                                                                                                                                                        |
-| [Driving a run](#driving-a-run)                         | `InMemoryStore`, `MockServiceRecorder`, `createAgentDispatcher`, `createGateResponder`                                                                                                                                                                                                                                                                                                                          |
-| [Assertions](#assertions)                               | `assertFinalState`, `assertStepSucceeded`, `assertStepFailed`, `assertStepOutput`, `assertEvidenceHash`                                                                                                                                                                                                                                                                                                         |
-| [Unit helpers](#unit-helpers)                           | `testStepHandler`, `testAdapter`, `testProcessor`                                                                                                                                                                                                                                                                                                                                                               |
-| [GitHub stand-in](#github-stand-in)                     | `startGitHubMockServer`                                                                                                                                                                                                                                                                                                                                                                                         |
-| [Clocks and test locations](#clocks-and-test-locations) | `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`, `createTestHome`                                                                                                                                                                                                                                                                                                                       |
-| [Store contracts](#store-contracts)                     | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS`, `storeClockContract`, `STORE_CLOCK_LAWS`, `leasePortContract`, `LEASE_PORT_LAWS`, `createLeaseDouble` |
-| Version                                                 | `VERSION`, the package's version as a string, for example `"0.46.0"`.                                                                                                                                                                                                                                                                                                                                           |
+| Group                                                   | Values                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Fixtures](#fixtures)                                   | `loadFixtureFromFile`, `loadFixtureFromString`, `loadFixturesFromDir`, `runFixtureTests`                                                                                                                                                                                                                                                                                                                                                                  |
+| [Driving a run](#driving-a-run)                         | `InMemoryStore`, `MockServiceRecorder`, `createAgentDispatcher`, `createGateResponder`                                                                                                                                                                                                                                                                                                                                                                    |
+| [Assertions](#assertions)                               | `assertFinalState`, `assertStepSucceeded`, `assertStepFailed`, `assertStepOutput`, `assertEvidenceHash`                                                                                                                                                                                                                                                                                                                                                   |
+| [Unit helpers](#unit-helpers)                           | `testStepHandler`, `testAdapter`, `testProcessor`                                                                                                                                                                                                                                                                                                                                                                                                         |
+| [GitHub stand-in](#github-stand-in)                     | `startGitHubMockServer`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| [Clocks and test locations](#clocks-and-test-locations) | `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`, `createTestHome`                                                                                                                                                                                                                                                                                                                                                                 |
+| [Store contracts](#store-contracts)                     | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS`, `storeClockContract`, `STORE_CLOCK_LAWS`, `leasePortContract`, `LEASE_PORT_LAWS`, `createLeaseDouble`, `leaseFactsContract`, `LEASE_FACTS_LAWS` |
+| Version                                                 | `VERSION`, the package's version as a string, for example `"0.46.0"`.                                                                                                                                                                                                                                                                                                                                                                                     |
 
-The 39 types are named in the group that uses them.
+The 43 types are named in the group that uses them.
 
 ## Fixtures
 
@@ -217,7 +217,7 @@ new InMemoryStore();
 new InMemoryStore({ clock });
 ```
 
-A run store that keeps runs in memory. It has the 9 functions of a run store: `create`, `get`, `update`, `claimStep`, `settleStep`, `stampSeal`, `scan`, `resolveKey` and `tombstonesSince`, and it purges nothing: `purgesRuns` is `false`, so `resolveKey` answers `held` or `unseen`, never `purged`. It keeps every field of a run's record. It keeps no claim leases. See [Core library](core-library.md) for what each function does.
+A run store that keeps runs in memory. It has the 9 functions of a run store: `create`, `get`, `update`, `claimStep`, `settleStep`, `stampSeal`, `scan`, `resolveKey` and `tombstonesSince`, and it purges nothing: `purgesRuns` is `false`, so `resolveKey` answers `held` or `unseen`, never `purged`. It keeps every field of a run's record. It keeps no claim leases unless it is given a lease port, `new InMemoryStore({ leases })` (the lease double, for example); then every run it returns carries `lease_facts`. See [Core library](core-library.md) for what each function does.
 
 Given a `clock`, it stamps its writes with that clock; without one, with this computer's (added after version 0.48.0). See [A store's clock](core-library.md#a-stores-clock).
 
@@ -392,7 +392,7 @@ Types: `SettableClock`, `SettableClockOptions`, `TestLocation`, `TestHome`.
 
 ## Store contracts
 
-A store contract is a set of tests for a store you wrote. Each of the 6 contract functions takes an adapter that describes your store and returns a list of cases. A case has a `law`, a `name`, and a `run` function that throws if your store breaks the law.
+A store contract is a set of tests for a store you wrote. Each of the 7 contract functions takes an adapter that describes your store and returns a list of cases. A case has a `law`, a `name`, and a `run` function that throws if your store breaks the law.
 
 ```js
 import { it } from 'vitest';
@@ -410,14 +410,15 @@ for (const [i, c] of makeCases().entries()) {
 
 Build a new adapter and store for each case, as above. Several cases delete or damage what they are given.
 
-| Contract                      | For a store that implements                        | Laws | Cases with Realm's own store                   |
-| ----------------------------- | -------------------------------------------------- | ---- | ---------------------------------------------- |
-| `runStoreFidelityContract`    | `RunStore`                                         | 18   | 31, with `InMemoryStore`                       |
-| `settlementContract`          | `RunStore` with `settleStep`                       | 58   | 149, with `InMemoryStore` (below)              |
-| `perRunArtifactStoreContract` | `PerRunArtifactStore`                              | 7    | 7, with `JsonFileFailedAttemptStore`           |
-| `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions       | 12   | 72, with `InMemoryTraceBufferStore`            |
-| `storeClockContract`          | `RunStore`, on a clock the test moves              | 12   | 12, with `InMemoryStore`                       |
-| `leasePortContract`           | `RunStore.leases`, with holders in other processes | 10   | 10, with `@sensigo/realm-store-sqlite`'s store |
+| Contract                      | For a store that implements                                      | Laws | Cases with Realm's own store                   |
+| ----------------------------- | ---------------------------------------------------------------- | ---- | ---------------------------------------------- |
+| `runStoreFidelityContract`    | `RunStore`                                                       | 18   | 31, with `InMemoryStore`                       |
+| `settlementContract`          | `RunStore` with `settleStep`                                     | 58   | 149, with `InMemoryStore` (below)              |
+| `perRunArtifactStoreContract` | `PerRunArtifactStore`                                            | 7    | 7, with `JsonFileFailedAttemptStore`           |
+| `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions                     | 12   | 72, with `InMemoryTraceBufferStore`            |
+| `storeClockContract`          | `RunStore`, on a clock the test moves                            | 12   | 12, with `InMemoryStore`                       |
+| `leasePortContract`           | `RunStore.leases`, with holders in other processes               | 10   | 10, with `@sensigo/realm-store-sqlite`'s store |
+| `leaseFactsContract`          | `RunStore` with `leases`: the lease facts on the runs it returns | 8    | 8, with `InMemoryStore` and the lease double   |
 
 Every case in the last column passed, except the 2 it reports as skipped for `InMemoryTraceBufferStore` (it supplies neither byte hook), the 1 the settlement contract reports as skipped for `InMemoryStore` (it keeps claims, so the no-claims case does not apply), and the 3 the fidelity contract reports as skipped for `InMemoryStore` (it never deletes a run, so the purge laws' cases are skipped). The store interfaces are in [Core library](core-library.md).
 
@@ -425,7 +426,7 @@ Each of the first four contracts has the law `STORE_RELEASE_LINE_TRUE`: the rele
 
 #### Running every law
 
-Each contract exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`, added in 0.46.0, `STORE_CLOCK_LAWS`, added after version 0.48.0, and `LEASE_PORT_LAWS`, added after version 0.49.0. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
+Each contract exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`, added in 0.46.0, `STORE_CLOCK_LAWS`, added after version 0.48.0, and `LEASE_PORT_LAWS` and `LEASE_FACTS_LAWS`, added after version 0.49.0. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
 
 ```js
 import { SETTLEMENT_LAWS } from '@sensigo/realm-testing';
@@ -610,6 +611,25 @@ The laws of a store's claim leases, `RunStore.leases` (added after version 0.49.
 `createLeaseDouble()` returns a lease port in memory whose leases a test sets to `live`, `closed_kept`, `removed`, `dead` or `{ forced: fact }`, for the laws that do not need a real lock. A `live` lease reads `held`, a `closed_kept` or `dead` one `not_held`, a `removed` one `absent`, as does an id it never made, and a `{ forced: fact }` one that fact. It runs `L1_HELD_ACROSS_PROCESSES`, `L2_NOT_HELD_AFTER_DEATH`, `L3_DEAD_LEASE_NEVER_HELD_AGAIN` and `L5_CLOSE_BY_RECORD`; the other six laws need a real lock or a file.
 
 Types: `LeaseDouble`, `LeaseDoubleState`, `LeaseHolder`, `LeaseHomeFiles`, `LeasePortContractAdapter`, `LeasePortContractCase`, `LeasePortLaw`, `LeaseTestHome`.
+
+### `leaseFactsContract(adapter)`
+
+The laws of a store with claim leases about the runs it returns: a run with an in-progress claim that names a lease carries `lease_facts`, what the store's lease port found about that lease (added after version 0.49.0). Each case builds its own store through the adapter's `makeStore()`, which gives the store a lease port, a lease another program holds (`heldLease()`; for a store with real locks, a program in another process), and every id its port was asked about (`probed()`). Nothing in Realm writes a claim's lease yet, so a case writes two leased claims through the store's own `update`: one on the held lease, one on a lease no program held. Each case reads the facts with `leaseFactOf`.
+
+| Law                          | What it checks                                                                                                                    |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `LF_GET`                     | `get` returns `held` for the claim on the held lease and `absent` for the other.                                                  |
+| `LF_SCAN_PAGE`               | A record page of `scan` does the same.                                                                                            |
+| `LF_CREATE_KEYED_EXISTING`   | A keyed `create` that returns the run already holding the key does the same.                                                      |
+| `LF_UPDATE`                  | `update` does the same.                                                                                                           |
+| `LF_CLAIM_STEP`              | `claimStep` of another step does the same.                                                                                        |
+| `LF_SETTLE_APPLIED`          | An applied `settleStep` of another step does the same.                                                                            |
+| `LF_SETTLE_REFUSED`          | A `settleStep` refused by its predicate, a replayed settle, does the same.                                                        |
+| `LF_UNLEASED_PROBES_NOTHING` | A run with no leased claim, the new run a `create` makes, is returned with no `lease_facts`, and the lease port is asked nothing. |
+
+`@sensigo/realm-store-sqlite`'s store runs every law too, with its holder in another process.
+
+Types: `LeaseFactsContractAdapter`, `LeaseFactsContractCase`, `LeaseFactsLaw`, `LeaseFactsTestStore`.
 
 ### `createFenceRunSource()`
 

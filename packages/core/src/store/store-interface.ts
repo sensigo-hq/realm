@@ -7,6 +7,7 @@ import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 import type { Snapshot } from '../engine/snapshot.js';
 import type { Clock } from '../utils/clock.js';
 import type { LeasePort } from './lease-port.js';
+import type { LeaseFacts } from './lease-facts.js';
 
 /**
  * The load-bearing `RunRecord` fields the engine treats specially enough that a store must
@@ -123,8 +124,12 @@ export type CreateResult = Snapshot & { created: boolean };
  * What a run store's `settleStep` returns (#715 (b), D-19): the transform's result plus the write's
  * one reading `at` — returned on an applied write AND on a predicate refusal (both took it, after the
  * lock). A throw before the lock (a missing run) spends none.
+ *
+ * #729 CW-1b: `lease_facts`, as on a {@link Snapshot}: what the store's lease port found about the
+ * leases of `run`'s in-progress claims after the write (applied or refused). Present only when a
+ * claim names a lease and the store has a lease port.
  */
-export type StoreSettlement = SettlementResult & { at: Date };
+export type StoreSettlement = SettlementResult & { at: Date; lease_facts?: LeaseFacts };
 
 export interface RunStore {
   /**
@@ -489,6 +494,9 @@ export type ScanItem<P extends 'record' | 'row'> =
 export interface ScanPage<P extends 'record' | 'row'> {
   items: ScanItem<P>[];
   read_at: Date;
+  /** The page's records were read as ONE cut. #729 CW-1b: a run's `lease_facts` (the `'record'`
+   *  projection) are observed after the page's cut, not inside it: the store asks its lease port once
+   *  the page's read is done. */
   consistent_snapshot: true;
   derived_at_read: number;
   next_after?: string;
