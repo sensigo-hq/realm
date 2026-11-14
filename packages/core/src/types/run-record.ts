@@ -1139,6 +1139,12 @@ export interface ClaimRecord {
    * before this field.
    */
   since?: string;
+  /**
+   * #729, the claim window (CW-1): the claim lease the program that took this step held while it
+   * worked — its id, which the store's lease port probes. Written by nothing yet (CW-2 writes it) and
+   * shown on no surface; a claim without it has no lease.
+   */
+  lease?: { id: string };
 }
 
 /**

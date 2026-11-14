@@ -117,8 +117,23 @@ export function drivePid(): number {
 }
 
 /** U1b: the one line said when a stream's pipe cannot be made blocking: never a run unmasked. */
-export const NOT_BLOCKING_LINE =
-  'Error: realm agent cannot hide what its programs print here: this Node.js cannot make the output pipe blocking. Nothing was started.';
+const notBlockingFor = (command: string): string =>
+  `Error: ${command} cannot hide what its programs print here: this Node.js cannot make the output pipe blocking. Nothing was started.`;
+export const NOT_BLOCKING_LINE = notBlockingFor('realm agent');
+
+/** U1b Unit 2 (D6): the full name of the command that runs (`realm run drain`), recorded by the
+ *  pre-action hook; `undefined` when no hook ran. */
+let runningCommand: string | undefined;
+
+/** D6: the running command's full name, when the pre-action hook recorded one. */
+export function runningCommandName(): string | undefined {
+  return runningCommand;
+}
+
+/** D6: the not-blocking line for the running command — `realm agent`'s when none was recorded. */
+export function notBlockingLine(): string {
+  return runningCommand === undefined ? NOT_BLOCKING_LINE : notBlockingFor(runningCommand);
+}
 
 /**
  * U1b: sets `stream` blocking when it has a handle (a pipe or a socket), so every exit completes its
@@ -1421,6 +1436,10 @@ export function writerModeOf(command: Command): WriterMode {
 /** The `preAction` hook every exported command carries (L-1): installs the writer for the command
  *  that runs. */
 export function writerHook(_thisCommand: Command, actionCommand: Command): void {
+  // D6: the command's full name, its parents' names first (`realm run drain`).
+  const names: string[] = [];
+  for (let c: Command | null = actionCommand; c !== null; c = c.parent) names.unshift(c.name());
+  runningCommand = names.join(' ');
   installWriter(writerModeOf(actionCommand));
 }
 

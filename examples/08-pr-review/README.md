@@ -92,7 +92,7 @@ Create a `.env` file in this example's directory (next to `realm.yaml`):
 GITHUB_TOKEN=ghp_...
 ```
 
-Token needs `contents:read` (to fetch the diff) and `issues:write` (to post the comment —
+Token needs `pull_requests:read` (to fetch the diff) and `issues:write` (to post the comment —
 GitHub's PR comment endpoint is the Issues API). The deployment manifest (`realm.yaml`)
 constructs the github adapter with `${secret:GITHUB_TOKEN}` resolved from that `.env`.
 

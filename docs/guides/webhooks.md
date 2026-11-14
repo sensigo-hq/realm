@@ -13,7 +13,7 @@ You need a workflow you can run. [Write your first workflow](first-workflow.md) 
 Two parts work together:
 
 - A `trigger` block in the workflow says which requests start a run, and how to check them.
-- `realm listen` is a small web server. For each request that passes the checks, it creates a run and starts a separate `realm agent` process to drive it. It replies as soon as the run exists.
+- `realm listen` is a small web server. For each request that passes the checks, it creates a run and starts a separate `realm agent` process to drive it. It replies as soon as the run exists, unless the request asks it to wait: see [Waiting for the result](../reference/workflow/webhook-trigger.md#waiting-for-the-result).
 
 ## 1. Add a trigger to the workflow
 
@@ -84,6 +84,7 @@ It prints:
 
 ```text
 listen: mounted {"workflow":"tickets","path":"/tickets","mode":"shared_secret"}
+listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each step without tools, by that step's own earlier runs and the prices in runner.cache.economics; 5 minutes for a step that calls tools","set_by":"realm listen's default"}
 realm listen on 127.0.0.1:3000 — 1 workflow(s) mounted
 ```
 
@@ -106,8 +107,8 @@ curl -X POST http://127.0.0.1:3000/tickets \
 
 It prints:
 
-```json
-{ "run_id": "ed876b82-9365-4c63-9c6e-42ffed4d617e", "status": "accepted" }
+```text
+{"run_id":"ed876b82-9365-4c63-9c6e-42ffed4d617e","status":"accepted"}
 ```
 
 The status code is `202`. The run now exists, and `realm listen` logs that it handed the run over:
@@ -123,7 +124,7 @@ realm run list
 ```
 
 ```text
-ed876b82-9365-4c63-9c6e-42ffed4d617e  tickets v1  completed  10/2/2026, 12:30:21 AM  1 step(s)
+ed876b82-9365-4c63-9c6e-42ffed4d617e  tickets v1  completed  2026-10-02T00:30:21.517Z  1 step(s)
 ```
 
 ### Getting the result back
@@ -158,6 +159,45 @@ Once the run has completed, the reply holds the declared values:
 ```
 
 This was added after version 0.49.0.
+
+### Waiting for the answer
+
+A caller that would rather have the result in the reply itself sends `Prefer: wait=20` with the request that starts the run, to a workflow that has a `result_map` (the refunds workflow above; a workflow without one ignores the header). `realm listen` then holds the reply until the run ends or stops at a person's gate, for 20 seconds at most:
+
+```bash
+curl -i http://127.0.0.1:3000/refunds \
+  -H 'Content-Type: application/json' \
+  -H 'X-Webhook-Token: choose-a-long-secret' \
+  -H 'Prefer: wait=20' \
+  -d '{"event_id":"evt-302","approved":true,"note":"refund to the original card"}'
+```
+
+The run ended about a second later, and the reply holds its result (the `Date` and connection headers are left out here):
+
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+Content-Length: 196
+Preference-Applied: wait=20
+
+{"run_id":"9db311b2-3159-4247-9370-83e6f2ab2ee6","run_phase":"completed","result":{"approved":true,"note":"refund to the original card"},"result_masked":{"declared":0,"environment":0,"pattern":0}}
+```
+
+A run that is still going when the time is up gets the `202` instead, with its phase, its `status_path` and its token. Here a second refunds workflow, at `/refunds-review`, with the same `result_map` and a step that asks a model, was asked with `Prefer: wait=5` while the model had not yet answered:
+
+```text
+HTTP/1.1 202 Accepted
+Content-Type: application/json
+Content-Length: 240
+Location: /refunds-review/runs/48da5dfe-1666-4b88-915d-180fc4eac78c
+Retry-After: 5
+Preference-Applied: wait=5
+
+{"run_id":"48da5dfe-1666-4b88-915d-180fc4eac78c","status":"accepted","run_phase":"running","status_path":"/refunds-review/runs/48da5dfe-1666-4b88-915d-180fc4eac78c","token":"843a235f3a349ecf96c3413302fa67222bcf768963575fa8baba4a69eeb4c3ce"}
+```
+
+The wait never stops the run: read it later at its `status_path`, as above. When the header is ignored is in [Waiting for the result](../reference/workflow/webhook-trigger.md#waiting-for-the-result); what `--max-wait` and `--max-waiting` do is in [`realm listen`](../reference/cli/realm-listen.md). This was added after version 0.49.0.
 
 ## 4. See what is turned away
 

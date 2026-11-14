@@ -46,7 +46,8 @@ import {
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { agentReadyReason, inFlightReasons } from './run-advance.js';
-import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { RUN_PHASE_WORDS, exitProcess, writerCtx } from '../output/writer.js';
+import { relayIfLogged } from '../output/relay.js';
 import { openCliHome } from '../lib/home.js';
 
 /**
@@ -546,24 +547,24 @@ export async function runDrainAction(
   if (opts.void !== undefined) {
     if (runId === undefined) {
       console.error('Provide a <run-id> when using --void.');
-      process.exit(1);
+      exitProcess(1);
     }
     if (opts.all === true) {
       console.error('Cannot combine --void with --all.');
-      process.exit(1);
+      exitProcess(1);
     }
     try {
       const { record: run, at: runAt } = await runStore.get(runId);
       const entry = run.finalizer_ledger?.[opts.void];
       if (entry === undefined) {
         console.error(`No finalizer ledger entry named '${opts.void}' on run '${runId}'.`);
-        process.exit(1);
+        exitProcess(1);
       }
       if (entry.status !== 'pending') {
         console.error(
           `Finalizer '${opts.void}' is '${entry.status}', not 'pending' — nothing to void.`,
         );
-        process.exit(1);
+        exitProcess(1);
       }
       const isHeld =
         entry.lease_token !== undefined &&
@@ -576,7 +577,7 @@ export async function runDrainAction(
             `expire (bounded — leases are clamped to ${deps.drainLeaseMax}s) and retry. Not ` +
             `force-bypassable.`,
         );
-        process.exit(1);
+        exitProcess(1);
       }
       const neverLeased = entry.lease_token === undefined;
       const disclosure = neverLeased
@@ -603,7 +604,7 @@ export async function runDrainAction(
       console.log(disclosure);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
+      exitProcess(1);
     }
     return;
   }
@@ -612,7 +613,7 @@ export async function runDrainAction(
   if (opts.all === true) {
     if (runId !== undefined) {
       console.error('Cannot combine a <run-id> with --all. Use one or the other.');
-      process.exit(1);
+      exitProcess(1);
     }
     // issue #719 (B3): its own `try` — a listing that throws is rendered like every other failure
     // here, never an unhandled rejection.
@@ -629,7 +630,7 @@ export async function runDrainAction(
       atOf = new Map(snapshots.map((s) => [s.record.id, s.at]));
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
+      exitProcess(1);
     }
     const finalizerActionable = runs.filter(
       (r) => r.terminal_state && isBatchActionable(r, atOf.get(r.id)!),
@@ -769,7 +770,7 @@ export async function runDrainAction(
   // ============================ Per-run mode ============================
   if (runId === undefined) {
     console.error('Provide a <run-id>, or use --all for batch mode.');
-    process.exit(1);
+    exitProcess(1);
   }
 
   try {
@@ -848,7 +849,7 @@ export async function runDrainAction(
         `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}') — nothing to drain. ${first}`,
       );
       for (const line of more) console.error(line);
-      process.exit(1);
+      exitProcess(1);
     }
 
     let workingRun = run;
@@ -941,7 +942,7 @@ export async function runDrainAction(
       console.error(
         `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
       );
-      process.exit(1);
+      exitProcess(1);
       return;
     }
     const outcome = await deps.drainFinalizers(runStore, workflow, registry, runId, deps.driver);
@@ -962,7 +963,7 @@ export async function runDrainAction(
       );
       for (const name of outcome.leftPending)
         console.log(`  realm run drain ${runId} --void ${shellWord(name)} --force`);
-      process.exit(1);
+      exitProcess(1);
       return;
     }
     // F12 (review G2-R4, G3-1): the pass halted at another drainer's lease (its `⚠` line above says
@@ -975,7 +976,7 @@ export async function runDrainAction(
         console.log(`Drained run '${runId}' (${outcome.attempted.length} ran).`);
       }
       console.log(pendingCleanupLine(outcome.run, afterPass)!);
-      process.exit(1);
+      exitProcess(1);
       return;
     }
     if (outcome.attempted.length === 0) {
@@ -990,7 +991,7 @@ export async function runDrainAction(
     console.log(`Drained run '${runId}'.`);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
+    exitProcess(1);
   }
 }
 
@@ -1018,6 +1019,10 @@ export const drainCommand = new Command('drain')
     "CODE override: module that REPLACES the workflow's declared 'extensions' modules (repair tool)",
   )
   .action(async (runId: string | undefined, opts: DrainCommandOptions) => {
+    // U1b Unit 2 (D1): in log mode the work runs in a second process, which this one relays and
+    // masks — decided here, before the identity, the runtime import and the store; this process then
+    // never returns from it.
+    await relayIfLogged();
     // issue #625 (holder slice): this program's name, made once, before any other output. A name
     // that cannot be used prints one line and exits 1 here; nothing has been started.
     const driver = resolveProgramIdentity('drain');

@@ -53,7 +53,8 @@ import {
   PROJECT_OPTION_HELP,
   type ProjectLoad,
 } from './run-advance.js';
-import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { RUN_PHASE_WORDS, exitProcess, writerCtx } from '../output/writer.js';
+import { relayIfLogged } from '../output/relay.js';
 import { openCliHome } from '../lib/home.js';
 
 /**
@@ -494,10 +495,14 @@ export const respondCommand = new Command('respond')
           by = boundStatedName(opts.by, '--by');
         } catch (err) {
           console.error(identityRefusalLine('--by', err, 'nothing was recorded'));
-          process.exit(1);
+          exitProcess(1);
           return;
         }
       }
+      // U1b Unit 2 (D1): in log mode the work runs in a second process, which this one relays and
+      // masks — decided after the `--by` refusal (it needs no identity and prints once either way)
+      // and before the identity and the store; this process then never returns from it.
+      await relayIfLogged();
       // `REALM_OPERATOR` here names the PROGRAM on the cleanup steps this answer drains — never
       // the person who answered; the answer itself never carries it. It is checked before the run
       // is read, so it refuses on a workflow with no cleanup steps too — the refusal says both, so
@@ -534,7 +539,7 @@ export const respondCommand = new Command('respond')
           console.error(
             `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
           );
-          process.exit(1);
+          exitProcess(1);
           return;
         }
         // decisions C108, C121, C209: a `--project` the workflow's own project overrides is said,
@@ -561,7 +566,7 @@ export const respondCommand = new Command('respond')
         console.log(outcome.lastLine);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        exitProcess(1);
       }
     },
   );

@@ -3,7 +3,7 @@
 // cannot ship unclassified:
 //   - GUARDED (production, `option-value-guard.ts`): takes any word without a check of its own; the
 //     guard refuses a flag-like word typed after it;
-//   - OWN_CHECK (here): already refuses such a word with its own message (26 by an `argParser`, 33 by
+//   - OWN_CHECK (here): already refuses such a word with its own message (28 by an `argParser`, 33 by
 //     a check in the action).
 // Rule for a new option: it already refuses → OWN_CHECK; otherwise → GUARDED. Prints only the
 // (leaf, flag) pairs that break the law.
@@ -19,9 +19,9 @@ import { GUARDED_OPTIONS } from './option-value-guard.js';
 
 type Pair = `${string} ${string}`;
 
-/** The 59 that already refuse a flag-like word with their own message (do NOT guard). */
+/** The 61 that already refuse a flag-like word with their own message (do NOT guard). */
 const OWN_CHECK: readonly Pair[] = [
-  // by an argParser (26)
+  // by an argParser (28)
   'validate --provider',
   'register --provider',
   'watch --provider',
@@ -51,6 +51,9 @@ const OWN_CHECK: readonly Pair[] = [
   // #960 U2: by `option-parsers.ts` too
   'listen --shutdown-drain',
   'serve --shutdown-drain',
+  // R1.2: `--max-wait` by `option-parsers.ts`, `--max-waiting` by its own parser (digits only)
+  'listen --max-wait',
+  'listen --max-waiting',
   // in the action (33)
   'validate --registered',
   'validate --extensions-module',
@@ -107,7 +110,7 @@ function derived(): Map<Pair, Command[]> {
 }
 
 describe('#920 C-2 — every value-taking option is classified exactly once', () => {
-  it('1. the two tables and the command tree agree (25 + 59 = 84)', () => {
+  it('1. the two tables and the command tree agree (25 + 61 = 86)', () => {
     // (a) red when a guarded row is deleted, an option is added to a command, or a row is in two
     // tables; (b) prints the unclassified, extra and duplicated (leaf, flag) pairs only.
     const tree = derived();
@@ -133,8 +136,8 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
       },
       JSON.stringify({ inTwo, unclassified, notInTree, shared }),
     ).toEqual({
-      counts: { guarded: 25, ownCheck: 59 },
-      tree: 84,
+      counts: { guarded: 25, ownCheck: 61 },
+      tree: 86,
       inTwo: [],
       unclassified: [],
       notInTree: [],

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "about": "The main comparison document. The public page /compare/ (website/src/pages/compare.astro) is built from this file, so every fact is edited here and nowhere else. Each tool's 'checked' is the date its column was last read at the version named.",
+  "about": "The main comparison document. The public page /compare/ (website/src/pages/compare.astro) is built from this file, so every fact is edited here and nowhere else. Each tool's 'checked' is the date its column was last read; Realm's answers each name the release they were checked on, and the page's line about Realm is computed from them. 'checked_on' is the day the first full check of every column ended.",
   "checked_on": "2026-10-06",
   "order": {
     "by": "GitHub stars",
@@ -11,8 +11,8 @@
       "key": "realm",
       "name": "Realm",
       "group": "This project",
-      "version": "0.46.0 (npm)",
-      "checked": "2026-10-06"
+      "version": "0.49.0 (npm)",
+      "checked": "2026-11-13"
     },
     {
       "key": "n8n",
@@ -83,9 +83,10 @@
       "cells": {
         "realm": {
           "value": "Yes",
-          "note": "An MCP client calls execute_step for one step at a time. A step that is not eligible yet is refused, and when a step declares a schema, an answer that breaks it is refused.",
-          "source": "execution-loop.ts:1591-1605; probe on 0.46.0 over MCP",
-          "label": "CODE + EXECUTED"
+          "note": "An MCP client calls execute_step for one agent step at a time; the automatic steps that become ready run in that call's reply, and the work the engine owes after a gate is answered runs when the client calls advance_run. A step that is not eligible yet is refused, and when a step declares a schema, an answer that breaks it is refused.",
+          "source": "execution-loop.ts:2244-2275, :918, :930; mcp/tools.md:222, :300; probe on 0.49.0 over MCP (stdio)",
+          "label": "CODE + DOCS + EXECUTED",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "No",
@@ -143,14 +144,15 @@
       "ask": "Does the tool, not the model, decide the step order?",
       "verdict": {
         "kind": "level",
-        "text": "Level with the tools whose workflows are ordered by code, and the only one that holds an outside agent to that order. One gap: after a gate is answered, the next automatic step waits for an explicit call (#625)."
+        "text": "Level with the tools whose workflows are ordered by code, and the only one that holds an outside agent to that order. One gap: in a run an MCP client drives, after a gate is answered, the next automatic step waits for a call to advance_run (#625)."
       },
       "cells": {
         "realm": {
           "value": "Yes",
-          "note": "The engine works out the eligible steps after every result and refuses the others. Among several eligible steps, the caller picks. A guard step behind a gate is decided when the answer is written; an automatic step after a gate still waits for a call (#625, open).",
-          "source": "execution-loop.ts:1591-1605; CHANGELOG 0.46.0; probe on 0.46.0",
-          "label": "CODE + DOCS + EXECUTED"
+          "note": "The engine works out the eligible steps after every result and refuses the others. Among several eligible steps, the caller picks. A guard step behind a gate is decided when the answer is written. In a run an MCP client drives, an automatic step after a gate waits until a call to advance_run (realm run advance from a shell) runs it (#625, open); a realm agent or realm workflow run still waiting on the run goes on by itself.",
+          "source": "execution-loop.ts:2244-2275, :918; CHANGELOG at v0.49.0, :1212-1220; operate-runs.md:82-98; realm-run-acting.md:57, :70; probe on 0.49.0 (MCP + CLI respond/advance)",
+          "label": "CODE + DOCS + EXECUTED",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "Yes",
@@ -214,8 +216,9 @@
         "realm": {
           "value": "Yes",
           "note": "When a step declares a schema, a wrong-shape answer is refused before it is recorded; after 6 refusals the step fails, or uses a declared default. realm agent sends the error back to the model. Schemas are optional per step.",
-          "source": "execution-loop.ts:1836-1880; json-schema-blocks.md",
-          "label": "CODE + DOCS + EXECUTED"
+          "source": "execution-loop.ts:437, :2574-2625; json-schema-blocks.md:19; agent-step-controls.md:19-29; realm-agent.md:114-130; probe on 0.49.0",
+          "label": "CODE + DOCS + EXECUTED",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "Partial",
@@ -273,14 +276,15 @@
       "ask": "Is there a built-in step that waits for a person, and can it time out?",
       "verdict": {
         "kind": "level",
-        "text": "Level with n8n, Dify, Temporal and Inngest. Ahead of the frameworks that have no time limit. Realm's time limit is opt-in; by default a gate waits forever."
+        "text": "Level with n8n, Dify, Temporal and Inngest. Ahead of the frameworks that have no time limit. Realm's time limit is opt-in and is carried out by the next call that moves the run, or by a scheduled drain; by default a gate waits forever."
       },
       "cells": {
         "realm": {
           "value": "Yes",
-          "note": "A gate puts the run in gate_waiting and refuses later steps. A time limit is opt-in (abort or a default answer on expiry); by default it waits forever.",
-          "source": "gates-and-trust.md:63-114; probe on 0.46.0",
-          "label": "DOCS + EXECUTED"
+          "note": "A gate puts the run in gate_waiting and refuses later steps. A time limit is opt-in (abort or a default answer on expiry); by default it waits forever. An expired gate's ending is carried out by the next call that tries to move the run (a late answer, advance_run), or by realm run drain --expired or realm listen --sweep-expired-gates; until then the run reads gate_waiting.",
+          "source": "reference/workflow/gates.md:37-38, :112-113; gates-and-trust.md:79-115; probe on 0.49.0",
+          "label": "DOCS + EXECUTED",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "Partial",
@@ -343,9 +347,10 @@
       "cells": {
         "realm": {
           "value": "Partial",
-          "note": "Records a name the caller states and checks nothing. Each answer also records whether it passed back the token from the reply that opened the gate, which proves the conversation, not the person: in a test the MCP agent approved its own gate, passed its token, and was recorded as matched. Slack records no name (#603).",
-          "source": "gates-and-trust.md:72; mcp/tools.md:431-433; slack-gate-notifier.ts; probe on 0.46.0",
-          "label": "DOCS + CODE + EXECUTED"
+          "note": "Records a name the caller states, if any, and checks nothing. Each answer also records how it arrived, as the client declares it (a form in the user's app, Realm's MCP answer tool, a terminal or Slack), and whether it passed back the token from the reply that opened the gate, which proves the conversation, not the person. By default an app that shows forms asks the person in its own form and the agent gets no answer tool; apps without forms, and every realm serve client, keep it, and there in a test the MCP agent approved its own gate, passed its token, and was recorded as matched. In another test, a client that filled in its own form was recorded as a form answer. Realm's MCP server can also leave the answer tool out (--gate-answers withheld). Slack records no name (#603).",
+          "source": "gates-and-trust.md:63-77; mcp/gate-answers.md:9-13, :35-45; mcp/tools.md:564; slack-gate-notifier.ts:702-704; probe on 0.49.0 (forms and no-forms clients, CLI respond)",
+          "label": "DOCS + CODE + EXECUTED",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "No",
@@ -408,9 +413,10 @@
       "cells": {
         "realm": {
           "value": "Yes",
-          "note": "Each step's input, output and timing; the program that took it (stated or from the OS user, not verified); every gate answer with its stated answerer; why a step was skipped and why the run ended. Under realm agent, the token counts the provider reported. Kept until purged; one-file export.",
-          "source": "run-record-and-export.md:154-163; evidence.md; probe on 0.46.0",
-          "label": "DOCS + EXECUTED"
+          "note": "Each step's input, output and timing; the program that took it (stated or from the OS user, not verified); every gate answer with its stated answerer and how it arrived; why a step was skipped and why the run ended. Under realm agent, and in the runs realm listen starts, each model request's token counts as the provider reported them, and the model it named. Kept until purged; one-file export.",
+          "source": "run-record-and-export.md:7-11, :75-117, :128-153, :205-214, :281-297; gate-answers.md:35-45; probe on 0.49.0",
+          "label": "DOCS + EXECUTED",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "Yes",
@@ -468,14 +474,15 @@
       "ask": "Is the record hashed, chained or signed so an edit can be detected?",
       "verdict": {
         "kind": "open",
-        "text": "None of the tools here does this. LangGraph's optional encryption hides values but does not show that a record was changed."
+        "text": "Realm's store check catches an edit to an entry that leaves its stored hash unchanged, but not one that also rewrites that hash, and nothing here is chained or signed. LangGraph's optional encryption hides values but does not show that a record was changed."
       },
       "cells": {
         "realm": {
-          "value": "No",
-          "note": "A SHA-256 hash of each output, never re-checked. In a test, hand edits to an agent's output, a person's choice and the answerer's name all showed as real, with no warning; nothing is signed and there is no verify command.",
-          "source": "snapshot.ts:65-70; evidence.md:90-92; probe on 0.46.0",
-          "label": "CODE + DOCS + EXECUTED"
+          "value": "Partial",
+          "note": "A SHA-256 hash of each output. The store (realm.db) keeps a second hash of each record entry, refuses a plain SQL UPDATE of one, and realm db check reports an entry that no longer matches its stored hash. But in a test, a hand edit that also rewrote that hash showed as real in inspect, export and realm db check, with no warning. Nothing is signed or chained, and inspect checks nothing.",
+          "source": "evidence/snapshot.ts:75-77; store-sqlite evidence-hash.ts:1-10, run-rows.ts:450-484; concepts/evidence.md:95; cli/realm-db.md:98-104; probe on 0.49.0 (hand edit of realm.db, inspect, export, db check)",
+          "label": "CODE + DOCS + EXECUTED",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "No",
@@ -538,9 +545,10 @@
       "cells": {
         "realm": {
           "value": "Partial",
-          "note": "State is saved after every step, but nothing resumes it: someone starts a driver again. Claims now name a holder and a time, but nothing checks that the holder is alive. A crash mid agent step needs realm run reclaim --force, which may repeat the work. No fsync.",
-          "source": "claim-liveness.ts:116-157; atomic-write.ts:29-32; operate-runs.md",
-          "label": "CODE + DOCS"
+          "note": "State is saved after every step and synced to disk, but nothing resumes it: someone starts a driver again, or runs realm run advance for the steps the engine owes. Claims name a holder and a time, but nothing checks that the holder is alive. A crash mid agent step needs realm run reclaim --force, which may repeat the work.",
+          "source": "store-sqlite open-file.ts:184-202; claim-liveness.ts:153-176; run-record-and-export.md:205-214; operate-runs.md:82-98, :236",
+          "label": "CODE + DOCS",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "Partial",
@@ -603,9 +611,10 @@
       "cells": {
         "realm": {
           "value": "Yes",
-          "note": "10 tools over stdio (realm mcp) or HTTP (realm serve), at step level. realm serve checks one shared token.",
-          "source": "packages/mcp-server/src/tools; realm-mcp-and-serve.md",
-          "label": "CODE + EXECUTED"
+          "note": "11 tools over stdio (realm mcp) or HTTP (realm serve), at step level; 10 when the answer tool is left out. realm serve checks one shared token, which names no one.",
+          "source": "mcp-server/src/server.ts:430-452; cli/realm-mcp-and-serve.md:12, :64, :99-112; mcp/tools.md:5; probe on 0.49.0 (tools/list over stdio and HTTP)",
+          "label": "CODE + EXECUTED",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "Partial",
@@ -670,7 +679,8 @@
           "value": "Partial",
           "note": "stdio servers only, and only when realm agent drives the step.",
           "source": "agent-tools.md:15, 33-36",
-          "label": "DOCS"
+          "label": "DOCS",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "Yes",
@@ -725,7 +735,7 @@
     {
       "id": "cache-record",
       "title": "Keeps what the prompt cache did on each model call",
-      "ask": "Does a run's record keep, for each model call, how much of the prompt the provider read from its cache and how much it wrote to it? Realm's answer is for 0.46.0, the version in its column head. The other tools' answers to this question were read from each tool's code on 2026-10-09, at its default branch and not at the version in its column head; each source names the commit.",
+      "ask": "Does a run's record keep, for each model call, how much of the prompt the provider read from its cache and how much it wrote to it? The other tools' answers to this question were read from each tool's code on 2026-10-09, at its default branch and not at the version in its column head; each source names the commit.",
       "verdict": {
         "kind": "level",
         "text": "Level with LangGraph, whose checkpoints save each model message whole, cache counts included. Mastra, Microsoft Agent Framework, Temporal, Inngest and CrewAI keep part of it: per step, summed, or without the 5-minute/1-hour split. n8n and Dify keep no cache counts in a stored run. Realm keeps one entry per model call, and a count the provider did not report is left out, never written as 0."
@@ -733,9 +743,10 @@
       "cells": {
         "realm": {
           "value": "Yes",
-          "note": "For each model call realm agent makes for a step, the step's record holds one entry: the whole prompt size, the part read from the cache, the part written to it (with the 5-minute/1-hour split of the writes where the provider gives it) and the output tokens. A schema-repair call is an entry of its own. A figure the provider did not report is absent, never counted as 0.",
-          "source": "run-record.ts:329, :375; run-record-and-export.md:120-122; CHANGELOG 0.46.0 (all at v0.46.0)",
-          "label": "CODE + DOCS"
+          "note": "For each model call realm agent makes for a step (also in the runs realm listen starts, and in steps that call tools), the step's record holds one entry: the whole prompt size, the part read from the cache, the part written to it (with the 5-minute/1-hour split of the writes where the provider gives it) and the output tokens. A schema-repair call is an entry of its own. A figure the provider did not report is absent, never counted as 0.",
+          "source": "types/run-record.ts:330-337, :500-505, :643-675, :813-817; run-record-and-export.md:128-153; CHANGELOG at v0.49.0, :357-363",
+          "label": "CODE + DOCS",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "Yes",
@@ -790,17 +801,18 @@
     {
       "id": "cache-cost",
       "title": "Prices cache reads and writes in a run's cost",
-      "ask": "Does a run's cost price the tokens read from the prompt cache and the tokens written to it at their own rates, not as plain input? Realm's answer is for 0.48.0, which is newer than the 0.46.0 in its column head; the other Realm answers on this page are for 0.46.0. The other tools' answers to this question were read from each tool's code on 2026-10-09, at its default branch and not at the version in its column head; each source names the commit.",
+      "ask": "Does a run's cost price the tokens read from the prompt cache and the tokens written to it at their own rates, not as plain input? The other tools' answers to this question were read from each tool's code on 2026-10-09, at its default branch and not at the version in its column head; each source names the commit.",
       "verdict": {
         "kind": "level",
-        "text": "Level with Mastra, which prices cache reads and each write size at their own rates. n8n's Agents product and Dify's Anthropic plugin price them too, each in a narrower way. CrewAI, LangGraph, Temporal, Microsoft Agent Framework and Inngest price nothing that we found. In Realm 0.48.0 the figure is worked out when a run is read, names its price source, and says what caching saved or cost against no caching; we found no other tool among these eight that works out that last figure."
+        "text": "Level with Mastra, which prices cache reads and each write size at their own rates. n8n's Agents product and Dify's Anthropic plugin price them too, each in a narrower way. CrewAI, LangGraph, Temporal, Microsoft Agent Framework and Inngest price nothing that we found. In Realm the figure is worked out when a run is read, names its price source, and says what caching saved or cost against no caching; we found no other tool among these eight that works out that last figure."
       },
       "cells": {
         "realm": {
           "value": "Yes",
-          "note": "In 0.48.0, not the 0.46.0 of this column. When a run is read, each model call is priced at its own cache read and write rates, from your economics file or an installed price list; Realm ships no prices. The figure names its price source, says call-date or current price, and says what caching saved or cost against no caching. A call it cannot price is counted out and the figure starts with ≥. We found no other of these eight that works out that net (searched 2026-10-09).",
-          "source": "step-view.ts:769; price-source.ts:30, :163; cache-economics.ts:186, :244; inspect.ts:799-805; cache-economics.md:129-131; CHANGELOG 0.48.0 (all at v0.48.0)",
-          "label": "CODE + DOCS + INFERRED"
+          "note": "When a run is read, each model call is priced at its own cache read and write rates, from your economics file or an installed price list; Realm ships no prices. The figure names its price source, says call-date or current price, and says what caching saved or cost against no caching. A call it cannot price is counted out and the figure starts with ≥. We found no other of these eight that works out that net (searched 2026-10-09).",
+          "source": "reference/cache-economics.md:5-8, :155-163, :186-207; cli inspect.ts:741-745, :1044-1056; engine/step-view.ts:195; economics/price-source.ts:81; CHANGELOG at v0.49.0, :717",
+          "label": "CODE + DOCS + INFERRED",
+          "release": "0.49.0"
         },
         "langgraph": {
           "value": "No",
@@ -867,7 +879,8 @@
         "inngest": "Code: TS, Python, Go, Kotlin/Java",
         "n8n": "Visual editor (JSON); code nodes; TS SDK",
         "dify": "Visual editor; YAML export"
-      }
+      },
+      "release": "0.49.0"
     },
     {
       "id": "run-through",
@@ -882,13 +895,14 @@
         "inngest": "CLI, SDKs, dashboard, API, Cloud",
         "n8n": "UI, API, CLI, MCP, Cloud",
         "dify": "UI, API, CLI, MCP, Cloud"
-      }
+      },
+      "release": "0.49.0"
     },
     {
       "id": "hosting",
       "title": "Hosting and storage",
       "cells": {
-        "realm": "Self-hosted; JSON files on one machine",
+        "realm": "Self-hosted; one SQLite file on one machine",
         "langgraph": "Both; SQLite, Postgres, MongoDB (server: Postgres + Redis)",
         "crewai": "Both; SQLite, LanceDB",
         "mastra": "Both; about 20 storage adapters",
@@ -897,7 +911,8 @@
         "inngest": "Both; SQLite, or Redis + Postgres",
         "n8n": "Both; SQLite or Postgres (+ Redis)",
         "dify": "Both; Postgres, Redis, a vector store"
-      }
+      },
+      "release": "0.49.0"
     },
     {
       "id": "license",
@@ -912,7 +927,8 @@
         "inngest": "SSPL server; Apache-2.0 SDKs",
         "n8n": "Sustainable Use License (source-available)",
         "dify": "Apache-2.0 with added conditions"
-      }
+      },
+      "release": "0.49.0"
     },
     {
       "id": "first-release",
@@ -927,13 +943,15 @@
         "inngest": "2021-07",
         "n8n": "2019-06",
         "dify": "2023-05"
-      }
+      },
+      "release": "0.49.0"
     }
   ],
   "strengths": {
     "realm": {
       "stronger": "Drives an outside agent step by step and refuses out-of-order steps and wrong-shape answers; works with any MCP client and no model key; records why each step was skipped and why the run ended, which program took each step, and each gate answer; refuses a misspelt trust level or an invalid schema when the workflow is loaded.",
-      "weaker": "No UI: no visual editor or dashboard; no loops: a workflow cannot go back to an earlier step, repeat a step until a condition holds, or run a step once per item of a list (only a retry of the same step, or a separate run per item); runs are stored as JSON files on one machine; nothing resumes a run after a crash; a gate records the name the answerer gives and checks nothing; after a gate is answered, the next automatic step waits for a call; agent steps can use tools only from local (stdio) MCP servers, and only under realm agent."
+      "weaker": "No UI: no visual editor or dashboard; no loops: a workflow cannot go back to an earlier step, repeat a step until a condition holds, or run a step once per item of a list (only a retry of the same step, or a separate run per item); runs are stored in one SQLite file on one machine; nothing resumes a run after a crash; a gate records the name the answerer gives and checks nothing; in a run an MCP client drives, after a gate is answered, the next automatic step waits for a call to advance_run; agent steps can use tools only from local (stdio) MCP servers, and only under realm agent.",
+      "release": "0.49.0"
     },
     "langgraph": {
       "stronger": "Time travel and forking from any checkpoint; per-node retries, timeouts and caching; Postgres and MongoDB with encryption; Studio debugger; LangSmith tracing; Python and JS.",

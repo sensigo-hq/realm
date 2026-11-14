@@ -18,7 +18,6 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { writeSync } from 'node:fs';
 import type { Readable, Writable } from 'node:stream';
 import {
-  NOT_BLOCKING_LINE,
   RELAY_CHILD_ENV,
   RELAY_KEY_ENV,
   addDeclaredDisclosure,
@@ -27,7 +26,9 @@ import {
   flushHeld,
   isRelayWorker,
   noteDeclaredStanding,
+  notBlockingLine,
   relayReceiptLine,
+  runningCommandName,
   setStreamBlocking,
   spanKeyHex,
   writerMode,
@@ -43,12 +44,15 @@ export const SIGKILL_AFTER_MS = 10_000;
 export const DRAIN_LINE =
   "A program started by a handler kept the output open after the command's work ended; it has been stopped, and what it printed after that is not in this log.";
 
-/** The line printed when the worker cannot be started: the drive never runs in-process instead. */
+/** The line printed when the worker cannot be started: the drive never runs in-process instead.
+ *  It names the running command (D6, Unit 2); `realm agent`'s text when none was recorded. */
 export function spawnFailedLine(err: unknown): string {
   const code =
     err !== null && typeof err === 'object' ? (err as { code?: unknown }).code : undefined;
+  const command = runningCommandName() ?? 'realm agent';
   return (
-    'Error: realm agent could not start the process that runs its drive' +
+    `Error: ${command} could not start the process that runs its ` +
+    `${command === 'realm agent' ? 'drive' : 'work'}` +
     ` (${typeof code === 'string' ? code : 'unknown error'}). Nothing was started.`
   );
 }
@@ -106,7 +110,7 @@ function startRelay(deps: RelayDeps): void {
     if ((stream as { isTTY?: boolean }).isTTY === true) continue;
     if (setStreamBlocking(stream as never) === 'missing') {
       try {
-        writeSync(2, `${NOT_BLOCKING_LINE}\n`);
+        writeSync(2, `${notBlockingLine()}\n`);
       } catch {
         // Nothing more can be written.
       }

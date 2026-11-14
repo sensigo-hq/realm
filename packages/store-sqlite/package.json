@@ -11,6 +11,14 @@
     "url": "https://github.com/sensigo-hq/realm.git"
   },
   "homepage": "https://realmengine.dev",
+  "keywords": [
+    "workflow",
+    "workflow-engine",
+    "sqlite",
+    "store",
+    "ai-agent",
+    "typescript"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
