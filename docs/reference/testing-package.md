@@ -217,7 +217,7 @@ new InMemoryStore();
 new InMemoryStore({ clock });
 ```
 
-A run store that keeps runs in memory. It has the 9 functions of a run store: `create`, `get`, `update`, `claimStep`, `settleStep`, `stampSeal`, `scan`, `resolveKey` and `tombstonesSince`, and it purges nothing: `purgesRuns` is `false`, so `resolveKey` answers `held` or `unseen`, never `purged`. It keeps every field of a run's record. It keeps no claim leases unless it is given a lease port, `new InMemoryStore({ leases })` (the lease double, for example); then every run it returns carries `lease_facts`. See [Core library](core-library.md) for what each function does.
+A run store that keeps runs in memory. It has the 9 functions of a run store: `create`, `get`, `update`, `claimStep`, `settleStep`, `stampSeal`, `scan`, `resolveKey` and `tombstonesSince`, and it purges nothing: `purgesRuns` is `false`, so `resolveKey` answers `held` or `unseen`, never `purged`. It keeps every field of a run's record. It keeps no claim leases unless it is given a lease port, `new InMemoryStore({ leases })` (the lease double, for example); then a run it returns carries `lease_facts` for each in-progress claim that names a lease. See [Core library](core-library.md) for what each function does.
 
 Given a `clock`, it stamps its writes with that clock; without one, with this computer's (added after version 0.48.0). See [A store's clock](core-library.md#a-stores-clock).
 

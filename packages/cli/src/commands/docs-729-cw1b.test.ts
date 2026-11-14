@@ -60,13 +60,13 @@ describe('#729 CW-1b — the lease facts’ words', () => {
   });
 
   it("testing-package.md: InMemoryStore's leases, the contract's row, its section and its laws", () => {
-    // InMemoryStore given a port: lease-facts-in-memory-cw1b (every law); without one: the same file's
-    // "keeps no claim leases" cell, and docs-729-cw1's `leases` check. "every run it returns carries
-    // `lease_facts`" holds for a run with a claim that names a lease: a run with none carries no
-    // `lease_facts` (the law LF_UNLEASED_PROBES_NOTHING), a wording question raised in the report.
+    // InMemoryStore given a port: lease-facts-in-memory-cw1b (every law: a run with a leased
+    // in-progress claim carries its facts; a run with none carries no `lease_facts`, the law
+    // LF_UNLEASED_PROBES_NOTHING); without one: the same file's "keeps no claim leases" cell, and
+    // docs-729-cw1's `leases` check.
     claim(
       TESTING,
-      'It keeps no claim leases unless it is given a lease port, `new InMemoryStore({ leases })` (the lease double, for example); then every run it returns carries `lease_facts`.',
+      'It keeps no claim leases unless it is given a lease port, `new InMemoryStore({ leases })` (the lease double, for example); then a run it returns carries `lease_facts` for each in-progress claim that names a lease.',
     );
     // The row's numbers: the laws the built package exports, and the cases the contract returns for an
     // adapter (both test files run each of them, NOT_RUN empty).

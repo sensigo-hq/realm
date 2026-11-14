@@ -95,7 +95,7 @@ describe('#729 CW-1 — the claim lease’s words', () => {
     // lease port carries lease_facts (the testing package's lease-facts-in-memory-cw1b runs it).
     claim(
       TESTING,
-      "It keeps every field of a run's record. It keeps no claim leases unless it is given a lease port, `new InMemoryStore({ leases })` (the lease double, for example); then every run it returns carries `lease_facts`.",
+      "It keeps every field of a run's record. It keeps no claim leases unless it is given a lease port, `new InMemoryStore({ leases })` (the lease double, for example); then a run it returns carries `lease_facts` for each in-progress claim that names a lease.",
     );
     // (1) red when InMemoryStore built without a port keeps leases (it leaves `leases` unset,
     //     Amendment 1); (2) prints what it holds.
