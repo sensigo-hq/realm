@@ -18,7 +18,8 @@ import { admitEntry } from '../admission.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { classifyClaim, omitClaim, type ClaimState } from './claim-liveness.js';
 import { isPastDeadline } from './instants.js';
-import { writtenSnapshot, type Snapshot } from './snapshot.js';
+import type { Snapshot } from './snapshot.js';
+import { leaseFactOf } from '../store/lease-facts.js';
 
 export type ReclaimOutcome =
   /** The claim was moved out of `in_progress_steps` this call → the step is eligible again. */
@@ -133,8 +134,10 @@ export interface ReclaimStepOptions {
 
 /** Pure mutation: remove the claim from in_progress + claims and append a reclaim audit entry.
  *  The step is NOT added to completed/failed/skipped (it returns to eligible); terminal marks,
- *  aborted_at, and pending_gate are untouched. */
-function applyReclaim(run: RunRecord, stepName: string, now: Date): RunRecord {
+ *  aborted_at, and pending_gate are untouched. #729 CW-1b part 2: `snap` is the store's snapshot
+ *  the decision read, its lease facts included (the prior state judges the claim's lease). */
+function applyReclaim(snap: Snapshot, stepName: string): RunRecord {
+  const { record: run, at: now } = snap;
   const priorClaim = run.claims?.[stepName];
   const auditEvidence = captureEvidence({
     stepId: stepName,
@@ -144,7 +147,7 @@ function applyReclaim(run: RunRecord, stepName: string, now: Date): RunRecord {
     output: {
       reclaimed: true,
       reason: 'manual reclaim',
-      prior_state: classifyClaim(priorClaim, now),
+      prior_state: classifyClaim(priorClaim, now, leaseFactOf(snap, priorClaim)),
       prior_deadline: priorClaim?.deadline ?? null,
       reclaimed_at: now.toISOString(),
     },
@@ -391,7 +394,9 @@ export async function reclaimStep(
   }
 
   // #715 (b): the run and the store's reading it is judged at (taken before the load).
-  const { record: run, at: now } = await store.get(runId);
+  // #729 CW-1b part 2: the decision read, kept whole: its lease facts are what the claim is judged on.
+  const read = await store.get(runId);
+  const { record: run, at: now } = read;
 
   // Guard — terminal: a wedge is non-terminal (a terminal+claimed guard-abort record is left alone).
   if (run.terminal_state) {
@@ -430,13 +435,13 @@ export async function reclaimStep(
   }
 
   const priorClaim = run.claims?.[stepName];
-  const priorState = classifyClaim(priorClaim, now);
+  const priorState = classifyClaim(priorClaim, now, leaseFactOf(read, priorClaim));
   const priorDeadline = priorClaim?.deadline ?? null;
 
   // Guard — membership: not in_progress → discriminate settled vs no-active-claim (issue #221, B2).
   if (!run.in_progress_steps.includes(stepName)) {
     const { outcome, detail } = classifyNoActiveClaim(run, stepName);
-    const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(run, now));
+    const gateAdvisory = buildGateExpiryAdvisory(read);
     return {
       run,
       step: stepName,
@@ -476,13 +481,13 @@ export async function reclaimStep(
       );
       warnFencedClearOutcome(runId, stepName, clearResult);
     }
-    const { record: updated, at: updatedAt } = await store.update(applyReclaim(run, stepName, now));
+    const written = await store.update(applyReclaim(read, stepName));
     if (!fenced) {
       await clearStaleWal(traceBufferStore, runId, stepName);
     }
-    const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(updated, updatedAt));
+    const gateAdvisory = buildGateExpiryAdvisory(written);
     return {
-      run: updated,
+      run: written.record,
       step: stepName,
       outcome: 'reclaimed',
       priorState,
@@ -496,7 +501,8 @@ export async function reclaimStep(
     // permanent), reclaim's condition can FLIP BACK: a reclaimed step can be re-claimed FRESH by a
     // live driver. A blind abandon-style re-remove would double-remove that live claim and
     // double-drive live work (reviewer Sig-6). So RE-EVALUATE the predicate on the reloaded record.
-    const { record: reloaded, at: reloadedAt } = await store.get(runId);
+    const reread = await store.get(runId);
+    const { record: reloaded, at: reloadedAt } = reread;
 
     if (!reloaded.in_progress_steps.includes(stepName)) {
       // A live driver settled it, or another reclaim already removed it → idempotent, no
@@ -505,7 +511,7 @@ export async function reclaimStep(
       // NOW, after the concurrent write that caused this CAS mismatch, not at the stale decision
       // read).
       const { outcome, detail } = classifyNoActiveClaim(reloaded, stepName);
-      const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(reloaded, reloadedAt));
+      const gateAdvisory = buildGateExpiryAdvisory(reread);
       return {
         run: reloaded,
         step: stepName,
@@ -516,9 +522,10 @@ export async function reclaimStep(
         ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
       };
     }
-    if (classifyClaim(reloaded.claims?.[stepName], reloadedAt) === 'healthy') {
+    const reclaimed = reloaded.claims?.[stepName];
+    if (classifyClaim(reclaimed, reloadedAt, leaseFactOf(reread, reclaimed)) === 'healthy') {
       // Re-claimed FRESH (a future deadline) → a live driver took over. Never stomp live work.
-      const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(reloaded, reloadedAt));
+      const gateAdvisory = buildGateExpiryAdvisory(reread);
       return {
         run: reloaded,
         step: stepName,
@@ -550,15 +557,13 @@ export async function reclaimStep(
       );
       warnFencedClearOutcome(runId, stepName, clearResult);
     }
-    const { record: updated, at: updatedAt } = await store.update(
-      applyReclaim(reloaded, stepName, reloadedAt),
-    );
+    const written = await store.update(applyReclaim(reread, stepName));
     if (!fenced) {
       await clearStaleWal(traceBufferStore, runId, stepName);
     }
-    const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(updated, updatedAt));
+    const gateAdvisory = buildGateExpiryAdvisory(written);
     return {
-      run: updated,
+      run: written.record,
       step: stepName,
       outcome: 'reclaimed',
       priorState,

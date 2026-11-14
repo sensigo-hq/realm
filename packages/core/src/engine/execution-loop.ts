@@ -62,6 +62,7 @@ import type {
 } from '../types/workflow-definition.js';
 import { isGateTrust } from '../types/workflow-definition.js';
 import type { RunStore, StoreSettlement } from '../store/store-interface.js';
+import type { LeaseFacts } from '../store/lease-facts.js';
 import { persistsField } from '../store/store-fidelity.js';
 import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
 import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '../store/trace-buffer-store.js';
@@ -772,20 +773,28 @@ function waysContext(
 }
 
 /**
+ * #729 CW-1b part 2: a settlement's run as the snapshot the store returned it in: its reading and the
+ * lease facts the store attached (`StoreSettlement.lease_facts`).
+ */
+function settledSnapshot(result: { run: RunRecord; at: Date; lease_facts?: LeaseFacts }): Snapshot {
+  return writtenSnapshot(result.run, result.at, result.lease_facts);
+}
+
+/**
  * issue #729 PR-0: a reply's ways — composed by `composeWaysOn` from ONE snapshot: the record the
  * reply describes, at the reading the call judged it with (the reading taken before the call's load,
- * which is also the instant its writes used — `writtenSnapshot`, no clock read here). Never stored:
- * a replayed call gets fresh ways.
+ * which is also the instant its writes used — no clock read here). Never stored: a replayed call gets
+ * fresh ways. #729 CW-1b part 2: the snapshot of the store call the record came from, its lease facts
+ * included, so `held_elsewhere` reads them.
  */
 function waysOf(
   store: Pick<RunStore, 'persistsClaims'>,
   definition: WorkflowDefinition,
-  run: RunRecord,
+  snap: Snapshot,
   registry: ExtensionRegistry | undefined,
-  at: Date,
   extra: Pick<WaysContext, 'opening_token' | 'presented'> = {},
 ): Pick<EngineReply, 'ways' | 'unavailable' | 'basis'> {
-  return composeWaysOn(writtenSnapshot(run, at), waysContext(store, definition, registry, extra));
+  return composeWaysOn(snap, waysContext(store, definition, registry, extra));
 }
 
 /** issue #729 PR-0 (D3 A-1): whether a composition offers a way that moves the run on. */
@@ -815,19 +824,18 @@ function noWays(): Pick<EngineReply, 'ways' | 'unavailable'> {
 }
 
 /**
- * issue #729 PR-0 (D3 A-6): `admitWay`'s verdict on the step this call names, on `run` at `at` —
- * `undefined` when it is admitted.
+ * issue #729 PR-0 (D3 A-6): `admitWay`'s verdict on the step this call names, on `snap` (#729 CW-1b
+ * part 2: its lease facts included) — `undefined` when it is admitted.
  */
 function byNameRefusal(
   store: Pick<RunStore, 'persistsClaims'>,
   definition: WorkflowDefinition,
-  run: RunRecord,
+  snap: Snapshot,
   options: Pick<ExecuteStepOptions, 'runId' | 'command' | 'registry' | 'party'>,
-  at: Date,
 ): Unavailable | undefined {
   const admission = admitWay(
     'run_step',
-    writtenSnapshot(run, at),
+    snap,
     // issue #729 (the Q3 unit): the same judge as Step 2, with the call's party (R26: one judge).
     waysContext(store, definition, options.registry, {
       ...(options.party !== undefined ? { party: options.party } : {}),
@@ -1203,7 +1211,7 @@ function makeErrorEnvelope(
   ) {
     return {
       ...baseWithWarnings,
-      ...waysOf(store, definition, snapshot.record, options.registry, snapshot.at),
+      ...waysOf(store, definition, snapshot, options.registry),
     };
   }
   return snapshot !== null ? judgedOn(baseWithWarnings, snapshot) : baseWithWarnings;
@@ -1559,13 +1567,13 @@ function buildSettlementRefusalEnvelope(
   store: Pick<RunStore, 'persistsClaims'>,
   options: ExecuteStepOptions,
   definition: WorkflowDefinition,
-  // #715 (b): the refused settle's result, with the reading its write took.
-  result: Extract<SettlementResult, { applied: false }> & { at: Date },
+  // #715 (b): the refused settle's result, with the reading its write took (and its lease facts).
+  result: Extract<SettlementResult, { applied: false }> & { at: Date; lease_facts?: LeaseFacts },
   allEvidence: EvidenceSnapshot[],
   traceWarnings: string[],
   kind: 'settle_step' | 'open_gate' = 'settle_step',
 ): EngineReply {
-  const refusedAt = writtenSnapshot(result.run, result.at);
+  const refusedAt = settledSnapshot(result);
   const extraWarnings = traceWarnings.length > 0 ? traceWarnings : undefined;
   switch (result.reason) {
     case 'already_settled_by_other':
@@ -1677,14 +1685,20 @@ async function buildAlreadySettledEnvelope(
   store: RunStore,
   definition: WorkflowDefinition,
   options: ExecuteStepOptions,
-  result: Extract<SettlementResult, { applied: false }> & { reason: 'already_settled'; at: Date },
+  result: Extract<SettlementResult, { applied: false }> & {
+    reason: 'already_settled';
+    at: Date;
+    lease_facts?: LeaseFacts;
+  },
   traceWarnings: string[],
 ): Promise<EngineReply> {
-  let run = result.run;
-  // #715 (b) (01 §C.4): the reading of the write `run` comes from — the settle's, or the drain's.
-  let at = result.at;
+  // #715 (b) (01 §C.4): the snapshot `run` comes from — the settle's, or the drain's (#729 CW-1b part
+  // 2: with its lease facts).
+  let snap = settledSnapshot(result);
   let drainWarnings: string[] = [];
-  const hasPending = Object.values(run.finalizer_ledger ?? {}).some((e) => e.status === 'pending');
+  const hasPending = Object.values(snap.record.finalizer_ledger ?? {}).some(
+    (e) => e.status === 'pending',
+  );
   if (hasPending) {
     try {
       const drainOutcome = await drainFinalizers(
@@ -1694,8 +1708,7 @@ async function buildAlreadySettledEnvelope(
         options.runId,
         options.driver,
       );
-      run = drainOutcome.run;
-      at = drainOutcome.at;
+      snap = drainOutcome.snapshot;
       drainWarnings = drainOutcome.warnings;
     } catch (err) {
       drainWarnings = [
@@ -1706,7 +1719,7 @@ async function buildAlreadySettledEnvelope(
   return {
     command: options.command,
     run_id: options.runId,
-    run_version: run.version,
+    run_version: snap.record.version,
     status: 'ok',
     reply_kind: 'ok',
     data: {},
@@ -1714,8 +1727,8 @@ async function buildAlreadySettledEnvelope(
     warnings: mergeWarnings(traceWarnings, ...drainWarnings),
     errors: [],
     context_hint: `Step '${options.command}' was already settled (a duplicate/retried attempt) — no action was taken.`,
-    run_phase: run.run_phase,
-    ...waysOf(store, definition, run, options.registry, at),
+    run_phase: snap.record.run_phase,
+    ...waysOf(store, definition, snap, options.registry),
   };
 }
 
@@ -1912,9 +1925,9 @@ export function outcomeOf(
 async function enactExpiredGateIfDue(
   store: RunStore,
   definition: WorkflowDefinition,
-  run: RunRecord,
+  // #729 CW-1b part 2: the run as the store returned it, at its reading, with its lease facts.
+  snap: Snapshot,
   registry: ExtensionRegistry | undefined,
-  now: Date,
   // issue #625 (holder slice): the program whose call enacts the expiry — named on the cleanup
   // steps its drain runs.
   driver: Attributed | undefined,
@@ -1923,19 +1936,22 @@ async function enactExpiredGateIfDue(
   // advance call): its library name, or the name its host passed.
   via: EnactedVia,
 ): Promise<{
-  run: RunRecord;
-  /** #715 (b) (01 §C.4): the reading `run` was read or written at — `now` when nothing was written. */
-  at: Date;
+  /**
+   * #715 (b) (01 §C.4): the run, at the reading it was read or written at (`snap` itself when nothing
+   * was written); #729 CW-1b part 2: with the lease facts of the store call that returned it.
+   */
+  snapshot: Snapshot;
   disclosure?: string;
   enacted: boolean;
   guards?: string[];
   receipt?: ExpiryReceipt;
 }> {
+  const { record: run, at: now } = snap;
   const gate = run.pending_gate;
   // decision C95: the one predicate the run's view reads too (`dueExpiry`), so the view never
   // offers an expiry this function would not carry out.
   if (gate === undefined || dueExpiry(gate, now) === undefined) {
-    return { run, at: now, enacted: false };
+    return { snapshot: snap, enacted: false };
   }
 
   const delta = { kind: 'expire_gate' as const, gateId: gate.gate_id };
@@ -1945,19 +1961,18 @@ async function enactExpiredGateIfDue(
   } catch (err) {
     // decision C109: core prints nothing — the caller puts this line in its reply's `warnings`.
     return {
-      run,
-      at: now,
+      snapshot: snap,
       enacted: false,
       disclosure: `gate '${gate.gate_id}' on '${gate.step_name}' had expired, but this ${via} call could not carry out its declared ${gate.on_expiry} (${err instanceof Error ? err.message : String(err)}); it went on with the run as it was.`,
     };
   }
 
   if (!expireOutcome.applied) {
-    return { run: expireOutcome.run, at: expireOutcome.at, enacted: false };
+    return { snapshot: settledSnapshot(expireOutcome), enacted: false };
   }
 
-  let finalRun = expireOutcome.run;
-  let finalAt = expireOutcome.at;
+  let finalSnap = settledSnapshot(expireOutcome);
+  const finalRun = finalSnap.record;
   const disclosureParts: string[] = [];
   // decision C105: this call carried it out, as its first act — and what it did: the default choice
   // it recorded, or that the run ended.
@@ -1997,8 +2012,7 @@ async function enactExpiredGateIfDue(
   if (expireOutcome.transitioned) {
     try {
       const drainOutcome = await drainFinalizers(store, definition, registry, run.id, driver);
-      finalRun = drainOutcome.run;
-      finalAt = drainOutcome.at;
+      finalSnap = drainOutcome.snapshot;
       disclosureParts.push(...drainOutcome.warnings);
     } catch (err) {
       disclosureParts.push(
@@ -2013,8 +2027,7 @@ async function enactExpiredGateIfDue(
   // decision C186: the guards the expiry's write decided — a caller that says what ran names them.
   const guards = (expireOutcome.guards ?? []).map((g) => g.step);
   return {
-    run: finalRun,
-    at: finalAt,
+    snapshot: finalSnap,
     disclosure: disclosureParts.join(' '),
     enacted: true,
     ...(guards.length > 0 ? { guards } : {}),
@@ -2237,13 +2250,19 @@ async function executeStepBody(
   inputBy: 'engine' | 'caller',
 ): Promise<EngineReply> {
   // Step 1: Load run — #729 PR-0 (A-9): through the one snapshot constructor, which takes the call's
-  // reading BEFORE the load; every judgement this call makes about the run is made at it.
-  let run: RunRecord;
-  let gateExpiryCheckNow: Date;
+  // reading BEFORE the load; every judgement this call makes about the run is made at it. #729 CW-1b
+  // part 2: `snap` is the store's snapshot, its lease facts included; `run` and
+  // `gateExpiryCheckNow` are set only through `hold`, from it.
+  let snap!: Snapshot;
+  let run!: RunRecord;
+  let gateExpiryCheckNow!: Date;
+  const hold = (next: Snapshot): void => {
+    snap = next;
+    run = next.record;
+    gateExpiryCheckNow = next.at;
+  };
   try {
-    const snap = await loadSnapshot(store, options.runId);
-    run = snap.record;
-    gateExpiryCheckNow = snap.at;
+    hold(await loadSnapshot(store, options.runId));
   } catch (err) {
     return firstReadRefusal(options, err);
   }
@@ -2258,14 +2277,12 @@ async function executeStepBody(
     const enacted = await enactExpiredGateIfDue(
       store,
       definition,
-      run,
+      snap,
       options.registry,
-      gateExpiryCheckNow,
       options.driver,
       via,
     );
-    run = enacted.run;
-    gateExpiryCheckNow = enacted.at;
+    hold(enacted.snapshot);
     gateExpiryDisclosure = enacted.disclosure;
     if (enacted.disclosure !== undefined) expiry.line = enacted.disclosure;
     if (enacted.receipt !== undefined) expiry.receipt = enacted.receipt;
@@ -2279,7 +2296,7 @@ async function executeStepBody(
   // it below, as before.
   const admission = admitWay(
     'run_step',
-    writtenSnapshot(run, gateExpiryCheckNow),
+    snap,
     // issue #729 (the Q3 unit): the call's party rides into the one admission — an agent's by-name
     // call on an eligible engine step is refused here, before anything is claimed or written.
     waysContext(store, definition, options.registry, {
@@ -2288,7 +2305,7 @@ async function executeStepBody(
     { run_id: options.runId, command: options.command, params: options.input },
   );
   if (!('ok' in admission) && NOT_CALLABLE_CODES.has(admission.code)) {
-    const composed = waysOf(store, definition, run, options.registry, gateExpiryCheckNow);
+    const composed = waysOf(store, definition, snap, options.registry);
     return {
       command: options.command,
       run_id: options.runId,
@@ -2307,14 +2324,7 @@ async function executeStepBody(
       blocked_reason: {
         eligible_steps: run.terminal_state
           ? []
-          : callableSteps(
-              definition,
-              describePending(
-                definition,
-                writtenSnapshot(run, gateExpiryCheckNow),
-                options.registry,
-              ),
-            ),
+          : callableSteps(definition, describePending(definition, snap, options.registry)),
       },
     };
   }
@@ -2382,7 +2392,7 @@ async function executeStepBody(
   const refusalOf = (): Pick<EngineReply, 'ways' | 'unavailable' | 'basis' | 'refusal'> & {
     eligible_steps: string[];
   } => {
-    const composed = waysOf(store, definition, run, options.registry, gateExpiryCheckNow);
+    const composed = waysOf(store, definition, snap, options.registry);
     const refusal = composed.unavailable.find(
       (u) =>
         u.verb === 'run_step' && u.step === options.command && u.code === 'refused_before_claim',
@@ -2392,7 +2402,7 @@ async function executeStepBody(
       ...(refusal !== undefined ? { refusal } : {}),
       eligible_steps: callableSteps(
         definition,
-        describePending(definition, writtenSnapshot(run, gateExpiryCheckNow), options.registry),
+        describePending(definition, snap, options.registry),
       ),
     };
   };
@@ -2400,12 +2410,7 @@ async function executeStepBody(
   if (preClaim?.refused_by === 'trust') {
     const { eligible_steps, ...routing } = refusalOf();
     return {
-      ...makeErrorEnvelope(
-        store,
-        options,
-        writtenSnapshot(run, gateExpiryCheckNow),
-        preClaim.error!,
-      ),
+      ...makeErrorEnvelope(store, options, snap, preClaim.error!),
       reply_kind: 'refusal',
       ...routing,
       blocked_reason: { eligible_steps },
@@ -2610,7 +2615,7 @@ async function executeStepBody(
         const refused = makeErrorEnvelope(
           store,
           options,
-          writtenSnapshot(run, gateExpiryCheckNow),
+          snap,
           withCount(err, countdown),
           definition,
           countWarnings.length > 0 ? countWarnings : undefined,
@@ -2651,7 +2656,7 @@ async function executeStepBody(
         return makeErrorEnvelope(
           store,
           options,
-          writtenSnapshot(run, gateExpiryCheckNow),
+          snap,
           withCount(err as WorkflowError, countdown),
           definition,
           countWarnings.length > 0 ? countWarnings : undefined,
@@ -2718,7 +2723,7 @@ async function executeStepBody(
       return makeErrorEnvelope(
         store,
         options,
-        writtenSnapshot(run, gateExpiryCheckNow),
+        snap,
         new WorkflowError('Failed to read trace buffer before claiming step', {
           code: 'ENGINE_STORE_FAILED',
           category: 'ENGINE',
@@ -2776,13 +2781,7 @@ async function executeStepBody(
           } catch (err) {
             // On enforce rejection: do NOT delete the WAL — agent retries with WAL preserved.
             if (exhaustion === null) {
-              return makeErrorEnvelope(
-                store,
-                options,
-                writtenSnapshot(run, gateExpiryCheckNow),
-                err as WorkflowError,
-                definition,
-              );
+              return makeErrorEnvelope(store, options, snap, err as WorkflowError, definition);
             }
             // issue #220: exhaustion is already armed by an earlier Step 2b/2c rejection — the
             // enforce-gate YIELDS its return (rather than returning) so a persistently-invalid
@@ -2826,25 +2825,24 @@ async function executeStepBody(
   }
 
   // Step 3: Claim the step — adds to in_progress_steps under file lock.
-  let pendingRun: RunRecord;
-  // #715 (b) (01 §C.4): the reading `pendingRun` was written at — the claim's, then each later write's.
-  let pendingAt: Date;
+  // #715 (b) (01 §C.4): the snapshot `pendingRun` was written in — the claim's, then each later
+  // write's (#729 CW-1b part 2: its lease facts included); `pendingRun` is set only through
+  // `holdPending`, from it.
+  let pendingSnap!: Snapshot;
+  let pendingRun!: RunRecord;
+  const holdPending = (next: Snapshot): void => {
+    pendingSnap = next;
+    pendingRun = next.record;
+  };
   try {
     // issue #625 (holder slice): the program taking the step is the claim's `holder`.
-    ({ record: pendingRun, at: pendingAt } = await store.claimStep(
-      options.runId,
-      options.command,
-      definition,
-      options.driver,
-    ));
+    holdPending(await store.claimStep(options.runId, options.command, definition, options.driver));
   } catch (err) {
     if (err instanceof WorkflowError) {
       if (err.code === 'STATE_STEP_ALREADY_CLAIMED') {
         // #715 (b): the fresh snapshot, or — when it cannot be read — the record this call already
         // holds at the reading it was judged at (never a fresh reading).
-        const fresh = await store
-          .get(options.runId)
-          .catch(() => writtenSnapshot(run, gateExpiryCheckNow));
+        const fresh = await store.get(options.runId).catch(() => snap);
         const freshRun = fresh.record;
         // Design record §6: append the drain advisory when the fresh run carries pendings.
         const claimedAdvisory = finalizerDrainAdvisory(freshRun);
@@ -2863,10 +2861,10 @@ async function executeStepBody(
           reply_kind: 'blocked',
           context_hint: `Step '${options.command}' was already claimed by another process.`,
           run_phase: freshRun.run_phase,
-          ...waysOf(store, definition, freshRun, options.registry, fresh.at),
+          ...waysOf(store, definition, fresh, options.registry),
           // #729 PR-0 (T-1): the claim's refusal in the one vocabulary — `held_elsewhere`, or what
           // the fresh record now says of the step (it may have settled meanwhile).
-          refusal: byNameRefusal(store, definition, freshRun, options, fresh.at) ?? {
+          refusal: byNameRefusal(store, definition, fresh, options) ?? {
             verb: 'run_step',
             step: options.command,
             code: 'held_elsewhere',
@@ -2880,7 +2878,7 @@ async function executeStepBody(
             // decision C94: the steps that can be called, as the ways name them.
             eligible_steps: callableSteps(
               definition,
-              describePending(definition, writtenSnapshot(freshRun, fresh.at), options.registry),
+              describePending(definition, fresh, options.registry),
             ),
           },
         };
@@ -2889,9 +2887,7 @@ async function executeStepBody(
       // gets the drain advisory when the fresh run carries pendings — a fresh re-read since `run`
       // (Step 1's load) may be stale by the time claimStep's own re-check inside its lock raced.
       if (err.code === 'STATE_STEP_NOT_ELIGIBLE') {
-        const freshSnap = await store
-          .get(options.runId)
-          .catch(() => writtenSnapshot(run, gateExpiryCheckNow));
+        const freshSnap = await store.get(options.runId).catch(() => snap);
         const freshRun = freshSnap.record;
         const notEligibleAdvisory = finalizerDrainAdvisory(freshRun);
         const extraWarnings =
@@ -2905,7 +2901,7 @@ async function executeStepBody(
       return makeErrorEnvelope(
         store,
         options,
-        writtenSnapshot(run, gateExpiryCheckNow),
+        snap,
         err,
         definition,
         traceWarnings.length > 0 ? traceWarnings : undefined,
@@ -2914,7 +2910,7 @@ async function executeStepBody(
     return makeErrorEnvelope(
       store,
       options,
-      writtenSnapshot(run, gateExpiryCheckNow),
+      snap,
       new WorkflowError('Failed to claim step', {
         code: 'ENGINE_STORE_FAILED',
         category: 'ENGINE',
@@ -2985,7 +2981,7 @@ async function executeStepBody(
       return makeErrorEnvelope(
         store,
         options,
-        writtenSnapshot(pendingRun, pendingAt),
+        pendingSnap,
         new WorkflowError('Failed to read trace buffer after claiming step', {
           code: 'ENGINE_STORE_FAILED',
           category: 'ENGINE',
@@ -3087,10 +3083,9 @@ async function executeStepBody(
     pendingRun.workflow_context_snapshots === undefined
   ) {
     const contextSnapshots = await loadWorkflowContext(definition, store.clock.now());
-    ({ record: pendingRun, at: pendingAt } = await store.update({
-      ...pendingRun,
-      workflow_context_snapshots: contextSnapshots,
-    }));
+    holdPending(
+      await store.update({ ...pendingRun, workflow_context_snapshots: contextSnapshots }),
+    );
     // issue #188 field-fidelity gate: advisory only, never blocks — the re-snapshot above
     // already self-healed CURRENT context regardless of what the store persists. This warns
     // that the HISTORY of snapshots won't survive on a store that doesn't declare the field
@@ -3140,25 +3135,29 @@ async function executeStepBody(
         );
       }
       try {
-        ({ record: pendingRun, at: pendingAt } = await store.update({
-          ...pendingRun,
-          extension_identity: [...identityHistory, registryIdentity],
-        }));
+        holdPending(
+          await store.update({
+            ...pendingRun,
+            extension_identity: [...identityHistory, registryIdentity],
+          }),
+        );
       } catch {
         // CAS loser: another writer bumped the version between our read and update.
         // Retry ONCE on fresh state (re-checking append-on-change), then log-and-drop.
         try {
-          const { record: freshRun, at: freshAt } = await store.get(options.runId);
+          const fresh = await store.get(options.runId);
+          const freshRun = fresh.record;
           const freshHistory = freshRun.extension_identity ?? [];
           const freshLast = lastExecutionIdentity(freshHistory);
           if (freshLast === undefined || extensionIdentityDiffers(freshLast, registryIdentity)) {
-            ({ record: pendingRun, at: pendingAt } = await store.update({
-              ...freshRun,
-              extension_identity: [...freshHistory, registryIdentity],
-            }));
+            holdPending(
+              await store.update({
+                ...freshRun,
+                extension_identity: [...freshHistory, registryIdentity],
+              }),
+            );
           } else {
-            pendingRun = freshRun;
-            pendingAt = freshAt;
+            holdPending(fresh);
           }
         } catch (retryErr) {
           console.error(
@@ -3438,7 +3437,7 @@ async function executeStepBody(
               return makeErrorEnvelope(
                 store,
                 options,
-                writtenSnapshot(pendingRun, pendingAt),
+                pendingSnap,
                 err,
                 definition,
                 traceWarnings.length > 0 ? traceWarnings : undefined,
@@ -3453,7 +3452,7 @@ async function executeStepBody(
             return makeErrorEnvelope(
               store,
               options,
-              writtenSnapshot(pendingRun, pendingAt),
+              pendingSnap,
               internal,
               definition,
               traceWarnings.length > 0 ? traceWarnings : undefined,
@@ -3480,9 +3479,9 @@ async function executeStepBody(
           }
           // applied: true — abort is UNCONDITIONALLY terminal (transitioned is always true here;
           // isTerminal(fresh) was already refused above inside applySettlement).
-          let finalRun = result.run;
-          // #715 (b) (D6-17): the reading of the write `finalRun` comes from — its own, or the drain's.
-          let finalAt = result.at;
+          // #715 (b) (D6-17): the snapshot of the write the final run comes from — its own, or the
+          // drain's (#729 CW-1b part 2: its lease facts included).
+          let finalSnap = settledSnapshot(result);
           let drainWarnings: string[] = [];
           const reArmWarnings = computeReArmWarnings(
             pendingRun.finalizer_ledger,
@@ -3496,8 +3495,7 @@ async function executeStepBody(
               options.runId,
               options.driver,
             );
-            finalRun = drainOutcome.run;
-            finalAt = drainOutcome.at;
+            finalSnap = drainOutcome.snapshot;
             drainWarnings = drainOutcome.warnings;
           } catch (err) {
             // A drain failure is NEVER the step's own failure — the abort already committed.
@@ -3508,16 +3506,16 @@ async function executeStepBody(
           return {
             command: options.command,
             run_id: options.runId,
-            run_version: finalRun.version,
+            run_version: finalSnap.record.version,
             status: 'ok',
             data: {},
             evidence: [abortEvidence],
             warnings: mergeWarnings(traceWarnings, ...reArmWarnings, ...drainWarnings),
             errors: [],
             context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
-            run_phase: finalRun.run_phase,
+            run_phase: finalSnap.record.run_phase,
             reply_kind: 'ok',
-            ...waysOf(store, definition, finalRun, options.registry, finalAt),
+            ...waysOf(store, definition, finalSnap, options.registry),
           };
         }
 
@@ -3900,9 +3898,8 @@ async function executeStepBody(
       // already_released / any OTHER refusal / a thrown infra error), the RETURNED envelope is
       // ALWAYS this SAME capability-block report — only whether the internal capability_blocks
       // marker got durably persisted varies, disclosed via blockStoreWarning. #715 (b): the one path.
-      let persistedBlockedRun: RunRecord | undefined;
-      // #715 (b) (D6-17): the reading of the release write `persistedBlockedRun` comes from.
-      let persistedBlockedAt: Date | undefined;
+      // #715 (b) (D6-17): the release write's snapshot (#729 CW-1b part 2: its lease facts included).
+      let persistedBlocked: Snapshot | undefined;
       let blockStoreWarning: string | undefined;
       const releaseClaimToken = pendingRun.claims?.[options.command]?.token;
       const delta: ReleaseStepDelta = {
@@ -3925,8 +3922,7 @@ async function executeStepBody(
       };
       try {
         const releaseResult = await store.settleStep(options.runId, delta, definition);
-        persistedBlockedRun = releaseResult.run;
-        persistedBlockedAt = releaseResult.at;
+        persistedBlocked = settledSnapshot(releaseResult);
         // applied / NOOP already_released ⇒ the block envelope exactly as today (NOOP merges
         // silently — no extra warning). ANY OTHER refusal ⇒ the same block envelope + a typed
         // warning (never STATE_CLAIM_LOST framing) — the claim survives for reclaim either way.
@@ -3955,10 +3951,11 @@ async function executeStepBody(
           blockedWays = waysOf(
             store,
             definition,
-            persistedBlockedRun ?? blockedRun,
+            // the release write's snapshot; the unwritten draft at the reading it was built at, with
+            // the facts of the claim's snapshot it was built from.
+            persistedBlocked ??
+              writtenSnapshot(blockedRun, gateExpiryCheckNow, pendingSnap.lease_facts),
             options.registry,
-            // the release write's reading; the unwritten draft's is the one it was built at.
-            persistedBlockedAt ?? gateExpiryCheckNow,
           );
         } catch {
           // a step's prompt can throw for an unresolvable template reference; fall back to none.
@@ -3974,7 +3971,7 @@ async function executeStepBody(
         {
           command: options.command,
           run_id: options.runId,
-          run_version: (persistedBlockedRun ?? blockedRun).version,
+          run_version: (persistedBlocked?.record ?? blockedRun).version,
           status: 'error',
           data: {},
           evidence: allEvidence,
@@ -3985,13 +3982,11 @@ async function executeStepBody(
           reply_kind: 'error',
           error_code: recoverableCode,
           context_hint: `Step '${options.command}' is blocked: its ${reqLabel} is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this ${requirement?.kind ?? 'capability'} can execute it.`,
-          run_phase: (persistedBlockedRun ?? blockedRun).run_phase,
+          run_phase: (persistedBlocked?.record ?? blockedRun).run_phase,
           ...blockedWays,
         },
         // the release write's record; its write failed ⇒ the record this call read.
-        persistedBlockedRun !== undefined
-          ? writtenSnapshot(persistedBlockedRun, persistedBlockedAt!)
-          : writtenSnapshot(pendingRun, pendingAt),
+        persistedBlocked ?? pendingSnap,
       );
     }
 
@@ -4015,7 +4010,7 @@ async function executeStepBody(
         return makeErrorEnvelope(
           store,
           options,
-          writtenSnapshot(pendingRun, pendingAt),
+          pendingSnap,
           err,
           definition,
           traceWarnings.length > 0 ? traceWarnings : undefined,
@@ -4030,7 +4025,7 @@ async function executeStepBody(
       return makeErrorEnvelope(
         store,
         options,
-        writtenSnapshot(pendingRun, pendingAt),
+        pendingSnap,
         internal,
         definition,
         traceWarnings.length > 0 ? traceWarnings : undefined,
@@ -4058,9 +4053,14 @@ async function executeStepBody(
       );
     }
 
-    let finalRun = result.run;
-    // #715 (b) (D6-17): the reading of the write `finalRun` comes from — its own, or the drain's.
-    let finalAt = result.at;
+    // #715 (b) (D6-17): the snapshot of the write `finalRun` comes from — its own, or the drain's
+    // (#729 CW-1b part 2: its lease facts included); `finalRun` is set only through `holdFinal`.
+    let finalSnap = settledSnapshot(result);
+    let finalRun = finalSnap.record;
+    const holdFinal = (next: Snapshot): void => {
+      finalSnap = next;
+      finalRun = next.record;
+    };
     let drainWarnings: string[] = [];
     const reArmWarnings = result.transitioned
       ? computeReArmWarnings(pendingRun.finalizer_ledger, result.run.finalizer_ledger)
@@ -4074,8 +4074,7 @@ async function executeStepBody(
           options.runId,
           options.driver,
         );
-        finalRun = drainOutcome.run;
-        finalAt = drainOutcome.at;
+        holdFinal(drainOutcome.snapshot);
         drainWarnings = drainOutcome.warnings;
       } catch (err) {
         drainWarnings = [
@@ -4134,7 +4133,7 @@ async function executeStepBody(
     let migratedWays: Pick<EngineReply, 'ways' | 'unavailable' | 'basis'> = noWays();
     if (migratedEffectiveAction !== 'stop') {
       try {
-        migratedWays = waysOf(store, definition, finalRun, options.registry, finalAt);
+        migratedWays = waysOf(store, definition, finalSnap, options.registry);
       } catch {
         // a step's prompt can throw for an unresolvable template reference; fall back to none.
       }
@@ -4182,7 +4181,7 @@ async function executeStepBody(
       },
       result,
     );
-    judgedOn(failedReply, writtenSnapshot(finalRun, finalAt));
+    judgedOn(failedReply, finalSnap);
     return failedReply;
   }
 
@@ -4237,7 +4236,7 @@ async function executeStepBody(
           return makeErrorEnvelope(
             store,
             options,
-            writtenSnapshot(pendingRun, pendingAt),
+            pendingSnap,
             new WorkflowError(`gate.message uses unknown filter '${err.filterName}'`, {
               code: 'FILTER_UNKNOWN',
               category: 'ENGINE',
@@ -4260,7 +4259,7 @@ async function executeStepBody(
         return makeErrorEnvelope(
           store,
           options,
-          writtenSnapshot(pendingRun, pendingAt),
+          pendingSnap,
           new WorkflowError(`gate.message has unresolvable references: ${unresolved.join(', ')}`, {
             code: 'GATE_MESSAGE_UNRESOLVABLE',
             category: 'ENGINE',
@@ -4384,7 +4383,7 @@ async function executeStepBody(
         return makeErrorEnvelope(
           store,
           options,
-          writtenSnapshot(pendingRun, pendingAt),
+          pendingSnap,
           err,
           definition,
           traceWarnings.length > 0 ? traceWarnings : undefined,
@@ -4399,7 +4398,7 @@ async function executeStepBody(
       return makeErrorEnvelope(
         store,
         options,
-        writtenSnapshot(pendingRun, pendingAt),
+        pendingSnap,
         internal,
         definition,
         traceWarnings.length > 0 ? traceWarnings : undefined,
@@ -4424,7 +4423,7 @@ async function executeStepBody(
           errors: [],
           context_hint: `Step '${options.command}' was already settled (a duplicate/retried attempt) — no action was taken.`,
           run_phase: noopRun.run_phase,
-          ...waysOf(store, definition, noopRun, options.registry, result.at),
+          ...waysOf(store, definition, settledSnapshot(result), options.registry),
         };
       }
       if (result.reason === 'already_open') {
@@ -4446,7 +4445,7 @@ async function executeStepBody(
           context_hint: `Run is already paused at gate '${liveGate.gate_id}'.`,
           run_phase: result.run.run_phase,
           reply_kind: 'confirm_required',
-          ...waysOf(store, definition, result.run, options.registry, result.at, {
+          ...waysOf(store, definition, settledSnapshot(result), options.registry, {
             presented: 'with_gate',
           }),
           gate: {
@@ -4505,7 +4504,7 @@ async function executeStepBody(
       context_hint: `Run is paused at gate '${gate_id}'.`,
       run_phase: gateRun.run_phase,
       reply_kind: 'confirm_required',
-      ...waysOf(store, definition, gateRun, options.registry, result.at, {
+      ...waysOf(store, definition, settledSnapshot(result), options.registry, {
         presented: 'with_gate',
         ...(gateClaimToken !== undefined ? { opening_token: gateClaimToken } : {}),
       }),
@@ -4547,7 +4546,7 @@ async function executeStepBody(
       return makeErrorEnvelope(
         store,
         options,
-        writtenSnapshot(pendingRun, pendingAt),
+        pendingSnap,
         err,
         definition,
         traceWarnings.length > 0 ? traceWarnings : undefined,
@@ -4562,7 +4561,7 @@ async function executeStepBody(
     return makeErrorEnvelope(
       store,
       options,
-      writtenSnapshot(pendingRun, pendingAt),
+      pendingSnap,
       internal,
       definition,
       traceWarnings.length > 0 ? traceWarnings : undefined,
@@ -4589,9 +4588,14 @@ async function executeStepBody(
     );
   }
 
-  let finalRun = result.run;
-  // #715 (b) (D6-17): the reading of the write `finalRun` comes from — its own, or the drain's.
-  let finalAt = result.at;
+  // #715 (b) (D6-17): the snapshot of the write `finalRun` comes from — its own, or the drain's
+  // (#729 CW-1b part 2: its lease facts included); `finalRun` is set only through `holdFinal`.
+  let finalSnap = settledSnapshot(result);
+  let finalRun = finalSnap.record;
+  const holdFinal = (next: Snapshot): void => {
+    finalSnap = next;
+    finalRun = next.record;
+  };
   let drainWarnings: string[] = [];
   const reArmWarnings = result.transitioned
     ? computeReArmWarnings(pendingRun.finalizer_ledger, result.run.finalizer_ledger)
@@ -4605,8 +4609,7 @@ async function executeStepBody(
         options.runId,
         options.driver,
       );
-      finalRun = drainOutcome.run;
-      finalAt = drainOutcome.at;
+      holdFinal(drainOutcome.snapshot);
       drainWarnings = drainOutcome.warnings;
     } catch (err) {
       drainWarnings = [
@@ -4666,12 +4669,8 @@ async function executeStepBody(
   // issue #625 PR-2a (decisions C33, C34): the reply's view is judged with the CALL's registry —
   // the same fact `get_run_state` reads on this server — and a step that cannot run is named, never
   // passed over as "waiting for other steps".
-  const migratedWays = waysOf(store, definition, finalRun, options.registry, finalAt);
-  const migratedPending = describePending(
-    definition,
-    writtenSnapshot(finalRun, finalAt),
-    options.registry,
-  );
+  const migratedWays = waysOf(store, definition, finalSnap, options.registry);
+  const migratedPending = describePending(definition, finalSnap, options.registry);
   // #729 PR-0 (Table rows 20–26, 32): the hint says what happened; the way on — the `inspect` way
   // on an ended run, the run's next ways otherwise — is the door's sentence after it.
   const migratedNamesNext =
@@ -4947,7 +4946,11 @@ function withGateClaim(
       .find((e) => e.step_id === envelope.command && e.kind !== 'gate_response');
     openedBy = readDrivenBy(driverEntry);
   } else {
-    const described = describeClaimHolder(gateClaim.claim, storeKeepsClaims);
+    // #729 CW-1b part 2: the gate claim's `{ holder, since }` copy is no run's claim: it names no
+    // lease (an opened gate's claim is written without one).
+    const described = describeClaimHolder(gateClaim.claim, storeKeepsClaims, {
+      absent: 'unleased',
+    });
     openedBy =
       'holder' in described ? described.holder : { by: null, absent_cause: described.absent_cause };
   }
@@ -5290,15 +5293,19 @@ async function composeExpiryReply(
   // F1: the question's pre-settle `expires_at` (see composeExpiredGateEnvelope).
   expiresAt: string | undefined,
 ): Promise<EngineReply> {
-  let finalRun = expireResult.run;
-  // #715 (b) (D6-17): the reading of the write `finalRun` comes from — its own, or the drain's.
-  let finalAt = expireResult.at;
+  // #715 (b) (D6-17): the snapshot of the write `finalRun` comes from — its own, or the drain's
+  // (#729 CW-1b part 2: its lease facts included); `finalRun` is set only through `holdFinal`.
+  let finalSnap = settledSnapshot(expireResult);
+  let finalRun = finalSnap.record;
+  const holdFinal = (next: Snapshot): void => {
+    finalSnap = next;
+    finalRun = next.record;
+  };
   let drainWarnings: string[] = [];
   if (expireResult.transitioned) {
     try {
       const drainOutcome = await drainFinalizers(store, definition, registry, finalRun.id, driver);
-      finalRun = drainOutcome.run;
-      finalAt = drainOutcome.at;
+      holdFinal(drainOutcome.snapshot);
       drainWarnings = drainOutcome.warnings;
     } catch (err) {
       drainWarnings = [
@@ -5361,7 +5368,7 @@ async function composeExpiryReply(
           errors: [],
           context_hint: LATE_SAME_CHOICE_SENTENCE,
           run_phase: finalRun.run_phase,
-          ...waysOf(store, definition, finalRun, registry, finalAt),
+          ...waysOf(store, definition, finalSnap, registry),
           ...(finalRun.terminal_state ? {} : { names_next: true as const }),
         },
         stepName,
@@ -5394,7 +5401,7 @@ async function composeExpiryReply(
       {
         ...envelope,
         warnings: mergeWarnings([], enacted.line, ...drainWarnings),
-        ...waysOf(store, definition, finalRun, registry, finalAt),
+        ...waysOf(store, definition, finalSnap, registry),
         ...(finalRun.terminal_state ? {} : { names_next: true as const }),
       },
       stepName,
@@ -5431,7 +5438,7 @@ async function composeExpiryReply(
     return lateReply(
       judgedOn(
         { ...envelope, warnings: mergeWarnings([], enacted.line, ...drainWarnings) },
-        writtenSnapshot(finalRun, finalAt),
+        finalSnap,
       ),
       stepName,
       enacted.receipt,
@@ -5475,30 +5482,29 @@ async function submitHumanResponseBody(
   const via: AnswerCaller = options.caller ?? 'submitHumanResponse';
 
   // 1. Load run — #729 PR-0 (A-9): through the one snapshot constructor; its reading — the store's,
-  // taken before the load (#715 (b)) — is the instant this call judges the question at.
-  let run: RunRecord;
-  let now: Date;
+  // taken before the load (#715 (b)) — is the instant this call judges the question at. #729 CW-1b
+  // part 2: `loaded` is the store's snapshot, its lease facts included.
+  let loaded: Snapshot;
   try {
-    const snap = await loadSnapshot(store, options.runId);
-    run = snap.record;
-    now = snap.at;
+    loaded = await loadSnapshot(store, options.runId);
   } catch (err) {
     // decision C168: a run this answer cannot read gets the reply its siblings give it.
     return errorEnvelope('submit_gate', options.runId, 0, runReadError(err));
   }
+  const { record: run, at: now } = loaded;
   // #729 PR-0 (P-3): the question as this call read it, before any wait — its deadline is the
   // `expiry` a not-recorded answer's outcome names.
   const readExpiresAt =
     run.pending_gate?.gate_id === options.gateId ? run.pending_gate.expires_at : undefined;
   // #729 PR-0 (D3 A-6): an answer's refusal, judged on the record a settle returned — #715 (b)
   // (D6-17): at that settle's own reading.
-  const answerRefusal = (onRun: RunRecord, onAt: Date): Unavailable | undefined => {
-    const admission = admitWay(
-      'respond',
-      writtenSnapshot(onRun, onAt),
-      waysContext(store, definition, options.registry),
-      { run_id: options.runId, gate_id: options.gateId, choice: options.choice },
-    );
+  // #729 CW-1b part 2: judged on the store's snapshot, its lease facts included.
+  const answerRefusal = (on: Snapshot): Unavailable | undefined => {
+    const admission = admitWay('respond', on, waysContext(store, definition, options.registry), {
+      run_id: options.runId,
+      gate_id: options.gateId,
+      choice: options.choice,
+    });
     return 'ok' in admission ? undefined : admission;
   };
 
@@ -5557,7 +5563,7 @@ async function submitHumanResponseBody(
           `Failed to persist gate response.`,
           run.run_phase,
         ),
-        writtenSnapshot(run, now),
+        loaded,
       );
     }
 
@@ -5570,9 +5576,15 @@ async function submitHumanResponseBody(
           // this call site) — recovers a crashed-drain RESOLVE on a duplicate submit (design record
           // §6 row 2, the buildAlreadySettledEnvelope drain-on-NOOP pattern reused verbatim).
           const stepName = findGateStepName(result.run, options.gateId) ?? 'submit_gate';
-          let noopRun = result.run;
-          // #715 (b) (D6-17): the reading of the write `noopRun` comes from — the settle's, or the drain's.
-          let noopAt = result.at;
+          // #715 (b) (D6-17): the snapshot of the write `noopRun` comes from — the settle's, or the
+          // drain's (#729 CW-1b part 2: its lease facts included); `noopRun` is set only through
+          // `holdNoop`.
+          let noopSnap = settledSnapshot(result);
+          let noopRun = noopSnap.record;
+          const holdNoop = (next: Snapshot): void => {
+            noopSnap = next;
+            noopRun = next.record;
+          };
           let noopDrainWarnings: string[] = [];
           const hasPending = Object.values(noopRun.finalizer_ledger ?? {}).some(
             (e) => e.status === 'pending',
@@ -5586,8 +5598,7 @@ async function submitHumanResponseBody(
                 options.runId,
                 options.driver,
               );
-              noopRun = drainOutcome.run;
-              noopAt = drainOutcome.at;
+              holdNoop(drainOutcome.snapshot);
               noopDrainWarnings = drainOutcome.warnings;
             } catch (err) {
               noopDrainWarnings = [
@@ -5627,7 +5638,7 @@ async function submitHumanResponseBody(
                 : `Gate '${options.gateId}' was already resolved with choice '${options.choice}' — no action was taken.`,
               run_phase: noopRun.run_phase,
               reply_kind: 'ok',
-              ...waysOf(store, definition, noopRun, options.registry, noopAt),
+              ...waysOf(store, definition, noopSnap, options.registry),
               ...(gateSettledByTimeout(noopRun, stepName) && !noopRun.terminal_state
                 ? { names_next: true as const }
                 : {}),
@@ -5677,10 +5688,10 @@ async function submitHumanResponseBody(
           // #729 PR-6a (B2; #729 comment 6237959686 item 15): the refusal is the one admission's
           // verdict on the record the settle returned — `question_settled` while the run goes on,
           // `run_ended` once it has ended; `outcome` names the winner either way.
-          const conflictRefusal = answerRefusal(result.run, result.at);
+          const conflictRefusal = answerRefusal(settledSnapshot(result));
           const conflictWithNext: EngineReply = {
             ...conflictReply,
-            ...waysOf(store, definition, result.run, options.registry, result.at),
+            ...waysOf(store, definition, settledSnapshot(result), options.registry),
             ...(result.run.terminal_state ? {} : { names_next: true as const }),
             ...(conflictOutcome !== undefined ? { outcome: conflictOutcome } : {}),
             ...(conflictRefusal !== undefined ? { refusal: conflictRefusal } : {}),
@@ -5711,7 +5722,7 @@ async function submitHumanResponseBody(
               `Invalid choice '${options.choice}' for gate '${stepName}'.`,
               result.run.run_phase,
             ),
-            writtenSnapshot(result.run, result.at),
+            settledSnapshot(result),
           );
         }
         case 'gate_mismatch': {
@@ -5741,8 +5752,8 @@ async function submitHumanResponseBody(
               err.message,
               result.run.run_phase,
             ),
-            waysOf(store, definition, result.run, options.registry, result.at),
-            answerRefusal(result.run, result.at),
+            waysOf(store, definition, settledSnapshot(result), options.registry),
+            answerRefusal(settledSnapshot(result)),
           );
         }
         case 'run_terminal': {
@@ -5799,7 +5810,7 @@ async function submitHumanResponseBody(
                 ),
                 ...(cancelOutcome !== undefined ? { outcome: cancelOutcome } : {}),
               },
-              writtenSnapshot(result.run, result.at),
+              settledSnapshot(result),
             );
           }
           // #729 PR-6a (B2 (3); PR6-R-20): an answer after an `on_expiry: abort` that another call
@@ -5840,7 +5851,7 @@ async function submitHumanResponseBody(
             expiredOutcome !== undefined
               ? { ...zombieReply, outcome: expiredOutcome, answer_recorded: false }
               : zombieReply,
-            writtenSnapshot(result.run, result.at),
+            settledSnapshot(result),
           );
         }
         default:
@@ -5884,9 +5895,14 @@ async function submitHumanResponseBody(
     // (buildAlreadySettledEnvelope is ExecuteStepOptions-shaped, not reusable here). `applied:
     // true` never reaches the already_settled leg, so only the `transitioned` disjunct applies at
     // THIS call site (design record §6 row 2).
-    let finalRun = result.run;
-    // #715 (b) (D6-17): the reading of the write `finalRun` comes from — its own, or the drain's.
-    let finalAt = result.at;
+    // #715 (b) (D6-17): the snapshot of the write `finalRun` comes from — its own, or the drain's
+    // (#729 CW-1b part 2: its lease facts included); `finalRun` is set only through `holdFinal`.
+    let finalSnap = settledSnapshot(result);
+    let finalRun = finalSnap.record;
+    const holdFinal = (next: Snapshot): void => {
+      finalSnap = next;
+      finalRun = next.record;
+    };
     let drainWarnings: string[] = [];
     if (result.transitioned) {
       try {
@@ -5897,8 +5913,7 @@ async function submitHumanResponseBody(
           options.runId,
           options.driver,
         );
-        finalRun = drainOutcome.run;
-        finalAt = drainOutcome.at;
+        holdFinal(drainOutcome.snapshot);
         drainWarnings = drainOutcome.warnings;
       } catch (err) {
         drainWarnings = [
@@ -5941,7 +5956,7 @@ async function submitHumanResponseBody(
             context_hint: migratedOrientation,
             run_phase: finalRun.run_phase,
             reply_kind: 'ok',
-            ...waysOf(store, definition, finalRun, options.registry, finalAt),
+            ...waysOf(store, definition, finalSnap, options.registry),
             names_next: true,
             ...(finalRun.defaulted_steps?.length
               ? { defaulted_steps: finalRun.defaulted_steps }
@@ -6146,6 +6161,8 @@ export async function drainFinalizers(
   run: RunRecord;
   /** #715 (b): the reading of the write (or load) `run` comes from — the instant to judge it at. */
   at: Date;
+  /** #729 CW-1b part 2: `run` at `at`, as the store returned it, with its lease facts. */
+  snapshot: Snapshot;
   warnings: string[];
   leftPending: string[];
   attempted: string[];
@@ -6169,7 +6186,14 @@ export async function drainFinalizers(
   // `attempted` AND an empty `leftPending` ran nothing and had nothing to run — the abandoned-run
   // case, where a surface must not claim a drain happened.
   const attempted: string[] = [];
-  let { record: run, at } = await store.get(runId);
+  // #729 CW-1b part 2: the run as the store last returned it (its lease facts included); `run` and
+  // `at` are set only through `hold`, from it.
+  let snap = await store.get(runId);
+  let { record: run, at } = snap;
+  const hold = (next: Snapshot): void => {
+    snap = next;
+    ({ record: run, at } = next);
+  };
 
   for (;;) {
     const pending = pendingByRank(run);
@@ -6212,8 +6236,7 @@ export async function drainFinalizers(
     );
     if (!leaseResult.applied) {
       if (leaseResult.reason === 'lease_held' || leaseResult.reason === 'rank_blocked') {
-        run = leaseResult.run;
-        at = leaseResult.at;
+        hold(settledSnapshot(leaseResult));
         // F12 (review G7-13): the pass halts at another drainer's lease — said, with what the record
         // shows (the lease's deadline), never that the drainer is alive or dead. Not in `leftPending`:
         // its escape is to wait, never to void a step another drainer may be running.
@@ -6224,8 +6247,7 @@ export async function drainFinalizers(
         break; // HALT the pass — a peer holds this lease, or a lower rank is still pending.
       }
       if (leaseResult.reason === 'ledger_not_pending') {
-        run = leaseResult.run;
-        at = leaseResult.at;
+        hold(settledSnapshot(leaseResult));
         continue; // ADVANCE — a peer already resolved this entry.
       }
       // not_eligible — unknown finalizer id; a contract violation (mintFresh never mints one).
@@ -6234,8 +6256,9 @@ export async function drainFinalizers(
           `on run '${runId}' — remaining pending: ${pendingByRank(leaseResult.run).join(', ')}`,
       );
     }
-    run = leaseResult.run;
-    // (#715 (b): `at` is the mark's below — every path from here assigns it or throws.)
+    hold(settledSnapshot(leaseResult));
+    // (#715 (b): `at` is set at the lease, just above, and again at the mark below — every path from
+    // here assigns it at the mark or throws.)
     // issue #558 PR-C: the lease APPLIED — this finalizer is attempted from here on, whatever the
     // handler returns (completed / failed / executed-but-unrecorded).
     attempted.push(finalizerName);
@@ -6343,21 +6366,19 @@ export async function drainFinalizers(
       // execute, but the outcome could not be durably recorded — the three-reason
       // executed-but-not-recorded warning (design record §6). Halt: none of these three mutate
       // the entry's 'pending' status, so continuing would re-select the SAME entry forever.
-      run = markOutcome.run;
-      at = markOutcome.at;
+      hold(settledSnapshot(markOutcome));
       warnings.push(
         `finalizer '${finalizerName}' executed but its outcome may not have been recorded ` +
           `(${markOutcome.reason}) — it may re-execute at the next terminal edge`,
       );
       break;
     }
-    run = markOutcome.run;
-    at = markOutcome.at;
+    hold(settledSnapshot(markOutcome));
     // result:'failed' is settled too (a recorded terminal outcome for this finalizer) — the loop
     // continues to the next rank regardless of markResult.
   }
 
-  return { run, at, warnings, leftPending, attempted };
+  return { run, at, snapshot: snap, warnings, leftPending, attempted };
 }
 
 /** One entry of the chain's `chained_auto_steps` accumulator. */
@@ -6574,9 +6595,14 @@ interface AdvanceLoopContext {
   traceBufferStore?: TraceBufferStore;
   driver?: Attributed;
   onStep?: (step: string) => void;
-  onTaken?: (step: string, run: RunRecord) => void;
+  onTaken?: (step: string, run: RunRecord, snapshot?: Snapshot) => void;
   /** F7: a step this loop ran whose outcome another program's act kept from being recorded. */
-  onNotRecorded?: (step: string, kind: NotRecordedKind, run: RunRecord) => void;
+  onNotRecorded?: (
+    step: string,
+    kind: NotRecordedKind,
+    run: RunRecord,
+    snapshot?: Snapshot,
+  ) => void;
   onGuard?: (guard: string) => void;
   /** The step `executeChain` ran before the loop (its warnings are rescued); absent for advanceRun. */
   namedStep?: string;
@@ -6611,9 +6637,11 @@ async function advanceLoop(
   definition: WorkflowDefinition,
   options: AdvanceLoopContext,
   state: {
-    run: RunRecord;
-    /** #715 (b) (01 §C.4): the reading `run` was read or written at — the instant the loop judges at. */
-    at: Date;
+    /**
+     * #715 (b) (01 §C.4): the run at the reading it was read or written at — the instant the loop
+     * judges at; #729 CW-1b part 2: with the lease facts of the store call that returned it.
+     */
+    snapshot: Snapshot;
     result: EngineReply;
     chainedSteps: ChainedStepEntry[];
     depth0Warnings: string[];
@@ -6625,11 +6653,18 @@ async function advanceLoop(
   },
 ): Promise<EngineReply> {
   const { chainedSteps, depth0Warnings, races } = state;
-  let { run, result } = state;
+  let { result } = state;
   // #715 (b) (02 §A.2, D6-17): the reading `run` was read or written at — the loop holds the record
   // and its reading as ONE snapshot, and replaces both together whenever it reads or writes the run,
-  // so a record is never judged at another load's reading.
-  let runAt = state.at;
+  // so a record is never judged at another load's reading. #729 CW-1b part 2: `snap` is that
+  // snapshot, as the store returned it (its lease facts included); `run` is set only through `hold`,
+  // from it.
+  let snap = state.snapshot;
+  let run = snap.record;
+  const hold = (next: Snapshot): void => {
+    snap = next;
+    run = next.record;
+  };
   // F7: the step whose own `ok` reply `result` is — the named step for `executeChain`, none for
   // `advanceRun` until a step runs.
   let lastRan = options.namedStep;
@@ -6637,7 +6672,7 @@ async function advanceLoop(
   const afterRaces = (reply: EngineReply): EngineReply =>
     races.length === 0
       ? reply
-      : composeAfterRaces(store, definition, run, options.registry, runAt, reply, {
+      : composeAfterRaces(store, definition, snap, options.registry, reply, {
           lastRan,
           races,
         });
@@ -6761,7 +6796,7 @@ async function advanceLoop(
             run_phase: run.run_phase,
             ...noWays(),
           },
-          writtenSnapshot(run, runAt),
+          snap,
         );
       }
 
@@ -6790,8 +6825,7 @@ async function advanceLoop(
             // recorded; already_settled/divergence DID decide something (elsewhere), so it is.
             pushGuard({ step: guardName, run_phase: guardSettleResult.run.run_phase });
           }
-          run = guardSettleResult.run;
-          runAt = guardSettleResult.at;
+          hold(settledSnapshot(guardSettleResult));
           // Drain: on already_settled ∧ pending ledger entries non-empty (design record §6, "same
           // clause" as the transitioned leg below) — recovers a crashed-drain RESOLVE that a
           // sibling's own settle committed but never drained.
@@ -6808,8 +6842,7 @@ async function advanceLoop(
                   options.runId,
                   options.driver,
                 );
-                run = drainOutcome.run;
-                runAt = drainOutcome.at;
+                hold(drainOutcome.snapshot);
                 if (drainOutcome.warnings.length > 0) guardWarnings.push(...drainOutcome.warnings);
               } catch (err) {
                 guardWarnings.push(
@@ -6866,7 +6899,7 @@ async function advanceLoop(
               run_phase: guardSettleResult.run.run_phase,
               ...noWays(),
             },
-            writtenSnapshot(guardSettleResult.run, guardSettleResult.at),
+            settledSnapshot(guardSettleResult),
           );
         }
         if (guardSettleResult.reason === 'run_terminal') {
@@ -6887,13 +6920,7 @@ async function advanceLoop(
             reply_kind: 'ok',
             context_hint: `Run '${options.runId}' is already terminal (${guardSettleResult.run.run_phase}); guard '${guardName}' was not evaluated.`,
             run_phase: guardSettleResult.run.run_phase,
-            ...waysOf(
-              store,
-              definition,
-              guardSettleResult.run,
-              options.registry,
-              guardSettleResult.at,
-            ),
+            ...waysOf(store, definition, settledSnapshot(guardSettleResult), options.registry),
           };
         }
         // gate_mismatch/choice_not_eligible/already_open/already_released and every other kind's
@@ -6910,8 +6937,8 @@ async function advanceLoop(
         // Drain IMMEDIATELY after a transitioned settle result, BEFORE building the in-loop
         // terminal envelope (design record §6/R5 — a post-loop drain would be dead code on this
         // leg: this function RETURNS before ever reaching a post-loop point).
-        let finalGuardRun = guardSettleResult.run;
-        let finalGuardAt = guardSettleResult.at;
+        // #729 CW-1b part 2: the snapshot of the write the final run comes from (lease facts included).
+        let finalGuard = settledSnapshot(guardSettleResult);
         let guardDrainWarnings: string[];
         try {
           const drainOutcome = await drainFinalizers(
@@ -6921,8 +6948,7 @@ async function advanceLoop(
             options.runId,
             options.driver,
           );
-          finalGuardRun = drainOutcome.run;
-          finalGuardAt = drainOutcome.at;
+          finalGuard = drainOutcome.snapshot;
           guardDrainWarnings = drainOutcome.warnings;
         } catch (err) {
           guardDrainWarnings = [
@@ -6938,20 +6964,20 @@ async function advanceLoop(
         // F13 (review F-R4): the guard this loop decided ended the run — the reply says so as a
         // step's write that ends the run says it (the one reply rule): `guards`, the guard this
         // write settled, and `ended_by`, its seal arm, step and reason, read off the record.
-        const loopEnding = guardEndingOfRun(finalGuardRun);
+        const loopEnding = guardEndingOfRun(finalGuard.record);
         return {
           command: options.command,
           run_id: options.runId,
-          run_version: finalGuardRun.version,
+          run_version: finalGuard.record.version,
           status: 'ok',
           data: {},
           evidence: guardOwnEvidence,
           warnings: mergeWarnings(guardWarnings, ...guardDrainWarnings),
           errors: [],
           context_hint: migratedContextHint,
-          run_phase: finalGuardRun.run_phase,
+          run_phase: finalGuard.record.run_phase,
           reply_kind: 'ok',
-          ...waysOf(store, definition, finalGuardRun, options.registry, finalGuardAt),
+          ...waysOf(store, definition, finalGuard, options.registry),
           guards: [{ step: guardName, outcome: guardSettleOutcome }],
           ...(loopEnding !== undefined
             ? {
@@ -6962,15 +6988,14 @@ async function advanceLoop(
                 },
               }
             : {}),
-          ...(finalGuardRun.defaulted_steps?.length
-            ? { defaulted_steps: finalGuardRun.defaulted_steps }
+          ...(finalGuard.record.defaulted_steps?.length
+            ? { defaulted_steps: finalGuard.record.defaulted_steps }
             : {}),
         };
       }
 
       // Non-terminal pass — continue the chain.
-      run = guardSettleResult.run;
-      runAt = guardSettleResult.at;
+      hold(settledSnapshot(guardSettleResult));
       guardEligible = findEligibleGuardSteps(definition, run);
       continue;
     }
@@ -6982,7 +7007,7 @@ async function advanceLoop(
       result = {
         ...result,
         run_version: run.version,
-        ...waysOf(store, definition, run, options.registry, runAt),
+        ...waysOf(store, definition, snap, options.registry),
         // issue #279 (increment 2, PR-D): non-abort settled_outcome_divergence warnings accumulated
         // during the guard loop above (the ADVANCE leg) must reach whichever envelope returns —
         // this rebuild is the first point after the loop `result` is touched again.
@@ -6996,18 +7021,14 @@ async function advanceLoop(
       return afterRaces(result);
     }
 
-    const nextAutoStep = pickNextEngineStep(
-      definition,
-      writtenSnapshot(run, runAt),
-      options.registry,
-    );
+    const nextAutoStep = pickNextEngineStep(definition, snap, options.registry);
     if (nextAutoStep === undefined || executions >= budget) {
       // Only agent steps, a refused step, or nothing — the reply is composed from this record.
       return afterRaces({
         ...result,
         run_version: run.version,
         run_phase: deriveRunPhase(run),
-        ...waysOf(store, definition, run, options.registry, runAt),
+        ...waysOf(store, definition, snap, options.registry),
       });
     }
 
@@ -7052,13 +7073,14 @@ async function advanceLoop(
     if (stepResult.status !== 'ok') {
       // F7: every reply that is not `ok` is read against the record as it is now — core's one rule
       // for "another program got there first" ({@link classifyStop}), which the hosts read too.
-      let after: RunRecord;
-      let afterAt: Date;
+      // #729 CW-1b part 2: the re-read snapshot, its lease facts included.
+      let afterSnap: Snapshot;
       try {
-        ({ record: after, at: afterAt } = await store.get(options.runId));
+        afterSnap = await store.get(options.runId);
       } catch {
         return stepResult;
       }
+      const after = afterSnap.record;
       const stop = classifyStop(stepResult, nextAutoStep, after);
       if (isRaceStop(stop)) {
         // A race: not a stop. The record is the re-read one, and the loop goes on with what is
@@ -7068,14 +7090,13 @@ async function advanceLoop(
         // refused because the run ended or a question opened ran nothing here and needs no line of
         // its own — the reply says what the record shows. A refused settle's own warnings are said
         // with the reply the call ends on.
-        run = after;
-        runAt = afterAt;
+        hold(afterSnap);
         races.push({ step: nextAutoStep, stop });
         if (stepResult.status === 'error') depth0Warnings.push(...stepResult.warnings);
         if (stop.kind === 'held_elsewhere' && !stop.ran_here) {
-          options.onTaken?.(nextAutoStep, run);
+          options.onTaken?.(nextAutoStep, run, snap);
         } else if (stop.ran_here) {
-          options.onNotRecorded?.(nextAutoStep, stop.kind as NotRecordedKind, run);
+          options.onNotRecorded?.(nextAutoStep, stop.kind as NotRecordedKind, run, snap);
         }
         // A step a race left owed again may run once more in this call (the bound above).
         if (
@@ -7090,10 +7111,10 @@ async function advanceLoop(
       // decision C24: the step's own reply judged its ways with no registry (the capability check
       // reports 'unknown', so the act stayed offered for the step that just failed to dispatch).
       // Judge them again on the record as it is now, with this call's registry.
-      return { ...stepResult, ...waysOf(store, definition, after, options.registry, afterAt) };
+      return { ...stepResult, ...waysOf(store, definition, afterSnap, options.registry) };
     }
     try {
-      ({ record: run, at: runAt } = await store.get(options.runId));
+      hold(await store.get(options.runId));
     } catch {
       return stepResult;
     }
@@ -7184,12 +7205,13 @@ function raceClause(step: string, stop: Pick<RaceEntry, 'kind' | 'ran_here'>): s
 function composeAfterRaces(
   store: Pick<RunStore, 'persistsClaims'>,
   definition: WorkflowDefinition,
-  run: RunRecord,
+  // #729 CW-1b part 2: the re-read snapshot, its lease facts included.
+  snap: Snapshot,
   registry: ExtensionRegistry,
-  at: Date,
   reply: EngineReply,
   context: { lastRan: string | undefined; races: readonly LoopRace[] },
 ): EngineReply {
+  const run = snap.record;
   const ranHere = context.races.some((r) => r.stop.ran_here);
   const head =
     context.lastRan !== undefined
@@ -7202,7 +7224,7 @@ function composeAfterRaces(
     ...rest,
     run_version: run.version,
     run_phase: deriveRunPhase(run),
-    ...waysOf(store, definition, run, registry, at),
+    ...waysOf(store, definition, snap, registry),
     ...(run.terminal_state ? {} : { names_next: true as const }),
     context_hint: head + tail,
     races: context.races.map(raceEntryOf),
@@ -7273,17 +7295,25 @@ export interface AdvanceRunOptions {
    * Called with the name of a step another process held when this call tried to claim it
    * (`STATE_STEP_ALREADY_CLAIMED`), with the record re-read after the refusal; the loop then
    * continues, and the step is not in `chained_auto_steps`. A driver prints its past-tense line
-   * from the re-read record's claim.
+   * from the re-read record's claim. #729 CW-1b part 2: `snapshot`, an optional last argument, is the
+   * run's re-read snapshot, with its lease facts (read a claim's with `leaseFactOf`).
    */
-  onTaken?: (step: string, run: RunRecord) => void;
+  onTaken?: (step: string, run: RunRecord, snapshot?: Snapshot) => void;
   /**
    * F7: called with the name of a step this call ran whose own settle was refused because another
-   * program acted after this call's claim — the kind core's classifier names (`taken`: another
-   * program holds it now; `ran_elsewhere`: another program settled it; `run_ended`; `claim_removed`:
-   * its claim was removed, and the step is owed again) — with the record re-read after the refusal.
-   * The step's outcome was not recorded; the loop then goes on with what is left.
+   * program acted after this call's claim — the kind core's classifier names (`held_elsewhere`:
+   * another program holds it now; `step_settled`: another program settled it; `run_ended`;
+   * `claim_removed`: its claim was removed, and the step is owed again) — with the record re-read
+   * after the refusal.
+   * The step's outcome was not recorded; the loop then goes on with what is left. #729 CW-1b part 2:
+   * `snapshot`, an optional last argument, is the run's re-read snapshot, with its lease facts.
    */
-  onNotRecorded?: (step: string, kind: NotRecordedKind, run: RunRecord) => void;
+  onNotRecorded?: (
+    step: string,
+    kind: NotRecordedKind,
+    run: RunRecord,
+    snapshot?: Snapshot,
+  ) => void;
   /**
    * Called with the name of each guard the reply lists in `chained_auto_steps`, in that order, as
    * the call reaches it and before the next step's `onStep` (decision C187): a guard decided by the
@@ -7346,13 +7376,17 @@ async function advanceRunBody(
   const caller: AdvanceCaller = options.caller ?? 'advanceRun';
   const command = options.command ?? caller;
   const registry = options.registry ?? createDefaultRegistry();
-  // #729 PR-0 (A-9): the load through the one snapshot constructor; its reading is `now`.
-  let stored: RunRecord;
-  let now: Date;
+  // #729 PR-0 (A-9): the load through the one snapshot constructor; its reading is `snap.at`. #729
+  // CW-1b part 2: `snap` is the store's snapshot, its lease facts included; `stored` is set only
+  // through `hold`, from it.
+  let snap!: Snapshot;
+  let stored!: RunRecord;
+  const hold = (next: Snapshot): void => {
+    snap = next;
+    stored = next.record;
+  };
   try {
-    const snap = await loadSnapshot(store, options.runId);
-    stored = snap.record;
-    now = snap.at;
+    hold(await loadSnapshot(store, options.runId));
   } catch (err) {
     // decision C156: a run this call cannot read is answered as its siblings answer it — the same
     // error reply, labelled with this call's `command` — never a throw.
@@ -7370,14 +7404,12 @@ async function advanceRunBody(
     const enacted = await enactExpiredGateIfDue(
       store,
       definition,
-      stored,
+      snap,
       registry,
-      now,
       options.driver,
       caller,
     );
-    stored = enacted.run;
-    now = enacted.at;
+    hold(enacted.snapshot);
     expiryDisclosure = enacted.disclosure;
     if (expiryDisclosure !== undefined) options.onExpiry?.(expiryDisclosure);
     // decision C109: a line can say the expiry could NOT be carried out — the hint then never says
@@ -7408,8 +7440,7 @@ async function advanceRunBody(
       via: caller,
     },
     {
-      run: stored,
-      at: now,
+      snapshot: snap,
       result: {
         command,
         run_id: options.runId,
@@ -7419,10 +7450,10 @@ async function advanceRunBody(
         evidence: [],
         warnings: [],
         errors: [],
-        ...nothingRanHint(writtenSnapshot(stored, now), expiryCarriedOut, expiryGuards),
+        ...nothingRanHint(snap, expiryCarriedOut, expiryGuards),
         run_phase: deriveRunPhase(stored),
         reply_kind: 'ok',
-        ...waysOf(store, definition, stored, registry, now),
+        ...waysOf(store, definition, snap, registry),
       },
       chainedSteps: chained,
       depth0Warnings,
@@ -7437,7 +7468,7 @@ async function advanceRunBody(
   // the run after every race) — never a second load, so the hint and the reply's `as_of` agree.
   let endHint: Pick<EngineReply, 'context_hint' | 'names_next'> | undefined;
   if (chained.length === 0 && advanced.status === 'ok' && !races.some((r) => r.stop.ran_here)) {
-    const end = snapshotOfBasis(advanced) ?? writtenSnapshot(stored, now);
+    const end = snapshotOfBasis(advanced) ?? snap;
     endHint = nothingRanHint(end, expiryCarriedOut, expiryGuards);
   }
   // decision C110: each line once — a chained step's warnings are not listed again when the final
@@ -7508,11 +7539,11 @@ async function executeChainBody(
   // boundary protects every executeChain caller regardless of how it reached here. Placed in the
   // public wrapper so it fires exactly once at entry; recursive depth>0 calls and runs that become
   // terminal mid-chain are covered by the loop's own check in advanceLoop.
-  let entryRun: RunRecord | undefined;
-  // #715 (b) (01 §C.4): the reading of the entry's read — the instant its reply is judged at.
-  let entryAt: Date | undefined;
+  // #715 (b) (01 §C.4): the entry's read — its reading is the instant its reply is judged at (#729
+  // CW-1b part 2: its lease facts included).
+  let entry: Snapshot | undefined;
   try {
-    ({ record: entryRun, at: entryAt } = await store.get(options.runId));
+    entry = await store.get(options.runId);
   } catch (err) {
     // issue #183: the store layer no longer conflates absence with unreachability — store.get()
     // now throws a typed I/O error (rather than mapping it to STATE_RUN_NOT_FOUND) when the run
@@ -7523,7 +7554,7 @@ async function executeChainBody(
     // (the follow-up to round 20's finding 3): the store's own `WorkflowError`, or
     // `ENGINE_STORE_FAILED` naming the cause; the step named in `stopped_step`.
     if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
-      entryRun = undefined;
+      entry = undefined;
     } else {
       return stampStoppedStep(firstReadRefusal(options, err), options.command);
     }
@@ -7531,7 +7562,8 @@ async function executeChainBody(
   // issue #279 (increment 2, PR-C — D-3 leg v): keyed on terminal_state, never the persisted
   // run_phase — a grandfathered terminal-with-stale-gate record (the #282 class) must still be
   // recognized as terminal here.
-  if (entryRun !== undefined && entryRun.terminal_state === true) {
+  const entryRun = entry?.record;
+  if (entry !== undefined && entryRun !== undefined && entryRun.terminal_state === true) {
     // Derive-for-message (D-3 leg v): render the TRUE (derived) phase, never the possibly-stale
     // persisted one.
     const derivedPhase = deriveRunPhase(entryRun);
@@ -7549,7 +7581,7 @@ async function executeChainBody(
       reply_kind: 'ok',
       context_hint: `Run '${options.runId}' is already terminal (${derivedPhase}); no steps executed.`,
       run_phase: derivedPhase,
-      ...waysOf(store, definition, entryRun, options.registry, entryAt!),
+      ...waysOf(store, definition, entry, options.registry),
     };
   }
 
@@ -7573,14 +7605,15 @@ async function executeChainBody(
   );
   let result: EngineReply = named;
   if (named.status === 'ok') {
-    let run: RunRecord | undefined;
-    let runAt: Date | undefined;
+    // #729 CW-1b part 2: the run re-read after the named step, its lease facts included.
+    let snap: Snapshot | undefined;
     try {
-      ({ record: run, at: runAt } = await store.get(options.runId));
+      snap = await store.get(options.runId);
     } catch {
-      run = undefined;
+      snap = undefined;
     }
-    if (run !== undefined && runAt !== undefined) {
+    const run = snap?.record;
+    if (snap !== undefined && run !== undefined) {
       // issue #625: on a store that declares `settleStep`, the named step's own write settled
       // every guard it made eligible (`named.guards`).
       const cascadedGuards = named.guards ?? [];
@@ -7615,7 +7648,7 @@ async function executeChainBody(
           namedStep: options.command,
           via,
         },
-        { run, at: runAt, result: named, chainedSteps: chained, depth0Warnings, races },
+        { snapshot: snap, result: named, chainedSteps: chained, depth0Warnings, races },
       );
     }
   }

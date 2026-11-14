@@ -459,3 +459,100 @@ describe('caching 3-M B1 — response_id is kept only when it passes the one che
     expect(result?.kept, `${label}: ${JSON.stringify(result)}`).toBe(expected);
   });
 });
+
+// U3: every field a provider module can write into a request is bounded where the record is
+// written, as `model` is. A request is written through a step's evidence with one field set as a
+// module might set it; the cell reads the STORED request back: whether the field was kept, and its
+// length and ending when it is text. The rest of the request is kept beside it. Fakes only.
+describe('U3 — every field a provider module writes is bounded at the write', () => {
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
+  });
+
+  const storedField = async (field: string, value: unknown) => {
+    const { record: run } = await store.create({
+      workflowId: DEF.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const usage = {
+      request_index: 0,
+      request_start: '2026-11-14T00:00:00.000Z',
+      prompt_tokens: 10,
+      [field]: value,
+    } as unknown as UsageRecord;
+    await executeStep(store, DEF, {
+      runId: run.id,
+      command: 'work',
+      input: {},
+      dispatcher: echo,
+      stepMeta: { usage: [usage] },
+    });
+    const request = (await store.get(run.id)).record.evidence[0]!.diagnostics!.cache!
+      .requests[0]! as unknown as Record<string, unknown>;
+    const kept = request[field];
+    return {
+      field,
+      has: Object.hasOwn(request, field),
+      ...(typeof kept === 'string'
+        ? { length: kept.length, ending: kept.slice(NAME_MAX_LENGTH) }
+        : {}),
+      prompt_tokens: request['prompt_tokens'],
+    };
+  };
+
+  it('a long endpoint is cut at 200; one with a control character, an 80-character date, a date with text around it, a count as text or below 0, and a cache_creation as text are not stored; a copy whose date has text around it is not stored', async () => {
+    // A module's endpoint text with no control character: 1,032 characters.
+    const longEndpoint = `https://${'e'.repeat(1024)}`;
+    // A date with a comment after it: 63 characters, and `Date.parse` reads it.
+    const commentedDate = `Nov 14 2026 (${'x'.repeat(49)})`;
+    const copy = (request_start: string) => ({
+      from: 'run',
+      request_start,
+      cache_requested: 'lifetime',
+    });
+    const dropped = (field: string) => ({ field, has: false, prompt_tokens: 10 });
+    // (a) red when `endpoint` is not in the bounded list (the long text kept whole: length 1032; the
+    //     control character kept), when the shape checks are removed (each dropped arm kept), or when
+    //     the date is checked by `Date.parse` alone (the commented date kept at 63, and the copy that
+    //     carries it kept); (b) prints each arm's field, whether it was kept, and a kept text's length
+    //     and ending.
+    expect([
+      await storedField('endpoint', longEndpoint),
+      await storedField('endpoint', 'custom\u0007FAKE-u3-endpoint'),
+      await storedField('request_start', `2026-11-14T00:00:00.000Z${'Z'.repeat(56)}`),
+      await storedField('request_start', commentedDate),
+      await storedField('output_tokens', '7'),
+      await storedField('cache_read_input_tokens', -1),
+      await storedField('cache_creation', 'FAKE-u3-cache-creation'),
+      await storedField('reference', copy(commentedDate)),
+      await storedField('reference', copy('2026-11-13T00:00:00.000Z')),
+    ]).toEqual([
+      {
+        field: 'endpoint',
+        has: true,
+        length: NAME_MAX_LENGTH + NAME_CAP_MARKER.length,
+        ending: NAME_CAP_MARKER,
+        prompt_tokens: 10,
+      },
+      dropped('endpoint'),
+      dropped('request_start'),
+      dropped('request_start'),
+      dropped('output_tokens'),
+      dropped('cache_read_input_tokens'),
+      dropped('cache_creation'),
+      dropped('reference'),
+      { field: 'reference', has: true, prompt_tokens: 10 },
+    ]);
+    // Non-vacuity: Realm's own word in `endpoint` is stored as it is.
+    // (a) red when the bound drops or changes a valid word; (b) prints the arm.
+    expect(await storedField('endpoint', 'custom')).toEqual({
+      field: 'endpoint',
+      has: true,
+      length: 6,
+      ending: '',
+      prompt_tokens: 10,
+    });
+  });
+});
