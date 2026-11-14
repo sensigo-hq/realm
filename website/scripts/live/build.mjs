@@ -74,21 +74,28 @@ const r = await esbuild.build({
   legalComments: 'none',
 });
 // M7: the packages pin each other exactly; a partial bump would nest a second copy of the engine.
-const copies = [
-  ...new Set(
-    Object.keys(r.metafile.inputs)
-      .map((p) => /^(.*node_modules\/@sensigo\/realm)\//.exec(p)?.[1])
-      .filter(Boolean),
-  ),
-];
-if (copies.length !== 1) {
-  console.log(
-    'build FAILED: the bundle must hold exactly one copy of @sensigo/realm; it holds ' +
-      copies.length +
-      ': ' +
-      copies.join(', '),
-  );
-  process.exit(1);
+// The MCP SDK too: realm-mcp pins it exactly, and with no override nothing else keeps the bundle to
+// one SDK; a website pin that differs from realm-mcp's would nest a second copy under realm-mcp.
+for (const pkg of ['@sensigo/realm', '@modelcontextprotocol/sdk']) {
+  const re = new RegExp('^(.*node_modules/' + pkg + ')/');
+  const copies = [
+    ...new Set(
+      Object.keys(r.metafile.inputs)
+        .map((p) => re.exec(p)?.[1])
+        .filter(Boolean),
+    ),
+  ];
+  if (copies.length !== 1) {
+    console.log(
+      'build FAILED: the bundle must hold exactly one copy of ' +
+        pkg +
+        '; it holds ' +
+        copies.length +
+        ': ' +
+        copies.join(', '),
+    );
+    process.exit(1);
+  }
 }
 const code = r.outputFiles[0].contents;
 const sha256 = crypto.createHash('sha256').update(code).digest('hex');

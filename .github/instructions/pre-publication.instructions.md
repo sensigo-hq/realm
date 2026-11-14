@@ -121,7 +121,7 @@ Rename `## [Unreleased]` to `## [<version>] — YYYY-MM-DD`. Use [keepachangelog
 - Breaking changes: include a note referencing the migration guide.
 - If using automated CHANGELOG tooling (changesets, git-cliff), run the tool and verify its output before committing.
 
-Three docs lines quote the published version; set each to `<version>` in this same commit, the only moment the number is true of a release: the `realm --version` output in `docs/start/install-and-first-run.md`, the initialize reply's `"version"` in `docs/reference/cli/realm-mcp-and-serve.md`, and the sentence "the published version is …" in `docs/README.md` (0.47.0 and 0.48.0 shipped with the first still at 0.46.0; 0.48.0 and 0.49.0 with the third still at 0.47.0).
+Three docs lines quote the published version; set each to `<version>` in this same commit, the only moment the number is true of a release: the `realm --version` output in `docs/start/install-and-first-run.md`, the initialize reply's `"version"` in `docs/reference/cli/realm-mcp-and-serve.md`, and both numbers in the sentence "These pages describe Realm …" in `docs/README.md` (0.47.0 and 0.48.0 shipped with the first still at 0.46.0; 0.48.0 and 0.49.0 with the third still at 0.47.0).
 
 Commit:
 
