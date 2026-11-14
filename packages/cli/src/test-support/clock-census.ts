@@ -29,6 +29,11 @@ export const CENSUS: Record<string, Entry> = {
     'read',
     "the start of the read's window, compared with updated_at, the store's own stamp",
   ],
+  'cli/src/agent/gate/slack-gate-notifier.ts#at#clock.now()': [
+    1,
+    'read',
+    "#964: a question reminder's or escalation's waiter, reading the store's clock once when it fires: compared with the occurrence instants, opened_at and expires_at (startGateReminderTimers), to compose its age and to skip what a later due occurrence or the question's expiry replaces",
+  ],
   'cli/src/agent/gate/slack-gate-server.ts#startSlackGateServer#Date.now()': [
     1,
     'outside',

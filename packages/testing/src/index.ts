@@ -71,6 +71,15 @@ export type {
 } from './store/lease-port-contract.js';
 export { createLeaseDouble } from './store/lease-double.js';
 export type { LeaseDouble, LeaseDoubleState } from './store/lease-double.js';
+// issue #729, the claim window (CW-1b): the laws that every run a store with leases returns carries
+// its claims' lease facts.
+export { leaseFactsContract, LEASE_FACTS_LAWS } from './store/lease-facts-contract.js';
+export type {
+  LeaseFactsLaw,
+  LeaseFactsContractAdapter,
+  LeaseFactsContractCase,
+  LeaseFactsTestStore,
+} from './store/lease-facts-contract.js';
 
 // Clocks and test locations (issue #715 (a); D5 §6, D6-1, D6-20, D6-54)
 export { settableClock, steppingClock, countingClock } from './clock/settable-clock.js';

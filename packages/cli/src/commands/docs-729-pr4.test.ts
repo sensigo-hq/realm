@@ -232,7 +232,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
   it('the reminders, the escalation, the expiry reminder and the closed lines, in their words; durations in `formatDuration`’s forms', () => {
     claim(
       SLACK,
-      'A reminder reads ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.``; the escalation is the same line with the gate\'s `owner` first. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`, with the instant beside them in UTC; each is counted to the moment the reminder was scheduled for. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or `This question is closed: it was answered — send, by "alice" (as stated), from a terminal, at 2026-11-12T10:02:14Z.` (the name is left out when that answer names nobody; version 0.49.0 said ``it was answered elsewhere as `send` ``)',
+      'A reminder reads ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.``; the escalation is the same line with the gate\'s `owner` first. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`, with the instant beside them in UTC; a reminder more than a minute late is counted to the moment it is posted. Added after version 0.49.0. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or `This question is closed: it was answered — send, by "alice" (as stated), from a terminal, at 2026-11-12T10:02:14Z.` (the name is left out when that answer names nobody; version 0.49.0 said ``it was answered elsewhere as `send` ``)',
     );
     const now = new Date('2026-10-27T10:12:00.000Z');
     const g = gate({ owner: '@ana' });
@@ -621,6 +621,61 @@ describe('packages/core/src/utils/duration.ts — the doc comment no longer list
       stale: source.includes("the Slack reminder's minutes"),
       moved: source.includes("the Slack reminder's and expiry reminder's spans"),
     }).toEqual({ stale: false, moved: true });
+  });
+});
+
+describe('#964 — the Slack guide and the CHANGELOG on a reminder after the computer slept', () => {
+  it('the new paragraph, the changed clause (the old one gone) and the CHANGELOG entry', () => {
+    // Each sentence names its executing cells, all in agent/gate/slack-reminder-after-sleep-964.test.ts
+    // unless named: "the last reminder that came due … once, with the time the question has really
+    // been open … ; the ones … in between are not posted" — cell 3; "(a reminder at most a minute late
+    // reads as if it had been posted on time)" — cells 1, 2; "the later ones stay on their planned
+    // times" — cell 4; "The escalation, if it came due, is posted too, as its own line" — cell 5; "when
+    // the gate names no `owner` and the reminder and the escalation would read the same, only the first
+    // of them is posted" — cells 7a, 7b, 7c and 6b; "A reminder that comes due while the computer is
+    // awake is posted at its time" — cells 3–4 (k = 19, 20) and gate-notify-clock.test.ts; "If the time
+    // limit … has passed by the time a reminder would be posted …, no plain reminder and no escalation
+    // are posted" — cells 6, 10 and 11; "and so is the reminder that says the time ran out, if its own
+    // time has come by then" — cells 6 (withFinal) and 11; the closing line — the expiry's own,
+    // slack-question-post-729-pr6b.test.ts check 3, unchanged here; "a question with no `on_expiry` is
+    // still open … its reminders follow the rules above" — cell 6b; "within a minute of waking" / "up
+    // to a minute after waking" — the store clock's own bound, core utils/clock.test.ts (its hop), not
+    // re-measured here;
+    // "a reminder more than a minute late is counted to the moment it is posted" — cells 1, 2 and
+    // slack-reminder-late-fire-715b.test.ts's second cell. (a) red when the page or the CHANGELOG no
+    // longer holds the words, or an old clause is back; (b) prints the sentence.
+    claim(
+      SLACK,
+      "When the computer sleeps while a question is open, the last reminder that came due during the sleep is posted within a minute of waking, once, with the time the question has really been open (a reminder at most a minute late reads as if it had been posted on time); the ones that came due in between are not posted, and the later ones stay on their planned times. The escalation, if it came due, is posted too, as its own line; when the gate names no `owner` and the reminder and the escalation would read the same, only the first of them is posted. A reminder that comes due while the computer is awake is posted at its time. If the time limit of a question that closes at its limit (`on_expiry`) has passed by the time a reminder would be posted (up to a minute after waking), no plain reminder and no escalation are posted: the question's closing line is, and so is the reminder that says the time ran out, if its own time has come by then. A question with no `on_expiry` is still open after its time limit, so its reminders follow the rules above. (`timeout_seconds`, `on_expiry` and `owner` are set on the gate: see [Gates](../reference/workflow/gates.md).) Added after version 0.49.0.",
+    );
+    claim(
+      SLACK,
+      'a reminder more than a minute late is counted to the moment it is posted. Added after version 0.49.0.',
+    );
+    expect(read(SLACK)).not.toContain(
+      'each is counted to the moment the reminder was scheduled for',
+    );
+    // Correction 1: the clauses that said more than the program does are gone.
+    const page = flat(read(SLACK));
+    const changelog = flat(changelogSection());
+    expect({
+      pageFinalAlways: page.includes(
+        "only the reminder that says the time ran out (when the gate has one) and the question's closing line are posted",
+      ),
+      pageSleepLasted: page.includes('When the sleep lasted past the time limit'),
+      pageReallyOpenUnqualified: page.includes('really been open; the ones that came due'),
+      changelogFinalAlways: changelog.includes(
+        'no escalation after that limit, only the reminder that says the time ran out and its closing line.',
+      ),
+    }).toEqual({
+      pageFinalAlways: false,
+      pageSleepLasted: false,
+      pageReallyOpenUnqualified: false,
+      changelogFinalAlways: false,
+    });
+    claimChangelog(
+      '- **A Slack reminder posted after the computer slept says how long the question has really been open (issue #964).** Before, the reminder that came due during the sleep was posted late with the age it had when it was due ("open for 10m" on a question three hours old), and on Windows every missed one was posted at once. Now, within a minute of waking, only the last one that came due is posted, once, with the true age; the later ones stay on their planned times. A reminder at most a minute late reads as before. A question that closes at its time limit (`on_expiry`) gets no plain reminder and no escalation once that limit has passed when the reminder would be posted, only its closing line and, if its own time has come by then, the reminder that says the time ran out. When the reminder and the escalation would read the same (the gate names no owner), only the first of them is posted.',
+    );
   });
 });
 

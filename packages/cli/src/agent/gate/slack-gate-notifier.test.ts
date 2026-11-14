@@ -26,6 +26,7 @@ import type {
 } from '@sensigo/realm';
 import {
   ExtensionRegistry,
+  systemClock,
   executeStep,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   answerArrivalOf,
@@ -355,6 +356,7 @@ describe('startGateReminderTimers', () => {
       heldAt(gate),
       500, // reminderIntervalMs
       5000, // escalationThresholdMs
+      systemClock,
     );
 
     await vi.advanceTimersByTimeAsync(600);
@@ -388,6 +390,7 @@ describe('startGateReminderTimers', () => {
       heldAt(gate),
       10, // reminderIntervalMs — fires fast
       20, // escalationThresholdMs — fires even faster for escalation
+      systemClock,
     );
 
     await vi.advanceTimersByTimeAsync(50);
@@ -419,14 +422,17 @@ describe('startGateReminderTimers', () => {
       '1234567890.000',
       heldAt(gate),
       10,
-      20,
+      2_000,
+      systemClock,
     );
 
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(2_050);
     clearTimers();
 
     // #729 PR-4 (re-pinned): the plain reminder and the escalation both post; with no owner,
     // neither names anyone. (a) red when a mention is invented; (b) prints the posted texts.
+    // #964 correction 1: the escalation is 2 s in ("open for 2s"), so its line differs from the
+    // reminder's ("open for 0s"); a line that would repeat the other's is posted once.
     expect({
       posts: calls.filter((t) => t.startsWith('⏰ gate `review_step` has been open for')).length,
       mention: calls.some((t) => t.includes('@')),
@@ -446,6 +452,7 @@ describe('startGateReminderTimers', () => {
       heldAt(gate),
       200,
       400,
+      systemClock,
     );
 
     // Clear before any timers fire.

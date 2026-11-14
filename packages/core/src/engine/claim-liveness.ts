@@ -10,6 +10,8 @@
 // WITHOUT needing the workflow definition (it reads the stored deadline). Recovery is a
 // deliberate per-step act (`reclaimStep` / `realm run reclaim`), never a background sweep.
 import type { ClaimRecord } from '../types/run-record.js';
+import type { LeaseFact } from '../store/lease-port.js';
+import { isLeaseFact, leaseFactOf, type Unleased } from '../store/lease-facts.js';
 import type { Snapshot } from './snapshot.js';
 import type {
   WorkflowDefinition,
@@ -194,11 +196,30 @@ export function omitClaim(
  * - `claim_stale` — a concrete deadline that has passed (the runner is presumed dead).
  * - `claim_unknown_age` — no claim record, or a `null` deadline (agent / finalizer-bearing /
  *   legacy run). Detect-only, human-judged, NEVER auto-reclaimed.
+ *
+ * #729 CW-1b: a claim that names a lease is judged by its lease's fact instead (design record C5
+ * §4.4): `held` ⇒ `healthy`; `not_held` ⇒ `claim_stale`; `absent` or `unknown` ⇒ `claim_unknown_age`.
  */
 export type ClaimState = 'healthy' | 'claim_stale' | 'claim_unknown_age';
 
-/** Classifies a single claim record against `now`. Definition-free (reads only the stored deadline). */
-export function classifyClaim(claim: ClaimRecord | undefined, now: Date): ClaimState {
+/**
+ * Classifies a single claim record against `now`. Definition-free (reads only the stored deadline).
+ *
+ * #729 CW-1b: `lease` is the claim's lease fact, from `leaseFactOf` on the snapshot the claim was read
+ * from. A fact decides before the deadline is read (§4.4's table above); `{ absent: 'unleased' }`
+ * leaves today's answer. Without the argument, a claim that names a lease reads as `not_checked`, so
+ * `claim_unknown_age`, and one that names none keeps today's answer.
+ */
+export function classifyClaim(
+  claim: ClaimRecord | undefined,
+  now: Date,
+  lease?: LeaseFact | Unleased,
+): ClaimState {
+  const fact = lease ?? leaseFactOf({}, claim);
+  if (isLeaseFact(fact)) {
+    if (fact.state === 'held') return 'healthy';
+    return fact.state === 'not_held' ? 'claim_stale' : 'claim_unknown_age';
+  }
   if (claim === undefined || claim.deadline === null) return 'claim_unknown_age';
   // #715 (b) (Amendment 11): the engine's one due test (`at ≥ deadline`) — a claim is stale AT its
   // deadline, as every other reader of a deadline says; an unparseable one is never past (healthy).
@@ -210,18 +231,28 @@ export interface InProgressClaimInfo {
   step: string;
   state: ClaimState;
   deadline: string | null;
+  /** #729 CW-1b: the claim's lease fact (`leaseFactOf`), only for a claim that names a lease. */
+  lease?: LeaseFact;
 }
 
 /**
  * Classifies every in-progress claim on a run. Definition-free — works even when the workflow
  * definition is unresolved (detection reads the stored per-claim deadline, not the definition).
  * #715 (b) (D6-17): judged at the snapshot's `at` — no default clock (its `now = new Date()` died).
+ * #729 CW-1b: a claim that names a lease is judged by its fact on this snapshot (`leaseFactOf`), and
+ * its info carries it as `lease`; a claim that names none gives exactly the info it gave before.
  */
 export function classifyInProgressClaims(snapshot: Snapshot): InProgressClaimInfo[] {
   const { record: run, at: now } = snapshot;
   return run.in_progress_steps.map((step) => {
     const claim = run.claims?.[step];
-    return { step, state: classifyClaim(claim, now), deadline: claim?.deadline ?? null };
+    const lease = leaseFactOf(snapshot, claim);
+    const info = {
+      step,
+      state: classifyClaim(claim, now, lease),
+      deadline: claim?.deadline ?? null,
+    };
+    return isLeaseFact(lease) ? { ...info, lease } : info;
   });
 }
 

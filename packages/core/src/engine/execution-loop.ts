@@ -26,6 +26,7 @@ import {
   respondWayOfGate,
   classifyStop,
   composeWaysOn,
+  heldFacts,
   waysStoreOf,
   isRaceStop,
   type NotRecordedKind,
@@ -2869,7 +2870,10 @@ async function executeStepBody(
             verb: 'run_step',
             step: options.command,
             code: 'held_elsewhere',
-            facts: { step: options.command, deadline: { absent: 'unknown_age' } },
+            // #729 CW-1b: the one producer of these facts. This arm runs only when the fresh record
+            // lets the step run by name, so the step is not in progress: its age is unknown and it
+            // carries no lease fact.
+            facts: heldFacts(fresh, options.command),
             remedy: [],
           },
           blocked_reason: {

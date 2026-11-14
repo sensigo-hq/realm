@@ -9,6 +9,7 @@
 // built by `writtenSnapshot`.
 import type { RunRecord } from '../types/run-record.js';
 import type { RunStore } from '../store/store-interface.js';
+import { NO_LEASE_FACTS, type LeaseFacts } from '../store/lease-facts.js';
 import type { DefinitionAbsence, LoadErrorCode } from './ways.js';
 
 /** One record and the reading it is judged at (#715 D6-17). Built only by this module. */
@@ -16,6 +17,13 @@ export interface Snapshot {
   readonly record: RunRecord;
   /** The clock reading taken BEFORE the record was loaded (D6-16), or the reading its write used. */
   readonly at: Date;
+  /**
+   * #729 CW-1b: what the store's lease port found about the leases of the record's in-progress
+   * claims, observed after the read or write (`held` holds at the reading; `not_held` from the check,
+   * which follows it in the same call). Present only when a claim names a lease and the store has a
+   * lease port; read it through `leaseFactOf`, which reads a missing fact as `not_checked`.
+   */
+  readonly lease_facts?: LeaseFacts;
 }
 
 /**
@@ -32,9 +40,13 @@ export async function loadSnapshot(store: Pick<RunStore, 'get'>, runId: string):
  * is judged at — no clock is read here. A store builds every snapshot it returns through it (the
  * reading its read or write took); the engine builds one from a write's returned `{ record, at }`.
  * A reply's ways speak of the record as written, never of a record read again.
+ *
+ * #729 CW-1b: with `facts`, the `lease_facts` from `leaseFactsOf` when the store has a lease port; a
+ * snapshot with no facts (none passed, or `NO_LEASE_FACTS`) is `{ record, at }` exactly, as before.
  */
-export function writtenSnapshot(record: RunRecord, at: Date): Snapshot {
-  return { record, at };
+export function writtenSnapshot(record: RunRecord, at: Date, facts?: LeaseFacts): Snapshot {
+  if (facts === undefined || facts === NO_LEASE_FACTS) return { record, at };
+  return { record, at, lease_facts: facts };
 }
 
 /**

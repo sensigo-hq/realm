@@ -14,9 +14,10 @@
  * `fn` never runs. A `when` already past runs at the next opportunity (on a system clock the next
  * tick; on a test clock the next `advance`). Its scope (D6-8, D6-45): it serves waits for an instant
  * STORED on a record or derived from stored fields alone (an expiry; reminder occurrence
- * k = `opened_at + k·R`). It never drives the default ceiling (`gate_unanswered` is a fact derived at
- * read, with no writer and no timer) and never replaces a poll or a duration timer: those stay on
- * real timers.
+ * k = `opened_at + k·R`), and (#964) the instant a question's escalation or single fallback reminder
+ * falls due: a duration added to the store's reading the reminders started from. It never drives the
+ * default ceiling (`gate_unanswered` is a fact derived at read, with no writer and no timer) and never
+ * replaces a poll or any other duration timer: those stay on real timers.
  */
 export interface Clock {
   /** The current instant. Returns a FRESH Date on every call: mutating a returned Date changes nothing else. */

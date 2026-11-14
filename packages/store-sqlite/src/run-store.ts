@@ -49,6 +49,8 @@ import {
   foldReading,
   isRunRecordShape,
   isStepSettledOrInFlight,
+  leaseFactsOf,
+  NO_LEASE_FACTS,
   runNotFoundError,
   takeRawReading,
   TERMINAL_PHASES,
@@ -523,6 +525,40 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
   }
 
   /**
+   * #729 CW-1b: `snapshot` with the facts about its in-progress claims' leases (core's
+   * `leaseFactsOf`), asked of the home's lease port after the call's transaction and its in-process
+   * lock: both are let go of before the call's promise settles (`connection.ts`), so a probe never
+   * stretches the write lock. A run with no leased claim is returned as it is, unprobed.
+   */
+  async #withFacts<S extends Snapshot>(snapshot: S): Promise<S> {
+    const facts = await leaseFactsOf(this.leases, snapshot.record);
+    if (facts === NO_LEASE_FACTS) return snapshot;
+    return { ...snapshot, ...writtenSnapshot(snapshot.record, snapshot.at, facts) };
+  }
+
+  /** #729 CW-1b: a settlement's result with its run's lease facts, as {@link #withFacts} does. */
+  async #settlementWithFacts(result: StoreSettlement): Promise<StoreSettlement> {
+    const facts = await leaseFactsOf(this.leases, result.run);
+    return facts === NO_LEASE_FACTS ? result : { ...result, lease_facts: facts };
+  }
+
+  /** #729 CW-1b: a record page with each run's lease facts, asked after the page's cut. */
+  async #pageWithFacts(page: ScanPage<'record' | 'row'>): Promise<ScanPage<'record' | 'row'>> {
+    let changed = false;
+    const items = await Promise.all(
+      page.items.map(async (item) => {
+        if (item.kind !== 'run') return item;
+        const run = item.run as Snapshot;
+        const withFacts = await this.#withFacts(run);
+        if (withFacts === run) return item;
+        changed = true;
+        return { ...item, run: withFacts };
+      }),
+    );
+    return changed ? { ...page, items } : page;
+  }
+
+  /**
    * Creates a run. An unkeyed create (`idempotencyKey` undefined) writes a fresh run stamped with the
    * call's one reading and returns it with `created: true`. Its limits are checked before `BEGIN`, on
    * a provisional record with the real one's bytes and depth (a 36-character id, 24-character
@@ -531,7 +567,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
    */
   async create(options: CreateRunOptions): Promise<CreateResult> {
     if (options.idempotencyKey !== undefined)
-      return this.#createKeyed(options, options.idempotencyKey);
+      return this.#withFacts(await this.#createKeyed(options, options.idempotencyKey));
     assertRunRecordWithinLimits(freshRecord(options, PROVISIONAL_ID, PROVISIONAL_STAMP));
     const written = await this.#db.immediate(
       (db, reading) => {
@@ -541,7 +577,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
       },
       (db, snapshot) => verifyCreated(db, snapshot.record),
     );
-    return { ...written, created: true };
+    return this.#withFacts({ ...written, created: true });
   }
 
   /**
@@ -549,7 +585,9 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
    * `updated_at`. A run that does not exist is refused with core's `STATE_RUN_NOT_FOUND`.
    */
   async get(runId: string): Promise<Snapshot> {
-    return this.#db.snapshot((db, reading) => readSnapshot(db, runId, reading));
+    return this.#withFacts(
+      await this.#db.snapshot((db, reading) => readSnapshot(db, runId, reading)),
+    );
   }
 
   /**
@@ -591,7 +629,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
       const page = await this.#db.snapshot((db, reading) =>
         readScanPage(db, reading, scanned, request, (runId) => readSnapshot(db, runId, reading)),
       );
-      yield page;
+      yield projection === 'record' ? await this.#pageWithFacts(page) : page;
       if (page.next_after === undefined) return;
       after = page.next_after;
     }
@@ -656,7 +694,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
       (db, written) => verifyWritten(db, record.id, written.text, written.snapshot.record.version),
       { takesReading: false },
     );
-    return written.snapshot;
+    return this.#withFacts(written.snapshot);
   }
 
   /**
@@ -709,7 +747,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
       (db, written) => verifyWritten(db, runId, written.text, written.snapshot.record.version),
       { takesReading: false },
     );
-    return written.snapshot;
+    return this.#withFacts(written.snapshot);
   }
 
   /**
@@ -777,7 +815,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
         verifyWritten(db, runId, settled.written.text, settled.written.version),
       { takesReading: false },
     );
-    return settled.result;
+    return this.#settlementWithFacts(settled.result);
   }
 
   /**
