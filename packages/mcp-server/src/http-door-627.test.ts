@@ -1,10 +1,9 @@
-// http-door-627.test.ts — #627 W correction 1 (F1): the HTTP doors, over real HTTP. F1's sentence on
-// four pages (the CHANGELOG's BREAKING bullet, gate-answers.md's `asked` row, gates-and-trust.md,
-// human-gates.md) — "On an HTTP server built per request — `realm serve`, or a program that builds a
-// server per request or passes `statelessHttp` — no client gets forms: under `asked` every client
-// keeps the answer tool, marked for approval. A program that keeps one server per HTTP session sends
-// forms as stdio does." — executed with the SDK's own Streamable HTTP transports on localhost, by a
-// client that declares forms in every case. `realm serve` is the per-request shape with
+// http-door-627.test.ts — #627 W correction 1 (F1): the HTTP doors, over real HTTP. F1's sentence —
+// since the gate-answers default (2026-11-14), on gates-and-trust.md and human-gates.md: "On an HTTP
+// server built per request — `realm serve`, or a program that builds a server per request or passes
+// `statelessHttp` — no client gets forms. A program that keeps one server per HTTP session sends forms
+// as stdio does."; gate-answers.md's `asked` row says the per-request half — executed with the SDK's
+// own Streamable HTTP transports on localhost, by a client that declares forms in every case. `realm serve` is the per-request shape with
 // `statelessHttp` (serve.ts builds a server and a stateless transport per request, and passes it).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
@@ -169,24 +168,25 @@ async function walk(shape: Shape, statelessHttp: boolean) {
 }
 
 describe('#627 W correction 1 (F1) — the HTTP doors, under asked, for a client that shows forms', () => {
-  it('a server built per request — realm serve’s shape, with or without statelessHttp — sends no form: the answer tool stays, marked for approval', async () => {
-    const FALLBACK = {
-      listed: ['submit_human_response'],
-      meta: { 'anthropic/requiresUserInteraction': true },
+  it('a server built per request — realm serve’s shape, with or without statelessHttp — sends no form, and lists no answer tool (the gate-answers default)', async () => {
+    const NO_WAY = {
+      listed: [],
+      meta: undefined,
       forms: 0,
       recorded: undefined,
     };
-    // (a) red when a per-request server lists present_question or sends a form (its tools are the
-    //     fallback until `initialize`, which a per-request server never keeps), or when
-    //     `statelessHttp` stops turning forms off; (b) prints each door's tools, _meta, forms, route.
+    // (a) red when a per-request server lists present_question or sends a form (a per-request server
+    //     never keeps `initialize`), when `statelessHttp` stops turning forms off, or when the HTTP
+    //     door keeps the answer tool under asked (the fallback row kept); (b) prints each door's
+    //     tools, _meta, forms, route.
     expect({
       perRequest: await walk('per_request', false),
       perRequestStateless: await walk('per_request', true),
       perSessionStateless: await walk('per_session', true),
     }).toEqual({
-      perRequest: FALLBACK,
-      perRequestStateless: FALLBACK,
-      perSessionStateless: FALLBACK,
+      perRequest: NO_WAY,
+      perRequestStateless: NO_WAY,
+      perSessionStateless: NO_WAY,
     });
   }, 60_000);
 

@@ -47,7 +47,8 @@ describe('#729 PR-0 — P-5: each MCP tool takes its verb’s ARGS', () => {
   it('the five tools that enact a verb: the same arguments, types and requiredness; register is no tool here (A-10)', async () => {
     const h = await makeTempHome();
     handles.push(h);
-    const server = createRealmMcpServer({ ...h.stores });
+    // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+    const server = createRealmMcpServer({ ...h.stores, gateAnswers: 'permitted' });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'args-witness-729', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);

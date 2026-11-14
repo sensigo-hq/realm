@@ -1,10 +1,11 @@
 // journey-627.test.ts — #627 W, cell 2, the journey scan (M-7): examples 03, 07, 08 and 09, each
 // driven to its gate through THREE real `realm mcp --project` sessions (stdio) — `withheld`; `asked`
-// with a test client that declares forms (it declines each form); `asked` without forms (the
-// fallback) — then a fixed probe script on the run at its gate. Every string of every reply, and of
-// the protocol, outside the author's own fields, is held to a CLOSED forbidden list; in the fallback
-// session only the answer tool's name and the answer entry (its `call_with`, and its words naming the
-// claim_token it passes back) are allowed — the rest of that entry's words are scanned. Every probe
+// with a test client that declares forms (it declines each form); `asked` without forms — then a
+// fixed probe script on the run at its gate. Every string of every reply, and of the protocol,
+// outside the author's own fields, is held to a CLOSED forbidden list. Since the gate-answers default
+// (2026-11-14) no session here has the answer tool — `asked` without forms is on withheld's row — so
+// the list allows the answer tool's name nowhere (the former fallback session's allowance is gone).
+// Every probe
 // asserts its reply class (never ENGINE_INTERNAL) and the server's stderr holds ZERO W-e2 lines.
 //
 // 07/08/09 run against realm-testing's GitHub mock (09's Slack post against a local stand-in);
@@ -36,7 +37,7 @@ type Reply = Record<string, unknown>;
 // Correction 1 (A3): two more forms clients — one accepts the form, one has the person answer in the
 // CLI before the form comes back — so the replies after an accepted form and after a mid-form settle
 // are scanned too.
-type Session = 'withheld' | 'forms' | 'fallback' | 'forms-accept' | 'forms-settle';
+type Session = 'withheld' | 'forms' | 'no-forms' | 'forms-accept' | 'forms-settle';
 
 let github: GitHubMockServerHandle;
 let slack: Server;
@@ -139,24 +140,12 @@ function withoutAuthorText(value: unknown, key?: string): unknown {
 function forbidden(session: Session, reply: Reply, person: string): string[] {
   const found: string[] = [];
   const scanned = withoutAuthorText(reply) as Reply;
-  // The fallback's one allowance: the answer entry — its instruction (the tool's name, its
-  // call_with and the token in it) and its own words about them, which name the tool and the
-  // claim_token it passes back. Every other forbidden string is still looked for in those words.
-  type Entry = { instruction?: { tool?: string } | null };
-  const isAnswer = (a: Entry): boolean =>
-    session === 'fallback' && a.instruction?.tool === 'submit_human_response';
-  const entries = (scanned['next_actions'] as Entry[] | undefined) ?? [];
-  const answerWords = JSON.stringify(
-    entries.filter(isAnswer).map(({ instruction: _instruction, ...words }) => words),
-  );
-  const rest = JSON.stringify({ ...scanned, next_actions: entries.filter((a) => !isAnswer(a)) });
-  const text = `${rest}\n${person}`;
-  const all = `${text}\n${answerWords}`;
+  // The gate-answers default (2026-11-14): no session here lists the answer tool, so no reply may
+  // name it or a claim token anywhere (the former fallback session's allowance is gone).
+  const all = `${JSON.stringify(scanned)}\n${person}`;
   const list: [string, boolean][] = [
-    // The answer tool's NAME may be said anywhere in the fallback (its own texts tell the agent to
-    // call it); a claim_token only inside the answer entry.
-    ['submit_human_response', session !== 'fallback' && all.includes('submit_human_response')],
-    ['claim_token', text.includes('claim_token')],
+    ['submit_human_response', all.includes('submit_human_response')],
+    ['claim_token', all.includes('claim_token')],
     ['Available choices', all.includes('Available choices')],
     ['run respond', all.includes('run respond')],
     [
@@ -188,7 +177,7 @@ function forbidden(session: Session, reply: Reply, person: string): string[] {
 
 describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × three sessions', () => {
   for (const c of CASES) {
-    for (const session of ['withheld', 'forms', 'fallback'] as const) {
+    for (const session of ['withheld', 'forms', 'no-forms'] as const) {
       it(`${c.dir} · ${session}`, async () => {
         const h = await makeTempHome();
         const home = h.root;

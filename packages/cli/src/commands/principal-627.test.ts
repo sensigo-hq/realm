@@ -74,7 +74,8 @@ describe('#627 W — cell 25: the principal each door stamps', () => {
     await client.connect(
       new StdioClientTransport({
         command: process.execPath,
-        args: [CLI, 'mcp'],
+        // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+        args: [CLI, 'mcp', '--gate-answers', 'permitted'],
         env: { PATH: process.env['PATH'] ?? '', HOME: home },
         stderr: 'pipe',
       }),
@@ -113,6 +114,8 @@ describe('#627 W — cell 25: the principal each door stamps', () => {
         runStore: realmHome.runStore,
         traceBufferStore: realmHome.traceBufferStore,
         failedAttemptStore: realmHome.failedAttemptStore,
+        // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+        gateAnswersFlag: 'permitted',
       });
       // #616 PR-2a (iii): the per-request server takes the four stores above, all on this HOME's
       // home (it read the run store from HOME's default before); HOME is still pointed at it.

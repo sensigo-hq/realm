@@ -146,7 +146,7 @@ describe(
       // request …"; the counts by docs-627 :: "6.6 (a)").
       claim(
         'docs/reference/cli/realm-mcp-and-serve.md',
-        "Which answer tool is among them follows the server's gate-answers value and the client: `submit_human_response` under `offered` and under `asked` with a client that shows no forms, `present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms), and neither under `withheld`, which serves 10.",
+        "Which answer tool is among them follows the server's gate-answers value and the client: `submit_human_response` under `permitted`, `present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms), and neither under `withheld`, or under `asked` with a client that shows no forms, which serve 10.",
       );
       registered();
       async function served(client: Client) {
@@ -168,7 +168,9 @@ describe(
           ),
         };
       }
-      const viaMcp = await stdio(CLI, ['mcp']);
+      // The gate-answers default (2026-11-14): the 11 tools are listed under permitted (the default
+      // lists 10 to a client that shows no forms, as this one does).
+      const viaMcp = await stdio(CLI, ['mcp', '--gate-answers', 'permitted']);
       const mcp = await served(viaMcp).finally(() => viaMcp.close());
       const port = await new Promise<number>((resolve, reject) => {
         const probe = createServer();
@@ -181,7 +183,17 @@ describe(
       });
       const child = spawn(
         process.execPath,
-        [CLI, 'serve', '--dev', '--port', String(port), '--host', '127.0.0.1'],
+        [
+          CLI,
+          'serve',
+          '--dev',
+          '--gate-answers',
+          'permitted',
+          '--port',
+          String(port),
+          '--host',
+          '127.0.0.1',
+        ],
         { cwd: project, env: env(), stdio: ['ignore', 'pipe', 'pipe'] },
       );
       let serve: Awaited<ReturnType<typeof served>>;

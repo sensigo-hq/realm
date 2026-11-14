@@ -1,6 +1,7 @@
 // door-627.test.ts — #627 W, the MCP door's cells: the per-session tool list (cells 23, 1, 10),
 // annotations and the `initialize` capability (cell 24), `list_changed`, abandon's description
-// (cell 17), the fallback's approval prompt (cell 11), the protocol per session (cells 23, 28, 12),
+// (cell 17), cell 11 (since the gate-answers default, 2026-11-14: asked without forms keeps no answer
+// tool and no approval mark), the protocol per session (cells 23, 28, 12),
 // author text labelled (cell 27b, door half), the await entry (W-a1, W-a2, W-a1f; cells 15, 16), the
 // door's route and principal (cells 21b, 25), the embedder's setting (cell 4), the held-back reply
 // (Part I) and the door-schema witness for `present_question`.
@@ -183,27 +184,28 @@ afterEach(() => {
 // ─── C, B: the per-session tool list (cells 23, 1, 10) ─────────────────────────────────────────
 
 describe('#627 W — which answer tool a session lists', () => {
-  it('row by row, by tool NAME: offered → the answer tool; asked with forms → present_question; asked without → the answer tool; withheld → neither', async () => {
+  it('row by row, by tool NAME: permitted → the answer tool; asked with forms → present_question; asked without → neither; withheld → neither', async () => {
     const lists = {
-      offered: await (await session({ gateAnswers: 'offered' }, { forms: true })).tools(),
+      permitted: await (await session({ gateAnswers: 'permitted' }, { forms: true })).tools(),
       askedForms: await (await session({}, { forms: true })).tools(),
       askedNoForms: await (await session({})).tools(),
       withheldForms: await (await session({ gateAnswers: 'withheld' }, { forms: true })).tools(),
       withheld: await (await session({ gateAnswers: 'withheld' })).tools(),
     };
     const which = (names: string[]) => [names.includes(ANSWER), names.includes(PRESENT)];
-    // (a) red when rows 2 and 3 swap, the answer tool is registered under withheld, or present is
-    //     listed off row 2; (b) prints each row's two booleans.
+    // (a) red when rows 2 and 3 swap, the answer tool is registered under withheld or under asked
+    //     without forms (the fallback row kept), or present is listed off row 2; (b) prints each
+    //     row's two booleans.
     expect({
-      offered: which(lists.offered),
+      permitted: which(lists.permitted),
       askedForms: which(lists.askedForms),
       askedNoForms: which(lists.askedNoForms),
       withheldForms: which(lists.withheldForms),
       withheld: which(lists.withheld),
     }).toEqual({
-      offered: [true, false],
+      permitted: [true, false],
       askedForms: [false, true],
-      askedNoForms: [true, false],
+      askedNoForms: [false, false],
       withheldForms: [false, false],
       withheld: [false, false],
     });
@@ -217,7 +219,7 @@ describe('#627 W — which answer tool a session lists', () => {
     expect({
       first: (await withForms.tools()).filter((n) => n === ANSWER || n === PRESENT),
       second: (await without.tools()).filter((n) => n === ANSWER || n === PRESENT),
-    }).toEqual({ first: [PRESENT], second: [ANSWER] });
+    }).toEqual({ first: [PRESENT], second: [] });
   });
 
   it('list_changed is sent when initialize moves the session to row 2; a session that stays on its first list gets none', async () => {
@@ -245,11 +247,11 @@ describe('#627 W — which answer tool a session lists', () => {
     }).toEqual({ isError: true, stillOpen: true, answers: 0 });
   });
 
-  it('cell 10 — restarting on one store flips asked → withheld → offered → asked; the store keeps no value', async () => {
+  it('cell 10 — restarting on one store flips asked → withheld → permitted → asked; the store keeps no value', async () => {
     const h = await makeTempHome();
     handles.push(h);
     const stores = h.stores;
-    const answerToolOf = async (gateAnswers?: 'withheld' | 'offered') =>
+    const answerToolOf = async (gateAnswers?: 'withheld' | 'permitted') =>
       (
         await (await session(gateAnswers !== undefined ? { gateAnswers } : {}, {}, stores)).tools()
       ).includes(ANSWER);
@@ -257,9 +259,9 @@ describe('#627 W — which answer tool a session lists', () => {
     expect([
       await answerToolOf(),
       await answerToolOf('withheld'),
-      await answerToolOf('offered'),
+      await answerToolOf('permitted'),
       await answerToolOf(),
-    ]).toEqual([true, false, true, true]);
+    ]).toEqual([false, false, true, false]);
   });
 });
 
@@ -268,10 +270,11 @@ describe('#627 W — which answer tool a session lists', () => {
 describe('#627 W — the tool list’s annotations and the initialize capability', () => {
   it('cell 24 — every tool is annotated with a title; reads read-only, writes destructive; present_question openWorldHint false, no idempotentHint', async () => {
     const forms = await session({}, { forms: true });
-    const fallback = await session({});
+    // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+    const permitted = await session({ gateAnswers: 'permitted' });
     const all = [
       ...(await forms.client.listTools()).tools,
-      ...(await fallback.client.listTools()).tools,
+      ...(await permitted.client.listTools()).tools,
     ];
     const byName = new Map(all.map((t) => [t.name, t.annotations]));
     const reads = ['get_run_state', 'get_workflow_protocol', 'list_workflows'];
@@ -306,7 +309,7 @@ describe('#627 W — the tool list’s annotations and the initialize capability
 
   it('the initialize result names the value and the KIND of its source, never a variable', async () => {
     process.env['REALM_MCP_GATE_ANSWERS'] = 'withheld';
-    const s = await session({ gateAnswers: 'offered' });
+    const s = await session({ gateAnswers: 'permitted' });
     const caps = s.client.getServerCapabilities()?.experimental;
     // (a) red when the variable's name or the option's value reaches the capability, or the
     //     restrictive value loses; (b) prints the capability.
@@ -316,7 +319,7 @@ describe('#627 W — the tool list’s annotations and the initialize capability
     }).toEqual({ cap: { value: 'withheld', source_kind: 'env' }, namesVariable: false });
   });
 
-  it('cell 17 — abandon_run’s description names no answer tool where none is listed (W-c8); today’s under the fallback and offered', async () => {
+  it('cell 17 — abandon_run’s description names no answer tool where none is listed (W-c8), asked without forms included; today’s under permitted', async () => {
     const description = async (s: Session) =>
       (await s.client.listTools()).tools.find((t) => t.name === 'abandon_run')?.description;
     const TODAY =
@@ -328,9 +331,9 @@ describe('#627 W — the tool list’s annotations and the initialize capability
     expect({
       withheld: await description(await session({ gateAnswers: 'withheld' })),
       askedForms: await description(await session({}, { forms: true })),
-      fallback: await description(await session({})),
-      offered: await description(await session({ gateAnswers: 'offered' })),
-    }).toEqual({ withheld: W_C8, askedForms: W_C8, fallback: TODAY, offered: TODAY });
+      askedNoForms: await description(await session({})),
+      permitted: await description(await session({ gateAnswers: 'permitted' })),
+    }).toEqual({ withheld: W_C8, askedForms: W_C8, askedNoForms: W_C8, permitted: TODAY });
   });
 
   it('the door-schema witness for present_question: its input is exactly ARGS.present', async () => {
@@ -357,57 +360,50 @@ describe('#627 W — the tool list’s annotations and the initialize capability
   });
 });
 
-// ─── E: the fallback (cell 11) ──────────────────────────────────────────────────────────────────
+// ─── E: cell 11, re-pinned (the gate-answers default, 2026-11-14) ──────────────────────────────
 
-describe('#627 W — asked’s fallback: the answer tool asks the app to have the person approve it', () => {
-  it('cell 11 — _meta and the description’s guidance on the fallback only; W-g1 on its respond entry; the answer records client_prompt_requested and route mcp', async () => {
-    const fallback = await session({});
-    const offered = await session({ gateAnswers: 'offered' });
+describe('#627 W — the former fallback: asked without forms keeps no answer tool, and nothing asks an app to approve', () => {
+  it('cell 11 — no session lists a marked answer tool; asked without forms lists none and its entry is the await entry; permitted’s tool is unmarked, and its answer records route mcp and no client_prompt_requested', async () => {
+    const noForms = await session({});
+    const permitted = await session({ gateAnswers: 'permitted' });
     const toolOf = async (s: Session) =>
       (await s.client.listTools()).tools.find((t) => t.name === ANSWER);
-    const fb = await toolOf(fallback);
-    const off = await toolOf(offered);
-    const { runId, gateId } = await openedElsewhere(fallback);
-    const state = await fallback.call('get_run_state', { run_id: runId });
-    const entry = (state['next_actions'] as Array<{ human_readable: string }>).find((a) =>
-      a.human_readable.startsWith('Human review required'),
-    );
-    await fallback.call(ANSWER, { run_id: runId, gate_id: gateId, choice: 'approve' });
-    const recorded = (await fallback.runStore.get(runId)).record.evidence.find(
+    const none = await toolOf(noForms);
+    const unmarked = await toolOf(permitted);
+    const { runId } = await openedElsewhere(noForms);
+    const state = await noForms.call('get_run_state', { run_id: runId });
+    const entries = state['next_actions'] as Array<{
+      instruction: unknown;
+      awaiting?: unknown;
+      human_readable: string;
+    }>;
+    const o = await openedElsewhere(permitted);
+    await permitted.call(ANSWER, { run_id: o.runId, gate_id: o.gateId, choice: 'approve' });
+    const recorded = (await permitted.runStore.get(o.runId)).record.evidence.find(
       (e) => e.kind === 'gate_response',
     );
-    const o = await openedElsewhere(offered);
-    await offered.call(ANSWER, { run_id: o.runId, gate_id: o.gateId, choice: 'approve' });
-    const offeredEntry = (await offered.runStore.get(o.runId)).record.evidence.find(
-      (e) => e.kind === 'gate_response',
-    );
-    // (a) red when _meta or the guidance reaches every session, or the fallback answer does not
-    //     record the prompt request; (b) prints both tools' _meta, the guidance, the record's facts.
+    // (a) red when the fallback row is kept (the tool listed, marked, under asked without forms; the
+    //     answer call or the approval guidance in its entry), or the mark reaches permitted's tool,
+    //     or an answer records the prompt request; (b) prints the tools, the entry, the record.
     expect({
-      fallbackMeta: fb?._meta,
-      offeredMeta: off?._meta,
-      fallbackGuidance: fb?.description?.includes(
-        'If the call is refused, the run keeps waiting at the gate: tell the user so.',
-      ),
-      offeredGuidance: off?.description?.includes('If the call is refused'),
-      entryGuidance: entry?.human_readable.endsWith(
-        "If the call is refused, the run keeps waiting at step 'q': tell the user so.",
-      ),
-      fallbackRecord: [recorded?.answer, recorded?.client_prompt_requested],
-      offeredRecord: [offeredEntry?.answer, offeredEntry?.client_prompt_requested],
+      noFormsTool: none?.name,
+      permittedMeta: unmarked?._meta,
+      permittedGuidance: unmarked?.description?.includes('If the call is refused'),
+      noFormsEntry: entries.map((e) => [e.instruction === null, e.awaiting !== undefined]),
+      noFormsGuidance: entries.some((e) => e.human_readable.includes('If the call is refused')),
+      permittedRecord: [recorded?.answer, recorded?.client_prompt_requested],
     }).toEqual({
-      fallbackMeta: { 'anthropic/requiresUserInteraction': true },
-      offeredMeta: undefined,
-      fallbackGuidance: true,
-      offeredGuidance: false,
-      entryGuidance: true,
-      fallbackRecord: [{ route: 'mcp' }, true],
-      offeredRecord: [{ route: 'mcp' }, undefined],
+      noFormsTool: undefined,
+      permittedMeta: undefined,
+      permittedGuidance: false,
+      noFormsEntry: [[true, true]],
+      noFormsGuidance: false,
+      permittedRecord: [{ route: 'mcp' }, undefined],
     });
   });
 
   it('cells 21b, 25 — a route or a principal the tool’s CALLER sends is never recorded: the door’s are', async () => {
-    const s = await session({ gateAnswers: 'offered', principal: { kind: 'shared_token' } });
+    const s = await session({ gateAnswers: 'permitted', principal: { kind: 'shared_token' } });
     const { runId, gateId } = await openedElsewhere(s);
     const reply = await s.call(ANSWER, {
       run_id: runId,
@@ -440,7 +436,7 @@ describe('#627 W — the protocol says what this session’s way means', () => {
     return s.call('get_workflow_protocol', { workflow_id: def.id });
   }
 
-  it('rule 2, the await rule (W-p4, every value), the value line (W-p5/W-p6/W-p9; none under offered) and the auto+gate step text (W-p8) per session', async () => {
+  it('rule 2, the await rule (W-p4, every value), the value line (W-p5/W-p9; none under permitted) and the auto+gate step text (W-p8) per session; asked without forms reads withheld’s', async () => {
     const view = (p: Reply) => {
       const rules = p['rules'] as string[];
       const q = (p['steps'] as Array<{ id: string; agent_involvement: string }>).find(
@@ -456,30 +452,32 @@ describe('#627 W — the protocol says what this session’s way means', () => {
         step: q.agent_involvement.split('opens a gate. ')[1],
       };
     };
-    const offered = view(await protocolOf({ gateAnswers: 'offered' }, true));
-    const fallback = view(await protocolOf({}, false));
+    const permitted = view(await protocolOf({ gateAnswers: 'permitted' }, true));
+    const askedNoForms = view(await protocolOf({}, false));
     const forms = view(await protocolOf({}, true));
     const withheld = view(await protocolOf({ gateAnswers: 'withheld' }, false));
-    // (a) red when W-p4 is dropped from offered, the value lines swap, or rule 2 / W-p8 keep the
-    //     answer act where the session has no answer tool; (b) prints each session's texts.
-    // #819 follow-up 2 re-pin (reader B's M4(b)): the offered and fallback rule 2 and the auto+gate
-    // step text say "when the reply has one" of gate.display too — was "present … verbatim,".
-    expect({ offered, fallback, forms, withheld }).toEqual({
-      offered: {
+    // (a) red when W-p4 is dropped from permitted, the value lines swap, or rule 2 / W-p8 keep the
+    //     answer act where the session has no answer tool (the fallback row kept for asked without
+    //     forms); (b) prints each session's texts.
+    // #819 follow-up 2 re-pin (reader B's M4(b)): the permitted rule 2 and the auto+gate step text
+    // say "when the reply has one" of gate.display too — was "present … verbatim,".
+    const WITHHELD = {
+      rule2:
+        "When you receive status 'confirm_required', read gate.agent_hint when the reply has one, present gate.display to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation.",
+      await: true,
+      valueLine:
+        'This server records no gate answers. Workflow text that mentions answering tools refers to tools this session does not have.',
+      step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation.',
+    };
+    expect({ permitted, askedNoForms, forms, withheld }).toEqual({
+      permitted: {
         rule2:
           "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim when the reply has one, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.",
         await: true,
         valueLine: expect.stringMatching(/^Optional: mint a fresh UUIDv4/),
         step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim when the reply has one, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.',
       },
-      fallback: {
-        rule2:
-          "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim when the reply has one, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.",
-        await: true,
-        valueLine:
-          'Answers to gates go through submit_human_response; your client may ask the user to approve each call.',
-        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim when the reply has one, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.',
-      },
+      askedNoForms: WITHHELD,
       forms: {
         rule2:
           "When you receive status 'confirm_required', read gate.agent_hint when the reply has one; the user's app shows them the question as a form; follow next_actions.",
@@ -488,20 +486,13 @@ describe('#627 W — the protocol says what this session’s way means', () => {
           "Gate questions are sent to the user's app as a form when start_run, execute_step or advance_run first reaches the gate, or when you call present_question; you cannot answer them. Follow the await entry: it says whether a form was sent in this session.",
         step: "Read `gate.agent_hint` for presentation instructions when the reply has one; the user's app shows them the question as a form; follow next_actions.",
       },
-      withheld: {
-        rule2:
-          "When you receive status 'confirm_required', read gate.agent_hint when the reply has one, present gate.display to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation.",
-        await: true,
-        valueLine:
-          'This server records no gate answers. Workflow text that mentions answering tools refers to tools this session does not have.',
-        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation.',
-      },
+      withheld: WITHHELD,
     });
   });
 
   it.each([
-    ['offered', { gateAnswers: 'offered' as const }, true],
-    ['the fallback (asked, no forms)', {}, false],
+    ['permitted', { gateAnswers: 'permitted' as const }, true],
+    ['asked, no forms', {}, false],
     ['asked with forms', {}, true],
     ['withheld', { gateAnswers: 'withheld' as const }, false],
   ] as const)(
@@ -545,7 +536,7 @@ describe('#627 W — the protocol says what this session’s way means', () => {
 
   it('correction 2 (8.6 (g), the docs’ claim) — a reply has gate.agent_hint only when the gate’s step has instructions', async () => {
     const hintOf = async (yaml: string) => {
-      const s = await session({ gateAnswers: 'offered' });
+      const s = await session({ gateAnswers: 'permitted' });
       await s.workflowStore.register(loadWorkflowFromString(yaml));
       const started = await s.call('start_run', { workflow_id: 'door627', params: {} });
       const gate = started['gate'] as Record<string, unknown> | undefined;
@@ -565,12 +556,12 @@ describe('#627 W — the protocol says what this session’s way means', () => {
 
   it('cell 12 — the protocol under every value names no command and never says the agent may answer ("run respond", "the agent included")', async () => {
     const texts = await Promise.all([
-      protocolOf({ gateAnswers: 'offered' }, false),
+      protocolOf({ gateAnswers: 'permitted' }, false),
       protocolOf({}, false),
       protocolOf({}, true),
       protocolOf({ gateAnswers: 'withheld' }, false),
     ]);
-    // (a) red when a command or the offered start line's clause reaches the protocol; (b) prints
+    // (a) red when a command or the permitted start line's clause reaches the protocol; (b) prints
     //     which session's protocol holds it.
     expect(
       texts.map((p) => {
@@ -601,7 +592,7 @@ describe('#627 W — the protocol says what this session’s way means', () => {
     };
     // (a) red when the label is dropped on one surface, or put on an ordinary step; (b) prints each.
     expect([
-      view(await protocolOf({ gateAnswers: 'offered' }, false, 'Be brief.')),
+      view(await protocolOf({ gateAnswers: 'permitted' }, false, 'Be brief.')),
       view(await protocolOf({}, true, 'Be brief.')),
       view(await protocolOf({ gateAnswers: 'withheld' }, false, 'Be brief.')),
     ]).toEqual([expected, expected, expected]);
@@ -619,7 +610,7 @@ describe('#627 W — the protocol says what this session’s way means', () => {
     };
     // (a) red when the label is dropped on agent_hint; (b) prints each session's hint.
     expect([
-      await hintOf({ gateAnswers: 'offered' }, false),
+      await hintOf({ gateAnswers: 'permitted' }, false),
       await hintOf({}, false),
       await hintOf({ gateAnswers: 'withheld' }, false),
     ]).toEqual([
@@ -1104,7 +1095,7 @@ describe('#627 W — an embedder: env + option, the most restrictive wins; a bad
     }).toEqual({
       setting: ['withheld', 'option', [['env', 'asked']]],
       capability: { value: 'withheld', source_kind: 'option' },
-      bad: "createRealmMcpServer: invalid REALM_MCP_GATE_ANSWERS value 'witheld': expected asked, offered or withheld — refused: no server is built while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value where this program reads it, or remove it; a program that reads its environment only at start must be restarted.",
+      bad: "createRealmMcpServer: invalid REALM_MCP_GATE_ANSWERS value 'witheld': expected asked, permitted or withheld — refused: no server is built while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value where this program reads it, or remove it; a program that reads its environment only at start must be restarted.",
       badWait:
         "createRealmMcpServer: invalid formWaitSeconds value '10': expected a whole number of seconds from 30 to 3600 — refused: no server is built while it is set. Fix the value or remove it.",
     });
@@ -1157,12 +1148,12 @@ describe('#627 W — Part I: a token for a handed-off question is held back', ()
 });
 
 describe('#627 W correction 1 (E4, E5) — the held-back reply by row, its arms, and the narrowed opening', () => {
-  const ANSWERS = (value: 'offered' | 'withheld') => ({
+  const ANSWERS = (value: 'permitted' | 'withheld') => ({
     value,
     source: { kind: 'default' as const, ref: 'test' },
     forms: { shown: false, source: { kind: 'negotiated' as const, ref: 'test' } },
   });
-  async function planted(gateAnswers: 'offered' | 'withheld') {
+  async function planted(gateAnswers: 'permitted' | 'withheld') {
     const s = await session({ gateAnswers });
     const def = await registered(s);
     const { record: run } = await s.runStore.create({
@@ -1191,11 +1182,11 @@ describe('#627 W correction 1 (E4, E5) — the held-back reply by row, its arms,
     return { hint: envelope.context_hint, logged };
   };
 
-  it('E4: on offered the clause is the opening reply’s answer instruction, in the text and the log line', async () => {
-    const p = await planted('offered');
+  it('E4: on permitted the clause is the opening reply’s answer instruction, in the text and the log line', async () => {
+    const p = await planted('permitted');
     // (a) red when the withholding clause prints on a row that does not withhold answers;
     //     (b) prints the hint and the log line, never the token.
-    expect(held(p.plant(p.opening), { answers: ANSWERS('offered') })).toEqual({
+    expect(held(p.plant(p.opening), { answers: ANSWERS('permitted') })).toEqual({
       hint: `Realm held back this reply: it carried a claim token outside the answer instruction of the reply that opened the question. The call itself ran and changed the run (version ${p.opening.run_version}). This is a fault in Realm or in the program that embeds it, and it was logged. Do not repeat this call: tell the user, and call get_run_state to see where the run stands.`,
       logged: [
         `realm: held back a ${p.opening.command} reply for run ${p.run.id}: it carried a claim_token outside the answer instruction of the reply that opened the question. This is a bug in Realm or in the program embedding it; please report it with this line.`,
@@ -1238,8 +1229,8 @@ describe('#627 W correction 1 (E4, E5) — the held-back reply by row, its arms,
     //     counted as an opening); (b) prints both verdicts.
     expect({
       withheld: tokenStrayed(envelope, narrowed(['asked_person'])),
-      offered: tokenStrayed(envelope, narrowed(['agent', 'asked_person'])),
-    }).toEqual({ withheld: true, offered: false });
+      permitted: tokenStrayed(envelope, narrowed(['agent', 'asked_person'])),
+    }).toEqual({ withheld: true, permitted: false });
   });
 });
 
@@ -1357,7 +1348,7 @@ describe('#627 W correction 2 (4.2, 4.3) — the library refuses an inert form w
         'createRealmMcpServer: the formWaitSeconds option has no effect on this server: it sends no forms (statelessHttp)',
       asked: 'built',
       emptyAnswers:
-        "createRealmMcpServer: invalid gateAnswers option value '': expected asked, offered or withheld",
+        "createRealmMcpServer: invalid gateAnswers option value '': expected asked, permitted or withheld",
     });
     await home.cleanup();
   });

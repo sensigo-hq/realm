@@ -47,7 +47,7 @@ const DAMAGED = {
   schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
 } as WorkflowDefinition;
 
-type Door = 'offered' | 'asked' | 'withheld';
+type Door = 'permitted' | 'asked' | 'withheld';
 
 const handles: TempHome[] = [];
 afterEach(async () => {
@@ -142,8 +142,9 @@ describe('#627 W correction 1 (A2) — append_trace’s error reply names no ans
 
 describe('#627 W correction 2 (3.1, MCP F7) — a copy Realm cannot read: the way on is the repair, on every door', () => {
   it.each([
-    ['offered', 'offered', false, false],
-    ['asked, a client without forms', 'asked', false, false],
+    ['permitted', 'permitted', false, false],
+    // The gate-answers default (2026-11-14): asked without forms hands the question off, as withheld.
+    ['asked, a client without forms', 'asked', false, true],
     ['withheld', 'withheld', false, true],
     ['asked, a client with forms', 'asked', true, true],
   ] as const)(
@@ -264,8 +265,8 @@ describe('#627 W correction 2 (8.1) — append_trace on a step waiting at its ow
     });
   });
 
-  it('under offered: the hint names submit_human_response for that gate', async () => {
-    const r = await atOwnQuestion('offered');
+  it('under permitted: the hint names submit_human_response for that gate', async () => {
+    const r = await atOwnQuestion('permitted');
     const { hint } = judged(JSON.stringify(r.reply));
     // An error reply lists no ways (its next_actions is empty on every error reply — 8.6 (f)'s fact):
     // the remedy is worded in the hint, by the door's remedyWords.

@@ -78,8 +78,10 @@ const CELLS = {
   installs:
     'npm install lines: each package named exists, is published, and has the bin the pages use',
   quickStart: 'README quick start: init, the edited workflow.yaml, validate, register and run',
-  clients: 'MCP client configurations and realm mcp: started as a client starts them, 11 tools',
-  serve: 'realm serve lines: up on the port, 401 without the token, 11 tools with it',
+  clients:
+    'MCP client configurations and realm mcp: started as a client starts them, 10 tools under the default',
+  serve:
+    'realm serve lines: up on the port, 401 without the token, 10 tools with it under the default',
   readmeExtensions: 'README extensions line: merged into the scaffold and validated',
   repo: 'README development and security commands: the scripts and the provenance they rely on',
   agentCreated: 'agent-created-workflows: create_workflow as sent, then realm workflow list',
@@ -95,7 +97,8 @@ const CELLS = {
   coreQuickStartNext:
     "core README: the quick start's comment gives advanceRun's call, and that call runs the step the run then owes the engine",
   coreAdapter: 'core README: the adapter fragment serves a step through executeStep',
-  embedded: 'mcp-server README: the embedded server program serves 11 tools over stdio',
+  embedded:
+    'mcp-server README: the embedded server program serves 10 tools over stdio under the default',
   provider: 'cli README: the custom provider module drives realm agent',
   db: 'realm-db: realm db backup, then realm db migrate --backup, on a home with a store, each make their copy; then realm db check finds nothing',
 } as const;
@@ -523,7 +526,8 @@ describe(
         counts.push(await toolCount(await client(command!, args)));
       }
       // (a) red when a configuration names a command or argument no package installs, or the server
-      //     it starts does not serve the 11 tools; (b) prints the configurations and the counts.
+      //     it starts does not serve its tools (10 under the default for this client, which shows no
+      //     forms, and under withheld); (b) prints the configurations and the counts.
       expect({ configs, lines, counts }).toEqual({
         configs: [
           { command: 'realm', args: ['mcp'] },
@@ -533,8 +537,9 @@ describe(
           { command: 'realm', args: ['mcp', '--gate-answers', 'withheld'] },
         ],
         lines: ['realm mcp', 'realm mcp', 'realm mcp --gate-answers withheld'],
-        // #627 W: under withheld the server lists no answer tool — 10.
-        counts: [11, 11, 11, 11, 10, 11, 11, 10],
+        // #627 W: under withheld the server lists no answer tool — 10. The gate-answers default
+        // (2026-11-14): nor does the default for a client that shows no forms — 10.
+        counts: [10, 10, 10, 10, 10, 10, 10, 10],
       });
     });
 
@@ -582,9 +587,10 @@ describe(
       }
       // (a) red when a line does not start a server on its port, lets a request in without the
       //     token, or refuses the token; (b) prints the status without the token and the tool count.
+      // The gate-answers default (2026-11-14): realm serve's default lists no answer tool — 10.
       expect(seen).toEqual([
-        [401, 11],
-        [401, 11],
+        [401, 10],
+        [401, 10],
       ]);
     });
 
@@ -1253,10 +1259,12 @@ describe(
         `${fence('packages/mcp-server/README.md', 'createRealmMcpServerOnHome(')}\n`,
       );
       const own = programHome();
-      // (a) red when the program does not start a server that serves the 11 tools; (b) prints the count.
+      // (a) red when the program does not start a server that serves its tools (10 under the default,
+      //     for a client that shows no forms — the gate-answers default, 2026-11-14); (b) prints the
+      //     count.
       expect(
         await toolCount(await client(process.execPath, ['server.ts'], dir, env({ HOME: own }))),
-      ).toBe(11);
+      ).toBe(10);
       // (a) red when the program does not open the home the README says it opens; (b) prints the path.
       expect(existsSync(join(own, '.realm', 'realm.db')), join(own, '.realm', 'realm.db')).toBe(
         true,

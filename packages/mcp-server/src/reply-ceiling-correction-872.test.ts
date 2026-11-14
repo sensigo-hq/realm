@@ -514,6 +514,8 @@ async function door(registry?: ExtensionRegistry) {
   const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
     ...h.stores,
+    // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+    gateAnswers: 'permitted',
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();

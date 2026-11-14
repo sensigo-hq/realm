@@ -67,7 +67,10 @@ afterEach(async () => {
   for (const h of handles.splice(0).reverse()) await h.cleanup();
 });
 
-async function connect(registry?: ExtensionRegistry) {
+async function connect(
+  registry?: ExtensionRegistry,
+  answers: 'permitted' | 'default' = 'permitted',
+) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-sweep-625-'));
   await located(dir);
   const h = await makeTempHome({ home: dir });
@@ -75,6 +78,9 @@ async function connect(registry?: ExtensionRegistry) {
   const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
     ...h.stores,
+    // The gate-answers default (2026-11-14): these pages' examples show the agent answering, on a
+    // server started with --gate-answers permitted; `'default'` is a server given no value.
+    ...(answers === 'permitted' ? { gateAnswers: 'permitted' as const } : {}),
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -633,7 +639,8 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
       'docs/reference/workflow/top-level-fields.md',
       "The fifth rule was added after version 0.46.0; the sixth, and the first rule's second sentence, after version 0.47.0. Setting `rules` removes all six, including the two about human gates.",
     );
-    const { call, workflowStore } = await connect();
+    // The page shows the six rules a default server gives a client with no forms.
+    const { call, workflowStore } = await connect(undefined, 'default');
     await workflowStore.register(
       wf(
         [
@@ -738,7 +745,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
   it('packages/mcp-server/README.md: the server exposes 11 tools, advance_run among them', async () => {
     claim(
       'packages/mcp-server/README.md',
-      'Exposes 11 workflow tools (10 under `withheld`) over stdio or HTTP',
+      'Exposes up to 11 workflow tools (10 without an answer tool: under `withheld`, and under the default `asked` in an app that shows no forms) over stdio or HTTP',
     );
     claim(
       'packages/mcp-server/README.md',

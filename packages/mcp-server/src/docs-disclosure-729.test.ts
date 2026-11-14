@@ -51,6 +51,8 @@ async function connect(extra: ServerExtras = {}) {
   await workflowStore.register(FLOW);
   const server = createRealmMcpServer({
     ...h.stores,
+    // The gate-answers default (2026-11-14): the answer tool is listed under permitted only.
+    gateAnswers: 'permitted',
     ...extra,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();

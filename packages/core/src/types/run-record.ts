@@ -398,6 +398,14 @@ export const CACHE_REQUEST_SOURCES = ['stated', 'runner_default'] as const;
 export type CacheRequestSource = (typeof CACHE_REQUEST_SOURCES)[number];
 
 /**
+ * The runners that choose a request's cache setting (`UsageRecord.cache_requested_by`): `realm
+ * agent`, or `realm listen` for a drive it spawned. Produced by the CLI's `resolvePromptCache`. The
+ * record's field stays a `string`: a provider module may write any text there, which is then
+ * checked as text, never shown as one of these words.
+ */
+export const CACHE_REQUESTERS = ['realm agent', 'realm listen'] as const;
+
+/**
  * Issue #600 (the lifetime unit) — on what `--prompt-cache auto` chose a request's lifetime
  * (`UsageRecord.cache_auto.basis`):
  * - `no_measurement` — produced by the CLI's `resolvePromptCache` for the setting `auto`, which the

@@ -54,7 +54,8 @@ describe('CP-W (e) — the table and the said-set', () => {
       frozen: Object.isFrozen(DEPRECATIONS),
     }).toEqual({
       shipped: undefined,
-      shippedLength: 0,
+      // PR #1167 correction 1 (item 11): REALM-D001, the gate-answers value offered.
+      shippedLength: 1,
       good: undefined,
       duplicate: 'deprecations: REALM-D001 is used twice',
       outOfOrder: 'deprecations: REALM-D001 comes after REALM-D002; ids are listed in order',
@@ -118,9 +119,10 @@ describe('CP-W (f) — the compatibility page lists every id the table holds', (
 
   it('the section holds a row per entry (id, since, goes away, what) — "None today." when the table is empty', () => {
     const page = readFileSync(join(ROOT, PAGE), 'utf8');
+    // The separator row as the page pads it (Prettier widens the table to its widest cell).
     const extra = page.replace(
-      '| --- | ----- | --------- | ---- |\n',
-      '| --- | ----- | --------- | ---- |\n| REALM-D001 | 0.50.0 | not scheduled | You used the old flag. |\n',
+      /(\n\| -+ \| -+ \| -+ \| -+ \|\n)/,
+      '$1| REALM-D001 | 0.50.0 | not scheduled | You used the old flag. |\n',
     );
     // (a) red when a row is on the page and not in the table, or in the table and not on the page
     //     (both shown here on copies); (b) prints the page's rows and what the table expects.
@@ -133,7 +135,17 @@ describe('CP-W (f) — the compatibility page lists every id the table holds', (
       page: true,
       rowTooManyOnThePage: false,
       rowTooManyInTheTable: false,
-      pinned: { rows: [], noneLine: true, expected: [], expectNone: true },
+      // PR #1167 correction 1 (item 11): the page's one row, REALM-D001.
+      pinned: {
+        rows: [
+          ['REALM-D001', '0.50.0', 'not scheduled', 'The gate-answers value offered was given.'],
+        ],
+        noneLine: false,
+        expected: [
+          ['REALM-D001', '0.50.0', 'not scheduled', 'The gate-answers value offered was given.'],
+        ],
+        expectNone: false,
+      },
     });
   });
 });

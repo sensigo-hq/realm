@@ -59,8 +59,21 @@ export function validateDeprecations(entries: readonly DeprecationEntry[]): void
   }
 }
 
-/** Every retired thing, in id order. Empty: nothing is deprecated today. */
-export const DEPRECATIONS: readonly DeprecationEntry[] = Object.freeze([]);
+/** Every retired thing, in id order. */
+export const DEPRECATIONS: readonly DeprecationEntry[] = Object.freeze([
+  // The gate-answers default (PR #1167 correction 1, item 11): `offered`, now called `permitted`.
+  // The bins raise it from their own reading of the flag and the variable; the library's option
+  // raises nothing (its TSDoc says it).
+  {
+    id: 'REALM-D001',
+    since: '0.50.0',
+    removal: 'not scheduled',
+    used: 'The gate-answers value offered was given.',
+    means: 'It is now called permitted, and works the same.',
+    instead: 'Write permitted in its place.',
+    when: 'offered keeps working: no removal is scheduled.',
+  },
+]);
 validateDeprecations(DEPRECATIONS);
 
 /** The one line a door prints for `entry`: `Warning: [<id>] <used> <means> <instead> <when>`. */
