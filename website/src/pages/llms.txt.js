@@ -18,7 +18,7 @@ import {
   assertDocsListed,
   isDocsPageId,
 } from '../data/docs-sidebar.mjs';
-import { newestRealmRelease, rows } from '../lib/comparison.mjs';
+import { rows } from '../lib/comparison.mjs';
 import {
   TEXTS_CHECKED_ON,
   llmsFigures,
@@ -60,7 +60,7 @@ const COMPARISON = [
   `The ${rows.length} questions, with Realm's answers:`,
   ...llmsQuestionLines,
   '',
-  `Realm's answers were checked against ${newestRealmRelease}; the other tools' columns were read ${llmsFigures.othersRead}.`,
+  `${llmsFigures.realmChecked}; the other tools' columns were read ${llmsFigures.othersRead}.`,
 ];
 
 /** The approved text from "A worked example" to its end. */

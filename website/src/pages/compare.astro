@@ -28,6 +28,7 @@ import {
   issueLink,
   HEADINGS,
   OTHER_TOOLS,
+  oneLineParts,
 } from '../lib/compare-text.mjs';
 
 const PILL = { Yes: 'yes', Partial: 'part', No: 'no', 'N/A': 'na' };
@@ -148,6 +149,8 @@ button.openall:hover { border-color: var(--muted); }
   .rowsof td[data-label]::before { content: attr(data-label); display: block; font: 500 11px/1.3 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
 }
 @media (max-width: 520px) { .rowhead { min-width: 160px; max-width: 180px; } }
+/* A command-line flag stays whole: broken after its "--", it would read as a dash (oneLineParts). */
+.one-line { white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -260,7 +263,7 @@ button.openall:hover { border-color: var(--muted); }
     <h3>{OTHER_TOOLS.question}</h3>
     <p>{OTHER_TOOLS.answer}</p>
     <ul>
-      {OTHER_TOOLS.items.map((item) => <li>{item.strong ? <strong>{item.strong}</strong> : null}{linkParts(item.text).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</li>)}
+      {OTHER_TOOLS.items.map((item) => <li>{item.strong ? <strong>{item.strong}</strong> : null}{linkParts(item.text).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : oneLineParts(p.text).map((q) => (q.oneLine ? <span class="one-line">{q.oneLine}</span> : q.text))))}</li>)}
     </ul>
   </section>
 

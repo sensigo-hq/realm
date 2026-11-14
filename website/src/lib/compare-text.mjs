@@ -115,12 +115,15 @@ const releaseCounts = [...new Set(realmReleases.map((a) => a.release))]
   .map((release) => ({ release, n: realmReleases.filter((a) => a.release === release).length }));
 const realmTool = tools.find((t) => t.key === 'realm');
 /** The line under the column dates: what Realm's answers were checked against, computed from them. */
+/** What Realm's answers were checked against, when they name more than one release: the words the
+ *  page's line and llms.txt's both use. */
+const mixedReleaseWords = `Realm's answers (${rows.length} questions, ${facts.length} facts and its strengths) were checked against more than one release: ${releaseCounts
+  .map(({ release, n }) => `${release} (${n} ${n === 1 ? 'answer' : 'answers'})`)
+  .join(', ')}`;
 export const releaseLine =
   releaseCounts.length === 1
     ? `Realm's answers re-checked against ${newestRealmRelease} on ${longDate(realmTool.checked)}.`
-    : `Realm's answers (${rows.length} questions, ${facts.length} facts and its strengths) were checked against more than one release: ${releaseCounts
-        .map(({ release, n }) => `${release} (${n} ${n === 1 ? 'answer' : 'answers'})`)
-        .join(', ')}. Each one checked on an older release says so beside it.`;
+    : `${mixedReleaseWords}. Each one checked on an older release says so beside it.`;
 /** What an answer checked on an older release than the newest says beside it, or `null`. */
 export const olderNote = (release) =>
   compareReleases(release, newestRealmRelease) < 0 ? `Checked against Realm ${release}.` : null;
@@ -176,6 +179,20 @@ export const howChecked = [
   ],
 ];
 
+/** Words the page keeps on one line: a command-line flag that, broken after its "--", would read as
+ *  a dash. Only the page marks them; the Markdown copy and llms.txt are plain text. */
+const ONE_LINE = ['--gate-answers withheld'];
+const ONE_LINE_SPLIT = new RegExp(
+  `(${ONE_LINE.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+);
+/** Text split so each of ONE_LINE's words is a part of its own (`oneLine`), as linkParts splits off
+ *  issue numbers. */
+export const oneLineParts = (text) =>
+  text
+    .split(ONE_LINE_SPLIT)
+    .filter((part) => part !== '')
+    .map((part) => (ONE_LINE.includes(part) ? { oneLine: part } : { text: part }));
+
 /** Text split so issue numbers (#625) can become links to the issue. */
 export const linkParts = (text) =>
   text
@@ -223,6 +240,12 @@ export const llmsFigures = {
   realmNo: realmNo === 0 ? 'none' : String(realmNo),
   othersMostYes: Math.max(...othersByAnswers.map((t) => t.yes)),
   othersFewestNo: Math.min(...othersByAnswers.map((t) => t.no)),
+  /** What Realm's answers were checked against: one release, or the page's mixed-release words
+   *  (without its note on answers checked on an older release, which llms.txt does not show). */
+  realmChecked:
+    releaseCounts.length === 1
+      ? `Realm's answers were checked against ${newestRealmRelease}`
+      : mixedReleaseWords,
   /** When the other tools' columns were read: "in October 2026", "between … and …". */
   othersRead:
     firstRead.y === lastRead.y && firstRead.m === lastRead.m
