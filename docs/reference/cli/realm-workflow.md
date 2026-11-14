@@ -436,6 +436,8 @@ The last line is `Run complete. Phase: <phase>`. When an engine failure ended th
 
 **Exit code:** 0 if the run completed; 1 if it ended in any other way, if nothing else could run, if it stopped waiting for a step another program holds, if you left a prompt with Ctrl+C or Ctrl+D, or if there was no terminal. A signal sent to the command gives 128 plus the signal's number, as above.
 
+When its output goes to a file or a pipe, `realm workflow run` runs its work in a second process and keeps the first to mask what reaches the file or pipe, as `realm agent` does; `kill` on the first process stops both. Its prompts still reach your terminal when your error output is one; with both outputs in a file you type without seeing the prompt, as before. Ctrl-Z at a prompt and `fg` work as on a terminal.
+
 ## `test`
 
 ```text

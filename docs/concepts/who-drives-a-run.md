@@ -35,7 +35,7 @@ It runs one step at a time.
 
 ## `realm listen`
 
-`realm listen` starts runs from webhooks. You give it one or more workflow files. Each says which requests it accepts in its `trigger` block. When a request arrives, `realm listen` checks it, creates a run, and starts a `realm agent` process for that run. The request gets its reply as soon as the run exists; it does not wait for the run to finish.
+`realm listen` starts runs from webhooks. You give it one or more workflow files. Each says which requests it accepts in its `trigger` block. When a request arrives, `realm listen` checks it, creates a run, and starts a `realm agent` process for that run. The request gets its reply as soon as the run exists, and does not wait for the run to finish, unless the request asks it to wait: see [Waiting for the result](../reference/workflow/webhook-trigger.md#waiting-for-the-result).
 
 ## `realm workflow run`
 

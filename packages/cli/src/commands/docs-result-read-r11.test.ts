@@ -143,11 +143,12 @@ describe('R1.1 — webhook-trigger.md', () => {
       "Realm hides a value equal to one of the project's declared secrets, or to an environment value of 8 or more characters, wherever it appears in a result, even if it is not a secret; and it hides a text or a number kept under a name like `token` or `password` in the run's output, whichever way `result_map` reaches it.",
     );
     // L2 (core's `workflow/result-map-r11.test.ts`: the loader's verdict on each name this lists, in
-    // its cases and with a prefix), G4 (`source-canary-729.test.ts`: a value is hidden by the field
-    // it sits under, also when a path lifts it out to a harmless name).
+    // its cases and with a prefix) and R1.2's `docs-wait-r12.test.ts` (the loader's verdict on the
+    // prefixed names it gives), G4 (`source-canary-729.test.ts`: a value is hidden by the field it
+    // sits under, also when a path lifts it out to a harmless name). R1.2 (MA3-R11-13): what a prefix is.
     claim(
       TRIGGER,
-      "A name is refused when Realm treats a field of that name as a credential's: `token`, `password`, `api_key`, `secret`, `authorization`, `cookie` and `private_key` are, in any case and with a prefix (`my_token`, `x_secret`); `tokens`, `auth` and `session` are not. Realm hides a value by the field it sits under in the run's output, not by the name given here, so a name like these would look protected and not be.",
+      "A name is refused when Realm treats a field of that name as a credential's: `token`, `password`, `api_key`, `secret`, `authorization`, `cookie` and `private_key` are, in any case, and with a prefix set off by `_`, `-`, `.`, a space or a capital letter (`my_token`, `x-secret`, `myToken`); `mytoken`, `xsecret` and `MYTOKEN` are not, nor are `tokens`, `auth` and `session`. Realm hides a value by the field it sits under in the run's output, not by the name given here, so a name like these would look protected and not be.",
     );
     // L1 (the four modes refused).
     claim(
@@ -223,10 +224,10 @@ describe('R1.1 — realm-listen.md', () => {
   });
 
   it('the 202, the in-window repeat, the two log lines and the start refusal', () => {
-    // P1.
+    // P1; R1.2: unless the request asks it to wait (`listen-wait-r12.test.ts` C1, C3).
     claim(
       LISTEN,
-      'It does not wait for the run. The reply for a workflow with `result_map` also carries `status_path` and `token` (see [The read address](#the-read-address); added after version 0.49.0).',
+      'It does not wait for the run, unless the request asks it to wait: see [Waiting for the result](../workflow/webhook-trigger.md#waiting-for-the-result). The reply for a workflow with `result_map` also carries `status_path` and `token` (see [The read address](#the-read-address); added after version 0.49.0).',
     );
     // P2 (no `params_differ` in the window; purged: bare).
     claim(
@@ -248,8 +249,8 @@ describe('R1.1 — realm-listen.md', () => {
       LISTEN,
       "| Two workflows with `result_map` have the same path but for a trailing slash (added after version 0.49.0) | `Error: listen: the read address '/refunds/runs/<run id>' is taken twice — workflow 'twin' conflicts with 'refunds'; give each workflow with a result_map its own trigger.path` |",
     );
-    // R1.1 adds no flag: the count stays.
-    claim(LISTEN, 'This page lists its argument and 15 flags (13 in version 0.49.0),');
+    // R1.1 adds no flag; R1.2 adds `--max-wait` and `--max-waiting` (the table's 17 rows).
+    claim(LISTEN, 'This page lists its argument and 17 flags (13 in version 0.49.0),');
   });
 });
 
