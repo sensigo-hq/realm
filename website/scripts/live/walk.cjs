@@ -52,10 +52,11 @@ const S = {
   skipLabel: 'Or let the agent try to skip the gate',
   shown:
     'This is what the reviewer was shown. The run is in phase gate_waiting and neither posting step is available to the agent.',
-  agentSends: 'On this release the agent still sends the chosen step itself.',
+  agentSends: 'Realm runs the chosen step itself when the agent calls advance_run.',
+  sendLabel: 'The agent calls advance_run',
   record:
     "One entry for each step that ran and for the gate answer, each with a hash. Refused calls leave no entry; counted refusals are noted on the step's entry.",
-  notFinished: 'The run is not finished: the agent has not sent the chosen step yet.',
+  notFinished: 'The run is not finished: the agent has not called advance_run yet.',
   readBack:
     'This run lives only in this page. With Realm installed, realm run inspect <run-id> reads a run back.',
   failed: 'This run failed after 6 counted refusals.',
@@ -108,6 +109,8 @@ const wordBreaks = (sel) => {
   }
   return out;
 };
+// The cut markers 0.49.0 writes into a gate question that does not fit its view.
+const CUT_MARKS = ['Cut when this question opened', '[cut at mint'];
 const fakeBundle = (startBody) =>
   `export const version = "test"; export async function start() { ${startBody} }`;
 
@@ -221,10 +224,8 @@ async function walk(which, width) {
     ok(`${stateName}: no horizontal scroll`, sw <= 0, `overflow ${sw}px`);
   }
   // Every cell of the Live state table, for the state the run is in.
-  // path (D only): 'stage4' when the chosen step was sent with stage 4's button, 'stage2' when it
-  // was sent from stage 2's editor.
-  async function cells(L, ending, path = 'stage4') {
-    const name = `state ${L}${ending ? ' (' + ending.choice + (L === 'D' ? ', sent from ' + path : '') + ')' : ''}`;
+  async function cells(L, ending) {
+    const name = `state ${L}${ending ? ' (' + ending.choice + ')' : ''}`;
     ok(`${name}: data-live-state`, (await letter()) === L, String(await letter()));
     // stage 2
     let t = await txt(1);
@@ -274,6 +275,11 @@ async function walk(which, width) {
         JSON.stringify(next),
       );
     if (L === 'B') {
+      ok(
+        `${name} stage 3: the gate question is whole (no cut marker)`,
+        !CUT_MARKS.some((x) => t.includes(x)),
+        JSON.stringify(CUT_MARKS.filter((x) => t.includes(x))),
+      );
       ok(
         `${name} stage 3: gate text = the recording, Approve/Request changes, two skip attempts, :73, Next waits`,
         (await page.textContent('[data-l="gate"]')) === R.gate.display &&
@@ -326,10 +332,11 @@ async function walk(which, width) {
       );
     if (L === 'C')
       ok(
-        `${name} stage 4: the :104 heading and sentence, the next step, the other branch`,
+        `${name} stage 4: the :104 heading and sentence, the "${S.sendLabel}" button, the other branch`,
         t.startsWith(`The reviewer chose ${ending.choice}. Realm closes the other branch.\n`) &&
           t.includes(S.agentSends) &&
           posts === 1 &&
+          (await page.textContent('[data-act="post"]')) === S.sendLabel &&
           others === 1 &&
           !t.includes(S.need4),
         JSON.stringify(t.slice(0, 160)),
@@ -399,31 +406,14 @@ async function walk(which, width) {
         );
         const postVis = await page.isVisible(s4 + '[data-box="post"]');
         const postT = postVis ? await page.innerText(s4 + '[data-box="post"]') : '';
-        const s2Vis = await page.isVisible(s4 + '[data-l="sent2"]');
-        const s2T = s2Vis ? await page.innerText(s4 + '[data-l="sent2"]') : '';
-        const posted = ending.evidence.at(-1);
-        if (path === 'stage4')
-          ok(
-            `${name} stage 4: "Ran:" shows the accepted reply and Full reply, without the call`,
-            /^REALM ACCEPTS IT\n/i.test(postT) &&
-              !/AGENT CALLS/i.test(postT) &&
-              (await page.locator(s4 + '[data-box="post"] > pre').count()) === 1 &&
-              (await page.locator(s4 + '[data-box="post"] details').count()) === 1 &&
-              !s2Vis,
-            JSON.stringify(postT.slice(0, 120)),
-          );
-        else
-          ok(
-            `${name} stage 4: "Ran:" shows "The agent sent ${ending.posted.step} from stage 2." and its row from the record`,
-            !postVis &&
-              s2T.startsWith(`The agent sent ${ending.posted.step} from stage 2.\n`) &&
-              s2T
-                .replace(/\s+/g, ' ')
-                .includes(`${ending.posted.step} success ${posted.hash.slice(0, 12)}…`) &&
-              (await page.getAttribute(s4 + '[data-l="sent2-row"] code[title]', 'title')) ===
-                posted.hash,
-            JSON.stringify(s2T.slice(0, 160)),
-          );
+        ok(
+          `${name} stage 4: "Ran:" shows the accepted reply and Full reply, without the call`,
+          /^REALM ACCEPTS IT\n/i.test(postT) &&
+            !/AGENT CALLS/i.test(postT) &&
+            (await page.locator(s4 + '[data-box="post"] > pre').count()) === 1 &&
+            (await page.locator(s4 + '[data-box="post"] details').count()) === 1,
+          JSON.stringify(postT.slice(0, 120)),
+        );
         ok(
           `${name} stage 4: not empty below the heading (the reviewer's box, "Ran:", the skip line)`,
           t.replace(/\s+/g, ' ').length >
@@ -601,6 +591,19 @@ async function walk(which, width) {
     /REALM REFUSES/i.test(r.txt) && r.txt.includes('Nothing was counted.'),
     r.txt.split('\n').slice(0, 6).join(' | '),
   );
+  {
+    // The skip-ahead refusal's context_hint is over 64 characters on 0.49.0 (the valid reply's is
+    // 61, so it no longer exercises the shortening).
+    const shown = await page.textContent('[data-box="send"] > pre:not(:first-of-type)');
+    await page.click('[data-box="send"] summary');
+    const full = await page.innerText('[data-box="send"] details pre');
+    const hint = JSON.parse(full).context_hint;
+    ok(
+      'a long reply string is shortened with "…" and shown whole under "Full reply"',
+      hint.length > 64 && shown.includes(hint.slice(0, 61) + '…') && full.includes(hint),
+      `${hint.length} chars: ${hint.slice(0, 80)}`,
+    );
+  }
   await preset('Leave out a field');
   ok(
     'a preset fills the editor and shows "Press Send to submit it."',
@@ -691,15 +694,6 @@ async function walk(which, width) {
       (await page.textContent('.rp-stage[data-s="1"] [data-say="stop"]')) === S.stop,
     r.txt.split('\n').slice(-4).join(' | '),
   );
-  const shown = await page.textContent('[data-box="send"] > pre:not(:first-of-type)');
-  await page.click('[data-box="send"] summary');
-  const full = await page.innerText('[data-box="send"] details pre');
-  const hint = JSON.parse(full).context_hint;
-  ok(
-    'a long reply string is shortened with "…" and shown whole under "Full reply"',
-    hint.length > 64 && shown.includes(hint.slice(0, 61) + '…') && full.includes(hint),
-    hint.slice(0, 80),
-  );
   await cells('B');
   const h1 = await headings();
   await go(2);
@@ -744,11 +738,17 @@ async function walk(which, width) {
   const p0 = await posts();
   await go(3);
   await page.dblclick('[data-act="post"]');
-  await page.waitForFunction(() => document.querySelector('.rp').dataset.liveState === 'D');
+  // If the run does not complete, the check below prints what the page shows instead.
+  await page
+    .waitForFunction(() => document.querySelector('.rp').dataset.liveState === 'D', null, {
+      timeout: 10000,
+    })
+    .catch(() => {});
   await idle();
   ok(
-    'a double-click on "The agent sends the next step" sends one call',
-    (await posts()) - p0 === 1,
+    `a double-click on "${S.sendLabel}" sends one call: the run completed (state D), one POST`,
+    (await posts()) - p0 === 1 && (await letter()) === 'D',
+    `POSTs ${(await posts()) - p0}, state ${await letter()}`,
   );
   await cells('D', ending1);
   ok(
@@ -794,18 +794,27 @@ async function walk(which, width) {
   );
   await cells('C', R.endings.approve);
   await go(3);
+  const p1 = await posts();
   await page.click('[data-act="post"]');
-  await page.waitForFunction(() => document.querySelector('.rp').dataset.liveState === 'D');
+  await page
+    .waitForFunction(() => document.querySelector('.rp').dataset.liveState === 'D', null, {
+      timeout: 10000,
+    })
+    .catch(() => {});
   await idle();
   ok(
-    'a single click on "The agent sends the next step" → stage 4, focus on its heading',
-    (await page.getAttribute('.rp', 'data-stage')) === '3' &&
+    `a single click on "${S.sendLabel}" → the run completed (state D), one POST, stage 4, focus on its heading`,
+    (await posts()) - p1 === 1 &&
+      (await letter()) === 'D' &&
+      (await page.getAttribute('.rp', 'data-stage')) === '3' &&
       (await focusIs('.rp-stage[data-s="3"] h3[data-say="branch"]')),
+    `POSTs ${(await posts()) - p1}, state ${await letter()}`,
   );
   await cells('D', R.endings.approve);
   await common('state D (approve)');
 
-  // ---- the chosen step sent from stage 2's editor (both endings): stage 4 is not empty in D
+  // ---- the chosen step sent from stage 2's editor in state C (both endings): refused, not
+  // counted, the run stays in C, nothing is posted
   for (const ending of [R.endings.request_changes, R.endings.approve]) {
     await page.click('.rp-live-mark [data-act="new"]');
     await page.waitForFunction(
@@ -821,13 +830,21 @@ async function walk(which, width) {
     await page.click(`[data-act="answer"][data-choice="${ending.choice}"]`);
     await page.waitForFunction(() => document.querySelector('.rp').dataset.liveGate === 'answered');
     await idle();
+    const pe = await posts();
     r = await sendBox(ending.posted.step, '{}');
     ok(
-      `stage 2 path (${ending.choice}): the chosen step sent from the editor → Realm accepts it, state D`,
-      /REALM ACCEPTS IT/i.test(r.txt) && (await letter()) === 'D',
-      r.txt.split('\n').slice(0, 4).join(' | '),
+      `the editor in C (${ending.choice}): the chosen step sent by the agent → Realm refuses, "it is an automatic step", "Nothing was counted.", state C, no POST`,
+      /REALM REFUSES/i.test(r.txt) &&
+        r.txt.includes('it is an automatic step') &&
+        r.txt.includes('Nothing was counted.') &&
+        (await letter()) === 'C' &&
+        (await posts()) === pe,
+      r.txt
+        .split('\n')
+        .filter((l) => /^REALM|automatic step|counted/i.test(l))
+        .join(' | ') + ` | state ${await letter()}, POSTs ${(await posts()) - pe}`,
     );
-    await cells('D', ending, 'stage2');
+    await cells('C', ending);
   }
 
   // ---- the failed run (state E): six counted refusals
@@ -976,6 +993,37 @@ async function walk(which, width) {
         !(await p.isVisible('[data-live-try]')) &&
         (await p.isVisible('.rp > p.rp-foot')),
       `note after ${after} ms: "${n}"`,
+    );
+    await p.context().close();
+  }
+
+  // ---- recorded mode: no sentence shows a backtick (each `…` span renders as code), and the gate
+  // question is whole
+  {
+    const { page: p } = await newPage();
+    await p.goto(BASE);
+    const bt = await p.evaluate(() =>
+      [...document.querySelectorAll('.rp p, .rp h3, .rp li, .rp summary')]
+        .filter((e) => !e.closest('[data-live]'))
+        .map((e) => e.textContent)
+        .filter((x) => x.includes('`')),
+    );
+    const n = await p.evaluate(
+      () =>
+        [...document.querySelectorAll('.rp p, .rp h3, .rp li, .rp summary')].filter(
+          (e) => !e.closest('[data-live]'),
+        ).length,
+    );
+    ok(
+      'recorded mode: no sentence in the built page shows a backtick',
+      n > 0 && bt.length === 0,
+      `${n} elements; ${JSON.stringify(bt).slice(0, 200)}`,
+    );
+    const g = await p.textContent('.rp-stage[data-s="2"] [data-rec] .rp-msg');
+    ok(
+      'recorded mode: the gate question is whole (no cut marker)',
+      g === R.gate.display && !CUT_MARKS.some((x) => g.includes(x)),
+      `${g.length} chars, markers ${JSON.stringify(CUT_MARKS.filter((x) => g.includes(x)))}`,
     );
     await p.context().close();
   }

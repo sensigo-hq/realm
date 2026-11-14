@@ -1,7 +1,12 @@
 // Records the home page's interactive replay: two real runs of examples/08-pr-review driven
 // over MCP (stdio) against published realm packages, with a local stand-in for GitHub.
-// Usage: NM=<dir with node_modules holding @sensigo/realm-cli + realm-testing> WORK=<empty scratch dir> \
-//        node scripts/replay/record.mjs   -> writes $WORK/recording.json; then run distill.mjs.
+// Usage: NM=<dir with node_modules holding @sensigo/realm-cli + realm-testing + @modelcontextprotocol/sdk>
+//        WORK=<empty scratch dir> node scripts/replay/record.mjs   -> writes $WORK/recording.json;
+//        then run distill.mjs. Run it in a clean environment (env -i PATH=… HOME=…): the CLI hides
+//        every environment value it prints, so one that is part of WORK's path hides that part, and
+//        the build guard then refuses the recording.
+// The prepared review is one key change and one sentence, so the gate question fits whole in the
+// question's 600-character view on 0.49.0 (the owner's (b), 2026-11-13).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -31,7 +36,11 @@ fs.writeFileSync(
   `version: 1\nadapters:\n  github:\n    use: github\n    config: { base_url: '${gh.url}', auth: { token: '\${secret:GITHUB_TOKEN}' } }\n`,
 );
 fs.writeFileSync(D + '/project/.env', 'GITHUB_TOKEN=local-stand-in\n');
-const env = { ...process.env, HOME };
+// The recorder's own settings stay out of the CLI's environment: 0.49.0 hides every environment
+// value in what it prints, and WORK is the folder `realm run respond` names, which distill.mjs
+// replaces with a fixed name.
+const { NM: _nm, WORK: _work, ...outer } = process.env;
+const env = { ...outer, HOME };
 const cli = (...a) => {
   const r = spawnSync('node', [CLI, ...a], { env, encoding: 'utf8', cwd: D + '/project' });
   return { argv: ['realm', ...a], exit: r.status, stdout: r.stdout, stderr: r.stderr };
@@ -47,14 +56,10 @@ const c = new Client({ name: 'recorder', version: '1' });
 await c.connect(t);
 const good = {
   risk: 'high',
-  key_changes: [
-    'deliverWebhook now retries a failed POST in a loop instead of failing on the first error',
-    'New MAX_RETRIES constant (5) in webhooks/config.ts',
-    'One new test: a single failure followed by a success',
-  ],
+  key_changes: ['deliverWebhook retries a failed POST up to 5 times'],
   recommendation: 'request_changes',
   review_comment:
-    'Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed.',
+    'Changes requested. After the last retry fails, rethrow the error instead of returning normally.',
 };
 async function run(label, choice, withWrong) {
   const ev = [];
@@ -141,11 +146,9 @@ async function run(label, choice, withWrong) {
       params: {},
     });
   }
-  await call('drive', 'execute_step', {
-    run_id: id,
-    command: choice === 'approve' ? 'post_approval' : 'post_changes_request',
-    params: {},
-  });
+  // The answer leaves the chosen posting step owed to the engine (0.49.0): advance_run, with
+  // run_id only, runs it.
+  await call('drive', 'advance_run', { run_id: id });
   const final = await call('final_state', 'get_run_state', { run_id: id, include_steps: true });
   const inspect = cli('run', 'inspect', id);
   const out = D + `/export-${label}.json`;

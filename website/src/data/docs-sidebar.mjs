@@ -1,7 +1,13 @@
 // The docs sidebar, in reading order. astro.config.mjs gives it to Starlight; llms.txt lists the pages
 // in the same groups; the preview images name a page's group.
+//
+// The deploy build (scripts/deploy-build.mjs) builds the docs from the newest release's branch
+// docs/v<version>, and gives this module that branch's own lists in REALM_DOCS_LISTS, so the sidebar,
+// llms.txt and the preview images list the pages it builds. Every other build uses the lists below.
+// The lists reach a build only through its environment, never through a file a later build would read.
+const fromBranch = process.env.REALM_DOCS_LISTS ? JSON.parse(process.env.REALM_DOCS_LISTS) : null;
 
-export const DOCS_SIDEBAR = [
+const SIDEBAR = [
   {
     label: 'Start here',
     items: [
@@ -108,9 +114,10 @@ export const DOCS_SIDEBAR = [
     ],
   },
 ];
+export const DOCS_SIDEBAR = fromBranch ? fromBranch.sidebar : SIDEBAR;
 
 // The docs index (docs/README.md) is reached from the header, not the sidebar.
-export const DOCS_INDEX_ID = 'docs';
+export const DOCS_INDEX_ID = fromBranch ? fromBranch.indexId : 'docs';
 
 /** Whether a content entry is a docs page. The other entry is the 404 page (scripts/sync-docs.mjs). */
 export function isDocsPageId(id) {
@@ -119,7 +126,7 @@ export function isDocsPageId(id) {
 
 // Pages kept at their old addresses so that old links still work. Each one only links to the pages
 // that replaced it, so the sidebar and llms.txt leave them out.
-export const REPLACED_PAGE_IDS = [
+const REPLACED = [
   'docs/getting-started',
   'docs/reference/cli-commands',
   'docs/reference/mcp-protocol',
@@ -128,6 +135,7 @@ export const REPLACED_PAGE_IDS = [
   'docs/reference/testing',
   'docs/reference/yaml-schema',
 ];
+export const REPLACED_PAGE_IDS = fromBranch ? fromBranch.replaced : REPLACED;
 
 /** The sidebar group a docs page is in, or undefined for the index and the replaced pages. */
 export function groupOf(id) {

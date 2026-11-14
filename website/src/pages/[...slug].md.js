@@ -3,12 +3,14 @@
 // Each page names its copy in a <link rel="alternate" type="text/markdown"> (src/route-data.mjs), and
 // llms.txt links to every copy.
 //
-// The copy is the page as written in docs/, with three differences: the title is plain text (as on the
-// site, see scripts/sync-docs.mjs), the description comment is gone, and links to other docs pages point
-// at their copies. Links are full addresses, so they still work when the text is read away from the site.
+// The copy is the page as written in docs/, with four differences: the title is plain text (as on the
+// site, see scripts/sync-docs.mjs), the description comment is gone, the line that says which Realm the
+// docs describe follows the title (src/lib/docs-version.mjs), and links to other docs pages point at
+// their copies. Links are full addresses, so they still work when the text is read away from the site.
 import { getCollection } from 'astro:content';
 import { SITE_URL, absolute, markdownPath } from '../lib/site-meta.mjs';
 import { isDocsPageId } from '../data/docs-sidebar.mjs';
+import { docsVersionMarkdown } from '../lib/docs-version.mjs';
 
 export async function getStaticPaths() {
   const pages = await getCollection('docs', (page) => isDocsPageId(page.id));
@@ -42,6 +44,6 @@ function linksToCopies(body) {
 }
 
 export function GET({ props }) {
-  const text = `# ${props.title}\n\n${linksToCopies(props.body).trim()}\n`;
+  const text = `# ${props.title}\n\n${docsVersionMarkdown()}\n\n${linksToCopies(props.body).trim()}\n`;
   return new Response(text, { headers: { 'Content-Type': 'text/markdown; charset=utf-8' } });
 }
