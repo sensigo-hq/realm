@@ -13,10 +13,13 @@
   "homepage": "https://realmengine.dev",
   "keywords": [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
     "ai-agent",
     "agent-workflow",
     "workflow",
+    "workflow-engine",
+    "human-in-the-loop",
     "typescript"
   ],
   "private": false,

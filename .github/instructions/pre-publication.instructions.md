@@ -232,6 +232,16 @@ Push only this tag: `git push --tags` would also push any stray local tag, and t
 
 Pushing the tag triggers `.github/workflows/publish.yml`, which builds and publishes every package to npm using OIDC Trusted Publishing — no token required.
 
+**5a. Cut the docs branch from the tag**
+
+The website's live docs are built from the newest release's branch, `docs/v<version>`, not from `main` (`website/deploy/DEPLOY.md`). Cut it from the tag you just pushed:
+
+```bash
+git push origin refs/tags/v<version>^0:refs/heads/docs/v<version>
+```
+
+Until the branch exists, `npm run build:deploy` in `website/` stops and prints this command. A docs fix that is true of the release lands on `main` first and is then copied onto the branch with `git cherry-pick -x` (DEPLOY.md, "Put a docs fix on the live docs between releases").
+
 **6. Verify the publish workflow**
 
 Go to https://github.com/sensigo-hq/realm/actions and confirm the **Publish** workflow triggered and completed successfully on the `v<version>` tag. Each publish step should be green.
@@ -341,16 +351,17 @@ If the tag was pushed but verification (step 7) reveals a broken artifact: publi
 
 The home page's live demo (`website/src/live/`, #624) runs the Realm release its pins name, in the visitor's browser. After a successful publish (step 7), bump it, or record in the release notes why it stays on the older release.
 
-1. In `website/package.json`, set `@sensigo/realm`, `@sensigo/realm-mcp` and `@sensigo/realm-testing` to `<version>`. Move all three together: the build refuses a bundle that holds more than one copy of `@sensigo/realm`. If realm-mcp's own pin of `@modelcontextprotocol/sdk` is now 1.31.0 or later, drop that `overrides` entry, as its `//overrides` note says. Then run `npm install --ignore-scripts` in `website/` (`website/` has no `.npmrc`, so the flag is needed).
+1. In `website/package.json`, set `@sensigo/realm`, `@sensigo/realm-mcp` and `@sensigo/realm-testing` to `<version>`, and `@modelcontextprotocol/sdk` to the exact version `@sensigo/realm-mcp@<version>` pins (read it from the new tag's `packages/mcp-server/package.json`). Move all four together: the build refuses a bundle that holds more than one copy of `@sensigo/realm` or of the SDK. Then run `npm install --ignore-scripts` in `website/` (`website/` has no `.npmrc`, so the flag is needed).
 2. Copy the workflow from the new tag: `git show v<version>:examples/08-pr-review/workflow.yaml > website/src/live/workflow.yaml`.
 3. Re-record the replay on the new release, as the header of `website/scripts/replay/record.mjs` says:
-   - `NM` is a folder outside the repository holding a `package.json` with `@sensigo/realm-cli` and `@sensigo/realm-testing` at `<version>`, and the same `@modelcontextprotocol/sdk` pin and `$` override as `website/package.json`; run `npm install --ignore-scripts` in it.
+   - `NM` is a folder outside the repository holding a `package.json` with `@sensigo/realm-cli` and `@sensigo/realm-testing` at `<version>` and `@modelcontextprotocol/sdk` at the version `@sensigo/realm-mcp@<version>` pins; run `npm install --ignore-scripts` in it.
    - `WORK` is an empty folder outside any folder that holds a `package.json` or a `.git`; otherwise `realm workflow register` refuses and the recorder fails.
-   - In `website/`: `NM=<nm> WORK=<work> node scripts/replay/record.mjs`, then `WORK=<work> node scripts/replay/distill.mjs`, then `npx prettier --write src/data/replay.json`.
+   - In `website/`, in a clean environment, as the recorder's header says: `env -i PATH="$PATH" HOME="$HOME" NM=<nm> WORK=<work> node scripts/replay/record.mjs` (the CLI hides every environment value it prints, so a value that is part of `WORK`'s path would read `[REDACTED]` and the guard would refuse the recording), then `WORK=<work> node scripts/replay/distill.mjs`, then `npx prettier --write src/data/replay.json`. `distill.mjs` replaces the recorder's folder with `~/pr-review` wherever it appears.
    - The new `src/data/replay.json` should differ from the old one only in run and gate ids, durations, `realm_version` and `recorded_at`. Any other difference is a change in what the engine does; read it before going on.
 4. Run `npm run build` in `website/`. It runs the build guard (`scripts/live/smoke.mjs`), which must print `GUARD PASSED`.
 5. Serve `website/dist` (for example `python3 -m http.server 8624 --bind 0.0.0.0 --directory dist`) and run `scripts/live/walk.cjs` on it, as its header says. It must print `WALK PASSED: 0 FAIL`.
 6. Re-run the claim ledger at the top of `stageSentences` in `website/src/live/view.mjs`. The guard checks the rows marked "guard"; check the rows marked "hand" yourself on the new release.
+7. The comparison page (`/compare/`) names the release Realm's answers were checked on. If you re-check them on the new release, move the whole Realm column together in `website/src/data/comparison.json`: the 18 `release` fields — `rows[<id>].cells.realm.release` for the twelve rows (drive, order, schema, gate, who, record, tamper, crash, mcpserver, mcpclient, cache-record, cache-cost), `facts[<id>].release` for the five facts (defined-in, run-through, hosting, license, first-release), and `strengths.realm.release` — and Realm's tool entry `tools[0]`: its `version` (for example `0.50.0 (npm)`) and its `checked` (today's date, which the page's "re-checked on" line shows). The build refuses a `release` that is not of the form X.Y.Z and a column `version` older than the newest of them; it does not catch a stale `checked`, so set it by hand. If you do not re-check, leave all of it: the page then keeps naming the earlier release, which stays true.
 
 If a step shows that the new release makes a sentence of the demo untrue, change the sentence and its ledger row in `view.mjs` before deploying, or keep the demo on the older release and say why in the release notes.
 
