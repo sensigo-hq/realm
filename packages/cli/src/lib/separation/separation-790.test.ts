@@ -1263,6 +1263,8 @@ describe("#790 — the probes: the spy, the one spawn site, the runner's refusal
         // PR-3: the check renders through the CLI writer (`PLAIN`, `RenderCtx`), which reads a run's
         // manifest; none of the three starts a process.
         '../extensions/manifest-secrets.ts',
+        // CP-W: the deprecation door; imports node:fs and @sensigo/realm, starts no process
+        '../output/deprecations.ts',
         '../output/writer.ts',
         'program-identity.ts',
         'read-run-manifest.ts',
