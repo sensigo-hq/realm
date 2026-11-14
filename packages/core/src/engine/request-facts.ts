@@ -18,7 +18,8 @@
 //
 // Every other field a provider module can write is bounded here too: `endpoint` is free text, as
 // `model` is; a count or a place is kept only as a non-negative safe integer, `cache_creation` only in
-// its one shape, a yes/no only as a boolean, and `request_start` only as a date, or each is dropped.
+// its one shape, a yes/no only as a boolean, and `request_start` only as a time in Realm's ISO shape,
+// or each is dropped.
 import { CONTROL_CHAR, readStoredName } from './holder.js';
 import { parseStamp } from './instants.js';
 import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
@@ -56,18 +57,18 @@ const NAME_FIELDS = [
  * unchanged. Each count and place (`request_index`, `cache_lifetime_s`, the six token counts) is kept
  * only as a non-negative safe integer, `cache_creation` only as an object of its two counts (other
  * keys gone), `cache_ttl_sent` and `cache_split_offered` only as booleans, and `request_start` only as
- * a date (`normalizeRequestStart`); each is deleted otherwise. An entry's own `cache_auto` is
- * replaced by its normalised form (`normalizeCacheAuto`:
+ * a time in Realm's ISO shape (`normalizeRequestStart`); each is deleted otherwise. An entry's own
+ * `cache_auto` is replaced by its normalised form (`normalizeCacheAuto`:
  * `{ basis }`, `{ basis, gaps_s }` or (#898) `{ basis, gaps_s, prices }` with `prices` in one of its
  * five shapes, other keys gone) or deleted when that is `undefined`. Caching 3-B: each split fact
  * (`prefix_sha256`, `prefix_chars`, `prefix_parts`, `cache_marked`, `request_strict_sent`,
  * `cache_controls_rejected`, `cache_key_sent`) is kept in its one shape or deleted. Caching 3-M
  * (piece A-1b): `request_in_call` is kept when it is a non-negative safe integer, as `prefix_chars`
  * is, or deleted. Caching 3-M (piece A-1): `reference` is kept only when its `from` is a word of
- * `CACHE_REFERENCE_SOURCES` and its `request_start` a date, or deleted whole; inside it, each
- * copied field passes the rule it passes here and is dropped alone when it fails, and any other key
- * (a `reference`, a `request_index`, a `request_in_call`) is dropped; its `agent_profile_changed`
- * (piece C3) is kept only as `true`. Caching 3-M (piece B1):
+ * `CACHE_REFERENCE_SOURCES` and its `request_start` a time in Realm's ISO shape, or deleted whole;
+ * inside it, each copied field passes the rule it passes here and is dropped alone when it fails, and
+ * any other key (a `reference`, a `request_index`, a `request_in_call`) is dropped; its
+ * `agent_profile_changed` (piece C3) is kept only as `true`. Caching 3-M (piece B1):
  * `response_id` is kept only when it passes `normalizeResponseId`, or deleted. Piece B3a:
  * `cache_diagnostics` is rebuilt by `normalizeCacheDiagnostics`, or deleted. Every other field, and every entry that is not an object (a `null`, a number), passes through
  * unchanged. Total: it never throws, because it runs inside `recordDriveFailure`'s fence, where a
@@ -237,8 +238,8 @@ const REFERENCE_KEYS = {
 
 /**
  * Caching 3-M (piece A-1): `reference` in its one shape — a plain object whose `from` is a word of
- * `CACHE_REFERENCE_SOURCES` and whose `request_start` is a date (`normalizeRequestStart`) — or
- * `undefined` (dropped whole).
+ * `CACHE_REFERENCE_SOURCES` and whose `request_start` is a time in Realm's ISO shape
+ * (`normalizeRequestStart`) — or `undefined` (dropped whole).
  * Its other keys of `CacheReference` each pass the rule they pass on a request (`boundFields`), and
  * one that fails is dropped alone; `agent_profile_changed` (piece C3), which no request holds, is
  * kept only as `true`, as `cache_key_sent` is, and dropped alone otherwise; every other key is
@@ -265,19 +266,19 @@ const nonNegativeSafeInteger = (v: unknown): number | undefined =>
 /** A yes/no as Realm writes it: a boolean. */
 const booleanOnly = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined);
 
-/** The longest `request_start` kept; Realm writes an ISO time of 24 characters. */
-const REQUEST_START_MAX_CHARS = 63;
+/** Realm's ISO time, as `toISOString()` writes it: `YYYY-MM-DDTHH:mm:ss`, an optional fraction of
+ *  1–3 digits, then `Z` or a `±HH:MM` offset. Digits and ISO punctuation only: no other letter, no
+ *  space, no parenthesis. */
+const ISO_STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
 
 /**
- * A request's `request_start`: a string of at most 63 characters, with no character of the house
- * control set, that parses as a date (`parseStamp`, the one parser of a stored stamp); anything else
- * is `undefined`.
+ * A request's `request_start`: a string in Realm's ISO shape (`ISO_STAMP`) that is a real time
+ * (`parseStamp`, the one parser of a stored stamp, reads it: a month 99 fails); anything else is
+ * `undefined`. The shape comes first: `Date.parse` alone also reads a date with words or a comment
+ * around it, and this field is shown as Realm's own stamp.
  */
 function normalizeRequestStart(value: unknown): string | undefined {
-  return typeof value === 'string' &&
-    value.length <= REQUEST_START_MAX_CHARS &&
-    !CONTROL_CHAR.test(value) &&
-    parseStamp(value) !== undefined
+  return typeof value === 'string' && ISO_STAMP.test(value) && parseStamp(value) !== undefined
     ? value
     : undefined;
 }

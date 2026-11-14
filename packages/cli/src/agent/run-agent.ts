@@ -618,8 +618,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // only if neither applies.
   const providerForEvidence = deps.providerId ?? caps.providerId;
   // Which provider's strict RULES to assess schemas against. Module providers fall to the
-  // Anthropic profile — realm cannot know a module's dialect — and the `provider` field above is
-  // what makes that assumption visible if the module in fact targets a different API.
+  // Anthropic profile — realm cannot know a module's dialect — and a module's declared `providerId`
+  // still picks the profile (`openai` → OpenAI's rules) but no longer appears on its records, which
+  // read `module:<file>`.
   const profile = caps.providerId === 'openai' ? ('openai' as const) : ('anthropic' as const);
   // issue #313 (D-3 precedence rule 1): the endpoint gate is only MEANINGFUL for a provider that
   // could otherwise place the marker on the wire. A gate on a non-consuming provider says nothing

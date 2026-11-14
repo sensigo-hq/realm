@@ -502,20 +502,32 @@ describe('U3 — every field a provider module writes is bounded at the write', 
     };
   };
 
-  it('a long endpoint is cut at 200; one with a control character, an 80-character date, a count as text or below 0, and a cache_creation as text are not stored', async () => {
+  it('a long endpoint is cut at 200; one with a control character, an 80-character date, a date with text around it, a count as text or below 0, and a cache_creation as text are not stored; a copy whose date has text around it is not stored', async () => {
     // A module's endpoint text with no control character: 1,032 characters.
     const longEndpoint = `https://${'e'.repeat(1024)}`;
+    // A date with a comment after it: 63 characters, and `Date.parse` reads it.
+    const commentedDate = `Nov 14 2026 (${'x'.repeat(49)})`;
+    const copy = (request_start: string) => ({
+      from: 'run',
+      request_start,
+      cache_requested: 'lifetime',
+    });
     const dropped = (field: string) => ({ field, has: false, prompt_tokens: 10 });
     // (a) red when `endpoint` is not in the bounded list (the long text kept whole: length 1032; the
-    //     control character kept) or when the shape checks are removed (each dropped arm kept); (b)
-    //     prints each arm's field, whether it was kept, and a kept text's length and ending.
+    //     control character kept), when the shape checks are removed (each dropped arm kept), or when
+    //     the date is checked by `Date.parse` alone (the commented date kept at 63, and the copy that
+    //     carries it kept); (b) prints each arm's field, whether it was kept, and a kept text's length
+    //     and ending.
     expect([
       await storedField('endpoint', longEndpoint),
       await storedField('endpoint', 'custom\u0007FAKE-u3-endpoint'),
       await storedField('request_start', `2026-11-14T00:00:00.000Z${'Z'.repeat(56)}`),
+      await storedField('request_start', commentedDate),
       await storedField('output_tokens', '7'),
       await storedField('cache_read_input_tokens', -1),
       await storedField('cache_creation', 'FAKE-u3-cache-creation'),
+      await storedField('reference', copy(commentedDate)),
+      await storedField('reference', copy('2026-11-13T00:00:00.000Z')),
     ]).toEqual([
       {
         field: 'endpoint',
@@ -526,9 +538,12 @@ describe('U3 — every field a provider module writes is bounded at the write', 
       },
       dropped('endpoint'),
       dropped('request_start'),
+      dropped('request_start'),
       dropped('output_tokens'),
       dropped('cache_read_input_tokens'),
       dropped('cache_creation'),
+      dropped('reference'),
+      { field: 'reference', has: true, prompt_tokens: 10 },
     ]);
     // Non-vacuity: Realm's own word in `endpoint` is stored as it is.
     // (a) red when the bound drops or changes a valid word; (b) prints the arm.
