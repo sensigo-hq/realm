@@ -127,8 +127,9 @@ print(json.dumps({'pid': p.pid, 'code': code, 'tty': fds[master].decode('utf-8',
  * times on the terminal, within a time), `send` (bytes typed; `\\x1a` is Ctrl-Z), `stopped` (the
  * command's stop read with waitpid(WUNTRACED), its signal), `state` (the `/proc` state of the first
  * process and of its child, the worker), `fg` (SIGCONT to the command's group, as a shell's `fg`),
- * `kill`, `touch`, `sleep`, `worker`. Prints what it saw as JSON; a command still running after
- * `exitTimeout` is killed and reported `timedOut`.
+ * `kill`, `touch`, `sleep`, `worker`, `mark` and `since` (what the terminal received after a mark).
+ * Prints what it saw as JSON; a command still running after `exitTimeout` is killed and reported
+ * `timedOut`.
  */
 const TALK_RUN = `import json, os, pty, select, signal, sys, time
 cfg = json.loads(open(sys.argv[1]).read())
@@ -202,6 +203,8 @@ for step in cfg['script']:
         seen_worker = worker()
         events[step[1]] = seen_worker
     elif op == 'touch': open(step[1], 'w').close()
+    elif op == 'mark': events[step[1]] = len(buf)
+    elif op == 'since': events[step[1]] = buf[events[step[2]]:].decode('utf-8', 'replace')
 end = time.time() + cfg.get('exitTimeout', 30)
 while exited is None and time.time() < end:
     pump(0.05)
@@ -858,10 +861,11 @@ describe('U1b Unit 2 — Ctrl-Z at a `realm workflow run` prompt (D5)', () => {
         ['expect', 'handler', 'slow: running', 1, 20],
         ['send', '\x1a'],
         ['stopped', 'stop1', 3],
+        ['mark', 'beforeFg1'],
         ['fg'],
         ['sleep', 0.6],
         ['state', 'afterFg1'],
-        ['expect', 'stale', MOCK_PROMPT, 2, 0.5],
+        ['since', 'drawnAfterFg1', 'beforeFg1'],
         ['touch', go],
         ['expect', 'second', AGENT_PROMPT, 1, 20],
         ['send', '\x1a'],
@@ -874,13 +878,14 @@ describe('U1b Unit 2 — Ctrl-Z at a `realm workflow run` prompt (D5)', () => {
     );
     const running = (s: unknown) => ['R', 'S'].includes(String(s));
     const after = r.events['afterFg1'] as { first: unknown; worker: unknown };
-    // GROUNDING: the redraw is D5's, only while a question is open; (b) prints both stops, the
-    //     state after the first `fg`, whether a stale prompt was drawn, the prompts' counts and the
-    //     ending.
+    // GROUNDING: the redraw is D5's, only while a question is open — red when the listener redraws
+    //     after every `fg` (readline's idle prompt `> ` drawn mid-step); (b) prints both stops, the
+    //     states after the first `fg`, what the terminal received after it, the prompts' counts and
+    //     the ending.
     expect({
       stop1: r.events['stop1'],
       bothRunningAfterFg: running(after.first) && running(after.worker),
-      stalePrompt: r.events['stale'],
+      drawnAfterFg1: r.events['drawnAfterFg1'],
       mockPrompts: drawn(r.tty, MOCK_PROMPT),
       stop2: r.events['stop2'],
       agentPrompts: drawn(r.tty, AGENT_PROMPT),
@@ -889,7 +894,7 @@ describe('U1b Unit 2 — Ctrl-Z at a `realm workflow run` prompt (D5)', () => {
     }).toEqual({
       stop1: 'SIGTSTP',
       bothRunningAfterFg: true,
-      stalePrompt: false,
+      drawnAfterFg1: '',
       mockPrompts: 1,
       stop2: 'SIGTSTP',
       agentPrompts: 2,
