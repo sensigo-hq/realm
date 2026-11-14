@@ -5,6 +5,8 @@ export * from './types/workflow-error.js';
 export { resolvePreExecutionAgentAction } from './engine/error-resolution.js';
 export * from './types/workflow-definition.js';
 export * from './store/store-interface.js';
+// #729, the claim window, CW-1: the claim lease's port, its answers and its closed reason lists.
+export * from './store/lease-port.js';
 export { persistsField } from './store/store-fidelity.js';
 export { JsonFileStore } from './store/json-file-store.js';
 export type {

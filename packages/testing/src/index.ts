@@ -59,6 +59,19 @@ export type {
   StoreClockContractCase,
 } from './store/store-clock-contract.js';
 
+// issue #729, the claim window (CW-1): the laws of a store's claim leases, and a lease port in memory.
+export { leasePortContract, LEASE_PORT_LAWS } from './store/lease-port-contract.js';
+export type {
+  LeasePortLaw,
+  LeasePortContractAdapter,
+  LeasePortContractCase,
+  LeaseTestHome,
+  LeaseHolder,
+  LeaseHomeFiles,
+} from './store/lease-port-contract.js';
+export { createLeaseDouble } from './store/lease-double.js';
+export type { LeaseDouble, LeaseDoubleState } from './store/lease-double.js';
+
 // Clocks and test locations (issue #715 (a); D5 §6, D6-1, D6-20, D6-54)
 export { settableClock, steppingClock, countingClock } from './clock/settable-clock.js';
 export type { SettableClock, SettableClockOptions } from './clock/settable-clock.js';

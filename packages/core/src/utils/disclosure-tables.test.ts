@@ -444,3 +444,35 @@ describe('#729 PR-3 correction 4 (I-9b) — a digest of content the law hid anyt
     ).toEqual([false, false, false, false, false]);
   });
 });
+
+describe('#729 CW-1 correction 1 — a claim’s lease is a table of its own', () => {
+  it('a key a stored lease holds beyond its id is walked as any unclassified field of the claim', () => {
+    const extra = 'kept FAKE-DECLARED-CW1C1-0001 here';
+    // One claim with a lease whose stored object holds an extra key, and the same text under an
+    // unclassified key of the claim itself, for comparison.
+    const record = {
+      claims: { draft: { deadline: null, lease: { id: 'lease-1', extra }, extra } },
+    } as unknown as RunRecord;
+    const set = compileDisclosure([{ value: 'FAKE-DECLARED-CW1C1-0001', source: 'declared:A' }], {
+      declared: 'resolved',
+      audience: 'file',
+      environment: 'swept',
+    }).set;
+    const unclassified: string[] = [];
+    const shown = discloseRecord(record, set, 'file', {
+      onUnclassified: (path) => unclassified.push(path),
+    }).record as unknown as { claims: { draft: Record<string, unknown> } };
+    // (a) red with `lease: 'fact'` (the stored object is returned unwalked: its extra key reaches
+    //     no `onUnclassified` and its declared value shows); (b) prints the unclassified paths and
+    //     the shown lease beside the claim's own unclassified key.
+    expect({
+      unclassified: unclassified.sort(),
+      lease: shown.claims.draft['lease'],
+      extra: shown.claims.draft['extra'],
+    }).toEqual({
+      unclassified: ['claims.draft.extra', 'claims.draft.lease.extra'],
+      lease: { id: 'lease-1', extra: 'kept [REDACTED] here' },
+      extra: 'kept [REDACTED] here',
+    });
+  });
+});
