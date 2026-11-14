@@ -6,6 +6,7 @@ import {
   AUTO_LIFETIME_MARGIN,
   CACHE_GAP_MAX_S,
   PROMPT_CACHE_SETTINGS,
+  type CACHE_REQUESTERS,
   type CacheAuto,
   type CacheAutoPrices,
   type CacheRequestSource,
@@ -70,7 +71,8 @@ export function cacheableStepCounts(definition: Pick<WorkflowDefinition, 'steps'
 export interface ResolvedPromptCache {
   value: PromptCacheSetting;
   source: CacheRequestSource;
-  by: 'realm agent' | 'realm listen';
+  /** One of core's `CACHE_REQUESTERS`. */
+  by: (typeof CACHE_REQUESTERS)[number];
   auto?: CacheAuto;
 }
 
