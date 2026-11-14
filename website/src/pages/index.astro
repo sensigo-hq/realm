@@ -6,6 +6,8 @@ import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
 import Replay from '../components/Replay.astro';
 import PageMeta from '../components/PageMeta.astro';
 import { HOME_DESCRIPTION, PUBLISHER, SITE_NAME, absolute } from '../lib/site-meta.mjs';
+// The demo's own workflow, cut from the file it runs (the build stops when it no longer can).
+import { EXCERPT, FILE_LINES, FILE_URL, VERSION } from '../lib/workflow-excerpt.mjs';
 
 // Structured data for search engines: the site's name (Google takes it from WebSite on the home page)
 // and who publishes it.
@@ -102,6 +104,12 @@ svg.loop-narrow .n-t{font-size:13px}
 .term{margin:0;background:var(--term);border:1px solid var(--edge-soft);border-radius:8px;padding:22px 24px;overflow-x:auto}
 .term code{display:block;background:none;padding:0;border-radius:0;font:400 14px/1.85 "IBM Plex Mono",monospace;color:#CFE6F5;white-space:pre}
 .termwrap{position:relative}
+.wf{margin:0;display:grid;grid-template-columns:minmax(0,1fr);gap:10px;min-width:0}
+/* compact: its own line height, and no wider than its longest line needs */
+.wf .term{width:fit-content;max-width:100%}
+.wf .term code{line-height:1.5}
+.wf-k{font:500 11.5px/1.4 "IBM Plex Mono",monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.wf-cap{font-size:13.5px;line-height:1.5;color:var(--dim)}
 .copy{position:absolute;top:10px;right:10px;width:34px;height:34px;display:grid;place-items:center;cursor:pointer;
   border:1px solid rgba(207,230,245,.28);border-radius:6px;background:rgba(11,19,32,.85);color:#CFE6F5;
   opacity:0;transition:opacity .15s}
@@ -261,6 +269,11 @@ svg.loop-narrow .n-t{font-size:13px}
     </div>
     <p class="spine">Every step records what it returned, a hash of it, and when. Not a log that something ran: a record of what Realm accepted at each step.</p>
     <Replay />
+    <figure class="wf" aria-labelledby="wf-label">
+      <p class="wf-k" id="wf-label">The workflow this run follows</p>
+      <pre class="term"><code>{EXCERPT.join('\n')}</code></pre>
+      <figcaption class="wf-cap">{EXCERPT.length} of the file's {FILE_LINES} lines, as written. The whole file: <a href={FILE_URL}>examples/08-pr-review/workflow.yaml at Realm {VERSION}</a>.</figcaption>
+    </figure>
   </section>
 
   <section>
