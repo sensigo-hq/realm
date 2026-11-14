@@ -72,11 +72,11 @@ const actingSentence = (name: string): string =>
   `When its output goes to a file or a pipe, \`realm run ${name}\` runs its work in a second process and keeps the first to mask what reaches the file or pipe, as \`realm agent\` does; \`kill\` on the first process stops both.`;
 
 describe('U1b Unit 2 — the docs say what the four doors do', () => {
-  it.each([
+  it.each<[string, string]>([
     ['respond', '(s3)'],
     ['advance', '(s2)'],
     ['drain', '(s1), (t-s)'],
-  ] as const)('realm-run-acting.md, the last paragraph of the `%s` section: %s', (name) => {
+  ])('realm-run-acting.md, the last paragraph of the `%s` section: %s', (name) => {
     // The masking: (s1)–(s3) of `four-doors-relay-u1b2.test.ts`; on a terminal, today's path:
     // (t-s); the `kill` clause: Unit 1's (f), the forward these doors reuse.
     claim('docs/reference/cli/realm-run-acting.md', actingSentence(name));
