@@ -628,7 +628,7 @@ describe('#627 W — the other pages W changed', () => {
     // run of the paragraph, so the one claim pins its place too.
     claim(
       'docs/reference/cli/realm-mcp-and-serve.md',
-      'The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It opens `~/.realm` itself, the same home every `realm` command uses. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr, and the same two lines as `realm mcp` for an app that shows no forms and for `offered`, each naming `REALM_MCP_GATE_ANSWERS`.',
+      'The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It opens `~/.realm` itself, the same home every `realm` command uses. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr, and the same two lines as `realm mcp` for an app that shows no forms (its remedy naming `REALM_MCP_GATE_ANSWERS`) and for `offered`.',
     );
     // #616 PR-2a (ii-a): the CHANGELOG's line — "its own file" executed by docs-examples-625's cell
     // (the package's `bin` is the entry the CLI's tests resolve) and every spawn through
