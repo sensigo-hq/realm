@@ -78,6 +78,8 @@ interface Seen {
   hold: Promise<void> | undefined;
   /** While set, the next scan yields one page holding only this run, then throws. */
   firstPageOnly: string | undefined;
+  /** While set, the next scan is refused before it reads anything. */
+  refuseNext: boolean;
 }
 
 function proxied(store: RunStore): { runStore: RunStore; seen: Seen } {
@@ -88,6 +90,7 @@ function proxied(store: RunStore): { runStore: RunStore; seen: Seen } {
     expireCalls: 0,
     hold: undefined,
     firstPageOnly: undefined,
+    refuseNext: false,
   };
   async function* scan(filter: ScanFilter, options: ScanOptions) {
     const entry = { filter, items: 0 };
@@ -98,7 +101,10 @@ function proxied(store: RunStore): { runStore: RunStore; seen: Seen } {
     seen.hold = undefined;
     const only = seen.firstPageOnly;
     seen.firstPageOnly = undefined;
+    const refuse = seen.refuseNext;
+    seen.refuseNext = false;
     try {
+      if (refuse) throw new Error('the store refused the read');
       if (hold !== undefined) await hold;
       for await (const page of store.scan(
         filter,
@@ -411,26 +417,94 @@ describe('U3b (#963) — the stop', () => {
   });
 });
 
-describe('U3b (#963) — a gate opened since the last read', () => {
-  it('C6: a gate opened after a pass, with no waiter for it, is carried out at the next pass and not before', async () => {
+describe('U3b (#963) correction 1 — a waiter replaced, a read refused, a gate opened since, a workflow not here', () => {
+  const runnerOf = (x: Home, workflowStore: ListenDeps['workflowStore'] = x.h.home.workflowStore) =>
+    makeSweepRunner({ runStore: x.runStore, workflowStore, logger: x.logger });
+
+  it('T1: a gate with an earlier deadline, opened after the waiter was armed, replaces it and is carried out at its own deadline', async () => {
     const x = await home();
-    const runner = makeSweepRunner({
-      runStore: x.runStore,
-      workflowStore: x.h.home.workflowStore,
-      logger: x.logger,
-    });
+    await x.gate(120_000);
+    const runner = runnerOf(x);
     await runner.wake();
-    const liveAfterFirst = x.w.live();
+    const b = await x.gate(60_000);
+    await runner.wake();
+    const armed = [...x.w.armed];
+    const live = x.w.live();
+    await x.inner.advance(60_000);
+    // (a) red when the runner keeps the later waiter although a pass read an earlier deadline (the
+    //     earlier gate would then wait for the next interval); (b) prints the deadlines armed, the
+    //     live count and the earlier gate's phase at its deadline.
+    expect({ armed, live, b: await x.phase(b) }).toEqual({
+      armed: [at(120_000), at(60_000)],
+      live: 1,
+      b: 'aborted',
+    });
+  });
+
+  it('T1b: the waiter’s own pass cannot read the store: the gate stays open, no waiter is left, and the next pass carries it out', async () => {
+    const x = await home();
+    const g = await x.gate(60_000);
+    const runner = runnerOf(x);
+    await runner.wake();
+    x.seen.refuseNext = true;
+    await x.inner.advance(60_000);
+    const atDeadline = {
+      phase: await x.phase(g),
+      live: x.w.live(),
+      errors: x.logger.lines.filter(([level]) => level === 'error').map(([, msg]) => msg),
+    };
+    await runner.wake();
+    // (a) red when a pass whose read failed arms a waiter anyway (it would fire again at once, or
+    //     wake a pass for nothing), or when the gate is carried out without a read; (b) prints the
+    //     gate's phase, the live waiters and the error lines at the deadline, then after the next pass.
+    expect({ atDeadline, after: await x.phase(g), live: x.w.live() }).toEqual({
+      atDeadline: { phase: 'gate_waiting', live: 0, errors: ['listen: sweeper pass failed'] },
+      after: 'aborted',
+      live: 0,
+    });
+  });
+
+  it('T2: a gate opened after a read, already due, is late until the next pass, which carries it out; the waiter stays at its deadline', async () => {
+    const x = await home();
+    await x.gate(120_000);
+    const runner = runnerOf(x);
+    await runner.wake();
     const g = await x.gate(-5_000);
     await x.inner.advance(30_000);
-    const beforeNext = await x.phase(g);
+    const late = await x.phase(g);
     await runner.wake();
-    // (a) red when the next pass does not carry out a due gate it reads; (b) prints the live
-    //     waiters, and the run's phase before and after the next pass.
-    expect({ liveAfterFirst, beforeNext, afterNext: await x.phase(g) }).toEqual({
-      liveAfterFirst: 0,
-      beforeNext: 'gate_waiting',
-      afterNext: 'aborted',
+    // (a) red when a pass does not read a gate opened after the first pass, or carries one out
+    //     before a pass reads it; (b) prints the late gate's phase before and after the next pass,
+    //     and the deadlines armed.
+    expect({ late, after: await x.phase(g), armed: x.w.armed, live: x.w.live() }).toEqual({
+      late: 'gate_waiting',
+      after: 'aborted',
+      armed: [at(120_000)],
+      live: 1,
     });
+  });
+
+  it('T3: a due gate whose workflow is not registered in this store is skipped at every pass, arms nothing and logs nothing', async () => {
+    const x = await home();
+    const g = await x.gate(-5_000);
+    const notHere: ListenDeps['workflowStore'] = {
+      register: async () => {},
+      get: async () => {
+        throw new Error('the workflow is not registered in this store');
+      },
+    };
+    const runner = runnerOf(x, notHere);
+    await runner.wake();
+    await runner.wake();
+    // (a) red when a gate the pass could not carry out arms a waiter (its deadline has passed: a
+    //     waiter would fire at once and wake passes for nothing) or is carried out; (b) prints the
+    //     gate's phase, the waiters and the log lines.
+    expect({
+      phase: await x.phase(g),
+      live: x.w.live(),
+      armed: x.w.armed.length,
+      reads: x.seen.scans.length,
+      lines: x.logger.lines,
+    }).toEqual({ phase: 'gate_waiting', live: 0, armed: 0, reads: 2, lines: [] });
   });
 });
