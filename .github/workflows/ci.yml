@@ -64,6 +64,8 @@ jobs:
       # title the page's preview image cannot draw. Building it here stops such a page on its pull
       # request instead of at the next deploy. website/ is not an npm workspace: it has its own
       # lockfile. Install scripts are skipped, as the repository's .npmrc skips them for the root.
+      # Then the deploy build's tests (scripts/deploy-build.test.mjs): each on a fixture repository
+      # with its own origin, no network; they copy the demo bundle the build above writes.
       - name: Build the website
         working-directory: website
         env:
@@ -71,6 +73,7 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
+          npm run test:deploy-build
       # issue #337 — type-check the test files. `tsconfig.eslint.json` is the only project that
       # includes `*.test.ts` (the per-package build tsconfigs exclude them), so until now tsc never
       # saw them and 351 type errors had accumulated unseen — including assertions that could not
