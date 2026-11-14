@@ -91,7 +91,6 @@ import type {
   ExtensionIdentityEntry,
   PendingGate,
   RunRecord,
-  Snapshot,
   DisclosureSet,
 } from '@sensigo/realm';
 import {
@@ -1249,83 +1248,153 @@ async function enactSweptGate(
 }
 
 /**
- * Issue #291 (Deliverable 4f, Amendment 4 — the `realm listen` opt-in sweeper): one store-wide
- * scan for expired, enactable gates across EVERY run this store holds (not just the workflows
- * THIS `listen` process has mounted — a gate opened by any process on the same store is
- * enactable). [F7]: listen is reclaim-like — it enacts (unlike reclaim), but NEVER drains
- * finalizers itself (no `ExtensionRegistry` for a workflow this process hasn't mounted) —
- * a terminalizing enactment logs an advisory pointing at `realm run drain --expired` (or plain
- * `drain`) instead. Multi-process safe: races with ANY other enactment point (submit/
- * execute_step/reclaim/drain --expired/another listen process/the attending timer) resolve via
- * the [F1] arm matrix's NOOPs — this function absorbs every refusal silently. Pure I/O
- * orchestration. #715 (b) (D-26, D6-9, D6-41): each run is judged at its OWN snapshot's reading —
- * no clock is passed in — and the store's own `settleStep` decides, at its reading, that the gate is
- * due; a test sets the store's clock. #715 (b) (03 §A.4, D6-8): given `waits`, a gate the pass finds
- * NOT yet due gets one waiter on the store's clock at its `expires_at` (`runStore.clock.at`), which
- * carries it out when the clock reaches it — the pass is the discovery of gates other processes
- * open, a real-time interval; the wait for a stored instant is the store's clock's. A waiter whose
- * gate the pass no longer finds open is cancelled.
+ * U3b (#963): what one sweeper pass reads: the open gates that are due at their run's own reading,
+ * and the earliest deadline among the open gates that are not due yet. The deadline index (U3a)
+ * would replace this one read, not the runner.
  */
-export async function sweepExpiredGates(
-  deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'> & {
-    waits?: SweepGateWaits;
-  },
-): Promise<SweepResult> {
-  const result: SweepResult = {
-    scanned: 0,
-    enacted: 0,
-    skipped_unregistered: 0,
-    skipped_locked: 0,
-    errors: 0,
-  };
-
-  // #616 PR-2c c4: every page of the store's scan.
-  const snapshots: Snapshot[] = [];
-  for await (const page of deps.runStore.scan({}, { pageSize: 1000, projection: 'record' })) {
-    for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
-  }
-  const open = new Set<string>();
-  for (const { record: run, at } of snapshots) {
-    if (run.terminal_state || run.pending_gate === undefined) continue;
-    const gate = run.pending_gate;
-    // Finding-only (no on_expiry) or no enforce clock at all — nothing this sweep can enact.
-    if (gate.expires_at === undefined || gate.on_expiry === undefined) continue;
-    // #729 PR-0 (A2): core's one due test of a stored deadline — at this row's own reading.
-    if (!isPastDeadline(gate.expires_at, at)) {
-      // #715 (b) (03 §A.4): not yet due — one waiter on the store's clock at its deadline.
-      const expiresAtMs = parseStamp(gate.expires_at);
-      if (deps.waits !== undefined && expiresAtMs !== undefined) {
-        open.add(gate.gate_id);
-        if (!deps.waits.has(gate.gate_id)) {
-          const waits = deps.waits;
-          const cancel = deps.runStore.clock.at(new Date(expiresAtMs), async () => {
-            waits.delete(gate.gate_id);
-            await enactSweptGate(deps, run, gate, emptySweepResult());
-          });
-          waits.set(gate.gate_id, cancel);
-        }
-      }
-      continue;
-    }
-
-    result.scanned += 1;
-
-    await enactSweptGate(deps, run, gate, result);
-  }
-  // A waiter whose gate this pass no longer finds open (answered, expired elsewhere, the run ended or
-  // cannot be read now) is cancelled; a later pass registers it again if it is open then.
-  if (deps.waits !== undefined) {
-    for (const [gateId, cancel] of deps.waits) {
-      if (open.has(gateId)) continue;
-      cancel();
-      deps.waits.delete(gateId);
-    }
-  }
-  return result;
+export interface SweepRead {
+  due: Array<{ run: RunRecord; gate: PendingGate }>;
+  /** The earliest `expires_at` (epoch ms) among the gates not yet due; undefined when none. */
+  nextDeadlineMs: number | undefined;
 }
 
-/** #715 (b) (03 §A.4): the sweeper's waiters on the store's clock, by gate id — each one's cancel. */
-export type SweepGateWaits = Map<string, () => void>;
+/**
+ * U3b (#963): the pass's one store read: only the runs waiting at a gate, through the store's `phase`
+ * filter (no schema change), every page, each record still judged by itself, because the filter only
+ * narrows the read (another store filters on a stored label).
+ */
+export async function readWaitingGates(runStore: Pick<RunStore, 'scan'>): Promise<SweepRead> {
+  const due: SweepRead['due'] = [];
+  let nextDeadlineMs: number | undefined;
+  const pages = runStore.scan({ phase: 'gate_waiting' }, { pageSize: 1000, projection: 'record' });
+  for await (const page of pages) {
+    for (const item of page.items) {
+      if (item.kind !== 'run') continue;
+      const { record: run, at } = item.run;
+      if (run.terminal_state || run.pending_gate === undefined) continue;
+      const gate = run.pending_gate;
+      // Finding-only (no on_expiry) or no enforce clock at all: nothing to enact or to wait for.
+      if (gate.expires_at === undefined || gate.on_expiry === undefined) continue;
+      // #729 PR-0 (A2): core's one due test of a stored deadline — at this row's own reading.
+      if (isPastDeadline(gate.expires_at, at)) {
+        due.push({ run, gate });
+        continue;
+      }
+      // Not due yet: a candidate for the one waiter. A deadline that does not parse arms nothing.
+      const expiresAtMs = parseStamp(gate.expires_at);
+      if (
+        expiresAtMs !== undefined &&
+        (nextDeadlineMs === undefined || expiresAtMs < nextDeadlineMs)
+      ) {
+        nextDeadlineMs = expiresAtMs;
+      }
+    }
+  }
+  return { due, nextDeadlineMs };
+}
+
+/** One pass: the read, then each due gate carried out in turn. */
+async function sweepOnce(
+  deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'>,
+  read: (runStore: ListenDeps['runStore']) => Promise<SweepRead>,
+): Promise<{ result: SweepResult; nextDeadlineMs: number | undefined }> {
+  const result = emptySweepResult();
+  const { due, nextDeadlineMs } = await read(deps.runStore);
+  for (const { run, gate } of due) {
+    result.scanned += 1;
+    await enactSweptGate(deps, run, gate, result);
+  }
+  return { result, nextDeadlineMs };
+}
+
+/**
+ * Issue #291 (Deliverable 4f, Amendment 4 — the `realm listen` opt-in sweeper): one pass over the runs
+ * waiting at a gate in this store (not just the workflows THIS `listen` process has mounted — a gate
+ * opened by any process on the same store is enactable), carrying out each gate whose time has passed.
+ * U3b (#963): it reads only those runs (`readWaitingGates`), and it registers no waiter itself: the
+ * runner (`makeSweepRunner`) runs one pass at a time and holds the one waiter on the store's clock.
+ * [F7]: listen is reclaim-like — it enacts (unlike reclaim), but NEVER drains finalizers itself (no
+ * `ExtensionRegistry` for a workflow this process hasn't mounted) — a terminalizing enactment logs an
+ * advisory pointing at `realm run drain --expired` (or plain `drain`) instead. Multi-process safe:
+ * races with ANY other enactment point (submit/execute_step/reclaim/drain --expired/another listen
+ * process/the attending timer) resolve via the [F1] arm matrix's NOOPs — this function absorbs every
+ * refusal silently. #715 (b) (D-26, D6-9, D6-41): each run is judged at its OWN snapshot's reading —
+ * no clock is passed in — and the store's own `settleStep` decides, at its reading, that the gate is
+ * due; a test sets the store's clock.
+ */
+export async function sweepExpiredGates(
+  deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'>,
+): Promise<SweepResult> {
+  return (await sweepOnce(deps, readWaitingGates)).result;
+}
+
+/** U3b (#963): the sweeper's runner, which `startListen` wakes at each interval. */
+export interface SweepRunner {
+  /**
+   * Starts a pass, or, while one runs, asks for exactly one more after it. Resolves once the pass
+   * that serves this wake has ended; never rejects.
+   */
+  wake(): Promise<void>;
+  /** The first signal: no further pass, and the waiter cancelled; a running pass arms nothing. */
+  stop(): void;
+}
+
+/**
+ * U3b (#963): one pass at a time, and at most one waiter on the store's clock (`runStore.clock.at`;
+ * never a host timer for a stored instant, #715 (b)) at the earliest deadline the last pass saw. The
+ * waiter only wakes the runner, so a gate is carried out in one place, from a fresh read. It is
+ * replaced or cancelled only by a pass whose whole read succeeded; a pass that throws is logged and
+ * leaves it as it was. `read` is the pass's one store read.
+ */
+export function makeSweepRunner(
+  deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'>,
+  read: (runStore: ListenDeps['runStore']) => Promise<SweepRead> = readWaitingGates,
+): SweepRunner {
+  let running: Promise<void> | undefined;
+  let again = false;
+  let stopped = false;
+  let waiter: { atMs: number; cancel: () => void } | undefined;
+  const arm = (nextDeadlineMs: number | undefined): void => {
+    if (stopped || waiter?.atMs === nextDeadlineMs) return;
+    waiter?.cancel();
+    waiter = undefined;
+    if (nextDeadlineMs === undefined) return;
+    const armed = { atMs: nextDeadlineMs, cancel: (): void => {} };
+    armed.cancel = deps.runStore.clock.at(new Date(nextDeadlineMs), () => {
+      if (waiter === armed) waiter = undefined;
+      return wake();
+    });
+    waiter = armed;
+  };
+  const loop = async (): Promise<void> => {
+    do {
+      again = false;
+      try {
+        arm((await sweepOnce(deps, read)).nextDeadlineMs);
+      } catch (err) {
+        deps.logger.error('listen: sweeper pass failed', { error: String(err) });
+      }
+    } while (again && !stopped);
+    running = undefined;
+  };
+  const wake = (): Promise<void> => {
+    if (stopped) return Promise.resolve();
+    if (running !== undefined) {
+      again = true;
+      return running;
+    }
+    running = loop();
+    return running;
+  };
+  return {
+    wake,
+    stop: () => {
+      stopped = true;
+      waiter?.cancel();
+      waiter = undefined;
+    },
+  };
+}
 
 function emptySweepResult(): SweepResult {
   return { scanned: 0, enacted: 0, skipped_unregistered: 0, skipped_locked: 0, errors: 0 };
@@ -1531,16 +1600,14 @@ export function startListen(
   // issue #291 (Deliverable 4f): the opt-in expired-gate sweeper — a coarse setInterval, started
   // only when the operator explicitly requested it. A pass's own errors never crash the server:
   // each run's failure is caught and logged inside the pass, and a pass that throws (its listing
-  // failed) is caught and logged here.
-  // #715 (b) (03 §A.4): the waiters the passes register on the store's clock, cancelled at shutdown.
-  const gateWaits: SweepGateWaits = new Map();
+  // failed) is caught and logged by the runner. U3b (#963): the interval only wakes the runner, which
+  // runs one pass at a time and holds the one waiter on the store's clock; the first pass comes one
+  // period after the start.
+  const sweepPeriodMs = options.sweepExpiredGatesIntervalMs;
+  const sweeper = sweepPeriodMs !== undefined ? makeSweepRunner(deps) : undefined;
   const sweepTimer =
-    options.sweepExpiredGatesIntervalMs !== undefined
-      ? setInterval(() => {
-          sweepExpiredGates({ ...deps, waits: gateWaits }).catch((err) => {
-            deps.logger.error('listen: sweeper pass failed', { error: String(err) });
-          });
-        }, options.sweepExpiredGatesIntervalMs)
+    sweeper !== undefined && sweepPeriodMs !== undefined
+      ? setInterval(() => void sweeper.wake(), sweepPeriodMs)
       : undefined;
 
   // Issue #960: the stop. From the first signal `/health` answers 503 (U2); with `--shutdown-drain`
@@ -1558,8 +1625,7 @@ export function startListen(
     stopping = true;
     deps.logger.info('listen: shutting down', { reason });
     if (sweepTimer !== undefined) clearInterval(sweepTimer);
-    for (const cancel of gateWaits.values()) cancel();
-    gateWaits.clear();
+    sweeper?.stop();
     // R1.2: the waits too, in this turn and before any drain: none is held through `--shutdown-drain`.
     stop.abort();
     let outcome: Promise<StopOutcome>;
