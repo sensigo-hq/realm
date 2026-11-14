@@ -302,11 +302,11 @@ function sitePath(address, from) {
   }
   return url.origin === SITE ? url.pathname : null;
 }
-// Which docs page a site path names: a page id, '' for an address under /docs/ that fits no form, or
-// null for a path outside the docs.
+// Which docs page a site path names: a page id, '' for an address under /docs/, /docs.md or /og/docs
+// that fits no form, or null for a path outside the docs.
 function docsPageOf(p) {
   if (p === '/docs/' || p === '/docs.md' || p === '/og/docs.png') return lists.indexId;
-  if (!(p.startsWith('/docs/') || p.startsWith('/og/docs/'))) return null;
+  if (!(p.startsWith('/docs/') || p.startsWith('/og/docs'))) return null;
   const m =
     /^\/docs\/(.+)\/$/.exec(p) ?? /^\/docs\/(.+)\.md$/.exec(p) ?? /^\/og\/docs\/(.+)\.png$/.exec(p);
   return m ? `docs/${m[1]}` : '';
