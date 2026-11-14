@@ -1,0 +1,284 @@
+# The kept surface of realm's CLI and of `realm listen` / `realm serve`: the commands, flags, exit
+# codes and reply codes the compatibility page promises to keep. kept-surface.test.ts, beside this
+# file, regenerates it from the code and fails when it differs.
+#
+# A change here is made on purpose: regenerate it with `npx vitest run src/inventory -u` (from
+# packages/cli), commit it in the same change, and name each changed key under `## [Unreleased]` in
+# CHANGELOG.md, in backticks. A row's key is its text before " — "; for example
+# `realm run migrate --detailed-exitcode`, `exit code 2`, `realm listen 403`. Rows marked `hidden`
+# and the `exit site` / `reply site` rows are listed to be seen, not promised: a change to them
+# needs no changelog line. kept-surface.frozen.txt is this file as of the last release.
+
+## commands
+realm — command
+realm --help — option, short -h, no value
+realm --version — option, short -V, no value
+realm agent — command
+realm agent --base-url — option, takes a value
+realm agent --cache-diagnostics — option, takes a value
+realm agent --extensions-module — option, takes a value
+realm agent --help — option, short -h, no value
+realm agent --llm-timeout — option, takes a value
+realm agent --log-mode — option, no value
+realm agent --mint-writer-nonce — option, no value, default false
+realm agent --model — option, takes a value
+realm agent --no-release-line-advisory — option, no value, negates, hidden
+realm agent --params — option, takes a value, default "{}"
+realm agent --project — option, takes a value
+realm agent --prompt-cache — option, takes a value
+realm agent --provider — option, takes a value
+realm agent --provider-module — option, takes a value
+realm agent --register — option, no value
+realm agent --run-id — option, takes a value
+realm agent --schema-retries — option, takes a value, default 2
+realm agent --spawned-by-listen — option, no value, hidden
+realm agent --strict-base-url — option, no value
+realm agent --workflow — option, takes a value
+realm db — command
+realm db --help — option, short -h, no value
+realm db backup — command
+realm db backup <path> — argument 1, required
+realm db backup --help — option, short -h, no value
+realm db check — command
+realm db check --help — option, short -h, no value
+realm db check --json — option, no value
+realm db help — command, Commander's help
+realm db help <command> — argument 1, optional
+realm db migrate — command
+realm db migrate --backup — option, takes a value
+realm db migrate --help — option, short -h, no value
+realm db migrate --no-backup — option, no value, negates
+realm help — command, Commander's help
+realm help <command> — argument 1, optional
+realm listen — command
+realm listen <workflows> — argument 1, optional, variadic
+realm listen --body-timeout-ms — option, takes a value, default 5000
+realm listen --cache-diagnostics — option, takes a value
+realm listen --dedup-store — option, takes a value, default "file"
+realm listen --help — option, short -h, no value
+realm listen --host — option, takes a value, default "127.0.0.1"
+realm listen --llm-timeout — option, takes a value
+realm listen --log-level — option, takes a value, default "info"
+realm listen --max-body-bytes — option, takes a value, default 1048576
+realm listen --max-concurrent — option, takes a value, default 20
+realm listen --max-wait — option, takes a value, default 25
+realm listen --max-waiting — option, takes a value
+realm listen --model — option, takes a value
+realm listen --port — option, takes a value, default 3000
+realm listen --prompt-cache — option, takes a value
+realm listen --provider — option, takes a value
+realm listen --shutdown-drain — option, takes a value, default 0
+realm listen --shutdown-grace — option, takes a value, default 30
+realm listen --sweep-expired-gates — option, takes a value
+realm mcp — command
+realm mcp --check — option, no value
+realm mcp --extensions-module — option, takes a value
+realm mcp --form-wait-seconds — option, takes a value
+realm mcp --gate-answers — option, takes a value
+realm mcp --help — option, short -h, no value
+realm mcp --project — option, takes a value
+realm run — command
+realm run --help — option, short -h, no value
+realm run abandon — command
+realm run abandon <run-id> — argument 1, required
+realm run abandon --help — option, short -h, no value
+realm run abandon --reason — option, takes a value
+realm run advance — command
+realm run advance <run-id> — argument 1, required
+realm run advance --extensions-module — option, takes a value
+realm run advance --help — option, short -h, no value
+realm run advance --project — option, takes a value
+realm run attempts — command
+realm run attempts <run-id> — argument 1, required
+realm run attempts --accept-partial-disclosure — option, no value
+realm run attempts --help — option, short -h, no value
+realm run attempts --json — option, no value
+realm run cleanup — command
+realm run cleanup --dry-run — option, no value
+realm run cleanup --help — option, short -h, no value
+realm run cleanup --older-than — option, takes a value, mandatory
+realm run diff — command
+realm run diff <run-id-a> — argument 1, required
+realm run diff <run-id-b> — argument 2, required
+realm run diff --accept-partial-disclosure — option, no value
+realm run diff --help — option, short -h, no value
+realm run drain — command
+realm run drain <run-id> — argument 1, optional
+realm run drain --all — option, no value
+realm run drain --expired — option, no value
+realm run drain --extensions-module — option, takes a value
+realm run drain --force — option, no value
+realm run drain --help — option, short -h, no value
+realm run drain --project — option, takes a value
+realm run drain --void — option, takes a value
+realm run export — command
+realm run export <run-id> — argument 1, required
+realm run export --accept-partial-disclosure — option, no value
+realm run export --help — option, short -h, no value
+realm run export --out — option, takes a value
+realm run help — command, Commander's help
+realm run help <command> — argument 1, optional
+realm run import — command
+realm run import <path> — argument 1, required, variadic
+realm run import --help — option, short -h, no value
+realm run inspect — command
+realm run inspect <run-id> — argument 1, required
+realm run inspect --accept-partial-disclosure — option, no value
+realm run inspect --check-drift — option, no value
+realm run inspect --help — option, short -h, no value
+realm run inspect --verbose — option, no value
+realm run list — command
+realm run list --help — option, short -h, no value
+realm run list --older-than — option, takes a value
+realm run list --status — option, takes a value
+realm run list --stuck — option, no value
+realm run list --workflow — option, takes a value
+realm run migrate — command
+realm run migrate --detailed-exitcode — option, no value
+realm run migrate --force — option, no value
+realm run migrate --help — option, short -h, no value
+realm run migrate --stamp-seals — option, no value, mandatory
+realm run purge — command
+realm run purge <run-id> — argument 1, optional
+realm run purge --force — option, no value
+realm run purge --help — option, short -h, no value
+realm run purge --older-than — option, takes a value
+realm run purge --workflow — option, takes a value
+realm run reclaim — command
+realm run reclaim <run-id> — argument 1, optional
+realm run reclaim --all — option, no value
+realm run reclaim --force — option, no value
+realm run reclaim --help — option, short -h, no value
+realm run reclaim --older-than — option, takes a value
+realm run reclaim --step — option, takes a value
+realm run reclaim --workflow — option, takes a value
+realm run replay — command
+realm run replay <run-id> — argument 1, required
+realm run replay --help — option, short -h, no value
+realm run replay --save — option, no value
+realm run replay --with — option, takes a value, variadic
+realm run respond — command
+realm run respond <run-id> — argument 1, required
+realm run respond --by — option, takes a value
+realm run respond --choice — option, takes a value, mandatory
+realm run respond --extensions-module — option, takes a value
+realm run respond --gate — option, takes a value, mandatory
+realm run respond --help — option, short -h, no value
+realm run respond --project — option, takes a value
+realm run resume — command
+realm run resume <run-id> — argument 1, required
+realm run resume --force — option, no value
+realm run resume --from — option, takes a value, mandatory
+realm run resume --help — option, short -h, no value
+realm serve — command
+realm serve --check — option, no value
+realm serve --dev — option, no value
+realm serve --extensions-module — option, takes a value
+realm serve --form-wait-seconds — option, takes a value
+realm serve --gate-answers — option, takes a value
+realm serve --help — option, short -h, no value
+realm serve --host — option, takes a value, default "127.0.0.1"
+realm serve --port — option, takes a value, default 3001
+realm serve --project — option, takes a value
+realm serve --shutdown-drain — option, takes a value, default 0
+realm serve --shutdown-grace — option, takes a value, default 30
+realm webhook — command
+realm webhook --help — option, short -h, no value
+realm workflow — command
+realm workflow --help — option, short -h, no value
+realm workflow help — command, Commander's help
+realm workflow help <command> — argument 1, optional
+realm workflow init — command
+realm workflow init <name> — argument 1, required
+realm workflow init --help — option, short -h, no value
+realm workflow list — command
+realm workflow list --help — option, short -h, no value
+realm workflow list --json — option, no value
+realm workflow register — command
+realm workflow register <path> — argument 1, required
+realm workflow register --floor — option, takes a value
+realm workflow register --help — option, short -h, no value
+realm workflow register --model — option, takes a value
+realm workflow register --provider — option, takes a value
+realm workflow register --ratio — option, takes a value
+realm workflow register --strict — option, no value
+realm workflow run — command
+realm workflow run <path> — argument 1, required
+realm workflow run --extensions-module — option, takes a value
+realm workflow run --help — option, short -h, no value
+realm workflow run --mint-writer-nonce — option, no value, default false
+realm workflow run --params — option, takes a value, default "{}"
+realm workflow run --params-from-run — option, takes a value
+realm workflow run --project — option, takes a value
+realm workflow test — command
+realm workflow test <workflow-path> — argument 1, required
+realm workflow test --extensions-module — option, takes a value
+realm workflow test --fixtures — option, short -f, takes a value, mandatory
+realm workflow test --help — option, short -h, no value
+realm workflow validate — command
+realm workflow validate <path> — argument 1, optional
+realm workflow validate --explain — option, no value
+realm workflow validate --extensions-module — option, takes a value
+realm workflow validate --floor — option, takes a value
+realm workflow validate --help — option, short -h, no value
+realm workflow validate --json — option, no value
+realm workflow validate --model — option, takes a value
+realm workflow validate --provider — option, takes a value
+realm workflow validate --ratio — option, takes a value
+realm workflow validate --registered — option, takes a value
+realm workflow validate --strict — option, no value
+realm workflow watch — command
+realm workflow watch <path> — argument 1, required
+realm workflow watch --floor — option, takes a value
+realm workflow watch --help — option, short -h, no value
+realm workflow watch --model — option, takes a value
+realm workflow watch --provider — option, takes a value
+realm workflow watch --ratio — option, takes a value
+
+## exit codes
+exit code 0 — success; also `--help` and `--version`
+exit code 1 — a failure of any kind, a usage error included (an unknown command or flag, a missing argument or value)
+exit code 2 — `realm run migrate --detailed-exitcode` only: it succeeded, and a finished run is left whose ending cannot be worked out or whose record disagrees with its stored ending
+exit site cli/src/commands/agent.ts — 1 call with a computed code
+exit site cli/src/commands/run-advance.ts — 1 call with a computed code
+exit site cli/src/commands/run-import.ts — 1 call with a computed code
+exit site cli/src/commands/run-migrate.ts — 1 call with a computed code
+exit site cli/src/commands/run.ts — 1 call with a computed code
+exit site cli/src/commands/test.ts — 1 call with a computed code
+exit site cli/src/output/relay.ts — 1 call with a computed code
+exit site cli/src/output/writer.ts — 1 call with a computed code
+exit site mcp-server/src/bin-identity.ts — 1 call with a computed code
+
+## HTTP
+/health 200 — answerHealth: the program is accepting connections
+/health 503 — answerHealth: the program has been asked to stop (Ctrl+C or SIGTERM)
+realm listen 200 — respond: the `filter` skipped the event, or a run already has the event ID (deduplicated)
+realm listen 202 — respond: the request started a run; to a request that waits, its run has not ended
+realm listen 400 — clientErrorReply: a request that is not valid HTTP
+realm listen 400 — refuse: an HTTP/1.1 request without a `Host` header, or a body that broke off while it was read
+realm listen 400 — respond: the body is not JSON, the event ID cannot be found with `on_missing_id: reject`, or the parameters do not fit `params_schema`
+realm listen 403 — refuse: no workflow is mounted at the address
+realm listen 403 — respond: the `auth` check failed
+realm listen 405 — refuse: the method is not POST, and the request is not a read request
+realm listen 408 — clientErrorReply: the headers, or the whole request, did not arrive in time
+realm listen 408 — refuse: the body did not arrive within `--body-timeout-ms`
+realm listen 413 — clientErrorReply: a chunked body's extensions are too large
+realm listen 413 — refuse: the body is larger than `--max-body-bytes`
+realm listen 415 — respond: `Content-Type` is not `application/json`
+realm listen 417 — refuse: an `Expect` header that does not include `100-continue`
+realm listen 431 — clientErrorReply: the headers are larger than Node accepts
+realm listen 500 — respond: the store failed, or an unexpected error
+realm listen 500 — spawnFailedReply: the run's agent failed to start; every retry of that delivery gets it again
+realm listen 503 — refuse: as many requests are being handled as `--max-concurrent` allows
+realm listen read 200 — sendRead: the run's phase and, once it has completed, its result; also the answer to a request that waited for its run to end
+realm listen read 403 — sendRead: a refused read, whatever the reason
+realm listen read 503 — sendRead: the store cannot be read, or the values cannot be checked for secrets
+realm serve 400 — writeHead: a body that is not JSON
+realm serve 401 — writeHead: no token, or a wrong one
+realm serve 413 — writeHead: a body larger than 1 MiB
+realm serve 500 — writeHead: the request failed inside the server
+reply site cli/src/commands/listen.ts — 1 raw reply call with a computed status
+reply site cli/src/commands/listen.ts — 2 respond calls with a computed status
+
+## environment
+# The REALM_* names are kept by two cells, not by this file: core's redaction.test.ts (the names the source reads are the lists) and cli's docs-disclosure-729.test.ts (the lists are the docs page's rows).
