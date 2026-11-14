@@ -54,6 +54,7 @@ import {
   type WayVerb,
 } from '@sensigo/realm';
 import { createHash } from 'node:crypto';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   buildDisclosureSet,
   disclose,
@@ -2305,20 +2306,52 @@ export function disclosureOfTool(opts: WithDoorDisclosure | undefined): DoorDisc
   return opts?.doorDisclosure ?? doorDisclosureOf();
 }
 
+/** `text` masked with the environment's set for a log. Throws when the set cannot be built. */
+function maskedForLog(text: string): string {
+  const set = buildDisclosureSet({
+    env: process.env,
+    cwd: process.cwd(),
+    declared: {},
+    declaredState: 'unknown',
+    declaredCause: 'embedder_none',
+    audience: 'log',
+  }).set;
+  return disclose(text, set, 'all').text;
+}
+
 /** Writes one line to stderr, masked with the environment's set for a log (never a raw error). */
 export function logMasked(text: string): void {
   try {
-    const set = buildDisclosureSet({
-      env: process.env,
-      cwd: process.cwd(),
-      declared: {},
-      declaredState: 'unknown',
-      declaredCause: 'embedder_none',
-      audience: 'log',
-    }).set;
-    process.stderr.write(`${disclose(text, set, 'all').text}\n`);
+    process.stderr.write(`${maskedForLog(text)}\n`);
   } catch {
     process.stderr.write('realm-mcp: an error could not be logged.\n');
+  }
+}
+
+/**
+ * CP-W: a warning to the client as the protocol's log notification (level `warning`, logger
+ * `realm`), its text masked as `logMasked` masks stderr — the one place the door's notification
+ * leaves (#729 PR-3, M-5). Best-effort and never throws: the SDK's send is async, and a send with
+ * no transport (before `connect`, after close) or through one that fails rejects, so the promise is
+ * caught here; the SDK sends only when the server declared `logging`, and drops a message below the
+ * client's level.
+ */
+export function sendWarningLogMasked(
+  server: Pick<McpServer, 'sendLoggingMessage'>,
+  text: string,
+): void {
+  let data: string;
+  try {
+    data = maskedForLog(text);
+  } catch {
+    return;
+  }
+  try {
+    server.sendLoggingMessage({ level: 'warning', logger: 'realm', data }).catch(() => {
+      // A transport that cannot send loses the notification; the line is on stderr.
+    });
+  } catch {
+    // Nothing more can be sent.
   }
 }
 

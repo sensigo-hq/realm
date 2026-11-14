@@ -47,8 +47,10 @@ import {
   WorkflowError,
   type WorkflowDefinition,
   stripSpanMarks,
+  seedSaid,
 } from '@sensigo/realm';
 import { readRunManifest, type RunManifest } from '../lib/read-run-manifest.js';
+import { deprecationWriterInstalled, isKnownDeprecation } from './deprecations.js';
 
 // ─── Spans ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -65,6 +67,10 @@ type SpanKind = 'c' | 'q' | 'd';
 /** The two markers a relay sets in its worker's environment: the relay's pid, and its span key. */
 export const RELAY_CHILD_ENV = 'REALM_RELAY_CHILD';
 export const RELAY_KEY_ENV = 'REALM_RELAY_KEY';
+/** CP-W (W3): the third marker: the deprecation ids this command's parent process has already said,
+ *  `<the parent's pid>:<the ids, comma-separated, empty when none>` — set by a relay for its worker
+ *  and by `realm listen` for each agent it starts. */
+export const DEPRECATIONS_SAID_ENV = 'REALM_DEPRECATIONS_SAID';
 
 /**
  * U1b: the relay's span key and pid, when this process is that relay's worker: the markers are
@@ -82,6 +88,29 @@ function readRelayMarkers(): { key: Buffer; parent: number } | undefined {
 }
 
 const relayMarkers = readRelayMarkers();
+
+/**
+ * CP-W (W3): seeds this process's said-set from the parent's marker, so a deprecation is said once
+ * per command the operator ran, not once per process. Read and deleted here, with the relay's two
+ * markers and before the start-environment snapshot; honoured only when the pid it names is this
+ * process's parent (a shell cannot use it to silence a line). A marker that names another pid, or an
+ * id not in the table, is ignored whole; nothing here throws.
+ */
+function readDeprecationsSaid(): void {
+  const raw = process.env[DEPRECATIONS_SAID_ENV];
+  delete process.env[DEPRECATIONS_SAID_ENV];
+  if (raw === undefined) return;
+  try {
+    const m = /^(\d+):(.*)$/.exec(raw);
+    if (m === null || Number(m[1]) !== process.ppid) return;
+    const ids = m[2] === '' ? [] : m[2]!.split(',');
+    if (!ids.every(isKnownDeprecation)) return;
+    seedSaid(ids);
+  } catch {
+    // A marker that cannot be read is ignored.
+  }
+}
+readDeprecationsSaid();
 const relayKey = relayMarkers?.key;
 /** U1b: this process is a relay's worker. */
 const relayWorker = relayKey !== undefined;
@@ -1230,6 +1259,8 @@ export function installWriter(mode: WriterMode = 'default'): void {
   // relay's worker, the relay has said it (U1b).
   const unset = notSecretNames(process.env).filter((name) => process.env[name] === undefined);
   if (unset.length > 0 && !relayWorker) process.stderr.write(`${notSecretUnsetWarning(unset)}\n`);
+  // CP-W (W2): a deprecation raised before this install goes out now, through the patched stderr.
+  deprecationWriterInstalled(true);
 }
 
 /**
@@ -1483,5 +1514,6 @@ export const writerTestSeams = {
     process.off('unhandledRejection', fatal);
     process.off('exit', onExit);
     state = undefined;
+    deprecationWriterInstalled(false);
   },
 };

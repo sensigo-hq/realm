@@ -123,6 +123,8 @@ export const mcpCommand = new Command('mcp')
           principal: { absent: 'door_authenticates_no_principal' },
           // #729 PR-3 (M-3): every reply is masked with this process's set, declared part included.
           disclosureProvider: cliDisclosureProvider,
+          // CP-W: deprecation warnings also go to the client as the protocol's log notification.
+          deprecationNotifications: true,
         });
       } catch (err) {
         console.error(hostRefusalLine('mcp', err));
