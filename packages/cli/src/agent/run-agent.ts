@@ -612,12 +612,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // issue #313 — read the provider's capabilities ONCE for the whole drive (they are constant
   // per instance) and derive the three facts every dimension needs from them.
   const caps = deps.provider.capabilities();
-  // Evidence provenance: an in-repo provider names itself; a third-party module cannot, so
-  // agent.ts supplies `module:<basename>` instead. Undefined only if neither applies.
-  const providerForEvidence = caps.providerId ?? deps.providerId;
+  // Evidence provenance: the drive's own word. For a third-party module agent.ts supplies
+  // `module:<basename>`, and it wins over any `providerId` the module declares, so a module's word
+  // never names (or prices) its requests; an in-repo provider has none and names itself. Undefined
+  // only if neither applies.
+  const providerForEvidence = deps.providerId ?? caps.providerId;
   // Which provider's strict RULES to assess schemas against. Module providers fall to the
-  // Anthropic profile — realm cannot know a module's dialect — and the `provider` field above is
-  // what makes that assumption visible if the module in fact targets a different API.
+  // Anthropic profile — realm cannot know a module's dialect — and a module's declared `providerId`
+  // still picks the profile (`openai` → OpenAI's rules) but no longer appears on its records, which
+  // read `module:<file>`.
   const profile = caps.providerId === 'openai' ? ('openai' as const) : ('anthropic' as const);
   // issue #313 (D-3 precedence rule 1): the endpoint gate is only MEANINGFUL for a provider that
   // could otherwise place the marker on the wire. A gate on a non-consuming provider says nothing

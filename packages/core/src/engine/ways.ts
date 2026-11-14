@@ -34,7 +34,7 @@ import {
 } from './snapshot.js';
 import { renderTemplateWithBoundary, type StableBoundary } from './render-template.js';
 import type { LeaseFact } from '../store/lease-port.js';
-import { isLeaseFact, leaseFactOf } from '../store/lease-facts.js';
+import { isLeaseFact, leaseFactOf, type LeaseFacts } from '../store/lease-facts.js';
 import { clockBasis, type Clock } from '../utils/clock.js';
 import { buildEvidenceByStep, deriveRunPhase, findEligibleSteps } from './eligibility.js';
 import {
@@ -1419,11 +1419,12 @@ export function heldFacts(snap: Snapshot, step: string): FactsOf<'held_elsewhere
  */
 function refusedEntry(
   entry: EngineRunnable,
-  run: RunRecord,
+  // #715 (b) (02 §D.4): the record and the reading it is judged at — a remedy's step brief renders
+  // there (#729 CW-1b part 2: the snapshot itself, its lease facts included).
+  snap: Snapshot,
   definition: WorkflowDefinition,
-  // #715 (b) (02 §D.4): the reading the record is judged at — a remedy's step brief renders there.
-  at: Date,
 ): Unavailable {
+  const run = snap.record;
   const def = definition.steps[entry.step];
   if (entry.refused_by === 'capability') {
     const requirement =
@@ -1454,7 +1455,7 @@ function refusedEntry(
       conditions: [],
       run_id: run.id,
       step: entry.step,
-      brief: stepBrief(definition, writtenSnapshot(run, at), entry.step),
+      brief: stepBrief(definition, snap, entry.step),
     });
   }
   const param =
@@ -1637,7 +1638,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
     });
   }
   for (const entry of pending.cannot_run) {
-    unavailable.push(refusedEntry(entry, run, definition, snap.at));
+    unavailable.push(refusedEntry(entry, snap, definition));
   }
   if (respond !== undefined && pending.expiry_due === undefined) {
     for (const step of pending.waiting_on_answer ?? []) {
@@ -1716,14 +1717,21 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
  * The ways of a record a caller already holds (a host that read the run, or wrote it), judged at the
  * caller's reading — `composeWaysOn` on the snapshot the record and that reading make. The judges
  * read the definition, this program's registry (an observer when none is passed: C33) and whether
- * the store keeps claims.
+ * the store keeps claims. #729 CW-1b part 2: `input.lease_facts` takes the lease facts of the store
+ * snapshot the record came from (`snapshot.lease_facts`), so a step held elsewhere carries its
+ * lease's fact; without them a claim that names a lease reads `not_checked`.
  */
 export function composeWaysAt(
   record: RunRecord,
   at: Date,
-  input: { definition: WorkflowDefinition; registry?: ExtensionRegistry; persistsClaims?: boolean },
+  input: {
+    definition: WorkflowDefinition;
+    registry?: ExtensionRegistry;
+    persistsClaims?: boolean;
+    lease_facts?: LeaseFacts | undefined;
+  },
 ): ComposedWays {
-  return composeWaysOn(writtenSnapshot(record, at), {
+  return composeWaysOn(writtenSnapshot(record, at, input.lease_facts), {
     definition: { ok: input.definition },
     enactor:
       input.registry !== undefined
@@ -1750,7 +1758,6 @@ function advanceUnavailable(
   // CW-1b: the held step's lease fact).
   snap: Snapshot,
 ): Unavailable {
-  const { at } = snap;
   if (respond !== undefined) {
     return {
       verb: 'advance',
@@ -1782,11 +1789,11 @@ function advanceUnavailable(
   // remedies (correct the workflow; the operator's lever; a new run only where one can help).
   const refused = pending.cannot_run.find((e) => e.refused_by !== 'capability');
   if (offeredSteps.length === 0 && refused !== undefined) {
-    return { ...refusedEntry(refused, run, definition, at), verb: 'advance' };
+    return { ...refusedEntry(refused, snap, definition), verb: 'advance' };
   }
   const missing = pending.cannot_run.find((e) => e.refused_by === 'capability');
   if (offeredSteps.length === 0 && missing !== undefined) {
-    const entry = refusedEntry(missing, run, definition, at);
+    const entry = refusedEntry(missing, snap, definition);
     return { ...entry, verb: 'advance' };
   }
   // Amendment 15: the agent's steps are the way on; else nothing is left to do.

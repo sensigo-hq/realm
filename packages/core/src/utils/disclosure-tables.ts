@@ -26,6 +26,12 @@ import type {
   CacheReference,
   WorkflowContextSnapshot,
 } from '../types/run-record.js';
+import {
+  CACHE_REQUESTERS,
+  CACHE_REQUESTS,
+  CACHE_REQUEST_SOURCES,
+  REQUEST_ENDPOINTS,
+} from '../types/run-record.js';
 import type { DisclosureAudience, DisclosureSet } from './redaction.js';
 import {
   discloseByTable,
@@ -110,10 +116,25 @@ const CACHE_DIAGNOSTICS_TABLE = {
   result: 'fact',
 } as const satisfies Record<KeysOfUnion<CacheDiagnostics>, DisclosureClass>;
 
+/**
+ * A row for a field whose values are Realm's own closed words (`words`) but which a provider module
+ * may fill with any text: chosen by its value. A string exactly equal to one of the words (case
+ * counts: `Off` is not `off`) is Realm's own word, shown whole; anything else is text, checked at
+ * every tier and counted where it is hidden, as a `bounded` row is.
+ */
+function ownWordsRow(words: readonly string[]): ChosenClass {
+  return {
+    choose: (value) => (typeof value === 'string' && words.includes(value) ? 'fact' : 'bounded'),
+  };
+}
+
 /** A provider's per-request usage. `model` is a value (the model a provider answered with can be
  *  anything a configuration says); realm agent's own prints, where the requested model is known,
  *  show it (01 #16). Caching 3-M (piece A-1): every row but `reference`, which holds a copy of some
- *  of these rows — declared apart so the copy can take its rows from here. */
+ *  of these rows — declared apart so the copy can take its rows from here. The four fields that
+ *  carry Realm's closed words (`cache_requested`, `cache_requested_source`, `cache_requested_by`,
+ *  `endpoint`) choose their class by value (`ownWordsRow`): a provider module can write any text
+ *  there, and its text is checked, never shown as one of Realm's words. */
 const USAGE_RECORD_ROWS = {
   request_index: 'fact',
   request_start: 'fact',
@@ -125,15 +146,15 @@ const USAGE_RECORD_ROWS = {
   output_tokens: 'fact',
   cache_creation: 'fact',
   model: 'value',
-  cache_requested: 'fact',
+  cache_requested: ownWordsRow(CACHE_REQUESTS),
   cache_lifetime_s: 'fact',
   cache_ttl_sent: 'fact',
-  cache_requested_source: 'fact',
-  cache_requested_by: 'fact',
+  cache_requested_source: ownWordsRow(CACHE_REQUEST_SOURCES),
+  cache_requested_by: ownWordsRow(CACHE_REQUESTERS),
   // closed at the write by `normalizeCacheAuto` (basis ∈ CACHE_AUTO_BASES; prices ∈ its five shapes); any other value drops the field
   cache_auto: 'fact',
   provider: 'fact',
-  endpoint: 'fact',
+  endpoint: ownWordsRow(REQUEST_ENDPOINTS),
   cache_split_offered: 'fact',
   // #715 (R): an id realm mints per request (`mintRequestIds`), never a provider's.
   request_id: 'fact',
@@ -520,15 +541,13 @@ export const GATE_INFO_FACTS = {
   first_reminder_due_at: 'time',
 } as const satisfies FactProducers<typeof GATE_INFO_TABLE, GateInfo>;
 
+// `cache_requested`, `cache_requested_source`, `cache_requested_by` and `endpoint` are not here: their
+// rows choose by value (`ownWordsRow`), and only a `fact` row names a producer.
 export const USAGE_RECORD_FACTS = {
   request_start: 'time',
-  cache_requested: 'enum',
-  cache_requested_source: 'enum',
-  cache_requested_by: 'enum',
   // closed at the write by `normalizeCacheAuto` (basis ∈ CACHE_AUTO_BASES; prices ∈ its five shapes); any other value drops the field
   cache_auto: 'enum',
   provider: 'enum',
-  endpoint: 'enum',
   request_id: 'id',
   prefix_sha256: 'hash',
   cache_marked: 'enum',
@@ -540,8 +559,6 @@ export const REFERENCE_FACTS = {
   request_start: USAGE_RECORD_FACTS.request_start,
   request_id: USAGE_RECORD_FACTS.request_id,
   provider: USAGE_RECORD_FACTS.provider,
-  endpoint: USAGE_RECORD_FACTS.endpoint,
-  cache_requested: USAGE_RECORD_FACTS.cache_requested,
   cache_auto: USAGE_RECORD_FACTS.cache_auto,
   cache_marked: USAGE_RECORD_FACTS.cache_marked,
 } as const satisfies FactProducers<typeof REFERENCE_TABLE, CacheReference>;
