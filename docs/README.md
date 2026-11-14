@@ -87,3 +87,4 @@ Realm is a workflow engine that an AI agent calls. These pages describe Realm 0.
 - [Run record and export bundle format](reference/run-record-and-export.md)
 - [Environment variables and files on disk](reference/environment-and-files.md)
 - [Glossary](reference/glossary.md)
+- [Compatibility: what a release keeps](reference/compatibility.md)
