@@ -2,6 +2,7 @@
 // its reading. A double holds the host's clock (`systemClock`) and judges a record exactly as a real
 // store on an ordinary directory does: one raw reading, floored by the record's own `updated_at`.
 import {
+  deriveRunPhase,
   floorAtRecord,
   systemClock,
   takeRawReading,
@@ -34,8 +35,10 @@ type Records = readonly RunRecord[] | (() => readonly RunRecord[]);
 /**
  * #616 PR-2c c4: the `scan` of a double over `records`, paged as a real store pages: ids in UTF-8 byte
  * order, the `workflow` filter, `pageSize` at a time, one raw reading of the host clock a page, each
- * record judged at it floored by its own `updated_at`, `next_after` on a full page. It does not
- * filter by anything else, or give the `'row'` projection: asked to, it throws.
+ * record judged at it floored by its own `updated_at`, `next_after` on a full page. U3b (#963): and the
+ * `phase` filter, by the engine's own `deriveRunPhase` (the expired-gate sweeper reads only the runs
+ * waiting at a gate). It does not filter by anything else, or give the `'row'` projection: asked to,
+ * it throws.
  */
 export function scanning(records: Records): RunStore['scan'] {
   function scan(
@@ -54,21 +57,16 @@ export function scanning(records: Records): RunStore['scan'] {
     filter: ScanFilter,
     options: ScanOptions,
   ): AsyncGenerator<ScanPage<'record' | 'row'>, void, undefined> {
-    const others = [
-      filter.phase,
-      filter.terminal,
-      filter.key,
-      filter.created_since,
-      filter.updated_since,
-    ];
+    const others = [filter.terminal, filter.key, filter.created_since, filter.updated_since];
     if (others.some((v) => v !== undefined) || options.projection === 'row') {
-      throw new Error("this store double scans by 'workflow' only, as records");
+      throw new Error("this store double scans by 'workflow' and 'phase' only, as records");
     }
     let after = Buffer.from(options.after ?? '', 'utf8');
     for (;;) {
       const r = takeRawReading(systemClock);
       const cut = (typeof records === 'function' ? records() : records)
         .filter((rec) => filter.workflow === undefined || rec.workflow_id === filter.workflow)
+        .filter((rec) => filter.phase === undefined || deriveRunPhase(rec) === filter.phase)
         .map((rec) => ({ rec, id: Buffer.from(rec.id, 'utf8') }))
         .filter(({ id }) => Buffer.compare(id, after) > 0)
         .sort((a, b) => Buffer.compare(a.id, b.id))

@@ -68,7 +68,7 @@ Drive failures:
 
 ### `--sweep-expired-gates`
 
-A gate with `timeout_seconds` is carried out, once its time has passed, only when something next touches its run. With this flag, `realm listen` looks through every run in the store at the given interval and carries out the gates that are due, whether or not it started those runs:
+A gate with `timeout_seconds` is carried out, once its time has passed, only when something next touches its run. With this flag, `realm listen` reads the runs in the store that are waiting at a gate, once per interval (the first time one interval after it starts), whether or not it started those runs, and carries out the gates whose time has passed. A gate it has read is carried out when its time arrives, provided the store can be read then and no other writer is holding its run; otherwise it is carried out at the next interval. A gate that another process opens after a read is read at the next interval, so it can be up to one interval late. A gate whose workflow is not registered in this store is skipped at every pass. It reads once at a time: a read still under way when the next is due is followed by one more read, not by several. This changed after version 0.49.0. When it carries out a gate, it logs:
 
 ```text
 listen: sweeper enacted an expired gate {"run_id":"a36b4ec7-f82b-439d-8011-816ae0023663","gate_id":"10e986c4-6507-48a9-a86f-e00fc7ce6ead","disposition":"abort"}
