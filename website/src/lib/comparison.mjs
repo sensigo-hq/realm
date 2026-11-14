@@ -20,7 +20,7 @@ const RELEASE = /^\d+\.\d+\.\d+$/;
 // A column's version starts with its release, read out whole: `0.49.10 (npm)` is 0.49.10, not 0.49.1.
 const LEADING_RELEASE = /^(\d+\.\d+\.\d+)(?![\d.])/;
 // Section ids the page itself uses; a row id equal to one would make two elements share it.
-const PAGE_IDS = ['table', 'answers', 'tools', 'how'];
+const PAGE_IDS = ['table', 'answers', 'other-tools', 'tools', 'how'];
 // A column older than this is still published, but the build says it needs re-checking.
 const STALE_DAYS = 120;
 const DAY = 86_400_000;

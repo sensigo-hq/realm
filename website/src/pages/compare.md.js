@@ -24,6 +24,7 @@ import {
   linkParts,
   issueLink,
   HEADINGS,
+  OTHER_TOOLS,
 } from '../lib/compare-text.mjs';
 import { absolute } from '../lib/site-meta.mjs';
 
@@ -133,6 +134,22 @@ export function GET() {
       '',
     );
   }
+  // Using Realm with n8n, Zapier or Make: the page's words, without its eyebrow; the bold lead of an
+  // item is written outside esc.
+  out.push(
+    `## ${esc(OTHER_TOOLS.heading)}`,
+    '',
+    esc(OTHER_TOOLS.paragraph),
+    '',
+    `### ${esc(OTHER_TOOLS.question)}`,
+    '',
+    esc(OTHER_TOOLS.answer),
+    '',
+    ...OTHER_TOOLS.items.map(
+      (item) => `- ${item.strong ? `**${item.strong}**` : ''}${withIssueLinks(item.text)}`,
+    ),
+    '',
+  );
   // One section per tool, in the table's order: Realm first, under its name, then each other tool
   // under "Realm vs <tool>", the page's place for it.
   out.push(`## ${esc(HEADINGS.tools)}`, '', esc(toolsIntro), '');
