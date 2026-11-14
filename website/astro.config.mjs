@@ -4,7 +4,7 @@ import sitemap from '@astrojs/sitemap';
 import sitemapAtRoot from './src/integrations/sitemap-at-root.mjs';
 import { THEME_INIT } from './src/lib/theme-init.mjs';
 import { ICON_LINKS, THEME_COLOR } from './src/lib/favicon.mjs';
-import { HOME_DESCRIPTION, SITEMAP_PATH, SITE_URL } from './src/lib/site-meta.mjs';
+import { HOME_DESCRIPTION, SITEMAP_PATH, SITE_URL, absolute } from './src/lib/site-meta.mjs';
 import { DOCS_SIDEBAR } from './src/data/docs-sidebar.mjs';
 
 export default defineConfig({
@@ -40,6 +40,9 @@ export default defineConfig({
         { tag: 'meta', attrs: { name: 'theme-color', content: THEME_COLOR } },
         // replaces Starlight's own link to /sitemap-index.xml (see sitemapAtRoot below)
         { tag: 'link', attrs: { rel: 'sitemap', href: SITEMAP_PATH } },
+        // the site's map for AI agents (llmstxt.org), on every docs page and the 404; the other
+        // pages get it from PageMeta.astro
+        { tag: 'link', attrs: { rel: 'describedby', href: absolute('/llms.txt') } },
       ],
       // Shiki, which colours code examples, stops colouring a line after 500 ms by default and
       // leaves the rest plain. That made the colours depend on how busy the build machine was,
