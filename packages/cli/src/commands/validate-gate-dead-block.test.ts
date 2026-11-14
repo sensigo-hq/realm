@@ -16,7 +16,7 @@ const MSG_A_APPROVE =
   "no gate trust ('trust: human_confirmed' or 'trust: human_reviewed'), so Realm would never " +
   'open this gate: nobody would be asked, and the run would go on exactly as if the block were ' +
   "not there. Set 'trust: human_confirmed' on this step if a person must approve its result, or " +
-  "remove the 'gate:' block. The workflow loads as soon as either is done. (line 9)";
+  "remove the 'gate:' block. This refusal clears as soon as either is done. (line 9)";
 
 describe('validate — fix 2: a gate: block that can never open a gate is refused (was the #524 advisory)', () => {
   let dir: string;
@@ -85,9 +85,10 @@ ${stepFields}${gateBlock}`,
     expect(ERRORED().split('\n')).toContain(
       "Invalid workflow: Step 'approve': 'gate' is not valid on execution: guard steps — a " +
         "guard step never opens a gate (only an auto or agent step with 'trust: " +
-        "human_confirmed' or 'trust: human_reviewed' does), so nobody would be asked. Put the " +
-        'approval on the auto or agent step whose result a person must approve, or remove the ' +
-        "'gate:' block. The workflow loads as soon as either is done. (line 9)",
+        "human_confirmed' or 'trust: human_reviewed' does), so nobody would be asked. Move the " +
+        "'gate:' block to the auto or agent step whose result a person must approve, and set " +
+        "'trust: human_confirmed' on that step; or remove the block. This refusal clears as soon " +
+        'as either is done. (line 9)',
     );
   });
 
@@ -95,7 +96,7 @@ ${stepFields}${gateBlock}`,
     ['the trust added', '    handler: h\n    trust: human_confirmed\n', GATE],
     ['the block removed', '    handler: h\n', ''],
   ])(
-    "following message A's remedy (%s), the same step validates — the message's 'loads as soon as either is done'",
+    "following message A's remedy (%s) on a block with no mistakes of its own, the same step validates — the message's 'this refusal clears as soon as either is done'",
     async (_remedy, stepFields, gateBlock) => {
       const wfPath = write('auto', stepFields, gateBlock);
       await validateCommand.parseAsync([wfPath], { from: 'user' });

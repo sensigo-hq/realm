@@ -2,10 +2,12 @@
 // open a gate used to load with ONE `DEAD_GATE_CONFIG` block advisory (#524, which replaced the
 // per-member "set a timeout" remedies). Since fix 2 it is REFUSED at load: the engine mints a gate
 // only where `isGateTrust(trust)` holds (Step 5b, `execution-loop.ts`), so the approval the block
-// describes would ask nobody. One error per block, and no other finding about the block's keys:
+// describes would ask nobody. One refusal per block:
 //   - auto/agent with trust absent or `auto` (the `lawful_no_gate` verdict): message A;
 //   - guard/finalizer, whatever `trust` says: message B, minted from the step-key registry;
 //   - a trust the loader refuses keeps its own refusal; a malformed kind keeps its kind error.
+// Beside A or B, the block's own key ERRORS still show (correction 1), so following the
+// refusal's advice never meets a mistake it hid; no WARNING about the block's keys does.
 // The cells below that pinned the #524 advisory now pin the refusal; the gate-trusted controls
 // (cells 8, 8b, 10's second cell) are unchanged.
 //
@@ -22,15 +24,15 @@ const MSG_A = (step: string, line: number): string =>
   "('trust: human_confirmed' or 'trust: human_reviewed'), so Realm would never open this gate: " +
   'nobody would be asked, and the run would go on exactly as if the block were not there. Set ' +
   "'trust: human_confirmed' on this step if a person must approve its result, or remove the " +
-  `'gate:' block. The workflow loads as soon as either is done. (line ${line})`;
+  `'gate:' block. This refusal clears as soon as either is done. (line ${line})`;
 
 /** Message B, on a guard or finalizer step `step`, with its key-line cite. */
 const MSG_B = (step: string, kind: 'guard' | 'finalizer', line: number): string =>
   `Step '${step}': 'gate' is not valid on execution: ${kind} steps — a ${kind} step never opens ` +
   "a gate (only an auto or agent step with 'trust: human_confirmed' or 'trust: human_reviewed' " +
-  'does), so nobody would be asked. Put the approval on the auto or agent step whose result a ' +
-  "person must approve, or remove the 'gate:' block. The workflow loads as soon as either is " +
-  `done. (line ${line})`;
+  "does), so nobody would be asked. Move the 'gate:' block to the auto or agent step whose " +
+  "result a person must approve, and set 'trust: human_confirmed' on that step; or remove the " +
+  `block. This refusal clears as soon as either is done. (line ${line})`;
 
 /** A gate block whose keys are all valid, so only the refusal under test can refuse it. */
 const ON_EXPIRY_BLOCK = '      timeout_seconds: 300\n      on_expiry: abort';
@@ -80,8 +82,8 @@ function refusal(doc: string): { errors: string[]; warnings: LoaderWarning[] } {
 
 describe('yaml-loader — fix 2: a gate: block on a step that can never open a gate is refused at load', () => {
   describe('cell 7 — every step kind without gate trust (was the #524 block advisory)', () => {
-    it('guard (never gate-trusted): exactly ONE error, message B at the gate key, no warning', () => {
-      const { errors, warnings } = refusal(
+    it('guard (never gate-trusted): exactly ONE error, message B at the gate key', () => {
+      const { errors } = refusal(
         gateWorkflow(
           'guard',
           "    description: check\n    abort_unless: ['work.ok == true']",
@@ -92,18 +94,14 @@ describe('yaml-loader — fix 2: a gate: block on a step that can never open a g
       //     is left as before (it loads, and `refusal` throws "expected … refused"); (2) prints the
       //     error list.
       expect(errors).toEqual([MSG_B('work', 'guard', 10)]);
-      // (1) red when the refused block's key checks still run; (2) prints the warning codes.
-      expect(warnings.map((w) => w.code)).toEqual([]);
     });
 
-    it('auto, NO trust declared: exactly ONE error, message A at the gate key, no warning', () => {
-      const { errors, warnings } = refusal(
+    it('auto, NO trust declared: exactly ONE error, message A at the gate key', () => {
+      const { errors } = refusal(
         gateWorkflow('auto', '    description: work\n    handler: h', ON_EXPIRY_BLOCK),
       );
       // (1) red when the refusal is removed (the file loads); (2) prints the error list.
       expect(errors).toEqual([MSG_A('work', 10)]);
-      // (1) red when the refused block's member checks still run; (2) prints the warning codes.
-      expect(warnings.map((w) => w.code)).toEqual([]);
     });
 
     it("auto, trust: 'auto' EXPLICITLY (still not gate-trusted): exactly ONE error, message A", () => {
@@ -128,11 +126,10 @@ describe('yaml-loader — fix 2: a gate: block on a step that can never open a g
     });
 
     it('finalizer (never gate-trusted): exactly ONE error, the finalizer form of message B', () => {
-      const { errors, warnings } = refusal(FINALIZER_WF('', ON_EXPIRY_BLOCK));
+      const { errors } = refusal(FINALIZER_WF('', ON_EXPIRY_BLOCK));
       // (1) red when gate×finalizer is left as before (it loads, and `refusal` throws); (2) prints
       //     the error list.
       expect(errors).toEqual([MSG_B('work', 'finalizer', 15)]);
-      expect(warnings.map((w) => w.code)).toEqual([]);
     });
 
     it('auto, NO trust, the reminder member alone: still exactly ONE error, message A, and no member warning', () => {
@@ -147,7 +144,8 @@ describe('yaml-loader — fix 2: a gate: block on a step that can never open a g
       expect(errors).toEqual([MSG_A('work', 10)]);
       // The reminder member's own claim ("the first reminder would never fire before the gate
       // expires") must not appear: there is no gate here to expire. (1) red when the member
-      // checks run on a refused block; (2) prints the warning codes.
+      // advisories run without gate trust (the #524 check, `gateTrusted`), which a refused block
+      // now reaches; (2) prints the warning codes.
       expect(warnings.map((w) => w.code)).toEqual([]);
     });
 
@@ -190,6 +188,46 @@ describe('yaml-loader — fix 2: a gate: block on a step that can never open a g
       expect(errors[0]).toContain(
         "Step 'work': 'trust: \"human_confrimed\"' is not a recognized value — refused at load",
       );
+    });
+  });
+
+  describe("correction 1 — a guard's refused block shows its own mistakes, never its warnings", () => {
+    it('guard with gate {choices: []}: TWO errors, message B and the empty-choices error', () => {
+      const { errors } = refusal(
+        gateWorkflow(
+          'guard',
+          "    description: check\n    abort_unless: ['work.ok == true']",
+          '      choices: []',
+        ),
+      );
+      // (1) red when the block's own errors are still hidden on a guard (B alone: one error);
+      //     (2) prints the error list.
+      expect(errors).toHaveLength(2);
+      // (1) red when B's text or line changes, or when it no longer comes first; (2) prints it.
+      expect(errors[0]).toBe(MSG_B('work', 'guard', 10));
+      // (1) red when the empty-choices error is missing or cites another line; (2) prints it.
+      expect(errors[1]).toContain(
+        "Step 'work': 'gate.choices', when declared, must be non-empty — an empty list is never right",
+      );
+      expect(errors[1]).toMatch(/\(line 11\)$/);
+    });
+
+    it('guard with trust: human_confirmed and gate {default_choice: approve}: TWO errors, the trust refusal and message B, and no warning', () => {
+      const { errors, warnings } = refusal(
+        gateWorkflow(
+          'guard',
+          "    description: check\n    abort_unless: ['work.ok == true']\n    trust: human_confirmed",
+          '      default_choice: approve',
+        ),
+      );
+      // (1) red when another error joins them (or one goes); (2) prints the error list.
+      expect(errors).toHaveLength(2);
+      expect(errors[0]).toContain("Step 'work': 'trust' is not valid on execution: guard steps");
+      expect(errors[1]).toBe(MSG_B('work', 'guard', 11));
+      // A gate-trust value passes the member advisories' own gate-trust check, so on a guard they
+      // are hidden explicitly. (1) red when they are not (a DEAD_GATE_CONFIG warning appears);
+      // (2) prints the warning codes.
+      expect(warnings.map((w) => w.code)).toEqual([]);
     });
   });
 
@@ -249,7 +287,6 @@ describe('yaml-loader — fix 2: a gate: block on a step that can never open a g
         "Step 'work': 'gate.on_expiry' is ignored without 'gate.timeout_seconds' — set a " +
           "timeout, or remove 'gate.on_expiry'.",
       );
-      expect(gate[0]?.message).not.toContain("gate:' block is inert");
     });
 
     it('human_reviewed + timeout_seconds + on_expiry: abort together — the live population, no warning at all (control, paired with the cell above)', () => {
@@ -275,7 +312,8 @@ describe('yaml-loader — fix 2: a gate: block on a step that can never open a g
       );
       // (1) red when the refusal is removed (the file loads); (2) prints the error list.
       expect(errors).toEqual([MSG_A('work', 10)]);
-      // (1) red when the member check runs on a refused block; (2) prints the warning codes.
+      // (1) red when the member advisories run without gate trust (the #524 check, `gateTrusted`),
+      //     which a refused block now reaches; (2) prints the warning codes.
       expect(warnings.map((w) => w.code)).toEqual([]);
     });
 

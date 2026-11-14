@@ -26,7 +26,7 @@ Invalid workflow: Step 'approve': 'trust: "human_confirmd"' is not a recognized 
 
 ## The `gate` block
 
-The block is read only on a step whose `trust` is `human_confirmed` or `human_reviewed`. All nine keys are optional.
+The block is allowed only on an auto or agent step whose `trust` is `human_confirmed` or `human_reviewed`. All nine keys are optional.
 
 A `gate` block on a step whose `trust` opens no gate is refused when the file is loaded, because Realm would never open that gate and nobody would be asked:
 

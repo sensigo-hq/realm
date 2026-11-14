@@ -422,11 +422,12 @@ steps:
     }
   });
 
-  it('C7 (fix 2) an UNGATED step (no trust) whose block has choices: [] and an unknown key — exactly ONE error, the block refusal; no choices error, no UNKNOWN_GATE_KEY warning', () => {
-    // Before fix 2 this block got the #433 member (a) error AND the #524 block advisory (and an
-    // UNKNOWN_GATE_KEY warning for the typo). Since fix 2 the block itself is refused at load, and
-    // a refused block gets no other finding about its keys — the empty-choices check sits outside
-    // the `gate` region, so the suppression has to reach it too.
+  it('C7 (fix 2, correction 1) an UNGATED step (no trust) whose block has choices: [], an unknown key and a bad timeout — THREE errors: the empty-choices error, the block refusal, the timeout error; no UNKNOWN_GATE_KEY warning', () => {
+    // Before fix 2 this block got the #433 member (a) error, the timeout error AND the #524 block
+    // advisory (and an UNKNOWN_GATE_KEY warning for the typo). Since fix 2 the block itself is
+    // refused at load; since correction 1 its own key errors still show beside the refusal (so
+    // setting the trust, as the refusal advises, never meets a mistake it hid), and its warnings
+    // do not. The empty-choices check sits outside the `gate` region, so both halves must reach it.
     let errors: string[] = [];
     let warningCodes: string[] = [];
     try {
@@ -442,17 +443,26 @@ steps:
     gate:
       choices: []
       choises: [approve]
+      timeout_seconds: -5
 `);
     } catch (err) {
       errors = [...((err as WorkflowError).errors ?? [(err as WorkflowError).message])];
       warningCodes = ((err as WorkflowError).warnings ?? []).map((w) => w.code);
     }
-    // (1) red when the block's key checks still run on a refused block (the choices error makes
-    //     two); (2) prints the error list.
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain("Step 'step1': the 'gate:' block is refused at load");
-    expect(errors[0]).toContain('(line 10)');
-    // (1) red when the unknown-key check still runs on a refused block; (2) prints the codes.
+    // (1) red when the empty-choices check or the gate region is still skipped on a refused block
+    //     (one or two errors); (2) prints the error list.
+    expect(errors).toHaveLength(3);
+    // (1) red when the empty-choices error is skipped or moves; (2) prints it.
+    expect(errors[0]).toContain("Step 'step1': 'gate.choices', when declared, must be non-empty");
+    expect(errors[0]).toContain('(line 11)');
+    // (1) red when the refusal is removed or moves; (2) prints it.
+    expect(errors[1]).toContain("Step 'step1': the 'gate:' block is refused at load");
+    expect(errors[1]).toContain('(line 10)');
+    // (1) red when the gate region is still skipped on a refused block; (2) prints it.
+    expect(errors[2]).toBe(
+      "Step 'step1': 'gate.timeout_seconds' must be a positive integer (step at line 6)",
+    );
+    // (1) red when the unknown-key warning is not hidden on a refused block; (2) prints the codes.
     expect(warningCodes).toEqual([]);
   });
 

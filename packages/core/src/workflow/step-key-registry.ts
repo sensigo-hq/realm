@@ -262,8 +262,9 @@ const MSG_TOOL_TIMEOUT =
 const gateNeverOpensOn = (kind: 'guard' | 'finalizer'): string =>
   `'gate' is not valid on execution: ${kind} steps — a ${kind} step never opens a gate (only ` +
   "an auto or agent step with 'trust: human_confirmed' or 'trust: human_reviewed' does), so " +
-  'nobody would be asked. Put the approval on the auto or agent step whose result a person ' +
-  "must approve, or remove the 'gate:' block. The workflow loads as soon as either is done.";
+  "nobody would be asked. Move the 'gate:' block to the auto or agent step whose result a " +
+  "person must approve, and set 'trust: human_confirmed' on that step; or remove the block. " +
+  'This refusal clears as soon as either is done.';
 const MSG_GATE_GUARD = gateNeverOpensOn('guard');
 const MSG_GATE_FINALIZER = gateNeverOpensOn('finalizer');
 
