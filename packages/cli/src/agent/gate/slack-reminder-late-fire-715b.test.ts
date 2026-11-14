@@ -101,11 +101,12 @@ describe('#715 (b) Amendment 12 (c) — a late firing speaks at its scheduled in
   it('#964: inside the grace a firing speaks at its scheduled instant, past it at the reading (the second side)', async () => {
     // (a) red when a firing past the 60 s grace keeps its scheduled age (the escalation and k = 2 read
     //     "15m" and "20m" at a 22-minute wake), or a firing inside it is composed at the reading ("expired
-    //     30s ago"); (b) prints the texts.
+    //     30s ago"); (b) prints the texts. The gate names an owner, so the escalation's line differs
+    //     from k = 2's (#964 correction 1: a line that would repeat the other's is posted once).
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const texts = posts();
     const opened = writtenSnapshot(
-      { pending_gate: gateOf() } as unknown as RunRecord,
+      { pending_gate: { ...gateOf(), owner: '<@U0OWNER>' } } as unknown as RunRecord,
       new Date(Date.parse(OPENED) + 30_000),
     );
     const clock = wakeClock(opened.at);
@@ -126,7 +127,7 @@ describe('#715 (b) Amendment 12 (c) — a late firing speaks at its scheduled in
     await settle();
     clear();
     expect(texts).toEqual([
-      '⏰ gate `review_step` has been open for 22m (since 2033-01-01T00:00:00Z). Please respond.',
+      '<@U0OWNER> — ⏰ gate `review_step` has been open for 22m (since 2033-01-01T00:00:00Z). Please respond.',
       '⏰ gate `review_step` has been open for 22m (since 2033-01-01T00:00:00Z). Please respond.',
       '⏰ gate `review_step` expired 0s ago (2033-01-01T00:30:00Z) — the run will be stopped.',
     ]);

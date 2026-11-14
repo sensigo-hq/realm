@@ -585,7 +585,8 @@ const REMINDER_GRACE_MS = 60_000;
  * scheduled instant, later at the reading; an occurrence posts only when no later occurrence of the
  * cycle (the final included) is due at that reading, so one post replaces a burst and the occurrences
  * not yet due stay on their instants; and when the gate declares `on_expiry`, a firing at or after
- * `expires_at` posts nothing but the final reminder (the expiry closes the question and says so).
+ * `expires_at` posts nothing but the final reminder (the expiry closes the question and says so);
+ * a reminder or the escalation whose line is the one the other just posted is not posted again.
  * Returns a cleanup function that cancels every waiter — must be called when the gate resolves.
  * Exported for testing.
  */
@@ -605,7 +606,13 @@ export function startGateReminderTimers(
   if (gate === undefined) return (): void => {};
   const startMs = opened.at.getTime();
   const cancels: Array<() => void> = [];
-  const post = (text: string, what: string): void => {
+  // #964: the last line posted. A reminder never repeats the escalation's line, nor the escalation a
+  // reminder's (they read the same when the gate names no owner and both are composed at one reading).
+  let last: { what: 'Reminder' | 'Escalation'; text: string } | undefined;
+  const repeats = (text: string, what: 'Reminder' | 'Escalation'): boolean =>
+    last !== undefined && last.what !== what && last.text === text;
+  const post = (text: string, what: 'Reminder' | 'Escalation'): void => {
+    last = { what, text };
     postSlackReply(botToken, channelId, threadTs, text).catch((err) => {
       console.warn(`${what} post failed: ${err instanceof Error ? err.message : String(err)}`);
     });
@@ -649,6 +656,7 @@ export function startGateReminderTimers(
           composedAt(whenMs, nowMs),
           listens,
         );
+        if (repeats(text, 'Reminder')) return;
         post(text, 'Reminder');
       });
     }
@@ -668,6 +676,7 @@ export function startGateReminderTimers(
         composedAt(whenMs, nowMs),
         listens,
       );
+      if (repeats(text, 'Reminder')) return;
       post(text, 'Reminder');
     });
   }
@@ -691,6 +700,7 @@ export function startGateReminderTimers(
       }),
       { mode: 'bot', listens },
     ).text;
+    if (repeats(text, 'Escalation')) return;
     post(text, 'Escalation');
   });
 

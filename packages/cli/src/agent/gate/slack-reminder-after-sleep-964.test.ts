@@ -3,7 +3,8 @@
 // is composed as when on time (at its scheduled instant), a later one at the clock's reading; of what
 // is due together only the latest occurrence posts (the escalation is its own post); the occurrences
 // not yet due stay on their instants; a question its expiry closes (`on_expiry`) gets nothing at or
-// after `expires_at` but the final reminder.
+// after `expires_at` but the final reminder; a reminder or the escalation whose line is the one the
+// other just posted (no `owner`, one reading) is not posted again.
 //
 // A sleep is rehearsed with `wakeClock` (test-support): every waiter due by the wake runs, each
 // reading the wake, as the store's system clock delivers them after a sleep. The instants are in 2033.
@@ -195,8 +196,9 @@ describe('#964 — a reminder after a sleep says the true age', () => {
     });
   });
 
-  it('6b: a gate with no `on_expiry` is not closed at its time: after a sleep past expires_at the latest reminder and the escalation post; an escalation due after expires_at posts on time', async () => {
-    // (a) red when the expiry rule is applied without its `on_expiry` condition; (b) prints the posts.
+  it('6b: a gate with no `on_expiry` is not closed at its time: after a sleep past expires_at the escalation posts (the latest reminder would repeat its line); an escalation due after expires_at posts on time', async () => {
+    // (a) red when the expiry rule is applied without its `on_expiry` condition, or when the reminder
+    //     repeats the escalation's line (correction 1); (b) prints the posts.
     const asleep = started(
       { reminder_seconds: 600, reminder_max: 3, expires_at: plus(3 * HOUR).toISOString() },
       FAR,
@@ -217,8 +219,58 @@ describe('#964 — a reminder after a sleep says the true age', () => {
       asleep: asleep.texts,
       onTime: onTime.texts,
     }).toEqual({
-      asleep: [open('22h 0m'), open('22h 0m')], // the escalation (15 m), then k = 3 (30 m)
+      asleep: [open('22h 0m')], // the escalation (15 m); k = 3 (30 m) would read the same: not posted
       onTime: [open('10m'), open('20m'), open('30m'), open('4h 0m')],
+    });
+  });
+
+  it('7a: no `owner`, the escalation fires first: the reminder that would repeat its line is not posted (the authored series and the operator fallback)', async () => {
+    // (a) red when a reminder posts the escalation's line again (two identical posts in a half);
+    //     (b) prints the posts of each half.
+    const series = started({ reminder_seconds: 600, reminder_max: 20 }, FAR, 45 * MIN);
+    await series.clock.wake(plus(65 * MIN)); // the escalation (45 m), then k = 6 (60 m)
+    await settle();
+    series.clear();
+    const fallback = started({}, 45 * MIN, 30 * MIN);
+    await fallback.clock.wake(plus(3 * HOUR)); // the escalation (30 m), then the reminder (45 m)
+    await settle();
+    fallback.clear();
+    expect({ series: series.texts, fallback: fallback.texts }).toEqual({
+      series: [open('1h 5m')],
+      fallback: [open('3h 0m')],
+    });
+  });
+
+  it('7b: no `owner`, a reminder fires first: the escalation that would repeat its line is not posted (the authored series; the default operator config after a night)', async () => {
+    // (a) red when the escalation posts a reminder's line again; (b) prints the posts of each half.
+    const series = started({ reminder_seconds: 600, reminder_max: 20 }, FAR, 63 * MIN);
+    await series.clock.wake(plus(65 * MIN)); // k = 6 (60 m), then the escalation (63 m)
+    await settle();
+    series.clear();
+    const fallback = started({}, 10 * MIN, 30 * MIN); // reminder 10 min, escalation 30 min
+    await fallback.clock.wake(plus(8 * HOUR));
+    await settle();
+    fallback.clear();
+    expect({ series: series.texts, fallback: fallback.texts }).toEqual({
+      series: [open('1h 5m')],
+      fallback: [open('8h 0m')],
+    });
+  });
+
+  it('7c: no `owner`, awake: an escalation 20 minutes after a reminder still posts (its line differs)', async () => {
+    // (a) red when the repeat check looks at the kind of the last post and not at its text;
+    //     (b) prints the posts of each half.
+    const series = started({ reminder_seconds: 600, reminder_max: 3 }, FAR, 50 * MIN);
+    await series.clock.set(plus(60 * MIN));
+    await settle();
+    series.clear();
+    const fallback = started({}, 10 * MIN, 30 * MIN);
+    await fallback.clock.set(plus(60 * MIN));
+    await settle();
+    fallback.clear();
+    expect({ series: series.texts, fallback: fallback.texts }).toEqual({
+      series: [open('10m'), open('20m'), open('30m'), open('50m')],
+      fallback: [open('10m'), open('30m')],
     });
   });
 
@@ -256,5 +308,44 @@ describe('#964 — a reminder after a sleep says the true age', () => {
     await settle();
     s.clear();
     expect(s.texts).toEqual([open('3h 0m')]);
+  });
+
+  it('10: the operator-fallback reminder of a question its expiry closes: a wake after `expires_at` posts nothing', async () => {
+    // (a) red when the fallback reminder skips the expiry check (it posts "open for 3h 0m");
+    //     (b) prints the posts.
+    const s = started(
+      { expires_at: plus(30 * MIN).toISOString(), on_expiry: 'abort' },
+      10 * MIN,
+      FAR,
+    );
+    await s.clock.wake(plus(3 * HOUR)); // the reminder (10 m) came due before the limit (30 m)
+    await settle();
+    s.clear();
+    expect(s.texts).toEqual([]);
+  });
+
+  it("11: a wake between `expires_at` and a final reminder not yet due posts nothing; a wake after the final's own time posts it alone", async () => {
+    // (a) red when the expiry rule is judged at the reminder's scheduled instant and not at the reading
+    //     (k = 2, due at 50 m, before the limit, would post); (b) prints the posts of each half.
+    const fields = {
+      reminder_seconds: 1500, // k = 1 (25 m), k = 2 (50 m); the final k = 3 at 75 m, after expires_at
+      reminder_max: 3,
+      expires_at: plus(60 * MIN).toISOString(),
+      on_expiry: 'abort',
+    };
+    const early = started(fields);
+    await early.clock.wake(plus(65 * MIN));
+    await settle();
+    early.clear();
+    const late = started(fields);
+    await late.clock.wake(plus(80 * MIN));
+    await settle();
+    late.clear();
+    expect({ early: early.texts, late: late.texts }).toEqual({
+      early: [],
+      late: [
+        '⏰ gate `review_step` expired 20m ago (2033-01-01T01:00:00Z) — the run will be stopped.',
+      ],
+    });
   });
 });
