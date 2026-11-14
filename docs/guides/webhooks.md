@@ -161,7 +161,7 @@ This was added after version 0.49.0.
 
 ### Waiting for the answer
 
-A caller that would rather have the result in the reply itself sends `Prefer: wait=20`. `realm listen` then holds the reply until the run ends, for 20 seconds at most:
+A caller that would rather have the result in the reply itself sends `Prefer: wait=20` with the request that starts the run, to a workflow that has a `result_map` (the refunds workflow above; a workflow without one ignores the header). `realm listen` then holds the reply until the run ends or stops at a person's gate, for 20 seconds at most:
 
 ```bash
 curl -i http://127.0.0.1:3000/refunds \
@@ -183,7 +183,7 @@ Preference-Applied: wait=20
 {"run_id":"9db311b2-3159-4247-9370-83e6f2ab2ee6","run_phase":"completed","result":{"approved":true,"note":"refund to the original card"},"result_masked":{"declared":0,"environment":0,"pattern":0}}
 ```
 
-A run that is still going when the time is up gets the `202` instead, with its phase, its `status_path` and its token. Here a workflow at `/refunds-review`, whose step asks a model that had not answered, was asked with `Prefer: wait=5`:
+A run that is still going when the time is up gets the `202` instead, with its phase, its `status_path` and its token. Here a second refunds workflow, at `/refunds-review`, with the same `result_map` and a step that asks a model, was asked with `Prefer: wait=5` while the model had not yet answered:
 
 ```text
 HTTP/1.1 202 Accepted
@@ -196,7 +196,7 @@ Preference-Applied: wait=5
 {"run_id":"48da5dfe-1666-4b88-915d-180fc4eac78c","status":"accepted","run_phase":"running","status_path":"/refunds-review/runs/48da5dfe-1666-4b88-915d-180fc4eac78c","token":"843a235f3a349ecf96c3413302fa67222bcf768963575fa8baba4a69eeb4c3ce"}
 ```
 
-The wait never stops the run: read it later at its `status_path`, as above. When the header is ignored, and what `--max-wait` and `--max-waiting` do, is in [Waiting for the result](../reference/workflow/webhook-trigger.md#waiting-for-the-result). This was added after version 0.49.0.
+The wait never stops the run: read it later at its `status_path`, as above. When the header is ignored is in [Waiting for the result](../reference/workflow/webhook-trigger.md#waiting-for-the-result); what `--max-wait` and `--max-waiting` do is in [`realm listen`](../reference/cli/realm-listen.md). This was added after version 0.49.0.
 
 ## 4. See what is turned away
 

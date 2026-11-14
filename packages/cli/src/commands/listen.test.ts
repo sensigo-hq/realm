@@ -1255,7 +1255,7 @@ describe('--llm-timeout on listen (issue #409)', () => {
       'run-42',
       existingFolder(),
     );
-    expect(result).toMatchObject({ pid: 4242 });
+    expect(result).toEqual({ pid: 4242, exited: expect.any(Promise) });
 
     const [cmd, argv] = spawnMock.mock.calls[0]! as unknown as [string, string[]];
     expect(cmd).toBe(process.execPath);
@@ -1280,7 +1280,7 @@ describe('--llm-timeout on listen (issue #409)', () => {
       'run-43',
       existingFolder(),
     );
-    expect(result).toMatchObject({ pid: 4242 });
+    expect(result).toEqual({ pid: 4242, exited: expect.any(Promise) });
 
     const [, argv] = spawnMock.mock.calls[0]! as unknown as [string, string[]];
     expect(argv.slice(1)).toEqual([
@@ -1301,7 +1301,7 @@ describe('--llm-timeout on listen (issue #409)', () => {
       { model: 'm-676', provider: 'openai', llmTimeout: 45 },
       silentLogger,
     )('run-44', existingFolder());
-    expect(result).toMatchObject({ pid: 4242 });
+    expect(result).toEqual({ pid: 4242, exited: expect.any(Promise) });
 
     const [cmd, argv] = spawnMock.mock.calls[0]! as unknown as [string, string[]];
     expect(cmd).toBe(process.execPath);

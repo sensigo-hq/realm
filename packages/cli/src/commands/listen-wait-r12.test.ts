@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { request, type IncomingHttpHeaders } from 'node:http';
+import { connect } from 'node:net';
 import { abandonRun, compileDisclosure, executeStep, type RunStore } from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { listenCommand, makeAgentSpawner, parseMaxWaiting, type SpawnResult } from './listen.js';
@@ -111,6 +112,37 @@ function postWait(
     JSON.stringify(event),
     hangUpAtMs,
   );
+}
+
+/**
+ * A POST on a raw connection whose sender closes its side of it right after the body, as `nc -N`
+ * does, then keeps reading: what it got back is the answer, nothing at all a hang-up.
+ */
+function halfClosedPost(port: number, path: string, event: unknown, prefer: string) {
+  return new Promise<Answer | 'hung up'>((resolve) => {
+    const body = JSON.stringify(event);
+    const t0 = performance.now();
+    let got = '';
+    const socket = connect(port, '127.0.0.1', () => {
+      socket.end(
+        `POST ${path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nX-Token: ${ENV['READ_SECRET']!}\r\nPrefer: ${prefer}\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+      );
+    });
+    socket.on('data', (d: Buffer) => (got += d.toString('latin1')));
+    socket.on('error', () => {});
+    socket.on('close', () =>
+      resolve(
+        got === ''
+          ? 'hung up'
+          : {
+              status: Number(got.split(' ')[1]),
+              headers: {},
+              body: got,
+              ms: Math.round(performance.now() - t0),
+            },
+      ),
+    );
+  });
 }
 
 /** An answer, or a test failure naming the hang-up. */
@@ -241,6 +273,8 @@ describe('R1.2 — reading the header', () => {
     ['respond-async, wait=20', 20],
     ['WAIT=20', 20],
     ['wait = 20', 20],
+    ['wait=020', 20],
+    ['wait=20;', 20],
     [['wait=7', 'wait=20'], 7],
   ] as const)(
     'C2: `Prefer: %s` is honoured with Preference-Applied: wait=%i (--max-wait 25)',
@@ -788,6 +822,25 @@ describe('R1.2 — every ending releases what the wait held', () => {
       });
     },
   );
+});
+
+describe('R1.2 — a caller that closes its side after sending', () => {
+  it('C7: a caller that closes its side right after the body (as `nc -N` does) gets nothing; the run starts; the wait ends at once as a hang-up', async () => {
+    const s = await serveHandler([refunds], { over: { spawnAgent: idle() } });
+    const t0 = performance.now();
+    const got = await halfClosedPost(s.port, '/refunds', { id: 'evt-1' }, 'wait=10');
+    await s.settled();
+    const settledMs = Math.round(performance.now() - t0);
+    // (a) red when the wait does not end on the response's close (it then holds the request to N,
+    //     10 s), when the closed caller is answered, or when no run is started; (b) prints what the
+    //     caller got, the time the handling took, the runs dispatched and the wait lines.
+    expect({
+      got,
+      promptly: settledMs < 2000,
+      dispatched: s.logger.lines.filter((l) => l.msg === 'webhook: dispatched').length,
+      ended: s.waits().map((w) => w['ended_by']),
+    }).toEqual({ got: 'hung up', promptly: true, dispatched: 1, ended: ['hangup'] });
+  });
 });
 
 describe('R1.2 — the waiting budget', () => {

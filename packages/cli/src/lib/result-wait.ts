@@ -87,7 +87,9 @@ interface WaitInput {
  * every `WAIT_CHECK_MS`) that finds a finished run or a gate; the agent's exit, the cap or the stop
  * signal, each followed by one read (a finished run then ends it as `terminal`); the caller hanging
  * up. A check whose read fails is tried again at the next one. Every ending releases both timers and
- * both listeners; the exit promise, which may never settle, keeps only an emptied box.
+ * both listeners. The exit promise, which may never settle (an agent at a gate), keeps what the
+ * closures made for it hold, the request and response among it, until the agent exits: about 8 KB a
+ * wait.
  */
 function waitForRun(input: WaitInput): Promise<WaitOutcome> {
   const started = performance.now();

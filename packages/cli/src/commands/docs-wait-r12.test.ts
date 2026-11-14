@@ -58,7 +58,7 @@ describe('R1.2 — webhook-trigger.md, "Waiting for the result"', () => {
     );
     claim(
       TRIGGER,
-      '| The process that drives the run exits and the run has not ended (it handed the run on, or it crashed) | The `202`, with the phase the run is in |',
+      '| The process that drives the run exits and the run has not ended (for example it had no model key, or it crashed) | The `202`, with the phase the run is in |',
     );
     // C3 (a run that ends between the last check and N: 200 at N; just before the signal: 200).
     claim(
@@ -67,7 +67,7 @@ describe('R1.2 — webhook-trigger.md, "Waiting for the result"', () => {
     );
     claim(
       TRIGGER,
-      '| `realm listen` is stopped (Ctrl+C or `SIGTERM`) | At once: the `200` if the run has ended; otherwise the `202`, with its phase |',
+      '| `realm listen` is stopped (Ctrl+C or `SIGTERM`) | At once: the `200` if the run has ended; otherwise the `202`, with its phase (with `--shutdown-grace 0` and no `--shutdown-drain` it is cut instead, as every request being answered is) |',
     );
     claim(TRIGGER, '| The caller hangs up | Nothing is sent |');
   });
@@ -87,10 +87,11 @@ describe('R1.2 — webhook-trigger.md, "Waiting for the result"', () => {
 
   it('when the header is ignored', () => {
     // C1 (no result_map), C9 (a repeat; a failed start), C6 (stopping), C8 (the budget), C2 (each
-    // ignored spelling, first-wins, the name in any case, `respond-async`).
+    // ignored spelling, first-wins, the name in any case, `respond-async`; the honoured `wait = 20`,
+    // `wait=020` and `wait=20;`), C7 (a caller that half-closes after sending: hung up).
     claim(
       TRIGGER,
-      'The header is ignored, and the request answered at once as if it had not asked, for a workflow without `result_map`, for a repeat of an event, for a run whose process could not be started, while `realm listen` is stopping, and when `--max-waiting` requests are already waiting. A value that is not a whole number of seconds from 1 is ignored too, never refused: `wait=0`, `wait=1.5`, `wait=20s` and `wait="20"` are, and so is a `wait` with a parameter (`wait=20; x=y`). Only the first `wait` in the header counts, and the name is read in any case. Other preferences, such as `respond-async`, are ignored.',
+      'The header is ignored, and the request answered at once as if it had not asked, for a workflow without `result_map`, for a repeat of an event, for a run whose process could not be started, while `realm listen` is stopping, and when `--max-waiting` requests are already waiting. A value that is not a whole number of seconds from 1 is ignored too, never refused: `wait=0`, `wait=1.5`, `wait=20s` and `wait="20"` are, and so is a `wait` with a parameter (`wait=20; x=y`). Blanks around `=` (`wait = 20`), leading zeros (`wait=020`, read as 20) and a `;` with nothing after it (`wait=20;`) do not make it one: those are honoured. Only the first `wait` in the header counts, and the name is read in any case. Other preferences, such as `respond-async`, are ignored. A caller that closes its side of the connection as soon as it has sent the request, as `nc -N` does, counts as hung up, even if it still reads the reply: it gets nothing, and the run starts anyway.',
     );
     // C11 and B5 (`--max-wait 0`, `--max-concurrent 1`); 0.49.0 reads no `Prefer` (registry).
     claim(
@@ -182,21 +183,23 @@ describe('R1.2 — realm-listen.md', () => {
       LISTEN,
       'During the drain, a request that asks to wait for its run (`Prefer: wait=N`) is answered at once, as if it had not asked; one that was already waiting is answered at the Ctrl+C or `SIGTERM` (see _How it stops_). This was added after version 0.49.0.',
     );
-    // B2 (drain 5: answered within a second of the signal), C3 (200 at the signal), B3 (grace 0:
-    // cut, exit 1).
+    // B2 (drain 5: answered within a second of the signal), C3 (200 at the signal), B3 (grace 0 and
+    // no drain: cut, exit 1). With a drain the waiter is answered at the signal, before the cut.
     claim(
       LISTEN,
-      'A request that is waiting for its run (`Prefer: wait=N`, see [Waiting for the result](../workflow/webhook-trigger.md#waiting-for-the-result)) is answered at the first Ctrl+C or `SIGTERM`, before any `--shutdown-drain`: the `200` if its run has ended, otherwise the `202` with its phase. With `--shutdown-grace 0`, or at a second Ctrl+C or `SIGTERM`, it is cut like any other request being answered. This was added after version 0.49.0.',
+      'A request that is waiting for its run (`Prefer: wait=N`, see [Waiting for the result](../workflow/webhook-trigger.md#waiting-for-the-result)) is answered at the first Ctrl+C or `SIGTERM`, before any `--shutdown-drain`: the `200` if its run has ended, otherwise the `202` with its phase. With `--shutdown-grace 0` and no `--shutdown-drain`, it is cut like any other request being answered. This was added after version 0.49.0.',
     );
     gone(LISTEN, 'It does not wait for the run. The reply');
+    gone(LISTEN, 'With `--shutdown-grace 0`, or at a second Ctrl+C or `SIGTERM`, it is cut like');
   });
 
   it('the log lines', () => {
     // C12 (one line, at info, three fields, nothing of the run's), each ending's word in C3–C10,
-    // B3 (`signal` for a waiter the stop cut), C10 (`failed`, with `webhook: read failed`).
+    // B3 (`signal` for a waiter the stop cut), C10 (`failed`, with `webhook: read failed`); C1, C2,
+    // C8, C9, C11 (a request answered at once logs no `wait ended` line).
     claim(
       LISTEN,
-      '| `info` | `webhook: wait ended {"run_id","ended_by","waited_ms"}` | A request that asked to wait for its run (`Prefer: wait=N`) has been answered, or was not. `ended_by` says why the wait ended: `terminal` (the run had ended), `gate` (a person\'s gate), `exit` (the process that drives the run exited with the run open), `cap` (N seconds passed), `signal` (Ctrl+C or `SIGTERM`, a waiter the stop cut included), `hangup` (the caller hung up; nothing was sent) or `failed` (the run could not be read: the reply was the one without `Prefer`, and `webhook: read failed` is logged too). `waited_ms` is how long it waited, in milliseconds. Nothing of the run is logged. Added after version 0.49.0. |',
+      '| `info` | `webhook: wait ended {"run_id","ended_by","waited_ms"}` | A request that asked to wait for its run (`Prefer: wait=N`) was held waiting, and the wait has ended. A request that asked and was answered at once, for any of the reasons in [Waiting for the result](../workflow/webhook-trigger.md#waiting-for-the-result), logs nothing here. `ended_by` says why the wait ended: `terminal` (the run had ended), `gate` (a person\'s gate), `exit` (the process that drives the run exited with the run open), `cap` (N seconds passed), `signal` (Ctrl+C or `SIGTERM`, a waiter the stop cut included), `hangup` (the caller hung up; nothing was sent) or `failed` (the run could not be read: the reply was the one without `Prefer`, and `webhook: read failed` is logged too). `waited_ms` is how long it waited, in milliseconds. Nothing of the run is logged. Added after version 0.49.0. |',
     );
     // B5.
     claim(
@@ -234,10 +237,15 @@ describe('R1.2 — the webhooks guide, who drives a run, and the CHANGELOG', () 
       `It replies as soon as the run exists, unless the request asks it to wait: see ${WAITING}.`,
     );
     gone(GUIDE, 'It replies as soon as the run exists.');
-    // B1 and the capture (the built realm: a run that ended inside N, and one still going at N).
+    // B1 and the capture (the built realm: a run that ended inside N, and one still going at N);
+    // C1 (a workflow without result_map ignores the header), C4 (a gate ends the wait).
     claim(
       GUIDE,
-      'A caller that would rather have the result in the reply itself sends `Prefer: wait=20`. `realm listen` then holds the reply until the run ends, for 20 seconds at most:',
+      "A caller that would rather have the result in the reply itself sends `Prefer: wait=20` with the request that starts the run, to a workflow that has a `result_map` (the refunds workflow above; a workflow without one ignores the header). `realm listen` then holds the reply until the run ends or stops at a person's gate, for 20 seconds at most:",
+    );
+    gone(
+      GUIDE,
+      'sends `Prefer: wait=20`. `realm listen` then holds the reply until the run ends, for 20 seconds at most:',
     );
     claim(
       GUIDE,
@@ -251,10 +259,20 @@ describe('R1.2 — the webhooks guide, who drives a run, and the CHANGELOG', () 
       GUIDE,
       'HTTP/1.1 202 Accepted Content-Type: application/json Content-Length: 240 Location: /refunds-review/runs/48da5dfe-1666-4b88-915d-180fc4eac78c Retry-After: 5 Preference-Applied: wait=5 {"run_id":"48da5dfe-1666-4b88-915d-180fc4eac78c","status":"accepted","run_phase":"running","status_path":"/refunds-review/runs/48da5dfe-1666-4b88-915d-180fc4eac78c","token":"843a235f3a349ecf96c3413302fa67222bcf768963575fa8baba4a69eeb4c3ce"}',
     );
-    // C4, C7 (the run is not touched); the reference section.
+    // The capture's second workflow (`ia4-r12/captures/capture.mjs`: the same `result_map`, an agent
+    // step whose model never answered within 5 s).
     claim(
       GUIDE,
-      `The wait never stops the run: read it later at its \`status_path\`, as above. When the header is ignored, and what \`--max-wait\` and \`--max-waiting\` do, is in ${WAITING}. This was added after version 0.49.0.`,
+      'Here a second refunds workflow, at `/refunds-review`, with the same `result_map` and a step that asks a model, was asked with `Prefer: wait=5` while the model had not yet answered:',
+    );
+    gone(
+      GUIDE,
+      'Here a workflow at `/refunds-review`, whose step asks a model that had not answered,',
+    );
+    // C4, C7 (the run is not touched); the reference section and the command's page.
+    claim(
+      GUIDE,
+      `The wait never stops the run: read it later at its \`status_path\`, as above. When the header is ignored is in ${WAITING}; what \`--max-wait\` and \`--max-waiting\` do is in [\`realm listen\`](../reference/cli/realm-listen.md). This was added after version 0.49.0.`,
     );
   });
 
@@ -273,7 +291,7 @@ describe('R1.2 — the webhooks guide, who drives a run, and the CHANGELOG', () 
   it('the CHANGELOG: one Added entry, no Changed one', () => {
     // C3–C8 and B1–B3.
     claimChangelog(
-      "- **A caller of `realm listen` can ask the reply to wait for the run**: a `POST` that starts a run of a workflow with `result_map` and sends `Prefer: wait=N` is answered `200` with the result once the run ends, or with the `202` and the phase reached when the run stops at a person's gate, its process exits, N seconds pass or `realm listen` is stopped; the wait never stops the run. `--max-wait <seconds>` caps N (25 by default; 0 turns waiting off), and `--max-waiting <n>` how many requests wait at once (5 by default, and always fewer than `--max-concurrent`). Waiting requests are answered at the first Ctrl+C or `SIGTERM`, before any `--shutdown-drain`.",
+      "- **A caller of `realm listen` can ask the reply to wait for the run**: a `POST` that starts a run of a workflow with `result_map` and sends `Prefer: wait=N` is answered `200` with the result once the run ends, or with the `202` and the phase reached when the run stops at a person's gate, its process exits, N seconds pass or `realm listen` is stopped; the wait never stops the run. `--max-wait <seconds>` caps N (25 by default; 0 turns waiting off), and `--max-waiting <n>` how many requests wait at once (5 by default, and always fewer than `--max-concurrent`). Waiting requests are answered at the first Ctrl+C or `SIGTERM`, before any `--shutdown-drain` (with `--shutdown-grace 0` and no drain they are cut, as every request being answered is).",
     );
   });
 });
