@@ -94,6 +94,7 @@ import {
   writerHost,
 } from '../commands/ways-renderer.js';
 import {
+  PLAIN,
   RUN_PHASE_WORDS,
   questionSpan,
   recordWalk,
@@ -1156,6 +1157,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     first,
                     keepsClaims,
                     writerCtx(),
+                    currentSnap,
                   ),
                 );
               }
@@ -2382,9 +2384,25 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           result.intrinsic_action === 'stop' &&
           result.evidence.length === 0
         ) {
-          if (answerNotRecordedLine(currentRun, stepName, keepsClaims) !== undefined)
+          if (
+            answerNotRecordedLine(
+              currentRun,
+              stepName,
+              keepsClaims,
+              undefined,
+              PLAIN,
+              currentSnap,
+            ) !== undefined
+          )
             console.log(
-              answerNotRecordedLine(currentRun, stepName, keepsClaims, undefined, writerCtx()),
+              answerNotRecordedLine(
+                currentRun,
+                stepName,
+                keepsClaims,
+                undefined,
+                writerCtx(),
+                currentSnap,
+              ),
             );
           continue;
         }
@@ -2444,7 +2462,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               blockedStep === stepName &&
               currentRun.terminal_state
             ) {
-              if (answerNotRecordedLine(currentRun, stepName, keepsClaims) !== undefined)
+              if (
+                answerNotRecordedLine(
+                  currentRun,
+                  stepName,
+                  keepsClaims,
+                  undefined,
+                  PLAIN,
+                  currentSnap,
+                ) !== undefined
+              )
                 console.log(
                   answerNotRecordedLine(
                     currentRun,

@@ -12,6 +12,11 @@
 //     that way in the same function. An object literal (`{ absent: 'unleased' }`, which makes a leased
 //     claim be judged by its deadline) passes only at an entry of the closed literal census, checked
 //     both ways (correction 1).
+//   - The snapshot a caller passes (part 2b, correction 1): `NO_SNAPSHOT` (a snapshot with no facts)
+//     appears only at its declaration, as a parameter's default value and in an import; and every
+//     production call of a function whose parameter defaults to it (a line-maker, a callback) fills
+//     that position with a name or a property access, never `undefined` or `NO_SNAPSHOT`. The set of
+//     those functions is read from the source and held closed both ways.
 //
 // SCOPE: every package's production source. Part 2a held core; part 2b converted the CLI, the MCP
 // server and the testing package, and widened `SCANNED` to them and to the SQLite store's package.
@@ -19,7 +24,8 @@
 // WHAT IT SEES: every `.ts` file under the scanned packages' `src` but tests, declarations and the
 // `test-support` folders. WHAT IT CANNOT SEE: a call through another name (`const w = writtenSnapshot`),
 // a facts argument that is a variable holding `undefined`, a record that a judge reads without one of
-// these calls.
+// these calls, a defaulted function called by another name, and whether the name a caller passes is
+// the snapshot its record came from.
 //
 // HOME: the cli package, as the source censuses: cli's test task waits for every package's build.
 //
@@ -47,6 +53,22 @@ const STORE_FILES = [
 
 /** Where `NO_LEASE_FACTS` may appear: its module, the snapshot module, the stores, core's export. */
 const NO_FACTS_ALLOWED = ['core/src/store/lease-facts.ts', 'core/src/index.ts', ...STORE_FILES];
+
+/**
+ * The functions whose snapshot parameter defaults to `NO_SNAPSHOT`, by name, with that parameter's
+ * position (correction 1, part 2b): the line-makers that gained the snapshot as their last parameter,
+ * and the two callbacks core calls with its re-read snapshot. Closed both ways against the source.
+ */
+const NO_SNAPSHOT_DEFAULTS: Record<string, number> = {
+  answerNotRecordedLine: 5,
+  outcomeNotRecordedLine: 5,
+  renderDetachMap: 5,
+  elsewherePhrase: 5,
+  stepClosedLine: 5,
+  answerNotRunLine: 4,
+  onTaken: 2,
+  onNotRecorded: 3,
+};
 
 /**
  * The closed census: each production `writtenSnapshot` call outside the stores that passes no facts,
@@ -94,6 +116,51 @@ function enclosing(node: ts.Node): string {
       return n.name.getText();
   }
   return '(top)';
+}
+
+/** The name a function is called by: its declaration's, its variable's, or its property's. */
+function functionName(fn: ts.SignatureDeclaration): string | undefined {
+  if ((ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) && fn.name !== undefined)
+    return fn.name.getText();
+  const parent = fn.parent;
+  if (ts.isVariableDeclaration(parent) || ts.isPropertyAssignment(parent))
+    return parent.name.getText();
+  return undefined;
+}
+
+/** Each function in `sources` whose parameter defaults to `NO_SNAPSHOT`, by name, with its position. */
+function noSnapshotDefaults(
+  sources: ReadonlyArray<readonly [string, string]>,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [path, text] of sources) {
+    const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+    const visit = (n: ts.Node): void => {
+      if (ts.isFunctionLike(n)) {
+        const i = n.parameters.findIndex(
+          (p) =>
+            p.initializer !== undefined &&
+            ts.isIdentifier(p.initializer) &&
+            p.initializer.text === 'NO_SNAPSHOT',
+        );
+        const name = functionName(n);
+        if (i >= 0 && name !== undefined) out.set(name, i);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+/** Whether a `NO_SNAPSHOT` name is its declaration, a parameter's default, or an import of it. */
+function noSnapshotAllowed(id: ts.Identifier): boolean {
+  const p = id.parent;
+  return (
+    (ts.isVariableDeclaration(p) && p.name === id) ||
+    (ts.isParameter(p) && p.initializer === id) ||
+    ts.isImportSpecifier(p)
+  );
 }
 
 function calleeName(call: ts.CallExpression): string {
@@ -169,8 +236,15 @@ interface Finding {
   census?: true;
 }
 
-/** Every breach of checks 2 and 3 in `text` (a file at `path`, relative to the packages). */
-function breaches(path: string, text: string): Finding[] {
+/**
+ * Every breach of checks 2 and 3 in `text` (a file at `path`, relative to the packages); `defaults`,
+ * the functions whose parameter defaults to `NO_SNAPSHOT` (`noSnapshotDefaults`).
+ */
+function breaches(
+  path: string,
+  text: string,
+  defaults: ReadonlyMap<string, number> = new Map(),
+): Finding[] {
   const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   const out: Finding[] = [];
   const line = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
@@ -206,19 +280,36 @@ function breaches(path: string, text: string): Finding[] {
           else add(`${name}: an object literal outside the census`, n);
         } else if (why !== undefined) add(`${name}: ${why}`, n);
       }
+      const position = defaults.get(name);
+      if (position !== undefined) {
+        const arg = n.arguments[position];
+        if (arg === undefined) add(`${name}: the snapshot left out`, n);
+        else if (
+          !(ts.isIdentifier(arg) || ts.isPropertyAccessExpression(arg)) ||
+          (ts.isIdentifier(arg) && ['undefined', 'NO_SNAPSHOT'].includes(arg.text))
+        )
+          add(`${name}: no snapshot passed`, n);
+      }
     }
     if (ts.isIdentifier(n) && n.text === 'NO_LEASE_FACTS' && !NO_FACTS_ALLOWED.includes(path))
       add('NO_LEASE_FACTS outside its homes', n);
+    if (ts.isIdentifier(n) && n.text === 'NO_SNAPSHOT' && !noSnapshotAllowed(n))
+      add('NO_SNAPSHOT outside its declaration and defaults', n);
     ts.forEachChild(n, visit);
   };
   visit(sf);
   return out;
 }
 
+/** The production source of every scanned package, each file with its path relative to the packages. */
+const sources = (): Array<readonly [string, string]> =>
+  productionFiles().map((path) => [rel(path), readFileSync(path, 'utf8')] as const);
+
 describe('#729 CW-1b part 2 — the lease facts reach every judge (checks 2 and 3, every package)', () => {
   it('the instrument: it finds every breach spelling, and no conversion', () => {
+    const defaults = noSnapshotDefaults(sources());
     const breachesIn = (path: string, code: string) =>
-      breaches(path, code)
+      breaches(path, code, defaults)
         .filter((b) => b.census !== true)
         .map((b) => b.rule);
     const at = (code: string) => breachesIn('core/src/engine/x.ts', code);
@@ -257,6 +348,20 @@ describe('#729 CW-1b part 2 — the lease facts reach every judge (checks 2 and 
         'function f() {\n  classifyClaim(c, now, lease);\n}',
         'classifyClaim: a name not declared from leaseFactOf',
       ],
+      // Correction 1 (part 2b): the snapshot a line-maker's caller passes.
+      [
+        'answerNotRecordedLine(run, step, true, undefined, writerCtx());',
+        'answerNotRecordedLine: the snapshot left out',
+      ],
+      [
+        'answerNotRecordedLine(run, step, true, undefined, writerCtx(), undefined);',
+        'answerNotRecordedLine: no snapshot passed',
+      ],
+      ['leaseFactOf(NO_SNAPSHOT, c);', 'NO_SNAPSHOT outside its declaration and defaults'],
+      [
+        'composeWaysAt(run, at, { definition, lease_facts: NO_SNAPSHOT.lease_facts });',
+        'NO_SNAPSHOT outside its declaration and defaults',
+      ],
     ];
     const mustNot = [
       'writtenSnapshot(run, at, snap.lease_facts);',
@@ -265,6 +370,11 @@ describe('#729 CW-1b part 2 — the lease facts reach every judge (checks 2 and 
       'classifyClaim(claim, now, leaseFactOf(this.snap, claim));',
       'function f() {\n  const l = leaseFactOf(snap, c);\n  classifyClaim(c, now, l);\n}',
       '// writtenSnapshot(run, at)',
+      'answerNotRecordedLine(run, step, true, undefined, writerCtx(), currentSnap);',
+      'outcomeNotRecordedLine(kind, run, step, true, writerCtx(), judged.snapshot);',
+      "import { NO_SNAPSHOT } from './holder-render.js';",
+      'export const NO_SNAPSHOT: Pick<Snapshot, "lease_facts"> = Object.freeze({});',
+      'const o = { onTaken: (s: string, r: unknown, snapshot = NO_SNAPSHOT) => s };',
     ];
     // The literal at its census entry is the census's own use, never a breach there.
     const atCensus = breachesIn(
@@ -281,8 +391,10 @@ describe('#729 CW-1b part 2 — the lease facts reach every judge (checks 2 and 
   });
 
   it('every package’s production source: no breach of the census or the consumer witness, and the census is closed', () => {
-    const files = productionFiles();
-    const found = files.flatMap((path) => breaches(rel(path), readFileSync(path, 'utf8')));
+    const all = sources();
+    const files = all.map(([path]) => path);
+    const defaults = noSnapshotDefaults(all);
+    const found = all.flatMap(([path, text]) => breaches(path, text, defaults));
     const unlisted = found.filter(
       (b) =>
         b.census !== true &&
@@ -291,14 +403,24 @@ describe('#729 CW-1b part 2 — the lease facts reach every judge (checks 2 and 
     const listed = new Set(found.map((b) => `${b.at.split(':')[0]}#${b.fn}`));
     // (1) red when a production call in any package drops the facts (a rebuild, a composeWaysAt call, a
     //     judge's lease argument) or names NO_LEASE_FACTS outside its homes, or a census entry no
-    //     longer matches a call (the census is closed both ways); (2) prints each breach with its rule,
-    //     file, line and function, and each stale entry.
+    //     longer matches a call (the census is closed both ways); correction 1: a call of a function
+    //     whose snapshot defaults to NO_SNAPSHOT leaves the snapshot out or passes none, NO_SNAPSHOT is
+    //     used elsewhere, or the set of those functions differs from NO_SNAPSHOT_DEFAULTS; (2) prints
+    //     each breach with its rule, file, line and function, each stale entry, and the set it read.
     expect({
       files: files.length > 0,
       breaches: unlisted.map((b) => `${b.rule}: ${b.at} (${b.fn})`),
       staleCensus: [...Object.keys(CENSUS), ...Object.keys(LITERAL_CENSUS)].filter(
         (entry) => !listed.has(entry),
       ),
-    }).toEqual({ files: true, breaches: [], staleCensus: [] });
+      noSnapshotDefaults: Object.fromEntries([...defaults].sort(([a], [b]) => a.localeCompare(b))),
+    }).toEqual({
+      files: true,
+      breaches: [],
+      staleCensus: [],
+      noSnapshotDefaults: Object.fromEntries(
+        Object.entries(NO_SNAPSHOT_DEFAULTS).sort(([a], [b]) => a.localeCompare(b)),
+      ),
+    });
   });
 });
