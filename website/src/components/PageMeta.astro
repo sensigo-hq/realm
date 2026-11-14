@@ -2,7 +2,7 @@
 // The description, canonical link and link-preview tags of a page that is not a docs page
 // (Starlight writes these for the docs pages). The home page also passes its structured data; a page
 // with a Markdown copy names it, as each docs page does.
-import { HOME_DESCRIPTION, jsonLdText, previewTags } from '../lib/site-meta.mjs';
+import { HOME_DESCRIPTION, absolute, jsonLdText, previewTags } from '../lib/site-meta.mjs';
 
 interface Props {
   title: string;
@@ -32,6 +32,8 @@ const tags = previewTags({ title, description, path, imageKey: image.key, imageA
 <meta name="description" content={description} />
 {tags.map(({ tag: Tag, attrs }) => <Tag {...attrs} />)}
 {markdownPath && <link rel="alternate" type="text/markdown" href={markdownPath} />}
+{/* the site's map for AI agents (llmstxt.org); the docs pages and the 404 get it from astro.config.mjs */}
+<link rel="describedby" href={absolute('/llms.txt')} />
 {
   structuredData.map((data) => (
     <script is:inline type="application/ld+json" set:html={jsonLdText(data)} />
