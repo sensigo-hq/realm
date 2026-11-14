@@ -6,7 +6,7 @@ At the end of this page you have a finished Realm run on your machine and you ha
 
 ## Before you start
 
-You need Node.js 22 or later, and a terminal. Realm's automated tests run on Linux. On Windows, run Realm inside WSL 2 (the Windows Subsystem for Linux); running it directly on Windows is not supported yet.
+You need Node.js 22.22.3 or a later 22, or Node.js 24.15.0 or later, and a terminal. On an older Node 22, 23 or 24, npm quietly installs Realm 0.48.0 instead, the newest release whose Node range fits; `realm --version` shows which one you got. Realm's automated tests run on Linux. On Windows, run Realm inside WSL 2 (the Windows Subsystem for Linux); running it directly on Windows is not supported yet.
 
 ## 1. Install the command-line tool
 
@@ -50,6 +50,8 @@ Created: my-first/
 
 Next: realm workflow validate ./my-first/
 ```
+
+The `Next:` line names the folder as seen from where you ran `realm workflow init`. You have moved into it, so the same check is `realm workflow validate ./`.
 
 Inside an existing project — a folder above it holds a `package.json` or a `.git` — it creates four files, leaves out `realm.yaml` and `.env.example`, and names the project's top folder, where Realm reads `realm.yaml`.
 
