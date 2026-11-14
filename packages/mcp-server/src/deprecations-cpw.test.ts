@@ -86,7 +86,11 @@ describe('CP-W (d) — the MCP door', () => {
     warnDeprecated('REALM-D932');
     await settle();
     const afterConnect = received.length;
-    await client.setLoggingLevel('error');
+    // Without `logging` declared the SDK registers no setLevel: recorded, never thrown.
+    const setLevel = await client.setLoggingLevel('error').then(
+      () => 'ok',
+      (err: unknown) => (err as Error).message,
+    );
     warnDeprecated('REALM-D933');
     await settle();
     const afterSetLevel = received.length;
@@ -107,6 +111,7 @@ describe('CP-W (d) — the MCP door', () => {
       rejections: rejections.length,
       stderrLines: IDS.slice(0, 4).map(lines),
       afterConnect,
+      setLevel,
       afterSetLevel,
       notification: received[0],
     }).toEqual({
@@ -114,6 +119,7 @@ describe('CP-W (d) — the MCP door', () => {
       rejections: 0,
       stderrLines: [1, 1, 1, 1],
       afterConnect: 1,
+      setLevel: 'ok',
       afterSetLevel: 1,
       notification: { level: 'warning', logger: 'realm', data: lineOf('REALM-D932') },
     });
