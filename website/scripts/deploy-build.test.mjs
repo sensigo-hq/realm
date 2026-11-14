@@ -73,10 +73,24 @@ const BASE_DOCS = {
     'How to install the fixture engine.',
   ),
   'guides/alpha.md': page('Alpha guide', 'The alpha guide.', LINES(8)),
+  // The pages llms.txt's own text links to by address: the deploy build refuses a link to a page the
+  // release's docs lack, so the fixture's release has each of them.
+  'guides/test-a-workflow.md': page('Test a workflow', 'How to test a fixture workflow.'),
+  'reference/error-codes.md': page('Error codes', 'The fixture error codes.'),
+  'reference/adapters.md': page('Adapters', 'The fixture adapters.'),
+  'reference/workflow/step-fields.md': page('Step fields', 'The fixture step fields.'),
 };
 const BASE_SIDEBAR = [
   { label: 'Start here', items: ['docs/start/what-is-realm', 'docs/start/install-and-first-run'] },
-  { label: 'Guides', items: ['docs/guides/alpha'] },
+  { label: 'Guides', items: ['docs/guides/alpha', 'docs/guides/test-a-workflow'] },
+  {
+    label: 'Reference',
+    items: [
+      'docs/reference/error-codes',
+      'docs/reference/adapters',
+      'docs/reference/workflow/step-fields',
+    ],
+  },
 ];
 const V1 = (v) =>
   `These docs describe Realm ${v}, the latest release. Docs for [older versions](https://github.com/sensigo-hq/realm/tags), and for [the next one](https://github.com/sensigo-hq/realm/tree/main/docs), are on GitHub.`;
@@ -501,7 +515,11 @@ test('6, then 9 and 10 on its build: a page main has and the branch lacks is lef
   f.write('docs/guides/newpage.md', page('New page', 'A page added after the release.'));
   f.sidebar([
     BASE_SIDEBAR[0],
-    { label: 'Guides', items: ['docs/guides/alpha', 'docs/guides/newpage'] },
+    {
+      label: 'Guides',
+      items: ['docs/guides/alpha', 'docs/guides/test-a-workflow', 'docs/guides/newpage'],
+    },
+    BASE_SIDEBAR[2],
   ]);
   const added = f.commit('docs: a page added after 0.10.0');
   f.git('push', '-q', 'origin', 'main');
@@ -530,7 +548,7 @@ test('6, then 9 and 10 on its build: a page main has and the branch lacks is lef
   // Check 9: V1 right after each docs page's <h1>, kept out of the search index; first in each copy.
   // Can fail: the version read from a package file; the line inside the indexed text.
   const pages = docsPages(f);
-  assert.deepEqual(pages.length, 4, pages.join(', '));
+  assert.deepEqual(pages.length, 8, pages.join(', '));
   const html = new RegExp(
     '</h1><p class="docs-version[^"]*" data-pagefind-ignore>These docs describe Realm 0\\.10\\.0, the latest release\\. Docs for <a href="https://github\\.com/sensigo-hq/realm/tags"[^>]*>older versions</a>, and for <a href="https://github\\.com/sensigo-hq/realm/tree/main/docs"[^>]*>the next one</a>, are on GitHub\\.</p>',
   );
