@@ -3,7 +3,8 @@
 # file, regenerates it from the code and fails when it differs.
 #
 # A change here is made on purpose: regenerate it with `npx vitest run src/inventory -u` (from
-# packages/cli), commit it in the same change, and name each changed key under `## [Unreleased]` in
+# packages/cli) and run it once more without `-u` (the two censuses read the committed file as it
+# was), commit it in the same change, and name each changed key under `## [Unreleased]` in
 # CHANGELOG.md, in backticks. A row's key is its text before " — "; for example
 # `realm run migrate --detailed-exitcode`, `exit code 2`, `realm listen 403`. Rows marked `hidden`
 # and the `exit site` / `reply site` rows are listed to be seen, not promised: a change to them
