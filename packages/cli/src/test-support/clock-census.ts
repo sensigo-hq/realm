@@ -165,6 +165,9 @@ export const CENSUS: Record<string, Entry> = {
   'cli/src/lib/graceful-stop.ts#armYoung#performance.now()': [1, 'duration', MONOTONIC],
   'cli/src/lib/graceful-stop.ts#onConnection#performance.now()': [1, 'duration', MONOTONIC],
   'cli/src/lib/graceful-stop.ts#stop#performance.now()': [1, 'duration', MONOTONIC],
+  // R1.2: a wait's own time, from its start to its end (the `waited_ms` of its line).
+  'cli/src/lib/result-wait.ts#finish#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/lib/result-wait.ts#waitForRun#performance.now()': [1, 'duration', MONOTONIC],
   // R1.1: the read address's 1-second answer of a running or waiting run's phase from memory.
   'cli/src/lib/run-read-address.ts#monotonicNow#performance.now()': [1, 'duration', MONOTONIC],
   'cli/src/lib/webhook-verifiers.ts#verifyHmac#Date.now()': [

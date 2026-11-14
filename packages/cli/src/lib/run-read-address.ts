@@ -140,17 +140,23 @@ export function readEntriesOf(routes: Iterable<ReadEntry>): Map<string, ReadEntr
 const FORBIDDEN = { error: 'forbidden' } as const;
 const UNAVAILABLE = { error: 'unavailable' } as const;
 
-function send(
+/**
+ * Writes a read's reply: its headers, and its body unless the request is `HEAD`. R1.2: a wait's
+ * `200` is written here too, with `extra` (`Preference-Applied`), so its headers are the read's.
+ */
+export function sendRead(
   req: IncomingMessage,
   res: ServerResponse,
   status: number,
   payload: Record<string, unknown>,
+  extra: Record<string, string> = {},
 ): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',
     'Content-Length': Buffer.byteLength(body),
+    ...extra,
   });
   if (req.method === 'HEAD') res.end();
   else res.end(body);
@@ -223,7 +229,7 @@ function walkedInPlace(
 async function completedFields(
   entry: ReadEntry,
   run: RunRecord,
-  ctx: ReadContext,
+  ctx: Pick<ReadContext, 'disclosureProvider'>,
 ): Promise<Record<string, unknown>> {
   const map = entry.definition.trigger?.result_map ?? {};
   const differs = run.workflow_version !== entry.definition.version;
@@ -267,15 +273,15 @@ export async function answerRead(
     entry.readKey === undefined ||
     !codeMatches(req.headers.authorization, readCode(entry.readKey, read.runId))
   ) {
-    send(req, res, 403, FORBIDDEN);
+    sendRead(req, res, 403, FORBIDDEN);
     return;
   }
   const workflowId = entry.definition.id;
   const cached = ctx.cache.get(read.runId);
   if (cached !== undefined) {
     // The cache is keyed by run id alone, so this compare is what keeps another workflow's code out.
-    if (cached.workflowId !== workflowId) send(req, res, 403, FORBIDDEN);
-    else send(req, res, 200, { run_id: read.runId, run_phase: cached.phase });
+    if (cached.workflowId !== workflowId) sendRead(req, res, 403, FORBIDDEN);
+    else sendRead(req, res, 200, { run_id: read.runId, run_phase: cached.phase });
     return;
   }
   const fail = (err: unknown): void => {
@@ -284,33 +290,44 @@ export async function answerRead(
       run_id: read.runId,
       error: String(err),
     });
-    send(req, res, 503, UNAVAILABLE);
+    sendRead(req, res, 503, UNAVAILABLE);
   };
   let run: RunRecord;
   try {
     run = (await ctx.get(read.runId)).record;
   } catch (err) {
     if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
-      send(req, res, 403, FORBIDDEN);
+      sendRead(req, res, 403, FORBIDDEN);
     } else fail(err);
     return;
   }
   if (run.workflow_id !== workflowId) {
-    send(req, res, 403, FORBIDDEN);
+    sendRead(req, res, 403, FORBIDDEN);
     return;
   }
   const phase = deriveRunPhase(run);
   if (phase === 'running' || phase === 'gate_waiting') ctx.cache.set(run.id, workflowId, phase);
-  if (phase !== 'completed') {
-    send(req, res, 200, { run_id: run.id, run_phase: phase });
-    return;
-  }
-  let fields: Record<string, unknown>;
+  let body: Record<string, unknown>;
   try {
-    fields = await completedFields(entry, run, ctx);
+    body = await readReplyBody(entry, run, ctx);
   } catch (err) {
     fail(err);
     return;
   }
-  send(req, res, 200, { run_id: run.id, run_phase: phase, ...fields });
+  sendRead(req, res, 200, body);
+}
+
+/**
+ * The body of a read's `200` for `run`, the one producer of it: the read address and a wait's `200`
+ * (R1.2) both call it, so the two cannot differ. The run and its phase; for a completed run, the
+ * result or why there is none. It throws when the disclosure set cannot be built.
+ */
+export async function readReplyBody(
+  entry: ReadEntry,
+  run: RunRecord,
+  ctx: Pick<ReadContext, 'disclosureProvider'>,
+): Promise<Record<string, unknown>> {
+  const phase = deriveRunPhase(run);
+  if (phase !== 'completed') return { run_id: run.id, run_phase: phase };
+  return { run_id: run.id, run_phase: phase, ...(await completedFields(entry, run, ctx)) };
 }
