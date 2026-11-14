@@ -216,8 +216,15 @@ stop_signal = signal.Signals(os.WSTOPSIG(status)).name if stopped else None
 time.sleep(0.4)
 worker_stopped = state(worker)
 os.kill(pid, signal.SIGCONT)
-time.sleep(0.4)
+# A resumed worker reads S when idle and R when the sample catches it running: poll up to 2 s, every
+# 20 ms, for it to leave the stopped state (T, t); report 'resumed', or the state last seen.
+deadline = time.monotonic() + 2.0
 worker_resumed = state(worker)
+while worker_resumed in ('T', 't') and time.monotonic() < deadline:
+    time.sleep(0.02)
+    worker_resumed = state(worker)
+if worker_resumed not in ('T', 't'):
+    worker_resumed = 'resumed'
 open(go, 'w').close()
 while True:
     chunk = os.read(r, 65536)
@@ -1223,7 +1230,8 @@ describe('U1b — the trigger and the marker', () => {
     );
     const seen = JSON.parse(r.stdout) as Record<string, unknown>;
     // (a) red under a self-SIGSTOP (the stop signal reads SIGSTOP); red under a forwarded SIGTSTP
-    //     (the worker, in its own session, never stops: state S); (b) prints what the spawner saw,
+    //     (the worker, in its own session, never stops: state S); red when the worker stays stopped
+    //     after SIGCONT (the forward missing); (b) prints what the spawner saw,
     //     the drive's output cut to its end line.
     expect({
       stopped: seen['stopped'],
@@ -1236,7 +1244,7 @@ describe('U1b — the trigger and the marker', () => {
       stopped: true,
       stopSignal: 'SIGTSTP',
       workerWhileStopped: 'T',
-      workerAfterCont: 'S',
+      workerAfterCont: 'resumed',
       code: 0,
       completed: true,
     });
