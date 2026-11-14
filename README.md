@@ -216,8 +216,10 @@ Start at the [documentation index](docs/README.md), or read the same pages at [r
 `engines: ^20.19 || ^22.13 || >=24`) effectively requires **Node ≥22.13** to run `npm run lint`
 locally — an older Node 22 patch will fail there. CI runs Node 24, and that's the recommended local
 version too; see [`.nvmrc`](.nvmrc) (`nvm use` / `fnm use` / `volta run` will pick it up
-automatically). This is a _development-only_ requirement — it does not change the _published_
-runtime floor, which stays `>=22.0.0` for every consumer of `@sensigo/*`.
+automatically). This is a _development-only_ requirement. The _published_ packages state their own
+floors: `@sensigo/realm-cli` and `@sensigo/realm-store-sqlite` need Node `^22.22.3 || >=24.15.0`;
+`@sensigo/realm`, `@sensigo/realm-mcp` and `@sensigo/realm-testing` state `>=22.0.0`, though the MCP
+server's own command opens the SQLite store and so needs the higher floor.
 
 ```bash
 npm install          # install all workspace dependencies

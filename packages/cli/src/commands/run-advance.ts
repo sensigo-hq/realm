@@ -64,10 +64,12 @@ import {
   PLAIN,
   RUN_PHASE_WORDS,
   errorWithCommand,
+  exitProcess,
   writerCtx,
   writerSetFor,
   type RenderCtx,
 } from '../output/writer.js';
+import { relayIfLogged } from '../output/relay.js';
 import { openCliHome } from '../lib/home.js';
 
 /** How the project code of this program compares with the run's last record, in words. */
@@ -724,6 +726,9 @@ export const runAdvanceCommand = new Command('advance')
     "CODE override: module that REPLACES the workflow's declared 'extensions' modules (repair tool)",
   )
   .action(async (runId: string, opts: { project?: string; extensionsModule?: string }) => {
+    // U1b Unit 2 (D1): in log mode the work runs in a second process, which this one relays and
+    // masks — decided before the identity and the store; this process then never returns from it.
+    await relayIfLogged();
     // The program's name is checked first: a name that cannot be used prints one line and exits 1
     // before any work.
     const driver = resolveProgramIdentity(
@@ -738,9 +743,9 @@ export const runAdvanceCommand = new Command('advance')
       const code = await advanceRunFromShell(runId, opts, runStore, workflowStore, driver, (l) =>
         console.log(l),
       );
-      process.exit(code);
+      exitProcess(code);
     } catch (err) {
       console.error(errorWithCommand(err, writerCtx()));
-      process.exit(1);
+      exitProcess(1);
     }
   });

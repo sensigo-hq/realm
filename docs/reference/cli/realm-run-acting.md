@@ -140,6 +140,8 @@ The refusals:
 | The gate's time was up, and it was settled with another choice | `Gate '80e024ee-…' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.`, after the `⚠` line when this answer carried out the expiry. Then what the guard did, if this answer carried out the expiry — a guard that failed goes on with the way back in, `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0) — the `Not recorded:` line, and what the run owes. |
 | The run has ended                                              | `Run '00b33778-…' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 00b33778-…' previews what it would remove.` The words after the dash name the way out that kind of ending has, as `submit_human_response` names it: see [A run that has ended](../mcp/tools.md#a-run-that-has-ended).                                                                                                   |
 
+When its output goes to a file or a pipe, `realm run respond` runs its work in a second process and keeps the first to mask what reaches the file or pipe, as `realm agent` does; `kill` on the first process stops both.
+
 ## `advance`
 
 ```text
@@ -212,6 +214,8 @@ The engine can run nothing now: 'process' is in flight in another program — wa
 ```
 
 Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, or when a step cannot run, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
+
+When its output goes to a file or a pipe, `realm run advance` runs its work in a second process and keeps the first to mask what reaches the file or pipe, as `realm agent` does; `kill` on the first process stops both.
 
 ## `resume`
 
@@ -599,6 +603,8 @@ Finalizer 'release' is 'voided', not 'pending' — nothing to void.
 No finalizer ledger entry named 'nope' on run '41a348b2-e48e-48ee-8622-21df7135688e'.
 Finalizer 'release' has an active drain lease (expires 2026-10-01T23:02:59.535Z) — a drainer is executing NOW. Wait for the lease to expire (bounded — leases are clamped to 300s) and retry. Not force-bypassable.
 ```
+
+When its output goes to a file or a pipe, `realm run drain` runs its work in a second process and keeps the first to mask what reaches the file or pipe, as `realm agent` does; `kill` on the first process stops both.
 
 ## `purge`
 

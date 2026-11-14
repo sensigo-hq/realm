@@ -14,7 +14,12 @@
 // - The set: the environment part is built at install through core's one filter; when a manifest
 //   loads, its declared values are unioned in and the environment part is rebuilt with the
 //   manifests' not-secret lists (their intersection).
+// - U1b: in log mode `realm agent` runs its drive in a second process, the worker (`relay.ts`). The
+//   first process, the relay, owns the piped streams and masks them here; the worker's writer passes
+//   a piped stream's text through unchanged, sends what it learns of the declared values to the
+//   relay (numbered, acknowledged), and ends with one end message.
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import type { Socket } from 'node:net';
 import { writeSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import { Writable } from 'node:stream';
@@ -55,8 +60,258 @@ const SPAN = /\uE000([cqd])([A-Za-z0-9_-]{22})\uE001([^\uE000-\uE002]*)\uE002/g;
 /** A span's kind: a command (`c`), question text (`q`), or data built by a class table (`d`). */
 type SpanKind = 'c' | 'q' | 'd';
 
-/** The per-process key. Never part of any string the process writes. */
-const KEY = randomBytes(32);
+// ─── The relay's worker (U1b) ───────────────────────────────────────────────────────────────────
+
+/** The two markers a relay sets in its worker's environment: the relay's pid, and its span key. */
+export const RELAY_CHILD_ENV = 'REALM_RELAY_CHILD';
+export const RELAY_KEY_ENV = 'REALM_RELAY_KEY';
+
+/**
+ * U1b: the relay's span key and pid, when this process is that relay's worker: the markers are
+ * honoured only when the parent's pid is the one named AND an IPC channel exists. Both markers are
+ * deleted here, at the module's init, whether honoured or not, so a handler never sees either.
+ */
+function readRelayMarkers(): { key: Buffer; parent: number } | undefined {
+  const parent = process.env[RELAY_CHILD_ENV];
+  const key = process.env[RELAY_KEY_ENV];
+  delete process.env[RELAY_CHILD_ENV];
+  delete process.env[RELAY_KEY_ENV];
+  if (parent === undefined || key === undefined || !/^[0-9a-f]{64}$/.test(key)) return undefined;
+  if (process.ppid !== Number(parent) || typeof process.send !== 'function') return undefined;
+  return { key: Buffer.from(key, 'hex'), parent: Number(parent) };
+}
+
+const relayMarkers = readRelayMarkers();
+const relayKey = relayMarkers?.key;
+/** U1b: this process is a relay's worker. */
+const relayWorker = relayKey !== undefined;
+/** U1b correction 1 (C1): in a relay's worker, its environment and working folder at its start
+ *  (the relay's own, its markers aside); what changes after is told to the relay. */
+const startEnvironment = relayWorker
+  ? { env: { ...process.env } as Record<string, string | undefined>, cwd: currentCwd() }
+  : undefined;
+/** U1b: in a relay's worker, which streams are pipes to the relay (a terminal is inherited). */
+const relayed: Record<'stdout' | 'stderr', boolean> = {
+  stdout: relayWorker && process.stdout.isTTY !== true,
+  stderr: relayWorker && process.stderr.isTTY !== true,
+};
+
+/** The per-process key — in a relay's worker, the relay's. Never part of any string the process
+ *  writes. */
+const KEY = relayKey ?? randomBytes(32);
+
+/** U1b: the span key a relay hands its worker (the marker's value). */
+export function spanKeyHex(): string {
+  return KEY.toString('hex');
+}
+
+/** U1b: whether this process is a relay's worker. */
+export function isRelayWorker(): boolean {
+  return relayWorker;
+}
+
+/** U1b: the pid the operator sees for this drive: in a relay's worker the relay's, else this
+ *  process's. */
+export function drivePid(): number {
+  return relayMarkers?.parent ?? process.pid;
+}
+
+/** U1b: the one line said when a stream's pipe cannot be made blocking: never a run unmasked. */
+const notBlockingFor = (command: string): string =>
+  `Error: ${command} cannot hide what its programs print here: this Node.js cannot make the output pipe blocking. Nothing was started.`;
+export const NOT_BLOCKING_LINE = notBlockingFor('realm agent');
+
+/** U1b Unit 2 (D6): the full name of the command that runs (`realm run drain`), recorded by the
+ *  pre-action hook; `undefined` when no hook ran. */
+let runningCommand: string | undefined;
+
+/** D6: the running command's full name, when the pre-action hook recorded one. */
+export function runningCommandName(): string | undefined {
+  return runningCommand;
+}
+
+/** D6: the not-blocking line for the running command — `realm agent`'s when none was recorded. */
+export function notBlockingLine(): string {
+  return runningCommand === undefined ? NOT_BLOCKING_LINE : notBlockingFor(runningCommand);
+}
+
+/**
+ * U1b: sets `stream` blocking when it has a handle (a pipe or a socket), so every exit completes its
+ * pending writes (Node's own remedy, `tty.js`/`net.js`; `_handle.setBlocking` is internal and
+ * untyped). `'none'` for a stream with no handle (a file, `/dev/null`: written synchronously);
+ * `'missing'` for a handle that lacks the call (another runtime) — the caller then refuses.
+ */
+export function setStreamBlocking(
+  stream: NodeJS.WriteStream | { _handle?: unknown },
+): 'blocking' | 'none' | 'missing' {
+  const handle = (stream as { _handle?: unknown })._handle as
+    { setBlocking?: (blocking: boolean) => unknown } | null | undefined;
+  if (handle === undefined || handle === null) return 'none';
+  if (typeof handle.setBlocking !== 'function') return 'missing';
+  handle.setBlocking(true);
+  return 'blocking';
+}
+
+/** U1b: what a relay's worker sends: a numbered piece of the declared set, or its end message. */
+export type RelayDelta =
+  | {
+      kind: 'declared';
+      payload: { declared: Record<string, string>; notSecret: readonly string[] | null };
+    }
+  | {
+      kind: 'values';
+      payload: { declared: Record<string, string>; manifestNotSecret: readonly string[] | null };
+    }
+  | { kind: 'standing'; payload: { path: string; standing: DeclaredStanding } }
+  | {
+      kind: 'environment';
+      payload: { env: Record<string, string>; unset: string[]; cwd: string | null };
+    };
+
+export type RelayMessage =
+  | ({ t: 'realm-relay-delta'; seq: number } & RelayDelta)
+  | { t: 'realm-relay-end'; receipt: boolean; tally?: RelayTally };
+
+/** A worker's tally as it crosses the channel (`members` an array). */
+export type RelayTally = Omit<WriterTally, 'members'> & { members: string[] };
+
+let deltaSent = 0;
+let deltaAcked = 0;
+const syncWaiters: Array<() => void> = [];
+/** U1b: set when this worker's receipt printer was reached in broadcast mode. */
+let receiptReached = false;
+
+function relayChannel(): (Socket & { ref(): void; unref(): void }) | undefined {
+  return (process as unknown as { channel?: Socket & { ref(): void; unref(): void } }).channel;
+}
+
+/** U1b: sends one numbered piece of the declared set to the relay. The channel holds the loop
+ *  only while an ack is pending. */
+function sendDelta(delta: RelayDelta): void {
+  if (!relayWorker) return;
+  if (deltaAcked === deltaSent) relayChannel()?.ref();
+  deltaSent += 1;
+  process.send!({ t: 'realm-relay-delta', seq: deltaSent, ...delta }, undefined, undefined, () => {
+    // A dead channel: the worker ends on the disconnect.
+  });
+}
+
+/**
+ * U1b: resolves when the relay has acknowledged every piece of the declared set sent so far, so it
+ * holds every declared value before this process prints next. Resolved at once outside a relay's
+ * worker, or with nothing pending.
+ */
+export function writerSynced(): Promise<void> {
+  if (!relayWorker || deltaAcked >= deltaSent) return Promise.resolve();
+  return new Promise((resolve) => syncWaiters.push(resolve));
+}
+
+if (relayWorker) {
+  // The pipes to the relay are blocking, so every exit completes its pending writes.
+  for (const stream of ['stdout', 'stderr'] as const) {
+    if (relayed[stream] && setStreamBlocking(process[stream]) === 'missing') {
+      writeSync(2, `${NOT_BLOCKING_LINE}\n`);
+      process.send!({ t: 'realm-relay-end', receipt: false }, undefined, undefined, () => {});
+      process.exit(1);
+    }
+  }
+  // The channel never keeps the worker alive on its own: refed only while an ack is pending.
+  relayChannel()?.unref();
+  process.on('message', (message: unknown) => {
+    const m = message as { t?: unknown; seq?: unknown } | null;
+    if (m === null || typeof m !== 'object' || m.t !== 'realm-relay-ack') return;
+    if (typeof m.seq === 'number' && m.seq > deltaAcked) deltaAcked = m.seq;
+    if (deltaAcked >= deltaSent) {
+      relayChannel()?.unref();
+      for (const resolve of syncWaiters.splice(0)) resolve();
+    }
+  });
+  // The relay is gone (its channel closed, whatever ended it): the worker's whole process group
+  // ends as on SIGTERM, the programs its handlers started included (correction 1, C2). The worker
+  // leads its group (spawned detached); a worker that does not (a test's fork) ends itself.
+  process.on('disconnect', () => {
+    try {
+      process.kill(-process.pid, 'SIGTERM');
+    } catch {
+      process.kill(process.pid, 'SIGTERM');
+    }
+  });
+}
+
+function currentCwd(): string | undefined {
+  try {
+    return process.cwd();
+  } catch {
+    return undefined;
+  }
+}
+
+/** C1: what the relay holds of the worker's environment beyond its own start: the values sent,
+ *  the names sent as unset, and the working folder sent. */
+const sentEnvironment = new Map<string, string | undefined>();
+let sentCwd: string | undefined;
+
+/**
+ * U1b correction 1 (C1): in a relay's worker, tells the relay which environment names appeared,
+ * changed or were removed since the worker started (each value it has not yet sent), and the
+ * working folder when it changed: what a project module's top-level code put there while it loaded
+ * (`dotenv.config()`, a token read for a child CLI). The relay sweeps them as the worker's own
+ * writer would. The caller awaits {@link writerSynced} before this process prints next. Sends
+ * nothing outside a relay's worker, or when nothing changed.
+ */
+export function noteLoadedEnvironment(): void {
+  if (startEnvironment === undefined) return;
+  const known = (name: string): string | undefined =>
+    sentEnvironment.has(name) ? sentEnvironment.get(name) : startEnvironment.env[name];
+  const env: Record<string, string> = {};
+  const unset: string[] = [];
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined && value !== known(name)) env[name] = value;
+  }
+  for (const name of new Set([...Object.keys(startEnvironment.env), ...sentEnvironment.keys()])) {
+    if (process.env[name] === undefined && known(name) !== undefined) unset.push(name);
+  }
+  const cwd = currentCwd();
+  const cwdChanged = cwd !== undefined && cwd !== (sentCwd ?? startEnvironment.cwd);
+  if (Object.keys(env).length === 0 && unset.length === 0 && !cwdChanged) return;
+  for (const [name, value] of Object.entries(env)) sentEnvironment.set(name, value);
+  for (const name of unset) sentEnvironment.set(name, undefined);
+  if (cwdChanged) sentCwd = cwd;
+  sendDelta({ kind: 'environment', payload: { env, unset, cwd: cwdChanged ? cwd : null } });
+}
+
+/**
+ * U1b: ends this process with `code`. In a relay's worker, its one end message goes first (whether
+ * the receipt printer was reached in broadcast mode, and then the tally); everywhere else it is
+ * `process.exit(code)` and sends nothing.
+ */
+export function exitProcess(code: number): never {
+  if (relayWorker) sendEnd(receiptReached && state?.mode === 'broadcast');
+  return process.exit(code);
+}
+
+function sendEnd(receipt: boolean): void {
+  const t = state?.tally;
+  const message: RelayMessage =
+    receipt && t !== undefined
+      ? { t: 'realm-relay-end', receipt: true, tally: { ...t, members: [...t.members] } }
+      : { t: 'realm-relay-end', receipt: false };
+  try {
+    process.send!(message, undefined, undefined, () => {});
+  } catch {
+    // The relay is gone: it reads the exit as an abrupt end.
+  }
+}
+
+/**
+ * U1b: in a relay's worker the drive's `Disclosure:` line is the relay's to print (its stderr is a
+ * pipe to the relay): notes that the receipt was reached and answers `true`; elsewhere `false`.
+ */
+export function receiptIsTheRelays(): boolean {
+  if (!relayed.stderr) return false;
+  receiptReached = true;
+  return true;
+}
 
 function tagOf(kind: SpanKind, text: string): string {
   return createHmac('sha256', KEY)
@@ -261,6 +516,9 @@ export async function noteRunManifest(
     declared: manifest.declaredState,
     ...(manifest.declaredCause !== undefined ? { declaredCause: manifest.declaredCause } : {}),
   });
+  // U1b: the relay holds the run's declared values before this process prints next (the ended-run
+  // refusal prints its reason).
+  await writerSynced();
   return manifest;
 }
 
@@ -345,6 +603,9 @@ interface WriterState {
   readRule?: { accepted: boolean };
   /** U1: each stream's held tail on a log (`log`, `broadcast`), and the idle timer that flushes it. */
   carry: Record<'stdout' | 'stderr', { chunk: ChunkCarry; idle?: NodeJS.Timeout }>;
+  /** U1b correction 1 (C1): in a relay, its worker's environment changes (a value, or `undefined`
+   *  for a name removed) and working folder, as the worker sent them. */
+  worker?: { env: Map<string, string | undefined>; cwd?: string };
 }
 
 /** What this process's output hid and shaped, its sources on a private terminal, and whether it
@@ -390,8 +651,8 @@ function setFor(audience: DisclosureAudience): DisclosureSet {
   if (set === undefined) {
     const standing = processStanding(s);
     set = buildDisclosureSet({
-      env: process.env,
-      cwd: process.cwd(),
+      env: environmentOf(s),
+      cwd: s.worker?.cwd ?? process.cwd(),
       declared: Object.fromEntries(s.declared),
       declaredState: standing.declared,
       ...(standing.declaredCause !== undefined ? { declaredCause: standing.declaredCause } : {}),
@@ -401,6 +662,35 @@ function setFor(audience: DisclosureAudience): DisclosureSet {
     s.sets.set(audience, set);
   }
   return set;
+}
+
+/** The environment the sweep and `REALM_NOT_SECRET` are read from: this process's own; in a relay,
+ *  with its worker's changes over it (the worker's value winning, a name it removed gone). */
+function environmentOf(s: WriterState): Readonly<Record<string, string | undefined>> {
+  if (s.worker === undefined) return process.env;
+  const env: Record<string, string | undefined> = { ...process.env };
+  for (const [name, value] of s.worker.env) {
+    if (value === undefined) delete env[name];
+    else env[name] = value;
+  }
+  return env;
+}
+
+/**
+ * U1b correction 1 (C1): in a relay, its worker's environment changes and working folder (the
+ * `environment` piece) join what its sets are built from, and the sets are rebuilt.
+ */
+export function addWorkerEnvironment(
+  env: Readonly<Record<string, string>>,
+  unset: readonly string[],
+  cwd: string | undefined,
+): void {
+  if (state === undefined) return;
+  state.worker ??= { env: new Map() };
+  for (const [name, value] of Object.entries(env)) state.worker.env.set(name, value);
+  for (const name of unset) state.worker.env.set(name, undefined);
+  if (cwd !== undefined) state.worker.cwd = cwd;
+  state.sets.clear();
 }
 
 function audienceOf(stream: 'stdout' | 'stderr'): StreamAudience {
@@ -676,16 +966,62 @@ export function questionReceiptWords(): string {
  */
 export function writerReceiptLine(): string | undefined {
   if (state === undefined) return undefined;
+  return receiptLineFor(state.tally);
+}
+
+/** U1b: the relay's standing words when its worker ended before it sent any of the declared set. */
+export const RELAY_STANDING_UNKNOWN_WORDS =
+  'declared values unknown (the drive ended before it said)';
+/** U1b: the relay's walks clause when its worker ended before its end message. */
+export const RELAY_WALKS_NOT_COUNTED_WORDS =
+  'values shown as their type and size: not counted (the drive ended before it said)';
+
+/** The receipt line for tally `t`; `ended` when the worker ended before its end message (U1b). */
+function receiptLineFor(t: WriterTally, ended?: { heardDelta: boolean }): string {
   const set = setFor(
     audienceOf('stderr') === 'off' ? 'log' : (audienceOf('stderr') as DisclosureAudience),
   );
-  const t = state.tally;
+  const standing =
+    ended !== undefined && !ended.heardDelta ? RELAY_STANDING_UNKNOWN_WORDS : declaredWords(set);
+  const shaped =
+    ended !== undefined
+      ? RELAY_WALKS_NOT_COUNTED_WORDS
+      : t.shaped === 1
+        ? '1 value shown as its type and size'
+        : `${t.shaped} values shown as their type and size`;
   return (
-    `Disclosure: ${declaredWords(set)}; environment ${set.environment === 'swept' ? 'swept' : 'not swept'}; ` +
+    `Disclosure: ${standing}; environment ${set.environment === 'swept' ? 'swept' : 'not swept'}; ` +
     `hidden ${t.declared} declared, ${t.environment} environment, ${t.pattern} by pattern; ` +
-    `${t.unchecked} not checked; ${set.unmaskable} too short to hide; ${t.shaped === 1 ? '1 value shown as its type and size' : `${t.shaped} values shown as their type and size`}` +
-    `${t.question ? `; ${questionReceiptWords()}` : ''}.`
+    `${t.unchecked} not checked; ${set.unmaskable} too short to hide; ${shaped}` +
+    `${ended === undefined && t.question ? `; ${questionReceiptWords()}` : ''}.`
   );
+}
+
+/**
+ * U1b: the relay's one `Disclosure:` line. With the worker's end message, this process's own stream
+ * counts merged with the worker's tally (sums; the question flag OR'd; the standings from the
+ * pieces received, read as today). Without one (the worker died by a signal or crashed), this
+ * process's own counts, the walks' clause "not counted", no question clause, and — when no piece of
+ * the declared set arrived either — the standing "unknown (the drive ended before it said)".
+ * `undefined` when no writer runs.
+ */
+export function relayReceiptLine(
+  worker: RelayTally | undefined,
+  heardDelta: boolean,
+): string | undefined {
+  if (state === undefined) return undefined;
+  if (worker === undefined) return receiptLineFor(state.tally, { heardDelta });
+  const own = state.tally;
+  return receiptLineFor({
+    declared: own.declared + worker.declared,
+    environment: own.environment + worker.environment,
+    pattern: own.pattern + worker.pattern,
+    unchecked: own.unchecked + worker.unchecked,
+    shaped: own.shaped + worker.shaped,
+    tooDeep: own.tooDeep + worker.tooDeep,
+    question: own.question || worker.question,
+    members: new Set([...own.members, ...worker.members]),
+  });
 }
 
 /** Text as this process's stdout shows it: the pass for its audience, or the text when no writer
@@ -728,6 +1064,9 @@ function patch(stream: 'stdout' | 'stderr'): void {
   const decoder = new StringDecoder('utf8');
   target.write = function write(...args: WriteArgs): boolean {
     const [chunk, encoding, callback] = args;
+    // U1b: a pipe to the relay — the relay masks it; spans stay enveloped, nothing held or counted.
+    if (relayed[stream])
+      return original.call(target, chunk as never, encoding as never, callback as never);
     const cb = (typeof encoding === 'function' ? encoding : callback) as
       ((err?: Error | null) => void) | undefined;
     let text: string;
@@ -818,6 +1157,11 @@ function onExit(): void {
   flush('stderr', 'exit');
 }
 
+/** U1b: the relay's synchronous flush of both held tails, before it exits or re-raises a signal. */
+export function flushHeld(): void {
+  onExit();
+}
+
 function errorText(err: unknown): string {
   if (err instanceof Error) return err.stack ?? `${err.name}: ${err.message}`;
   return String(err);
@@ -833,7 +1177,8 @@ function fatal(err: unknown): void {
   flush('stderr', 'fatal');
   let text: string;
   try {
-    text = passForStderr(errorText(err));
+    // U1b: on a pipe to the relay, the raw text — the relay masks it.
+    text = relayed.stderr ? errorText(err) : passForStderr(errorText(err));
     if (!text.endsWith('\n')) text += '\n';
   } catch {
     text = FATAL_CONSTANT;
@@ -843,6 +1188,8 @@ function fatal(err: unknown): void {
   } catch {
     // Nothing more can be written.
   }
+  // U1b: a fatal error's end message never asks for the receipt (as today, none is printed).
+  if (relayWorker) sendEnd(false);
   process.exit(1);
 }
 
@@ -879,9 +1226,10 @@ export function installWriter(mode: WriterMode = 'default'): void {
   process.on('uncaughtException', fatal);
   process.on('unhandledRejection', fatal);
   process.once('exit', onExit);
-  // F32: a name REALM_NOT_SECRET lists that is not set has no effect — said once per process.
+  // F32: a name REALM_NOT_SECRET lists that is not set has no effect — said once per process; in a
+  // relay's worker, the relay has said it (U1b).
   const unset = notSecretNames(process.env).filter((name) => process.env[name] === undefined);
-  if (unset.length > 0) process.stderr.write(`${notSecretUnsetWarning(unset)}\n`);
+  if (unset.length > 0 && !relayWorker) process.stderr.write(`${notSecretUnsetWarning(unset)}\n`);
 }
 
 /**
@@ -962,6 +1310,7 @@ export function noteDeclaredStanding(path: string, standing: DeclaredStanding): 
   if (state === undefined) return;
   state.standings.set(path, standing);
   state.sets.clear();
+  sendDelta({ kind: 'standing', payload: { path, standing } });
 }
 
 export function addDeclaredDisclosure(
@@ -972,6 +1321,10 @@ export function addDeclaredDisclosure(
   for (const [name, value] of Object.entries(declared)) state.declared.set(name, value);
   state.notSecretLists.push(notSecret);
   state.sets.clear();
+  sendDelta({
+    kind: 'declared',
+    payload: { declared: { ...declared }, notSecret: notSecret ?? null },
+  });
 }
 
 /**
@@ -1029,7 +1382,12 @@ export function addDeclaredValues(
     changed = true;
   }
   // The sets are rebuilt only when the declared part changed (a provider asks once per reply).
-  if (changed) state.sets.clear();
+  if (!changed) return;
+  state.sets.clear();
+  sendDelta({
+    kind: 'values',
+    payload: { declared: { ...declared }, manifestNotSecret: manifestNotSecret ?? null },
+  });
 }
 
 /** The audience this process's stdout is shown to (`log` for `realm mcp`'s diverted writes), or
@@ -1078,6 +1436,10 @@ export function writerModeOf(command: Command): WriterMode {
 /** The `preAction` hook every exported command carries (L-1): installs the writer for the command
  *  that runs. */
 export function writerHook(_thisCommand: Command, actionCommand: Command): void {
+  // D6: the command's full name, its parents' names first (`realm run drain`).
+  const names: string[] = [];
+  for (let c: Command | null = actionCommand; c !== null; c = c.parent) names.unshift(c.name());
+  runningCommand = names.join(' ');
   installWriter(writerModeOf(actionCommand));
 }
 

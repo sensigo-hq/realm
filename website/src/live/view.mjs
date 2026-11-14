@@ -89,7 +89,7 @@ export function classify(reply, before, after) {
   };
 }
 
-// The counting line. A schema refusal carries error_details.rejections and .threshold (0.46.0
+// The counting line. A schema refusal carries error_details.rejections and .threshold (0.49.0
 // sends both; the threshold is never hard-coded). `blocked` and an MCP-layer refusal never reach
 // the counter: "Nothing was counted.".
 export function countLine(reply) {
@@ -115,8 +115,8 @@ export function gateText(openingReply) {
 
 // After the answer, the closed branch is the posting step the answer's `when` turned off
 // (skip_details kind when_false; a failed run skips both with another kind). The chosen posting
-// step is the other one; it is offered to the agent while the run is running and that step is
-// not completed (#625: on 0.46.0 the answer does not run it).
+// step is the other one; `send` names it while the run is running and that step is not completed.
+// On 0.49.0 the run then owes it to the engine: the agent calls advance_run and Realm runs it.
 export function nextActions(state) {
   const sd = state?.skip_details ?? {};
   const other = POSTING.find((p) => sd[p]?.kind === 'when_false') ?? null;
@@ -134,7 +134,7 @@ export function chosenStep(state) {
 }
 
 // The Live state table's five states, from the run's state after the last reply: A running, gate
-// not reached · B gate open · C answered, chosen posting step not sent · D completed · E failed.
+// not reached · B gate open · C answered, chosen posting step not run yet · D completed · E failed.
 export function stateLetter(state) {
   const p = state?.run_phase;
   if (p === 'completed') return 'D';
@@ -211,7 +211,7 @@ export function recordedState(r, ending) {
   };
 }
 
-// THE CLAIM LEDGER (design rev 4 "Claim ledger", executed on 0.46.0; R = recorded, L = live).
+// THE CLAIM LEDGER (design rev 4 "Claim ledger", executed on 0.49.0; R = recorded, L = live).
 // Every visitor sentence below is true on the pinned release for the reason given. At each version
 // bump: the guard (scripts/live/smoke.mjs) re-runs the rows marked "guard"; check the rows marked
 // "hand" by hand on the new release (pre-publication checklist Part B, step 11).
@@ -237,22 +237,23 @@ export function recordedState(r, ending) {
 // | stage 3 | The reviewer chose X. | the record's gate-response entry | L (C, D) | guard (answer effect) |
 // | :101 | Answer the gate first. This stage opens once the gate is answered. | before the answer neither posting step can run | R, L | guard (at-gate attempts) |
 // | :104 | The reviewer chose `X`. Realm closes the other branch. | after the answer the other posting step is skipped (when_false) and refused | R, L | guard (answer effect, other-branch reply) |
-// | :104 | On this release the agent still sends the chosen step itself. | after the answer the chosen posting step is not completed and the phase is running (#625); shown only while that holds (L), always in R (true of the recording) | R, L | guard (:104 condition, both modes) |
+// | :104 | Realm runs the chosen step itself when the agent calls `advance_run`. | after the answer the chosen posting step is not completed, the phase is running and the run owes the step to the engine (next_actions_status advance_owed, next action advance_run); the agent's own execute_step of it is refused ("it is an automatic step"); shown only while that holds (L, C), always in R (the recorder ran the step with advance_run) | R, L (C) | guard (:104 condition, both modes; the editor in C) |
+// | stage 4 button | The agent calls advance_run | the button calls advance_run with run_id only; Realm runs the chosen step and the run completes, with one POST | L (C) | guard (posted reply, final record, stand-in log) + walk (stage 4) |
 // | :131 | Answer the gate first. There is no finished record until the gate is answered. | the run is not completed before the answer | R, L | guard (state at gate) |
 // | :134 | What is left behind. One entry for each step that ran and for the gate answer, each with a hash. Refused calls leave no entry; counted refusals are noted on the step's entry. | 5 entries; after 4 refusals evidence_count is 1; write_review's entry carries validation_rejections | R, L (C, D) | guard (rows, after_refusals) |
 // | :140 | accepted after n counted refusal(s) | diagnostics.validation_rejections on a successful entry | R, L | guard (:140 row) |
 // | stage 4 label | The agent tries the branch that was not chosen | the other branch is refused after the answer (blocked, not eligible) | R, L (C, D) | guard (other-branch reply) |
 // | stage 4 label | Ran: `<step>` | the chosen posting step completed (accepted reply, run completed) | R, L (D) | guard (posted reply, final record) |
-// | stage 4 | The agent sent `<step>` from stage 2. | state D with no accepted stage-4 reply in this page (the page's flag, reset by a new run): the only other way to send the step is stage 2's editor | L (D) | guard (sentence) + walk (path) |
 // | stage 4 label | Skipped, with the reason on the record | the closed branch is in skip_details with kind when_false; skipLine() prints it as the CLI does | R, L (C, D) | guard (skip line = the recording's, both endings) |
-// | stage 5 | The run is not finished: the agent has not sent the chosen step yet. | state C: running, chosen posting step not completed | L (C) | guard (:104 condition) |
+// | stage 5 | The run is not finished: the agent has not called `advance_run` yet. | state C: running, chosen posting step not completed, owed to the engine | L (C) | guard (:104 condition) |
 // | stages 2–5 | This run failed after m counted refusals. / This run failed before reaching the gate. | the m-th schema refusal (m = error_details.threshold) fails the run before confirm_review runs | L (E) | guard (failed run) |
 // | stage 5 h3 | What is left behind. | heading only in E: the :134 paragraph is false there (no gate answer; the m-th refusal leaves the failed step's entry) | R; L (C, D, E) | guard (failed run) |
 // | :150 | Read it back any time with `realm run inspect <run-id>`, or take the whole record with `realm run export`. | the recorder read the runs back with the CLI | R | hand |
-// | :150 | This run lives only in this page. With Realm installed, `realm run inspect <run-id>` reads a run back. | runs are in an in-memory store; `realm run inspect` exists on 0.46.0 | L | hand |
+// | :150 | This run lives only in this page. With Realm installed, `realm run inspect <run-id>` reads a run back. | runs are in an in-memory store; `realm run inspect` exists on 0.49.0 | L | hand |
 // | :160 | … on Realm {v}, driven over MCP; the reviewer answered with the CLI. … | record.mjs drives the steps over MCP and answers with `realm run respond` | R | hand (record.mjs) |
+// | stage 4 (R) | the reviewer's box: `$ realm run respond <run-id> --gate <gate-id> --choice <choice>` and its output, word for word | copied from the recording by distill.mjs, which replaces the recorder's folder with the fixed name ~/pr-review (its header) | R | guard (no folder under a refused root; every "the project code under …" names ~/pr-review/project) |
 // | footer | Live · Realm {version} running in your browser … nothing is posted. Runs are kept in memory … Full reply shows Realm's reply whole. | the bundle's fetch is the stand-in (0 page fetches); InMemoryStore; the Full reply toggle shows Realm's reply, not the call | L | guard (page fetch, stand-in log) + walk (Full reply) |
-// | details | What is swapped (each line) | scripts/live/build.mjs and src/live/engine.mjs | L | guard (scan, stub calls) + hand |
+// | details | What is swapped (each line) | scripts/live/build.mjs, src/live/engine.mjs and src/live/shims/process.mjs; no package version is swapped (the bundle's SDK is realm-mcp's own pin) | L | guard (scan, stub calls) + build (one copy of realm and of the SDK) + hand |
 export function stageSentences(mode, state) {
   const live = mode === 'live';
   const letter = live ? stateLetter(state) : null;
@@ -302,13 +303,13 @@ export function stageSentences(mode, state) {
       live && choice && (letter === 'C' || letter === 'D') ? `The reviewer chose ${choice}.` : null,
     need4: 'Answer the gate first. This stage opens once the gate is answered.', // :101
     branch: choice ? `The reviewer chose \`${choice}\`. Realm closes the other branch.` : null, // :104
-    agentSends: na.send ? 'On this release the agent still sends the chosen step itself.' : null, // :104
-    sendLabel: 'The agent sends the next step',
+    agentSends: na.send
+      ? 'Realm runs the chosen step itself when the agent calls `advance_run`.'
+      : null, // :104 (R; L, C)
+    sendLabel: 'The agent calls advance_run', // stage 4 button (L, C)
     otherLabel: 'The agent tries the other branch',
     otherTried: !live || cd ? 'The agent tries the branch that was not chosen' : null, // stage 4 (R; L, C D)
     ran: chosen && (!live || letter === 'D') ? `Ran: \`${chosen}\`` : null, // stage 4 (R; L, D)
-    sentFrom2:
-      chosen && live && letter === 'D' ? `The agent sent \`${chosen}\` from stage 2.` : null, // stage 4 (L, D)
     skippedLabel: !live || cd ? 'Skipped, with the reason on the record' : null, // stage 4 (R; L, C D)
     skipped: live && cd ? skipLine(state) : null, // stage 4 (L, C D): the CLI's skip line
     need5: 'Answer the gate first. There is no finished record until the gate is answered.', // :131
@@ -319,8 +320,8 @@ export function stageSentences(mode, state) {
         : null, // :134
     notFinished:
       live && letter === 'C'
-        ? 'The run is not finished: the agent has not sent the chosen step yet.'
-        : null,
+        ? 'The run is not finished: the agent has not called `advance_run` yet.'
+        : null, // stage 5 (L, C)
     readBack: live
       ? 'This run lives only in this page. With Realm installed, `realm run inspect <run-id>` reads a run back.' // :150 L
       : 'Read it back any time with `realm run inspect <run-id>`, or take the whole record with `realm run export`.', // :150 R
@@ -351,20 +352,19 @@ export function stageSentences(mode, state) {
   };
 }
 
-// The "What is swapped" details (design clause 2, word for word). `m` is src/live/manifest.json.
-export function swappedLines(m) {
+// The "What is swapped" details (design clause 2, word for word).
+export function swappedLines() {
   return {
     title: 'What is swapped',
     opening:
       "To run in your browser, a few parts that need a server are replaced. Realm's own decisions — what it accepts, refuses and records — are unchanged.",
     lines: [
-      'process: argv [], env {}, platform "browser", stderr.write a no-op.',
+      'process: argv [], env {}, platform "browser", cwd() "/demo", stderr.write a no-op.',
       'Buffer: only byteLength, through TextEncoder; every other member throws and is logged.',
       'global and setImmediate: throw, logged.',
       'fetch: the GitHub stand-in, which throws naming the method and URL for anything off its routes.',
       'crypto: sha256 from @noble/hashes, plus Web Crypto.',
       'Every other Node built-in and the npm package proper-lockfile: stubs that throw.',
-      `The MCP SDK at ${m.sdk_version} in place of the version realm-mcp ${m.realm_version} pins exactly (security fix GHSA-6qxp-vccf-f47h).`,
       'Runs: InMemoryStore (realm-testing). Workflows: a hand-made in-memory store holding this one workflow.',
       "Traces: InMemoryTraceBufferStore, Realm's own in-memory trace store. Failed attempts: not written to a file; refusals are still counted in the run.",
     ],

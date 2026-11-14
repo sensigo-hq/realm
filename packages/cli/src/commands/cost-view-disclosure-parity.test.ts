@@ -12,6 +12,8 @@
 // `ClaimRecord`, the name's `Attributed`, the answer's `AnswerView`, `AttemptView.driven_by` and
 // `StepView.answers` — probed against the real `inspect` output, so a field added to any of them
 // fails to COMPILE here until it is routed to a screen or waived with a reason.
+// Issue #729's claim window (CW-1) adds `ClaimRecord.lease`, waived: the cost view does not show a
+// claim's lease.
 //
 // Issue #600 PR 2 adds four `CostView` rows (`models`, `cache_requested`, `cache_write_5m`,
 // `cache_write_1h`) and the `CacheRequestedEntry` registry, rendered on both contexts with no waiver;
@@ -1044,6 +1046,8 @@ const HOLDER_CLAIM_RECORD = {
     probe: (out) =>
       expect(out).toMatch(/claimed_step: taken by claimer@host \([^)]*\), \d+[dhm][^\n]* ago/),
   },
+  // #729, the claim window (CW-1): the claim's lease id; nothing writes it until CW-2.
+  lease: { surface: 'waived', reason: "the cost view does not show a claim's lease" },
 } satisfies Record<keyof ClaimRecord, DisclosureRoute>;
 
 const HOLDER_ATTRIBUTED = {
@@ -1082,7 +1086,7 @@ const HOLDER_ANSWER_VIEW = {
 } satisfies Record<keyof AnswerView, DisclosureRoute>;
 
 describe('#625 PR-H — context 1b, the holder slice', () => {
-  it('only the two waivers the header names: the deadline (not printed) and the token (one door)', () => {
+  it("only the three waivers the header names: the deadline (not printed), the token (one door) and the lease (the cost view does not show a claim's lease)", () => {
     for (const registry of [HOLDER_CLAIM_RECORD, HOLDER_ATTRIBUTED, HOLDER_ANSWER_VIEW]) {
       for (const [field, route] of Object.entries(registry as Record<string, DisclosureRoute>)) {
         if (route.surface === 'waived') {
@@ -1097,7 +1101,7 @@ describe('#625 PR-H — context 1b, the holder slice', () => {
       .filter(([, r]) => r.surface === 'waived')
       .map(([f]) => f)
       .sort();
-    expect(waived).toEqual(['deadline', 'token']);
+    expect(waived).toEqual(['deadline', 'lease', 'token']);
     expect(
       [HOLDER_ATTRIBUTED, HOLDER_ANSWER_VIEW].flatMap((r) =>
         Object.values(r as Record<string, DisclosureRoute>).filter((x) => x.surface === 'waived'),

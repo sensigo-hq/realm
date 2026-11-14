@@ -61,6 +61,7 @@ import {
   type CreateResult,
   type CreateRunOptions,
   type KeyAnswer,
+  type LeasePort,
   type LoadBearingRunRecordField,
   type PerRunArtifactStore,
   type RunRecord,
@@ -502,12 +503,23 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
   /** The home's clock: every reading the store takes is the primitive's, of this clock. */
   readonly clock: Clock;
 
+  /**
+   * The home's claim leases (#729, the claim window, CW-1): files in `claim-leases/` beside
+   * `realm.db`, each a lock the operating system keeps while its program runs (`claim-lease.ts`).
+   * Nothing in Realm takes one yet.
+   */
+  readonly leases: LeasePort;
+
   readonly #db: RealmDb;
 
-  /** Package-internal: `openRealmHome` builds the one store of a handle over the home's primitive. */
-  constructor(db: RealmDb) {
+  /**
+   * Package-internal: `openRealmHome` builds the one store of a handle over the home's primitive and
+   * the home's lease port.
+   */
+  constructor(db: RealmDb, leases: LeasePort) {
     this.#db = db;
     this.clock = db.clock;
+    this.leases = leases;
   }
 
   /**
