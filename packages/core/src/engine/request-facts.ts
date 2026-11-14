@@ -15,7 +15,12 @@
 // A-1b: a request's `request_in_call`, its place in its provider call, is kept as a non-negative
 // safe integer or dropped. Piece B3a: a request's `cache_diagnostics`, what it asked Anthropic about a
 // cache miss and what came back, is rebuilt in one of its shapes from its named keys, or dropped.
+//
+// Every other field a provider module can write is bounded here too: `endpoint` is free text, as
+// `model` is; a count or a place is kept only as a non-negative safe integer, `cache_creation` only in
+// its one shape, a yes/no only as a boolean, and `request_start` only as a date, or each is dropped.
 import { CONTROL_CHAR, readStoredName } from './holder.js';
+import { parseStamp } from './instants.js';
 import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
 import { counter } from '../economics/price-source.js';
 import {
@@ -31,6 +36,7 @@ import {
   type CacheMissType,
   type CacheReference,
   type PrefixParts,
+  type UsageRecord,
 } from '../types/run-record.js';
 
 /** The request fields that hold free text, bounded at the write. */
@@ -40,20 +46,25 @@ const NAME_FIELDS = [
   'cache_requested_source',
   'cache_requested_by',
   'provider',
+  'endpoint',
 ] as const;
 
 /**
  * Bounds the free text on each request record: for each entry that is a plain object, `model`,
- * `cache_requested`, `cache_requested_source`, `cache_requested_by` and `provider` go through
- * `readStoredName`, and a field it refuses is dropped. A valid word (`lifetime`, `stated`) is
- * unchanged. An entry's own `cache_auto` is replaced by its normalised form (`normalizeCacheAuto`:
+ * `cache_requested`, `cache_requested_source`, `cache_requested_by`, `provider` and `endpoint` go
+ * through `readStoredName`, and a field it refuses is dropped. A valid word (`lifetime`, `stated`) is
+ * unchanged. Each count and place (`request_index`, `cache_lifetime_s`, the six token counts) is kept
+ * only as a non-negative safe integer, `cache_creation` only as an object of its two counts (other
+ * keys gone), `cache_ttl_sent` and `cache_split_offered` only as booleans, and `request_start` only as
+ * a date (`normalizeRequestStart`); each is deleted otherwise. An entry's own `cache_auto` is
+ * replaced by its normalised form (`normalizeCacheAuto`:
  * `{ basis }`, `{ basis, gaps_s }` or (#898) `{ basis, gaps_s, prices }` with `prices` in one of its
  * five shapes, other keys gone) or deleted when that is `undefined`. Caching 3-B: each split fact
  * (`prefix_sha256`, `prefix_chars`, `prefix_parts`, `cache_marked`, `request_strict_sent`,
  * `cache_controls_rejected`, `cache_key_sent`) is kept in its one shape or deleted. Caching 3-M
  * (piece A-1b): `request_in_call` is kept when it is a non-negative safe integer, as `prefix_chars`
  * is, or deleted. Caching 3-M (piece A-1): `reference` is kept only when its `from` is a word of
- * `CACHE_REFERENCE_SOURCES` and its `request_start` a string, or deleted whole; inside it, each
+ * `CACHE_REFERENCE_SOURCES` and its `request_start` a date, or deleted whole; inside it, each
  * copied field passes the rule it passes here and is dropped alone when it fails, and any other key
  * (a `reference`, a `request_index`, a `request_in_call`) is dropped; its `agent_profile_changed`
  * (piece C3) is kept only as `true`. Caching 3-M (piece B1):
@@ -226,7 +237,8 @@ const REFERENCE_KEYS = {
 
 /**
  * Caching 3-M (piece A-1): `reference` in its one shape — a plain object whose `from` is a word of
- * `CACHE_REFERENCE_SOURCES` and whose `request_start` is a string — or `undefined` (dropped whole).
+ * `CACHE_REFERENCE_SOURCES` and whose `request_start` is a date (`normalizeRequestStart`) — or
+ * `undefined` (dropped whole).
  * Its other keys of `CacheReference` each pass the rule they pass on a request (`boundFields`), and
  * one that fails is dropped alone; `agent_profile_changed` (piece C3), which no request holds, is
  * kept only as `true`, as `cache_key_sent` is, and dropped alone otherwise; every other key is
@@ -235,7 +247,7 @@ const REFERENCE_KEYS = {
 function normalizeReference(value: unknown): CacheReference | undefined {
   if (!plainObject(value)) return undefined;
   if (!(CACHE_REFERENCE_SOURCES as readonly unknown[]).includes(value['from'])) return undefined;
-  if (typeof value['request_start'] !== 'string') return undefined;
+  if (normalizeRequestStart(value['request_start']) === undefined) return undefined;
   const kept: Record<string, unknown> = {};
   for (const key of Object.keys(value)) {
     if (Object.hasOwn(REFERENCE_KEYS, key)) kept[key] = value[key];
@@ -250,9 +262,57 @@ function normalizeReference(value: unknown): CacheReference | undefined {
 const nonNegativeSafeInteger = (v: unknown): number | undefined =>
   typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : undefined;
 
+/** A yes/no as Realm writes it: a boolean. */
+const booleanOnly = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined);
+
+/** The longest `request_start` kept; Realm writes an ISO time of 24 characters. */
+const REQUEST_START_MAX_CHARS = 63;
+
+/**
+ * A request's `request_start`: a string of at most 63 characters, with no character of the house
+ * control set, that parses as a date (`parseStamp`, the one parser of a stored stamp); anything else
+ * is `undefined`.
+ */
+function normalizeRequestStart(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    value.length <= REQUEST_START_MAX_CHARS &&
+    !CONTROL_CHAR.test(value) &&
+    parseStamp(value) !== undefined
+    ? value
+    : undefined;
+}
+
+/** `cache_creation`: an object whose two optional keys, when present, are counts; other keys gone.
+ *  Key order is kept. */
+function normalizeCacheCreation(value: unknown): UsageRecord['cache_creation'] {
+  if (!plainObject(value)) return undefined;
+  const kept: Record<string, number> = {};
+  for (const key of Object.keys(value)) {
+    if (key !== 'ephemeral_5m_input_tokens' && key !== 'ephemeral_1h_input_tokens') continue;
+    const count = nonNegativeSafeInteger(value[key]);
+    if (count === undefined) return undefined;
+    kept[key] = count;
+  }
+  return kept;
+}
+
 /** Caching 3-B (A6): each split fact and the one shape it is kept in (or `undefined`: dropped).
- *  Caching 3-M (piece A-1): and the request's `reference`; (piece A-1b) and its `request_in_call`. */
+ *  Caching 3-M (piece A-1): and the request's `reference`; (piece A-1b) and its `request_in_call`;
+ *  and every count, yes/no and date a request carries. */
 const SPLIT_FACT_NORMALIZERS: readonly [string, (value: unknown) => unknown][] = [
+  // The fields every request carries, each in its one shape.
+  ['request_index', nonNegativeSafeInteger],
+  ['request_start', normalizeRequestStart],
+  ['prompt_tokens', nonNegativeSafeInteger],
+  ['uncached_input_tokens', nonNegativeSafeInteger],
+  ['cache_read_input_tokens', nonNegativeSafeInteger],
+  ['cache_creation_input_tokens', nonNegativeSafeInteger],
+  ['cache_write_tokens', nonNegativeSafeInteger],
+  ['output_tokens', nonNegativeSafeInteger],
+  ['cache_creation', normalizeCacheCreation],
+  ['cache_lifetime_s', nonNegativeSafeInteger],
+  ['cache_ttl_sent', booleanOnly],
+  ['cache_split_offered', booleanOnly],
   ['prefix_sha256', (v) => (isSha256Hex(v) ? v : undefined)],
   ['prefix_chars', nonNegativeSafeInteger],
   ['prefix_parts', normalizePrefixParts],
