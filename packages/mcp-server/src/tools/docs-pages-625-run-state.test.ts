@@ -80,7 +80,9 @@ afterEach(async () => {
 });
 
 /** A server over a real client. `home` puts its stores where the `realm` CLI reads them. */
-async function connect(opts: { registry?: ExtensionRegistry; home?: string } = {}) {
+async function connect(
+  opts: { registry?: ExtensionRegistry; home?: string; answers?: 'permitted' | 'default' } = {},
+) {
   const base = opts.home ?? (await mkdtemp(join(tmpdir(), 'realm-pin-b-625-')));
   // The location first, then the handle on it (a second server on the same home shares both).
   const root = opts.home !== undefined ? join(base, '.realm') : base;
@@ -92,7 +94,7 @@ async function connect(opts: { registry?: ExtensionRegistry; home?: string } = {
     ...h.stores,
     // The gate-answers default (2026-11-14): these pages' examples show the agent answering, on a
     // server started with --gate-answers permitted.
-    gateAnswers: 'permitted',
+    ...((opts.answers ?? 'permitted') === 'permitted' ? { gateAnswers: 'permitted' as const } : {}),
     ...(opts.registry !== undefined ? { registry: opts.registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -551,7 +553,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     async () => {
       claim(
         PAGE,
-        "| `awaiting_human` | A gate is open, and its time is not up — or it declares no `on_expiry`. | The question's answer, `submit_human_response`, without a `claim_token`. Added after version 0.46.0, which leaves it empty. |",
+        "| `awaiting_human` | A gate is open, and its time is not up — or it declares no `on_expiry`. | The question's answer, `submit_human_response`, without a `claim_token`, where the session has the answer tool (under `permitted`); under the default `asked` and under `withheld`, the await entry. Added after version 0.46.0, which leaves it empty. |",
       );
       const { call, workflowStore } = await connect();
       const gated = (id: string, extra: string[]) =>
@@ -599,6 +601,28 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
         ['submit_human_response', false, 'awaiting_human'],
         1,
       ]);
+      // The gate-answers default (2026-11-14): a default server's client with no forms gets the
+      // await entry under the same status. (a) red when the default lists the answer there; (b)
+      // prints the status and the entry's kind.
+      const plain = await connect({ answers: 'default' });
+      await plain.workflowStore.register(
+        gated('plainnotup', [
+          '      timeout_seconds: 3600',
+          '      on_expiry: settle_default',
+          '      default_choice: hold',
+        ]),
+      );
+      const plainState = await plain.call('get_run_state', {
+        run_id: (await plain.call('start_run', { workflow_id: 'plainnotup' }))['run_id'] as string,
+      });
+      const first = (
+        plainState['next_actions'] as Array<{ awaiting?: unknown; instruction: unknown }>
+      )[0];
+      expect([
+        plainState['next_actions_status'],
+        first?.awaiting !== undefined,
+        first?.instruction,
+      ]).toEqual(['awaiting_human', true, null]);
     },
   );
 

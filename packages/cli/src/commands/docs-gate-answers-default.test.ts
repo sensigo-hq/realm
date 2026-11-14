@@ -89,6 +89,10 @@ const RUN_STATE_EXAMPLE: Cell = [
   `${MCP}/tools/docs-pages-625-run-state.test.ts`,
   'the reply at a gate: next_actions and next_actions_status',
 ];
+const AWAITING_HUMAN: Cell = [
+  `${MCP}/tools/docs-pages-625-run-state.test.ts`,
+  'awaiting_human: a gate open whose time is not up',
+];
 const SIX_RULES: Cell = [
   `${MCP}/tools/docs-pages-625-guides.test.ts`,
   'top-level-fields.md: the opening instruction without protocol, and the six standard rules',
@@ -256,6 +260,11 @@ const SENTENCES: ReadonlyArray<readonly [page: string, sentence: string, cells: 
     'docs/reference/mcp/run-state-and-health.md',
     'This read came from a server started with `--gate-answers permitted`. Under the default `asked`, and under `withheld`, the entry has `awaiting` in place of `instruction`,',
     [RUN_STATE_EXAMPLE, AC1],
+  ],
+  [
+    'docs/reference/mcp/run-state-and-health.md',
+    "The question's answer, `submit_human_response`, without a `claim_token`, where the session has the answer tool (under `permitted`); under the default `asked` and under `withheld`, the await entry.",
+    [AWAITING_HUMAN],
   ],
   ['README.md', '`realm-mcp` MCP server — 11 tools (10 without an answer tool)', [COUNT_TOOLS_MD]],
   [
