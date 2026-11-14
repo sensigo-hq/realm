@@ -477,7 +477,7 @@ describe('#729 CW-1 correction 1 — a claim’s lease is a table of its own', (
   });
 });
 
-// U3 (d): the four usage fields that carry Realm's closed words choose their class by value. Each of
+// U3: the four usage fields that carry Realm's closed words choose their class by value. Each of
 // Realm's own words is planted as a DECLARED member of the walk's set (the door cell's way): a fact
 // is never checked, so the word stays whole. A case variant of each word, also a member, is not one
 // of Realm's words: it is checked as text and hidden. (A word that is no member shows whole under

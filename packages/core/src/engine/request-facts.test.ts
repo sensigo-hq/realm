@@ -460,7 +460,7 @@ describe('caching 3-M B1 — response_id is kept only when it passes the one che
   });
 });
 
-// U3 (c): every field a provider module can write into a request is bounded where the record is
+// U3: every field a provider module can write into a request is bounded where the record is
 // written, as `model` is. A request is written through a step's evidence with one field set as a
 // module might set it; the cell reads the STORED request back: whether the field was kept, and its
 // length and ending when it is text. The rest of the request is kept beside it. Fakes only.
