@@ -15,6 +15,8 @@ import {
   LABEL_MEANINGS,
   pageTitle,
   checkedRange,
+  releaseLine,
+  olderNote,
   lede,
   difference,
   orderLine,
@@ -91,7 +93,9 @@ thead .rowhead { background: var(--panel2); z-index: 2; }
 .v-behind { background: var(--warn-soft); color: var(--warn); }
 .v-open { background: var(--danger-soft); color: var(--danger); }
 .qrows { display: grid; gap: 28px; margin-top: 8px; }
-section.q { border-top: 1px solid var(--line); padding-top: 22px; scroll-margin-top: 16px; }
+/* Link targets (a question, an answer row, a tool's place) keep the site's own clearance under its
+   sticky top bar (site.css, `.wrap *`): this page sets none of its own. */
+section.q { border-top: 1px solid var(--line); padding-top: 22px; }
 .qtop { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 .qtop h3 { font-size: 19px; font-weight: 600; }
 .ask { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
@@ -109,7 +113,6 @@ table.rowsof { border-collapse: collapse; width: 100%; font-size: 14.5px; }
 .rowsof p.src { margin-top: 4px; font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); overflow-wrap: anywhere; }
 .rowsof .tmeta { display: block; font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); font-weight: 400; margin-top: 2px; white-space: nowrap; }
 .rowsof tr:target { outline: 2px solid var(--muted); outline-offset: -2px; }
-.rowsof tr { scroll-margin-top: 16px; }
 details.box > summary { cursor: pointer; padding: 11px 16px; color: var(--ink); font-weight: 600; font-size: 14.5px; list-style-position: inside; }
 details.box > summary:hover { background: var(--panel2); }
 details.box[open] > summary { border-bottom: 1px solid var(--line-soft); }
@@ -122,6 +125,19 @@ button.openall:hover { border-color: var(--muted); }
 .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .lab { color: var(--ink); background: var(--panel2); border-radius: 3px; padding: 1px 4px; margin-right: 4px; white-space: nowrap; }
 /* On a phone each row stacks: the tool and its answer on one line, the note under them. */
+/* Tool by tool: one block per tool, in the table's column order; each other tool's block is the
+   page's "Realm vs <tool>" place (its id realm-vs-<key>), Realm's own comes first. */
+.toolset { display: grid; gap: 12px; margin-top: 14px; }
+.tool { border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel); padding: 14px 18px; }
+.tool.realm { background: var(--realm-tint); }
+.tool:target { outline: 2px solid var(--muted); outline-offset: -2px; }
+.tool h3 { font-size: 17px; font-weight: 600; }
+.tool .tmeta { margin: 4px 0 0; font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); }
+.tool .tmeta span { white-space: nowrap; }
+.tool p { max-width: 76ch; line-height: 1.5; }
+.tool p.sl { margin: 10px 0 0; }
+/* The label keeps the tool's own spelling of its name (n8n), so it is never upper-cased. */
+.tool .slab { display: block; font: 600 13px/1.3 'IBM Plex Sans', system-ui, sans-serif; color: var(--muted); margin-bottom: 3px; }
 @media (max-width: 640px) {
   .rowsof thead { display: none; }
   .rowsof tr { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 12px 14px; border-top: 1px solid var(--line-soft); }
@@ -139,8 +155,9 @@ button.openall:hover { border-color: var(--muted); }
 
   <header class="hero">
     <div class="eyebrow">Comparison</div>
-    <h1>How Realm compares</h1>
+    <h1>{pageTitle}</h1>
     <p class="checked">Checked {checkedRange}</p>
+    <p class="checked">{releaseLine}</p>
     <p class="lede">{lede}</p>
     <p class="diff">{difference}</p>
   </header>
@@ -186,7 +203,7 @@ button.openall:hover { border-color: var(--muted); }
           {facts.map((f) => (
             <tr class="fact">
               <th scope="row" class="rowhead">{f.title}</th>
-              {tools.map((t) => <td class={t.key === 'realm' ? 'realm' : undefined}>{f.cells[t.key]}</td>)}
+              {tools.map((t) => <td class={t.key === 'realm' ? 'realm' : undefined}>{f.cells[t.key]}{t.key === 'realm' && olderNote(f.release) ? <span class="tver">{olderNote(f.release)}</span> : null}</td>)}
             </tr>
           ))}
         </tbody>
@@ -223,6 +240,7 @@ button.openall:hover { border-color: var(--muted); }
                     <td class="wide">
                       <p>{linkParts(r.cells[t.key].note).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p>
                       <p class="src"><span class="lab">{r.cells[t.key].label}</span> {r.cells[t.key].source}</p>
+                      {t.key === 'realm' && olderNote(r.cells.realm.release) ? <p class="src">{olderNote(r.cells.realm.release)}</p> : null}
                     </td>
                   </tr>
                 ))}
@@ -238,19 +256,16 @@ button.openall:hover { border-color: var(--muted); }
     <div class="eyebrow">Tool by tool</div>
     <h2 id="tools">{HEADINGS.tools}</h2>
     <p>{toolsIntro}</p>
-    <div class="box">
-      <table class="rowsof">
-        <thead><tr><th scope="col">Tool</th><th scope="col">Stronger at</th><th scope="col">Weaker at</th></tr></thead>
-        <tbody>
-          {tools.map((t) => (
-            <tr class={t.key === 'realm' ? 'realm' : undefined}>
-              <th scope="row">{t.name}<span class="tmeta">{t.group}</span><span class="tmeta">{t.version}</span><span class="tmeta">checked {t.checked}</span></th>
-              <td class="wide" data-label="Stronger at"><p>{linkParts(strengths[t.key].stronger).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p></td>
-              <td class="wide" data-label="Weaker at"><p>{linkParts(strengths[t.key].weaker).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div class="toolset">
+      {tools.map((t) => (
+        <section class={t.key === 'realm' ? 'tool realm' : 'tool'} id={t.key === 'realm' ? undefined : `realm-vs-${t.key}`}>
+          <h3>{t.key === 'realm' ? t.name : `Realm vs ${t.name}`}</h3>
+          <p class="tmeta"><span>{t.group}</span> · <span>{t.version}</span> · <span>checked {t.checked}</span></p>
+          <p class="sl"><span class="slab">{t.name} is stronger at</span>{linkParts(strengths[t.key].stronger).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p>
+          <p class="sl"><span class="slab">{t.name} falls short at</span>{linkParts(strengths[t.key].weaker).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p>
+          {t.key === 'realm' && olderNote(strengths.realm.release) ? <p class="tmeta">{olderNote(strengths.realm.release)}</p> : null}
+        </section>
+      ))}
     </div>
   </section>
 

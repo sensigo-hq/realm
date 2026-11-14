@@ -2,6 +2,12 @@
 // consistent. The public page (src/pages/compare.astro) is built only from what this returns, so a
 // document with a missing answer, an unknown value, an answer without a source, or a summary that
 // contradicts its own answers stops the build here instead of reaching the site.
+//
+// Realm's answers each name the Realm release they were checked on (`release`): the 12 row cells (in
+// `cells.realm`), each fact (beside its `cells`, whose values stay plain strings) and its strengths
+// (in `strengths.realm`). Every one must be an X.Y.Z release, and Realm's column `version` must start
+// with the newest of them, compared as numbers, so a column left behind and a column bumped ahead of
+// its answers both stop the build. The page's line about Realm is computed from these releases.
 import doc from '../data/comparison.json';
 
 const VALUES = ['Yes', 'Partial', 'No', 'N/A'];
@@ -10,6 +16,9 @@ const VERDICTS = ['lead', 'level', 'behind', 'open'];
 const LABEL = /^(CODE|DOCS|EXECUTED|INFERRED)( \+ (CODE|DOCS|EXECUTED|INFERRED))*$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ID = /^[a-z][a-z0-9-]*$/;
+const RELEASE = /^\d+\.\d+\.\d+$/;
+// A column's version starts with its release, read out whole: `0.49.10 (npm)` is 0.49.10, not 0.49.1.
+const LEADING_RELEASE = /^(\d+\.\d+\.\d+)(?![\d.])/;
 // Section ids the page itself uses; a row id equal to one would make two elements share it.
 const PAGE_IDS = ['table', 'answers', 'tools', 'how'];
 // A column older than this is still published, but the build says it needs re-checking.
@@ -28,6 +37,23 @@ function object(where, value) {
 }
 function list(where, value) {
   if (!Array.isArray(value) || value.length === 0) fail(where, 'is missing or empty');
+}
+
+/** Compares two X.Y.Z releases as numbers: negative when a is older, positive when newer. */
+export function compareReleases(a, b) {
+  const x = a.split('.').map(Number);
+  const y = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i];
+  return 0;
+}
+
+/** Every Realm answer with the release it names, in page order: the rows, the facts, the strengths. */
+function realmAnswers(d) {
+  return [
+    ...d.rows.map((r) => ({ where: `row ${r.id} realm`, release: r.cells.realm.release })),
+    ...d.facts.map((f) => ({ where: `fact ${f.id}`, release: f.release })),
+    { where: 'strengths realm', release: d.strengths.realm.release },
+  ];
 }
 
 function check(d) {
@@ -148,6 +174,29 @@ function check(d) {
     text(`strengths ${k} stronger`, d.strengths[k].stronger);
     text(`strengths ${k} weaker`, d.strengths[k].weaker);
   }
+
+  // Each of Realm's answers names the release it was checked on; the column names the newest.
+  const answers = realmAnswers(d);
+  for (const a of answers) {
+    if (a.release === undefined) fail(`${a.where} release`, 'is missing');
+    if (typeof a.release !== 'string' || !RELEASE.test(a.release))
+      fail(`${a.where} release`, `${JSON.stringify(a.release)} is not a release of the form X.Y.Z`);
+  }
+  const newest = answers.reduce(
+    (best, a) => (compareReleases(a.release, best.release) > 0 ? a : best),
+    answers[0],
+  );
+  const column = d.tools[0].version.match(LEADING_RELEASE)?.[1];
+  if (column === undefined)
+    fail(
+      'tool realm version',
+      `${JSON.stringify(d.tools[0].version)} does not start with a release X.Y.Z`,
+    );
+  if (column !== newest.release)
+    fail(
+      'tool realm version',
+      `${column} is not the newest release Realm's answers name, ${newest.release} (${newest.where})`,
+    );
 }
 
 check(doc);
@@ -169,4 +218,9 @@ export const rows = doc.rows;
 /** The facts rows; the page shows every one of them. */
 export const facts = doc.facts;
 export const strengths = doc.strengths;
+/** Realm's answers, each with the release it was checked on, and the newest of those releases. */
+export const realmReleases = realmAnswers(doc);
+export const newestRealmRelease = realmReleases
+  .map((a) => a.release)
+  .reduce((best, r) => (compareReleases(r, best) > 0 ? r : best));
 export const rowsByVerdict = (kind) => doc.rows.filter((r) => r.verdict.kind === kind);
