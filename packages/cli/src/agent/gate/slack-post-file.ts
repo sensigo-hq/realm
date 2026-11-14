@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
+import { drivePid } from '../../output/writer.js';
 
 /** What the file holds: where the post is, and the process that wrote it. */
 export interface SlackPostRecord {
@@ -33,7 +34,7 @@ let processIdOnce: string | undefined;
 /** This process's writer fields; the random id is made at the first call and kept. */
 function thisWriter(): Pick<SlackPostRecord, 'pid' | 'host' | 'id'> {
   processIdOnce ??= randomUUID();
-  return { pid: process.pid, host: hostname(), id: processIdOnce };
+  return { pid: drivePid(), host: hostname(), id: processIdOnce };
 }
 
 /** One id as a file-name part: `encodeURIComponent`, and `*` too (not allowed in a Windows name).
@@ -106,8 +107,7 @@ export async function readSlackPostFile(
   }
   const record = parse(bytes);
   if (record === undefined || record.host !== hostname()) return { kind: 'not_usable' };
-  const running =
-    record.pid === process.pid ? record.id === thisWriter().id : isRunning(record.pid);
+  const running = record.pid === drivePid() ? record.id === thisWriter().id : isRunning(record.pid);
   if (running) return { kind: 'running' };
   if (record.channel !== channel) return { kind: 'not_usable' };
   return { kind: 'stopped', record, bytes };
