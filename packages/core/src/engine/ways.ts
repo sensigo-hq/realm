@@ -33,6 +33,8 @@ import {
   type Snapshot,
 } from './snapshot.js';
 import { renderTemplateWithBoundary, type StableBoundary } from './render-template.js';
+import type { LeaseFact } from '../store/lease-port.js';
+import { isLeaseFact, leaseFactOf } from '../store/lease-facts.js';
 import { clockBasis, type Clock } from '../utils/clock.js';
 import { buildEvidenceByStep, deriveRunPhase, findEligibleSteps } from './eligibility.js';
 import {
@@ -363,8 +365,13 @@ export interface FactsByCode {
     choices: readonly string[];
   };
   gated_step: { step: string; gate_id: string; choices: readonly string[] };
-  /** T-11: the claim's deadline, or that its age is unknown — never a liveness word (rule 10). */
-  held_elsewhere: { step: string; deadline: string | { absent: 'unknown_age' } };
+  /** T-11: the claim's deadline, or that its age is unknown — never a liveness word (rule 10).
+   *  #729 CW-1b: `lease`, the claim's lease fact (`leaseFactOf`), only for a claim that names a lease. */
+  held_elsewhere: {
+    step: string;
+    deadline: string | { absent: 'unknown_age' };
+    lease?: LeaseFact;
+  };
   upstream_cannot_run: { step: string; upstream: readonly string[] };
   deps_unsettled: { step: string; deps: readonly string[] };
   /** Amendment 13 (Q11): `advance` with nothing owed is `{ reason: 'nothing_owed' }`. */
@@ -1388,10 +1395,19 @@ function refusedParamOf(
   return path.startsWith('run.params.') ? path.slice('run.params.'.length) : undefined;
 }
 
-/** The claim deadline of a step held elsewhere (T-11): its deadline, or that its age is unknown. */
-function heldDeadline(run: RunRecord, step: string): string | { absent: 'unknown_age' } {
-  const deadline = run.claims?.[step]?.deadline;
-  return typeof deadline === 'string' ? deadline : { absent: 'unknown_age' };
+/**
+ * The facts of a step held elsewhere (T-11), for every `held_elsewhere` producer (these three and the
+ * claim refusal's in execution-loop.ts): the claim's deadline, or that its age is unknown, and (#729
+ * CW-1b) the claim's lease fact on this snapshot (`leaseFactOf`), only for a claim that names a lease.
+ * Only an in-progress step's claim is read: a step not in progress has no deadline and no lease here.
+ */
+export function heldFacts(snap: Snapshot, step: string): FactsOf<'held_elsewhere'> {
+  const run = snap.record;
+  const claim = run.in_progress_steps.includes(step) ? run.claims?.[step] : undefined;
+  const deadline: string | { absent: 'unknown_age' } =
+    typeof claim?.deadline === 'string' ? claim.deadline : { absent: 'unknown_age' };
+  const lease = leaseFactOf(snap, claim);
+  return isLeaseFact(lease) ? { step, deadline, lease } : { step, deadline };
 }
 
 /**
@@ -1641,13 +1657,13 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
   }
   const held = run.in_progress_steps.filter((step) => step !== run.pending_gate?.step_name);
   for (const step of held) {
-    const deadline = heldDeadline(run, step);
+    const facts = heldFacts(snap, step);
     unavailable.push({
       verb: 'run_step',
       step,
       code: 'held_elsewhere',
-      facts: { step, deadline },
-      ...(typeof deadline === 'string' ? { clears_at: deadline } : {}),
+      facts,
+      ...(typeof facts.deadline === 'string' ? { clears_at: facts.deadline } : {}),
       remedy: [],
       no_remedy: HELD,
     });
@@ -1669,7 +1685,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
   } else if (advance !== undefined) {
     ways.push(advance);
   } else {
-    unavailable.push(advanceUnavailable(run, definition, pending, respond, held, ways, snap.at));
+    unavailable.push(advanceUnavailable(run, definition, pending, respond, held, ways, snap));
   }
 
   // abandon — refused while a question is open (`abandon-run.ts`), remedy [respond]; at a question
@@ -1730,9 +1746,11 @@ function advanceUnavailable(
   respond: RespondWay | undefined,
   held: readonly string[],
   ways: readonly WayOn[],
-  // #715 (b) (02 §D.4): the snapshot's reading (a refused step's remedy brief renders there).
-  at: Date,
+  // #715 (b) (02 §D.4): the snapshot (its reading: a refused step's remedy brief renders there; #729
+  // CW-1b: the held step's lease fact).
+  snap: Snapshot,
 ): Unavailable {
+  const { at } = snap;
   if (respond !== undefined) {
     return {
       verb: 'advance',
@@ -1749,13 +1767,13 @@ function advanceUnavailable(
   const offeredSteps = ways.filter((w): w is RunStepWay => w.verb === 'run_step');
   if (offeredSteps.length === 0 && held.length > 0) {
     const step = held[0]!;
-    const deadline = heldDeadline(run, step);
+    const facts = heldFacts(snap, step);
     return {
       verb: 'advance',
       step,
       code: 'held_elsewhere',
-      facts: { step, deadline },
-      ...(typeof deadline === 'string' ? { clears_at: deadline } : {}),
+      facts,
+      ...(typeof facts.deadline === 'string' ? { clears_at: facts.deadline } : {}),
       remedy: [],
       no_remedy: HELD,
     };
@@ -1980,13 +1998,13 @@ function judgeStepByName(
         };
   }
   if (run.in_progress_steps.includes(step)) {
-    const deadline = heldDeadline(run, step);
+    const facts = heldFacts(snap, step);
     return {
       verb: 'run_step',
       step,
       code: 'held_elsewhere',
-      facts: { step, deadline },
-      ...(typeof deadline === 'string' ? { clears_at: deadline } : {}),
+      facts,
+      ...(typeof facts.deadline === 'string' ? { clears_at: facts.deadline } : {}),
       remedy: [],
       no_remedy: HELD,
     };

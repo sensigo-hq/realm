@@ -12,6 +12,8 @@
 // only the members something produces (a member nothing produces is not shipped).
 import { WorkflowError } from '../types/workflow-error.js';
 import type { ClaimRecord } from '../types/run-record.js';
+import type { LeaseFact } from '../store/lease-port.js';
+import { isLeaseFact, type Unleased } from '../store/lease-facts.js';
 
 // ---------------------------------------------------------------------------------------------
 // The vocabulary
@@ -377,8 +379,24 @@ export function readDrivenBy(entry: { driven_by?: unknown } | undefined): Attrib
  * `storeKeepsClaims` is `store.persistsClaims === true` (fail-closed). The argument is the two
  * fields, not the whole claim, so the same function reads the copy the settlement result carries
  * after the write has deleted the claim.
+ *
+ * #729 CW-1b: `lease` is the claim's lease fact (`leaseFactOf` on the snapshot it was read from). A
+ * fact is returned beside the answer as `lease`; `{ absent: 'unleased' }`, or no argument, returns
+ * exactly the answer above.
  */
 export function describeClaimHolder(
+  claim: Pick<ClaimRecord, 'holder' | 'since'> | undefined,
+  storeKeepsClaims: boolean,
+  lease?: LeaseFact | Unleased,
+):
+  | { holder: Attributed; since?: string; lease?: LeaseFact }
+  | (ActorAbsent & { absent_cause: ClaimHolderAbsentCause; since?: string; lease?: LeaseFact }) {
+  const answer = holderOf(claim, storeKeepsClaims);
+  return lease !== undefined && isLeaseFact(lease) ? { ...answer, lease } : answer;
+}
+
+/** {@link describeClaimHolder}'s answer without the lease. */
+function holderOf(
   claim: Pick<ClaimRecord, 'holder' | 'since'> | undefined,
   storeKeepsClaims: boolean,
 ):
