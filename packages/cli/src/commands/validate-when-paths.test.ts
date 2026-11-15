@@ -353,7 +353,7 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
     );
     claim(
       'CHANGELOG.md',
-      '**4. `register` and `watch` refuse a `when` condition that cannot work as written, because of what it reads or compares.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and fix the condition the refusal names. A stored copy keeps running as it was until you register it again.',
+      '**5. `register` and `watch` refuse a `when` condition that cannot work as written, because of what it reads or compares.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and fix the condition the refusal names. A stored copy keeps running as it was until you register it again.',
     );
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     const unreleased = changelog.slice(
@@ -365,6 +365,6 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
     );
     // (1) red when the item is misnumbered or lost; (2) prints the numbers.
-    expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual(['**1. ', '**2. ', '**3. ', '**4. ']);
+    expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual(['**1. ', '**2. ', '**3. ', '**4. ', '**5. ']);
   });
 });

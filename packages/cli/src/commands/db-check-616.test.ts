@@ -330,9 +330,9 @@ describe('#616 c8a2 — check 2: a home with findings', { timeout: 120_000 }, ()
       summary: lines[1 + notRun.length + 1],
     }).toEqual({
       code: 1,
-      first: `Checked ${shown(file)} (schema version 99; this version of Realm reads up to 1).`,
+      first: `Checked ${shown(file)} (schema version 99; this version of Realm reads up to 2).`,
       finding:
-        '✗ Written by a later version of Realm (schema version 99; this version reads up to 1).',
+        '✗ Written by a later version of Realm (schema version 99; this version reads up to 2).',
       part: ['Not run: settings, its meta row part (because of newer_version).'],
       notRun: 13,
       summary: '1 finding. 12 check(s) did not run. 1 ran in part.',
@@ -356,7 +356,7 @@ describe('#616 c8a2 — check 2: a home with findings', { timeout: 120_000 }, ()
       last: lines.at(-1),
     }).toEqual({
       code: 1,
-      first: `Checked ${shown(file)} (its schema version could not be read; this version of Realm reads up to 1).`,
+      first: `Checked ${shown(file)} (its schema version could not be read; this version of Realm reads up to 2).`,
       finding: '✗ The file is not a readable SQLite database: its header or schema cannot be read.',
       file: `File: ${2 * PAGE_SIZE} bytes.`,
       wal: 'WAL: 0 bytes; its frame counts could not be read.',

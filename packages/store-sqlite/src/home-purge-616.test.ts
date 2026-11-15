@@ -375,6 +375,10 @@ describe('#616 PR-2c c9 — the home’s purge: what one batch deletes, and how 
         runs: 1,
         evidence: 2,
         failed_attempts: 2,
+        // #597 D1c-1: schema version 2's ledger table. No store writes it until D1c-2, and the
+        // preview here sums the three stores' stats, so this cell holds none; the purge of a run's
+        // outbound rows, with their bytes, is `store-format-v2-d1c1.test.ts`'s.
+        outbound: 0,
         run_blobs: 1,
         trace_buffer: 1,
         trace_sealed: 1,

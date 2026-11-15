@@ -5,9 +5,10 @@
 // text itself is the check.
 //
 // Every statement is written in the form SQLite keeps in `sqlite_master` (no `IF NOT EXISTS`, no
-// trailing semicolon), so a created file's text equals this constant byte for byte. Later units APPEND
-// to version 1 (PR-1b: the other stores' tables): nothing is released in between (SEAMS S2). After the first release these statements are
-// version 1's and never change: a schema change adds the next version to `REALM_STORE_VERSIONS`.
+// trailing semicolon), so a created file's text equals this constant byte for byte. These statements are
+// version 1's, as 0.49.0 published them, and they never change: `store-schema-versions.test.ts` pins
+// their hash. A schema change adds the next version to `REALM_STORE_VERSIONS`
+// (`store-schema-versions.ts`), whose schema starts with these statements (#597 D1c-1: version 2).
 //
 // Every rule a writer that is not Realm must obey is a TRIGGER, because a connection that sets
 // `PRAGMA ignore_check_constraints = 1` turns every CHECK off while triggers stay on; the CHECKs state
@@ -32,8 +33,11 @@ export type WriteOnceRunField = (typeof WRITE_ONCE_RUN_FIELDS)[number];
 /** `PRAGMA application_id` of a `realm.db` (the header's 32-bit field at offset 68): ASCII "REAL". */
 export const REALM_STORE_APPLICATION_ID = 0x5245414c;
 
-/** The schema version this Realm creates and reads (`PRAGMA user_version`). */
-export const REALM_STORE_SCHEMA_VERSION = 1;
+/**
+ * The schema version this Realm creates and reads (`PRAGMA user_version`). #597 D1c-1: 2, version 1
+ * and the `outbound` table; a version-1 file is brought to it by `realm db migrate`.
+ */
+export const REALM_STORE_SCHEMA_VERSION = 2;
 
 /** The page size a fresh `realm.db` is created with, in bytes (design §2: 16 KiB). */
 export const REALM_STORE_PAGE_SIZE = 16384;
@@ -50,7 +54,8 @@ export const REALM_STORE_PAGE_SIZE = 16384;
  * move of a workflow's pointer, in order) and `workflows` (the pointer); `failed_attempts` (B7, a
  * run's failed agent attempts, one caller-serialized line per row, in `seq` order) and `replays` (B7, a
  * saved replay's record, by its id, with its `created_at`); and `trace_buffer` (B4, a step's buffered
- * trace lines) and `trace_sealed` (B4, a step's sealed lines).
+ * trace lines) and `trace_sealed` (B4, a step's sealed lines). Frozen since 0.49.0 (its hash is pinned):
+ * version 2 adds `outbound` in `store-schema-versions.ts`, never here.
  */
 export const REALM_STORE_SCHEMA: readonly string[] = [
   // ---- runs: the core document; the generated columns read it, never the reverse ----

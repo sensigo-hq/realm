@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   deriveRunPhase,
+  REALM_STORE_SCHEMA_VERSION,
   systemClock,
   type RunRecord,
   type WorkflowDefinition,
@@ -50,6 +51,7 @@ import {
 } from './store-check.js';
 import { filterColumns } from './store-check-records.js';
 import { openForeignConnection } from './test-support/foreign-connection.js';
+import { openHome } from './open-realm-home.js';
 import { ladder } from './test-support/schema-versions.js';
 import { workflowVersionHash } from './workflow-store.js';
 
@@ -97,10 +99,13 @@ async function refusal(promise: Promise<unknown>): Promise<Record<string, unknow
   }
 }
 
-/** A home with a healthy store holding `runs` runs, closed. */
-async function storeHome(runs = 1): Promise<string> {
+/**
+ * A home with a healthy store holding `runs` runs, closed. #597 D1c-1: `seams` makes it at another
+ * schema version (`V1`: a version-1 file, the ladder's older file).
+ */
+async function storeHome(runs = 1, seams?: Parameters<typeof openHome>[1]): Promise<string> {
   const home = join(tmp(), '.realm');
-  const h = await openRealmHome({ home });
+  const h = await (seams === undefined ? openRealmHome({ home }) : openHome({ home }, seams));
   for (let i = 0; i < runs; i++) {
     await h.runStore.create({
       workflowId: `wf${String(i % 5)}`,
@@ -111,6 +116,11 @@ async function storeHome(runs = 1): Promise<string> {
   h.close();
   return home;
 }
+
+/** #597 D1c-1: the open's seam that makes a version-1 file. */
+const V1 = { schemaVersion: 1 } as const;
+/** #597 D1c-1: a schema version above this Realm's, as a newer Realm would leave it. */
+const NEWER = REALM_STORE_SCHEMA_VERSION + 1;
 
 /** The home's entries and their sizes, by name. */
 function entries(home: string): string[] {
@@ -428,7 +438,7 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
     }).toEqual({
       status: 'ok',
       path: join(home, 'realm.db'),
-      versions: [1, 1],
+      versions: [2, 2],
       findings: [],
       not_run: [],
       // #616 PR-2c c8b1: the two not-checked entries of the data pass.
@@ -635,13 +645,13 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
 
   it("newer_version — user_version raised (check 3's newer half: the meta row's part)", async () => {
     const home = await storeHome();
-    rawly(home, 'PRAGMA user_version = 2');
+    rawly(home, `PRAGMA user_version = ${NEWER}`);
     // (1) red when the branch is removed or turned back into a refusal, or the schema or the meta
     //     row's part is not listed; (2) prints the report's parts.
     expect(verdict(await check(home))).toEqual({
       status: 'findings',
-      schema_version: 2,
-      findings: [newer(2, 1)],
+      schema_version: NEWER,
+      findings: [newer(NEWER, REALM_STORE_SCHEMA_VERSION)],
       not_run: [
         ...stopped('newer_version', 'schema'),
         metaRow('newer_version'),
@@ -651,7 +661,7 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
   });
 
   it("older_version — a version-1 file under a Realm writing version 2 (the ladder's fixture)", async () => {
-    const home = await storeHome();
+    const home = await storeHome(1, V1);
     const report = await check(home, { schemaVersion: 2, versions: ladder() });
     // (1) red when the branch is removed or turned back into a refusal, or the schema is not held to
     //     version 1's (it would differ); (2) prints the report's parts and the versions.
@@ -757,7 +767,7 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
       tombstoneFacts: [f.tombstones_since, f.tombstones_through_seq, f.purged_ids],
     }).toEqual({
       status: 'findings',
-      schema_version: 1,
+      schema_version: 2,
       findings: [
         {
           check: 'settings',
@@ -776,12 +786,12 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
     // (1) red when the branch is removed or turned back into a refusal; (2) prints the report's parts.
     expect(verdict(await check(home))).toEqual({
       status: 'findings',
-      schema_version: 1,
+      schema_version: 2,
       findings: [
         {
           check: 'schema',
           code: 'schema_differs',
-          message: "The schema differs from schema version 1's: missing trigger runs_insert_once.",
+          message: "The schema differs from schema version 2's: missing trigger runs_insert_once.",
         },
       ],
       not_run: stopped('schema_differs', ...DATA_STOPPED),
@@ -799,7 +809,7 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
       frames: [report.facts.wal_frames, report.facts.wal_frames_copied],
     }).toEqual({
       status: 'findings',
-      schema_version: 1,
+      schema_version: 2,
       findings: [
         {
           check: 'settings',
@@ -821,7 +831,7 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
       //     report's parts.
       expect(verdict(await check(home))).toEqual({
         status: 'findings',
-        schema_version: 1,
+        schema_version: 2,
         findings: [NOT_WRITABLE],
         not_run: [],
       });
@@ -895,14 +905,14 @@ describe('#616 PR-2c c8a3 — checks 2 and 3: a read-only folder, a dropped meta
     // (1) red when settings is skipped whole or reported as run in full; (2) prints the parts.
     expect(verdict(await check(home))).toEqual({
       status: 'findings',
-      schema_version: 1,
+      schema_version: 2,
       findings: [
         {
           check: 'schema',
           code: 'schema_differs',
           // Dropping the table drops its triggers too.
           message:
-            "The schema differs from schema version 1's: missing table store_meta, trigger store_meta_insert_once, trigger store_meta_no_delete, trigger store_meta_immutable, trigger store_meta_forward, trigger store_meta_insert_types, trigger store_meta_update_types.",
+            "The schema differs from schema version 2's: missing table store_meta, trigger store_meta_insert_once, trigger store_meta_no_delete, trigger store_meta_immutable, trigger store_meta_forward, trigger store_meta_insert_types, trigger store_meta_update_types.",
         },
       ],
       not_run: [metaRow('schema_differs'), ...stopped('schema_differs', ...DATA_STOPPED)],
@@ -1020,7 +1030,7 @@ describe('#616 PR-2c c8a3 — check 4c: usable and blockedBy, read as a second c
   async function opened(state: State): Promise<Record<string, unknown>> {
     const home = await storeHome();
     if (state === 'newer' || state === 'newer, not writable') {
-      rawly(home, 'PRAGMA user_version = 2');
+      rawly(home, `PRAGMA user_version = ${NEWER}`);
     }
     if (state === 'schema differs') rawly(home, 'DROP TRIGGER runs_insert_once');
     if (state === 'newer, not writable') lock(join(home, 'realm.db'), 0o444, 0o644);
@@ -1045,7 +1055,7 @@ describe('#616 PR-2c c8a3 — check 4c: usable and blockedBy, read as a second c
 describe('#616 PR-2c c8a3 — check 5: one report holding newer_version, not_writable and integrity_failed', () => {
   it.skipIf(AS_ROOT)('the three findings together, each with its checks stopped', async () => {
     const home = await storeHome();
-    rawly(home, 'PRAGMA user_version = 2');
+    rawly(home, `PRAGMA user_version = ${NEWER}`);
     neverUsedPage(home);
     lock(join(home, 'realm.db'), 0o444, 0o644);
     const report = await check(home);
@@ -1591,7 +1601,7 @@ describe('#616 PR-2c c8b1 — check 3: a damaged page and a bad record', () => {
 
 describe('#616 PR-2c c8b1 — check 4: a file whose finding stops the data checks, a phase lie planted in it', () => {
   it.each(['older_version', 'schema_differs'] as const)('%s', async (code) => {
-    const home = await storeHome();
+    const home = await storeHome(1, code === 'older_version' ? V1 : undefined);
     rawly(home, "UPDATE runs SET run_phase = 'completed'");
     if (code === 'schema_differs') rawly(home, 'DROP TRIGGER runs_insert_once');
     const report = await check(
@@ -2079,6 +2089,11 @@ describe('#616 PR-2c c8b2 — checks 2 and 2a: the orphans by table, and example
       "INSERT INTO trace_sealed (run_id, step_id, seal_seq, lines, bytes) VALUES ('gone', 's', 0, '[]', 2)",
     ],
     ['failed_attempts', "INSERT INTO failed_attempts (run_id, seq, line) VALUES ('gone', 0, 'x')"],
+    // #597 D1c-1: schema version 2's ledger rows, which go with their run.
+    [
+      'outbound',
+      "INSERT INTO outbound (run_id, entry_key, type, occurrence, of_max, status, lease_token, lease_deadline, attempts, created_at) VALUES ('gone', 'gate:g:reminder:1', 'reminder', 1, 3, 'pending', 't', '2030-01-01T00:00:00.000Z', 1, '2030-01-01T00:00:00.000Z')",
+    ],
   ] as const)('%s alone holds an orphan — named, and nothing else found', async (table, seed) => {
     const home = await storeHome();
     rawly(home, seed);

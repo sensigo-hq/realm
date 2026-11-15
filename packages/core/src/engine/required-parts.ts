@@ -207,7 +207,15 @@ const STEP_PARTS: readonly PartRule[] = [
  */
 export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
   executeStep: [...STEP_PARTS, typed('output_source', 'options', 'outputSource')],
-  executeChain: STEP_PARTS,
+  // #729 CW-2b: `heldClaim`, when given, an object whose `hold` has an `id` string and a `close`
+  // function (each member checked only when its container is an object).
+  executeChain: [
+    ...STEP_PARTS,
+    typed('object', 'options', 'heldClaim'),
+    need('object', 'options', 'heldClaim', 'hold'),
+    need('string', 'options', 'heldClaim', 'hold', 'id'),
+    need('function', 'options', 'heldClaim', 'hold', 'close'),
+  ],
   executeEngineStep: [
     ...DEFINITION,
     need('object', 'options'),
@@ -325,6 +333,7 @@ const EXECUTE_CHAIN_MEMBERS = [
   'caller',
   'party',
   'disclosure',
+  'heldClaim',
 ] as const satisfies readonly (keyof ExecuteChainOptions)[];
 const EXECUTE_ENGINE_STEP_MEMBERS = [
   'runId',

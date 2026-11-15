@@ -212,7 +212,7 @@ const writeClock = (c: DatabaseLike): unknown[] =>
     .map((r) => [r['one'], r['at']]);
 
 describe('#616 unit 14 — deleteAllForRun: what a deletion removes and how it is stamped', () => {
-  it("check 1: a deletion removes the run's rows from the run store's tables and keeps the other stores' rows of it; the tables holding a run id are exactly the five classified", async () => {
+  it("check 1: a deletion removes the run's rows from the run store's tables and keeps the other stores' rows of it; the tables holding a run id are exactly the six classified", async () => {
     const { home, runStore } = await open(testClock(T).clock);
     const run = await finished(runStore);
     const c = await foreign(home);
@@ -227,6 +227,12 @@ describe('#616 unit 14 — deleteAllForRun: what a deletion removes and how it i
     ).run(run.id);
     c.prepare(
       "INSERT INTO trace_sealed (run_id, step_id, seal_seq, lines, bytes) VALUES (?, 'a', 1, '[]', 2)",
+    ).run(run.id);
+    // #597 D1c-1: schema version 2's outbound ledger row (no store writes it yet: a raw insert).
+    c.prepare(
+      'INSERT INTO outbound (run_id, entry_key, type, occurrence, of_max, status, lease_token, ' +
+        "lease_deadline, attempts, created_at) VALUES (?, 'gate:g:reminder:1', 'reminder', 1, 3, " +
+        "'pending', 't', '2030-01-01T00:00:00.000Z', 1, '2030-01-01T00:00:00.000Z')",
     ).run(run.id);
     // From the file's own schema, not typed by hand: every table with a `run_id` column.
     const runIdTables = c
@@ -244,17 +250,25 @@ describe('#616 unit 14 — deleteAllForRun: what a deletion removes and how it i
     });
     const before = rowsOf();
     await runStore.deleteAllForRun(run.id);
-    // (1) red when a table holding a run id is added and not classified here (a sixth name), when
+    // (1) red when a table holding a run id is added and not classified here (a seventh name), when
     //     the deletion skips one of the run store's tables (its evidence rows left behind, the
     //     Temporal #11233 class), or when it deletes another store's rows of the run (a DELETE over
     //     every `run_id` table); (2) prints the tables found and each table's rows before and after.
     expect({ runIdTables, before, after: rowsOf() }).toEqual({
-      runIdTables: ['evidence', 'failed_attempts', 'run_blobs', 'trace_buffer', 'trace_sealed'],
+      runIdTables: [
+        'evidence',
+        'failed_attempts',
+        'outbound',
+        'run_blobs',
+        'trace_buffer',
+        'trace_sealed',
+      ],
       before: {
         runs: 1,
         evidence: 2,
         run_blobs: 1,
         failed_attempts: 1,
+        outbound: 1,
         trace_buffer: 1,
         trace_sealed: 1,
       },
@@ -263,6 +277,7 @@ describe('#616 unit 14 — deleteAllForRun: what a deletion removes and how it i
         evidence: 0,
         run_blobs: 0,
         failed_attempts: 1,
+        outbound: 1,
         trace_buffer: 1,
         trace_sealed: 1,
       },

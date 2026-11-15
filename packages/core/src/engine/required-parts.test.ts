@@ -273,6 +273,8 @@ const TYPED: Array<[EngineEntry, string, unknown]> = [
   ['reclaimStep', 'options', 'x'],
   ['reclaimStep', 'options.traceBufferStore', 'x'],
   ['releaseDriveClaim', 'options.evidence', 'x'],
+  // #729 CW-2b: `heldClaim`, executeChain's only.
+  ['executeChain', 'options.heldClaim', 'x'],
 ];
 
 describe('issue #719 A2 (R3) — every typed optional member: a wrong type is refused before any read', () => {
@@ -301,6 +303,55 @@ const TWO: Array<[EngineEntry, [string, unknown], [string, unknown]]> = [
   ['claimStepForDrive', ['runId', 7], ['options.registry', 'x']],
   ['releaseDriveClaim', ['options.hold.id', 7], ['options.evidence', 'x']],
 ];
+
+// #729 CW-2b: `heldClaim`, when given, an object whose `hold` has an `id` string and a `close`
+// function; `executeStep` does not take it. The nested rows need a base where `heldClaim` is present
+// (the harness builds a missing container as `{}`, which would name its other members too).
+describe('#729 CW-2b — executeChain’s heldClaim: its hold, its id and its close are refused before any read', () => {
+  const HELD = () =>
+    withPart(BASE.executeChain(), 'options.heldClaim', { hold: { id: 'h', close: () => {} } });
+  const cells: Array<[string, string, unknown]> = [
+    ['options.heldClaim.hold', 'absent', ABSENT],
+    ['options.heldClaim.hold', 'null', null],
+    ['options.heldClaim.hold', 'a wrong type', 'x'],
+    ['options.heldClaim.hold.id', 'absent', ABSENT],
+    ['options.heldClaim.hold.id', 'null', null],
+    ['options.heldClaim.hold.id', 'a wrong type', 7],
+    ['options.heldClaim.hold.close', 'absent', ABSENT],
+    ['options.heldClaim.hold.close', 'null', null],
+    ['options.heldClaim.hold.close', 'a wrong type', 'x'],
+  ];
+  it.each(cells)('executeChain: %s %s', async (path, _label, value) => {
+    // (a) red when such a hold reaches the entry, or the row names another member too; (b) prints
+    //     the code, the options named and the store calls.
+    expect(await outcome('executeChain', withPart(HELD(), path, value))).toEqual({
+      code: 'VALIDATION_OPTION_INVALID',
+      invalid: [path],
+      calls: [],
+    });
+  });
+
+  it('executeStep: heldClaim is not an option of executeStep', async () => {
+    const parts = withPart(BASE.executeStep(), 'options.heldClaim', {
+      hold: { id: 'h', close: () => {} },
+    });
+    // (a) red when executeStep accepts heldClaim; (b) prints the outcome.
+    expect(await outcome('executeStep', parts)).toEqual({
+      code: 'VALIDATION_OPTION_INVALID',
+      invalid: ['options.heldClaim'],
+      calls: [],
+    });
+  });
+
+  it('guard: executeChain with a sound heldClaim is admitted — the call goes on to its store', async () => {
+    const o = await outcome('executeChain', HELD());
+    // (b) prints the outcome: admitted means the call went on to read the store.
+    expect({ refused: o.code === 'VALIDATION_OPTION_INVALID', read: o.calls.length > 0 }).toEqual({
+      refused: false,
+      read: true,
+    });
+  });
+});
 
 describe('issue #719 A2 — every defect of the parts at once', () => {
   it.each(TWO)('%s: two defects, both named', async (entry, [p1, v1], [p2, v2]) => {

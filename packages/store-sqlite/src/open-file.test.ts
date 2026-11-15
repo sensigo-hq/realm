@@ -130,10 +130,13 @@ function noStoreYet(path: string, ...differences: string[]): unknown {
   };
 }
 
-/** A Realm store made by a first open and closed again. */
-async function realmStore(): Promise<{ home: string; file: string }> {
+/**
+ * A Realm store made by a first open and closed again. #597 D1c-1: `seams` makes it at another
+ * schema version (`{ schemaVersion: 1 }`: a version-1 file, the local ladders' start).
+ */
+async function realmStore(seams?: OpenSeams): Promise<{ home: string; file: string }> {
   const home = join(tmp(), '.realm');
-  (await RealmDb.open(home, { clock })).close();
+  (await RealmDb.open(home, { clock }, seams)).close();
   return { home, file: join(home, DATABASE_FILE) };
 }
 
@@ -366,7 +369,10 @@ describe('#616 unit 7b — the first open', () => {
     try {
       file = {
         metaRows: Number(db.prepare('SELECT count(*) AS n FROM store_meta').get()?.['n']),
-        schema: storedSchemaDifference(db, REALM_STORE_SCHEMA),
+        schema: storedSchemaDifference(
+          db,
+          REALM_STORE_VERSIONS.get(REALM_STORE_SCHEMA_VERSION)!.schema,
+        ),
         journalMode: pragma(db, 'journal_mode'),
         autoVacuum: pragma(db, 'auto_vacuum'),
         pageSize: pragma(db, 'page_size'),
@@ -413,7 +419,7 @@ describe('#616 unit 7b — the first open', () => {
       mode: (statSync(file).mode & 0o777).toString(8),
     }).toEqual({
       applicationId: REALM_ID,
-      version: 1,
+      version: 2,
       meta: [
         {
           one: 1,
@@ -577,7 +583,7 @@ describe('#616 unit 7b — an empty store file that another program already wrot
     //     file's application id and schema version.
     expect({ result, made }).toEqual({
       result: 'opened',
-      made: { applicationId: REALM_ID, version: 1 },
+      made: { applicationId: REALM_ID, version: 2 },
     });
   });
 });
@@ -715,7 +721,7 @@ describe('#616 unit 7b — the checks of an existing file', () => {
   );
 
   it('a store one schema version behind is refused as older, never as tampered', async () => {
-    const { home, file } = await realmStore();
+    const { home, file } = await realmStore({ schemaVersion: 1 });
     const before = identity(file);
     // A Realm that writes version 2 (unit 6c's way: version 1 plus one table) opens a version-1 file.
     const result = await outcome(home, { schemaVersion: 2, versions: LADDER_2 });
@@ -734,7 +740,7 @@ describe('#616 unit 7b — the checks of an existing file', () => {
   });
 
   it('a store a newer Realm migrated is refused as newer by the open, naming the version this Realm writes', async () => {
-    const { home, file } = await realmStore();
+    const { home, file } = await realmStore({ schemaVersion: 1 });
     // A file climbed to version 3, opened by a Realm that writes version 2. The read transactions'
     // own gate compares with core's version (1), so this cell tells the open's refusal from it.
     foreign(file, (db) => migrateSchema(db, 3, LADDER_3));
@@ -776,8 +782,8 @@ describe('#616 unit 7b — the checks of an existing file', () => {
     expect({ result, after: identity(file) }).toEqual({
       result: {
         code: 'STATE_STORE_SCHEMA_TAMPERED',
-        message: `The tables in ${file} do not match what this Realm writes for schema version 1. This usually means someone changed the store outside Realm. Realm will not use it; restore a backup made before the change.`,
-        details: { path: file, version: 1, ...difference },
+        message: `The tables in ${file} do not match what this Realm writes for schema version 2. This usually means someone changed the store outside Realm. Realm will not use it; restore a backup made before the change.`,
+        details: { path: file, version: 2, ...difference },
       },
       after: before,
     });
@@ -847,8 +853,8 @@ describe('#616 unit 7b — the checks of an existing file', () => {
     expect({ result, after: identity(file) }).toEqual({
       result: {
         code: 'STATE_STORE_SCHEMA_TAMPERED',
-        message: `The tables in ${file} do not match what this Realm writes for schema version 1. This usually means someone changed the store outside Realm. Realm will not use it; restore a backup made before the change.`,
-        details: { path: file, version: 1, ...difference },
+        message: `The tables in ${file} do not match what this Realm writes for schema version 2. This usually means someone changed the store outside Realm. Realm will not use it; restore a backup made before the change.`,
+        details: { path: file, version: 2, ...difference },
       },
       after: before,
     });

@@ -1,6 +1,7 @@
 // schema-versions.ts — issue #616, test support only (moved here from `schema-ladder-616.test.ts` by
-// PR-2c c6, unchanged): the synthetic schema ladder. Only version 1 exists, so tests that need a
-// second or a third version build them here: version 2 adds two tables and fills the first; version 3
+// PR-2c c6, unchanged): the synthetic schema ladder. Tests that need a second or a third version they
+// can shape build them here (#597 D1c-1: core holds a real version 2, one table, which `ladder()`'s
+// own 2 replaces: the last entry of a key wins): version 2 adds two tables and fills the first; version 3
 // rebuilds the first table with a new column, the design owner's way (the old table renamed away, the
 // new one created under its final name with its exact text, the rows copied, the old one dropped),
 // and adds an index. The ladder test climbs it; the maintenance entry's cells (c6) open a version-1
