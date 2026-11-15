@@ -421,7 +421,7 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 | `leasePortContract`           | `RunStore.leases`, with holders in other processes               | 10   | 10, with `@sensigo/realm-store-sqlite`'s store |
 | `leaseFactsContract`          | `RunStore` with `leases`: the lease facts on the runs it returns | 8    | 8, with `InMemoryStore` and the lease double   |
 | `leasedClaimContract`         | `RunStore` with `leases`: a claim taken under a lease            | 5    | 5, with `InMemoryStore` and the lease double   |
-| `outboundLedgerContract`      | `RunStore` with `outbound`: its outbound ledger                  | 29   | 29, with `InMemoryStore`                       |
+| `outboundLedgerContract`      | `RunStore` with `outbound`: its outbound ledger                  | 29   | 29, with `InMemoryStore` and the SQLite store  |
 
 Every case in the last column passed, except the 2 it reports as skipped for `InMemoryTraceBufferStore` (it supplies neither byte hook), the 1 the settlement contract reports as skipped for `InMemoryStore` (it keeps claims, so the no-claims case does not apply), and the 3 the fidelity contract reports as skipped for `InMemoryStore` (it never deletes a run, so the purge laws' cases are skipped). The store interfaces are in [Core library](core-library.md).
 
@@ -686,7 +686,7 @@ The laws of a store's outbound ledger, `RunStore.outbound` (added after version 
 | `OL_VIEW`                           | No entry the ledger returns carries `lease_token`; `read` orders the rows by `created_at`, then `entry_key`.                                                                      |
 | `OL_PURGE`                          | `statAllForRun` equals what `deleteAllForRun` then reports; the run then has no rows, and another run's rows stay.                                                                |
 
-The ledger's purge pair is a `PerRunArtifactStore` too. `OL_PURGE` holds it to what that interface promises: `statAllForRun` reports what `deleteAllForRun` then reports, a run that does not exist reports zero, and a second delete reports zero. `InMemoryStore` runs every outbound law.
+The ledger's purge pair is a `PerRunArtifactStore` too. `OL_PURGE` holds it to what that interface promises: `statAllForRun` reports what `deleteAllForRun` then reports, a run that does not exist reports zero, and a second delete reports zero. `InMemoryStore` runs every outbound law. `@sensigo/realm-store-sqlite`'s store runs every one too, and its ledger passes the 7 laws of `perRunArtifactStoreContract`.
 
 Types: `OutboundLedgerContractAdapter`, `OutboundLedgerContractCase`, `OutboundLedgerLaw`.
 
