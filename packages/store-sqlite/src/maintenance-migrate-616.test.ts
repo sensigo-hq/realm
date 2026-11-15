@@ -23,10 +23,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   deriveRunPhase,
+  REALM_STORE_VERSIONS,
   runPhaseDerivationFingerprint,
   WorkflowError,
   type CreateRunOptions,
   type RunRecord,
+  type StoreSchemaVersions,
 } from '@sensigo/realm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from './driver.js';
@@ -36,7 +38,15 @@ import { openHome } from './open-realm-home.js';
 import { migrateSchema } from './schema-ladder.js';
 import { faultyFiles, SQLITE } from './test-support/commit-faults.js';
 import { openForeignConnection } from './test-support/foreign-connection.js';
-import { ladder, STEP_3 } from './test-support/schema-versions.js';
+import {
+  ladder,
+  STEP_2,
+  STEP_3,
+  V2_TABLE,
+  V2_TAGS,
+  V3_INDEX,
+  V3_TABLE,
+} from './test-support/schema-versions.js';
 
 const RUN: CreateRunOptions = {
   workflowId: 'triage',
@@ -64,20 +74,46 @@ function tmp(): string {
   return dir;
 }
 
-/** A home with a store holding `runs` runs, made by the open and closed again; its ids. */
-async function storeWithRuns(path: string, runs = 2): Promise<string[]> {
-  const h = await openRealmHome({ home: path });
+/**
+ * A home with a store holding `runs` runs, made by the open and closed again; its ids. #597 D1c-1:
+ * `seams` makes it at another schema version (`V1`: a version-1 file, the synthetic ladder's start).
+ */
+async function storeWithRuns(
+  path: string,
+  runs = 2,
+  seams?: Parameters<typeof openHome>[1],
+): Promise<string[]> {
+  const h = await (seams === undefined
+    ? openRealmHome({ home: path })
+    : openHome({ home: path }, seams));
   const ids: string[] = [];
   for (let i = 0; i < runs; i++) ids.push((await h.runStore.create(RUN)).record.id);
   h.close();
   return ids;
 }
 
-/** Moves the home's store file to `version` of the synthetic ladder, from another connection. */
-async function climbForeign(path: string, version: number): Promise<void> {
+/** #597 D1c-1: the open's seam that makes a version-1 file (the synthetic ladder's start). */
+const V1 = { schemaVersion: 1 } as const;
+
+/**
+ * #597 D1c-1: the synthetic ladder moved ABOVE the real version 2, for the cell (G) whose point is a
+ * file at a version this Realm does not know: core's 1 and 2, then the synthetic steps as 3 and 4,
+ * each extending the real version 2's schema. `ladder()` keeps its own 2 and 3 for every other cell.
+ */
+function ladderAboveReal(): StoreSchemaVersions {
+  const real = REALM_STORE_VERSIONS.get(2)!.schema;
+  return new Map([
+    ...REALM_STORE_VERSIONS,
+    [3, { schema: [...real, V2_TABLE, V2_TAGS], upgrade: STEP_2 }],
+    [4, { schema: [...real, V3_TABLE, V2_TAGS, V3_INDEX], upgrade: STEP_3 }],
+  ]);
+}
+
+/** Moves the home's store file up the ladder above the real version 2, from another connection. */
+async function climbForeignAbove(path: string, version: number): Promise<void> {
   const foreign = await openForeignConnection(path);
   try {
-    migrateSchema(foreign, version, ladder());
+    migrateSchema(foreign, version, ladderAboveReal());
   } finally {
     foreign.close();
   }
@@ -171,29 +207,31 @@ function newer(file: number, realm: number): unknown {
 }
 
 describe('#616 PR-2c c7 — the gate judges the file against the version the connection was opened under', () => {
-  it('(G) SEAMS IA-2C6-11: a connection opened under version 2 writes a version-2 file, refuses it at version 3 naming both versions, and production still refuses the version-2 file at its open', async () => {
+  it('(G) SEAMS IA-2C6-11: a connection opened under version 3 writes a version-3 file, refuses it at version 4 naming both versions, and production still refuses the version-3 file at its open', async () => {
+    // #597 D1c-1: the synthetic versions sit above the real version 2 (`ladderAboveReal`), so the
+    // version-3 file is one this Realm (at 2) does not know, as version 2 was before.
     const live = join(tmp(), '.realm');
     await storeWithRuns(live, 1);
-    await climbForeign(live, 2);
+    await climbForeignAbove(live, 3);
     const production = await refusal(openRealmHome({ home: live }));
-    const opening = openHome({ home: live }, { schemaVersion: 2, versions: ladder() });
-    const openAtTwo = await refusal(opening);
-    const atTwo = await opening.catch(() => undefined);
-    if (atTwo !== undefined) closers.push(() => atTwo.close());
-    const writeAtTwo =
-      atTwo === undefined ? 'not opened' : await refusal(atTwo.runStore.create(RUN));
-    await climbForeign(live, 3);
+    const opening = openHome({ home: live }, { schemaVersion: 3, versions: ladderAboveReal() });
+    const openAtThree = await refusal(opening);
+    const atThree = await opening.catch(() => undefined);
+    if (atThree !== undefined) closers.push(() => atThree.close());
     const writeAtThree =
-      atTwo === undefined ? 'not opened' : await refusal(atTwo.runStore.create(RUN));
-    // (1) red when the gate compares with core's constant (the open's own reads refuse the version-2
-    //     file under realm 2, "writes version 1"), when the open does not pass its version to the
-    //     connection (the same), or when the refusal names the constant (version 3's refusal says 1);
+      atThree === undefined ? 'not opened' : await refusal(atThree.runStore.create(RUN));
+    await climbForeignAbove(live, 4);
+    const writeAtFour =
+      atThree === undefined ? 'not opened' : await refusal(atThree.runStore.create(RUN));
+    // (1) red when the gate compares with core's constant (the open's own reads refuse the version-3
+    //     file under realm 3, "writes version 2"), when the open does not pass its version to the
+    //     connection (the same), or when the refusal names the constant (version 4's refusal says 2);
     //     (2) prints each outcome: its code, message and details, `resolved`, or `not opened`.
-    expect({ production, openAtTwo, writeAtTwo, writeAtThree }).toEqual({
-      production: newer(2, 1),
-      openAtTwo: 'resolved',
-      writeAtTwo: 'resolved',
-      writeAtThree: newer(3, 2),
+    expect({ production, openAtThree, writeAtThree, writeAtFour }).toEqual({
+      production: newer(3, 2),
+      openAtThree: 'resolved',
+      writeAtThree: 'resolved',
+      writeAtFour: newer(4, 3),
     });
   });
 });
@@ -215,7 +253,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     const root = tmp();
     const live = join(root, '.realm');
     const file = join(live, 'realm.db');
-    const ids = await storeWithRuns(live);
+    const ids = await storeWithRuns(live, 2, V1);
     const seams = { schemaVersion: 3, versions: ladder() };
     const m = await maintain(live, seams);
     const copy = join(root, 'before-upgrade.db');
@@ -257,7 +295,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     const root = tmp();
     const live = join(root, '.realm');
     const file = join(live, 'realm.db');
-    await storeWithRuns(live, 1);
+    await storeWithRuns(live, 1, V1);
     // Version 3's step builds its index on the other column: its result is not version 3's schema.
     const drift = [...STEP_3.slice(0, -1), 'CREATE INDEX ladder_notes_by_k ON ladder_notes (w)'];
     const m = await maintain(live, { schemaVersion: 3, versions: ladder(drift) });
@@ -304,7 +342,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
   it('(B2) a step whose COMMIT reports an error after it landed: the line reads the file at version 3 and says the step is in it, and a second run has nothing pending', async () => {
     const live = join(tmp(), '.realm');
     const file = join(live, 'realm.db');
-    await storeWithRuns(live, 1);
+    await storeWithRuns(live, 1, V1);
     const files = faultyFiles(openDatabase);
     const seams = { schemaVersion: 3, versions: ladder() };
     const m = await maintain(live, { ...seams, openFile: files.openFile });
@@ -358,7 +396,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     async () => {
       const live = join(tmp(), '.realm');
       const file = join(live, 'realm.db');
-      await storeWithRuns(live, 1);
+      await storeWithRuns(live, 1, V1);
       const m = await maintain(live, { schemaVersion: 3, versions: ladder() });
       const holder = await openForeignConnection(live);
       let failed: unknown;
@@ -400,7 +438,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
       outcome: await codeOf(m.migrate({ backup: false, progress })),
       seen,
       file: versionOf(file),
-    }).toEqual({ outcome: 'resolved', seen: ['already at 1', 'restamped 0'], file: 1 });
+    }).toEqual({ outcome: 'resolved', seen: ['already at 2', 'restamped 0'], file: 2 });
   });
 
   it('(D) the re-stamp: each run another derivation stamped gets the phase its record derives and the running stamp, its record and version untouched; the others are left alone; a second run counts 0', async () => {
@@ -452,8 +490,8 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
       second: second.seen,
       runs: Object.fromEntries(ids.map((id) => [id, shape(after[id], id)])),
     }).toEqual({
-      first: ['already at 1', 'restamped 2'],
-      second: ['already at 1', 'restamped 0'],
+      first: ['already at 2', 'restamped 2'],
+      second: ['already at 2', 'restamped 0'],
       runs: expected,
     });
   });
@@ -462,7 +500,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     const root = tmp();
     const live = join(root, '.realm');
     const file = join(live, 'realm.db');
-    await storeWithRuns(live, 1);
+    await storeWithRuns(live, 1, V1);
     const seams = { schemaVersion: 3, versions: ladder() };
     const inside = await maintain(live, seams);
     const a = recorder(file);

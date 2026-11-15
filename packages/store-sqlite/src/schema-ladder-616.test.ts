@@ -4,7 +4,8 @@
 // version holds, a step that rewrites evidence, a second migrator at the same moment: each must leave the
 // file at a version whose schema and rows are exactly that version's.
 //
-// Only version 1 exists, so the cells climb a synthetic ladder (`test-support/schema-versions.ts`). Version 1 is core's own entry
+// The cells climb a synthetic ladder (`test-support/schema-versions.ts`): a step's failure modes need
+// steps that can be made to fail, which the real version 2 (#597 D1c-1, one table) cannot. Version 1 is core's own entry
 // (its schema IS the constant: no cell copies or counts its text); version 2 adds two tables and fills
 // the first; version 3 rebuilds the first table with a new column, the design owner's way (the old table renamed away,
 // the new one created under its final name with its exact text, the rows copied, the old one dropped),
@@ -282,8 +283,9 @@ describe('#616 unit 6c — the upgrade ladder', () => {
     const neverSetUp = connect(empty);
     const { file, db } = versionOneFile();
     const bytes = readFileSync(file);
+    // #597 D1c-1: core's map holds a real version 2 now, so the gap is built from version 1 alone.
     const gap: StoreSchemaVersions = new Map([
-      ...REALM_STORE_VERSIONS,
+      [1, REALM_STORE_VERSIONS.get(1)!],
       [3, { schema: V3_SCHEMA, upgrade: STEP_3 }],
     ]);
     const rows = {

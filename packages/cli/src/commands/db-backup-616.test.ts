@@ -155,7 +155,7 @@ describe('#616 PR-2c c6 — realm db backup, on the built CLI', { timeout: 120_0
     //     the command writes to stderr or exits non-zero; (2) prints the run.
     expect(r).toEqual({
       code: 0,
-      stdout: `Backed up ${shown(join(home, 'realm.db'))} (schema version 1, ${bytes} bytes) to ${copy}; the copy passes SQLite's quick check.\n`,
+      stdout: `Backed up ${shown(join(home, 'realm.db'))} (schema version 2, ${bytes} bytes) to ${copy}; the copy passes SQLite's quick check.\n`,
       stderr: '',
     });
   });
@@ -288,7 +288,7 @@ describe('#616 PR-2c c6 — realm db backup, on the built CLI', { timeout: 120_0
         first: 0,
         r: {
           code: 0,
-          stdout: `Backed up [REDACTED]/.realm/realm.db (schema version 1, ${bytes} bytes) to ${again}; the copy passes SQLite's quick check.\n`,
+          stdout: `Backed up [REDACTED]/.realm/realm.db (schema version 2, ${bytes} bytes) to ${again}; the copy passes SQLite's quick check.\n`,
           stderr: '',
         },
       });

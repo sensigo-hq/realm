@@ -212,7 +212,7 @@ describe('#616 unit 6 — the schema constant', () => {
       applicationId: read('application_id'),
       spelled: String.fromCharCode(id >>> 24, (id >>> 16) & 255, (id >>> 8) & 255, id & 255),
       userVersion: read('user_version'),
-    }).toEqual({ pageSize: 16384, applicationId: 0x5245414c, spelled: 'REAL', userVersion: 1 });
+    }).toEqual({ pageSize: 16384, applicationId: 0x5245414c, spelled: 'REAL', userVersion: 2 });
   });
 });
 

@@ -21,7 +21,11 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { REALM_STORE_SCHEMA, type WorkflowDefinition } from '@sensigo/realm';
+import {
+  REALM_STORE_SCHEMA,
+  REALM_STORE_SCHEMA_VERSION,
+  type WorkflowDefinition,
+} from '@sensigo/realm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DATABASE_FILE } from './home.js';
 import { openRealmHome, readRegisteredWorkflows } from './index.js';
@@ -273,7 +277,7 @@ describe('#616 PR-2c c10a-3b-i — readRegisteredWorkflows', () => {
     const home = await storeWith([definition('wf-h', { trust_root: '/srv/root' })]);
     const c = await openForeignConnection(home);
     try {
-      c.exec('PRAGMA user_version = 2');
+      c.exec(`PRAGMA user_version = ${REALM_STORE_SCHEMA_VERSION + 1}`);
     } finally {
       c.close();
     }
@@ -291,7 +295,7 @@ describe('#616 PR-2c c10a-3b-i — readRegisteredWorkflows', () => {
       const home = await storeWith([definition('wf-h')]);
       const c = await openForeignConnection(home);
       try {
-        c.exec('PRAGMA user_version = 2');
+        c.exec(`PRAGMA user_version = ${REALM_STORE_SCHEMA_VERSION + 1}`);
       } finally {
         c.close();
       }
