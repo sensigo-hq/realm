@@ -746,6 +746,7 @@ export const purgeCommand = new Command('purge')
       const artifactStores: PerRunArtifactStore[] = [
         traceBufferStore, // SqliteTraceBufferStore
         failedAttemptStore, // SqliteFailedAttemptStore
+        home.runStore.outbound, // SqliteOutboundLedger
       ];
 
       const dryRun = opts.force !== true;
