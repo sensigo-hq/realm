@@ -65,6 +65,9 @@ const N_A: Record<string, string> = {
   'lease-facts-contract.ts':
     'the #729 CW-1b lease-facts TCK — creates throwaway runs purely to check that a store under test ' +
     "returns its claims' lease facts with every run; not a production run-creating path",
+  'outbound-ledger-contract.ts':
+    'the #597 D1a outbound-ledger TCK — creates one throwaway run per case purely to build the runs ' +
+    'it plants in a store under test; not a production run-creating path',
 };
 
 describe('#134 pre-flight capability warning — create-site enumeration (Part B3)', () => {
