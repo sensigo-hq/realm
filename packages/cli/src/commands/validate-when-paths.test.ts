@@ -321,12 +321,12 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
     ).toBe(true);
   }
 
-  it('loader-diagnostics.md: 29 codes, seven of them errors, the three `when` rows and `not_checked`', () => {
+  it('loader-diagnostics.md: 32 codes, ten of them errors, the three `when` rows and `not_checked`', () => {
     // (1) red when a sentence or row is changed or lost; (2) prints it.
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 29 warning codes');
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 32 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 29 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.",
+      "The loader has 32 warning codes. Ten of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; and a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text.",
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
@@ -346,11 +346,11 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
     );
   });
 
-  it('loader-diagnostics.md: the table has one row per code, 29 (`DEFAULT_POLICY` in core)', () => {
+  it('loader-diagnostics.md: the table has one row per code, 32 (`DEFAULT_POLICY` in core)', () => {
     const page = readFileSync(join(ROOT, 'docs/reference/workflow/loader-diagnostics.md'), 'utf8');
     const rows = page.split('\n').filter((l) => /^\| `[A-Z][A-Z_]+` +\| (Error|Warning) /.test(l));
     // (1) red when a row is missing or doubled; (2) prints the count.
-    expect(rows.length).toBe(29);
+    expect(rows.length).toBe(32);
   });
 
   it('conditions.md: the new rule and the changed sentence', () => {
@@ -389,7 +389,7 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
     );
     // (1) red when the item is misnumbered or lost; (2) prints the numbers. #597 D1b's Slack
-    // questions item is 7.
+    // questions item is 7; fix 1 piece 3a-i's template item is 8.
     expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual([
       '**1. ',
       '**2. ',
@@ -398,6 +398,7 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
       '**5. ',
       '**6. ',
       '**7. ',
+      '**8. ',
     ]);
   });
 });

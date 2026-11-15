@@ -40,6 +40,7 @@ import { resolveTemplates } from './template-resolver.js';
 import { checkInputMapPaths, type NotCheckedPath } from './input-map-paths.js';
 import type { WhenLeaf } from './when-paths.js';
 import { checkProvidedNames, type DeclaredNames } from './name-check.js';
+import { checkTemplates } from './template-check.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
 import { checkParamsMap } from './params-map-check.js';
@@ -3886,6 +3887,10 @@ function parseWorkflowString(
       },
     );
     warnings.push(...inputMapPaths.warnings);
+
+    // Fix 1, piece 3a-i: a template's filters and arguments, and a templated field's type, on every
+    // load; their codes' policy is 'error', so validate, register and watch refuse them.
+    warnings.push(...checkTemplates(stepsRaw, (segments) => sourceMap.posOf(segments)));
 
     // Fix 1, piece 4: a handler or adapter a step needs that the project does not provide, warned
     // only when the loader has the project's registry (validate, register and watch pass it).
