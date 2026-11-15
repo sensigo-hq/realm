@@ -7,10 +7,15 @@
 import { createHash } from 'node:crypto';
 import type { PendingGate } from '../types/run-record.js';
 import { canonicalJson } from '../store/params-hash.js';
-import { buildDisclosureSet, disclose, type DisclosureSet } from '../utils/redaction.js';
+import {
+  buildDisclosureSet,
+  disclose,
+  WHOLE_NAMED_MARKER,
+  type DisclosureSet,
+} from '../utils/redaction.js';
 import { withheldCauseOf } from '../utils/disclosure-walk.js';
 import { discloseGate, type ShownGate } from '../utils/disclosure-tables.js';
-import { TEMPLATE_PLACEHOLDER } from './render-template.js';
+import { TEMPLATE_PLACEHOLDER, applyFilter, placeholderParts } from './render-template.js';
 
 /**
  * The view budget, in rendered units (UTF-16 code units, the length JavaScript measures — never
@@ -39,29 +44,80 @@ export function stripSpanMarks(value: unknown): unknown {
   return json === undefined ? value : JSON.parse(json.replace(SPAN_MARKS, ''));
 }
 
+/** A value at a dot path of a step's output; `undefined` when the path finds nothing. */
+function displayValueAt(path: string, vars: Record<string, unknown>): unknown {
+  let val: unknown = vars;
+  for (const part of path.split('.')) {
+    if (typeof val !== 'object' || val === null) return undefined;
+    val = (val as Record<string, unknown>)[part];
+  }
+  return val;
+}
+
 /**
- * Renders a step's `display` template against its output: `{{ field }}` or `{{ nested.field }}` —
- * plain dot-path interpolation, no filters. A missing path renders as empty string; a value that is
- * not a string, as its JSON.
+ * Fix 1, piece 3b: a placeholder's filter chain over a value `display` shows — each filter by the
+ * approval question's `applyFilter`, at `'stored'` time. A filter whose input is wholly a named
+ * marker or a shape is not applied: the chain stops and that value is shown as it is. A filter
+ * that fails or throws fails the chain.
+ */
+function displayChain(
+  value: unknown,
+  filters: ReadonlyArray<{ name: string; args: string[] }>,
+): { ok: true; value: unknown } | { ok: false } {
+  let current = value;
+  for (const { name, args } of filters) {
+    if (typeof current === 'string' && WHOLE_NAMED_MARKER.test(current)) break;
+    let result: ReturnType<typeof applyFilter>;
+    try {
+      result = applyFilter(current, name, args, 'stored');
+    } catch {
+      return { ok: false };
+    }
+    if (!result.ok) return { ok: false };
+    current = result.value;
+  }
+  return { ok: true, value: current };
+}
+
+/**
+ * Renders a step's `display` template against its output: `{{ field }}`, `{{ nested.field }}`, and
+ * either one followed by filters (`{{ key_changes | bullets }}`). The output is disclosed for its
+ * audience by the caller, so every value here is masked before any filter runs. Unfiltered, a
+ * missing path renders as empty string and a value that is not a string as its JSON. Filtered: a
+ * missing path renders as what the chain gives (only `default` gives anything) or as empty string;
+ * a chain that fails leaves the placeholder as written; a chain's `undefined` or `null` is empty
+ * string. Never throws.
  */
 export function renderDisplay(template: string, vars: Record<string, unknown>): string {
-  // One quantifier between the braces, and no brace inside (the trim is the code's; renderTemplate's
-  // own placeholder rule): `\s*([^}]+?)\s*` let three quantifiers match the same spaces, and a
-  // `[^}]+` that admits `{` rescans from every `{{` — `{{{{` + spaces took cubic time, `{{{{|`
-  // repeated quadratic (CodeQL js/polynomial-redos). A display is author text, and an agent can
-  // author a workflow. A `{{ dot.path }}` holds no brace, so it renders as before.
-  return template.replace(/\{\{([^{}]+)\}\}/g, (_, expr: string) => {
-    const parts = expr.trim().split('.');
-    let val: unknown = vars;
-    for (const part of parts) {
-      if (typeof val !== 'object' || val === null) {
-        val = undefined;
-        break;
-      }
-      val = (val as Record<string, unknown>)[part];
+  // renderTemplate's own placeholder rule: one quantifier between the braces, and no brace inside —
+  // `\s*([^}]+?)\s*` let three quantifiers match the same spaces, and a `[^}]+` that admits `{`
+  // rescans from every `{{` (CodeQL js/polynomial-redos). A display is author text, and an agent
+  // can author a workflow.
+  return template.replace(TEMPLATE_PLACEHOLDER, (_, expr: string) => {
+    const { path, filters } = placeholderParts(expr);
+    const found = displayValueAt(path, vars);
+    if (filters.length === 0) {
+      return found === undefined ? '' : typeof found === 'string' ? found : JSON.stringify(found);
     }
-    return val === undefined ? '' : typeof val === 'string' ? val : JSON.stringify(val);
+    const chained = displayChain(found, filters);
+    if (!chained.ok) return found === undefined ? '' : `{{ ${expr.trim()} }}`;
+    const shown = chained.value;
+    return shown === undefined || shown === null
+      ? ''
+      : typeof shown === 'string'
+        ? shown
+        : JSON.stringify(shown);
   });
+}
+
+/**
+ * Fix 1, piece 3b: the paths a `display` template renders, one per placeholder, each split on `.` —
+ * found by `renderDisplay`'s own rule, so a filtered placeholder's path is its path.
+ */
+export function displayPaths(template: string): string[][] {
+  return [...template.matchAll(TEMPLATE_PLACEHOLDER)].map((m) =>
+    placeholderParts(m[1]!).path.split('.'),
+  );
 }
 
 /** A gate's question as one audience is shown it (PD-2). */

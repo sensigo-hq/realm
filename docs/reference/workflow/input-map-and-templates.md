@@ -116,7 +116,7 @@ A template expression is a path between double braces, optionally followed by fi
 | -------------- | ---------------------------------------------------------------------------- | ------------------------------- | ------- | -------------------------------------------- | ---------------------------------- |
 | `prompt`       | The step becomes the next action.                                            | All four roots                  | Yes     | The expression is left as written.           | The expression is left as written. |
 | `gate.message` | The gate opens.                                                              | All four roots                  | Yes     | The step stops: `GATE_MESSAGE_UNRESOLVABLE`. | The step stops: `FILTER_UNKNOWN`.  |
-| `display`      | `realm agent` prints the step's result, and a surface shows the step's gate. | Fields of the step's own output | No      | Nothing is printed in its place.             | Nothing is printed in its place.   |
+| `display`      | `realm agent` prints the step's result, and a surface shows the step's gate. | Fields of the step's own output | Yes     | Nothing is printed in its place.             | The expression is left as written. |
 
 `instructions` and `description` are not read for expressions. They are passed on as written.
 
@@ -153,7 +153,7 @@ FILTER_UNKNOWN: gate.message uses unknown filter 'shout'
 
 In both cases the run stays open, with the step not done. `realm workflow validate` does not check the paths or filter names in a template; these errors appear when the run reaches the step.
 
-In `display`, a path is a field of the step's own output, without a root: `{{ note }}`. With this template:
+In `display`, a path is a field of the step's own output, without a root: `{{ note }}`. Filters work as in other templates: `{{ note | upper }}`, and `default` fills a missing value. A filter that cannot apply to a value that is there leaves the placeholder as written. In `display`, a list or a map is written as JSON on one line. This was added after version 0.49.0. With this template:
 
 ```yaml
 display: 'Note: {{ note }} / upper: {{ note | upper }} / other step: {{ context.resources.order.id }}'
@@ -162,7 +162,7 @@ display: 'Note: {{ note }} / upper: {{ note | upper }} / other step: {{ context.
 `realm agent` printed:
 
 ```text
-Note: Pack with care. / upper:  / other step:
+Note: Pack with care. / upper: PACK WITH CARE. / other step:
 ```
 
 ### How a value is written into text
@@ -226,9 +226,9 @@ In the examples, `s.` stands for `context.resources.scan.`, and `⏎` marks a li
 | `time`     | `14:05`               |
 | `datetime` | `Jan 28, 2026, 14:05` |
 
-`from_now` says how long before or after the reply's time (its `basis.as_of`) the date is, in a step's `prompt` and `instructions`, which are rendered for each reply. In a gate's `message`, which Realm stores on the run and shows later, it writes the date itself, such as `2026-01-28T14:05:00.000Z` (added after version 0.48.0, which read this computer's clock for both). The result shown for `from_now` is for a reply on 1 October 2026.
+`from_now` says how long before or after the reply's time (its `basis.as_of`) the date is, in a step's `prompt` and `instructions`, which are rendered for each reply. In a gate's `message`, which Realm stores on the run and shows later, it writes the date itself, such as `2026-01-28T14:05:00.000Z` (added after version 0.48.0, which read this computer's clock for both). In `display` it writes the date itself too (added after version 0.49.0). The result shown for `from_now` is for a reply on 1 October 2026.
 
-`bullets`, `first`, `last` and `and_join` on an empty list leave the expression as written.
+`bullets`, `first`, `last` and `and_join` on an empty list leave the expression as written; in `display`, they show nothing.
 
 ## See also
 
