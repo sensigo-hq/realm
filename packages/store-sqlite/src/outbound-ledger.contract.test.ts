@@ -216,7 +216,7 @@ const OUTBOUND_ADAPTER: OutboundLedgerContractAdapter = {
   makeStore: async ({ clock }) => {
     const dir = mkdtempSync(join(tmpdir(), 'realm-597-d1c2-ol-'));
     const home = join(dir, '.realm');
-    const handle = await openHome({ home, clock });
+    const handle = await openHome({ home, clock }, {});
     return {
       store: handle.runStore,
       seedRun: (record) => plantRun(home, record),
