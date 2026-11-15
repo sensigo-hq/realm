@@ -916,11 +916,17 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
     });
   });
 
-  it("leaves alone a value a template filter changed in the agent step's prompt, but not its lines or parts", async () => {
-    claim(
-      TOOLS_PAGE,
-      "- a value that a template filter changed in the agent step's prompt (for example `| truncate` or `| upper`), except that a whole line of a multi-line value, and a part of a declared secret, are still hidden there;",
-    );
+  // The filter-mask fix (PR 1): the value is masked BEFORE its filters run, so the page no longer
+  // lists a filtered value among those left alone (the bullet is gone), and the model is sent the
+  // marker, not the upper-cased fake.
+  it("hides a value a template filter would change in the agent step's prompt, its lines and parts too; the page no longer lists it", async () => {
+    const BULLET =
+      "- a value that a template filter changed in the agent step's prompt (for example `| truncate` or `| upper`), except that a whole line of a multi-line value, and a part of a declared secret, are still hidden there;";
+    // (a) red when the bullet is back on the page; (b) prints the page and the bullet.
+    expect(
+      flat(readFileSync(join(ROOT, TOOLS_PAGE), 'utf8')).includes(flat(BULLET)),
+      `${TOOLS_PAGE} still says: ${BULLET}`,
+    ).toBe(false);
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const SECRET = 'docs-filter-secret';
     const upper = await promptSent('Use {{ run.params.key | upper }}.', { key: SECRET }, [SECRET]);
@@ -936,8 +942,8 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       { key: AMP },
       [AMP],
     );
-    // (a) red when values are hidden before the template renders (then the filter sees only the
-    //     marker: `upperSent`); when LINES is removed (`firstLineHidden`); when G2 is removed
+    // (a) red when the filters run before the mask again (`upperSent`: the upper-cased fake reaches
+    //     the model); when LINES is removed (`firstLineHidden`); when G2 is removed
     //     (`firstPartHidden`). (b) prints the facts.
     expect({
       upperSent: upper.includes(SECRET.toUpperCase()),
@@ -946,7 +952,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       truncatedPartCut: !truncatedPart.includes(AMP),
       firstPartHidden: !truncatedPart.includes('fkPartOne1&'),
     }).toEqual({
-      upperSent: true,
+      upperSent: false,
       truncatedLinesCut: true,
       firstLineHidden: true,
       truncatedPartCut: true,

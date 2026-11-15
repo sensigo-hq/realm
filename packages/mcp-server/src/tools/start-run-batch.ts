@@ -14,6 +14,7 @@ import {
   type RunPhase,
   type RunStore,
   type DisclosureClass,
+  type DisclosureSet,
   persistsField,
   startIdentityEntry,
 } from '@sensigo/realm';
@@ -163,6 +164,9 @@ export async function handleStartRunBatch(
   }
 
   const definition = await workflowStore.get(args.workflow_id);
+  // The filter-mask fix (B2): the door's set for each started entry's ways (a `run_step` way's prompt
+  // masks each value before its filters), for the workflow this call read — no store read.
+  const waysDisclosure: DisclosureSet = await disclosureOfTool(stores).setFor(definition);
 
   // Resolved BEFORE any runStore.create — a throwing registryProvider (broken project extensions) must
   // fail the batch with NO runs created (fail-fast gate). Provider wins over the construction-time
@@ -298,7 +302,7 @@ export async function handleStartRunBatch(
     // #715 (b) (02 §B.2, D6-17): that one reading is the create's — the snapshot the item describes.
     const handedBack = made;
     const rendered = renderWaysOf(
-      composeToolWays(runStore, definition, handedBack, registry),
+      composeToolWays(runStore, definition, handedBack, registry, waysDisclosure),
       mcpHostOf(stores),
     );
     started.push({

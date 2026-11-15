@@ -80,6 +80,7 @@ import {
   attachRecordedReference,
   type RecordedPredecessor,
   mintRequestIds,
+  agentDisclosureSet,
   type LlmClock,
 } from './providers/agent-utils.js';
 import { isToolCapable } from './providers/llm-provider.js';
@@ -1384,6 +1385,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             const stepWays = composeWaysAt(currentRun, currentAt!, {
               definition,
               lease_facts: currentSnap.lease_facts,
+              // The filter-mask fix (B2): the prompt bound for the model masks each value before
+              // its filters, with the agent set the provider edge masks with (tier `all`).
+              disclosure: agentDisclosureSet(),
             }).ways.filter((w) => w.verb === 'run_step');
             const nextAction = (
               stepWays.find((w) => w.verb === 'run_step' && w.step === stepName) ?? stepWays[0]

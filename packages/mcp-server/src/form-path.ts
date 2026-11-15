@@ -88,6 +88,17 @@ export interface FormDeps {
   /** #729 PR-4: the door's set for this call, built before its engine call — the form's question is
    *  composed over the gate it discloses. */
   disclosure?: DisclosureSet;
+  /** The filter-mask fix (B2): the set the ways are composed with — the answer's reply and this
+   *  reply (a `run_step` prompt masks each value before its filters) — when it is not `disclosure`
+   *  (`present_question` passes it alone: its form's question is composed as before). */
+  waysDisclosure?: DisclosureSet;
+}
+
+/** The filter-mask fix (B2): the set a form path's ways are composed with. */
+function waysSetOf(
+  deps: Pick<FormDeps, 'disclosure' | 'waysDisclosure'>,
+): DisclosureSet | undefined {
+  return deps.waysDisclosure ?? deps.disclosure;
 }
 
 /** The one required field of the form (W-f1). */
@@ -325,6 +336,7 @@ export async function sendQuestionForm(
     // let a stale form answer a NEW question. The engine refuses it when that gate is no longer open.
     // No claim token: the binding is the request state.
     const evidence = shownViewEvidence(gate, MCP_FORM_RENDERER);
+    const waysSet = waysSetOf(deps);
     const reply = await submitHumanResponse(deps.runStore, deps.definition, {
       runId,
       gateId: request.gate_id,
@@ -334,6 +346,8 @@ export async function sendQuestionForm(
       principal: deps.principal,
       ...(deps.registry !== undefined ? { registry: deps.registry } : {}),
       ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
+      // The filter-mask fix (Amendment 1): the door's set, for the reply's ways.
+      ...(waysSet !== undefined ? { disclosure: waysSet } : {}),
     });
     // Correction 1 (B5): answered only when the reply RECORDED it; else the form came back.
     answered = formAnswerRecorded(reply);
@@ -564,6 +578,7 @@ export async function replyAfterForm(
     (result.kind === 'answered' ? judgedSnapshotOf(result.reply) : undefined) ??
     (await loadSnapshot(deps.runStore, before.run_id));
   const record = snap.record;
+  const waysSet = waysSetOf(deps);
   const ways = composeWaysOn(snap, {
     definition: { ok: deps.definition },
     enactor:
@@ -572,6 +587,7 @@ export async function replyAfterForm(
         : { kind: 'observer' },
     // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
     store: waysStoreOf(deps.runStore),
+    ...(waysSet !== undefined ? { disclosure: waysSet } : {}),
   });
   const base: EngineReply = {
     command: before.command,

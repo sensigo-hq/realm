@@ -254,6 +254,8 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('object', 'options', 'shown'),
     typed('principal', 'options', 'principal'),
     typed('boolean', 'options', 'clientPromptRequested'),
+    // The filter-mask fix (Amendment 1): the door's set, for the reply's ways.
+    typed('object', 'options', 'disclosure'),
   ],
   abandonRun: [need('string', 'runId'), typed('string', 'reason')],
   drainFinalizers: [...DEFINITION, typed('registry', 'registry'), need('string', 'runId')],
@@ -377,6 +379,7 @@ const SUBMIT_HUMAN_RESPONSE_MEMBERS = [
   'shown',
   'principal',
   'clientPromptRequested',
+  'disclosure',
 ] as const satisfies readonly (keyof SubmitGateOptions)[];
 const GET_WORKFLOW_FOR_RUN_MEMBERS = [
   'retryVerb',
