@@ -88,6 +88,13 @@ export type {
   LeasedClaimContractCase,
   LeasedClaimTestStore,
 } from './store/leased-claim-contract.js';
+// issue #597, D1a: the laws of a store's outbound ledger (`RunStore.outbound`).
+export { outboundLedgerContract, OUTBOUND_LEDGER_LAWS } from './store/outbound-ledger-contract.js';
+export type {
+  OutboundLedgerLaw,
+  OutboundLedgerContractAdapter,
+  OutboundLedgerContractCase,
+} from './store/outbound-ledger-contract.js';
 
 // Clocks and test locations (issue #715 (a); D5 §6, D6-1, D6-20, D6-54)
 export { settableClock, steppingClock, countingClock } from './clock/settable-clock.js';

@@ -8,6 +8,7 @@ import type { Snapshot } from '../engine/snapshot.js';
 import type { Clock } from '../utils/clock.js';
 import type { LeaseHold, LeasePort } from './lease-port.js';
 import type { LeaseFacts } from './lease-facts.js';
+import type { OutboundLedger } from './outbound-ledger.js';
 
 /**
  * The load-bearing `RunRecord` fields the engine treats specially enough that a store must
@@ -183,6 +184,16 @@ export interface RunStore {
    * will call it.
    */
   readonly leases?: LeasePort | null;
+
+  /**
+   * The store's outbound ledger (#597, D1a). OPTIONAL: absent or `null`, the store keeps no ledger,
+   * as every store did before this property; nothing in core treats that as an error. A sender leases
+   * a reminder or the escalation of a run's open question, then marks it sent or failed, so two
+   * senders never both hold it and a restarted one finds what was done. The ledger is beside the run
+   * record, never in it. `InMemoryStore` keeps one unless it is built with `outbound: null`. Nothing in
+   * Realm uses it yet.
+   */
+  readonly outbound?: OutboundLedger | null;
 
   /**
    * Which {@link LoadBearingRunRecordField}s this store guarantees to round-trip through
