@@ -26,6 +26,7 @@ import {
   definitionAbsenceOf,
   dueExpiry,
   loadSnapshot,
+  leaseFactOf,
   agentActionOf,
   offeredResumeWay,
   pendingCleanupWay,
@@ -1159,9 +1160,12 @@ export async function handleGetRunState(
     run.terminal_state
       ? []
       : run.in_progress_steps.map((step) => {
+          // #729 CW-1b part 2: the claim's lease fact, from the read's snapshot (no reply field
+          // carries it: the reply is unchanged).
           const described = describeClaimHolder(
             run.claims?.[step],
             runStore.persistsClaims === true,
+            leaseFactOf(snap, run.claims?.[step]),
           );
           const since = described.since !== undefined ? { since: described.since } : {};
           return 'holder' in described

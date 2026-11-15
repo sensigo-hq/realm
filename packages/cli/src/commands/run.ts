@@ -18,6 +18,7 @@ import {
   describePending,
   writtenSnapshot,
   judgedSnapshotOf,
+  leaseFactOf,
   stepsThatCannotRun,
   cannotGoOnHere,
   composeWaysAt,
@@ -54,6 +55,7 @@ import {
   outcomeNotRecordedLine,
   cutWayLine,
   viewSetFor,
+  NO_SNAPSHOT,
 } from '../lib/holder-render.js';
 import { IN_FLIGHT_WATCH_MS } from '../agent/run-agent.js';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
@@ -65,6 +67,7 @@ import type {
   RunRecord,
   RunStore,
   Attributed,
+  Snapshot,
 } from '@sensigo/realm';
 import type { EngineReply, StepDispatcher, PendingView, WayOf } from '@sensigo/realm';
 import {
@@ -186,6 +189,8 @@ export function renderDetachMap(
      */
     driveFlags?: string;
   },
+  // #729 CW-1b part 2: the snapshot `record` came from, so the ways read its claims' lease facts.
+  snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
 ): string {
   // DERIVED, never the persisted field: a record can carry a stale `run_phase` that disagrees
   // with what its own seal says (issue #432's class), and a map that names the wrong phase sends
@@ -259,7 +264,10 @@ export function renderDetachMap(
   } else if (cannotGoOnHere(record, pending)) {
     // decision C202: the run cannot go on from here — core's lines: each step that cannot run, then
     // the way out (which ends with `realm run abandon`).
-    const composed = composeWaysAt(record, recordAt, { definition: ways.workflow });
+    const composed = composeWaysAt(record, recordAt, {
+      definition: ways.workflow,
+      lease_facts: snapshot.lease_facts,
+    });
     lines.push(
       ...cannotGoOnLines(composed, record.id, phase, writerCtx()).map((line) => `  ${line}`),
     );
@@ -362,13 +370,13 @@ async function recordChange(
   runId: string,
   version: number,
   withinMs: number,
-): Promise<RunRecord | undefined> {
+): Promise<Snapshot | undefined> {
   // issue #715 (a) (D6-23): the watch window is a duration — on the monotonic clock.
   const end = performance.now() + withinMs;
   while (performance.now() < end) {
     await new Promise((resolve) => setTimeout(resolve, questionWatchMs));
-    const fresh = (await store.get(runId).catch(() => undefined))?.record;
-    if (fresh !== undefined && fresh.version !== version) return fresh;
+    const fresh = await store.get(runId).catch(() => undefined);
+    if (fresh !== undefined && fresh.record.version !== version) return fresh;
   }
   return undefined;
 }
@@ -451,10 +459,12 @@ function elsewherePhrase(
   storeKeepsClaims: boolean,
   ownClaimToken?: string,
   ctx: RenderCtx = PLAIN,
+  // #729 CW-1b part 2: the snapshot `run` came from, its lease facts read for the claim.
+  snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
 ): string | undefined {
   const claim = run.claims?.[step];
   if (claim !== undefined && (ownClaimToken === undefined || claim.token !== ownClaimToken)) {
-    return `was ${takenPhrase(describeClaimHolder(claim, storeKeepsClaims), ctx)}`;
+    return `was ${takenPhrase(describeClaimHolder(claim, storeKeepsClaims, leaseFactOf(snapshot, claim)), ctx)}`;
   }
   const ran = ranElsewherePhrase(run, step, ctx);
   return ran !== undefined ? `was ${ran}` : undefined;
@@ -476,8 +486,10 @@ export function stepClosedLine(
   storeKeepsClaims: boolean,
   ownClaimToken?: string,
   ctx: RenderCtx = PLAIN,
+  // #729 CW-1b part 2: the snapshot `run` came from.
+  snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
 ): string {
-  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims, ownClaimToken, ctx);
+  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims, ownClaimToken, ctx, snapshot);
   if (elsewhere !== undefined) {
     return `This prompt is closed: step '${step}' ${elsewhere}; not run here.`;
   }
@@ -500,8 +512,10 @@ export function answerNotRunLine(
   step: string,
   storeKeepsClaims: boolean,
   ctx: RenderCtx = PLAIN,
+  // #729 CW-1b part 2: the snapshot `run` came from.
+  snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
 ): string | undefined {
-  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims, undefined, ctx);
+  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims, undefined, ctx, snapshot);
   return elsewhere === undefined
     ? undefined
     : `Not run here: step '${step}' ${elsewhere}; the answer typed here was not recorded.`;
@@ -522,11 +536,18 @@ async function holdStepClaim(
   definition: WorkflowDefinition,
   driver: Attributed | undefined,
 ): Promise<
-  { run: RunRecord; token: string | undefined; release: () => Promise<void> } | undefined
+  | {
+      run: RunRecord;
+      snapshot: Snapshot;
+      token: string | undefined;
+      release: () => Promise<void>;
+    }
+  | undefined
 > {
-  let claimed: RunRecord;
+  // #729 CW-1b part 2: the claim's snapshot whole, with the lease facts the store attached.
+  let snapshot: Snapshot;
   try {
-    claimed = (await store.claimStep(runId, step, definition, driver)).record;
+    snapshot = await store.claimStep(runId, step, definition, driver);
   } catch (err) {
     if (
       err instanceof WorkflowError &&
@@ -536,6 +557,7 @@ async function holdStepClaim(
     }
     throw err;
   }
+  const claimed = snapshot.record;
   const token = claimed.claims?.[step]?.token;
   let released = false;
   const onSignal = (signal: NodeJS.Signals): void => {
@@ -557,7 +579,7 @@ async function holdStepClaim(
       )
       .catch(() => undefined);
   }
-  return { run: claimed, token, release };
+  return { run: claimed, snapshot, token, release };
 }
 
 /**
@@ -847,7 +869,14 @@ export const runCommand = new Command('run')
         });
 
       // 5. Execution loop
-      let { record: run, at: runAt } = await store.get(runId);
+      // #729 CW-1b part 2: the run the loop holds, as one snapshot (its lease facts too). `run` and
+      // `runAt` are set only through `holdSnapshot`, which refreshes both from it.
+      let runSnap = await store.get(runId);
+      let { record: run, at: runAt } = runSnap;
+      const holdSnapshot = (next: Snapshot): void => {
+        runSnap = next;
+        ({ record: run, at: runAt } = next);
+      };
 
       // issue #447: which step the operator was answering for, assigned immediately before each
       // question. The block-scoped names below are not visible from the catch, and the catch is
@@ -914,7 +943,7 @@ export const runCommand = new Command('run')
             } catch (err) {
               // Not this close: the operator's cancel (#447), handled below as before.
               if (!settledElsewhere.signal.aborted) throw err;
-              ({ record: run, at: runAt } = await store.get(runId));
+              holdSnapshot(await store.get(runId));
               // readline ends the prompt's line when the question is closed.
               console.log(`  ${questionClosedLine(run, g.step_name, writerCtx())}`);
               continue;
@@ -958,10 +987,10 @@ export const runCommand = new Command('run')
               console.error(
                 `  ✗ ${respondResult.errors.join(', ') || respondResult.context_hint}\n`,
               );
-              ({ record: run, at: runAt } = await store.get(runId));
+              holdSnapshot(await store.get(runId));
               continue;
             }
-            ({ record: run, at: runAt } = judged);
+            holdSnapshot(judged);
             if (respondResult.status === 'ok') {
               // issue #625: what the answer's write settled is said BEFORE the state line — the
               // guard that ended the run (its sentence, `Reason:`, each finalizer's outcome) or
@@ -1030,7 +1059,7 @@ export const runCommand = new Command('run')
           // #688: neither is the input refusal of a step that consumes its `input_map` — its schema
           // checks what the map builds, which no typed answer changes.
           const cannotPrompt = new Set(
-            stepsThatCannotRun(describePending(definition, writtenSnapshot(run, runAt), registry))
+            stepsThatCannotRun(describePending(definition, runSnap, registry))
               .filter((e) => {
                 if (e.refused_by !== 'input_schema') return true;
                 const step = definition.steps[e.step];
@@ -1058,34 +1087,36 @@ export const runCommand = new Command('run')
               if (waitingSaid.has(key)) continue;
               waitingSaid.add(key);
               console.log(
-                `  ${waitingLine(step, describeClaimHolder(claim, store.persistsClaims === true), inFlightWatchMs, writerCtx())}`,
+                `  ${waitingLine(step, describeClaimHolder(claim, store.persistsClaims === true, leaseFactOf(runSnap, claim)), inFlightWatchMs, writerCtx())}`,
               );
             }
             const fresh = await recordChange(store, runId, run.version, inFlightWatchMs);
             if (fresh !== undefined) {
-              run = fresh;
+              // The changed record, judged at the loop's reading as before, with its own facts.
+              holdSnapshot(writtenSnapshot(fresh.record, runAt, fresh.lease_facts));
               continue;
             }
             // decision C188: the watch ended with the record unchanged — C173's own hand-back, never
             // the stall branch below (the run is in flight, not stalled). A last read: a record that
             // changed after the watch's last read goes on, as a change inside the watch does.
-            const { record: record, at: recordAt } = await store.get(runId);
+            const read = await store.get(runId);
+            const { record } = read;
             if (record.version !== run.version) {
-              run = record;
+              // As above: the loop's reading, the record's own facts.
+              holdSnapshot(writtenSnapshot(record, runAt, read.lease_facts));
               continue;
             }
-            const states = new Map(
-              classifyInProgressClaims(writtenSnapshot(record, recordAt)).map((c) => [
-                c.step,
-                c.state,
-              ]),
-            );
+            const states = new Map(classifyInProgressClaims(read).map((c) => [c.step, c.state]));
             for (const step of inFlight) {
               console.error(
                 inFlightLine(
                   runId,
                   step,
-                  describeClaimHolder(record.claims?.[step], store.persistsClaims === true),
+                  describeClaimHolder(
+                    record.claims?.[step],
+                    store.persistsClaims === true,
+                    leaseFactOf(read, record.claims?.[step]),
+                  ),
                   states.get(step) === 'claim_stale',
                   inFlightWatchMs,
                   writerCtx(),
@@ -1101,12 +1132,14 @@ export const runCommand = new Command('run')
           if (eligibleSteps.length === 0 && cannotPrompt.size > 0) {
             // The steps that cannot run, and the way out — the CLI renderer's lines over the ways
             // core composes (decision C64; #729 PR-0, A-10).
-            const { record: record, at: recordAt } = await store.get(runId);
+            const read = await store.get(runId);
+            const { record, at: recordAt } = read;
             const cannotGoOn = cannotGoOnLines(
               composeWaysAt(record, recordAt, {
                 definition,
                 registry,
                 persistsClaims: store.persistsClaims === true,
+                lease_facts: read.lease_facts,
               }),
               record.id,
               deriveRunPhase(record),
@@ -1127,12 +1160,9 @@ export const runCommand = new Command('run')
             // since the last read reached this branch in the same iteration), but the fresh read
             // is the doctrine this file already keeps for every detach point (#447) — kept for
             // consistency, not because a staleness gap is constructible in this spot.
-            const { record: record, at: recordAt } = await store.get(runId);
-            const pending = describePending(
-              definition,
-              writtenSnapshot(record, recordAt),
-              registry,
-            );
+            const read = await store.get(runId);
+            const { record, at: recordAt } = read;
+            const pending = describePending(definition, read, registry);
             // F16 (review G1-R1): with engine work owed — a guard, for one: this command runs only the
             // steps it prompts — the run is not stalled. The headline says what the engine owes, which
             // this command does not run; the map below names the call that runs it.
@@ -1149,6 +1179,7 @@ export const runCommand = new Command('run')
                 promptStep,
                 { pending, workflow: definition },
                 { headline: owed ? 'Engine work owed' : 'Workflow stalled', driveFlags },
+                read,
               ),
             );
             // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
@@ -1167,12 +1198,12 @@ export const runCommand = new Command('run')
             if (hold === undefined) {
               // Another process took or ran the step first: said as the house says it. Anything else
               // that made the step not ready (the run ended, a question opened) the next pass shows.
-              ({ record: run, at: runAt } = await store.get(runId));
+              holdSnapshot(await store.get(runId));
               const keeps = store.persistsClaims === true;
               const ran = ranElsewherePhrase(run, stepName, writerCtx());
               if (run.in_progress_steps.includes(stepName)) {
                 console.log(
-                  `${takenLine(stepName, describeClaimHolder(run.claims?.[stepName], keeps), writerCtx())}\n`,
+                  `${takenLine(stepName, describeClaimHolder(run.claims?.[stepName], keeps, leaseFactOf(runSnap, run.claims?.[stepName])), writerCtx())}\n`,
                 );
               } else if (ran !== undefined) {
                 console.log(`• Step '${stepName}' was ${ran}; not run here.\n`);
@@ -1180,7 +1211,8 @@ export const runCommand = new Command('run')
               continue;
             }
             heldClaim = hold;
-            run = hold.run;
+            // The claim's record, judged at the loop's reading as before, with its own facts.
+            holdSnapshot(writtenSnapshot(hold.run, runAt, hold.snapshot.lease_facts));
           }
 
           console.log(`→ [${stepDef.execution}] ${stepName}: ${stepDef.description}`);
@@ -1232,9 +1264,9 @@ export const runCommand = new Command('run')
           } catch (err) {
             if (!stepGone.signal.aborted) throw err;
             await releaseHeldClaim();
-            ({ record: run, at: runAt } = await store.get(runId));
+            holdSnapshot(await store.get(runId));
             console.log(
-              `  ${stepClosedLine(run, stepName, store.persistsClaims === true, ownToken, writerCtx())}\n`,
+              `  ${stepClosedLine(run, stepName, store.persistsClaims === true, ownToken, writerCtx(), runSnap)}\n`,
             );
             continue;
           } finally {
@@ -1274,7 +1306,7 @@ export const runCommand = new Command('run')
           const judged = judgedSnapshotOf(result);
           if (judged === undefined) {
             console.error(`${renderStepFailureLine(result, stepName)}\n`);
-            ({ record: run, at: runAt } = await store.get(runId));
+            holdSnapshot(await store.get(runId));
             continue;
           }
           // F7: a reply that is neither `ok` nor a question, read by core's classifier against the
@@ -1289,10 +1321,14 @@ export const runCommand = new Command('run')
           // record names no one to say it of.
           const notRun =
             isRaceStop(stop) && stop.kind === 'held_elsewhere' && !stop.ran_here
-              ? (answerNotRunLine(replyRecord!, stepName, keeps, writerCtx()) ??
+              ? (answerNotRunLine(replyRecord!, stepName, keeps, writerCtx(), judged) ??
                 takenLine(
                   stepName,
-                  describeClaimHolder(replyRecord!.claims?.[stepName], keeps),
+                  describeClaimHolder(
+                    replyRecord!.claims?.[stepName],
+                    keeps,
+                    leaseFactOf(judged, replyRecord!.claims?.[stepName]),
+                  ),
                   writerCtx(),
                 ))
               : undefined;
@@ -1305,13 +1341,13 @@ export const runCommand = new Command('run')
           ) {
             // decision C165: the run ended before this answer reached the engine (another process
             // finished it) — the call ran nothing, so no `✓`: the engine's own words say why.
-            ({ record: run, at: runAt } = judged);
+            holdSnapshot(judged);
             console.log(`  Not run here: ${result.context_hint}\n`);
           } else if (notRun !== undefined) {
             // decision C179: another process took or ran the step before the engine's own claim for
             // the answer (for an agent step, after this prompt let its claim go) — said; never `✗`
             // with no reason, never `✓`.
-            ({ record: run, at: runAt } = judged);
+            holdSnapshot(judged);
             console.log(`  ${notRun}\n`);
           } else if (isRaceStop(stop)) {
             // F7: the step's own settle of the answer was refused (`ran_here`: another process settled
@@ -1319,14 +1355,14 @@ export const runCommand = new Command('run')
             // prints, never `✗`. A claim refused because the run ended, a question opened or the step
             // stopped being eligible ran nothing here: no line of its own — the next pass says what
             // the record shows.
-            ({ record: run, at: runAt } = judged);
+            holdSnapshot(judged);
             if (stop.ran_here) {
               console.log(
-                `  ${outcomeNotRecordedLine(stop.kind as NotRecordedKind, run, stepName, keeps, writerCtx())}\n`,
+                `  ${outcomeNotRecordedLine(stop.kind as NotRecordedKind, run, stepName, keeps, writerCtx(), runSnap)}\n`,
               );
             }
           } else if (result.status === 'ok') {
-            ({ record: run, at: runAt } = judged);
+            holdSnapshot(judged);
             const ev = result.evidence[0];
             // #729 PR-3 correction 4 (I-9b): the hash of an output the law hid anything inside is
             // shown as its type and size.
@@ -1340,7 +1376,7 @@ export const runCommand = new Command('run')
             );
           } else if (result.status === 'confirm_required' && result.gate !== undefined) {
             // Gate opened as part of this step — it will be handled at loop top.
-            ({ record: run, at: runAt } = judged);
+            holdSnapshot(judged);
             console.log(`  Gate opened for '${result.gate.step_name}'.\n`);
           } else if (
             stop?.kind === 'capability_missing' &&
@@ -1352,7 +1388,7 @@ export const runCommand = new Command('run')
             // as completed; the next pass names the blocked step (it is never offered at the prompt).
             // Keyed on `stopped_step` (decision C73): a value other than this step means the engine
             // ran that step after this one, so this one settled — no record is read to guess it.
-            ({ record: run, at: runAt } = judged);
+            holdSnapshot(judged);
             const ev = [...run.evidence].reverse().find((e) => e.step_id === stepName);
             // I-9b, as above.
             const hash =
@@ -1371,7 +1407,7 @@ export const runCommand = new Command('run')
             // see that and exit to the tail — a bare continue would re-ask a dead run forever
             // (verified: the mock chain exhausts and the answer never lands anywhere real).
             // #715 (b): that read is the engine's own, after its failure — the judged snapshot.
-            ({ record: run, at: runAt } = judged);
+            holdSnapshot(judged);
           }
         }
         // Loop-head invariant (issue #468): exactly two exits from here — the while condition
@@ -1418,10 +1454,9 @@ export const runCommand = new Command('run')
           // A FRESH read, not the loop's `run`: while this process sat blocked on the prompt,
           // another terminal's `realm run respond` or an expiry enactment may have moved it —
           // the #291 race. The map is only as good as the state it forks on.
-          let record: RunRecord;
-          let recordAt: Date;
+          let read: Snapshot;
           try {
-            ({ record, at: recordAt } = await store.get(runId));
+            read = await store.get(runId);
           } catch (getErr) {
             // The same concurrent-writer reality that makes the fresh read necessary can also
             // make it FAIL — a record purged from another terminal mid-prompt. Without this arm
@@ -1437,16 +1472,18 @@ export const runCommand = new Command('run')
             rl.close();
             exitProcess(1);
           }
+          const { record, at: recordAt } = read;
           console.error(
             renderDetachMap(
               record,
               recordAt,
               promptStep,
               {
-                pending: describePending(definition, writtenSnapshot(record, recordAt), registry),
+                pending: describePending(definition, read, registry),
                 workflow: definition,
               },
               { driveFlags },
+              read,
             ),
           );
           // process.exit SKIPS the finally, so close explicitly. (rl.close is idempotent, so

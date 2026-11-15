@@ -34,6 +34,8 @@ import { dbBackupCommand } from './commands/db-backup.js';
 import { dbMigrateCommand } from './commands/db-migrate.js';
 import { dbCheckCommand } from './commands/db-check.js';
 import { setClockErrorSink } from '@sensigo/realm';
+import { Command } from 'commander';
+import { VERSION } from './version.js';
 import { attachWriterHook } from './output/writer.js';
 import { attachOptionValueGuard } from './lib/option-value-guard.js';
 
@@ -106,4 +108,16 @@ export function installClockErrorSink(): void {
   setClockErrorSink((err: unknown): void => {
     console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
   });
+}
+
+/** The `realm` program's command tree, as the binary runs it (CP-I: the kept-surface inventory walks it). */
+export function buildRealmProgram(): Command {
+  const program = new Command('realm').description('Realm workflow engine CLI').version(VERSION);
+  const group = (name: string, about: string, commands: Command[]): Command =>
+    commands.reduce((g, cmd) => g.addCommand(cmd), new Command(name).description(about));
+  program.addCommand(group('workflow', 'Manage workflow definitions', workflowCommands));
+  program.addCommand(group('run', 'Manage workflow run instances', runCommands));
+  program.addCommand(group('db', 'Maintain the store file', dbCommands));
+  for (const cmd of topLevelCommands) program.addCommand(cmd);
+  return program;
 }

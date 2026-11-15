@@ -12,7 +12,6 @@ import {
   reminderScheduleOf,
   reminderScheduleWords,
   formatInstantWords,
-  writtenSnapshot,
   probeClassOf,
   shellWord,
 } from '@sensigo/realm';
@@ -269,6 +268,8 @@ export async function listRuns(
   const runs = snapshots.map((s) => s.record);
   // #715 (b) (D6-17, D-26): each row is judged at its own snapshot's `at`.
   const atOf = new Map(snapshots.map((s) => [s.record.id, s.at]));
+  // #729 CW-1b part 2: each row's snapshot whole, with the lease facts the store attached.
+  const snapshotOf = new Map(snapshots.map((s) => [s.record.id, s]));
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
 
   let filtered = runs;
@@ -304,7 +305,7 @@ export async function listRuns(
       const definitionError = probed !== undefined && 'code' in probed ? probed : undefined;
       const definition =
         probed !== undefined && 'definition' in probed ? probed.definition : undefined;
-      const findings = classifyRunHealth(writtenSnapshot(r, atOf.get(r.id)!), {
+      const findings = classifyRunHealth(snapshotOf.get(r.id)!, {
         idleThresholdMs: effectiveIdleThresholdMs,
         ...(definitionError !== undefined ? { definitionError } : {}),
         ...(definition !== undefined ? { definition } : {}),
@@ -526,7 +527,7 @@ export async function listRuns(
       }
       // #715 (b) (02 §D.3, Amendment 9): the authored reminder SCHEDULE, from the one core function,
       // at this row's reading — never "due" or "overdue": no send is recorded on the run.
-      const reminders = reminderScheduleOf(writtenSnapshot(run, rowAt));
+      const reminders = reminderScheduleOf(snapshotOf.get(run.id)!);
       if (reminders !== undefined) line += `  ${reminderScheduleWords(reminders, rowAt)}`;
     }
     lines.push(line);

@@ -8,6 +8,7 @@ import type {
   AnswerView,
   EngineReply,
   RunRecord,
+  Snapshot,
   WorkflowDefinition,
 } from '@sensigo/realm';
 import {
@@ -22,7 +23,6 @@ import {
   deriveRunPhase,
   describePending,
   composeWaysAt,
-  writtenSnapshot,
   judgedSnapshotOf,
   deriveRunPhase as derivePhase,
   sentenceEnd,
@@ -76,15 +76,20 @@ function notRecordedLine(runId: string, late: { choice: string; phase: string })
 function nextLines(
   runId: string,
   workflow: WorkflowDefinition,
-  run: RunRecord,
-  // #715 (b) (D6-17): the reading `run` was read at — every line judges it there.
-  now: Date,
+  // #715 (b) (D6-17): the snapshot the reply was judged on — every line judges its record at its
+  // reading. #729 CW-1b part 2: with its lease facts.
+  snap: Snapshot,
   registry: ExtensionRegistry,
   hasCode: boolean,
 ): string[] {
-  const pending = describePending(workflow, writtenSnapshot(run, now), registry);
+  const { record: run, at: now } = snap;
+  const pending = describePending(workflow, snap, registry);
   // #729 PR-0 (A-10): the run's ways, composed by core and rendered by the CLI's one renderer.
-  const ways = composeWaysAt(run, now, { definition: workflow, registry });
+  const ways = composeWaysAt(run, now, {
+    definition: workflow,
+    registry,
+    lease_facts: snap.lease_facts,
+  });
   // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
   // that cannot run and the way out — the renderer's lines, never a copy.
   const cannotGoOn = cannotGoOnLines(ways, runId, derivePhase(run), writerCtx());
@@ -362,7 +367,7 @@ export async function respondToGate(
           ? [
               notRecordedLine(runId, late),
               // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
-              ...nextLines(runId, workflow, lateRun, lateAt, effectiveRegistry, hasCode),
+              ...nextLines(runId, workflow, judged, effectiveRegistry, hasCode),
             ]
           : []),
       ];
@@ -415,7 +420,7 @@ export async function respondToGate(
       // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
       lastLine: [
         notRecordedLine(runId, late),
-        ...nextLines(runId, workflow, updatedRun, updatedAt, effectiveRegistry, hasCode),
+        ...nextLines(runId, workflow, judged, effectiveRegistry, hasCode),
       ].join('\n'),
     };
   }
@@ -429,10 +434,9 @@ export async function respondToGate(
       newState: deriveRunPhase(updatedRun),
       recorded: false,
       lines,
-      lastLine: [
-        beaten,
-        ...nextLines(runId, workflow, updatedRun, updatedAt, effectiveRegistry, hasCode),
-      ].join('\n'),
+      lastLine: [beaten, ...nextLines(runId, workflow, judged, effectiveRegistry, hasCode)].join(
+        '\n',
+      ),
     };
   }
   // issue #625 PR-2a (decision C11): the answerer the record holds — read after the call, for the
@@ -453,7 +457,7 @@ export async function respondToGate(
     lines,
     lastLine: [
       `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${writerCtx().word(phase, RUN_PHASE_WORDS)}'`,
-      ...nextLines(runId, workflow, updatedRun, updatedAt, effectiveRegistry, hasCode),
+      ...nextLines(runId, workflow, judged, effectiveRegistry, hasCode),
     ].join('\n'),
   };
 }
