@@ -42,6 +42,7 @@ Follow this checklist in order before merging any branch into `main`.
 - Default values are sensible and documented
 - **If any exported symbol's signature or behaviour changes in a non-backwards-compatible way:** this is a breaking change — flag it explicitly. Do not merge without a CHANGELOG entry planned, a major version bump in the version plan, and a migration guide committed or linked.
 - **Pre-1.0 (0.x), breaking changes MAY ship in a minor** when flagged **BREAKING** in the changelog with upgrade guidance; 1.0.0 is reserved. (House precedent: v0.14.0, the #390 trio adjudication.)
+- If `packages/cli/src/inventory/kept-surface.txt` changed, `[Unreleased]` names each changed command, flag, exit code or reply status in backticks (the inventory cell enforces it; this is the human half).
 
 ### 5. Test Coverage
 
@@ -121,12 +122,12 @@ Rename `## [Unreleased]` to `## [<version>] — YYYY-MM-DD`. Use [keepachangelog
 - Breaking changes: include a note referencing the migration guide.
 - If using automated CHANGELOG tooling (changesets, git-cliff), run the tool and verify its output before committing.
 
-Three docs lines quote the published version; set each to `<version>` in this same commit, the only moment the number is true of a release: the `realm --version` output in `docs/start/install-and-first-run.md`, the initialize reply's `"version"` in `docs/reference/cli/realm-mcp-and-serve.md`, and both numbers in the sentence "These pages describe Realm …" in `docs/README.md` (0.47.0 and 0.48.0 shipped with the first still at 0.46.0; 0.48.0 and 0.49.0 with the third still at 0.47.0). The record in `docs/reference/compatibility.md` ("The record so far") is refreshed in this same commit: the release count, the patch count, and the workflow-file changes if this release carries one.
+Three docs lines quote the published version; set each to `<version>` in this same commit, the only moment the number is true of a release: the `realm --version` output in `docs/start/install-and-first-run.md`, the initialize reply's `"version"` in `docs/reference/cli/realm-mcp-and-serve.md`, and both numbers in the sentence "These pages describe Realm …" in `docs/README.md` (0.47.0 and 0.48.0 shipped with the first still at 0.46.0; 0.48.0 and 0.49.0 with the third still at 0.47.0). The record in `docs/reference/compatibility.md` ("The record so far") is refreshed in this same commit: the release count, the patch count, and the workflow-file changes if this release carries one. `packages/cli/src/inventory/kept-surface.frozen.txt` is copied from `kept-surface.txt`, with its header set to `frozen at v<version>`, and added to the same commit: the frozen copy is the release's, and the changelog cell starts clean for the next one.
 
 Commit:
 
 ```bash
-git add CHANGELOG.md docs/start/install-and-first-run.md docs/reference/cli/realm-mcp-and-serve.md docs/README.md docs/reference/compatibility.md
+git add CHANGELOG.md docs/start/install-and-first-run.md docs/reference/cli/realm-mcp-and-serve.md docs/README.md docs/reference/compatibility.md packages/cli/src/inventory/kept-surface.frozen.txt
 git commit -m "docs: update changelog for v<version>"
 ```
 
