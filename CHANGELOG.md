@@ -14,6 +14,8 @@ All notable changes to this project are documented here.
 
 **3. A `gate:` block on a step that declares no gate trust is refused when the file is loaded.** Set `trust: human_confirmed` on the step, or remove the block, as its refusal says; `realm workflow validate --registered <id>` reports a stored copy.
 
+**4. `register` and `watch` refuse a `when` condition that cannot work as written, because of what it reads or compares.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and fix the condition the refusal names. A stored copy keeps running as it was until you register it again.
+
 ### Added
 
 - **`--shutdown-grace <seconds>` on `realm serve` and `realm listen`**: how long requests being answered get to finish after Ctrl+C or `SIGTERM`; 30 by default; 0 to 2147483.
@@ -42,6 +44,7 @@ All notable changes to this project are documented here.
 - Packaging: every published package now carries the Apache License 2.0 text as its `LICENSE` file (0.49.0 and earlier named the licence in package.json only).
 - **BREAKING: a `gate:` block on a step that declares no gate trust is refused when the file is loaded.** Realm never opened such a gate, so the approval it described asked no one; 0.42.0 to 0.49.0 accepted it with a warning. Set `trust: human_confirmed` on the step, or remove the block; on a guard or finalizer step, move the block to the auto or agent step that needs the approval and set the trust there. Upgrading: `realm workflow validate --strict` on 0.49.0 already fails on every such file, and `realm workflow validate --registered <id>` reports a copy registered before this release; that copy keeps running as it was, and registering it again needs the fix.
 - **BREAKING: `realm workflow validate`, `register` and `watch` refuse an `input_map` path that can never be found**, with its line and the right spelling (for example `steps.propose.output.amount_cents`, written as `context.resources.propose.amount_cents`). Such a path never found a value: the step received nothing for that key. A path that may be absent gets a warning, and `validate` lists a path into data the workflow declares no shape for, such as a handler's output, as not checked (`not_checked` in `--json`). Running a workflow is not refused; `realm workflow run`, `realm agent` and `realm listen` print these as warnings. Upgrading: `realm workflow validate --registered <id>` reports a copy registered before this release; that copy keeps running as it was, and registering it again needs the fix.
+- **BREAKING: `realm workflow validate`, `register` and `watch` refuse a `when` condition that reads a path that can never be found, or that compares a gate's answer with a choice the gate does not offer**, with its line and a did-you-mean (for example `approve.choice == 'refnd'`: "Did you mean 'refund'?"). Such a condition never worked as written. A path that may be absent gets a warning, and `validate` lists a condition on data the workflow declares no shape for as not checked; `not_checked` entries in `--json` now carry `surface`. Running a workflow is not refused.
 
 ### Fixed
 
