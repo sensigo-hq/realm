@@ -164,6 +164,8 @@ function printValidationOutcome(
   // Fix 1, unit 1: after the result (and its description), only when some path was not checked.
   const notCheckedLine = renderNotCheckedLine(notChecked);
   if (notCheckedLine !== undefined) console.log(notCheckedLine);
+  const checkFailedLine = renderCheckFailedLine(notChecked);
+  if (checkFailedLine !== undefined) console.log(checkFailedLine);
   return strictFailing;
 }
 
@@ -171,14 +173,27 @@ function printValidationOutcome(
  * Fix 1, unit 1 — the line naming every `input_map` path into data the workflow declares no shape
  * for (a handler's output, params with no `params_schema`), so "Valid" is never silent about what
  * the check could not see. `undefined` when there is none. Information, not a warning: it moves no
- * exit code and no `--strict`.
- * @internal Exported for testing only.
+ * exit code and no `--strict`. It counts only the two shape reasons (correction 1).
  */
-export function renderNotCheckedLine(notChecked: readonly NotCheckedPath[]): string | undefined {
-  if (notChecked.length === 0) return undefined;
+function renderNotCheckedLine(notChecked: readonly NotCheckedPath[]): string | undefined {
+  const paths = notChecked.filter((n) => n.why !== 'check_failed');
+  if (paths.length === 0) return undefined;
   return (
-    `Not checked: ${notChecked.length} input_map path(s) into data the workflow declares no ` +
-    `shape for: ${notChecked.map((n) => `${n.step}.${n.key}`).join(', ')}`
+    `Not checked: ${paths.length} input_map path(s) into data the workflow declares no ` +
+    `shape for: ${paths.map((n) => `${n.step}.${n.key}`).join(', ')}`
+  );
+}
+
+/**
+ * Fix 1, unit 1, correction 1 — the paths Realm's own path check failed on (`why: check_failed`).
+ * The named exception to the #123 rule: a bug in this advisory check is shown here, never thrown.
+ */
+function renderCheckFailedLine(notChecked: readonly NotCheckedPath[]): string | undefined {
+  const paths = notChecked.filter((n) => n.why === 'check_failed');
+  if (paths.length === 0) return undefined;
+  return (
+    `Not checked: ${paths.length} input_map path(s), because Realm's own check failed on them: ` +
+    paths.map((n) => `${n.step}.${n.key}`).join(', ')
   );
 }
 
@@ -392,8 +407,10 @@ interface ValidateJsonEmit {
   extensionKeys: readonly string[];
   /**
    * Fix 1, unit 1 — the `input_map` paths into data the workflow declares no shape for, as
-   * `{ step, key, path, why }`. Emitted on EVERY arm (the `extensionKeys` precedent): the list on a
-   * success arm, `[]` on every refusal or load-failure arm.
+   * `{ step, key, path, why }` (`why: check_failed` when the check itself failed on the path).
+   * Emitted on EVERY arm. The list on a success arm and on the two arms refused by policy (file and
+   * `--registered`), where the file loaded and its paths were judged (correction 1, N2); `[]` on
+   * every other refusal or load-failure arm.
    */
   notChecked: readonly NotCheckedPath[];
   /**
@@ -486,7 +503,10 @@ interface ValidateJsonLoadFailureCtx {
  * WorkflowError means the workflow is invalid: print the warnings it carried (#424), render the
  * message, exit 1. Anything else is an internal bug and is RETHROWN — the #123 doctrine, pinned
  * by validate-internal-error.test.ts's "genuine-bug-still-loud" cell: a real crash must never be
- * relabelled `Invalid:`, because that tells an author their file is wrong when realm is.
+ * relabelled `Invalid:`, because that tells an author their file is wrong when realm is. One named
+ * exception (fix 1, unit 1, correction 1): a bug in the advisory `input_map` path check never
+ * reaches here; the loader lists the paths it failed on as not checked (`why: check_failed`), and
+ * `printValidationOutcome` shows them.
  *
  * The extensions arm used to render ANY error as `Invalid:`, so it violated that doctrine in two
  * directions at once — an internal bug was swallowed, and a user's broken extension module was
@@ -946,7 +966,7 @@ async function validateRegistered(
         errors: [renderEscalationLine(accumulated)],
         checksNotRun: notRun,
         extensionKeys: [],
-        notChecked: [],
+        notChecked,
         cacheability: cacheabilityJson(cache),
       });
       process.exit(1);
@@ -1241,7 +1261,7 @@ export const validateCommand = new Command('validate')
             errors: [renderEscalationLine(accumulated)],
             checksNotRun: [],
             extensionKeys: [],
-            notChecked: [],
+            notChecked,
             cacheability: cacheabilityJson(cache),
           });
           process.exit(1);

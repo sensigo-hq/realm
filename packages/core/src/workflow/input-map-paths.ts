@@ -11,11 +11,18 @@
 //
 // Only a map the step consumes is judged (`consumesInputMap`: an auto step with a `handler` or a
 // `uses_service`); a bare step's map is inert there (AA-AUU1-01).
+//
+// The check is advisory and never stops a load (correction 1, N3). The workflow's shared answers
+// (`PathIndex`) are built once for every leaf. A throw while judging one leaf lists that leaf as
+// not checked, `why: check_failed`, and every other leaf is judged as usual; a throw while building
+// the shared answers lists every leaf so. That is a named exception to the #123 rule (an internal
+// bug is thrown, never relabelled): a bug in this check is shown by `validate`, never thrown.
 import { consumesInputMap, type InputMapStep } from '../engine/input-map.js';
 import { capText } from '../utils/redaction.js';
 import { resolveSeverity, type LoaderWarning, type WarningCode } from './diagnostics.js';
 import {
   INPUT_MAP_SURFACE,
+  PathIndex,
   resolveReference,
   type AbsentCause,
   type NeverCause,
@@ -32,7 +39,8 @@ export interface NotCheckedPath {
   key: string;
   /** The path as written, trimmed. */
   path: string;
-  why: NotCheckedWhy;
+  /** The two shape reasons, or `check_failed` when the check itself failed on this path. */
+  why: NotCheckedWhy | 'check_failed';
 }
 
 /** The input_map leaves' findings: warnings for the loader's channel, and the paths not checked. */
@@ -56,6 +64,7 @@ export function checkInputMapPaths(
   positionOf: (segments: readonly string[]) => SourcePosition | undefined,
 ): InputMapPathFindings {
   const findings: InputMapPathFindings = { warnings: [], notChecked: [] };
+  const leaves: Leaf[] = [];
   const steps = typeof workflow.steps === 'object' && workflow.steps !== null ? workflow.steps : {};
   for (const [stepName, raw] of Object.entries(steps)) {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
@@ -63,11 +72,53 @@ export function checkInputMapPaths(
     if (!consumesInputMap(step)) continue;
     const map = step.input_map as unknown;
     if (typeof map !== 'object' || map === null || Array.isArray(map)) continue;
-    walkMap(map as Record<string, unknown>, [], 0, (keys, path) =>
-      judgeLeaf(workflow, stepName, keys, path, positionOf, findings),
+    walkMap(map as Record<string, unknown>, [], 0, (keys, rawPath) =>
+      leaves.push({ stepName, keys, rawPath }),
     );
   }
+  if (leaves.length === 0) return findings;
+
+  let index: PathIndex | undefined;
+  try {
+    index = new PathIndex(workflow);
+  } catch {
+    index = undefined;
+  }
+  for (const leaf of leaves) {
+    let judged: LeafFindings | undefined;
+    if (index !== undefined) {
+      try {
+        judged = judgeLeaf(index, leaf, positionOf);
+      } catch {
+        judged = undefined;
+      }
+    }
+    if (judged === undefined) {
+      findings.notChecked.push({
+        step: leaf.stepName,
+        key: leaf.keys.join('.'),
+        path: leaf.rawPath.trim(),
+        why: 'check_failed',
+      });
+      continue;
+    }
+    if (judged.notChecked !== undefined) findings.notChecked.push(judged.notChecked);
+    if (judged.warning !== undefined) findings.warnings.push(judged.warning);
+  }
   return findings;
+}
+
+/** One `input_map` leaf: the step that holds it, its key chain, and the path as written. */
+interface Leaf {
+  stepName: string;
+  keys: readonly string[];
+  rawPath: string;
+}
+
+/** One leaf's findings, pushed only once all of them are built. */
+interface LeafFindings {
+  warning?: LoaderWarning;
+  notChecked?: NotCheckedPath;
 }
 
 /** Walks a map as `resolveInputMap` does: string leaves are paths, `$literal` nodes are not. */
@@ -93,16 +144,14 @@ function walkMap(
 }
 
 function judgeLeaf(
-  workflow: PathWorkflow,
-  stepName: string,
-  keys: readonly string[],
-  rawPath: string,
+  index: PathIndex,
+  { stepName, keys, rawPath }: Leaf,
   positionOf: (segments: readonly string[]) => SourcePosition | undefined,
-  findings: InputMapPathFindings,
-): void {
-  const judgement = resolveReference(rawPath, INPUT_MAP_SURFACE, stepName, workflow);
+): LeafFindings {
+  const judgement = resolveReference(rawPath, INPUT_MAP_SURFACE, stepName, index);
   const key = keys.join('.');
   const path = rawPath.trim();
+  const findings: LeafFindings = {};
 
   let cause: { code: WarningCode; text: string; didYouMean?: string } | undefined;
   if (judgement.verdict === 'never') {
@@ -116,7 +165,7 @@ function judgeLeaf(
       text: absentWords(stepName, key, path, judgement.cause),
     };
   } else if (judgement.verdict === 'not_checked') {
-    findings.notChecked.push({ step: stepName, key, path, why: judgement.why });
+    findings.notChecked = { step: stepName, key, path, why: judgement.why };
     if (judgement.stepCause !== undefined) {
       cause = {
         code: 'INPUT_MAP_PATH_UNCERTAIN',
@@ -124,7 +173,7 @@ function judgeLeaf(
       };
     }
   }
-  if (cause === undefined) return;
+  if (cause === undefined) return findings;
 
   // The key's own line (`(line N)`), else the step's (`(step at line N)`), else no cite — the
   // loader's two-rung vocabulary (issue #420). The structured position is the key's, or absent.
@@ -151,7 +200,8 @@ function judgeLeaf(
     warning.endLine = keyPos.endLine;
     warning.endColumn = keyPos.endColumn;
   }
-  findings.warnings.push(warning);
+  findings.warning = warning;
+  return findings;
 }
 
 /** The opening every finding shares, bounded as unknown keys are (#872 b1). */
@@ -264,8 +314,8 @@ function why(
   switch (cause.rule) {
     case 'trigger_rule':
       return cause.through === undefined
-        ? `this step's trigger_rule lets it run after '${cause.step}' failed or was skipped`
-        : `step '${cause.through}''s trigger_rule lets it run after '${cause.step}' failed or was skipped`;
+        ? `this step's trigger_rule lets it run when '${cause.step}' did not complete`
+        : `step '${cause.through}''s trigger_rule lets it run when '${cause.step}' did not complete`;
     case 'optional':
       return `'${capText(cause.field)}' is optional in its schema`;
     case 'default_only':

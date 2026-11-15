@@ -520,7 +520,7 @@ ${rule !== undefined ? `    trigger_rule: ${rule}\n` : ''}    input_map:
     // (1) red when the trigger-rule condition is not applied to the reader; (2) prints both.
     expect(findings(yaml).messages).toEqual([
       "Step 'reader': input_map 'value' reads 'context.resources.p.f', which may be absent when " +
-        "this step runs (this step's trigger_rule lets it run after 'p' failed or was skipped); " +
+        "this step runs (this step's trigger_rule lets it run when 'p' did not complete); " +
         `the step then receives no value for 'value'. (line ${lineOf(yaml, 'value: ')})`,
     ]);
   });
@@ -532,7 +532,7 @@ ${rule !== undefined ? `    trigger_rule: ${rule}\n` : ''}    input_map:
     // (1) red when the nearest lenient step is not named; (2) prints both lists.
     expect(findings(yaml).messages).toEqual([
       "Step 'reader': input_map 'value' reads 'context.resources.p.f', which may be absent when " +
-        "this step runs (step 'm''s trigger_rule lets it run after 'p' failed or was skipped); " +
+        "this step runs (step 'm''s trigger_rule lets it run when 'p' did not complete); " +
         `the step then receives no value for 'value'. (line ${lineOf(yaml, 'value: ')})`,
     ]);
   });

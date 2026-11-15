@@ -6,10 +6,14 @@
 // loader-level cells (every row, every `<why>`) are core's input-map-paths.test.ts.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowRegistrar, WorkflowDefinition } from '@sensigo/realm';
+// The built core's resolver, the very module `@sensigo/realm` loads: check 5 plants a throw in it.
+import { PathIndex } from '../../../core/dist/workflow/path-resolver.js';
 import { validateCommand } from './validate.js';
 import { registerCommand } from './register.js';
 import { runCommand } from './run.js';
@@ -176,10 +180,14 @@ describe('validate — fix 1, unit 1: input_map paths', () => {
     expect(lines(logSpy)).toContain(
       'Not checked: 1 input_map path(s) into data the workflow declares no shape for: refund.amount',
     );
-    // (1) red when the line comes before the result line; (2) prints validate's output.
-    expect(lines(logSpy).findIndex((l) => l.startsWith('Valid: orders v1'))).toBeLessThan(
-      lines(logSpy).findIndex((l) => l.startsWith('Not checked:')),
-    );
+    // (1) red when the line comes before the result line, or the result line is missing
+    //     (correction 1, check 9); (2) prints validate's output.
+    expect(
+      lines(logSpy).filter((l) => l.startsWith('Valid: orders v1') || l.startsWith('Not checked:')),
+    ).toEqual([
+      'Valid: orders v1 (2 steps)',
+      'Not checked: 1 input_map path(s) into data the workflow declares no shape for: refund.amount',
+    ]);
   });
 
   it('check 11, --json: `not_checked` names the step, key, path and why', async () => {
@@ -415,7 +423,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     );
     claim(
       'docs/reference/workflow/input-map-and-templates.md',
-      "A path that may be absent when the step runs gets a warning. Examples: an optional field, a list position, a step that is not a dependency, or a step the trigger rule may let this one run without. A path into data the workflow declares no shape for, such as a handler's output, is listed as not checked. Running a workflow does not refuse these: `realm workflow run`, `realm agent` and `realm listen` print them as warnings. This was added after version 0.49.0.",
+      "A path that may be absent when the step runs gets a warning. Examples: an optional field, a list position, a step that is not a dependency, or a step the trigger rule may let this one run without. `validate` lists a path into data the workflow declares no shape for, such as a handler's output, as not checked. Running a workflow does not refuse these: `realm workflow run`, `realm agent` and `realm listen` print them as warnings. This was added after version 0.49.0.",
     );
   });
 
@@ -424,7 +432,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     //     counts the codes); (2) prints the sentence.
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      'The loader has 21 warning codes. 3 of them count as errors: an unknown key at the top of the file or on a step, and an `input_map` path that can never be found, make `validate` and `register` fail.',
+      'The loader has 21 warning codes. Three of them count as errors: an unknown key at the top of the file or on a step, and an `input_map` path that can never be found, make `validate`, `register` and `watch` fail.',
     );
     claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 21 warning codes');
     claim(
@@ -437,16 +445,36 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      '| `not_checked` | The `input_map` paths into data the workflow declares no shape for: `step`, `key`, `path`, `why`. Added after version 0.49.0. |',
+      '| `not_checked` | The `input_map` paths into data the workflow declares no shape for: `step`, `key`, `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, or `check_failed` when the check itself failed on that path). Empty when the file could not be loaded. Added after version 0.49.0. |',
     );
   });
 
-  it('CHANGELOG.md carries the line', () => {
-    // (1) red when the changelog line is changed or lost; (2) prints the sentence.
+  it('CHANGELOG.md carries the line and both Upgrading items', () => {
+    // (1) red when the changelog line or an Upgrading item is changed or lost; (2) prints the
+    //     sentence.
     claim(
       'CHANGELOG.md',
-      "- **`realm workflow validate`, `register` and `watch` refuse an `input_map` path that can never be found**, with its line and the right spelling (for example `steps.propose.output.amount_cents`, written as `context.resources.propose.amount_cents`). A path that may be absent gets a warning, and a path into data the workflow declares no shape for, such as a handler's output, is listed as not checked (`not_checked` in `--json`). Running a workflow is not refused; `realm workflow run`, `realm agent` and `realm listen` print these as warnings.",
+      "- **BREAKING: `realm workflow validate`, `register` and `watch` refuse an `input_map` path that can never be found**, with its line and the right spelling (for example `steps.propose.output.amount_cents`, written as `context.resources.propose.amount_cents`). Such a path never found a value: the step received nothing for that key. A path that may be absent gets a warning, and `validate` lists a path into data the workflow declares no shape for, such as a handler's output, as not checked (`not_checked` in `--json`). Running a workflow is not refused; `realm workflow run`, `realm agent` and `realm listen` print these as warnings. Upgrading: `realm workflow validate --registered <id>` reports a copy registered before this release; that copy keeps running as it was, and registering it again needs the fix.",
     );
+    claim(
+      'CHANGELOG.md',
+      '**2. `register` and `watch` refuse an `input_map` path that can never be found.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and write the path the refusal names. Such a path never found a value. A stored copy keeps running as it was until you register it again.',
+    );
+    claim(
+      'CHANGELOG.md',
+      '**3. A `gate:` block on a step that declares no gate trust is refused when the file is loaded.** Set `trust: human_confirmed` on the step, or remove the block, as its refusal says; `realm workflow validate --registered <id>` reports a stored copy.',
+    );
+    // The two items sit in [Unreleased]'s Upgrading section, numbered on from its item 1.
+    const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+    const unreleased = changelog.slice(
+      changelog.indexOf('## [Unreleased]'),
+      changelog.indexOf('\n## [', changelog.indexOf('## [Unreleased]') + 1),
+    );
+    const upgrading = unreleased.slice(
+      unreleased.indexOf('### Upgrading'),
+      unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
+    );
+    expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual(['**1. ', '**2. ', '**3. ']);
   });
 });
 
@@ -457,3 +485,449 @@ async function until(cond: () => boolean, capMs = 5000): Promise<void> {
     await new Promise((r) => setTimeout(r, 50));
   }
 }
+
+// ── Fix 1, unit 1, correction 1 (prompts/ai-authoring-fix1-u1-correction-1.md) ──────────────────
+
+const CLI = join(ROOT, 'packages/cli/dist/index.js');
+
+/** The built `realm workflow validate` on `yaml`, in a fresh HOME, bounded by `timeoutMs`. */
+function validateBuilt(
+  yaml: string,
+  timeoutMs: number,
+): { out: string; code: number | null; ms: number } {
+  const folder = mkdtempSync(join(tmpdir(), 'realm-c1-built-'));
+  try {
+    const file = join(folder, 'workflow.yaml');
+    writeFileSync(file, yaml, 'utf8');
+    const started = Date.now();
+    const r = spawnSync(process.execPath, [CLI, 'workflow', 'validate', file], {
+      env: { ...process.env, HOME: folder, REALM_NO_NUDGE: '1' },
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      // SIGKILL: the CLI handles SIGTERM, which a walk that never ends would never get to run.
+      killSignal: 'SIGKILL',
+    });
+    return { out: `${r.stdout}${r.stderr}`, code: r.status, ms: Date.now() - started };
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+/** A file refused by policy (one path that can never be found) that also reads a handler's output. */
+const REFUSED_WITH_HANDLER_READ = `id: refused
+name: Refused
+version: 1
+steps:
+  propose:
+    description: Propose
+    execution: agent
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [amount_cents]
+      properties:
+        amount_cents: { type: integer }
+  fetch:
+    description: Fetch
+    execution: auto
+    handler: fetch_order
+  refund:
+    description: Refund
+    execution: auto
+    handler: send_refund
+    depends_on: [propose, fetch]
+    input_map:
+      amount_cents: steps.propose.output.amount_cents
+      total: context.resources.fetch.total
+`;
+const HANDLER_READ = {
+  step: 'refund',
+  key: 'total',
+  path: 'context.resources.fetch.total',
+  why: 'producer_declares_no_shape',
+};
+
+describe('validate — fix 1, unit 1, correction 1: `not_checked` on a refused file (check 3, N2)', () => {
+  let h: TempHome & { readonly root: string };
+  let originalHome: string | undefined;
+  let dir: string;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    h = await makeTempHome();
+    originalHome = process.env['HOME'];
+    process.env['HOME'] = h.root;
+    dir = mkdtempSync(join(tmpdir(), 'realm-c1-n2-'));
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = originalHome;
+    vi.restoreAllMocks();
+    await h.cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const json = (): Record<string, unknown> =>
+    JSON.parse(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')) as Record<
+      string,
+      unknown
+    >;
+
+  it('file mode: `--json` on a file refused by policy lists the path it could not check', async () => {
+    const file = join(dir, 'workflow.yaml');
+    writeFileSync(file, REFUSED_WITH_HANDLER_READ, 'utf8');
+    await expect(validateCommand.parseAsync([file, '--json'], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+    const out = json();
+    // (1) red when the escalation arm passes `[]`; (2) prints the verdict and the list.
+    expect({ valid: out['valid'], not_checked: out['not_checked'] }).toEqual({
+      valid: false,
+      not_checked: [HANDLER_READ],
+    });
+  });
+
+  it('`--registered --json` on a stored copy refused by policy does the same', async () => {
+    const steps = {
+      propose: {
+        description: 'Propose',
+        execution: 'agent',
+        input_schema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['amount_cents'],
+          properties: { amount_cents: { type: 'integer' } },
+        },
+      },
+      fetch: { description: 'Fetch', execution: 'auto', handler: 'fetch_order' },
+      refund: {
+        description: 'Refund',
+        execution: 'auto',
+        handler: 'send_refund',
+        depends_on: ['propose', 'fetch'],
+        input_map: {
+          amount_cents: 'steps.propose.output.amount_cents',
+          total: 'context.resources.fetch.total',
+        },
+      },
+    };
+    // A copy stored before this release: the registry is written directly, past the loader that
+    // would refuse it today (validate-registered.test.ts's seeding).
+    await h.home.workflowStore.register({
+      id: 'refused',
+      name: 'Refused',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps,
+    } as never);
+    await expect(
+      validateCommand.parseAsync(['--registered', 'refused', '--json'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    const out = json();
+    // (1) red when the registered escalation arm passes `[]`; (2) prints the verdict and the list.
+    expect({ valid: out['valid'], not_checked: out['not_checked'] }).toEqual({
+      valid: false,
+      not_checked: [HANDLER_READ],
+    });
+  });
+
+  it("twin: a file refused through the loader's errors (an unknown `depends_on`) gives `not_checked: []`", async () => {
+    const file = join(dir, 'workflow.yaml');
+    writeFileSync(
+      file,
+      REFUSED_WITH_HANDLER_READ.replace(
+        'depends_on: [propose, fetch]',
+        'depends_on: [propose, fetch, nowhere]',
+      ),
+      'utf8',
+    );
+    await expect(validateCommand.parseAsync([file, '--json'], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+    const out = json();
+    // (1) red when a load that threw reports a list; (2) prints the verdict and the list.
+    expect({ valid: out['valid'], not_checked: out['not_checked'] }).toEqual({
+      valid: false,
+      not_checked: [],
+    });
+  });
+});
+
+describe('validate (built) — fix 1, unit 1, correction 1: N3, cycles and a long chain', () => {
+  it("check 4c: a cycle a ↔ b with a reader: the cycle refusal and the reader's findings, in time", () => {
+    // The audit's wf/cycle (AA-AUC1U-05).
+    const r = validateBuilt(
+      `id: cyc
+name: Cycle
+version: 1
+steps:
+  a:
+    description: a
+    execution: auto
+    depends_on: [b]
+  b:
+    description: b
+    execution: auto
+    depends_on: [a]
+  r:
+    description: r
+    execution: auto
+    handler: h
+    depends_on: [a]
+    trigger_rule: none_failed
+    input_map:
+      x: context.resources.a.f
+      y: context.resources.b.g
+`,
+      20_000,
+    );
+    // (1) red when the shape walk's guard against revisiting a step is removed (the walk never
+    //     ends, so the bound kills it: no output, no exit code); (2) prints the output.
+    expect({ code: r.code, lines: r.out.trim().split('\n') }).toEqual({
+      code: 1,
+      lines: [
+        "⚠ Step 'r': input_map 'x' reads 'context.resources.a.f', which may be absent when this step runs (this step's trigger_rule lets it run when 'a' did not complete); the step then receives no value for 'x'. (line 20)",
+        "⚠ Step 'r': input_map 'y' reads 'context.resources.b.g', which may be absent when this step runs (this step's trigger_rule lets it run when 'b' did not complete); the step then receives no value for 'y'. (line 21)",
+        'Invalid workflow: Workflow has a dependency cycle: a → b → a',
+      ],
+    });
+  }, 60_000);
+
+  it("check 4c, second file: no safe path through the cycle; the warning names step 'd''s, in time", () => {
+    // The audit's r2/cycle-safe (AA-AUC1U-26).
+    const r = validateBuilt(
+      `id: cyc2
+name: Cycle through the safe-path search
+version: 1
+steps:
+  c:
+    description: c
+    execution: agent
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [f]
+      properties:
+        f: { type: string }
+  d:
+    description: d
+    execution: auto
+    trigger_rule: none_failed
+    depends_on: [c]
+  a:
+    description: a
+    execution: auto
+    depends_on: [b]
+  b:
+    description: b
+    execution: auto
+    depends_on: [a, d]
+  r2:
+    description: r2
+    execution: auto
+    handler: h
+    depends_on: [a]
+    input_map:
+      v: context.resources.c.f
+`,
+      20_000,
+    );
+    // (1) red when the search of the steps that reach 'c' loses its guard against revisiting a
+    //     step (it never ends: no output, no exit code); (2) prints the output.
+    expect({ code: r.code, lines: r.out.trim().split('\n') }).toEqual({
+      code: 1,
+      lines: [
+        "⚠ Step 'r2': input_map 'v' reads 'context.resources.c.f', which may be absent when this step runs (step 'd''s trigger_rule lets it run when 'c' did not complete); the step then receives no value for 'v'. (line 33)",
+        'Invalid workflow: Workflow has a dependency cycle: a → b → a',
+      ],
+    });
+  }, 60_000);
+
+  it('a cycle inside the safe set: a step reached safely twice is entered once, in time', () => {
+    // `x` and `y` depend on each other, both `all_success`, and `x` on `p`: the walk out from `p`
+    // reaches `x`, then `y`, then `x` again. The optional `note` is warned only once that walk has
+    // ended and found `r` safe, so the warning shows the leaf was judged (a leaf the check failed
+    // on would show nothing here, the file being refused for its cycle).
+    const r = validateBuilt(
+      `id: cyc3
+name: A cycle the safe walk meets
+version: 1
+steps:
+  p:
+    description: p
+    execution: agent
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [f]
+      properties:
+        f: { type: string }
+        note: { type: string }
+  x:
+    description: x
+    execution: auto
+    depends_on: [p, y]
+  y:
+    description: y
+    execution: auto
+    depends_on: [x]
+  r:
+    description: r
+    execution: auto
+    handler: h
+    depends_on: [y]
+    input_map:
+      v: context.resources.p.f
+      w: context.resources.p.note
+`,
+      20_000,
+    );
+    // (1) red when the safe walk's guard against entering a step twice is removed (its queue grows
+    //     until it throws, and the leaf turns `check_failed`: no warning); (2) prints the output.
+    expect({ code: r.code, lines: r.out.trim().split('\n') }).toEqual({
+      code: 1,
+      lines: [
+        "⚠ Step 'r': input_map 'w' reads 'context.resources.p.note', which may be absent when this step runs ('note' is optional in its schema); the step then receives no value for 'w'. (line 30)",
+        'Invalid workflow: Workflow has a dependency cycle: x → y → x',
+      ],
+    });
+  }, 60_000);
+
+  it("check 4d: the walk's 1,000-step chain, every step reading s0, validates within 30 seconds", () => {
+    // perf/gen.py's `chain 1000` (65 s on 30d9d718, AA-WU1-15).
+    const out = [
+      'id: big',
+      'name: Big',
+      'version: 1',
+      'steps:',
+      '  s0:',
+      '    description: s0',
+      '    execution: agent',
+      '    input_schema:',
+      '      type: object',
+      '      additionalProperties: false',
+      '      required: [f]',
+      '      properties:',
+      '        f: { type: string }',
+    ];
+    for (let i = 1; i < 1000; i++) {
+      out.push(
+        `  s${i}:`,
+        `    description: s${i}`,
+        '    execution: auto',
+        '    handler: h',
+        `    depends_on: [s${i - 1}]`,
+        '    input_map:',
+        '      v: context.resources.s0.f',
+      );
+    }
+    const r = validateBuilt(out.join('\n') + '\n', 30_000);
+    // (1) red when the per-leaf work grows with the chain (the bound kills the run), or a leaf is
+    //     left not checked; (2) prints the exit code, the first line, any not-checked line and the
+    //     time.
+    expect({
+      code: r.code,
+      first: r.out.split('\n')[0],
+      notChecked: r.out.split('\n').filter((l) => l.startsWith('Not checked:')),
+    }).toEqual({ code: 0, first: 'Valid: big v1 (1000 steps)', notChecked: [] });
+    expect(r.ms).toBeLessThan(30_000);
+  }, 60_000);
+});
+
+describe('validate — fix 1, unit 1, correction 1: the path check failed on a leaf (check 5)', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'realm-c1-check-failed-'));
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
+    // The injection: the built core's shared index throws for the step 'bad' only (the class is
+    // the one `@sensigo/realm` loads, so the spy reaches the loader `validate` calls).
+    const original = PathIndex.prototype.stepCause;
+    vi.spyOn(PathIndex.prototype, 'stepCause').mockImplementation(function (
+      this: PathIndex,
+      reader: string,
+      s: string,
+      settlement: boolean,
+    ) {
+      if (reader === 'bad') throw new Error('planted: a bug in the path check');
+      return original.call(this, reader, s, settlement);
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** propose (an agent step), fetch (a handler), `bad` reading propose, `good` reading it unsafely. */
+  const fixture = (goodReadsHandler: boolean): string => `id: planted
+name: Planted
+version: 1
+steps:
+  propose:
+    description: Propose
+    execution: agent
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [amount_cents]
+      properties:
+        amount_cents: { type: integer }
+  fetch:
+    description: Fetch
+    execution: auto
+    handler: fetch_order
+  bad:
+    description: Bad
+    execution: auto
+    handler: h
+    depends_on: [propose]
+    input_map:
+      x: context.resources.propose.amount_cents
+  good:
+    description: Good
+    execution: auto
+    handler: h
+    depends_on: [fetch]
+    input_map:
+      y: context.resources.propose.amount_cents
+${goodReadsHandler ? '      z: context.resources.fetch.total\n' : ''}`;
+
+  async function validate(yaml: string): Promise<string[]> {
+    const file = join(dir, 'workflow.yaml');
+    writeFileSync(file, yaml, 'utf8');
+    await validateCommand.parseAsync([file], { from: 'user' });
+    return logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+  }
+
+  it('the load succeeds, the new line names the leaf, and the shape line is absent with no shape-reason path', async () => {
+    const out = await validate(fixture(false));
+    // (1) red when there is no catch (the load fails and validate throws); (2) prints the lines.
+    expect(out.filter((l) => l.startsWith('Valid:') || l.startsWith('Not checked:'))).toEqual([
+      'Valid: planted v1 (4 steps)',
+      "Not checked: 1 input_map path(s), because Realm's own check failed on them: bad.x",
+    ]);
+  });
+
+  it('beside a shape-reason path: the shape line counts and names only that one', async () => {
+    const out = await validate(fixture(true));
+    // (1) red when the shape line counts every `not_checked` entry; (2) prints the lines.
+    expect(out.filter((l) => l.startsWith('Not checked:'))).toEqual([
+      'Not checked: 1 input_map path(s) into data the workflow declares no shape for: good.z',
+      "Not checked: 1 input_map path(s), because Realm's own check failed on them: bad.x",
+    ]);
+  });
+});

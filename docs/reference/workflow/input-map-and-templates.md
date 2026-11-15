@@ -98,7 +98,7 @@ Started with `{"sku": "A-100"}`, the handler received:
 Invalid: 1 warning, 1 escalated to an error by policy: INPUT_MAP_PATH_UNRESOLVABLE 'amount_cents'
 ```
 
-A path that may be absent when the step runs gets a warning. Examples: an optional field, a list position, a step that is not a dependency, or a step the trigger rule may let this one run without. A path into data the workflow declares no shape for, such as a handler's output, is listed as not checked. Running a workflow does not refuse these: `realm workflow run`, `realm agent` and `realm listen` print them as warnings. This was added after version 0.49.0.
+A path that may be absent when the step runs gets a warning. Examples: an optional field, a list position, a step that is not a dependency, or a step the trigger rule may let this one run without. `validate` lists a path into data the workflow declares no shape for, such as a handler's output, as not checked. Running a workflow does not refuse these: `realm workflow run`, `realm agent` and `realm listen` print them as warnings. This was added after version 0.49.0.
 
 ## Template expressions
 
