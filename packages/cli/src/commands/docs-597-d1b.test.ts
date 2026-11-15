@@ -154,7 +154,7 @@ describe('#597 D1b — the docs say what the reminders record, and only what is 
   it('the CHANGELOG: the Upgrading item, the Added line, and the three sentences rewritten', () => {
     // R13 (a question open at the upgrade): inferred from the ledger's rules, as the item says.
     claimChangelog(
-      '**6. Answer or let open Slack questions expire before you upgrade.** A question open at the upgrade may get one repeated reminder when its agent restarts (the 0.49 reminders left no record).',
+      '**7. Answer or let open Slack questions expire before you upgrade.** A question open at the upgrade may get one repeated reminder when its agent restarts (the 0.49 reminders left no record).',
     );
     // slack-reminder-ledger-d1b (the lease, the mark, contention, restart, the retry, the catch-up);
     // outbound-lines-d1b (the lines); slack-reminder-writes-nothing-715b; inspect- and

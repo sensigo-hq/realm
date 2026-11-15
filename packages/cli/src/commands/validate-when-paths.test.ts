@@ -297,12 +297,12 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
     ).toBe(true);
   }
 
-  it('loader-diagnostics.md: 24 codes, five of them errors, the three new rows and `not_checked`', () => {
+  it('loader-diagnostics.md: 27 codes, seven of them errors, the three `when` rows and `not_checked`', () => {
     // (1) red when a sentence or row is changed or lost; (2) prints it.
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 24 warning codes');
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 27 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 24 warning codes. Five of them count as errors: an unknown key at the top of the file or on a step, an `input_map` path that can never be found, and a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer, make `validate`, `register` and `watch` fail.",
+      "The loader has 27 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.",
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
@@ -322,11 +322,11 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
     );
   });
 
-  it('loader-diagnostics.md: the table has one row per code, 24 (`DEFAULT_POLICY` in core)', () => {
+  it('loader-diagnostics.md: the table has one row per code, 27 (`DEFAULT_POLICY` in core)', () => {
     const page = readFileSync(join(ROOT, 'docs/reference/workflow/loader-diagnostics.md'), 'utf8');
     const rows = page.split('\n').filter((l) => /^\| `[A-Z][A-Z_]+` +\| (Error|Warning) /.test(l));
     // (1) red when a row is missing or doubled; (2) prints the count.
-    expect(rows.length).toBe(24);
+    expect(rows.length).toBe(27);
   });
 
   it('conditions.md: the new rule and the changed sentence', () => {
@@ -365,7 +365,7 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
     );
     // (1) red when the item is misnumbered or lost; (2) prints the numbers. #597 D1b's Slack
-    // questions item is 6.
+    // questions item is 7.
     expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual([
       '**1. ',
       '**2. ',
@@ -373,6 +373,7 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
       '**4. ',
       '**5. ',
       '**6. ',
+      '**7. ',
     ]);
   });
 });
