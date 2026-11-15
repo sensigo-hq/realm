@@ -1,0 +1,172 @@
+{
+  "id": "parallel-code-review",
+  "name": "Parallel Code Review",
+  "version": 1,
+  "params_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "path"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the diff file to review"
+      }
+    }
+  },
+  "workflow_context": {
+    "reviewer_guidelines": {
+      "source": {
+        "path": "/realm-corpus/host/source-path"
+      },
+      "description": "Shared risk level definitions and finding format used by both specialists"
+    }
+  },
+  "services": {
+    "diffs": {
+      "adapter": "filesystem",
+      "trust": "engine_delivered"
+    }
+  },
+  "steps": {
+    "read_diff": {
+      "description": "Load the diff from disk",
+      "execution": "auto",
+      "depends_on": [],
+      "uses_service": "diffs",
+      "operation": "read",
+      "input_map": {
+        "path": "run.params.path"
+      }
+    },
+    "review_security": {
+      "description": "Identify security vulnerabilities in the diff. Produces findings[], risk_level, and confidence. Schema-enforced before synthesize_review starts — the synthesizer cannot receive a malformed security review.\n",
+      "execution": "agent",
+      "depends_on": [
+        "read_diff"
+      ],
+      "prompt": "You are a security specialist reviewing a code diff.\n\nReview standards:\n{{ workflow.context.reviewer_guidelines }}\n\nDiff to review:\n{{ context.resources.read_diff.content }}\n\nRequired fields:\n- findings: list of security issues found (each entry: function/location + one-sentence issue)\n  If no issues are found, return an empty list.\n- risk_level: overall security risk ('low', 'medium', 'high', or 'critical')\n- confidence: your confidence in this assessment as a decimal between 0.0 and 1.0\n\nReturn exactly these three fields. Any missing or invalid field will be rejected.\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "findings",
+          "risk_level",
+          "confidence"
+        ],
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risk_level": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "review_performance": {
+      "description": "Identify performance problems in the diff. Produces findings[], risk_level, and confidence. Schema-enforced before synthesize_review starts — the synthesizer cannot receive a malformed performance review.\n",
+      "execution": "agent",
+      "depends_on": [
+        "read_diff"
+      ],
+      "prompt": "You are a performance specialist reviewing a code diff.\n\nReview standards:\n{{ workflow.context.reviewer_guidelines }}\n\nDiff to review:\n{{ context.resources.read_diff.content }}\n\nRequired fields:\n- findings: list of performance issues found (each entry: function/location + one-sentence issue)\n  If no issues are found, return an empty list.\n- risk_level: overall performance risk ('low', 'medium', 'high', or 'critical')\n- confidence: your confidence in this assessment as a decimal between 0.0 and 1.0\n\nReturn exactly these three fields. Any missing or invalid field will be rejected.\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "findings",
+          "risk_level",
+          "confidence"
+        ],
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risk_level": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "synthesize_review": {
+      "description": "Combine the security and performance reviews into a single structured verdict. Both upstream reviews are already schema-validated — the synthesizer receives confirmed, structured data from both branches.\n",
+      "execution": "agent",
+      "depends_on": [
+        "review_security",
+        "review_performance"
+      ],
+      "prompt": "Combine the two specialist reviews below into a single verdict.\n\nSecurity review:\n- Risk level: {{ context.resources.review_security.risk_level }}\n- Confidence: {{ context.resources.review_security.confidence }}\n- Findings:\n  {% for finding in context.resources.review_security.findings %}\n  - {{ finding }}\n  {% endfor %}\n\nPerformance review:\n- Risk level: {{ context.resources.review_performance.risk_level }}\n- Confidence: {{ context.resources.review_performance.confidence }}\n- Findings:\n  {% for finding in context.resources.review_performance.findings %}\n  - {{ finding }}\n  {% endfor %}\n\nReturn exactly these four fields:\n- agreed_risk_level: the higher of the two risk levels (critical > high > medium > low)\n- security_concerns: one or two sentences summarising the security findings\n- performance_concerns: one or two sentences summarising the performance findings\n- recommendation: one sentence — APPROVED, NEEDS REVISION, or BLOCKED, with reason\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agreed_risk_level",
+          "security_concerns",
+          "performance_concerns",
+          "recommendation"
+        ],
+        "properties": {
+          "agreed_risk_level": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "security_concerns": {
+            "type": "string",
+            "minLength": 10
+          },
+          "performance_concerns": {
+            "type": "string",
+            "minLength": 10
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 10
+          }
+        }
+      },
+      "display": "{{ agreed_risk_level }}: {{ recommendation }}\n\nSecurity: {{ security_concerns }}\nPerformance: {{ performance_concerns }}\n"
+    },
+    "record_review": {
+      "description": "Mark the review complete. All findings are already in the evidence chain from review_security, review_performance, and synthesize_review — this step exists to give the workflow a clean terminal step distinct from the final agent step.\n",
+      "execution": "auto",
+      "depends_on": [
+        "synthesize_review"
+      ]
+    }
+  }
+}
