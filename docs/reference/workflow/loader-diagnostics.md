@@ -2,7 +2,7 @@
 
 <!-- description: What realm workflow validate reports when it reads a workflow.yaml: accepted, accepted with warnings, or refused. Every warning code and the JSON output. -->
 
-When Realm reads a `workflow.yaml`, it either accepts the file, accepts it with warnings, or refuses it. This page describes the three outcomes as `realm workflow validate` prints them, lists all 18 warning codes, and gives the machine-readable form of the result.
+When Realm reads a `workflow.yaml`, it either accepts the file, accepts it with warnings, or refuses it. This page describes the three outcomes as `realm workflow validate` prints them, lists all 21 warning codes, and gives the machine-readable form of the result.
 
 `realm workflow register` applies the same checks before it stores anything.
 
@@ -59,28 +59,31 @@ A message has no line when the place could not be found exactly.
 
 ## Warning codes
 
-The loader has 18 warning codes. Two of them count as errors: an unknown key at the top of the file or on a step makes `validate` and `register` fail. The others are advice, and the file is accepted.
+The loader has 21 warning codes. 3 of them count as errors: an unknown key at the top of the file or on a step, and an `input_map` path that can never be found, make `validate` and `register` fail. The others are advice, and the file is accepted.
 
-| Code                                | Counts as | Printed when                                                                                          |
-| ----------------------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
-| `UNKNOWN_WORKFLOW_KEY`              | Error     | The top of the file has a field Realm does not know.                                                  |
-| `UNKNOWN_STEP_KEY`                  | Error     | A step has a field Realm does not know.                                                               |
-| `UNKNOWN_RETRY_KEY`                 | Warning   | A `retry` block has a key that is not one of its six.                                                 |
-| `UNKNOWN_GATE_KEY`                  | Warning   | A `gate` block has a key that is not one of its nine.                                                 |
-| `UNKNOWN_VALIDATION_EXHAUSTION_KEY` | Warning   | A `validation_exhaustion` block has a key that is not one of its three.                               |
-| `UNKNOWN_CREATE_WORKFLOW_KEY`       | Warning   | An assistant sent `create_workflow` a field it does not take. Not printed for files.                  |
-| `RETRY_NO_TIMEOUT`                  | Warning   | A step has `retry` and no `timeout_seconds`.                                                          |
-| `ON_TIMEOUT_SINGLE_ATTEMPT`         | Warning   | `retry.on_timeout` is set and the step is tried only once.                                            |
-| `TOTAL_TIMEOUT_BELOW_ATTEMPT`       | Warning   | `retry.total_timeout_seconds` is below `timeout_seconds`.                                             |
-| `TOTAL_TIMEOUT_NON_AUTO`            | Warning   | `retry.total_timeout_seconds` is on a step that is not an `auto` step.                                |
-| `RETRY_INERT_NON_AUTO`              | Warning   | `retry` is on an agent or guard step, where it does nothing.                                          |
-| `IDEMPOTENT_INERT_IN_FINALIZER`     | Warning   | A step says `idempotent: true` in a workflow that has a finalizer.                                    |
-| `DUAL_SCHEMA_DECLARED`              | Warning   | A step has both `input_schema` and `output_schema`.                                                   |
-| `DEAD_GATE_CONFIG`                  | Warning   | A `gate` setting can have no effect.                                                                  |
-| `DEAD_VALIDATION_EXHAUSTION_CONFIG` | Warning   | `default_output` is set without `mode: default`.                                                      |
-| `SCHEMA_STRICT_ADVISORY`            | Warning   | A schema compiles, and uses a list of types or a check without its `type`.                            |
-| `EXTENSION_SENTINEL`                | Warning   | A secret named in `realm.yaml` could not be found, so the check ran with placeholders.                |
-| `REALM_RELEASE_LINE_MISMATCH`       | Warning   | The `@sensigo/realm` the project's code imports is not the version the command runs. Added in 0.46.0. |
+| Code                                | Counts as | Printed when                                                                                                                                                                          |
+| ----------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UNKNOWN_WORKFLOW_KEY`              | Error     | The top of the file has a field Realm does not know.                                                                                                                                  |
+| `UNKNOWN_STEP_KEY`                  | Error     | A step has a field Realm does not know.                                                                                                                                               |
+| `INPUT_MAP_PATH_UNRESOLVABLE`       | Error     | An `input_map` path can never be found. Added after version 0.49.0.                                                                                                                   |
+| `INPUT_MAP_PATH_UNCERTAIN`          | Warning   | An `input_map` path may be absent when the step runs. Added after version 0.49.0.                                                                                                     |
+| `UNKNOWN_RETRY_KEY`                 | Warning   | A `retry` block has a key that is not one of its six.                                                                                                                                 |
+| `UNKNOWN_GATE_KEY`                  | Warning   | A `gate` block has a key that is not one of its nine.                                                                                                                                 |
+| `UNKNOWN_VALIDATION_EXHAUSTION_KEY` | Warning   | A `validation_exhaustion` block has a key that is not one of its three.                                                                                                               |
+| `UNKNOWN_CREATE_WORKFLOW_KEY`       | Warning   | An assistant sent `create_workflow` a field it does not take. Not printed for files.                                                                                                  |
+| `RETRY_NO_TIMEOUT`                  | Warning   | A step has `retry` and no `timeout_seconds`.                                                                                                                                          |
+| `ON_TIMEOUT_SINGLE_ATTEMPT`         | Warning   | `retry.on_timeout` is set and the step is tried only once.                                                                                                                            |
+| `TOTAL_TIMEOUT_BELOW_ATTEMPT`       | Warning   | `retry.total_timeout_seconds` is below `timeout_seconds`.                                                                                                                             |
+| `TOTAL_TIMEOUT_NON_AUTO`            | Warning   | `retry.total_timeout_seconds` is on a step that is not an `auto` step.                                                                                                                |
+| `RETRY_INERT_NON_AUTO`              | Warning   | `retry` is on an agent or guard step, where it does nothing.                                                                                                                          |
+| `IDEMPOTENT_INERT_IN_FINALIZER`     | Warning   | A step says `idempotent: true` in a workflow that has a finalizer.                                                                                                                    |
+| `DUAL_SCHEMA_DECLARED`              | Warning   | A step has both `input_schema` and `output_schema`.                                                                                                                                   |
+| `DEAD_GATE_CONFIG`                  | Warning   | A `gate` setting can have no effect.                                                                                                                                                  |
+| `DEAD_VALIDATION_EXHAUSTION_CONFIG` | Warning   | `default_output` is set without `mode: default`.                                                                                                                                      |
+| `SCHEMA_STRICT_ADVISORY`            | Warning   | A schema compiles, and uses a list of types or a check without its `type`.                                                                                                            |
+| `EXTENSION_SENTINEL`                | Warning   | A secret named in `realm.yaml` could not be found, so the check ran with placeholders.                                                                                                |
+| `REALM_RELEASE_LINE_MISMATCH`       | Warning   | The `@sensigo/realm` the project's code imports is not the version the command runs. Added in 0.46.0.                                                                                 |
+| `AUTHOR_TEXT_NAMES_ANSWER_TOOL`     | Warning   | The `instructions` of a step whose `trust` is `human_confirmed` or `human_reviewed`, or the workflow's `protocol.rules`, tell the agent to use an answer tool, which it may not have. |
 
 An unknown key is reported with its line, and with the nearest known key when there is one:
 
@@ -145,7 +148,8 @@ With `--json`, `validate` prints one JSON object and nothing else on standard ou
   ],
   "errors": ["Invalid: 1 warning, 1 escalated to an error by policy: UNKNOWN_STEP_KEY 'depend_on'"],
   "checks_not_run": [],
-  "extension_keys": []
+  "extension_keys": [],
+  "not_checked": []
 }
 ```
 
@@ -161,6 +165,7 @@ With `--json`, `validate` prints one JSON object and nothing else on standard ou
 | `errors`                       | The error lines, as text.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `checks_not_run`               | Checks that were left out, each with the reason. Used with `--registered`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `extension_keys`               | The `x-` fields found at the top of the file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `not_checked`                  | The `input_map` paths into data the workflow declares no shape for: `step`, `key`, `path`, `why`. Added after version 0.49.0.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `cacheability`                 | Each agent step's fixed part, for each provider described: its size and token range, its blocks and their segments, the other steps whose whole fixed part is the same as its own (a step below the minimum lists none, except a `structured_output: strict` step on OpenAI with a model that is not an `o1` model), and its verdict or why it has none. `shares_with` lists exactly the steps the `cache:` line names, all of them when the line ends `and N more`. Each entry holds `step`, the other step's id. It holds no prompt text, and is absent when the file could not be read. See [The cache lines](../cli/realm-workflow.md#the-cache-lines). Added after version 0.48.0. |
 
 In a position, `line` and `column` count from 1, and `endColumn` is one past the last character.

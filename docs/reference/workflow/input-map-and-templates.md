@@ -72,7 +72,7 @@ Started with `{"sku": "A-100"}`, the handler received:
 
 ### Rules
 
-- **A path that finds nothing leaves its key out.** In the example, `missing` is not in what the handler received. There is no error and no warning, when the file is loaded or when the step runs — unless the step's `input_schema` requires the key: then the step is refused before its claim (`'<step>' cannot run (input_schema): …`), and its way out names the `input_map` or the `input_schema`. A path without one of the roots above, such as `order.id`, finds nothing.
+- **A path that finds nothing leaves its key out.** In the example, `missing` is not in what the handler received. When the step runs there is no error and no warning — unless the step's `input_schema` requires the key: then the step is refused before its claim (`'<step>' cannot run (input_schema): …`), and its way out names the `input_map` or the `input_schema`. When the file is checked, a path that can never be found is refused and one that may be absent is warned (see [What `validate` checks in `input_map`](#what-validate-checks-in-input_map)). A path without one of the roots above, such as `order.id`, finds nothing, and `validate` refuses it.
 - **A bare list, number, or true or false is refused.** Wrap it in `$literal`.
 
   ```text
@@ -88,6 +88,17 @@ Started with `{"sku": "A-100"}`, the handler received:
 - **`$literal` stands alone.** A map that has `$literal` and another key is refused: `$literal node must have exactly one key ($literal); found sibling keys`.
 - **Maps can be nested 10 deep.** One more is refused: `exceeded maximum nesting depth of 10`.
 - **`input_map` does not build text.** A value cannot be made from pieces, and `{{ … }}` expressions are not read here.
+
+## What `validate` checks in `input_map`
+
+`realm workflow validate`, `register` and `watch` check each `input_map` path against what the workflow declares. A path that can never be found is refused, with its line and, where one can be worked out, the right spelling:
+
+```text
+⚠ Step 'refund': input_map 'amount_cents' reads 'steps.propose.output.amount_cents', which can never be found: a path starts with 'run.params.' or 'context.resources.<step>.'. Write it as 'context.resources.propose.amount_cents'. (line 20)
+Invalid: 1 warning, 1 escalated to an error by policy: INPUT_MAP_PATH_UNRESOLVABLE 'amount_cents'
+```
+
+A path that may be absent when the step runs gets a warning. Examples: an optional field, a list position, a step that is not a dependency, or a step the trigger rule may let this one run without. A path into data the workflow declares no shape for, such as a handler's output, is listed as not checked. Running a workflow does not refuse these: `realm workflow run`, `realm agent` and `realm listen` print them as warnings. This was added after version 0.49.0.
 
 ## Template expressions
 
