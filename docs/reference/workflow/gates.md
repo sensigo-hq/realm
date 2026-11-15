@@ -188,7 +188,7 @@ The new settings apply to gates that open afterwards.
 Realm has no background process. A gate whose time is up stays open until a call acts on its run: a late answer, a call to another step of the run, `advance_run` (or `realm run advance`, or `advanceRun` in a program), `realm run drain --expired`, or `realm listen` started with `--sweep-expired-gates`. Once the time is up on a gate that declares `on_expiry`, `get_run_state` offers `advance_run`, which carries out the declared default or abort and then runs the steps it makes ready; a gate with no `on_expiry` is never touched. The status is then `advance_owed`, or `claim_stale` when another step's claim is past its time. A server that cannot read the workflow says `workflow_unresolved` instead. `advance_run`, `realm run advance` and `advanceRun` were added after version 0.46.0. Until a call carries the expiry out, the run is listed as expired:
 
 ```text
-3fdf338c-…  ex-default v1  gate_waiting  …  gate: approve opened 1m ago (2026-10-09T09:13:00Z)  EXPIRED 0s ago (2026-10-09T09:14:00Z)
+3fdf338c-…  ex-default v1  gate_waiting  …  gate: approve opened 1m ago (2026-10-09T09:13:00Z)  EXPIRED 0s ago (2026-10-09T09:14:00Z)  reminders: none recorded
 ```
 
 and `realm run list --stuck` says what would be done:

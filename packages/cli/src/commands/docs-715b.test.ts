@@ -226,10 +226,12 @@ describe('#715 (b) 04 §E — core-library.md: a store’s clock', () => {
       CORE,
       "**Text rendered before this version.** A gate's message rendered with `from_now` before version 0.48.0 stays as it was written: it says the time from when it was rendered.",
     );
-    // (i) inspect-gate-expiry-render, list-gate-expiry-render ("no send is recorded").
+    // (i) inspect-gate-expiry-render, list-gate-expiry-render (the schedule); #597 D1b:
+    //     slack-reminder-ledger-d1b (the lease and the mark), outbound-lines-d1b (what inspect and list
+    //     show), slack-reminder-writes-nothing-715b (nothing written to the run).
     claim(
       CORE,
-      '**Reminders.** `realm run inspect` and `realm run list` show when a reminder is scheduled. Realm records no reminder as sent.',
+      "**Reminders.** `realm run inspect` and `realm run list` show when a reminder is scheduled. `realm agent` records the Slack reminders and the escalation it sends in the store's outbound ledger, beside the run, and `inspect` and `list` show what it recorded; nothing is written to the run.",
     );
     // (j) drive-failing-715b "a legacy entry … is judged by the stamp order, and says so".
     claim(

@@ -56,7 +56,7 @@ Do this, in this order:
 
 ## A store version change
 
-From the version after 0.49.0, the store file `realm.db` is at format version 2, which adds `outbound`, a per-run table nothing writes yet. A home that 0.49.0 used is at version 1. Every command that opens the store, except `realm db check`, `realm db backup` and `realm db migrate`, refuses it with one line, creates nothing and exits with code 1:
+From the version after 0.49.0, the store file `realm.db` is at format version 2, which adds `outbound`, a per-run table where `realm agent` records the Slack reminders and escalation it sends. A home that 0.49.0 used is at version 1. Every command that opens the store, except `realm db check`, `realm db backup` and `realm db migrate`, refuses it with one line, creates nothing and exits with code 1:
 
 ```text
 Error: This store's file is at schema version 1; this Realm writes version 2. Run `realm db migrate` with Realm stopped to upgrade it.

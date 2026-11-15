@@ -190,8 +190,8 @@ export interface RunStore {
    * as every store did before this property; nothing in core treats that as an error. A sender leases
    * a reminder or the escalation of a run's open question, then marks it sent or failed, so two
    * senders never both hold it and a restarted one finds what was done. The ledger is beside the run
-   * record, never in it. `InMemoryStore` keeps one unless it is built with `outbound: null`. Nothing in
-   * Realm uses it yet.
+   * record, never in it. `InMemoryStore` keeps one unless it is built with `outbound: null`. `realm
+   * agent`'s Slack reminders use it (#597 D1b), and `realm run inspect` and `realm run list` show it.
    */
   readonly outbound?: OutboundLedger | null;
 
