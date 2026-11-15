@@ -1,18 +1,37 @@
-// Issue #524 — the `DEAD_GATE_CONFIG` block advisory (the gate-remedy silence) on the built
-// `validate` command. In-process via commander's parseAsync, same pattern as
-// validate-retry-timeout-advisory.test.ts. New sibling: no cli/mcp file referenced
-// `DEAD_GATE_CONFIG` before this round.
+// Fix 2 (agent-written workflows), on top of issue #524 — on the built `validate` command. A
+// `gate:` block on a step that can never open a gate used to print the #524 `DEAD_GATE_CONFIG`
+// block advisory and validate (exit 0; only `--strict` failed). Since fix 2 the loader refuses
+// it, so plain `validate` fails. In-process via commander's parseAsync, the same pattern as
+// validate-retry-timeout-advisory.test.ts. The step is named `approve` and its block sits at line
+// 9, so the printed line is the one docs/reference/workflow/gates.md quotes.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateCommand } from './validate.js';
 
-describe('validate — DEAD_GATE_CONFIG block advisory (issue #524, the gate-remedy silence)', () => {
+/** Message A as validate prints it for the auto step `approve`, its block at line 9. */
+const MSG_A_APPROVE =
+  "Invalid workflow: Step 'approve': the 'gate:' block is refused at load — this step declares " +
+  "no gate trust ('trust: human_confirmed' or 'trust: human_reviewed'), so Realm would never " +
+  'open this gate: nobody would be asked, and the run would go on exactly as if the block were ' +
+  "not there. Set 'trust: human_confirmed' on this step if a person must approve its result, or " +
+  "remove the 'gate:' block. This refusal clears as soon as either is done. (line 9)";
+
+describe('validate — fix 2: a gate: block that can never open a gate is refused (was the #524 advisory)', () => {
   let dir: string;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'realm-validate-gate-dead-block-'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+      throw new Error('process.exit');
+    }) as never);
   });
 
   afterEach(() => {
@@ -20,7 +39,9 @@ describe('validate — DEAD_GATE_CONFIG block advisory (issue #524, the gate-rem
     vi.restoreAllMocks();
   });
 
-  function write(gateBlock: string): string {
+  /** One step, `approve`; `stepFields` sit between `execution` and the block (none keeps the
+   *  block at line 9); `gateBlock` empty leaves the block out. */
+  function write(execution: string, stepFields: string, gateBlock: string): string {
     const wfPath = join(dir, 'workflow.yaml');
     writeFileSync(
       wfPath,
@@ -28,60 +49,61 @@ describe('validate — DEAD_GATE_CONFIG block advisory (issue #524, the gate-rem
 name: Gate Dead Block
 version: 1
 steps:
-  check:
-    description: check
-    execution: guard
-    abort_unless: ["check.ok == true"]
-    gate:
-${gateBlock}
-`,
+  approve:
+    description: approve
+    execution: ${execution}
+${stepFields}${gateBlock}`,
       'utf8',
     );
     return wfPath;
   }
 
-  it('a guard with gate.on_expiry (no gate trust — never minted) renders the block advisory, exit 0', async () => {
-    const wfPath = write('      timeout_seconds: 300\n      on_expiry: abort');
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const ERRORED = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+  const GATE = '    gate:\n      timeout_seconds: 300\n      on_expiry: abort\n';
 
-    await validateCommand.parseAsync([wfPath], { from: 'user' });
-
-    const warned = warnSpy.mock.calls.flat().map(String).join(' ');
-    expect(warned).toContain("the 'gate:' block is inert");
-    expect(warned).toContain(
-      "this step declares no gate trust ('trust: human_confirmed' or 'trust: human_reviewed')",
+  it('auto, no trust, the block at line 9: plain validate exits 1 and prints message A with the line', async () => {
+    const wfPath = write('auto', '    handler: h\n', GATE);
+    await expect(validateCommand.parseAsync([wfPath], { from: 'user' })).rejects.toThrow(
+      'process.exit',
     );
-    expect(warned).toContain('on an auto or agent step');
-    expect(logSpy.mock.calls.flat().map(String).join(' ')).toContain('Valid:');
-  });
-
-  it('following the OLD remedy (adding gate.timeout_seconds) does NOT silence the advisory — it STILL prints, exit 0 (the gate-remedy silence, fixed)', async () => {
-    // Same shape as the cell above — the point is that "add a timeout" (the pre-#524 remedy)
-    // changes nothing: the block is exactly as inert with a timeout declared as without one,
-    // because the mint never reads either without gate trust.
-    const wfPath = write('      timeout_seconds: 300\n      on_expiry: abort');
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    await validateCommand.parseAsync([wfPath], { from: 'user' });
-
-    const warned = warnSpy.mock.calls.flat().map(String).join(' ');
-    expect(warned).toContain("the 'gate:' block is inert"); // never silenced by "following the remedy"
-  });
-
-  it('--strict fails on the same fixture', async () => {
-    const wfPath = write('      timeout_seconds: 300\n      on_expiry: abort');
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
-      throw new Error('process.exit');
-    }) as never);
-
-    await expect(
-      validateCommand.parseAsync([wfPath, '--strict'], { from: 'user' }),
-    ).rejects.toThrow('process.exit');
+    // (1) red when the refusal is removed: the file validates (exit 0, "Valid:"), so parseAsync
+    //     resolves and this line fails first; (2) prints the expected and the received rejection.
     expect(exitSpy).toHaveBeenCalledWith(1);
+    // (1) red when the message or its line cite changes; (2) prints everything validate printed
+    //     on its error output.
+    expect(ERRORED().split('\n')).toContain(MSG_A_APPROVE);
   });
+
+  it('a guard with a gate block (no gate trust, never minted): exit 1, message B with the line', async () => {
+    const wfPath = write('guard', "    abort_unless: ['approve.ok == true']\n", GATE);
+    await expect(validateCommand.parseAsync([wfPath], { from: 'user' })).rejects.toThrow(
+      'process.exit',
+    );
+    // (1) red when gate×guard is left as before (warning, Valid, exit 0); (2) prints the call.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    // (1) red when B's text or line changes; (2) prints the error output.
+    expect(ERRORED().split('\n')).toContain(
+      "Invalid workflow: Step 'approve': 'gate' is not valid on execution: guard steps — a " +
+        "guard step never opens a gate (only an auto or agent step with 'trust: " +
+        "human_confirmed' or 'trust: human_reviewed' does), so nobody would be asked. Move the " +
+        "'gate:' block to the auto or agent step whose result a person must approve, and set " +
+        "'trust: human_confirmed' on that step; or remove the block. This refusal clears as soon " +
+        'as either is done. (line 9)',
+    );
+  });
+
+  it.each([
+    ['the trust added', '    handler: h\n    trust: human_confirmed\n', GATE],
+    ['the block removed', '    handler: h\n', ''],
+  ])(
+    "following message A's remedy (%s) on a block with no mistakes of its own, the same step validates — the message's 'this refusal clears as soon as either is done'",
+    async (_remedy, stepFields, gateBlock) => {
+      const wfPath = write('auto', stepFields, gateBlock);
+      await validateCommand.parseAsync([wfPath], { from: 'user' });
+      // (1) red when a remedy the message offers does not make the file load (it would exit, and
+      //     parseAsync would reject above); (2) prints what validate logged.
+      expect(logSpy.mock.calls.flat().map(String).join(' ')).toContain('Valid:');
+      expect(exitSpy).not.toHaveBeenCalled();
+    },
+  );
 });

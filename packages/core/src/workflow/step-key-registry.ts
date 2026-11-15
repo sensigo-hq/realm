@@ -256,6 +256,17 @@ const MSG_TOOL_TIMEOUT =
   'nothing for it to bound, so the step would carry a bound with nothing to bind. In ' +
   "realm's own drive each tool call is capped at tool_timeout seconds (default 30); declare " +
   'at least one tool or remove the key.';
+// Fix 2: a guard or finalizer never opens a gate (the mint is reached only on an auto or agent
+// step with gate trust, Step 5b), so a `gate:` block there is refused whatever `trust` says. One
+// text per kind, the kind named in both places.
+const gateNeverOpensOn = (kind: 'guard' | 'finalizer'): string =>
+  `'gate' is not valid on execution: ${kind} steps — a ${kind} step never opens a gate (only ` +
+  "an auto or agent step with 'trust: human_confirmed' or 'trust: human_reviewed' does), so " +
+  "nobody would be asked. Move the 'gate:' block to the auto or agent step whose result a " +
+  "person must approve, and set 'trust: human_confirmed' on that step; or remove the block. " +
+  'This refusal clears as soon as either is done.';
+const MSG_GATE_GUARD = gateNeverOpensOn('guard');
+const MSG_GATE_FINALIZER = gateNeverOpensOn('finalizer');
 
 // ——— surviving hand-written by-witnesses (#517): only the except-bearing trust×finalizer
 // value-conditional check and the blocked_transitive tool_timeout companion check keep live
@@ -308,6 +319,13 @@ const W_GATE_MINT_TRUST: StepKeyWitness = {
 const W_TRUST_VALUE_REFUSAL: StepKeyWitness = {
   file: PEND,
   pattern: "classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse'",
+};
+// Fix 2: the loader refuses a `gate:` block on an auto/agent step whose trust opens no gate (trust
+// absent, or `auto`) — what closes the population the #524 advisory used to disclose, the way
+// W_TRUST_VALUE_REFUSAL closes trust's.
+const W_GATE_NO_TRUST_REFUSAL: StepKeyWitness = {
+  file: YL,
+  pattern: "classifyStepTrust(stepKind, step['trust']) === 'lawful_no_gate'",
 };
 // #729 PR-0 (A9): the one gate-choice default — the execution loop reads a gate's choices through
 // the loader's `gateChoicesOf` (its declared list, else `DEFAULT_GATE_CHOICES`).
@@ -1285,43 +1303,30 @@ export const STEP_KEY_REGISTRY = {
     finalizer: { c: 'na', reason: 'resolved away pre-validation (see ×auto)' },
   },
   gate: {
+    // Fix 2: the inert_subpop "without gate trust" (via the #524 DEAD_GATE_CONFIG block advisory)
+    // is gone from both cells — the loader now refuses that population at load
+    // (W_GATE_NO_TRUST_REFUSAL), as #508 did for trust.
     auto: {
       c: 'consumed',
-      where: [W_GATE_CHOICES],
+      where: [W_GATE_CHOICES, W_GATE_NO_TRUST_REFUSAL],
       when: {
         desc: 'gate-trusted only: the mint reads the gate config exactly once — every later enactment read sees only the already-FROZEN PendingGate',
         witness: W_GATE_MINT_TRUST,
       },
-      inert_subpop: [
-        {
-          desc: 'without gate trust: fully validated at load time (#291/#433) and never minted',
-          // issue #524: was `waived` quoting the loader's own header comment — not a witness,
-          // and nothing pinned the text (mutating it left the registry suite 205/205 green). The
-          // loader now emits ONE advisory naming the true cause on this exact population.
-          via: { kind: 'advisory', code: 'DEAD_GATE_CONFIG' },
-        },
-      ],
     },
     agent: {
       c: 'consumed',
-      where: [W_GATE_CHOICES],
+      where: [W_GATE_CHOICES, W_GATE_NO_TRUST_REFUSAL],
       when: {
         desc: 'gate-trusted only, the same mint site',
         witness: W_GATE_MINT_TRUST,
       },
-      inert_subpop: [
-        {
-          desc: 'without gate trust: validated, never minted',
-          via: { kind: 'advisory', code: 'DEAD_GATE_CONFIG' }, // issue #524, see ×auto
-        },
-      ],
     },
-    // issue #524: was `tracked #512` (a gate×guard/finalizer PROHIBITION is #512's own proposal,
-    // still open) — until #512 ships, the loader's #524 block advisory covers this population
-    // too (guard/finalizer never reach the gate mint at all, Step 5b `execution-loop.ts`), so it
-    // is `advisory`, not merely `tracked`, today. This pair is #512's red-first once it lands.
-    guard: { c: 'inert', via: { kind: 'advisory', code: 'DEAD_GATE_CONFIG' } },
-    finalizer: { c: 'inert', via: { kind: 'advisory', code: 'DEAD_GATE_CONFIG' } },
+    // Fix 2 (#512's gate half): guard/finalizer never reach the gate mint (Step 5b
+    // `execution-loop.ts`), so the block is refused there, minted by the #517 walk whatever
+    // `trust` says. Was `inert` via the #524 block advisory.
+    guard: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_GATE_GUARD },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_GATE_FINALIZER },
   },
   agent_profile: {
     auto: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_AGENT_PROFILE },
