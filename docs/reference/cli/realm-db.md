@@ -97,11 +97,13 @@ and then:
 
 ## `check`
 
-`realm db check [--json]`
+`realm db check [--json] [--project <dir>]`
 
 Reports on the store file without changing it: it opens the file read-only. `db check` writes nothing to the store file; SQLite may create or update its two side files beside it (`realm.db-wal`, `realm.db-shm`), as any open of the store does.
 
 It runs SQLite's integrity check and reads the file's settings, schema version and schema, and whether Realm can write to it. It reads every run's stored record once, checking its evidence hashes, its phase stamp, its key hash, its filter columns and its stored placeholders, and it compares the tables with each other: the purge counter, rows whose run is gone, each workflow's pointer, and each stored workflow version's hash. A problem is reported with its reason, and every check it stops is listed as not run, or as run in part. When a read meets a damaged page, or a run whose record cannot be read, that is reported and the rest of the report is kept.
+
+With `--project <dir>`, it also names each stored run that holds, in a changed form, a secret that `<dir>/realm.yaml` declares: upper-cased, lower-cased, capitalised, title-cased, or its first 8 or more characters followed by `…` as the `truncate` filter cuts, in a run's record, its evidence, its write-once fields, its trace or its refused answers. It never prints the value, runs no project code, and does not look for a value under 8 characters, for a part made by the `replace` or `split` filter, or for the value itself, which every run that handled it holds by design. It refuses a folder with no `realm.yaml`, a `realm.yaml` that cannot be read or is invalid, and one that names a secret it cannot resolve, before it opens the store: nothing is scanned.
 
 It refuses, with one `Error:` line, a home with no store file or an empty one, a Node.js whose built-in SQLite is below the floor, a home on a network or unrecognised filesystem or on a system other than Linux or macOS, a store file that is a folder, or a symbolic link (link the home folder instead, never the store file), and a home that still holds the old JSON store's folders (move them out of the home, then import what you want to keep with `realm run import`).
 
@@ -118,9 +120,14 @@ Each report lists what this version cannot check:
 - A purged run's key hash cannot be recomputed: no key is kept.
 - A run deleted while a finalizer was still owed cannot be detected: the purge record keeps no finalizer field.
 
+With `--project`, two more:
+
+- A declared value shorter than 8 characters is not looked for in a changed form.
+- A part of a declared value made by the replace or split filter is not looked for: such parts cannot be listed.
+
 **Exit code:** 0 when every check ran and found nothing. 1 when a problem is found or a check could not run, and 1 when the command refuses, with one `Error:` line on standard error and nothing on standard output. A file Realm cannot write to exits 1, a read-only copy included (`findings[].code` is `not_writable`). The side files SQLite creates beside a read-only file are read-only too: when you make the file writable, make `realm.db-wal` and `realm.db-shm` writable as well, or Realm still cannot write to the store.
 
-`--json` prints the report: `status` (`ok` or `findings`), `path`, `schema_version`, `reads_up_to`, `facts`, `findings`, `not_run` and `not_checked`. A finding's `examples_of`, present only when it differs from `count`, says how many examples exist: `orphaned_rows` counts rows, and its examples are one per table and run.
+`--json` prints the report: `status` (`ok` or `findings`), `path`, `schema_version`, `reads_up_to`, `facts`, `findings`, `not_run` and `not_checked`. A finding's `examples_of`, present only when it differs from `count`, says how many examples exist: `orphaned_rows` counts rows, and its examples are one per table and run. A `changed_form_of_declared_value` finding also carries `run_id`, `path` (the field that holds the form) and `kind` (`upper-cased`, `lower-cased`, `capitalised`, `title-cased` or `truncated`), so a script can purge by `run_id`; none of them holds the value.
 
 | Code                             | Check                   | Message                                                                                                                                                                                   | Stops                                                                          |
 | -------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
@@ -145,6 +152,7 @@ Each report lists what this version cannot check:
 | `orphaned_rows`                  | orphans                 | `1 row belongs to a run that is gone: <table> 1.` / `<n> rows belong to runs that are gone: <table> <k>, ….`                                                                              | nothing                                                                        |
 | `workflow_pointer_mismatch`      | workflow_pointers       | `1 workflow's pointer does not match its newest registration.` / `<n> workflows' pointers do not match their newest registration.`                                                        | nothing                                                                        |
 | `workflow_version_hash_mismatch` | workflow_version_hashes | `1 stored workflow version does not match its hash.` / `<n> stored workflow versions do not match their hash.`                                                                            | nothing                                                                        |
+| `changed_form_of_declared_value` | declared_forms          | `run <id>: <path> holds the <kind> form of a declared value — rotate it and purge the run`                                                                                                | nothing                                                                        |
 
 Never delete, move or replace `realm.db` or its side files while a Realm process is running.
 

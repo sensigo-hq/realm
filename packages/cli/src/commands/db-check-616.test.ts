@@ -477,7 +477,8 @@ const THIS = 'this file';
 
 describe('#616 c8a2 — check 6: the page says what the command does', { timeout: 120_000 }, () => {
   it.each([
-    ['the usage', '`realm db check [--json]`', `${THIS}, check 1`],
+    // The filter-mask fix, PR 2: the synopsis gains `--project` (db-check-declared-forms runs it).
+    ['the usage', '`realm db check [--json] [--project <dir>]`', `${THIS}, check 1`],
     [
       'it writes nothing',
       'Reports on the store file without changing it: it opens the file read-only. `db check` writes nothing to the store file; SQLite may create or update its two side files beside it (`realm.db-wal`, `realm.db-shm`), as any open of the store does.',

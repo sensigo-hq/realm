@@ -18,6 +18,11 @@
 //   3. the WAL's frames, by `PRAGMA wal_checkpoint(NOOP)` in autocommit (inside a read transaction it
 //      fails with errcode 6): it copies nothing and writes nothing (DELTAS 53). Its `log` and
 //      `checkpointed` are exact at that moment; another Realm process moves them.
+// The filter-mask fix, PR 2: `check({ declaredValues })` (`realm db check --project`) adds the
+// `declared_forms` check, one more scan of the data pass (`store-check-forms.ts`): each stored place
+// that holds a changed form of a declared value is a `changed_form_of_declared_value` finding naming
+// the run, the field and the kind of form, never the value; and two `not_checked` entries say what it
+// cannot find. Without the option, nothing of it is in the report.
 // A fact that could not be measured is absent, never 0. `check()` rejects with the store's busy
 // refusal (`STATE_RUN_BUSY`, past its budget), with any error of the integrity check other than a
 // damaged file's (passed on as every store read passes it), and after `close()`.
@@ -34,6 +39,7 @@ import {
   type PointerWrong,
   type RecordPass,
 } from './store-check-records.js';
+import { DECLARED_FORM_MIN, type FormKind } from './store-check-forms.js';
 
 /** The checks, in the order they run and are reported: one `as const` list (framework R3; c8b adds its own). */
 export const CHECK_IDS = [
@@ -57,6 +63,8 @@ export const CHECK_IDS = [
   'workflow_pointers',
   'workflow_version_hashes',
   'data_read',
+  // The filter-mask fix, PR 2: only when declared values are given (`realm db check --project`).
+  'declared_forms',
 ] as const;
 /** A check's id. */
 export type CheckId = (typeof CHECK_IDS)[number];
@@ -86,6 +94,8 @@ export const CHECK_FINDING_CODES = [
   'workflow_pointer_mismatch',
   'workflow_version_hash_mismatch',
   'data_unreadable',
+  // The filter-mask fix, PR 2.
+  'changed_form_of_declared_value',
 ] as const;
 /** A finding's code. */
 export type CheckFindingCode = (typeof CHECK_FINDING_CODES)[number];
@@ -111,6 +121,9 @@ export const NOT_CHECKED_IDS = [
   'tombstone_phase',
   'purged_key_hash',
   'finalizer_after_delete',
+  // The filter-mask fix, PR 2: listed only when declared values are given.
+  'declared_forms_short',
+  'declared_forms_replace_split',
 ] as const;
 /** A `not_checked` entry's check. */
 export type NotCheckedId = (typeof NOT_CHECKED_IDS)[number];
@@ -136,6 +149,12 @@ export interface CheckFinding {
   /** How many examples exist in all, present only when that differs from `count` (`orphaned_rows`,
    *  whose `count` is rows and whose examples are per table and run; DELTAS "Row 51 addendum"). */
   readonly examples_of?: number;
+  /** `changed_form_of_declared_value` only: the run, so a script can purge it. */
+  readonly run_id?: string;
+  /** `changed_form_of_declared_value` only: the field that holds the form. */
+  readonly path?: string;
+  /** `changed_form_of_declared_value` only: the kind of form, never the form. */
+  readonly kind?: FormKind;
 }
 
 /** A check that did not run, or ran in part, and the finding that says why. */
@@ -218,6 +237,16 @@ export interface CheckReport {
   readonly not_checked: readonly CheckNotChecked[];
 }
 
+/** What a caller may ask of the check besides what it always does. */
+export interface CheckOptions {
+  /**
+   * The declared values whose changed forms the `declared_forms` check looks for (the project's
+   * `${secret:NAME}` values). Absent: the check does not run and nothing of it is in the report. The
+   * values are not stored, logged or put in any error.
+   */
+  readonly declaredValues?: readonly string[];
+}
+
 /** What the check needs besides the open's: the facts it does not read from the file. */
 export interface CheckContext {
   readonly path: string;
@@ -244,6 +273,18 @@ const NOT_CHECKED: readonly CheckNotChecked[] = [
   {
     check: 'finalizer_after_delete',
     why: 'A run deleted while a finalizer was still owed cannot be detected: the purge record keeps no finalizer field.',
+  },
+];
+
+/** What the `declared_forms` check cannot find, listed whenever it was asked for. */
+const DECLARED_NOT_CHECKED: readonly CheckNotChecked[] = [
+  {
+    check: 'declared_forms_short',
+    why: `A declared value shorter than ${String(DECLARED_FORM_MIN)} characters is not looked for in a changed form.`,
+  },
+  {
+    check: 'declared_forms_replace_split',
+    why: 'A part of a declared value made by the replace or split filter is not looked for: such parts cannot be listed.',
   },
 ];
 
@@ -507,7 +548,7 @@ function integerFact(value: unknown): number | undefined {
 
 /** The checks each scan of the pass stops when it cannot finish (Behaviour 4; correction 1). */
 const SCAN_STOPS: Record<
-  'runs' | 'evidence' | 'blobs' | 'tombstones' | 'orphans' | 'pointers' | 'versions',
+  'runs' | 'evidence' | 'blobs' | 'tombstones' | 'orphans' | 'pointers' | 'versions' | 'forms',
   readonly CheckId[]
 > = {
   runs: ['records', 'phase_index', 'key_hashes', 'filter_columns', 'placeholders'],
@@ -517,6 +558,7 @@ const SCAN_STOPS: Record<
   orphans: ['orphans'],
   pointers: ['workflow_pointers'],
   versions: ['workflow_version_hashes'],
+  forms: ['declared_forms'],
 };
 
 /**
@@ -713,12 +755,27 @@ function recordFindings(pass: RecordPass): {
       ),
     );
   }
+  // The filter-mask fix, PR 2: each place that holds a changed form, one finding each, in the scan's
+  // order; the run, the field and the kind, never the value.
+  if (pass.forms?.done === true) {
+    for (const hit of pass.formHits) {
+      findings.push({
+        check: 'declared_forms',
+        code: 'changed_form_of_declared_value',
+        message: `run ${hit.runId}: ${hit.path} holds the ${hit.kind} form of a declared value — rotate it and purge the run`,
+        run_id: hit.runId,
+        path: hit.path,
+        kind: hit.kind,
+      });
+    }
+  }
   // A scan that could not finish: one finding, the first stopped scan's words; its checks not run.
   const stopped = (
-    ['runs', 'evidence', 'blobs', 'tombstones', 'orphans', 'pointers', 'versions'] as const
-  ).filter((scan) => !pass[scan].done);
+    ['runs', 'evidence', 'blobs', 'tombstones', 'orphans', 'pointers', 'versions', 'forms'] as const
+  ).filter((scan) => pass[scan] !== undefined && !pass[scan]!.done);
   if (stopped.length > 0) {
-    const first = pass[stopped[0]!];
+    // Defined: `stopped` holds only the scans that ran (the forms scan only when it was asked for).
+    const first = pass[stopped[0]!]!;
     findings.push({
       check: 'data_read',
       code: 'data_unreadable',
@@ -793,6 +850,7 @@ async function onTheConnection(
   db: RealmDb,
   platform: string,
   records: boolean,
+  declared: readonly string[] | undefined,
 ): Promise<{
   readonly read:
     | {
@@ -837,7 +895,9 @@ async function onTheConnection(
     findings.push(integrityUnreadable(errcode));
   }
   // 3. The data pass (c8b1), when no finding of the file stopped it: one read transaction.
-  const pass = records ? await readRecords(db, runPhaseDerivationFingerprint()) : undefined;
+  const pass = records
+    ? await readRecords(db, runPhaseDerivationFingerprint(), declared)
+    : undefined;
   // 4. The WAL's frames, outside any read transaction: NOOP copies and writes nothing.
   const wal = await measured(() =>
     db.autocommit((c) => {
@@ -852,12 +912,24 @@ async function onTheConnection(
  * Runs the check (see the module comment): the open's outcomes as findings and `not_run`, then, when
  * the file could be read, the facts and the integrity check on its read-only connection.
  */
-export async function runCheck(file: CheckedFile, context: CheckContext): Promise<CheckReport> {
+export async function runCheck(
+  file: CheckedFile,
+  context: CheckContext,
+  options: CheckOptions = {},
+): Promise<CheckReport> {
   const { findings, notRun } = fileFindings(file.outcomes);
+  const declared = options.declaredValues;
   // The data checks run only when no finding of the file put them in `not_run` (c8b1).
-  const records = !notRun.some((n) => DATA_CHECKS.includes(n.check));
+  const stoppedBy = notRun.find((n) => DATA_CHECKS.includes(n.check));
+  const records = stoppedBy === undefined;
+  // The filter-mask fix, PR 2: `declared_forms` is one of the pass's scans, stopped with them.
+  if (declared !== undefined && stoppedBy !== undefined) {
+    notRun.push({ check: 'declared_forms', because: stoppedBy.because });
+  }
   const measuredOn =
-    file.db === undefined ? undefined : await onTheConnection(file.db, context.platform, records);
+    file.db === undefined
+      ? undefined
+      : await onTheConnection(file.db, context.platform, records, declared);
   const read = measuredOn?.read;
   const wal = measuredOn?.wal;
   const pass = measuredOn?.pass;
@@ -897,7 +969,7 @@ export async function runCheck(file: CheckedFile, context: CheckContext): Promis
     facts,
     findings,
     not_run: notRun,
-    not_checked: NOT_CHECKED,
+    not_checked: declared === undefined ? NOT_CHECKED : [...NOT_CHECKED, ...DECLARED_NOT_CHECKED],
   };
 }
 

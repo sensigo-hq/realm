@@ -22,6 +22,8 @@ All notable changes to this project are documented here.
 
 **7. Answer or let open Slack questions expire before you upgrade.** A question open at the upgrade may get a repeated reminder or escalation when its agent restarts (the 0.49 reminders and escalations left no record).
 
+**8. If a template showed a declared secret through a filter, find the runs that hold it, then rotate it.** If a workflow template showed a declared secret through a filter (`upper`, `lower`, `capitalize`, `title`, `truncate`) before this version, the filtered form reached the question or the prompt (see Fixed). After item 4's migration, run `realm db check --project <your project folder>`: it names each stored run that holds such a form, and the field that holds it. Rotate those secrets and purge those runs (`realm run abandon <id>` if the run is still open, then `realm run purge <id> --force`). Run it before you rotate: it looks for your current declared values. Values under 8 characters, and forms made by `replace` or `split`, are not found. A form sent to a model provider or posted to Slack is not stored here: if such a template ran as an agent step's prompt or a Slack-notified gate, rotate that secret regardless.
+
 ### Added
 
 - **`--shutdown-grace <seconds>` on `realm serve` and `realm listen`**: how long requests being answered get to finish after Ctrl+C or `SIGTERM`; 30 by default; 0 to 2147483.
@@ -41,6 +43,7 @@ All notable changes to this project are documented here.
 - **The store file's format version 2** (issue #597): one new per-run table, `outbound`, where `realm agent` records the Slack reminders and escalation it sends. `realm db migrate` moves a 0.49.0 home's file to it, a new home is created at it, `realm run purge` deletes a run's `outbound` rows with the run, and `realm db check` reports rows whose run is gone.
 - **The SQLite store keeps the outbound ledger** (issue #597): the run store of `@sensigo/realm-store-sqlite` has an `outbound` ledger, kept on its file's `outbound` table, which passes every law of `outboundLedgerContract`; `realm run purge` counts its rows in the bytes a dry run shows, and `realm agent`'s Slack reminders use it (below).
 - **`realm agent` records its Slack reminders and escalation** (issue #597): before it posts one it leases it in the store's outbound ledger, and it marks it sent once Slack took it (failed when the channel is gone or archived), so two agents on one question, or a restarted one, post each reminder once; any other post Slack did not take is tried once more when its lease ends. A `realm agent` started again that uses a stopped agent's question post sends one catch-up reminder, for the latest one that came due if it was not sent yet, when the gate has its own `reminder_seconds`. `realm run inspect` prints `Reminders:` and `Escalation:` lines after the open question, and `realm run list` `reminders:` and `escalation:` on a `gate_waiting` row, counted from the ledger: sent, skipped, not confirmed, failed. Nothing is written to the run. The text of `REMINDER_BASIS_CLAUSE` (core) is now `reminders are sent only while a process attends this question`: the line beside it says what was recorded.
+- **`realm db check --project`** `<dir>`: names the stored runs that hold a changed form of a declared value.
 
 ### Changed
 

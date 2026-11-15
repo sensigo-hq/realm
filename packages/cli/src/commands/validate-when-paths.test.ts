@@ -389,7 +389,7 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
     );
     // (1) red when the item is misnumbered or lost; (2) prints the numbers. #597 D1b's Slack
-    // questions item is 7.
+    // questions item is 7; the filter-mask scan's item is 8.
     expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual([
       '**1. ',
       '**2. ',
@@ -398,6 +398,7 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
       '**5. ',
       '**6. ',
       '**7. ',
+      '**8. ',
     ]);
   });
 });
