@@ -6,13 +6,16 @@
 // listen-result-read-r11-real.test.ts starts it. The loader-level cells are core's
 // params-map-check.test.ts.
 import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { request } from 'node:http';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import {
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  loadWorkflowFromStringWithDiagnostics,
+} from '@sensigo/realm';
 import { validateCommand } from './validate.js';
 import { registerCommand } from './register.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -220,6 +223,9 @@ describe('realm listen (built) — fix 1, piece 2b: item 3, executed', () => {
           PATH: process.env['PATH'] ?? '',
           HOME: join(root, 'home'),
           ANTHROPIC_API_KEY: 'k-fake-u2b',
+          // A run's agent would reach a model only here: a closed local port, so no request leaves
+          // the machine whatever the agent does (correction 1).
+          ANTHROPIC_BASE_URL: 'http://127.0.0.1:9',
           WH_SECRET: SECRET,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -296,6 +302,32 @@ describe('realm listen (built) — fix 1, piece 2b: item 3, executed', () => {
     expect(output()).toContain(MISSPELT_FINDING.replace('⚠ ', ''));
     const carrying = await post(port, { id: '102' });
     const without = await post(port, { other: 1 });
+    const runId = String((JSON.parse(without.body) as Record<string, unknown>)['run_id']);
+    // The 202 run's agent: `realm listen` spawns it detached, so it outlives listen. Wait until it
+    // reports the run done, then until no process for this run is left; kill any that is.
+    const agents = (): number[] =>
+      spawnSync('ps', ['-eo', 'pid,args'], { encoding: 'utf8' })
+        .stdout.split('\n')
+        .filter((l) => l.includes('--spawned-by-listen') && l.includes(runId))
+        .map((l) => Number(l.trim().split(/\s+/)[0]));
+    onTestFinished(() => {
+      for (const pid of agents()) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          // already gone
+        }
+      }
+    });
+    // `seen` is the most agent processes found at once while waiting: at least one shows the search
+    // finds them, so an empty `left` below is not a search that finds nothing.
+    const deadline = performance.now() + 30_000;
+    let seen = 0;
+    while (!output().includes(`Run complete: ${runId}`) && performance.now() < deadline) {
+      seen = Math.max(seen, agents().length);
+      await sleep(50);
+    }
+    while (agents().length > 0 && performance.now() < deadline) await sleep(100);
     // (1) red when the claim is false (the misnamed value starts a run, or its absence is refused);
     //     (2) prints both replies.
     expect({
@@ -305,6 +337,16 @@ describe('realm listen (built) — fix 1, piece 2b: item 3, executed', () => {
       },
       without: without.status,
     }).toEqual({ carrying: { status: 400, error: 'params_invalid' }, without: 202 });
+    // (1) red when the run's agent makes a model call (its workflow has no agent step, and any call
+    //     could reach only 127.0.0.1:9), or is still running; (2) prints listen's lines and the pids.
+    expect({
+      noModelCall: output().includes(
+        'Caching: no step is cached; this workflow has no agent step.',
+      ),
+      completed: output().includes(`Run complete: ${runId}`),
+      agentSeen: seen > 0,
+      left: agents(),
+    }).toEqual({ noModelCall: true, completed: true, agentSeen: true, left: [] });
   }, 60_000);
 });
 
@@ -338,14 +380,45 @@ describe('fix 1, piece 2b — the words the docs and the changelog carry (check 
   });
 
   it("webhook-trigger.md's two examples are what the build prints (their text up to the …)", () => {
-    // (1) red when a page's example parts from the message; (2) prints both.
-    expect(MISSPELT_FINDING).toContain(
-      "trigger.params_map.tikcet_id: params_schema has no parameter 'tikcet_id' and allows no others, ",
-    );
-    expect(MISSPELT_FINDING).toContain("Did you mean 'ticket_id'?");
-    expect(UNFILLED_FINDING).toContain(
-      "trigger.params_map: params_schema requires 'source', but params_map does not fill it, ",
-    );
+    // Each example row's code span, read from the page, up to its `…` (correction 1: it read only
+    // this file's constants before).
+    const page = readFileSync(join(ROOT, 'docs/reference/workflow/webhook-trigger.md'), 'utf8');
+    const row = (start: string): string => {
+      const found = page.split('\n').find((l) => l.startsWith(start));
+      if (found === undefined) throw new Error(`webhook-trigger.md has no row starting: ${start}`);
+      return found;
+    };
+    const example = (r: string): string => /`([^`]*)…`/.exec(r)?.[1] ?? '';
+    const unknownRow = row('| A `params_map` name a closed `params_schema` does not have');
+    const unfilledRow = row('| A required parameter `params_map` does not fill');
+    // What the build prints for each matching fixture.
+    const printed = (yaml: string): string =>
+      loadWorkflowFromStringWithDiagnostics(yaml).warnings.find((w) =>
+        w.code.startsWith('PARAMS_MAP_'),
+      )?.message ?? '';
+    const misspelt = printed(MISSPELT);
+    const unfilled = printed(UNFILLED);
+    // (1) red when a page's example, or the message it quotes, changes; (2) prints both.
+    expect({
+      unknown: {
+        page: example(unknownRow),
+        printed: misspelt.slice(0, example(unknownRow).length),
+      },
+      dym: {
+        page: /with "([^"]*)"/.exec(unknownRow)?.[1],
+        printed: misspelt.includes("Did you mean 'ticket_id'?"),
+      },
+      unfilled: {
+        page: example(unfilledRow),
+        printed: unfilled.slice(0, example(unfilledRow).length),
+      },
+    }).toEqual({
+      unknown: { page: example(unknownRow), printed: example(unknownRow) },
+      dym: { page: "Did you mean 'ticket_id'?", printed: true },
+      unfilled: { page: example(unfilledRow), printed: example(unfilledRow) },
+    });
+    expect(example(unknownRow).length).toBeGreaterThan(20);
+    expect(example(unfilledRow).length).toBeGreaterThan(20);
   });
 
   it('loader-diagnostics.md: 27 codes, seven of them errors, the three new rows', () => {

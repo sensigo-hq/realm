@@ -40,22 +40,29 @@ export function checkParamsMap(
   positionOf: (segments: readonly string[]) => SourcePosition | undefined,
 ): LoaderWarning[] {
   if (!isObj(triggerRaw) || !isObj(paramsSchema)) return [];
-  // No `params_map` is an empty one (`realm listen` then passes `{}`). One the trigger's own schema
-  // refuses (not a map, or a value that is not text) is not judged here.
-  const rawMap = triggerRaw['params_map'] ?? {};
+  // No `params_map` key is an empty map (`realm listen` then passes `{}`). One the trigger's own schema
+  // refuses (not a map, null included, or a value that is not text) is not judged here (correction 1).
+  const rawMap = Object.prototype.hasOwnProperty.call(triggerRaw, 'params_map')
+    ? triggerRaw['params_map']
+    : {};
   if (!isObj(rawMap)) return [];
   if (!Object.values(rawMap).every((v) => typeof v === 'string' && v !== '')) return [];
   const mapped = Object.keys(rawMap);
 
-  const props = isObj(paramsSchema['properties'])
-    ? Object.keys(paramsSchema['properties'])
-    : undefined;
+  const closed = isClosedLevel(paramsSchema);
+  // A closed schema with no `properties` declares no parameter, exactly as `properties: {}` does
+  // (correction 1); a `properties` that is not a map is not judged.
+  const rawProps = paramsSchema['properties'];
+  const props = isObj(rawProps)
+    ? Object.keys(rawProps)
+    : rawProps === undefined && closed
+      ? []
+      : undefined;
   const rawRequired = paramsSchema['required'];
   const required =
     Array.isArray(rawRequired) && rawRequired.every((r) => typeof r === 'string')
       ? [...new Set(rawRequired as string[])]
       : undefined;
-  const closed = isClosedLevel(paramsSchema);
   const findings: LoaderWarning[] = [];
 
   // Item 2: a name that names no declared parameter. The did-you-mean is over the declared names no

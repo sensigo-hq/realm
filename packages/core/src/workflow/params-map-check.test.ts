@@ -219,3 +219,44 @@ describe('piece 2b — check 5: nothing to judge, no second finding, one pass', 
     }).toEqual({ result_map: true, findings: [unknown('tikcet_id', 'ticket_id', yaml)] });
   });
 });
+
+describe('piece 2b, correction 1 — a `params_map:` with no entries, a closed schema with no `properties`', () => {
+  it.each([
+    ['its one entry commented out', '  params_map:\n    # ticket_id: body.id\n'],
+    ['`params_map: ~`', '  params_map: ~\n'],
+  ])('(a) a present-but-null `params_map` (%s): only the schema refusal', (_case, lines) => {
+    const yaml =
+      `id: w\nname: W\nversion: 1\ntrigger:\n  type: webhook\n  path: /w\n  auth:\n    mode: none\n` +
+      lines +
+      `params_schema:\n${closed('ticket_id')}steps:\n  s:\n    description: s\n    execution: auto\n`;
+    // (1) red when a null `params_map` is read as an empty map (a second, required finding, as on
+    //     d7dc655a); (2) prints both.
+    expect(refused(yaml)).toEqual({ errors: ['trigger/params_map must be object'], findings: [] });
+  });
+
+  it("(b) the walk's fx2/g9: a closed `params_schema` with no `properties` refuses every mapped name", () => {
+    const yaml = wf('    ticket_id: body.id\n', '  type: object\n  additionalProperties: false\n');
+    // (1) red when an absent `properties` is not judged (Valid, no finding); (2) prints both.
+    expect(findings(yaml)).toEqual([unknown('ticket_id', undefined, yaml)]);
+  });
+
+  it("(b) twin: `properties: [x]` (not a map) gives only the loader's schema refusal", () => {
+    const r = refused(
+      wf(
+        '    ticket_id: body.id\n',
+        '  type: object\n  additionalProperties: false\n  properties: [x]\n',
+      ),
+    );
+    // (1) red when a `properties` that is not a map is judged; (2) prints both.
+    expect({
+      schema: r.errors.map((e) => e.startsWith("'params_schema' is not a valid JSON Schema")),
+      findings: r.findings,
+    }).toEqual({ schema: [true], findings: [] });
+  });
+
+  it('control: an open `params_schema` with no `properties` is not judged', () => {
+    // (1) red when the absent-properties reading spreads to open schemas (a warning per name);
+    //     (2) prints both.
+    expect(findings(wf('    ticket_id: body.id\n', '  type: object\n'))).toEqual([]);
+  });
+});
