@@ -2,7 +2,7 @@
 
 <!-- description: What realm workflow validate reports when it reads a workflow.yaml: accepted, accepted with warnings, or refused. Every warning code and the JSON output. -->
 
-When Realm reads a `workflow.yaml`, it either accepts the file, accepts it with warnings, or refuses it. This page describes the three outcomes as `realm workflow validate` prints them, lists all 27 warning codes, and gives the machine-readable form of the result.
+When Realm reads a `workflow.yaml`, it either accepts the file, accepts it with warnings, or refuses it. This page describes the three outcomes as `realm workflow validate` prints them, lists all 29 warning codes, and gives the machine-readable form of the result.
 
 `realm workflow register` applies the same checks before it stores anything.
 
@@ -59,7 +59,7 @@ A message has no line when the place could not be found exactly.
 
 ## Warning codes
 
-The loader has 27 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled. The others are advice, and the file is accepted.
+The loader has 29 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled. The others are advice, and the file is accepted.
 
 | Code                                | Counts as | Printed when                                                                                                                                                                          |
 | ----------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -73,6 +73,8 @@ The loader has 27 warning codes. Seven of them count as errors and make `validat
 | `PARAMS_MAP_UNKNOWN_PARAM`          | Error     | A webhook `params_map` names a parameter a closed `params_schema` does not have. Added after version 0.49.0.                                                                          |
 | `PARAMS_MAP_REQUIRED_UNMAPPED`      | Error     | `params_schema` requires a parameter the webhook's `params_map` does not fill. Added after version 0.49.0.                                                                            |
 | `PARAMS_MAP_UNDECLARED_PARAM`       | Warning   | A webhook `params_map` names a parameter an open `params_schema` does not list in its `properties`. Added after version 0.49.0.                                                       |
+| `HANDLER_NOT_PROVIDED`              | Warning   | A step's handler is not one the project provides. Added after version 0.49.0.                                                                                                         |
+| `ADAPTER_NOT_PROVIDED`              | Warning   | The adapter a step's service names is not one the project provides. Added after version 0.49.0.                                                                                       |
 | `UNKNOWN_RETRY_KEY`                 | Warning   | A `retry` block has a key that is not one of its six.                                                                                                                                 |
 | `UNKNOWN_GATE_KEY`                  | Warning   | A `gate` block has a key that is not one of its nine.                                                                                                                                 |
 | `UNKNOWN_VALIDATION_EXHAUSTION_KEY` | Warning   | A `validation_exhaustion` block has a key that is not one of its three.                                                                                                               |

@@ -421,11 +421,11 @@ describe('fix 1, piece 2b — the words the docs and the changelog carry (check 
     expect(example(unfilledRow).length).toBeGreaterThan(20);
   });
 
-  it('loader-diagnostics.md: 27 codes, seven of them errors, the three new rows', () => {
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 27 warning codes');
+  it('loader-diagnostics.md: 29 codes, seven of them errors, the three new rows', () => {
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 29 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 27 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.",
+      "The loader has 29 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.",
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',

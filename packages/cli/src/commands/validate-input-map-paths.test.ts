@@ -22,6 +22,28 @@ import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.j
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
+/**
+ * Fix 1, piece 4: the project in `folder` provides each handler in `names` (a `realm.yaml` entry each,
+ * built from a module beside it), so `validate`, `register` and `watch` do not warn that the file's
+ * handlers are not ones the project provides.
+ */
+function provide(folder: string, names: readonly string[]): void {
+  writeFileSync(
+    join(folder, 'handlers.mjs'),
+    'export function makeHandler({ id }) { return { id, execute: async () => ({ data: {} }) }; }\n',
+    'utf8',
+  );
+  writeFileSync(
+    join(folder, 'realm.yaml'),
+    [
+      'version: 1',
+      'handlers:',
+      ...names.flatMap((n) => [`  ${n}:`, '    use: ./handlers.mjs#makeHandler']),
+    ].join('\n') + '\n',
+    'utf8',
+  );
+}
+
 /** Check 1's file: the trial's refund (W49-R4 q8). The docs page quotes what validate prints for it. */
 const TRIAL = `id: refund
 name: Refund
@@ -128,6 +150,7 @@ describe('validate — fix 1, unit 1: input_map paths', () => {
     spy.mock.calls.map((c: unknown[]) => String(c[0]));
 
   it("check 1, the trial's case: exit 1, the row 1 message with its line and the fix, then the refusal", async () => {
+    provide(dir, ['send_refund']);
     await expect(validateCommand.parseAsync([write(TRIAL)], { from: 'user' })).rejects.toThrow(
       'process.exit',
     );
@@ -141,6 +164,7 @@ describe('validate — fix 1, unit 1: input_map paths', () => {
   });
 
   it('check 1, --json: valid false, the finding with its code, line, column and key; not_checked empty', async () => {
+    provide(dir, ['send_refund']);
     await expect(
       validateCommand.parseAsync([write(TRIAL), '--json'], { from: 'user' }),
     ).rejects.toThrow('process.exit');
@@ -171,6 +195,7 @@ describe('validate — fix 1, unit 1: input_map paths', () => {
   });
 
   it('check 11: a path into a handler\'s output: Valid, no warning, and the "Not checked" line', async () => {
+    provide(dir, ['fetch_order', 'send_refund']);
     await validateCommand.parseAsync([write(HANDLER_OUTPUT)], { from: 'user' });
     // (1) red when the handler's input_schema is read as its output (a refusal: exit 1);
     //     (2) prints the calls.
@@ -209,6 +234,7 @@ describe('validate — fix 1, unit 1: input_map paths', () => {
   });
 
   it('a path that may be absent leaves the file Valid, with its warning; --strict fails on it', async () => {
+    provide(dir, ['send_refund']);
     await validateCommand.parseAsync([write(NOT_A_DEPENDENCY)], { from: 'user' });
     // (1) red when a may-be-absent path refuses; (2) prints the calls.
     expect(exitSpy).not.toHaveBeenCalled();
@@ -228,6 +254,7 @@ describe('validate — fix 1, unit 1: input_map paths', () => {
   });
 
   it('check 16 on the command: three findings on three leaves are all printed, then one refusal', async () => {
+    provide(dir, ['send_refund']);
     const yaml = TRIAL.replace(
       '      amount_cents: steps.propose.output.amount_cents\n',
       '      a: steps.propose.output.amount_cents\n' +
@@ -266,6 +293,7 @@ describe('register and watch — fix 1, unit 1: a path that can never be found i
   });
 
   it('check 18: `realm workflow register` on the trial file exits 1 and registers nothing', async () => {
+    provide(dir, ['send_refund']);
     writeFileSync(join(dir, 'workflow.yaml'), TRIAL, 'utf8');
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -290,6 +318,7 @@ describe('register and watch — fix 1, unit 1: a path that can never be found i
   });
 
   it('check 18: `realm workflow watch` reports the same refusal on a save, and registers nothing', async () => {
+    provide(dir, ['send_refund']);
     const file = join(dir, 'workflow.yaml');
     writeFileSync(
       file,
@@ -433,9 +462,9 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     //     counts the codes); (2) prints the sentence.
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 27 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.",
+      "The loader has 29 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.",
     );
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 27 warning codes');
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 29 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
       '| `INPUT_MAP_PATH_UNRESOLVABLE` | Error | An `input_map` path can never be found. Added after version 0.49.0. |',

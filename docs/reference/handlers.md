@@ -320,7 +320,7 @@ Error loading extensions: Extension handler 'order_total' is declared by both '.
 
 ### A name that is not registered
 
-`realm workflow validate` and `realm workflow register` do not check that a step's handler is registered. Both accepted a workflow whose step names a handler that no file provides.
+`realm workflow validate`, `register` and `watch` warn when a step's handler is not one the project provides (`HANDLER_NOT_PROVIDED`, added after version 0.49.0), and still accept the workflow: another runner may provide it. Version 0.49.0 accepted it with no word.
 
 `realm agent` warns when it starts, and stops when it reaches the step. Started with `realm agent --workflow ./ --provider anthropic --model claude-sonnet-5-5`, it printed:
 

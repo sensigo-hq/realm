@@ -111,6 +111,12 @@ export interface LoadedProjectExtensions {
   /** Sentinel-mode construction warnings (entries skipped, listed — never silent). */
   sentinelWarnings?: string[];
   /**
+   * Fix 1, piece 4: the handler and adapter names the deployment manifest (`realm.yaml`) declares,
+   * built or not — sentinel mode skips an entry it cannot build. The loader counts each as provided.
+   * Absent when no manifest was read.
+   */
+  declaredNames?: { handlers: string[]; adapters: string[] };
+  /**
    * issue #620 PR-C: one `REALM_RELEASE_LINE_MISMATCH` per distinct `@sensigo/realm` copy the
    * loaded modules import that is not the running one. Stored on the cached result, so a cache hit
    * returns it too.
@@ -573,6 +579,14 @@ export async function loadProjectExtensions(
     ...(releaseLineWarnings.length > 0 ? { releaseLineWarnings } : {}),
     ...(secretValues !== undefined && secretValues.length > 0 ? { secretValues } : {}),
     ...(manifestCtx !== undefined ? { manifestPath: manifestCtx.path } : {}),
+    ...(manifestCtx !== undefined
+      ? {
+          declaredNames: {
+            handlers: Object.keys(manifestCtx.document.handlers ?? {}),
+            adapters: Object.keys(manifestCtx.document.adapters ?? {}),
+          },
+        }
+      : {}),
     ...cacheEconomicsPathOf(manifestCtx),
   };
   cache.set(cacheKey, { result, ...(freshness !== undefined ? { freshness } : {}) });

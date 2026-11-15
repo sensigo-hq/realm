@@ -17,6 +17,21 @@ import { ManifestSecretsError } from '../extensions/manifest-secrets.js';
 import { wrapReleaseLineWarnings, wrapSentinelWarnings } from './loader-warnings.js';
 
 /**
+ * Fix 1, piece 4: the codes only a load with the project's registry can find — a handler or adapter
+ * the project does not provide. A load without the registry never mints them, so the second pass's
+ * copy is the only one.
+ */
+const REGISTRY_CODES: ReadonlySet<LoaderWarning['code']> = new Set([
+  'HANDLER_NOT_PROVIDED',
+  'ADAPTER_NOT_PROVIDED',
+]);
+
+/** The warnings of a load with the project's registry that a load without it cannot give. */
+export function registryWarnings(warnings: readonly LoaderWarning[]): LoaderWarning[] {
+  return warnings.filter((w) => REGISTRY_CODES.has(w.code));
+}
+
+/**
  * Tags a failure thrown by the extensions load inside `loadWorkflowForAdmission` so the
  * callers' catches can say `Error loading extensions:` — the sentence run and validate already
  * print for this class (issue #451) — without guessing from the message. The message is the
@@ -118,7 +133,8 @@ export async function admitProjectExtensions(
  * UNCONDITIONAL project-extensions load (modules, manifest, config_schema two-pass), degrading
  * to SENTINEL credentials with a loud WARN when a secret source is unavailable.
  * Returns the definition alongside every accumulated LoaderWarning (issue #169) — pass-1's
- * structural warnings plus the sentinel-credential warnings, if any — and the resolved manifest
+ * structural warnings, the second pass's registry findings (fix 1, piece 4), the sentinel-credential
+ * warnings, if any — and the resolved manifest
  * (validate's `Extensions:` line reports its counts). Prints NOTHING itself beyond the two
  * sentinel ⚠ lines; every caller decides how to surface/act on warnings (register supports
  * `--strict` + the dormant #170 reject; watch just prints and continues; validate reports).
@@ -151,11 +167,14 @@ export async function loadWorkflowForAdmission(
     throw new ExtensionLoadError(err, pass1Warnings, definition);
   }
   // Two-pass: re-validate with the resolved registry so step config is checked against
-  // each adapter's config_schema before the definition is persisted. Its warnings are proven
-  // identical to pass-1's (same content, registry only adds config_schema checks) — discarded
-  // here to avoid double-counting the same unknown key twice.
+  // each adapter's config_schema before the definition is persisted. Its warnings repeat pass-1's
+  // (same content), so only the registry's own findings are kept (fix 1, piece 4: a handler or
+  // adapter the project does not provide), never a second copy of pass 1's.
+  let registryFindings: LoaderWarning[];
   try {
-    loadWorkflowFromFileWithDiagnostics(filePath, loaded.registry);
+    registryFindings = registryWarnings(
+      loadWorkflowFromFileWithDiagnostics(filePath, loaded.registry, loaded.declaredNames).warnings,
+    );
   } catch (err) {
     if (typeof err === 'object' && err !== null) admittedDefinitions.set(err, definition);
     throw err;
@@ -168,6 +187,7 @@ export async function loadWorkflowForAdmission(
     warnings: [
       ...wrapReleaseLineWarnings(loaded.releaseLineWarnings),
       ...pass1Warnings,
+      ...registryFindings,
       ...wrapSentinelWarnings(loaded.sentinelWarnings),
     ],
     manifest: loaded.manifest,

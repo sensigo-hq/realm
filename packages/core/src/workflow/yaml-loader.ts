@@ -39,6 +39,7 @@ import { createSourcePositionCollector, type SourcePositionMap } from './source-
 import { resolveTemplates } from './template-resolver.js';
 import { checkInputMapPaths, type NotCheckedPath } from './input-map-paths.js';
 import type { WhenLeaf } from './when-paths.js';
+import { checkProvidedNames, type DeclaredNames } from './name-check.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
 import { checkParamsMap } from './params-map-check.js';
@@ -859,6 +860,7 @@ export function resolveAgentProfiles(definition: WorkflowDefinition, workflowDir
 function loadWorkflowFromFileCore(
   filePath: string,
   registry?: ExtensionRegistry,
+  declared?: DeclaredNames,
 ): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
   let content: string;
   try {
@@ -872,7 +874,7 @@ function loadWorkflowFromFileCore(
       retryable: false,
     });
   }
-  const { definition, warnings, notChecked } = parseWorkflowString(content, registry, {
+  const { definition, warnings, notChecked } = parseWorkflowString(content, registry, declared, {
     allowExtensions: true,
   });
   // issue #424 — CHOKEPOINT 2. Everything past the parse can throw with `warnings` already
@@ -959,8 +961,10 @@ export function loadWorkflowFromFile(
 export function loadWorkflowFromFileWithDiagnostics(
   filePath: string,
   registry?: ExtensionRegistry,
+  /** Fix 1, piece 4: the names the project's realm.yaml declares, counted as provided. */
+  declared?: DeclaredNames,
 ): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
-  return loadWorkflowFromFileCore(filePath, registry);
+  return loadWorkflowFromFileCore(filePath, registry, declared);
 }
 
 /**
@@ -977,7 +981,7 @@ export function loadWorkflowFromString(
   content: string,
   registry?: ExtensionRegistry,
 ): WorkflowDefinition {
-  const { definition, warnings } = parseWorkflowString(content, registry, {
+  const { definition, warnings } = parseWorkflowString(content, registry, undefined, {
     allowExtensions: false,
   });
   for (const w of warnings) console.warn(renderLoaderWarning(w));
@@ -991,8 +995,10 @@ export function loadWorkflowFromString(
 export function loadWorkflowFromStringWithDiagnostics(
   content: string,
   registry?: ExtensionRegistry,
+  /** Fix 1, piece 4: the names the project's realm.yaml declares, counted as provided. */
+  declared?: DeclaredNames,
 ): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
-  return parseWorkflowString(content, registry, { allowExtensions: false });
+  return parseWorkflowString(content, registry, declared, { allowExtensions: false });
 }
 
 /**
@@ -1211,6 +1217,7 @@ function strictAdvisoryRemedy(line: string, block: unknown): string {
 function parseWorkflowString(
   content: string,
   registry: ExtensionRegistry | undefined,
+  declared: DeclaredNames | undefined,
   opts: { allowExtensions: boolean },
 ): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
   // Step 1: Parse YAML
@@ -3879,6 +3886,16 @@ function parseWorkflowString(
       },
     );
     warnings.push(...inputMapPaths.warnings);
+
+    // Fix 1, piece 4: a handler or adapter a step needs that the project does not provide, warned
+    // only when the loader has the project's registry (validate, register and watch pass it).
+    if (registry !== undefined) {
+      warnings.push(
+        ...checkProvidedNames(stepsRaw, doc['services'], registry, declared, (segments) =>
+          sourceMap.posOf(segments),
+        ),
+      );
+    }
 
     if (errors.length > 0) {
       throw new WorkflowError(`Invalid workflow: ${errors.join('; ')}`, {
