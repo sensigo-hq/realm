@@ -326,10 +326,14 @@ function corpusDisclosureSet(version: string, manifest: CorpusManifest) {
   }).set;
 }
 
-/** The count a note gives, `<label>: N line(s)`; 0 when the importer wrote no such note. */
-function notedCount(notes: readonly string[], label: string): number {
+/**
+ * The count a note gives, `<label>: N line(s)`, or `'none'` when the importer wrote no such note: it
+ * writes one only for what a bundle carries and the import does not take, so a bundle carrying none
+ * has no note, never one that counts 0.
+ */
+function notedCount(notes: readonly string[], label: string): number | 'none' {
   const note = notes.find((n) => n.startsWith(`${label}:`));
-  if (note === undefined) return 0;
+  if (note === undefined) return 'none';
   const m = /^[a-z_]+: (\d+) line/.exec(note);
   if (m === null) throw new Error(`the note "${note}" carries no count`);
   return Number(m[1]);
@@ -403,7 +407,11 @@ describe('the corpus: each published release read back by this tree', () => {
               sealed: result.notes.includes('sealed_not_imported'),
             },
             `${version} ${name}: the import's notes (${JSON.stringify(result.notes)})`,
-          ).toEqual({ wal: walLines(bundle['wal']), attempts, sealed: sealed > 0 });
+          ).toEqual({
+            wal: walLines(bundle['wal']) > 0 ? walLines(bundle['wal']) : 'none',
+            attempts: attempts > 0 ? attempts : 'none',
+            sealed: sealed > 0,
+          });
           const run = runOf(bundle, file);
           const { record } = await home.runStore.get(isObject(run) ? String(run['id']) : '');
           expectSameShape(
