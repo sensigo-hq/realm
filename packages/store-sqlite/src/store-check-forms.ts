@@ -18,8 +18,9 @@
 // The scan reads, in ONE read transaction on the check's read-only connection, every column that
 // holds rendered text: `runs.record`, `evidence.entry`, `run_blobs.value`, `trace_buffer.entries`,
 // `trace_sealed.lines` and `failed_attempts.line`, each table paged by rowid. A JSON column is parsed
-// and each string in it (every value and every key) is searched; a column that is not JSON is searched
-// as one string. In each string, the raw values are found first and their places are never a hit (the
+// and each string value in it is searched (a template renders into values, never into a key); a column
+// that is not JSON is searched as one string. A key that holds a declared value or a form of one is
+// written `[key]` in the path a hit is named by, so no finding carries it (correction 1). In each string, the raw values are found first and their places are never a hit (the
 // store keeps execution values raw by design: every run that handled a value holds it); then the
 // forms, longest first, a place matched once not matched again. A hit is one place × one kind; it
 // carries the run, the field and the kind, never the value or the form. The values never leave this
@@ -139,23 +140,35 @@ function kindsIn(text: string, forms: Forms): FormKind[] {
   return FORM_KINDS.filter((kind) => kinds.has(kind));
 }
 
-/** Each string of a parsed JSON value (every value and every key), with its path under `path`. */
-function strings(value: unknown, path: string, out: { path: string; text: string }[]): void {
+/** Whether `text` holds a declared value or a changed form of one. */
+function holdsDeclared(text: string, forms: Forms): boolean {
+  return forms.raws.some((raw) => text.includes(raw)) || kindsIn(text, forms).length > 0;
+}
+
+/**
+ * Each string value of a parsed JSON value, with its path under `path`. Keys are not searched; a key
+ * that holds a declared value or a form of one is written `[key]` in the path.
+ */
+function strings(
+  value: unknown,
+  path: string,
+  forms: Forms,
+  out: { path: string; text: string }[],
+): void {
   if (typeof value === 'string') {
     out.push({ path, text: value });
   } else if (Array.isArray(value)) {
-    value.forEach((item, i) => strings(item, `${path}[${String(i)}]`, out));
+    value.forEach((item, i) => strings(item, `${path}[${String(i)}]`, forms, out));
   } else if (value !== null && typeof value === 'object') {
     for (const [key, item] of Object.entries(value)) {
-      const at = path === '' ? key : `${path}.${key}`;
-      out.push({ path: at, text: key });
-      strings(item, at, out);
+      const segment = holdsDeclared(key, forms) ? '[key]' : key;
+      strings(item, path === '' ? segment : `${path}.${segment}`, forms, out);
     }
   }
 }
 
-/** A column's text: its strings with their paths when it is JSON, else the text itself at `''`. */
-function stringsOf(text: string): { path: string; text: string }[] {
+/** A column's text: its string values with their paths when it is JSON, else the text at `''`. */
+function stringsOf(text: string, forms: Forms): { path: string; text: string }[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -163,7 +176,7 @@ function stringsOf(text: string): { path: string; text: string }[] {
     return [{ path: '', text }];
   }
   const out: { path: string; text: string }[] = [];
-  strings(parsed, '', out);
+  strings(parsed, '', forms, out);
   return out;
 }
 
@@ -238,7 +251,7 @@ export function scanDeclaredForms(c: DatabaseLike, values: readonly string[]): F
   const forms = formsOf(values);
   const hits: FormHit[] = [];
   if (forms.raws.length === 0) return hits;
-  // One hit per place and kind: a key and its value share a path.
+  // One hit per place and kind: two values can share a path (two keys written `[key]`).
   const seen = new Set<string>();
   for (const source of SOURCES) {
     const select = (where: string): string =>
@@ -249,7 +262,7 @@ export function scanDeclaredForms(c: DatabaseLike, values: readonly string[]): F
       for (const row of page) {
         if (typeof row['t'] !== 'string') continue;
         const runId = source.runOf(row);
-        for (const { path, text } of stringsOf(row['t'])) {
+        for (const { path, text } of stringsOf(row['t'], forms)) {
           for (const kind of kindsIn(text, forms)) {
             const place = source.placeOf(row, path);
             const key = JSON.stringify([runId, place, kind]);

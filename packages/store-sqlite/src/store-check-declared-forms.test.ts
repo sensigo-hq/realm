@@ -11,11 +11,13 @@
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { openDatabase, type DatabaseLike } from './driver.js';
 import { openRealmHome, openRealmHomeForMaintenance } from './index.js';
+import { openMaintenance } from './maintenance.js';
 import type { CheckOptions, CheckReport } from './store-check.js';
 import { openForeignConnection } from './test-support/foreign-connection.js';
 
@@ -279,23 +281,77 @@ describe('the filter-mask fix, PR 2 — `declared_forms`: the runs that hold a c
       found: declared(r),
     }).toEqual({ records: 'older_version', declared: 'older_version', found: [] });
   });
-
-  it('read-only: the scan writes nothing (a second check reports the same)', async () => {
-    // (1) red when the scan changes what it reads; (2) prints both findings lists.
-    const { home, ids } = await homeWith(1);
-    await question(home, ids[0]!, MIXED.toLowerCase(), {});
-    const first = declared(await report(home, { declaredValues: [MIXED] }));
-    const second = declared(await report(home, { declaredValues: [MIXED] }));
-    expect({ first, same: JSON.stringify(first) === JSON.stringify(second) }).toEqual({
-      first: [
-        {
-          run_id: ids[0],
-          path: 'pending_gate.resolved_message',
-          kind: 'lower-cased',
-          code: 'changed_form_of_declared_value',
-        },
-      ],
-      same: true,
+  it('correction 1 (1): a file the check cannot open (`open_failed`, `header_damaged`) lists `declared_forms` under not_run once with the option, and not at all without it', async () => {
+    // (1) red when the derived lists of an open's or a header's failure name the check (present
+    //     without the option, twice with it); (2) prints each report's not_run checks.
+    const { home } = await homeWith(1);
+    let error: unknown;
+    try {
+      openDatabase(join(home, 'absent.db'), { readOnly: true });
+    } catch (err) {
+      error = err;
+    }
+    const openFile = (): DatabaseLike => {
+      throw error;
+    };
+    const opened = async (options?: CheckOptions): Promise<CheckReport> => {
+      const m = await openMaintenance({ home, verb: 'check' }, { openFile });
+      try {
+        return await m.check(options);
+      } finally {
+        m.close();
+      }
+    };
+    const junk = join(mkdtempSync(join(tmpdir(), 'realm-fm-scan-junk-')), '.realm');
+    roots.push(dirname(junk));
+    mkdirSync(junk);
+    writeFileSync(join(junk, 'realm.db'), Buffer.alloc(8192, 0x41));
+    const named = (r: CheckReport): string[] =>
+      r.not_run.filter((n) => n.check === 'declared_forms').map((n) => n.because);
+    expect({
+      openWithout: named(await opened()),
+      openWith: named(await opened({ declaredValues: [MIXED] })),
+      headerWithout: named(await report(junk)),
+      headerWith: named(await report(junk, { declaredValues: [MIXED] })),
+    }).toEqual({
+      openWithout: [],
+      openWith: ['open_failed'],
+      headerWithout: [],
+      headerWith: ['header_damaged'],
     });
+  });
+
+  it("correction 1 (2): a key is not searched, and a key that is a declared value is written `[key]` in a hit's path; no finding holds the value in any form", async () => {
+    // (1) red when keys are searched (the key that is the upper-cased value is a hit), or a hit's
+    //     path is built from a key that holds the value (the message and the path carry it); (2)
+    //     prints the findings with the value written `<FAKE>`.
+    const { home, ids } = await homeWith(1);
+    const id = ids[0]!;
+    const keyed = JSON.stringify({ [MIXED.toUpperCase()]: 'a plain value' });
+    const under = JSON.stringify({ tokens: { [MIXED]: `Ship ${MIXED.toLowerCase()}?` } });
+    await plant(
+      home,
+      [
+        'INSERT INTO evidence (run_id, seq, entry, entry_sha256) VALUES (?, ?, ?, ?)',
+        [id, 1, keyed, sha(keyed)],
+      ],
+      [
+        'INSERT INTO evidence (run_id, seq, entry, entry_sha256) VALUES (?, ?, ?, ?)',
+        [id, 2, under, sha(under)],
+      ],
+    );
+    const r = await report(home, { declaredValues: [MIXED] });
+    const found = r.findings.filter((f) => f.check === 'declared_forms');
+    const shown = JSON.stringify(found);
+    expect(
+      {
+        found: declared(r).map(({ path, kind }) => `${String(path)} — ${String(kind)}`),
+        leaks: holdsAValue(shown),
+      },
+      [MIXED, MIXED.toUpperCase(), MIXED.toLowerCase()].reduce(
+        (t, f) => t.split(f).join('<FAKE>'),
+        shown,
+      ),
+    ).toEqual({ found: ['evidence seq 2: tokens.[key] — lower-cased'], leaks: false });
   });
 });

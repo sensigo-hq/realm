@@ -28,11 +28,14 @@ function claimChangelog(sentence: string): void {
 describe('the filter-mask fix, PR 2 — the words of `realm db check --project`', () => {
   it('the CHANGELOG: the Upgrading item and the Added line', () => {
     // db-check-declared-forms "(1, 2)" (the run and the field named), "(5)" (a secret that cannot be
-    // resolved); store-check-declared-forms "(3)" (each kind; the short value and replace/split
-    // not looked for); AA-FM-AUD2-11 (abandon, then purge --force, deletes); the stored columns
-    // (AA-FM-AUD2-07, -13: a provider's prompt and a Slack post are not stored).
+    // resolved); store-check-declared-forms "(3)" (each kind, the `evidence seq <n>: gate_message`
+    // grammar; the short value and replace/split not looked for); AA-FM-AUD2-11 (abandon, then
+    // purge --force, deletes); correction 1: the walk (AA-FM-WALK2-*: a run waiting at its question
+    // refuses abandon and purge until it is answered; the answered question's `gate_message` holds
+    // the form until the purge), re-run by MA 1's lane as W6; the stored columns (AA-FM-AUD2-07, -13:
+    // a provider's prompt and a Slack post are not stored).
     claimChangelog(
-      "**8. If a template showed a declared secret through a filter, find the runs that hold it, then rotate it.** If a workflow template showed a declared secret through a filter (`upper`, `lower`, `capitalize`, `title`, `truncate`) before this version, the filtered form reached the question or the prompt (see Fixed). After item 4's migration, run `realm db check --project <your project folder>`: it names each stored run that holds such a form, and the field that holds it. Rotate those secrets and purge those runs (`realm run abandon <id>` if the run is still open, then `realm run purge <id> --force`). Run it before you rotate: it looks for your current declared values. Values under 8 characters, and forms made by `replace` or `split`, are not found. A form sent to a model provider or posted to Slack is not stored here: if such a template ran as an agent step's prompt or a Slack-notified gate, rotate that secret regardless.",
+      "**8. If a template showed a declared secret through a filter, find the runs that hold it, then rotate it.** If a workflow template showed a declared secret through a filter (`upper`, `lower`, `capitalize`, `title`, `truncate`) before this version, the filtered form reached the question or the prompt (see Fixed). After item 4's migration, run `realm db check --project <your project folder>`: it names each stored run that holds such a form, and the field that holds it. Rotate those secrets and purge those runs: a run still waiting at its question is answered first (`realm run respond <id> --gate <gate id> --choice reject`; `realm run inspect <id>` shows the gate id), a run still in progress is abandoned first (`realm run abandon <id>`), then `realm run purge <id> --force`; until the run is purged the scan names the same form again, at the answered question's `evidence seq <n>: gate_message`. Run it before you rotate: it looks for your current declared values. Values under 8 characters, and forms made by `replace` or `split`, are not found. A form sent to a model provider or posted to Slack is not stored here: if such a template ran as an agent step's prompt or a Slack-notified gate, rotate that secret regardless.",
     );
     // The inventory row `realm db check --project — option, takes a value` (kept-surface-changelog).
     claimChangelog(
@@ -60,6 +63,12 @@ describe('the filter-mask fix, PR 2 — the words of `realm db check --project`'
     claim(
       PAGE,
       'It refuses a folder with no `realm.yaml`, a `realm.yaml` that cannot be read or is invalid, and one that names a secret it cannot resolve, before it opens the store: nothing is scanned.',
+    );
+    // Correction 1: db-check-declared-forms "(5)" (the unresolved secret: the `Error:` line, then the
+    // resolver's lines naming `${secret:MISSING_KEY}`, no value, then "Nothing was scanned.").
+    claim(
+      PAGE,
+      "nothing on standard output — the `--project` refusal for a secret that cannot be resolved follows its `Error:` line with the resolver's lines naming each `${secret:NAME}`, never a value.",
     );
     // db-check-declared-forms "(1, 2)" (the JSON's run_id, path, kind).
     claim(

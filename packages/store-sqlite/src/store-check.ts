@@ -335,13 +335,17 @@ type Stops = readonly CheckId[];
 
 /** The checks `open_failed` stops: every other check but `writable`, which runs whenever the file exists. */
 const AFTER_THE_OPEN: Stops = [
-  ...CHECK_IDS.filter((id) => id !== 'open' && id !== 'writable'),
+  // `declared_forms` runs only when asked for: `runCheck` lists it then, once (the filter-mask fix,
+  // PR 2, correction 1).
+  ...CHECK_IDS.filter((id) => id !== 'open' && id !== 'writable' && id !== 'declared_forms'),
   ...DATA_CHECKS,
 ];
 
 /** The checks `header_damaged` stops: everything that reads the file after its header. */
 const AFTER_THE_HEADER: Stops = [
-  ...CHECK_IDS.filter((id) => id !== 'open' && id !== 'header' && id !== 'writable'),
+  ...CHECK_IDS.filter(
+    (id) => id !== 'open' && id !== 'header' && id !== 'writable' && id !== 'declared_forms',
+  ),
   ...DATA_CHECKS,
 ];
 
