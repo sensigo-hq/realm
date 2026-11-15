@@ -88,6 +88,7 @@ import {
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
 import { VerifyInconclusive, type RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
+import { SqliteOutboundLedger } from './outbound-ledger.js';
 import {
   assertRunRecordWithinLimits,
   deleteRunRows,
@@ -542,16 +543,23 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
    */
   readonly leases: LeasePort;
 
+  /**
+   * The home's outbound ledger (#597 D1c-2): the `outbound` table beside the runs, over the same
+   * primitive. A lease or a mark never writes the run. No Realm command uses it yet (D1b).
+   */
+  readonly outbound: SqliteOutboundLedger;
+
   readonly #db: RealmDb;
 
   /**
    * Package-internal: `openRealmHome` builds the one store of a handle over the home's primitive and
-   * the home's lease port.
+   * the home's lease port; the store builds its outbound ledger over the same primitive.
    */
   constructor(db: RealmDb, leases: LeasePort) {
     this.#db = db;
     this.clock = db.clock;
     this.leases = leases;
+    this.outbound = new SqliteOutboundLedger(db);
   }
 
   /**
