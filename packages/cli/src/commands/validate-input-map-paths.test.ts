@@ -514,6 +514,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       '**5. ',
       '**6. ',
       '**7. ',
+      '**8. ',
     ]);
   });
 });

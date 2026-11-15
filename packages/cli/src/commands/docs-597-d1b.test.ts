@@ -64,10 +64,11 @@ describe('#597 D1b — the docs say what the reminders record, and only what is 
       "A `realm agent` started again while a question is open, which uses the stopped agent's question post, posts at once the latest reminder that came due, if it was not sent yet, with the time the question has really been open; the ones before it are not posted.",
     );
     // slack-reminder-ledger-d1b "a takeover of a gate with no authored schedule" and "a takeover
-    // after `expires_at` of an `on_expiry` gate".
+    // after `expires_at` of an `on_expiry` gate"; #597 D3a: slack-reminder-due-d3a "one post at most"
+    // (the escalation) and "a catch-up never posts a final" (an `on_expiry` gate and a finding-only one).
     claim(
       SLACK,
-      'It does so only for a gate with its own `reminder_seconds`, and never for the reminder that says the time ran out.',
+      'It does so for every gate, the reminder of a gate with no `reminder_seconds` and the escalation too, never for the reminder that says the time ran out.',
     );
     // outbound-lines-d1b (every case).
     claim(
@@ -190,7 +191,7 @@ describe('#597 D1b — the docs say what the reminders record, and only what is 
     // outbound-lines-d1b (the lines); slack-reminder-writes-nothing-715b; inspect- and
     // list-gate-expiry-render (the clause's text).
     claimChangelog(
-      "- **`realm agent` records its Slack reminders and escalation** (issue #597): before it posts one it leases it in the store's outbound ledger, and it marks it sent once Slack took it (failed when the channel is gone or archived), so two agents on one question, or a restarted one, post each reminder once; any other post Slack did not take is tried once more when its lease ends. A `realm agent` started again that uses a stopped agent's question post sends one catch-up reminder, for the latest one that came due if it was not sent yet, when the gate has its own `reminder_seconds`. `realm run inspect` prints `Reminders:` and `Escalation:` lines after the open question, and `realm run list` `reminders:` and `escalation:` on a `gate_waiting` row, counted from the ledger: sent, skipped, not confirmed, failed. Nothing is written to the run. The text of `REMINDER_BASIS_CLAUSE` (core) is now `reminders are sent only while a process attends this question`: the line beside it says what was recorded.",
+      "- **`realm agent` records its Slack reminders and escalation** (issue #597): before it posts one it leases it in the store's outbound ledger, and it marks it sent once Slack took it (failed when the channel is gone or archived), so two agents on one question, or a restarted one, post each reminder once; any other post Slack did not take is tried once more when its lease ends. A `realm agent` started again that uses a stopped agent's question post sends one catch-up reminder, for the latest one that came due if it was not sent yet, for any gate (never the reminder that says the time ran out). `realm run inspect` prints `Reminders:` and `Escalation:` lines after the open question, and `realm run list` `reminders:` and `escalation:` on a `gate_waiting` row, counted from the ledger: sent, skipped, not confirmed, failed. Nothing is written to the run. The text of `REMINDER_BASIS_CLAUSE` (core) is now `reminders are sent only while a process attends this question`: the line beside it says what was recorded.",
     );
     claimChangelog("`realm agent`'s Slack reminders use it (below).");
     claimChangelog(

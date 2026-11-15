@@ -150,7 +150,9 @@ export function checkOutboundRequest(
 }
 
 /** The row's key, from the request's typed parts. */
-function keyOf(what: OutboundLeaseRequest['what']): string {
+/** The row's key (`entry_key`) of a reminder or the escalation of a question. #597 D3a: exported for
+ *  the due function, which reads a question's rows by it. */
+export function keyOf(what: OutboundLeaseRequest['what']): string {
   return what.type === 'reminder'
     ? `gate:${what.gateId}:reminder:${what.occurrence}`
     : `gate:${what.gateId}:escalation`;

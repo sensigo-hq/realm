@@ -88,8 +88,9 @@ describe('#715 (b) Amendment 12 (c) — a late firing speaks at its scheduled in
     await clock.set(new Date(at(31)));
     await settle();
     clear();
-    // In firing order: reminder k = 1 (+10 m), the escalation (the reading + 15 m = +15 m 30 s), reminder
-    // k = 2 (+20 m), the final expiry reminder (k = 3, +30 m = expires_at). Real `Date` is 2026.
+    // In firing order: reminder k = 1 (+10 m), the escalation (#597 D3a: the post's time, clamped up to
+    // `opened_at`, + 15 m), reminder k = 2 (+20 m), the final expiry reminder (k = 3, +30 m =
+    // expires_at). Real `Date` is 2026.
     expect(texts).toEqual([
       '⏰ gate `review_step` has been open for 10m (since 2033-01-01T00:00:00Z). Please respond.',
       '⏰ gate `review_step` has been open for 15m (since 2033-01-01T00:00:00Z). Please respond.',
@@ -119,8 +120,9 @@ describe('#715 (b) Amendment 12 (c) — a late firing speaks at its scheduled in
       15 * 60_000,
       clock,
     );
-    // A wake at 22 m: k = 1 (10 m) is replaced by k = 2 (20 m), 2 m late; the escalation (15 m 30 s)
-    // is its own post, 6 m 30 s late. Then a wake 30 s after the final reminder's instant (30 m).
+    // A wake at 22 m: k = 1 (10 m) is replaced by k = 2 (20 m), 2 m late; the escalation (15 m: #597
+    // D3a, the post's time clamped up to `opened_at`) is its own post, 7 m late. Then a wake 30 s
+    // after the final reminder's instant (30 m).
     await clock.wake(new Date(at(22)));
     await settle();
     await clock.wake(new Date(Date.parse(at(30)) + 30_000));
