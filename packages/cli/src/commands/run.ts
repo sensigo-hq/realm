@@ -88,6 +88,7 @@ import {
   drivePid,
   exitProcess,
   questionSpan,
+  stdoutAudience,
   writerCtx,
   writerSetFor,
   type RenderCtx,
@@ -899,11 +900,12 @@ export const runCommand = new Command('run')
             const g = run.pending_gate;
             console.log(`  ⏸  Gate: ${g.step_name} | gate_id: ${g.gate_id}`);
             // decisions C167, C175; #729 PR-4 (03 #4): the question and the preview through core's ONE
-            // composer, over the gate disclosed for this terminal (`private`: the declared tier) —
-            // the question each line as written, at the declared tier on every stream (#729 PR-3,
-            // P-9; R2); a gate with no message shows its preview alone ((f)).
+            // composer, over the gate disclosed for the stream it prints to, as `realm agent`'s gate
+            // print does (fix 1, piece 3b) — the question each line as written (#729 PR-3, P-9; R2);
+            // a gate with no message shows its preview alone ((f)).
+            const audience = stdoutAudience() ?? 'private';
             const view = composeQuestionView(
-              discloseGate(stripSpanMarks(g), viewSetFor('private'), 'private'),
+              discloseGate(stripSpanMarks(g), viewSetFor(audience), audience),
               definition.steps[g.step_name]?.display,
             );
             if (view.question_text !== '') {

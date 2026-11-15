@@ -500,9 +500,9 @@ function printAudience(): DisclosureAudience {
 
 /**
  * #729 PR-3; fix 1, piece 3b: a step's output as this drive's result line shows it — disclosed for
- * the print's audience in every writer mode (its shapes in log mode), the span marks stripped
- * first, as the gate print does. So `display` values are masked before any filter runs; the walk's
- * hides and shapes join the drive's tally.
+ * the print's audience in every writer mode (its shapes in log mode), as the gate print does. So
+ * `display` values are masked before any filter runs; the walk's hides and shapes join the
+ * drive's tally.
  */
 function outputForLog(output: Record<string, unknown>): Record<string, unknown> {
   const audience = printAudience();

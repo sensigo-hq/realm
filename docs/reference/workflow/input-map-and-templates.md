@@ -112,11 +112,11 @@ A template expression is a path between double braces, optionally followed by fi
 
 ### Where expressions are read
 
-| Field          | Read when                                                                    | Paths it can use                | Filters | A path that finds nothing                    | An unknown filter                  |
-| -------------- | ---------------------------------------------------------------------------- | ------------------------------- | ------- | -------------------------------------------- | ---------------------------------- |
-| `prompt`       | The step becomes the next action.                                            | All four roots                  | Yes     | The expression is left as written.           | The expression is left as written. |
-| `gate.message` | The gate opens.                                                              | All four roots                  | Yes     | The step stops: `GATE_MESSAGE_UNRESOLVABLE`. | The step stops: `FILTER_UNKNOWN`.  |
-| `display`      | `realm agent` prints the step's result, and a surface shows the step's gate. | Fields of the step's own output | Yes     | Nothing is printed in its place.             | The expression is left as written. |
+| Field          | Read when                                                                    | Paths it can use                | Filters | A path that finds nothing                    | An unknown filter                                                                                                                                     |
+| -------------- | ---------------------------------------------------------------------------- | ------------------------------- | ------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt`       | The step becomes the next action.                                            | All four roots                  | Yes     | The expression is left as written.           | The expression is left as written.                                                                                                                    |
+| `gate.message` | The gate opens.                                                              | All four roots                  | Yes     | The step stops: `GATE_MESSAGE_UNRESOLVABLE`. | The step stops: `FILTER_UNKNOWN`.                                                                                                                     |
+| `display`      | `realm agent` prints the step's result, and a surface shows the step's gate. | Fields of the step's own output | Yes     | Nothing is printed in its place.             | The expression is left as written; where values show as their shapes (the Slack post, log mode), a value that is not a list or a map shows its shape. |
 
 `instructions` and `description` are not read for expressions. They are passed on as written.
 
@@ -153,7 +153,7 @@ FILTER_UNKNOWN: gate.message uses unknown filter 'shout'
 
 In both cases the run stays open, with the step not done. `realm workflow validate` does not check the paths or filter names in a template; these errors appear when the run reaches the step.
 
-In `display`, a path is a field of the step's own output, without a root: `{{ note }}`. Filters work as in other templates: `{{ note | upper }}`, and `default` fills a missing value. A filter that cannot apply to a value that is there leaves the placeholder as written. In `display`, a list or a map is written as JSON on one line. This was added after version 0.49.0. With this template:
+In `display`, a path is a field of the step's own output, without a root: `{{ note }}`. Filters work as in other templates: `{{ note | upper }}`, and `default` fills a missing value. A filter that cannot apply to a value that is there leaves the placeholder as written; where values show as their shapes, a value that is not a list or a map shows its shape. In `display`, a list or a map is written as JSON on one line. This was added after version 0.49.0. With this template:
 
 ```yaml
 display: 'Note: {{ note }} / upper: {{ note | upper }} / other step: {{ context.resources.order.id }}'
