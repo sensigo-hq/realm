@@ -12,6 +12,12 @@
 //      ways: a call in another file is refused, and so is a listed file that no longer calls it (the
 //      list would then be wider than the code). No Realm command takes a lease yet (the CHANGELOG and
 //      the core library's reference say so; CW-5 is the unit that will).
+//   4. only the files of a closed list call core's `claimStepForDrive(` or `releaseDriveClaim(` (#729
+//      CW-2a, correction 1), checked both ways as rule 3 is. The list is empty: the sentences "No Realm
+//      command calls them yet" (the CHANGELOG) and "No Realm command takes a lease yet" (the CHANGELOG
+//      and the core library's reference) hold while no production file calls either. Their
+//      definitions in `drive-claim.ts` are not calls; the cell also checks that it read them, so a
+//      walk that misses the file cannot pass for an empty one.
 //
 // WHAT IT SEES: every `.ts` file under `packages/*/src` but tests (`*.test.ts`), declarations and the
 // `test-support` folders. WHAT IT CANNOT SEE: a call through a computed name (`port[name]()`), a call
@@ -29,6 +35,14 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const LEASE_MODULE = 'store-sqlite/src/claim-lease.ts';
+
+/** #729 CW-2a (correction 1): the production files that may call `claimStepForDrive(` or
+ *  `releaseDriveClaim(`, each with its reason. Empty: no Realm command calls them yet (CW-5's
+ *  `realm agent` will be the first entry here). */
+const DRIVE_ENTRY_CALLERS: Readonly<Record<string, string>> = {};
+
+/** #729 CW-2a: the two engine entries a drive takes and gives back its claim through. */
+const DRIVE_ENTRIES = ['claimStepForDrive', 'releaseDriveClaim'];
 
 /** #729 CW-2a: the production files that may call a lease port's `hold(`, each with its reason. */
 const HOLD_CALLERS: Readonly<Record<string, string>> = {
@@ -112,6 +126,35 @@ function holdCalls(sf: ts.SourceFile): number[] {
   return out;
 }
 
+/** Every call of one of `names` in a file (`f(…)`, `x.f(…)`, `x?.f(…)`, `x['f'](…)`), by name and line. */
+function callsOf(sf: ts.SourceFile, names: readonly string[]): { name: string; line: number }[] {
+  const out: { name: string; line: number }[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const name = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : ts.isElementAccessExpression(callee) &&
+              ts.isStringLiteralLike(callee.argumentExpression)
+            ? callee.argumentExpression.text
+            : undefined;
+      if (name !== undefined && names.includes(name)) out.push({ name, line: lineOf(sf, node) });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** The names of the functions a file declares at its top level (`export async function f(`). */
+function declaredFunctions(sf: ts.SourceFile): string[] {
+  return sf.statements.flatMap((s) =>
+    ts.isFunctionDeclaration(s) && s.name !== undefined ? [s.name.text] : [],
+  );
+}
+
 describe('#729 CW-1 — the claim lease’s source witness', () => {
   const files = productionFiles();
 
@@ -175,5 +218,27 @@ describe('#729 CW-1 — the claim lease’s source witness', () => {
       outside: calls.filter((c) => !listed.includes(c.file)).map((c) => `${c.file}:${c.line}`),
       calling: [...new Set(calls.map((c) => c.file))].sort(),
     }).toEqual({ outside: [], calling: listed });
+  });
+
+  it('only the listed files call claimStepForDrive() or releaseDriveClaim() — none today — and the walk read their definitions', () => {
+    const calls = files.flatMap((path) =>
+      callsOf(parse(path), DRIVE_ENTRIES).map((c) => ({ file: rel(path), ...c })),
+    );
+    const listed = Object.keys(DRIVE_ENTRY_CALLERS).sort();
+    const definedIn = files
+      .filter((path) => rel(path) === 'core/src/engine/drive-claim.ts')
+      .flatMap((path) => declaredFunctions(parse(path)).filter((n) => DRIVE_ENTRIES.includes(n)));
+    // (1) red when a production file outside the list calls either entry (a command calling one
+    //     makes "No Realm command calls them yet" and "No Realm command takes a lease yet" false), a
+    //     listed file no longer calls one, or the walk no longer reads the two definitions (it would
+    //     then see nothing); (2) prints each call outside the list with its file, line and name, the
+    //     files that call one, and the definitions it read.
+    expect({
+      outside: calls
+        .filter((c) => !listed.includes(c.file))
+        .map((c) => `${c.file}:${c.line} ${c.name}`),
+      calling: [...new Set(calls.map((c) => c.file))].sort(),
+      definedIn: definedIn.sort(),
+    }).toEqual({ outside: [], calling: listed, definedIn: [...DRIVE_ENTRIES].sort() });
   });
 });

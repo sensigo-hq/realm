@@ -61,8 +61,8 @@ describe('#729 CW-2a — the leased claim’s words', () => {
     // lease_unavailable with no claim (4), unleased_store with nothing held, read or written (5); every
     // answer but claimed lets go of the lease (2, 3, 6a–6c: `removed`). The give-back: released (8),
     // not_ours with nothing written (9); it does not let go of the lease (8: still `live`).
-    // `not_released` with the store's reason: the answer passes on the settle's own refusal
-    // (drive-claim.ts), and red-first's break of check 8 shows it (`claim_lost`).
+    // `not_released` with the store's reason: check 8c (the run abandoned while the drive gives its
+    // step back: `run_terminal`).
     claim(
       CORE,
       "`claimStepForDrive` takes a step's claim for a program that will run it, under a lease the program holds, before the step's work starts. It answers what happened:",
@@ -140,9 +140,9 @@ describe('#729 CW-2a — the leased claim’s words', () => {
     // The optional last argument and the lease in the claim, one call per lease: the leased-claim
     // contract (both stores); a store without leases is never given one: core's drive-claim-cw2a
     // check 5; the two functions: core's drive-claim-cw2a (checks 1–9); "no Realm command calls them
-    // yet": claim-lease-witness-cw1 (only core's drive-claim.ts and the leased-claim laws call
-    // `hold(`); the gate: the contract's LC_GATE_KEEPS_NO_LEASE; the testing package's exports: its
-    // index and this file's imports.
+    // yet": claim-lease-witness-cw1's closed list of their production calls, empty (correction 1); the
+    // gate: the contract's LC_GATE_KEEPS_NO_LEASE; the testing package's exports: its index and this
+    // file's imports.
     claimChangelog(
       "- **A drive can take a step's claim under a lease it holds, and give it back.** `RunStore.claimStep` takes an optional last argument, a lease the caller holds. A store with `leases` writes it in the claim as `lease: { id }`, and accepts each lease for one `claimStep` call only. A store without `leases` is never given one, so a store you wrote needs no change. Two new engine functions take and give back such a claim: `claimStepForDrive` and `releaseDriveClaim`. No Realm command calls them yet. A claim a gate keeps while it waits for a person names no lease. `@sensigo/realm-testing` adds `leasedClaimContract` and `LEASED_CLAIM_LAWS`.",
     );

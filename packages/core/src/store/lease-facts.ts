@@ -12,9 +12,9 @@
 // release's facts read `unknown('not_checked')`: never `not_held`. Core stays I/O-free (R19): the
 // port does the I/O.
 //
-// A claim names a lease only when a drive takes it through core's `claimStepForDrive` (CW-2a), which
-// no Realm command calls yet, so today every claim Realm writes reads `unleased` and every store
-// returns no facts: nothing anyone sees changes.
+// A claim names a lease only when a store's `claimStep` is given a hold (CW-2a: core's
+// `claimStepForDrive`, which no Realm command calls yet), so today every claim a Realm command writes
+// reads `unleased` and every store returns no facts: nothing anyone sees changes.
 import type { ClaimRecord, RunRecord } from '../types/run-record.js';
 import type { Snapshot } from '../engine/snapshot.js';
 import { brandClass, REALM_BRAND } from '../brand.js';

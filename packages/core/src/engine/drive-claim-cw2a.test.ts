@@ -284,6 +284,42 @@ describe('#729 CW-2a — releaseDriveClaim', () => {
     });
   });
 
+  it('8c. not_released: the run is abandoned while the drive gives its step back — the store refuses the release, with its reason and the run it judged', async () => {
+    const { store: real, double, runId } = await leased();
+    const claimed = await drive(real, runId, 'work', DRIVE_A);
+    if (claimed.kind !== 'claimed') throw new Error(`not claimed: ${JSON.stringify(claimed)}`);
+    // Another program (`realm run abandon`, for example) ends the run after the give-back has read it
+    // and before its write: the read still shows the drive's claim, the write meets an ended run.
+    const store = Object.create(real) as InMemoryStore;
+    store.get = async (id) => {
+      const read = await real.get(id);
+      await abandonRun(real, id);
+      return read;
+    };
+    const answer = await releaseDriveClaim(store, runId, 'work', {
+      definition: DEF,
+      hold: claimed.hold,
+    });
+    // (1) red when a refused settle is answered as `not_ours` (or `released`), or the answer drops the
+    //     store's reason or the run it was judged on; (2) prints the answer's kind and reason, the
+    //     snapshot's phase, whether it ended, its claim, and the lease's state.
+    expect({
+      kind: answer.kind,
+      reason: answer.kind === 'not_released' ? answer.reason : 'none',
+      phase: answer.snapshot.record.run_phase,
+      ended: answer.snapshot.record.terminal_state,
+      claim: answer.snapshot.record.claims?.['work'],
+      state: double.state(claimed.hold.id),
+    }).toEqual({
+      kind: 'not_released',
+      reason: 'run_terminal',
+      phase: 'abandoned',
+      ended: true,
+      claim: undefined,
+      state: 'live',
+    });
+  });
+
   it("9. not_ours after another program took the step: the late give-back writes nothing, and the other's claim stays", async () => {
     const { store, double, runId } = await leased();
     const first = await drive(store, runId, 'work', DRIVE_A);
