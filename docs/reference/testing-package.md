@@ -635,7 +635,7 @@ Types: `LeaseFactsContractAdapter`, `LeaseFactsContractCase`, `LeaseFactsLaw`, `
 
 ### `outboundLedgerContract(adapter)`
 
-The laws of a store's outbound ledger, `RunStore.outbound` (added after version 0.49.0). Each case builds its own store through the adapter's `makeStore({ clock })`, on a clock the case moves and counts, and writes each run it needs through the adapter's `seedRun(record)`, as given: a run with an open question, or one without. `OUTBOUND_LEDGER_LAWS` lists the laws. Each instant a law names is checked exactly at it and 1 ms before.
+The laws of a store's outbound ledger, `RunStore.outbound` (added after version 0.49.0). Each case builds its own store through the adapter's `makeStore({ clock })`, on a clock the case moves and counts, and writes each run it needs through the adapter's `seedRun(record)`, as given: a run with an open question, or one without. `OUTBOUND_LEDGER_LAWS` lists the laws. A law about a deadline or an expiry checks it exactly at that instant and 1 ms before.
 
 | Law                                 | What it checks                                                                                                                                                                    |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

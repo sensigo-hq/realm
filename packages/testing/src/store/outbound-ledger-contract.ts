@@ -39,7 +39,8 @@ import { settableClock } from '../clock/settable-clock.js';
  * - `OL_CONTENTION` — another token answers `lease_held`, with the row as a view (no `lease_token`).
  * - `OL_TAKEOVER` — 1 ms before the deadline another token is `lease_held`; exactly at it, it takes the
  *   lease over (`attempts` 2, the token replaced); the first token's mark is then `lease_lost`.
- * - `OL_LATE_MARK` — with no takeover, the holder's mark exactly at and after the deadline applies.
+ * - `OL_LATE_MARK` — with no takeover, the holder's mark 1 ms before, exactly at and after the deadline
+ *   applies.
  * - `OL_GATE_NOT_OPEN` — no open question, another question's id, a question answered since, a run
  *   that does not exist: `gate_not_open`, no row written, nothing thrown.
  * - `OL_TWO_GATES` — a later question's reminder 2 is not superseded by an earlier question's sent 3.
@@ -53,11 +54,12 @@ import { settableClock } from '../clock/settable-clock.js';
  * - `OL_UNREADABLE_EXPIRY` — an `expires_at` that cannot be read reads as unset: reminder 2 and the
  *   escalation apply.
  * - `OL_DEFAULT_SCHEDULE` — with no authored schedule, occurrence 1 applies, occurrence 2 is
- *   `not_eligible`, the escalation applies; past an `on_expiry` question's expiry, occurrence 1 still
- *   applies and the escalation does not.
+ *   `not_eligible`, the escalation applies; exactly at an `on_expiry` question's expiry, occurrence 1
+ *   still applies and the escalation does not (1 ms before, it does).
  * - `OL_DONE` — after `sent` and after `failed`, a lease answers `outbound_done` with the row.
  * - `OL_ORDER_ELIGIBILITY_BEFORE_DONE` — a sent non-final reminder, leased again exactly at an
- *   `on_expiry` question's expiry, is `not_eligible`, not `outbound_done`.
+ *   `on_expiry` question's expiry, is `not_eligible`, never `outbound_done` (1 ms before, it is
+ *   `outbound_done`).
  * - `OL_ORDER_DONE_BEFORE_SUPERSEDED` — with reminders 2 and 3 sent, a lease on 2 is `outbound_done`.
  * - `OL_ORDER_SUPERSEDED_BEFORE_LEASED` — A holds 2 and B holds 3, both live: A's retry on 2 is
  *   `superseded`, not `already_leased`.
@@ -495,12 +497,20 @@ function family(adapter: OutboundLedgerContractAdapter) {
     ),
     L(
       'OL_LATE_MARK',
-      'the holder’s mark at and after the deadline applies when nobody took over',
+      'the holder’s mark before, at and after the deadline applies when nobody took over',
       () =>
         on('OL_LATE_MARK', gate(AUTHORED), async (b) => {
           const law = 'OL_LATE_MARK';
           await b.ledger.lease(RUN, leaseOf(rem(1)));
           await b.ledger.lease(RUN, leaseOf(esc()));
+          await b.ledger.lease(RUN, leaseOf(rem(2)));
+          await b.at(120_000 - 1);
+          same(
+            law,
+            '1 ms before the deadline',
+            outcome(await b.ledger.mark(RUN, markOf(rem(2)))),
+            'applied',
+          );
           await b.at(120_000);
           same(
             law,
@@ -691,6 +701,13 @@ function family(adapter: OutboundLedgerContractAdapter) {
           );
         });
         await on(law, gate({ expires_at: iso(T0 + 25 * MIN), on_expiry: 'abort' }), async (b) => {
+          await b.at(25 * MIN - 1);
+          same(
+            law,
+            '1 ms before an on_expiry expiry: the escalation',
+            outcome(await b.ledger.lease(RUN, leaseOf(esc()))),
+            'applied',
+          );
           await b.at(25 * MIN);
           same(
             law,
@@ -733,6 +750,13 @@ function family(adapter: OutboundLedgerContractAdapter) {
         await b.at(10 * MIN);
         await b.ledger.lease(RUN, leaseOf(rem(1)));
         await b.ledger.mark(RUN, markOf(rem(1)));
+        await b.at(25 * MIN - 1);
+        same(
+          law,
+          'a sent reminder 1 leased 1 ms before expires_at',
+          outcome(await b.ledger.lease(RUN, leaseOf(rem(1)))),
+          'outbound_done',
+        );
         await b.at(25 * MIN);
         same(
           law,
