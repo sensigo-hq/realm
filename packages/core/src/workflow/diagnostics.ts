@@ -59,7 +59,13 @@ export type WarningCode =
   // refused at the boundary and lenient in execution; one that may be absent is advice.
   | 'WHEN_PATH_UNRESOLVABLE'
   | 'WHEN_CHOICE_NOT_OFFERED'
-  | 'WHEN_PATH_UNCERTAIN';
+  | 'WHEN_PATH_UNCERTAIN'
+  // fix 1, piece 2b: a webhook's `params_map` judged against `params_schema`
+  // (`params-map-check.ts`). A name a closed schema lacks, or a required parameter left unfilled, is
+  // refused at the boundary and lenient in execution; a name an open schema does not list is advice.
+  | 'PARAMS_MAP_UNKNOWN_PARAM'
+  | 'PARAMS_MAP_REQUIRED_UNMAPPED'
+  | 'PARAMS_MAP_UNDECLARED_PARAM';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -156,6 +162,10 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   WHEN_PATH_UNRESOLVABLE: 'error',
   WHEN_CHOICE_NOT_OFFERED: 'error',
   WHEN_PATH_UNCERTAIN: 'warn',
+  // fix 1, piece 2b — the same boundary for a webhook `params_map` that cannot fill its parameters.
+  PARAMS_MAP_UNKNOWN_PARAM: 'error',
+  PARAMS_MAP_REQUIRED_UNMAPPED: 'error',
+  PARAMS_MAP_UNDECLARED_PARAM: 'warn',
 };
 
 /**
