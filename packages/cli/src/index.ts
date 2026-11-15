@@ -1,40 +1,14 @@
 #!/usr/bin/env node
 // @sensigo/realm-cli — command-line interface for Realm
 import 'dotenv/config';
-import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { shellWord } from '@sensigo/realm';
-import {
-  workflowCommands,
-  runCommands,
-  dbCommands,
-  topLevelCommands,
-  installClockErrorSink,
-} from './commands-registry.js';
+import { buildRealmProgram, runCommands, installClockErrorSink } from './commands-registry.js';
 import { reportExpectedRefusal } from './lib/expected-refusal.js';
 import { declareRealmProgram } from './output/relay.js';
-import { VERSION } from './version.js';
 
-const program = new Command();
-
-program.name('realm').description('Realm workflow engine CLI').version(VERSION);
-
-// realm workflow — operations on workflow definitions
-const workflowCmd = new Command('workflow').description('Manage workflow definitions');
-for (const cmd of workflowCommands) workflowCmd.addCommand(cmd);
-
-// realm run — operations on run instances
-const runCmd = new Command('run').description('Manage workflow run instances');
-for (const cmd of runCommands) runCmd.addCommand(cmd);
-
-// realm db — maintenance of the store file (#616 PR-2c)
-const dbCmd = new Command('db').description('Maintain the store file');
-for (const cmd of dbCommands) dbCmd.addCommand(cmd);
-
-program.addCommand(workflowCmd);
-program.addCommand(runCmd);
-program.addCommand(dbCmd);
-for (const cmd of topLevelCommands) program.addCommand(cmd);
+// CP-I: one function builds the tree, so the kept-surface inventory's test walks the one the binary runs.
+const program = buildRealmProgram();
 
 // issue #427 — `realm run ./my-workflow` is the discoverability trap: `realm run` manages run
 // INSTANCES, while the dev-mode runner is `realm workflow run`. Commander's own unknown-command
@@ -51,7 +25,7 @@ if (
   group === 'run' &&
   token !== undefined &&
   !token.startsWith('-') &&
-  !runCmd.commands.some((c) => c.name() === token) &&
+  !runCommands.some((c) => c.name() === token) &&
   (token.includes('/') || token.endsWith('.yaml') || token.endsWith('.yml') || existsSync(token))
 ) {
   console.error(`error: unknown command '${token}'`);
