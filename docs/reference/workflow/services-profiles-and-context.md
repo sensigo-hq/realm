@@ -27,7 +27,7 @@ No other key is allowed: `Service 'files': unknown key 'colour'`. The keys insid
 Invalid workflow: Step 'a': uses_service 'files' is not defined in 'services' (step at line 5)
 ```
 
-`realm workflow validate`, `register` and `watch` warn when no adapter of that name is provided by the project (`ADAPTER_NOT_PROVIDED`, added after version 0.49.0). A step whose adapter cannot be found is blocked when the run reaches it. See [Call a service with an adapter](../../guides/call-a-service.md).
+`realm workflow validate`, `register` and `watch` warn when a step uses a service whose adapter the project does not provide (`ADAPTER_NOT_PROVIDED`, added after version 0.49.0). A step whose adapter cannot be found is blocked when the run reaches it. See [Call a service with an adapter](../../guides/call-a-service.md).
 
 ### `rate_limit`
 

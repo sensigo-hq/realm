@@ -535,7 +535,7 @@ describe('the words — fix 1, piece 4', () => {
     // (1) red when a new sentence is missing or an old one stays; (2) prints the four checks.
     expect({
       servicesNow: services.includes(
-        '`realm workflow validate`, `register` and `watch` warn when no adapter of that name is provided by the project (`ADAPTER_NOT_PROVIDED`, added after version 0.49.0). A step whose adapter cannot be found is blocked when the run reaches it.',
+        '`realm workflow validate`, `register` and `watch` warn when a step uses a service whose adapter the project does not provide (`ADAPTER_NOT_PROVIDED`, added after version 0.49.0). A step whose adapter cannot be found is blocked when the run reaches it.',
       ),
       servicesOld: services.includes(
         'Whether an adapter of that name exists is not checked when the file is loaded.',
