@@ -410,7 +410,13 @@ describe('fix 1, unit 1 — check 8: row 6, `run.params` against `params_schema`
     // (1) red when a path into undeclared params is judged; (2) prints both values.
     expect(f.messages).toEqual([]);
     expect(f.notChecked).toEqual([
-      { step: 'refund', key: 'amount', path: 'run.params.ordr_id', why: 'no_params_schema' },
+      {
+        surface: 'input_map',
+        step: 'refund',
+        key: 'amount',
+        path: 'run.params.ordr_id',
+        why: 'no_params_schema',
+      },
     ]);
   });
 
@@ -591,6 +597,7 @@ describe('fix 1, unit 1 — check 11: row 10, data the workflow declares no shap
     expect(f.messages).toEqual([]);
     expect(f.notChecked).toEqual([
       {
+        surface: 'input_map',
         step: 'refund',
         key: 'amount',
         path: 'context.resources.fetch.total',

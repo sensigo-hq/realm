@@ -58,6 +58,18 @@ export const INPUT_MAP_SURFACE: PathSurface = {
 };
 
 /**
+ * `when`'s surface (fix 1, piece 2a): the root `evaluateWhenCondition` builds
+ * (`{ ...evidenceByStep, run: { params } }`). A path starts with `run.params.`, or with a step's
+ * name, or with `$settlement.<step>.` (judged under the step root).
+ */
+export const WHEN_SURFACE: PathSurface = {
+  roots: [
+    { prefix: ['run', 'params'], data: 'params' },
+    { prefix: [], data: 'step' },
+  ],
+};
+
+/**
  * The workflow as the resolver reads it: the steps after templates are expanded, and the
  * workflow's `params_schema`. Raw on purpose — the loader calls it before the definition is typed,
  * and a malformed value is read as "declares nothing", never thrown on.
@@ -343,6 +355,11 @@ export class PathIndex {
     return this.shapes[this.at(name)]!;
   }
 
+  /** Whether step `name` opens a gate (its trust classifies as `gates`), so its answer carries `choice`. */
+  opensGate(name: string): boolean {
+    return this.shapes[this.at(name)]!.choice;
+  }
+
   /**
    * Rows 8 and 9: can step `s` be without output when `reader`'s input is built? `settlement` is
    * true for a `$settlement.<s>` read, which a step that runs only after `s` failed also finds.
@@ -599,8 +616,10 @@ class Context {
     let bare = false;
     let inner: FieldJudgement;
     for (;;) {
-      // A gated step's evidence carries `choice` once its gate is answered (AA-AUU1-03).
-      if (shape.choice && fields[0] === 'choice') return { kind: 'found' };
+      // A gated step's evidence carries `choice` once its gate is answered (AA-AUU1-03). Only on the
+      // step read: a bare step copies its dependency's own entry, not the gate's answer (piece 2a,
+      // AA-AU2A-24), so `choice` is never found through a bare step's chain.
+      if (!bare && shape.choice && fields[0] === 'choice') return { kind: 'found' };
       if (shape.kind === 'none') {
         inner = { kind: 'not_checked', why: 'producer_declares_no_shape' };
         break;

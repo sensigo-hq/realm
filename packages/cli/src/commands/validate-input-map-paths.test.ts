@@ -198,6 +198,7 @@ describe('validate — fix 1, unit 1: input_map paths', () => {
       valid: true,
       not_checked: [
         {
+          surface: 'input_map',
           step: 'refund',
           key: 'amount',
           path: 'context.resources.fetch.total',
@@ -432,9 +433,9 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     //     counts the codes); (2) prints the sentence.
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      'The loader has 21 warning codes. Three of them count as errors: an unknown key at the top of the file or on a step, and an `input_map` path that can never be found, make `validate`, `register` and `watch` fail.',
+      "The loader has 24 warning codes. Five of them count as errors: an unknown key at the top of the file or on a step, an `input_map` path that can never be found, and a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer, make `validate`, `register` and `watch` fail.",
     );
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 21 warning codes');
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 24 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
       '| `INPUT_MAP_PATH_UNRESOLVABLE` | Error | An `input_map` path can never be found. Added after version 0.49.0. |',
@@ -445,7 +446,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      '| `not_checked` | The `input_map` paths into data the workflow declares no shape for: `step`, `key`, `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, or `check_failed` when the check itself failed on that path). Empty when the file could not be loaded. Added after version 0.49.0. |',
+      '| `not_checked` | The `input_map` paths and `when` conditions that read data the workflow declares no shape for: `surface` (`input_map` or `when`), `step`, `key` (`when` for a condition), `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, or `check_failed` when the check itself failed on that path). Empty when the file could not be loaded. Added after version 0.49.0. |',
     );
   });
 
@@ -465,7 +466,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       '**3. A `gate:` block on a step that declares no gate trust is refused when the file is loaded.** Set `trust: human_confirmed` on the step, or remove the block, as its refusal says; `realm workflow validate --registered <id>` reports a stored copy.',
     );
     // The two items sit in [Unreleased]'s Upgrading section, numbered on from its item 1 (#597 D1c-1's
-    // store-format item, landed after them, is 4).
+    // store-format item, landed after them, is 4; fix 1 piece 2a's `when` item is 5).
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     const unreleased = changelog.slice(
       changelog.indexOf('## [Unreleased]'),
@@ -475,7 +476,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       unreleased.indexOf('### Upgrading'),
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
     );
-    expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual(['**1. ', '**2. ', '**3. ', '**4. ']);
+    expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual(['**1. ', '**2. ', '**3. ', '**4. ', '**5. ']);
   });
 });
 
@@ -542,6 +543,7 @@ steps:
       total: context.resources.fetch.total
 `;
 const HANDLER_READ = {
+  surface: 'input_map',
   step: 'refund',
   key: 'total',
   path: 'context.resources.fetch.total',
