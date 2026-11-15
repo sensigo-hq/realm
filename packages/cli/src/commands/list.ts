@@ -26,6 +26,7 @@ import type {
 import { parseDuration } from '../lib/parse-duration.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
+import { outboundWords, readOutboundRows } from '../lib/outbound-words.js';
 
 /** Returns a chalk-coloured phase label — `phase` is the caller's already-DERIVED value (issue
  *  #279, increment 2, PR-C — D-3 leg vi: render sweep), never a raw `run.run_phase` read here.
@@ -529,6 +530,14 @@ export async function listRuns(
       // at this row's reading — never "due" or "overdue": no send is recorded on the run.
       const reminders = reminderScheduleOf(snapshotOf.get(run.id)!);
       if (reminders !== undefined) line += `  ${reminderScheduleWords(reminders, rowAt)}`;
+      // #597 D1b: what the store's outbound ledger recorded, at this row's reading; a read that
+      // throws adds nothing to this row.
+      const outboundRows = await readOutboundRows(store, run.id);
+      if (outboundRows !== undefined) {
+        const words = outboundWords(outboundRows, rowAt, true);
+        if (words.reminders !== undefined) line += `  reminders: ${words.reminders}`;
+        if (words.escalation !== undefined) line += `  escalation: ${words.escalation}`;
+      }
     }
     lines.push(line);
   }

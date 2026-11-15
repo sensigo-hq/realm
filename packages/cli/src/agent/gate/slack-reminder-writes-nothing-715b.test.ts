@@ -1,8 +1,10 @@
 // slack-reminder-writes-nothing-715b.test.ts — issue #715 (b) 02 §D.3 (D6-21) with Amendment 9: the
-// basis clause the `inspect`/`list` reminder views print — "no send is recorded; reminders are sent
-// only while a process attends this question" — is TRUE by execution: the process attending the
-// question (`realm agent`'s Slack gate handler) posts its reminders and writes NOTHING to the run
-// record for them. Real timers: an authored reminder every second, three of them.
+// basis clause the `inspect`/`list` reminder views print — "reminders are sent only while a process
+// attends this question" (#597 D1b dropped "no send is recorded": the outbound ledger, beside the run,
+// now records what was sent) — and the rule that a reminder writes nothing to the run are TRUE by
+// execution: the process attending the question (`realm agent`'s Slack gate handler) posts its
+// reminders and writes NOTHING to the run record for them. Real timers: an authored reminder every
+// second, three of them.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';

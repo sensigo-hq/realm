@@ -57,6 +57,8 @@ Each line holds, in order:
 | `N step(s)`                 | How many steps have a record in the run.                                                                                                                                                                                                                                |
 | `gate: <step> opened <age>` | On a run in `gate_waiting`: the step whose gate is open, how long ago it opened and the instant (`opened 4m ago (2026-10-27T14:03:07Z)`). When its time is up, `EXPIRED <how long> ago (<deadline>)` follows; with authored reminders, the next one scheduled and when. |
 
+On a run in `gate_waiting`, the line then says what `realm agent` recorded of the question's Slack reminders and escalation, in the words of `realm run inspect` below: `reminders: …` and, when there is one, `escalation: …` (added after version 0.49.0).
+
 With `--stuck`, a first line gives the limit, each line has `idle:` and how long ago the run last changed, with the instant, and the end of the line names what was found:
 
 ```text
@@ -230,6 +232,15 @@ The `Question:` line is the gate's message as it read when the gate opened — n
 - `Question: not shown — the step's prompt could not be rendered`.
 
 The `To answer:` line is printed while the question can be answered here. Both were added after version 0.47.0.
+
+After the question's block, or after `Updated:` when no question is open, two lines say what `realm agent` recorded of the question's Slack reminders and escalation in the store's outbound ledger (added after version 0.49.0):
+
+```text
+Reminders: 1 sent (of at most 3), last 30m ago (2030-01-01T00:10:00Z); 1 skipped; 1 not confirmed
+Escalation: sent 28m ago (2030-01-01T00:12:00Z)
+```
+
+`N sent` counts the reminders Slack took, of at most the gate's `reminder_max` (3 when the gate sets `reminder_seconds` and no `reminder_max`; 1 when it sets no `reminder_seconds`), and `last` says when the latest was recorded as sent. `K skipped` counts the earlier reminders that were never posted, for example ones that came due while the computer slept or while no `realm agent` attended the question. On a question that was open at the upgrade from version 0.49.0, `skipped` may count reminders that a 0.49 `realm agent` sent, since they left no record. `U not confirmed` counts the reminders a `realm agent` started to send and never recorded as sent or failed, for example because it stopped, or because Slack took neither the post nor its one retry. `F failed (not retried)` counts the reminders Slack refused because the channel is gone or archived. A count of zero is left out, except `N sent`. The escalation reads `sent <when>`, `not confirmed` or `failed (not retried)`. An open question with no reminder recorded reads `Reminders: none recorded`. A run with neither an open question nor a recorded reminder or escalation prints neither line, and so does a store that keeps no outbound ledger, or one whose ledger cannot be read.
 
 ### The blocks in the middle
 
