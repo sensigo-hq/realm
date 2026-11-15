@@ -167,8 +167,8 @@ function isLive(row: OutboundEntry, at: Date): boolean {
 }
 
 /**
- * The lease's state machine, pure: `gate` is the run's open question (`undefined` for none, or for a
- * run that does not exist), `rows` the run's ledger rows, `at` the store's one reading. First match
+ * The lease's state machine, pure: `gate` is the run's open question (`undefined` for none, for a run
+ * that does not exist, or for a sealed run: a store reads it as core's `openQuestionOf` does), `rows` the run's ledger rows, `at` the store's one reading. First match
  * wins: `gate_not_open` · `not_eligible` (core's `reminderEligibility`) · `outbound_done` (the row is
  * `sent` or `failed`) · `superseded` (a reminder, and a reminder of the same question with a larger
  * occurrence is `sent` or holds a live lease; never an escalation) · `already_leased` / `lease_held`

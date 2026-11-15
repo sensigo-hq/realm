@@ -41,6 +41,7 @@ import {
   type OutboundLedger,
   checkOutboundRequest,
   leaseOutbound,
+  openQuestionOf,
   markOutbound,
   type ArtifactDeletionReport,
   type OutboundEntry,
@@ -111,7 +112,8 @@ function byCreatedThenKey(a: OutboundEntry, b: OutboundEntry): number {
 
 /**
  * The in-memory outbound ledger. `lease` and `mark` check the request, take ONE raw reading of the
- * store's clock, then read the run's open question (`openGateOf`) and its rows and write the row core
+ * store's clock, then read the run's open question (`openGateOf`: none on a sealed run, as core's
+ * `openQuestionOf` reads it) and its rows and write the row core
  * returns, all in one synchronous stretch: no `await` comes between the read and the write, so two
  * concurrent calls cannot both decide on the same rows. `read`, `statAllForRun` and `deleteAllForRun`
  * take no reading. Nothing it does writes to the run.
@@ -240,7 +242,13 @@ export class InMemoryStore implements RunStore {
     this.outbound =
       options?.outbound === null
         ? null
-        : new InMemoryOutboundLedger(this.clock, (runId) => this.runs.get(runId)?.pending_gate);
+        : new InMemoryOutboundLedger(this.clock, (runId) => {
+            // #597 D1a correction 1: core's one reading of an open question, none on a sealed run.
+            const run = this.runs.get(runId);
+            return run !== undefined && openQuestionOf(run) !== undefined
+              ? run.pending_gate
+              : undefined;
+          });
   }
 
   /**

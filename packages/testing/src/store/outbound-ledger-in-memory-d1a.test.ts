@@ -1,7 +1,8 @@
 // outbound-ledger-in-memory-d1a.test.ts — issue #597, D1a: the published outbound-ledger contract
-// (`outboundLedgerContract`) run against `InMemoryStore`'s ledger, every law; the per-run artifact
-// contract run against the same ledger's purge pair; and the store's own cells (built with
-// `outbound: null` it keeps no ledger; its ledger reads the store's own runs).
+// (`outboundLedgerContract`) run against `InMemoryStore`'s ledger, every law, and the store's own
+// cells (built with `outbound: null` it keeps no ledger; its ledger reads the store's own runs). The
+// ledger's purge pair is pinned by the family's `OL_PURGE`: an in-memory ledger can neither fail nor
+// declare a release line, so the per-run artifact contract runs on SQLite's ledger (D1c), not here.
 //
 // Each assertion carries the two questions of `~/.claude/TESTING-RULES.md` rule 8 next to it:
 // (a) what turns it red, (b) what it prints then.
@@ -14,12 +15,6 @@ import {
   type OutboundLedgerContractAdapter,
   type OutboundLedgerLaw,
 } from './outbound-ledger-contract.js';
-import {
-  ARTIFACT_STORE_LAWS,
-  perRunArtifactStoreContract,
-  type ArtifactStoreLaw,
-  type PerRunArtifactStoreContractAdapter,
-} from './per-run-artifact-store-contract.js';
 
 /** The outbound laws this file does not run, each with its reason. None: the in-memory store runs every one. */
 const NOT_RUN: Partial<Record<OutboundLedgerLaw, string>> = {};
@@ -36,11 +31,6 @@ const ADAPTER: OutboundLedgerContractAdapter = {
 };
 
 describe('#597 D1a — InMemoryStore runs the outbound-ledger contract', () => {
-  it('runs every law: NOT_RUN is empty', () => {
-    // (a) red when a law is put in NOT_RUN (it then never runs here); (b) prints the laws named there.
-    expect(NOT_RUN).toEqual({});
-  });
-
   const cases = outboundLedgerContract(ADAPTER);
   it('the contract has one case per exported law, in order', () => {
     // (a) red when a law is exported without a case, or a case is registered under another law;
@@ -58,23 +48,9 @@ describe('#597 D1a — InMemoryStore runs the outbound-ledger contract', () => {
   }
 });
 
-/**
- * The per-run artifact laws this file does not run on the ledger, each with its reason (the convention
- * `ARTIFACT_STORE_LAWS` states): an in-memory ledger has no I/O that can fail and declares no release
- * line.
- */
-const ARTIFACT_NOT_RUN: Partial<Record<ArtifactStoreLaw, string>> = {
-  L3_FAILURE_REJECTS: 'no failure to inject, no release line',
-  L4_TYPED_REJECTION: 'no failure to inject, no release line',
-  STORE_RELEASE_LINE_TRUE: 'no failure to inject, no release line',
-};
-const ARTIFACT_LAWS: readonly ArtifactStoreLaw[] = ARTIFACT_STORE_LAWS.filter(
-  (law) => !(law in ARTIFACT_NOT_RUN),
-);
-
-const RUN = 'run-outbound-artifact';
+const RUN = 'run-outbound-own';
 const GATE: PendingGate = {
-  gate_id: 'gate-outbound-artifact',
+  gate_id: 'gate-outbound-own',
   step_name: 'review',
   preview: {},
   choices: ['approve'],
@@ -86,7 +62,7 @@ const GATE: PendingGate = {
 function runWithGate(id: string, gate?: PendingGate): RunRecord {
   return {
     id,
-    workflow_id: 'wf-outbound-artifact',
+    workflow_id: 'wf-outbound-own',
     workflow_version: 1,
     completed_steps: [],
     in_progress_steps: [],
@@ -102,71 +78,6 @@ function runWithGate(id: string, gate?: PendingGate): RunRecord {
     ...(gate !== undefined ? { pending_gate: gate } : {}),
   };
 }
-
-/** A fresh store, its run's open question and a ledger seeded with every kind of row (fresh per law). */
-async function makeArtifactAdapter(): Promise<PerRunArtifactStoreContractAdapter> {
-  const store = new InMemoryStore();
-  store.seed(runWithGate(RUN, GATE));
-  const ledger = store.outbound!;
-  const what = (k: number) => ({ type: 'reminder', gateId: GATE.gate_id, occurrence: k }) as const;
-  const reseed = async (): Promise<void> => {
-    // A sent row with its outcome, a failed row, a pending row and an escalation row: every text field.
-    await ledger.lease(RUN, { what: what(1), leaseToken: 'A', leaseSeconds: 120 });
-    await ledger.mark(RUN, { what: what(1), leaseToken: 'A', result: 'sent', outcome: 'ok' });
-    await ledger.lease(RUN, { what: what(2), leaseToken: 'A', leaseSeconds: 120 });
-    await ledger.mark(RUN, {
-      what: what(2),
-      leaseToken: 'A',
-      result: 'failed',
-      outcome: 'refused:channel_not_found',
-    });
-    await ledger.lease(RUN, { what: what(3), leaseToken: 'A', leaseSeconds: 120 });
-    await ledger.lease(RUN, {
-      what: { type: 'escalation', gateId: GATE.gate_id },
-      leaseToken: 'A',
-      leaseSeconds: 120,
-    });
-  };
-  await reseed();
-  return {
-    store: ledger,
-    runIdWithArtifact: RUN,
-    runIdAbsent: 'run-outbound-artifact-absent',
-    injectFailure: () => {
-      throw new Error('not run here: an in-memory ledger has no failure to inject');
-    },
-    reseed,
-  };
-}
-
-describe('#597 D1a — the in-memory outbound ledger runs the per-run artifact contract', () => {
-  it('every exported law is either run or named in ARTIFACT_NOT_RUN, each with a reason', () => {
-    // (a) red when a law is dropped without being named, or a named law is no longer exported;
-    //     (b) prints the lists.
-    const exported: readonly string[] = ARTIFACT_STORE_LAWS;
-    const named = Object.keys(ARTIFACT_NOT_RUN);
-    expect(named.filter((law) => !exported.includes(law))).toEqual([]);
-    expect([...ARTIFACT_LAWS, ...named].sort()).toEqual([...exported].sort());
-    expect(ARTIFACT_LAWS).toEqual([
-      'L1_ABSENCE_RESOLVES',
-      'L2_IDEMPOTENT',
-      'L5_REPORT_SHAPE',
-      'L6_PREVIEW_EQUALS_RECEIPT',
-    ]);
-  });
-
-  for (const law of ARTIFACT_LAWS) {
-    it(`conforms to ${law}`, async () => {
-      const target = perRunArtifactStoreContract(await makeArtifactAdapter()).find(
-        (c) => c.law === law,
-      );
-      // (a) red when the case is gone or its law fails (an under-counting stat, a delete that
-      //     reports a figure the stat did not); (b) the case's own error names the figures.
-      expect(target, `no case for ${law}`).toBeDefined();
-      await target!.run();
-    });
-  }
-});
 
 describe('#597 D1a — InMemoryStore’s own outbound ledger', () => {
   it('keeps one by default, and none when built with outbound: null', () => {

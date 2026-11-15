@@ -420,7 +420,7 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 | `storeClockContract`          | `RunStore`, on a clock the test moves                            | 12   | 12, with `InMemoryStore`                       |
 | `leasePortContract`           | `RunStore.leases`, with holders in other processes               | 10   | 10, with `@sensigo/realm-store-sqlite`'s store |
 | `leaseFactsContract`          | `RunStore` with `leases`: the lease facts on the runs it returns | 8    | 8, with `InMemoryStore` and the lease double   |
-| `outboundLedgerContract`      | `RunStore` with `outbound`: its outbound ledger                  | 26   | 26, with `InMemoryStore`                       |
+| `outboundLedgerContract`      | `RunStore` with `outbound`: its outbound ledger                  | 29   | 29, with `InMemoryStore`                       |
 
 Every case in the last column passed, except the 2 it reports as skipped for `InMemoryTraceBufferStore` (it supplies neither byte hook), the 1 the settlement contract reports as skipped for `InMemoryStore` (it keeps claims, so the no-claims case does not apply), and the 3 the fidelity contract reports as skipped for `InMemoryStore` (it never deletes a run, so the purge laws' cases are skipped). The store interfaces are in [Core library](core-library.md).
 
@@ -428,7 +428,7 @@ Each of the first four contracts has the law `STORE_RELEASE_LINE_TRUE`: the rele
 
 #### Running every law
 
-Each contract exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`, added in 0.46.0, `STORE_CLOCK_LAWS`, added after version 0.48.0, and `LEASE_PORT_LAWS` and `LEASE_FACTS_LAWS`, added after version 0.49.0. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
+Each contract exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`, added in 0.46.0, `STORE_CLOCK_LAWS`, added after version 0.48.0, and `LEASE_PORT_LAWS` and `LEASE_FACTS_LAWS`, added after version 0.49.0. `OUTBOUND_LEDGER_LAWS`, added after version 0.49.0 too, lists the outbound ledger's laws. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
 
 ```js
 import { SETTLEMENT_LAWS } from '@sensigo/realm-testing';
@@ -644,13 +644,16 @@ The laws of a store's outbound ledger, `RunStore.outbound` (added after version 
 | `OL_MALFORMED_THROWS`               | A malformed lease or mark throws, writes nothing and reads no clock.                                                                                                              |
 | `OL_OWN_RETRY`                      | The same token again answers `already_leased`, the row unchanged.                                                                                                                 |
 | `OL_CONTENTION`                     | Another token answers `lease_held`, with the row without its token.                                                                                                               |
+| `OL_CONCURRENT_LEASES`              | Two senders asking for the same reminder at once: one gets the lease, the other `lease_held`.                                                                                     |
 | `OL_TAKEOVER`                       | At its deadline another token takes the lease over; the first token's mark is then `lease_lost`.                                                                                  |
 | `OL_LATE_MARK`                      | The holder's mark after the deadline applies when nobody took the lease over.                                                                                                     |
 | `OL_GATE_NOT_OPEN`                  | No open question, another question, one answered since, a run that does not exist: `gate_not_open`, and nothing written.                                                          |
+| `OL_SEALED_RUN`                     | A sealed run that still carries its question answers `gate_not_open`, and nothing is written.                                                                                     |
 | `OL_TWO_GATES`                      | One question's reminders never supersede another's.                                                                                                                               |
 | `OL_CAP`                            | A reminder past `reminder_max` is `not_eligible`.                                                                                                                                 |
 | `OL_EXPIRY_CLOSES`                  | From `expires_at`, a question with `on_expiry` gets no reminder but the final one, and no escalation.                                                                             |
 | `OL_FINAL_ELIGIBLE`                 | The final reminder of such a question can still be leased at and after `expires_at`.                                                                                              |
+| `OL_NONE_AFTER_THE_FINAL`           | No reminder after the final one can be leased, and a row's `of_max` is its question's own `reminder_max`.                                                                         |
 | `OL_FINDING_ONLY`                   | A question with no `on_expiry` is never closed by its expiry.                                                                                                                     |
 | `OL_UNREADABLE_EXPIRY`              | An `expires_at` that cannot be read counts as unset.                                                                                                                              |
 | `OL_DEFAULT_SCHEDULE`               | A question with no `reminder_seconds` gets one reminder and the escalation.                                                                                                       |
@@ -666,7 +669,7 @@ The laws of a store's outbound ledger, `RunStore.outbound` (added after version 
 | `OL_VIEW`                           | No entry the ledger returns carries `lease_token`; `read` orders the rows by `created_at`, then `entry_key`.                                                                      |
 | `OL_PURGE`                          | `statAllForRun` equals what `deleteAllForRun` then reports; the run then has no rows, and another run's rows stay.                                                                |
 
-The ledger's purge pair is a `PerRunArtifactStore` too: run `perRunArtifactStoreContract` on `store.outbound` as well. `InMemoryStore` runs every outbound law. On its ledger it runs `L1_ABSENCE_RESOLVES`, `L2_IDEMPOTENT`, `L5_REPORT_SHAPE` and `L6_PREVIEW_EQUALS_RECEIPT`, and names the other three in its `NOT_RUN`: an in-memory ledger has no failure to inject and no release line.
+The ledger's purge pair is a `PerRunArtifactStore` too. `OL_PURGE` holds it to what that interface promises: `statAllForRun` reports what `deleteAllForRun` then reports, a run that does not exist reports zero, and a second delete reports zero. `InMemoryStore` runs every outbound law.
 
 Types: `OutboundLedgerContractAdapter`, `OutboundLedgerContractCase`, `OutboundLedgerLaw`.
 

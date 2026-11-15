@@ -37,18 +37,26 @@ import { settableClock } from '../clock/settable-clock.js';
  *   characters is accepted).
  * - `OL_OWN_RETRY` — the same token again answers `already_leased` with the row unchanged.
  * - `OL_CONTENTION` — another token answers `lease_held`, with the row as a view (no `lease_token`).
+ * - `OL_CONCURRENT_LEASES` — two senders asking for the same reminder at once (`Promise.all`): exactly
+ *   one is applied, the other is `lease_held`; one row, leased once.
  * - `OL_TAKEOVER` — 1 ms before the deadline another token is `lease_held`; exactly at it, it takes the
  *   lease over (`attempts` 2, the token replaced); the first token's mark is then `lease_lost`.
  * - `OL_LATE_MARK` — with no takeover, the holder's mark 1 ms before, exactly at and after the deadline
  *   applies.
  * - `OL_GATE_NOT_OPEN` — no open question, another question's id, a question answered since, a run
  *   that does not exist: `gate_not_open`, no row written, nothing thrown.
+ * - `OL_SEALED_RUN` — a sealed run that still carries its open question (a record sealed before the
+ *   question was cleared) answers `gate_not_open` and writes nothing: a store reads the question as
+ *   core's `openQuestionOf` does, none on a sealed run.
  * - `OL_TWO_GATES` — a later question's reminder 2 is not superseded by an earlier question's sent 3.
  * - `OL_CAP` — occurrence `reminder_max` applies; `reminder_max` + 1 is `not_eligible`.
  * - `OL_EXPIRY_CLOSES` — on an `on_expiry` question, a non-final reminder and the escalation apply
  *   1 ms before `expires_at` and are `not_eligible` exactly at it.
  * - `OL_FINAL_ELIGIBLE` — the final reminder (the first occurrence at or after `expires_at`) of an
  *   `on_expiry` question applies 1 ms before, exactly at and after `expires_at`.
+ * - `OL_NONE_AFTER_THE_FINAL` — with `reminder_max` 5 and the expiry between reminders 2 and 3, no
+ *   reminder after the final (3) is eligible, on an `on_expiry` question or a finding-only one, 1 ms
+ *   before, exactly at and after `expires_at`; the final's row copies `of_max` 5 from the question.
  * - `OL_FINDING_ONLY` — on a question with `timeout_seconds` and no `on_expiry`, a reminder and the
  *   escalation apply 1 ms before, exactly at and after `expires_at`.
  * - `OL_UNREADABLE_EXPIRY` — an `expires_at` that cannot be read reads as unset: reminder 2 and the
@@ -92,13 +100,16 @@ export const OUTBOUND_LEDGER_LAWS = [
   'OL_MALFORMED_THROWS',
   'OL_OWN_RETRY',
   'OL_CONTENTION',
+  'OL_CONCURRENT_LEASES',
   'OL_TAKEOVER',
   'OL_LATE_MARK',
   'OL_GATE_NOT_OPEN',
+  'OL_SEALED_RUN',
   'OL_TWO_GATES',
   'OL_CAP',
   'OL_EXPIRY_CLOSES',
   'OL_FINAL_ELIGIBLE',
+  'OL_NONE_AFTER_THE_FINAL',
   'OL_FINDING_ONLY',
   'OL_UNREADABLE_EXPIRY',
   'OL_DEFAULT_SCHEDULE',
@@ -165,26 +176,25 @@ const CLOSING = { ...AUTHORED, expires_at: iso(T0 + 25 * MIN), on_expiry: 'abort
 /** It expires at +25 min with no `on_expiry`: the expiry is a finding, never a closure. */
 const FINDING_ONLY = { ...AUTHORED, expires_at: iso(T0 + 25 * MIN) } as const;
 
+/**
+ * A run with `open` as its open question (or none), built from `base`, a run the store under test
+ * created itself: the family writes no field of a record it does not need, so it never states a run's
+ * ending (`terminal_state` comes from the store's own new run).
+ */
 function runWith(
+  base: RunRecord,
   open: PendingGate | undefined,
   id = RUN,
   fields: Partial<RunRecord> = {},
 ): RunRecord {
+  const { pending_gate: _none, ...rest } = base;
   return {
+    ...rest,
     id,
-    workflow_id: 'wf-outbound-law',
-    workflow_version: 1,
-    completed_steps: [],
-    in_progress_steps: [],
-    failed_steps: [],
-    skipped_steps: [],
     run_phase: open !== undefined ? 'gate_waiting' : 'running',
     version: 3,
-    params: {},
-    evidence: [],
     created_at: iso(T0),
     updated_at: iso(T0),
-    terminal_state: false,
     ...(open !== undefined ? { pending_gate: open } : {}),
     ...fields,
   };
@@ -220,6 +230,8 @@ interface Bench {
   readonly store: RunStore;
   readonly ledger: OutboundLedger;
   seed(open: PendingGate | undefined, id?: string, fields?: Partial<RunRecord>): Promise<void>;
+  /** Writes `record` into the store as given (the adapter's `seedRun`). */
+  plant(record: RunRecord): Promise<void>;
   /** Moves the clock to `T0 + ms`. */
   at(ms: number): Promise<void>;
   /** The clock's reading now, in epoch milliseconds. */
@@ -249,10 +261,18 @@ function family(adapter: OutboundLedgerContractAdapter) {
       throw new Error(
         `${law}: adapter wiring — the store the adapter built has no outbound ledger.`,
       );
+    // The run every case plants is built from one this store created (its own shape): one reading,
+    // before any case counts.
+    const { record: base } = await built.store.create({
+      workflowId: 'wf-outbound-law',
+      workflowVersion: 1,
+      params: {},
+    });
     return {
       store: built.store,
       ledger,
-      seed: (open, id = RUN, fields = {}) => built.seedRun(runWith(open, id, fields)),
+      seed: (open, id = RUN, fields = {}) => built.seedRun(runWith(base, open, id, fields)),
+      plant: (record) => built.seedRun(record),
       at: (ms) => inner.set(new Date(T0 + ms)),
       now: () => inner.now().getTime(),
       reads: () => reads,
@@ -451,6 +471,25 @@ function family(adapter: OutboundLedgerContractAdapter) {
         same(law, 'read', await b.ledger.read(RUN), [first.entry]);
       }),
     ),
+    L('OL_CONCURRENT_LEASES', 'two senders asking at once: exactly one holds the lease', () =>
+      on('OL_CONCURRENT_LEASES', gate(AUTHORED), async (b) => {
+        const law = 'OL_CONCURRENT_LEASES';
+        const [first, second] = await Promise.all([
+          b.ledger.lease(RUN, leaseOf(rem(1), 'A')),
+          b.ledger.lease(RUN, leaseOf(rem(1), 'B')),
+        ]);
+        same(law, 'the two answers', [outcome(first), outcome(second)].sort(), [
+          'applied',
+          'lease_held',
+        ]);
+        same(
+          law,
+          'one row, leased once',
+          (await b.ledger.read(RUN)).map((e) => e.attempts),
+          [1],
+        );
+      }),
+    ),
     L('OL_TAKEOVER', 'exactly at the deadline another token takes an expired lease over', () =>
       on('OL_TAKEOVER', gate(AUTHORED), async (b) => {
         const law = 'OL_TAKEOVER';
@@ -566,6 +605,30 @@ function family(adapter: OutboundLedgerContractAdapter) {
           same(law, 'an absent run reads no rows', await b.ledger.read('run-outbound-absent'), []);
         }),
     ),
+    L(
+      'OL_SEALED_RUN',
+      'a sealed run that still carries its question: gate_not_open, nothing written',
+      () =>
+        on('OL_SEALED_RUN', gate(AUTHORED), async (b) => {
+          const law = 'OL_SEALED_RUN';
+          // The store seals the run itself, then the sealed record is planted with its question still on
+          // it, as a record sealed before the question was cleared would be.
+          const { record } = await b.store.get(RUN);
+          const sealed = await b.store.settleStep(RUN, {
+            kind: 'seal_run',
+            arm: 'abandon_requested',
+            reason: 'outbound law: a sealed run',
+            expected_version: record.version,
+            release_claims: false,
+          });
+          same(law, 'the store sealed the run', sealed.applied, true);
+          await b.plant({ ...sealed.run, pending_gate: gate(AUTHORED) });
+          const refused = { applied: false, reason: 'gate_not_open' };
+          same(law, 'reminder 1', await b.ledger.lease(RUN, leaseOf(rem(1))), refused);
+          same(law, 'the escalation', await b.ledger.lease(RUN, leaseOf(esc())), refused);
+          same(law, 'nothing written', await b.ledger.read(RUN), []);
+        }),
+    ),
     L('OL_TWO_GATES', 'an earlier question’s sent 3 does not supersede a later question’s 2', () =>
       on('OL_TWO_GATES', gate(AUTHORED, 'gate-a'), async (b) => {
         const law = 'OL_TWO_GATES';
@@ -649,6 +712,55 @@ function family(adapter: OutboundLedgerContractAdapter) {
               'applied',
             );
           });
+      },
+    ),
+    L(
+      'OL_NONE_AFTER_THE_FINAL',
+      'with reminder_max 5 nothing after the final is eligible, and of_max is the question’s',
+      async () => {
+        const law = 'OL_NONE_AFTER_THE_FINAL';
+        // Reminders every 10 minutes, at most 5, the expiry at +25 min: 1 (+10) and 2 (+20) come before
+        // it, 3 (+30) is the final, and 4 and 5 come after the final.
+        const LONG = {
+          reminder_seconds: 600,
+          reminder_max: 5,
+          expires_at: iso(T0 + 25 * MIN),
+        } as const;
+        for (const [label, ms] of [
+          ['1 ms before expires_at', 25 * MIN - 1],
+          ['exactly at expires_at', 25 * MIN],
+          ['at the final’s time', 30 * MIN],
+        ] as const) {
+          await on(law, gate({ ...LONG, on_expiry: 'abort' }), async (b) => {
+            await b.at(ms);
+            for (const k of [4, 5])
+              same(
+                law,
+                `${label}, on_expiry: reminder ${k}`,
+                outcome(await b.ledger.lease(RUN, leaseOf(rem(k)))),
+                'not_eligible',
+              );
+            const final = await b.ledger.lease(RUN, leaseOf(rem(3)));
+            same(
+              law,
+              `${label}, on_expiry: reminder 3, the final`,
+              { outcome: outcome(final), of_max: final.entry?.of_max },
+              {
+                outcome: 'applied',
+                of_max: 5,
+              },
+            );
+          });
+          await on(law, gate(LONG), async (b) => {
+            await b.at(ms);
+            same(
+              law,
+              `${label}, finding-only: reminder 4`,
+              outcome(await b.ledger.lease(RUN, leaseOf(rem(4)))),
+              'not_eligible',
+            );
+          });
+        }
       },
     ),
     L('OL_FINDING_ONLY', 'a question with no on_expiry is never closed by its expiry', async () => {
