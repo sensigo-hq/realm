@@ -3,8 +3,9 @@
 // release (a folder holding only `PENDING` is not a corpus: corpus-guard.test.ts owns it), the cells
 // read what that release wrote with the current store, importer, composer and loader, and require
 // the shapes it recorded:
-//   (i)    its `realm.db`, gunzipped alone into a fresh home, checked and migrated through the
-//          maintenance entry, then opened with the normal door: each run read equals the `run` of
+//   (i)    its `realm.db`, gunzipped alone into a fresh home, migrated through the maintenance
+//          entry (an older format is upgraded; at this Realm's own format it is a no-op), then
+//          checked (clean), then opened with the normal door: each run read equals the `run` of
 //          that run's recorded bundle;
 //   (ii-a) each bundle imported into a fresh store ends `imported`, its notes carry the bundle's own
 //          counts, and the record read back equals the bundle's `run`;
@@ -267,7 +268,12 @@ function equalVersionRefusal(version: string, err: unknown): Error | undefined {
   return undefined;
 }
 
-/** (i)'s store: the release's realm.db alone in a fresh home (no clock file), checked, migrated, opened. */
+/**
+ * (i)'s store: the release's realm.db alone in a fresh home (no clock file), migrated, checked, opened.
+ * The migrate comes first: once the store's format moves past the release's, the release's file is an
+ * older version, which the check reports as such and the migrate upgrades. The check then requires the
+ * migrated file to be clean.
+ */
 async function openReleaseStore(version: string): Promise<RealmHome> {
   const dir = freshFolder();
   writeFileSync(
@@ -276,21 +282,21 @@ async function openReleaseStore(version: string): Promise<RealmHome> {
     { mode: 0o600 },
   );
   try {
-    const check = await openRealmHomeForMaintenance({ home: dir, verb: 'check' });
-    try {
-      const report = await check.check();
-      expect(
-        { status: report.status, findings: report.findings, not_run: report.not_run },
-        `${version}'s realm.db fails the store check`,
-      ).toEqual({ status: 'ok', findings: [], not_run: [] });
-    } finally {
-      check.close();
-    }
     const maintenance = await openRealmHomeForMaintenance({ home: dir, verb: 'migrate' });
     try {
       await maintenance.migrate({ backup: false });
     } finally {
       maintenance.close();
+    }
+    const check = await openRealmHomeForMaintenance({ home: dir, verb: 'check' });
+    try {
+      const report = await check.check();
+      expect(
+        { status: report.status, findings: report.findings, not_run: report.not_run },
+        `${version}'s realm.db, migrated, fails the store check`,
+      ).toEqual({ status: 'ok', findings: [], not_run: [] });
+    } finally {
+      check.close();
     }
     const home = await openRealmHome({ home: dir });
     opened.push(home);
