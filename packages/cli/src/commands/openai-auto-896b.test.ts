@@ -303,8 +303,8 @@ describe('#896 unit B — `auto` with no kept gap, GPT-5.6 and later at OpenAI�
   }, 90_000);
 });
 
-/** An earlier run of the deployment's workflow, its step's request started `ago_s` seconds ago. */
-async function seedEarlier(d: Deployment, agoS: number): Promise<void> {
+/** An earlier run of the deployment's workflow, its step's request started at `startMs`. */
+async function seedEarlier(d: Deployment, startMs: number): Promise<void> {
   const store = d.h.home.runStore;
   const { record: current } = await store.get(d.runId);
   const { record } = await store.create({
@@ -312,7 +312,7 @@ async function seedEarlier(d: Deployment, agoS: number): Promise<void> {
     workflowVersion: 1,
     params: { ticket: TICKET },
   });
-  const start = new Date(Date.now() - agoS * 1000).toISOString();
+  const start = new Date(startMs).toISOString();
   await store.update({
     ...record,
     completed_steps: ['ask'],
@@ -340,6 +340,24 @@ async function seedEarlier(d: Deployment, agoS: number): Promise<void> {
   } as unknown as RunRecord);
 }
 
+/** Seeds three earlier runs `every` seconds apart, the newest `every` seconds before one clock
+ *  reading, then drives the step as `realm listen` does. The last gap is the host's reading when it
+ *  ends between that reading and the drive's end: a bound the cell measures itself, because a cold
+ *  start of the CLI on a loaded machine has taken 15 s, past a fixed 5 s allowance. Otherwise it
+ *  prints the gap and the bound. */
+async function driveAfterEarlier(slug: string, d: Deployment, every: number) {
+  const seededAt = Date.now();
+  for (const k of [3, 2, 1]) await seedEarlier(d, seededAt - k * every * 1000);
+  const r = await drive(slug, d, ['--spawned-by-listen']);
+  const most = every + Math.floor((Date.now() - seededAt) / 1000);
+  const last = (r.ask?.['cache_auto'] as CacheAuto | undefined)?.gaps_s?.at(-1) ?? -1;
+  const lastGap =
+    last >= every && last <= most
+      ? 'the host reading'
+      : `${String(last)} s, not within ${String(every)} to ${String(most)} s`;
+  return { r, lastGap };
+}
+
 describe('caching 3-M D-2 — check 6: OpenAI in the explicit set chooses for each step', () => {
   // The real case: a step without tools on a drive `realm listen` started, its earlier runs every 2
   // hours (constructed), or every 5 minutes; the price file's rates (write 1.25, read 0.1).
@@ -353,19 +371,16 @@ describe('caching 3-M D-2 — check 6: OpenAI in the explicit set chooses for ea
         realmYaml: NAMES_PRICES,
         prices: PRICED,
       });
-      for (const k of [3, 2, 1]) await seedEarlier(d, k * every);
-      const r = await drive(`d2-${String(every)}`, d, ['--spawned-by-listen']);
-      const auto = r.ask?.['cache_auto'] as CacheAuto | undefined;
-      const last = auto?.gaps_s?.at(-1) ?? -1;
+      const { r, lastGap } = await driveAfterEarlier(`d2-${String(every)}`, d, every);
       // (a) red when the rule is not asked for OpenAI (the step then asks the instance's 30 minutes,
-      //     recorded on listen's basis); (b) prints the bodies, the ask, the read count and whether the
-      //     last gap is the host's reading within 5 seconds.
+      //     recorded on listen's basis); (b) prints the bodies, the ask, the read count and, when the
+      //     last gap is not the host's reading, the gap and its bound.
       expect({
         code: r.code,
         bodies: r.bodies,
         ask: r.ask,
         reads: r.priceFileReads,
-        lastGap: last >= every && last <= every + 5,
+        lastGap,
       }).toEqual({
         code: 0,
         bodies: [chosen === 'off' ? OFF_BODY : UNIT_A_BODY],
@@ -375,7 +390,7 @@ describe('caching 3-M D-2 — check 6: OpenAI in the explicit set chooses for ea
           prices: { from: 'economics' },
         }),
         reads: 1,
-        lastGap: true,
+        lastGap: 'the host reading',
       });
     },
     90_000,
@@ -388,7 +403,8 @@ describe('caching 3-M D-2 — check 6: OpenAI in the explicit set chooses for ea
   // no `cache_write`. Earlier runs are constructed. (a) red when the fallback's margin is 1.0 (the
   // 28-minute row asks 30 minutes), when the fallback always asks 30 minutes (the 2-hour and 28-minute
   // rows), or when `cache_write_5m` is read as OpenAI's write rate (the last row records priced); (b)
-  // prints the bodies, the ask, the read count and whether the last gap is the host's reading.
+  // prints the bodies, the ask, the read count and, when the last gap is not the host's reading, the
+  // gap and its bound.
   it.each<[string, number, string, string, 'off' | 1800, unknown, number]>([
     [
       'no price file named, earlier runs every 2 hours → no caching',
@@ -431,16 +447,13 @@ describe('caching 3-M D-2 — check 6: OpenAI in the explicit set chooses for ea
     async (name, every, realmYaml, prices, chosen, recorded, reads) => {
       const slug = `c1-${String(every)}-${String(name.length)}`;
       const d = await deployment(slug, { realmYaml, prices });
-      for (const k of [3, 2, 1]) await seedEarlier(d, k * every);
-      const r = await drive(slug, d, ['--spawned-by-listen']);
-      const auto = r.ask?.['cache_auto'] as CacheAuto | undefined;
-      const last = auto?.gaps_s?.at(-1) ?? -1;
+      const { r, lastGap } = await driveAfterEarlier(slug, d, every);
       expect({
         code: r.code,
         bodies: r.bodies,
         ask: r.ask,
         reads: r.priceFileReads,
-        lastGap: last >= every && last <= every + 5,
+        lastGap,
       }).toEqual({
         code: 0,
         bodies: [chosen === 'off' ? OFF_BODY : UNIT_A_BODY],
@@ -450,7 +463,7 @@ describe('caching 3-M D-2 — check 6: OpenAI in the explicit set chooses for ea
           prices: recorded,
         }),
         reads,
-        lastGap: true,
+        lastGap: 'the host reading',
       });
     },
     90_000,
