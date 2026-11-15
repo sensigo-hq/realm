@@ -1,9 +1,10 @@
-// slack-reminder-eligibility-d1a.test.ts — issue #597, D1a: two rules the Slack notifier hands to core's
-// `reminderEligibility` that no #964 cell reaches. (1) The cap: the occurrence after the last scheduled
-// one is the final reminder only while it is within `reminder_max`. (2) The expiry closes an
-// `on_expiry` question exactly AT `expires_at`: a firing then posts no escalation (1 ms before, it
-// does). The #964 cells cover the rest of what moved (the final, finding-only, sleeps past the
-// expiry); these two were shown uncovered by D1a's red-first breaks B14 and B15.
+// slack-reminder-eligibility-d1a.test.ts — issue #597, D1a: three rules the Slack notifier hands to
+// core's `reminderEligibility` that no #964 cell reaches. (1) The cap: the occurrence after the last
+// scheduled one is the final reminder only while it is within `reminder_max`. (2) The expiry closes an
+// `on_expiry` question exactly AT `expires_at`: a firing then posts no plain reminder and no escalation
+// (1 ms before, each posts). (3) An `expires_at` that cannot be read counts as unset: every scheduled
+// reminder posts. The #964 cells cover the rest of what moved (the final, finding-only, sleeps past the
+// expiry); these three were shown uncovered by D1a's red-first breaks B14, B15 and B18.
 //
 // The reminders wait on `wakeClock` (test-support), as in `slack-reminder-after-sleep-964.test.ts`.
 // Each cell carries (a) the change that turns it red and (b) what it prints on failure (the posts).
@@ -126,5 +127,17 @@ describe('#597 D1a — the notifier’s rules that core now judges', () => {
       reminder: { exact: [], before: 1 },
       escalation: { exact: [], before: 1 },
     });
+  });
+
+  it('an expires_at that cannot be read counts as unset: reminders 1, 2 and 3 are posted', async () => {
+    const s = started({ reminder_seconds: 600, reminder_max: 3, expires_at: 'not-an-instant' });
+    for (const at of [10, 20, 30, 60]) {
+      await s.clock.set(plus(at * MIN));
+      await settle();
+    }
+    s.clear();
+    // (a) red when the unreadable instant is compared as a number (D1a break B18: `NaN` refuses
+    //     reminders 2 and 3); (b) prints the posts.
+    expect(s.texts.length, s.texts.join('\n')).toBe(3);
   });
 });
