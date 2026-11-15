@@ -99,16 +99,15 @@ describe('the filter-mask fix (B3) — a tool result strips its marks before it 
 });
 
 describe('the filter-mask fix (constraint 3) — the writer’s span-aware print is unchanged', () => {
-  it('(10) a private print of a value beside a span: the span’s body as built, the value masked', () => {
+  it('(10) a private print of a value beside a span: the span’s body as built (a word equal to a declared value included), the value masked', () => {
     vi.spyOn(process.stdout, 'write').mockImplementation((() => true) as never);
     vi.spyOn(process.stderr, 'write').mockImplementation((() => true) as never);
     installWriter('default');
-    addDeclaredValues({ FM_CLI_SECRET: SECRET });
-    const line = `${writerTestSeams.span('c', 'password=as-built-word')} beside ${SECRET}`;
-    // (1) red when the span marks are stripped inside `disclose` itself (the writer's mask input
-    //     loses its placeholders, the line falls back and the span's body is masked); (2) prints the
-    //     shown line.
-    expect(pass(line, 'private')).toBe('password=as-built-word beside [REDACTED]');
+    addDeclaredValues({ FM_CLI_SECRET: SECRET, FM_CLI_WORD: 'abandoned' });
+    const line = `${writerTestSeams.span('c', 'abandoned')} beside ${SECRET}`;
+    // (1) red when the writer's span-aware path is lost (the line falls back to masking whole: the
+    //     span's word, equal to a declared value, would be hidden too); (2) prints the shown line.
+    expect(pass(line, 'private')).toBe('abandoned beside [REDACTED]');
   });
 });
 
