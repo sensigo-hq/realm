@@ -462,10 +462,11 @@ describe('#715 (b) 04 §E — the other pages', () => {
 
   it('input-map-and-templates.md: from_now reads no clock', () => {
     // render-time-715b (the filter at the caller's instant; absolute in a stored text; a question's
-    // stored message absolute, a step's prompt in a reply relative to the reply's as_of).
+    // stored message absolute, a step's prompt in a reply relative to the reply's as_of); `display`:
+    // core's display-filters-u3b "`from_now` writes the date itself" (fix 1, piece 3b).
     claim(
       TEMPLATES,
-      "`from_now` says how long before or after the reply's time (its `basis.as_of`) the date is, in a step's `prompt` and `instructions`, which are rendered for each reply. In a gate's `message`, which Realm stores on the run and shows later, it writes the date itself, such as `2026-01-28T14:05:00.000Z` (added after version 0.48.0, which read this computer's clock for both).",
+      "`from_now` says how long before or after the reply's time (its `basis.as_of`) the date is, in a step's `prompt` and `instructions`, which are rendered for each reply. In a gate's `message`, which Realm stores on the run and shows later, it writes the date itself, such as `2026-01-28T14:05:00.000Z` (added after version 0.48.0, which read this computer's clock for both). In `display` it writes the date itself too (added after version 0.49.0).",
     );
   });
 

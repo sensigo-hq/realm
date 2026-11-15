@@ -37,6 +37,7 @@ import {
   composeQuestionView,
   discloseGate,
   renderDisplay,
+  displayPaths,
   stripSpanMarks,
   type DisclosureAudience,
   type QuestionView,
@@ -430,19 +431,17 @@ export interface AgentRunOptions {
   register?: boolean;
 }
 
-/** The `{{ path }}` expressions of a display template, as core's `renderDisplay` reads them. */
-const DISPLAY_EXPRESSION = /\{\{\s*([^}]+?)\s*\}\}/g;
-
 /**
  * #729 PR-3 correction 3 (C3): the preview's fields a display template renders — each `{{ path }}`'s
  * value at its path, in fresh objects (the stored preview is never written). A path under another
- * rendered path is that path's already.
+ * rendered path is that path's already. Fix 1, piece 3b: the paths are core's `displayPaths`, the
+ * placeholders `renderDisplay` renders, so a filtered placeholder's field is projected by its path.
  */
 function displayedFields(
   template: string,
   preview: Record<string, unknown>,
 ): Record<string, unknown> {
-  const paths = [...template.matchAll(DISPLAY_EXPRESSION)].map((m) => m[1]!.trim().split('.'));
+  const paths = displayPaths(template);
   const covered = (path: string[]): boolean =>
     paths.some((other) => other.length < path.length && other.every((part, i) => part === path[i]));
   const out: Record<string, unknown> = {};
@@ -479,8 +478,7 @@ function displayedFields(
  * walked or counted.
  */
 function gateViewForPrint(gate: PendingGate, display?: string): QuestionView {
-  const audience: DisclosureAudience =
-    writerMode() === 'broadcast' ? 'broadcast' : (stdoutAudience() ?? 'private');
+  const audience = printAudience();
   const printed: PendingGate = {
     gate_id: gate.gate_id,
     step_name: gate.step_name,
@@ -495,11 +493,20 @@ function gateViewForPrint(gate: PendingGate, display?: string): QuestionView {
   );
 }
 
-/** #729 PR-3: a step's output as a log-mode drive shows it (its shapes); as it is otherwise. */
+/** The audience this drive's prints are shown to: a broadcast in log mode; else stdout's. */
+function printAudience(): DisclosureAudience {
+  return writerMode() === 'broadcast' ? 'broadcast' : (stdoutAudience() ?? 'private');
+}
+
+/**
+ * #729 PR-3; fix 1, piece 3b: a step's output as this drive's result line shows it — disclosed for
+ * the print's audience in every writer mode (its shapes in log mode), as the gate print does. So
+ * `display` values are masked before any filter runs; the walk's hides and shapes join the
+ * drive's tally.
+ */
 function outputForLog(output: Record<string, unknown>): Record<string, unknown> {
-  const set = writerMode() === 'broadcast' ? writerSetFor('broadcast') : undefined;
-  if (set === undefined) return output;
-  const walked = discloseValue(output, set, 'broadcast');
+  const audience = printAudience();
+  const walked = discloseValue(stripSpanMarks(output), viewSetFor(audience), audience);
   recordWalk(walked.tally);
   return walked.value as Record<string, unknown>;
 }
