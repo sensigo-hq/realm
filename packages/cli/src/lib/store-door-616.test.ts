@@ -130,6 +130,12 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
         'the three docs cells about a run file that is not JSON, each on its own clocked JSON store, and the registry cell ("Register it with `realm workflow register <file>`": the JSON registry\'s copy judge); c12 rewrites them, PR-3',
     },
     {
+      file: 'engine/drive-claim-cw2a.test.ts',
+      sites: 1,
+      subject:
+        'check 5: claimStepForDrive on a JsonFileStore, a store that keeps no leases, answers unleased_store (#729 CW-2a); PR-3',
+    },
+    {
       file: 'engine/execution-loop.test.ts',
       sites: 1,
       subject:

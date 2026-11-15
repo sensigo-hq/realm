@@ -27,6 +27,8 @@ import {
   type Clock,
   judgedSnapshotOf,
   reminderScheduleOf,
+  isFinalReminder,
+  reminderEligibility,
 } from '@sensigo/realm';
 import { stripMarks, withoutMarks, writerCtx, writerSetFor } from '../../output/writer.js';
 import { cliCommandOf } from '../../commands/ways-renderer.js';
@@ -638,14 +640,23 @@ export function startGateReminderTimers(
     }
     const openedAtMs = parseStamp(gate.opened_at);
     const finalK = schedule.occurrences.length + 1;
-    if (openedAtMs !== undefined && gate.expires_at !== undefined && finalK <= schedule.max) {
+    // #597 D1a: whether the occurrence after the last is the final one, and within the cap, is core's
+    // (`isFinalReminder`, `reminderEligibility`), as the ledger reads it.
+    const finalReminder = { type: 'reminder', occurrence: finalK } as const;
+    if (
+      openedAtMs !== undefined &&
+      isFinalReminder(gate, finalK) &&
+      reminderEligibility(gate, finalReminder, opened.at)
+    ) {
       const finalMs = openedAtMs + finalK * gate.reminder_seconds! * 1000;
       if (finalMs >= startMs) cycle.push({ k: finalK, whenMs: finalMs, isFinal: true });
     }
     for (const { k, whenMs, isFinal } of cycle) {
       at(whenMs, (nowMs) => {
         if (cycle.some((later) => later.k > k && later.whenMs <= nowMs)) return;
-        if (!isFinal && closedBy(nowMs)) return;
+        // #597 D1a: closed by the expiry unless it is the final one, as the ledger judges it.
+        if (!reminderEligibility(gate, { type: 'reminder', occurrence: k }, new Date(nowMs)))
+          return;
         const text = reminderFiring(
           gate,
           runId,
@@ -683,7 +694,8 @@ export function startGateReminderTimers(
 
   const escalationMs = startMs + escalationThresholdMs;
   at(escalationMs, (nowMs) => {
-    if (closedBy(nowMs)) return;
+    // #597 D1a: the escalation's closure by the expiry is core's, as the ledger judges it.
+    if (!reminderEligibility(gate, { type: 'escalation' }, new Date(nowMs))) return;
     // #729 PR-4 (02): the escalation is the `reminder` notice with its owner named, its own post,
     // composed as a reminder is (#715 (b), D-29; #964).
     const text = renderSlack(

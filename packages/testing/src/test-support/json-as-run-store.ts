@@ -82,7 +82,8 @@ export function jsonAsRunStore(json: JsonFileStore): RunStore {
     create: (o: Parameters<RunStore['create']>[0]) => json.create(o),
     get: (id: string) => json.get(id),
     update: (r: Parameters<RunStore['update']>[0]) => json.update(r),
-    claimStep: (...a: Parameters<RunStore['claimStep']>) => json.claimStep(...a),
+    // #729 CW-2a: the JSON store keeps no leases, so it takes no hold (its own four parameters).
+    claimStep: (...a: Parameters<typeof json.claimStep>) => json.claimStep(...a),
     settleStep: ((...a: unknown[]) =>
       (json.settleStep as (...x: unknown[]) => unknown).apply(json, a)) as RunStore['settleStep'],
     stampSeal: (...a: Parameters<NonNullable<RunStore['stampSeal']>>) => json.stampSeal(...a),

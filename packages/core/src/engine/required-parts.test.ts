@@ -14,6 +14,8 @@ import {
 } from './execution-loop.js';
 import { abandonRun } from './abandon-run.js';
 import { reclaimStep } from './reclaim-step.js';
+import { claimStepForDrive, releaseDriveClaim } from './drive-claim.js';
+import { ExtensionRegistry } from '../extensions/registry.js';
 import { getWorkflowForRun } from '../workflow/registrar.js';
 import { declareReleaseLine } from '../release-line.js';
 import { InMemoryStore } from '@sensigo/realm-testing';
@@ -100,6 +102,17 @@ const BASE: Record<EngineEntry, () => Parts> = {
   drainFinalizers: () => ({ definition: AGENT, runId: 'r' }),
   getWorkflowForRun: () => ({ run: fullRunRecord(), opts: { retryVerb: 'retry', verb: 'answer' } }),
   reclaimStep: () => ({ runId: 'r', stepName: 'work' }),
+  // #729, the claim window (CW-2a).
+  claimStepForDrive: () => ({
+    runId: 'r',
+    stepName: 'work',
+    options: { definition: AGENT, registry: new ExtensionRegistry() },
+  }),
+  releaseDriveClaim: () => ({
+    runId: 'r',
+    stepName: 'work',
+    options: { definition: AGENT, hold: { id: 'h', close: () => {} } },
+  }),
 };
 
 /** Each entry, called for real with the parts as its parameters. */
@@ -117,6 +130,10 @@ const CALL: Record<EngineEntry, (s: RunStore, p: Parts) => Promise<unknown>> = {
   getWorkflowForRun: (s, p) => getWorkflowForRun(s as never, p['run'] as never, p['opts'] as never),
   reclaimStep: (s, p) =>
     reclaimStep(s, p['runId'] as never, p['stepName'] as never, p['options'] as never),
+  claimStepForDrive: (s, p) =>
+    claimStepForDrive(s, p['runId'] as never, p['stepName'] as never, p['options'] as never),
+  releaseDriveClaim: (s, p) =>
+    releaseDriveClaim(s, p['runId'] as never, p['stepName'] as never, p['options'] as never),
 };
 
 const ABSENT = Symbol('absent');
@@ -193,6 +210,21 @@ const REQUIRED: Array<[EngineEntry, string, unknown]> = [
   ['getWorkflowForRun', 'opts.verb', 7],
   ['reclaimStep', 'runId', 7],
   ['reclaimStep', 'stepName', 7],
+  // #729, the claim window (CW-2a).
+  ['claimStepForDrive', 'runId', 7],
+  ['claimStepForDrive', 'stepName', 7],
+  ['claimStepForDrive', 'options', 'x'],
+  ['claimStepForDrive', 'options.definition', 'x'],
+  ['claimStepForDrive', 'options.definition.steps', 'x'],
+  ['claimStepForDrive', 'options.registry', 'x'],
+  ['releaseDriveClaim', 'runId', 7],
+  ['releaseDriveClaim', 'stepName', 7],
+  ['releaseDriveClaim', 'options', 'x'],
+  ['releaseDriveClaim', 'options.definition', 'x'],
+  ['releaseDriveClaim', 'options.definition.steps', 'x'],
+  ['releaseDriveClaim', 'options.hold', 'x'],
+  ['releaseDriveClaim', 'options.hold.id', 7],
+  ['releaseDriveClaim', 'options.hold.close', 'x'],
 ];
 
 describe('issue #719 A2 — every required part: absent, null and a wrong type are refused before any read', () => {
@@ -240,6 +272,7 @@ const TYPED: Array<[EngineEntry, string, unknown]> = [
   ['getWorkflowForRun', 'opts.terminalOk', 'yes'],
   ['reclaimStep', 'options', 'x'],
   ['reclaimStep', 'options.traceBufferStore', 'x'],
+  ['releaseDriveClaim', 'options.evidence', 'x'],
 ];
 
 describe('issue #719 A2 (R3) — every typed optional member: a wrong type is refused before any read', () => {
@@ -265,6 +298,8 @@ const TWO: Array<[EngineEntry, [string, unknown], [string, unknown]]> = [
   ['drainFinalizers', ['definition', 'x'], ['runId', 7]],
   ['getWorkflowForRun', ['run', null], ['opts.verb', 7]],
   ['reclaimStep', ['runId', 7], ['stepName', null]],
+  ['claimStepForDrive', ['runId', 7], ['options.registry', 'x']],
+  ['releaseDriveClaim', ['options.hold.id', 7], ['options.evidence', 'x']],
 ];
 
 describe('issue #719 A2 — every defect of the parts at once', () => {
@@ -565,6 +600,8 @@ describe('issue #719 C4 — a member that is not an option of the entry is refus
     ['submitHumanResponse', 'options.bogusOption'],
     ['getWorkflowForRun', 'opts.bogusOption'],
     ['reclaimStep', 'options.bogusOption'],
+    ['claimStepForDrive', 'options.bogusOption'],
+    ['releaseDriveClaim', 'options.bogusOption'],
   ];
   it.each(UNKNOWN_AT)('%s: %s', async (entry, at) => {
     const parts = entry === 'reclaimStep' ? { ...BASE[entry](), options: {} } : BASE[entry]();
@@ -712,6 +749,8 @@ describe('issue #719 C4 — a step that is not an object, and a missing store', 
     drainFinalizers: 'a run store',
     reclaimStep: 'a run store',
     getWorkflowForRun: 'a workflow store',
+    claimStepForDrive: 'a run store',
+    releaseDriveClaim: 'a run store',
   };
   it.each(
     (Object.keys(STORE_KIND) as EngineEntry[]).flatMap((e) => [

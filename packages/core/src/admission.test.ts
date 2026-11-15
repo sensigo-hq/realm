@@ -16,6 +16,7 @@ import {
 } from './engine/execution-loop.js';
 import { abandonRun } from './engine/abandon-run.js';
 import { reclaimStep } from './engine/reclaim-step.js';
+import { claimStepForDrive, releaseDriveClaim } from './engine/drive-claim.js';
 import { getWorkflowForRun } from './workflow/registrar.js';
 import { declareReleaseLine } from './release-line.js';
 import { brandClass, createRealmBrand } from './brand.js';
@@ -128,6 +129,11 @@ const CALLS: Record<
       } as unknown as RunRecord,
       { retryVerb: 'retry', verb: 'answer' },
     ),
+  // #729, the claim window (CW-2a).
+  claimStepForDrive: (s, registry, driver) =>
+    claimStepForDrive(s, 'r', 'work', { definition: def, ...opt(registry, driver) } as never),
+  releaseDriveClaim: (s) =>
+    releaseDriveClaim(s, 'r', 'work', { definition: def, hold: { id: 'h', close: () => {} } }),
 };
 
 /** The entries that take a registry and a driver; the other three take a store only (C155: executeEngineStep admits its own call). */
@@ -138,6 +144,8 @@ const FULL: readonly EngineEntry[] = [
   'advanceRun',
   'submitHumanResponse',
   'drainFinalizers',
+  // #729, the claim window (CW-2a): it takes a registry and a driver too.
+  'claimStepForDrive',
 ];
 
 describe('the admission table', () => {
@@ -332,6 +340,8 @@ describe('the source-text witness: each entry admits as its first statement and 
     abandonRun: 'engine/abandon-run.ts',
     reclaimStep: 'engine/reclaim-step.ts',
     getWorkflowForRun: 'workflow/registrar.ts',
+    claimStepForDrive: 'engine/drive-claim.ts',
+    releaseDriveClaim: 'engine/drive-claim.ts',
   };
   const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
