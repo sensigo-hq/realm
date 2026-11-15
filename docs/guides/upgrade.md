@@ -87,6 +87,16 @@ A home the new version creates, or that `realm run import` fills, is created at 
 
 From the version after 0.49.0, the agent no longer answers gates by default in an app without forms, through `realm serve`, or through a program that builds its server per HTTP request or passes `statelessHttp`. If an agent answered gates for you there, start the server with `--gate-answers permitted` (`REALM_MCP_GATE_ANSWERS=permitted` for `realm-mcp`; `gateAnswers: 'permitted'` in a program that embeds Realm). The tool the agent then gets no longer asks the app to have you approve each call, as the old default's tool did. Code that reads `offered` from `GATE_ANSWERS_VALUES`, `GateAnswers`, `AnswersRow` or the `realm/gate_answers` capability reads `permitted` now. See [Gate answers over MCP](../reference/mcp/gate-answers.md).
 
+## In Slack, only the people a question names can answer
+
+From the version after 0.49.0, when a gate has an `owner` or the new `answerers`, a reply in its Slack thread counts only when it comes from one of them, by Slack member ID. A question whose `owner` is a handle such as `@ana`, a user group or `@here`, and that lists no `answerers`, can no longer be answered in Slack. When Realm listens in the thread, its post says `Replies in this thread are not counted`. A question already open when you upgrade follows the same rule.
+
+Do this, in this order:
+
+1. **Before you upgrade, answer or finish the open Slack questions that have such an owner.** After the upgrade, answer them with `realm run respond <run-id> --gate <gate-id> --choice <choice>`.
+2. **Find the gates.** When the project's `realm.yaml` has a Slack notifier that reads replies (`bot_token` and `channel_id`, with `app_token` or `signing_secret`), `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, names each such gate. `validate --strict` and `register --strict` fail on one.
+3. **Write who may answer.** Write the person's member ID (`U…`), list member IDs in `answerers`, or remove `owner` so that the project's `answerers`, or without them anyone in the thread, can answer. Then register the workflow again.
+
 ## 1. Read what changed
 
 Note the version you have:

@@ -69,7 +69,10 @@ export type WarningCode =
   // fix 1, piece 4: a handler or adapter a step needs that the project does not provide
   // (`name-check.ts`). Advice only, never a refusal: another runner may provide the name (#134).
   | 'HANDLER_NOT_PROVIDED'
-  | 'ADAPTER_NOT_PROVIDED';
+  | 'ADAPTER_NOT_PROVIDED'
+  // #603 A3a: with a Slack notifier that reads replies, a gate naming someone who is not a Slack
+  // member ID — no reply from them can count (the CLI mints it at the admission). Advice.
+  | 'GATE_ANSWERER_NOT_SLACK_ID';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -173,6 +176,8 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   // fix 1, piece 4 — a warning everywhere; `--strict` fails on it as on any warning.
   HANDLER_NOT_PROVIDED: 'warn',
   ADAPTER_NOT_PROVIDED: 'warn',
+  // #603 A3a — a warning; `--strict` fails on it as on any warning.
+  GATE_ANSWERER_NOT_SLACK_ID: 'warn',
 };
 
 /**

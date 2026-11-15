@@ -600,7 +600,8 @@ describe('#627 W — each answer records how it arrived', () => {
       runId: s.record.id,
       gateId: s.gateId,
       choice: 'approve',
-      channelEvidence: {},
+      // #603 A3a: `channelEvidence` is a member now; V-1's `answerVia` is still not one.
+      answerVia: {},
     } as never).catch((e: unknown) => e);
     const code =
       refused instanceof WorkflowError
@@ -615,7 +616,7 @@ describe('#627 W — each answer records how it arrived', () => {
       principal: { kind: 'shared_token' },
       clientPromptRequested: false,
     });
-    // (a) red when an unlisted member (V-1's channelEvidence) is admitted, or one of W's four is
+    // (a) red when an unlisted member (V-1's answerVia) is admitted, or one of W's four is
     //     refused; (b) prints the refusal's code and the admitted call's status.
     expect({ code, admitted: admitted.status }).toEqual({
       code: 'VALIDATION_OPTION_INVALID',

@@ -15,6 +15,7 @@ import {
 } from '../extensions/load-project-extensions.js';
 import { ManifestSecretsError } from '../extensions/manifest-secrets.js';
 import { wrapReleaseLineWarnings, wrapSentinelWarnings } from './loader-warnings.js';
+import { slackAnswererWarnings } from './slack-answerer-warnings.js';
 
 /**
  * Fix 1, piece 4: the codes only a load with the project's registry can find — a handler or adapter
@@ -188,6 +189,8 @@ export async function loadWorkflowForAdmission(
       ...wrapReleaseLineWarnings(loaded.releaseLineWarnings),
       ...pass1Warnings,
       ...registryFindings,
+      // #603 A3a: gates no Slack reply can answer, under a notifier that reads replies.
+      ...slackAnswererWarnings(definition, loaded.notifiers?.slack_gate),
       ...wrapSentinelWarnings(loaded.sentinelWarnings),
     ],
     manifest: loaded.manifest,

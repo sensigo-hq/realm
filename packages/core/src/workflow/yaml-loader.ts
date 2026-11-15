@@ -2680,6 +2680,24 @@ function parseWorkflowString(
             );
           }
 
+          // #603 A3a: `answerers` must be a non-empty list of non-empty strings — an ignored list
+          // would let anyone answer, so anything else is refused, never ignored.
+          if ('answerers' in gate) {
+            const answerers = gate['answerers'];
+            if (
+              !Array.isArray(answerers) ||
+              answerers.length === 0 ||
+              answerers.some((name) => typeof name !== 'string' || name === '')
+            ) {
+              errors.push(
+                withStepLine(
+                  stepName,
+                  `Step '${stepName}': 'gate.answerers' must be a non-empty list of non-empty strings (Slack member IDs)`,
+                ),
+              );
+            }
+          }
+
           // on_expiry must be 'settle_default' or 'abort' when provided.
           const onExpiry = gate['on_expiry'];
           if (onExpiry !== undefined && onExpiry !== 'settle_default' && onExpiry !== 'abort') {

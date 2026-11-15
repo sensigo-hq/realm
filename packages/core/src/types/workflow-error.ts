@@ -79,6 +79,10 @@ export type ErrorCode =
   // issue #279 (increment 1, PR-B): a settle_step delta refused `claim_lost` — this attempt's
   // outcome was NOT recorded (the claim was lost to a concurrent settle, or the run advanced).
   | 'STATE_CLAIM_LOST'
+  // #603 A3a: an answer whose channel evidence names an account the question does not let answer
+  // (its `owner` and `answerers`, or the project's `answerers` when it names no one). Nothing is
+  // written; the question stays open. Facts: the allowed names and the sender.
+  | 'STATE_ANSWERER_MISMATCH'
   | 'STATE_RUN_DIVERGED'
   | 'STATE_RUN_ALREADY_ACTIVE'
   | 'STATE_IDEMPOTENCY_KEY_USED'
@@ -293,6 +297,17 @@ export interface ErrorFactsByCode {
   VALIDATION_INPUT_SCHEMA: ValidationErrorFacts;
   VALIDATION_OUTPUT_SCHEMA: ValidationErrorFacts;
   STATE_NEWER_FORMAT: NewerDefinitionFacts;
+  STATE_ANSWERER_MISMATCH: AnswererMismatchFacts;
+}
+
+/**
+ * #603 A3a: an answer refused because its sender is not one the question lets answer — the names
+ * that may (as written: the question's `owner` and `answerers`, or the project's list), and the
+ * account the channel reported for the sender.
+ */
+export interface AnswererMismatchFacts {
+  allowed: readonly string[];
+  sender: string;
 }
 
 /**

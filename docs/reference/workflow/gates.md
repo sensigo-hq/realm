@@ -2,7 +2,7 @@
 
 <!-- description: Reference for trust and the gate block: the trust values, every gate key, the rules the loader applies, and what is stored when a gate opens. -->
 
-A step stops for a person when its `trust` says so. The `gate` block on the same step sets what the person is asked, what they can answer, and what happens if nobody answers. This page lists the three `trust` values and the nine `gate` keys, the rules the loader applies to them, and what is stored when a gate opens.
+A step stops for a person when its `trust` says so. The `gate` block on the same step sets what the person is asked, what they can answer, and what happens if nobody answers. This page lists the three `trust` values and the ten `gate` keys, the rules the loader applies to them, and what is stored when a gate opens.
 
 For a walk through one gate, see [Add a human gate](../../guides/human-gates.md).
 
@@ -26,7 +26,7 @@ Invalid workflow: Step 'approve': 'trust: "human_confirmd"' is not a recognized 
 
 ## The `gate` block
 
-The block is allowed only on an auto or agent step whose `trust` is `human_confirmed` or `human_reviewed`. All nine keys are optional.
+The block is allowed only on an auto or agent step whose `trust` is `human_confirmed` or `human_reviewed`. All ten keys are optional.
 
 A `gate` block on a step whose `trust` opens no gate is refused when the file is loaded, because Realm would never open that gate and nobody would be asked:
 
@@ -41,6 +41,7 @@ This changed after version 0.49.0, which accepted the block with a warning.
 | [`choices`](#choices)                         | list of text                | `approve`, `reject` | The answers a person can give.                   |
 | [`message`](#message)                         | text, with expressions      | None                | What the person is asked.                        |
 | [`owner`](#owner)                             | text                        | None                | Who is expected to answer.                       |
+| [`answerers`](#answerers)                     | list of Slack member IDs    | None                | Who else may answer in Slack.                    |
 | [`resolution_messages`](#resolution_messages) | map from choice to text     | None                | What the Slack thread is told after each choice. |
 | [`timeout_seconds`](#timeout_seconds)         | whole number above 0        | None: no time limit | How long the gate waits.                         |
 | [`on_expiry`](#on_expiry)                     | `settle_default` or `abort` | None                | What happens when the time is up.                |
@@ -48,7 +49,7 @@ This changed after version 0.49.0, which accepted the block with a warning.
 | [`reminder_seconds`](#reminder_seconds)       | whole number above 0        | None                | How often a reminder is sent.                    |
 | [`reminder_max`](#reminder_max)               | whole number above 0        | 3                   | How many reminders are sent.                     |
 
-This step uses all nine:
+This step uses all ten:
 
 ```yaml
 approve:
@@ -58,6 +59,7 @@ approve:
   gate:
     choices: [ship, hold]
     owner: '@ana'
+    answerers: [U024BE7LH]
     message: Ship order 4417?
     resolution_messages:
       ship: Shipping now.
@@ -97,7 +99,11 @@ The message is rendered once, when the gate opens, and stored as it is shown. A 
 
 ### `owner`
 
-A name for the person expected to answer. It is stored with the gate, returned to assistants by `get_run_state`, and printed in the Slack message. Realm does not check who answers.
+A name for the person expected to answer. It is stored with the gate, returned to assistants by `get_run_state`, and printed in the Slack message. In Slack, when a question names who may answer, only those accounts can: its `owner` and its `answerers`, compared with the member ID Slack reports for the reply (for a question that names no one, see `answerers`). Answers through MCP, a form or the terminal are not compared with `owner`.
+
+### `answerers`
+
+A list of Slack member IDs (`U…`, or the mention `<@U…>`) who may also answer the question in Slack. When a question names no `owner` and no `answerers`, the project's `notifiers.slack_gate.config.answerers` answer it when set, and otherwise anyone in the thread can. A name that is not a member ID matches no reply. Added after version 0.49.0.
 
 ### `resolution_messages`
 
@@ -148,7 +154,7 @@ These are accepted, with a warning that says the setting has no effect:
 | `on_expiry` without `timeout_seconds`                 | `'gate.on_expiry' is ignored without 'gate.timeout_seconds' — set a timeout, or remove 'gate.on_expiry'.`                    |
 | `default_choice` without `on_expiry: settle_default`  | `'gate.default_choice' is ignored without 'gate.on_expiry: settle_default' — set it, or remove 'gate.default_choice'.`       |
 | `reminder_seconds` not shorter than `timeout_seconds` | `'gate.reminder_seconds' (90) >= 'gate.timeout_seconds' (60) — the first reminder would never fire before the gate expires.` |
-| A key that is not one of the nine                     | `unknown key 'choises' (line 10) — ignored (did you mean 'choices'?)`                                                        |
+| A key that is not one of the ten                      | `unknown key 'choises' (line 10) — ignored (did you mean 'choices'?)`                                                        |
 
 ## What is stored when a gate opens
 

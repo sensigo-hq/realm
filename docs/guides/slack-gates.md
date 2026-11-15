@@ -121,9 +121,9 @@ The `Caching:` line says that no request asks to be cached: this workflow has no
 
 Under the question, the terminal shows the step's output; `review` has none, so it says `(no output)`.
 
-Notice `Socket Mode connected`. Realm is now listening. In Slack, the channel shows a message headed "Workflow gate waiting for approval". It has four parts: the gate's name (and its `owner`, when set); your gate message, with the step's output below it when room is left; how to answer; and, when the message was cut to fit, the command that shows the step's whole output. How to answer is one `realm run respond` command; when Realm listens in the thread (`app_token`, or `signing_secret` and `events_port`), the post says `Reply in this thread with` and the choices first.
+Notice `Socket Mode connected`. Realm is now listening. In Slack, the channel shows a message headed "Workflow gate waiting for approval". It has four parts: the gate's name (and its `owner`, when set); your gate message, with the step's output below it when room is left; how to answer; and, when the message was cut to fit, the command that shows the step's whole output. How to answer is one `realm run respond` command; when Realm listens in the thread (`app_token`, or `signing_secret` and `events_port`), the post says `Reply in this thread with` and the choices first, unless no one the question names is a Slack member ID: then it says `Replies in this thread are not counted`.
 
-Text from the workflow and the agent is shown as written: `<`, `>` and `&` do not become Slack markup. An `owner` written as a Slack mention still pings: a person (`<@U024BE7LH>`, or `<@W…>` on Enterprise Grid), a user group (`<!subteam^SAZ94GDB8>`), or `<!here>`, `<!channel>` and `<!everyone>`. Any other `owner`, such as `@ana`, is shown as written.
+Text from the workflow and the agent is shown as written: `<`, `>` and `&` do not become Slack markup. An `owner` written as a Slack mention still pings: a person (`<@U024BE7LH>`, or `<@W…>` on Enterprise Grid), a user group (`<!subteam^SAZ94GDB8>`), or `<!here>`, `<!channel>` and `<!everyone>`. A bare member ID such as `U024BE7LH` is shown as a mention too. Any other `owner`, such as `@ana`, is shown as written and matches no reply.
 
 ## 5. Answer in the thread
 
@@ -163,14 +163,15 @@ In the terminal, the run carries on:
 Run complete: 71b0ed55-f198-41b1-a6e2-e9234b1fab1c
 ```
 
-Two rules about replies:
+Three rules about replies:
 
+- **The reply must come from an account the question names**, when it names any (see [`owner` and `answerers`](../reference/workflow/gates.md#owner)). Anyone else who replies with a choice gets a private note, and their reply changes nothing.
 - **The reply must be in the thread.** A new message in the channel is ignored.
-- **The reply must be exactly one of the choices.** Capital letters do not matter, so `Send` works. `yes` or `looks good, send it` do not. For a reply that matches no choice, Realm answers in the thread with `Please reply with one of: send, discard`, at most twice.
+- **The reply must be exactly one of the choices.** Capital letters do not matter, so `Send` works. `yes` or `looks good, send it` do not. For a reply that matches no choice, from someone who may answer, Realm answers in the thread with `Please reply with one of: send, discard`, at most twice.
 
 ## What is recorded
 
-The run record keeps the choice. It does not keep who replied. Anyone who can post in the channel can answer a gate, so post gates to a channel whose members you trust to decide.
+The run record keeps the choice and the account that replied, as Slack reports it. When a question names no one, the project's `answerers` can answer it, or without them anyone who can post in the channel, so post such gates to a channel whose members you trust to decide.
 
 ## Reminders
 

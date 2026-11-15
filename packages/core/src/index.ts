@@ -1008,6 +1008,9 @@ export {
 } from './engine/question-view.js';
 export type { QuestionView } from './engine/question-view.js';
 export { composePersonNotice, durationWords } from './engine/person-notice.js';
+// #603 A3a: the one rule of who may answer a question (the settling write and the Slack door).
+export { judgeAnswerer } from './engine/answerer.js';
+export type { AnswererQuestion, AnswererVerdict } from './engine/answerer.js';
 export type { PersonNotice, PersonNoticeEvent } from './engine/person-notice.js';
 // decision C183 (issue #760, correction H2): the ONE spelling of a control character a terminal line
 // shows — the CLI's printers and the `check_quotes` warning share it.
