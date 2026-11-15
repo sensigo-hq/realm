@@ -20,7 +20,8 @@
 //   env -i PATH="$PATH" HOME=<a folder that is not above WORK> NM=<nm> WORK=/tmp/realm-corpus/work \
 //     node scripts/corpus/record.mjs <v>
 // WORK is that one empty folder on every machine (outside any home, with no package.json or .git
-// above it): the stored runs keep its path, and the gzipped store is committed as it is. The CLI runs
+// above it, and its path holding neither the OS user nor the host name as a word): the stored runs
+// keep its path, and the gzipped store is committed as it is. The CLI runs
 // with { PATH, HOME: <WORK>/home } (the drives also with REALM_OPERATOR), so it never sees the
 // caller's HOME or a real ~/.realm.
 import fs from 'node:fs';
@@ -30,9 +31,8 @@ import zlib from 'node:zlib';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-/** Bumped when what the recorder writes, or how, changes (2: it refuses a recording that names the
- * machine it ran on). */
-const RECORDER_VERSION = 2;
+/** Bumped when what the recorder writes for a well-formed input changes; a new refusal is not a bump. */
+const RECORDER_VERSION = 1;
 /** The test clock's instant: every stamp the CLI writes is this, and every duration 0. */
 const START = '2026-01-01T09:00:00.000Z';
 /** The mock GitHub's port, fixed so two recordings differ only in what the rules replace. */
@@ -72,6 +72,43 @@ if (!process.env.WORK || !path.isAbsolute(process.env.WORK)) stop('WORK must be 
 // `/realm-corpus/workproject` in every recorded path (NM's likewise in the manifest's transcript).
 const NM = path.resolve(process.env.NM);
 const WORK = path.resolve(process.env.WORK);
+
+// The words that name this machine, and how a name or a folder is found in a text: a name as a whole
+// word (`trust_root` does not hold `root`), a folder as a path start (`/realm-corpus/work/home` does
+// not hold `/home/`).
+const escaped = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const wholeWord = (word) => new RegExp(`(?<![A-Za-z0-9_])${escaped(word)}(?![A-Za-z0-9_])`);
+const pathStart = (folder) =>
+  new RegExp(`(?<![A-Za-z0-9._~-])${escaped(folder)}(?![A-Za-z0-9._~-])`);
+let osUser;
+try {
+  osUser = os.userInfo().username;
+} catch {
+  osUser = undefined;
+}
+const machineNames = [
+  ...(osUser ? [{ kind: 'the OS user name', test: wholeWord(osUser) }] : []),
+  ...(os.hostname() ? [{ kind: 'the host name', test: wholeWord(os.hostname()) }] : []),
+];
+/**
+ * The one way this machine's names enter a recording is WORK's path, which every stored run keeps:
+ * WORK (as given, and as its realpath once it exists) may hold neither the OS user nor the host name
+ * as a word. The line names the kind, never the word.
+ */
+function refuseNamedWork(folder) {
+  for (const { kind, test } of machineNames) {
+    if (test.test(folder)) {
+      const remedy = test.test('/tmp/realm-corpus/work')
+        ? 'a folder whose path does not hold it'
+        : 'WORK=/tmp/realm-corpus/work';
+      stop(
+        `WORK's path holds ${kind} as a word: the stored runs keep WORK's path, so the recording would ` +
+          `carry the machine it ran on. Use ${remedy} (Part B step 7a).`,
+      );
+    }
+  }
+}
+refuseNamedWork(WORK);
 
 // 2. NM holds the published packages at this version (the CLI, the testing package, and the loader's).
 function installedVersion(name) {
@@ -113,6 +150,7 @@ if (integrity['@sensigo/realm-cli'] === null)
 // 3. WORK: empty, outside any home, with no package.json or .git above it.
 fs.mkdirSync(WORK, { recursive: true });
 const realWork = fs.realpathSync(WORK);
+refuseNamedWork(realWork);
 if (fs.readdirSync(realWork).length > 0) stop(`${WORK} is not empty: give an empty folder`);
 const homes = [process.env.HOME, '/home', '/Users', '/root']
   .filter((p) => p !== undefined && p !== '')
@@ -454,22 +492,13 @@ outputs.set(
   }),
 );
 
-// 11. Nothing that names this machine: the OS user name, the host name, the caller's HOME, or a path
-// under /home/, /Users/ or /root/, in any text file or the raw store (searched as bytes, the gzipped
-// copy is made from it). A name counts as a whole word, a folder as a path start, so the CLI's own
-// <WORK>/home (`/realm-corpus/work/home` once scrubbed) and words such as `trust_root` are not hits.
-// One hit stops the recording, naming the file and the kind of thing found, never the word itself,
-// and nothing is written into the corpus folder.
-const escaped = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const wholeWord = (word) => new RegExp(`(?<![A-Za-z0-9_])${escaped(word)}(?![A-Za-z0-9_])`);
-const pathStart = (folder) =>
-  new RegExp(`(?<![A-Za-z0-9._~-])${escaped(folder)}(?![A-Za-z0-9._~-])`);
-let osUser;
-try {
-  osUser = os.userInfo().username;
-} catch {
-  osUser = undefined;
-}
+// 11. No home path: the caller's HOME, or a path under /home/, /Users/ or /root/, in any text file or
+// the raw store (searched as bytes, the gzipped copy is made from it), each found as a path start, so
+// the CLI's own <WORK>/home (`/realm-corpus/work/home` once scrubbed) is not a hit. The user and host
+// names are WORK's check (step 3), not this one: the example files' own words (`root`, `user`,
+// `github`, `localhost`) would make it refuse every recording on a machine so named. One hit stops
+// the recording, naming the file and the kind of thing found, and nothing is written into the corpus
+// folder.
 const callerHomes = [];
 if (
   process.env.HOME !== undefined &&
@@ -484,8 +513,6 @@ if (
   }
 }
 const machine = [
-  ...(osUser ? [{ kind: 'the OS user name', test: wholeWord(osUser) }] : []),
-  ...(os.hostname() ? [{ kind: 'the host name', test: wholeWord(os.hostname()) }] : []),
   ...[...new Set(callerHomes)].map((home) => ({
     kind: "the caller's HOME",
     test: pathStart(home),
