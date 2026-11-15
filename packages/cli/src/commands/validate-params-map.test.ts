@@ -425,7 +425,7 @@ describe('fix 1, piece 2b — the words the docs and the changelog carry (check 
     claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 32 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 32 warning codes. Ten of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; and a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text.",
+      "The loader has 32 warning codes. Ten of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; and a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text.",
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',

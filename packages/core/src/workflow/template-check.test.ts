@@ -220,9 +220,9 @@ steps:
     // (1) red when arguments are not judged, or "no sample gives a value" is not judged (`date` and
     // `truncate` pass), or the cause's words change; (2) prints the messages.
     expect(messages(agentPrompt(prompt))).toEqual([
-      "Step 'a': prompt gives the filter 'round' an argument no value accepts in '{{ run.params.n | round: 500 }}', so the step stops with an error when the run reaches it with a number. (line 8)",
-      "Step 'a': prompt gives the filter 'percent' an argument no value accepts in '{{ run.params.n | percent: 200 }}', so the step stops with an error when the run reaches it with a number. (line 8)",
-      "Step 'a': prompt gives the filter 'indent' an argument no value accepts in '{{ run.params.s | indent: -1 }}', so the step stops with an error when the run reaches it with a text. (line 8)",
+      "Step 'a': prompt gives the filter 'round' an argument no value accepts in '{{ run.params.n | round: 500 }}', so the step stops with an error when the run reaches it and the value is a number. (line 8)",
+      "Step 'a': prompt gives the filter 'percent' an argument no value accepts in '{{ run.params.n | percent: 200 }}', so the step stops with an error when the run reaches it and the value is a number. (line 8)",
+      "Step 'a': prompt gives the filter 'indent' an argument no value accepts in '{{ run.params.s | indent: -1 }}', so the step stops with an error when the run reaches it and the value is text. (line 8)",
       "Step 'a': prompt gives the filter 'date' an argument no value accepts in '{{ run.params.t | date: \"%Y-%m-%d\" }}', so the placeholder is passed on as written. (line 8)",
       "Step 'a': prompt gives the filter 'truncate' an argument no value accepts in '{{ run.params.s | truncate }}', so the placeholder is passed on as written. (line 8)",
     ]);
@@ -288,20 +288,58 @@ steps:
     // (1) red when a field's or a cause's consequence changes; (2) prints the consequences.
     expect(messages(yaml).map((m) => `${m.split(':')[0]} ${m.split(', so ')[1]}`)).toEqual([
       "Step 'ask' the question shows the placeholder as written. (line 12)",
-      "Step 'ask' the step stops with an error when the run reaches it with a number. (line 12)",
+      "Step 'ask' the step stops with an error when the run reaches it and the value is a number. (line 12)",
       "Step 'ask' the call that opens the gate fails with an error after the question is already open. (line 9)",
       "Step 'write' that placeholder is not filled in where the step's result is shown. (line 17)",
       "Step 'write' that placeholder is not filled in where the step's result is shown. (line 17)",
     ]);
   });
 
-  it('item 5: one finding per bad filter in chain order, up to and including the first unknown one', () => {
-    const prompt = '{{ run.params.n | round: 500 | shoutloud | indent: -1 }}';
-    // (1) red when a chain stops at its first finding, or a filter after an unknown one is judged;
-    // (2) prints the codes.
-    expect(findings(agentPrompt(prompt)).map((w) => w.code)).toEqual([
-      'TEMPLATE_FILTER_ARGUMENT',
-      'TEMPLATE_FILTER_UNKNOWN',
+  it('item 5 (correction 1): every filter before the first finding is judged, and none after it — the first unknown filter or the first argument no value accepts', () => {
+    // (1) red when a chain is judged past its first finding (`indent` and `shoutloud` after it), or
+    // a valid filter before it is reported; (2) prints the codes and filters.
+    const codes = (prompt: string): string[] =>
+      findings(agentPrompt(prompt)).map(
+        (w) => `${w.code} ${w.message.split("filter '")[1]!.split("'")[0]}`,
+      );
+    expect({
+      argumentFirst: codes('{{ run.params.n | round: 500 | shoutloud | indent: -1 }}'),
+      unknownFirst: codes('{{ run.params.n | round: 2 | shoutloud | indent: -1 }}'),
+    }).toEqual({
+      argumentFirst: ['TEMPLATE_FILTER_ARGUMENT round'],
+      unknownFirst: ['TEMPLATE_FILTER_UNKNOWN shoutloud'],
+    });
+  });
+
+  it('correction 1 (a): an argument finding ends the chain — one finding, for `truncate`, in each chain', () => {
+    // (1) red when the chain is judged past an argument finding (as on e13bef78: `indent` or `round`
+    // reported with a consequence it can never have); (2) prints the findings.
+    expect({
+      indent: messages(agentPrompt('{{ run.params.s | truncate | indent: -1 | upper }}')),
+      round: messages(agentPrompt('{{ run.params.n | truncate | round: 500 }}')),
+    }).toEqual({
+      indent: [
+        "Step 'a': prompt gives the filter 'truncate' an argument no value accepts in '{{ run.params.s | truncate | indent: -1 | upper }}', so the placeholder is passed on as written. (line 8)",
+      ],
+      round: [
+        "Step 'a': prompt gives the filter 'truncate' an argument no value accepts in '{{ run.params.n | truncate | round: 500 }}', so the placeholder is passed on as written. (line 8)",
+      ],
+    });
+  });
+
+  it('correction 1 (c): a value YAML reads as a date is "a date"', () => {
+    const yaml = `id: d
+name: D
+version: 1
+steps:
+  a:
+    description: A.
+    execution: agent
+    display: 2026-01-28
+`;
+    // (1) red when a date is read as a map; (2) prints the message.
+    expect(messages(yaml)).toEqual([
+      "Step 'a': display must be text; it is a date, so Realm stops with an error when it reads it. (line 8)",
     ]);
   });
 

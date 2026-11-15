@@ -68,7 +68,7 @@ function argumentConsequence(field: Field, verdict: ArgumentVerdict): string {
   if (verdict.cause === 'out_of_range') {
     return field === 'instructions'
       ? 'the call that opens the gate fails with an error after the question is already open'
-      : `the step stops with an error when the run reaches it with a ${verdict.kind}`;
+      : `the step stops with an error when the run reaches it and the value is ${verdict.kind === 'number' ? 'a number' : 'text'}`;
   }
   return field === 'gate.message' ? 'the question shows the placeholder as written' : AS_WRITTEN;
 }
@@ -98,6 +98,8 @@ function judgeArguments(name: string, args: string[]): ArgumentVerdict | undefin
 /** Item 3: the type word for a value that is not text. */
 function typeWord(value: unknown): string {
   if (value === null || value === undefined) return 'empty';
+  // YAML reads an unquoted date (`display: 2026-01-28`) as a date (correction 1, O2).
+  if (value instanceof Date) return 'a date';
   if (Array.isArray(value)) return 'a list';
   if (typeof value === 'number') return 'a number';
   if (typeof value === 'boolean') return 'true or false';
@@ -121,7 +123,8 @@ function fieldsOf(raw: Obj): Array<{ field: Field; value: unknown; key: string[]
 
 /**
  * The findings for one workflow's steps, in the steps' file order, each field's in the order above,
- * each placeholder's in chain order up to and including the first unknown filter. `positionOf`
+ * each placeholder's in chain order up to and including its first finding: the first unknown filter,
+ * or the first argument no value accepts — no filter after it can run (correction 1). `positionOf`
  * resolves a key's place in the source.
  */
 export function checkTemplates(
@@ -184,6 +187,7 @@ export function checkTemplates(
                 place,
               ),
             );
+            break; // a filter after it can never run, so it is not judged
           }
         }
       }

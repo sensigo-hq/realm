@@ -361,7 +361,7 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     // (1) red when either is missing, moved, or misnumbered; (2) prints the checks.
     expect({
       changed: section('Changed').includes(
-        '- **BREAKING: `realm workflow validate`, `register` and `watch` refuse a template filter Realm does not have, a filter argument no value accepts, and a templated field that is not text**, with the line and, when one is close, a did-you-mean. Such a template failed or misrendered when the step ran; `validate` crashed on an agent step whose prompt was not text. Running a workflow is not refused.',
+        '- **BREAKING: `realm workflow validate`, `register` and `watch` refuse a template filter Realm does not have, a filter argument no value accepts, and a templated field that is not text**, with the line and, when one is close, a did-you-mean. Such a template failed or misrendered when the step ran; `validate` crashed on an agent step whose prompt was not text, or whose filter argument made its render throw. Running a workflow is not refused.',
       ),
       upgrading: section('Upgrading').includes(
         '**8. `register` and `watch` refuse a template filter Realm does not have, an argument no value accepts, or a templated field that is not text.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and fix what the refusal names. A stored copy keeps running as it was until you register it again.',
