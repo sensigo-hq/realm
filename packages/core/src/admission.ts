@@ -46,6 +46,9 @@ export const ENGINE_ENTRIES = [
   'abandonRun',
   'reclaimStep',
   'getWorkflowForRun',
+  // #729, the claim window (CW-2a): a drive's claim under its lease, and its give-back.
+  'claimStepForDrive',
+  'releaseDriveClaim',
 ] as const;
 
 export type EngineEntry = (typeof ENGINE_ENTRIES)[number];

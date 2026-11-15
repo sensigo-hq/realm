@@ -63,6 +63,7 @@ import {
   type CreateResult,
   type CreateRunOptions,
   type KeyAnswer,
+  type LeaseHold,
   type LeasePort,
   type LoadBearingRunRecordField,
   type PerRunArtifactStore,
@@ -103,6 +104,35 @@ import { assertScanArguments, readHorizon, readKeyAnswer, readScanPage } from '.
 
 /** A run id's length (a version 4 uuid): the provisional record's id takes as many bytes. */
 const PROVISIONAL_ID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * #729 CW-2a: every lease hold a store of this module has been given in a `claimStep` call. A hold
+ * names at most one claim, so a second call with it throws before any write — across every store of
+ * this module in the process, so a hold cannot be spent once on each of two handles of one home.
+ */
+const SPENT_HOLDS = new WeakSet<LeaseHold>();
+
+/**
+ * #729 CW-2a: marks `hold` used by this `claimStep` call, or throws when an earlier call used it. Called
+ * before the write transaction, so the transaction's busy retry, which re-runs its body, is not a
+ * second use.
+ */
+function spendHold(hold: LeaseHold, runId: string, stepName: string): void {
+  if (SPENT_HOLDS.has(hold)) {
+    throw new WorkflowError(
+      `Lease '${hold.id}' was already given to a claimStep call; a lease names at most one claim. ` +
+        `Step '${stepName}' of run '${runId}' was not claimed, and nothing was written.`,
+      {
+        code: 'ENGINE_INTERNAL',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+        details: { runId, stepName, lease_id: hold.id },
+      },
+    );
+  }
+  SPENT_HOLDS.add(hold);
+}
 
 /** A stamp's length (`toISOString()`): the provisional record's stamps take as many bytes. */
 const PROVISIONAL_STAMP = '0000-00-00T00:00:00.000Z';
@@ -508,7 +538,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
   /**
    * The home's claim leases (#729, the claim window, CW-1): files in `claim-leases/` beside
    * `realm.db`, each a lock the operating system keeps while its program runs (`claim-lease.ts`).
-   * Nothing in Realm takes one yet.
+   * `claimStep` writes a hold's id in the claim it takes (CW-2a); no Realm command takes one yet.
    */
   readonly leases: LeasePort;
 
@@ -707,13 +737,19 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
    * `token`; `since`; `holder` only when a claimant is given), with the version moved by one and
    * `updated_at` = `since`. Only the core document changes. Returns the claimed record as `get()`
    * returns it, with the reading.
+   *
+   * With `hold` (#729 CW-2a), a lease the caller holds, the claim also names it: `lease: { id }`, in
+   * the same write. The hold is used by this call whether it writes or is refused, and a second call
+   * with it throws `ENGINE_INTERNAL` before the transaction opens.
    */
   async claimStep(
     runId: string,
     stepName: string,
     definition: WorkflowDefinition,
     claimant?: Attributed,
+    hold?: LeaseHold,
   ): Promise<Snapshot> {
+    if (hold !== undefined) spendHold(hold, runId, stepName);
     const written = await this.#db.immediate(
       (db): Written => {
         const stored = readStoredCore(db, runId);
@@ -729,6 +765,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
           token: randomUUID(),
           since,
           ...(claimant !== undefined ? { holder: claimant } : {}),
+          ...(hold !== undefined ? { lease: { id: hold.id } } : {}),
         };
         // The same four keys replaced in place, in the stored document and in the run as read, so
         // the claimed run keeps the stored key order.

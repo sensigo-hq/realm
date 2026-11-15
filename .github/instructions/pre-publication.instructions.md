@@ -42,6 +42,7 @@ Follow this checklist in order before merging any branch into `main`.
 - Default values are sensible and documented
 - **If any exported symbol's signature or behaviour changes in a non-backwards-compatible way:** this is a breaking change — flag it explicitly. Do not merge without a CHANGELOG entry planned, a major version bump in the version plan, and a migration guide committed or linked.
 - **Pre-1.0 (0.x), breaking changes MAY ship in a minor** when flagged **BREAKING** in the changelog with upgrade guidance; 1.0.0 is reserved. (House precedent: v0.14.0, the #390 trio adjudication.)
+- If `packages/cli/src/inventory/kept-surface.txt` changed, `[Unreleased]` names each changed command, flag, exit code or reply status in backticks (the inventory cell enforces it; this is the human half).
 
 ### 5. Test Coverage
 
@@ -121,12 +122,12 @@ Rename `## [Unreleased]` to `## [<version>] — YYYY-MM-DD`. Use [keepachangelog
 - Breaking changes: include a note referencing the migration guide.
 - If using automated CHANGELOG tooling (changesets, git-cliff), run the tool and verify its output before committing.
 
-Three docs lines quote the published version; set each to `<version>` in this same commit, the only moment the number is true of a release: the `realm --version` output in `docs/start/install-and-first-run.md`, the initialize reply's `"version"` in `docs/reference/cli/realm-mcp-and-serve.md`, and both numbers in the sentence "These pages describe Realm …" in `docs/README.md` (0.47.0 and 0.48.0 shipped with the first still at 0.46.0; 0.48.0 and 0.49.0 with the third still at 0.47.0). The record in `docs/reference/compatibility.md` ("The record so far") is refreshed in this same commit: the release count, the patch count, and the workflow-file changes if this release carries one.
+Three docs lines quote the published version; set each to `<version>` in this same commit, the only moment the number is true of a release: the `realm --version` output in `docs/start/install-and-first-run.md`, the initialize reply's `"version"` in `docs/reference/cli/realm-mcp-and-serve.md`, and both numbers in the sentence "These pages describe Realm …" in `docs/README.md` (0.47.0 and 0.48.0 shipped with the first still at 0.46.0; 0.48.0 and 0.49.0 with the third still at 0.47.0). The record in `docs/reference/compatibility.md` ("The record so far") is refreshed in this same commit: the release count, the patch count, and the workflow-file changes if this release carries one. `packages/cli/src/inventory/kept-surface.frozen.txt` is copied from `kept-surface.txt`, with its header set to `frozen at v<version>`, and added to the same commit: the frozen copy is the release's, and the changelog cell starts clean for the next one. `packages/cli/src/corpus/<version>/PENDING` is created with one line, the heading's date, and added to the same commit: the corpus guard then knows this release's recording is owed.
 
 Commit:
 
 ```bash
-git add CHANGELOG.md docs/start/install-and-first-run.md docs/reference/cli/realm-mcp-and-serve.md docs/README.md docs/reference/compatibility.md
+git add CHANGELOG.md docs/start/install-and-first-run.md docs/reference/cli/realm-mcp-and-serve.md docs/README.md docs/reference/compatibility.md packages/cli/src/inventory/kept-surface.frozen.txt packages/cli/src/corpus/<version>/PENDING
 git commit -m "docs: update changelog for v<version>"
 ```
 
@@ -267,6 +268,10 @@ node --input-type=module -e "import { openRealmHome } from '@sensigo/realm-store
 It prints `function`.
 
 **The upgrade guide's captures.** The outputs quoted in `docs/guides/upgrade.md` come from one real upgrade on published packages, between the two versions its first paragraph names; between releases, `packages/cli/src/commands/docs-upgrade-captures-616.test.ts` keeps the quoted outputs of steps 3–6 true to the tree. If `git diff v<previous>..v<version> -- docs/guides/upgrade.md` changes a quoted block, a product change has moved the page off that run: re-run the guide's story on the published packages, from `<previous>` to `<version>` — every command the page quotes, in the page's order, on a throwaway home that holds `packages/cli/src/commands/fixtures/old-json-home/runs`, registering the workflow files of `packages/cli/src/commands/fixtures/upgrade-story` (step 5 registers `upgrade-story-corrected/intake`) — set each re-run block to what the published version printed (the blocks the first paragraph says were kept stay as they are), name `<previous>` and `<version>` in that paragraph, and merge it as a docs PR.
+
+**7a. Record the release's corpus**
+
+Prepare the published packages once: `mkdir <nm> && cd <nm> && npm install --no-save @sensigo/realm-cli@<version> @sensigo/realm-testing@<version>` (a registry read; no sign-in). Then, in the repository root, in a clean environment: `env -i PATH="$PATH" HOME=<a folder that is not above WORK> NM=<nm> WORK=/tmp/realm-corpus/work node scripts/corpus/record.mjs <version>`. WORK is that folder on every machine and must be empty: two recordings then agree in every text file, and the stored runs keep its path (the recorder refuses a WORK that is not empty or lies under a home). It records the release's corpus into `packages/cli/src/corpus/<version>/` and deletes the `PENDING` marker; the CLI it runs never sees your HOME. Commit the folder on a branch and open its PR; the corpus cells and the guard must be green.
 
 **8. Create the GitHub Release**
 

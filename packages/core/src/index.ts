@@ -7,6 +7,8 @@ export * from './types/workflow-definition.js';
 export * from './store/store-interface.js';
 // #729, the claim window, CW-1: the claim lease's port, its answers and its closed reason lists.
 export * from './store/lease-port.js';
+// #597 D1a: the outbound ledger's port, its request check and its pure state machine.
+export * from './store/outbound-ledger.js';
 // #729, the claim window, CW-1b: the facts a store's lease port found, and their one reader.
 export { leaseFactsOf, leaseFactOf, NO_LEASE_FACTS, LeaseFactsClass } from './store/lease-facts.js';
 export type { LeaseFacts, Unleased } from './store/lease-facts.js';
@@ -483,6 +485,14 @@ export {
 export type { ClaimState, InProgressClaimInfo } from './engine/claim-liveness.js';
 export { reclaimStep } from './engine/reclaim-step.js';
 export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine/reclaim-step.js';
+// #729, the claim window (CW-2a): a drive takes a step's claim under its lease, and gives it back.
+export { claimStepForDrive, releaseDriveClaim } from './engine/drive-claim.js';
+export type {
+  ClaimStepForDriveOptions,
+  DriveClaim,
+  ReleaseDriveClaimOptions,
+  DriveRelease,
+} from './engine/drive-claim.js';
 export {
   classifyRunHealth,
   DEFAULT_IDLE_THRESHOLD_MS,
@@ -498,6 +508,9 @@ export {
   reminderScheduleOf,
   reminderScheduleWords,
   REMINDER_BASIS_CLAUSE,
+  // #597 D1a: may a reminder or the escalation go out, and is a reminder the final one.
+  isFinalReminder,
+  reminderEligibility,
 } from './engine/gate-timing.js';
 export type { ReminderSchedule, ReminderOccurrence } from './engine/gate-timing.js';
 // issue #729 PR-0 (D4 P-8, A-15): the one parser of stored instants and the one due test of a
@@ -973,6 +986,7 @@ export {
   EVIDENCE_TABLE,
   STEP_DIAGNOSTICS_TABLE,
   USAGE_RECORD_TABLE,
+  OUTBOUND_VIEW_TABLE,
   discloseGate,
   discloseRecord,
   discloseReply,

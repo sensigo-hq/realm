@@ -992,8 +992,28 @@ describe('U1b — exits, signals and the drain', () => {
   it('(n2) a slow consumer → the relay’s memory stays bounded, the worker’s end waits for its writes, nothing lost', async () => {
     const rssOf = (pid: number | undefined): number =>
       Number(/VmRSS:\s+(\d+)/.exec(readFileSync(`/proc/${pid}/status`, 'utf8'))?.[1] ?? 0);
+    // A relay's resident size once it is STEADY: sampled every 500 ms until two consecutive samples
+    // are within 1 MiB and at least 3 s have passed, at most 20 s. A fixed 3 s was the flake: under
+    // machine load a relay has not finished starting at 3 s (74–80 MB against its usual 133–143 MB), so
+    // a baseline taken then makes an honest flood relay look unbounded (two reds at load 10–13,
+    // 47/47 at load 4). The seconds waited are printed with the figure.
+    const steadyRss = async (
+      pid: number | undefined,
+    ): Promise<{ kib: number; waitedS: number }> => {
+      const from = Date.now();
+      let last = rssOf(pid);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 500));
+        const now = rssOf(pid);
+        const elapsed = Date.now() - from;
+        if ((elapsed >= 3000 && Math.abs(now - last) < 1024) || elapsed >= 20_000) {
+          return { kib: now, waitedS: Math.round(elapsed / 100) / 10 };
+        }
+        last = now;
+      }
+    };
     // The relay's own resident size in this layout, measured in the same run: a drive that prints one
-    // line and waits (`go`), its consumer paused for the same 3 s; then it is let finish.
+    // line and waits (`go`), its consumer paused until the relay is steady; then it is let finish.
     const go = join(root, 'go-n2');
     const quiet = spawn(process.execPath, agentArgs(oneStep('flood-baseline', 'go')), {
       cwd,
@@ -1004,8 +1024,7 @@ describe('U1b — exits, signals and the drain', () => {
       if (quiet.exitCode === null && quiet.signalCode === null) quiet.kill('SIGKILL');
     });
     quiet.stdout!.pause();
-    await new Promise((r) => setTimeout(r, 3000));
-    const baseline = rssOf(quiet.pid);
+    const { kib: baseline, waitedS: baselineWait } = await steadyRss(quiet.pid);
     writeFileSync(go, '');
     quiet.stdout!.resume();
     await new Promise((r) => quiet.once('close', r));
@@ -1018,8 +1037,7 @@ describe('U1b — exits, signals and the drain', () => {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     });
     child.stdout!.pause();
-    await new Promise((r) => setTimeout(r, 3000));
-    const whilePaused = rssOf(child.pid);
+    const { kib: whilePaused, waitedS: pausedWait } = await steadyRss(child.pid);
     let bytes = 0;
     let tail = '';
     child.stdout!.on('data', (d: Buffer) => {
@@ -1031,7 +1049,7 @@ describe('U1b — exits, signals and the drain', () => {
     // (a) red when the relay buffers what it cannot write (its memory grows by the 64 MiB over its
     //     own baseline; the bound is half the flood, so an honest relay's ~2% passes), or the
     //     worker's end drops pending writes; (b) prints the relay's memory while paused and its
-    //     baseline, the byte count's floor check and the code.
+    //     baseline, the seconds each sample waited to be steady, the byte count's floor check and the code.
     expect(
       {
         code,
@@ -1039,7 +1057,7 @@ describe('U1b — exits, signals and the drain', () => {
         everyLine: bytes >= 65536 * 1024,
         ended: tail.includes('flood done'),
       },
-      `relay VmRSS ${String(whilePaused)} KiB while paused (baseline ${String(baseline)} KiB); ${String(bytes)} bytes read`,
+      `relay VmRSS ${String(whilePaused)} KiB while paused (steady after ${String(pausedWait)} s; baseline ${String(baseline)} KiB, steady after ${String(baselineWait)} s); ${String(bytes)} bytes read`,
     ).toEqual({ code: 0, bounded: true, everyLine: true, ended: true });
   }, 90_000);
 

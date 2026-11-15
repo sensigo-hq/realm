@@ -229,6 +229,94 @@ describe('yaml-loader — fix 2: a gate: block on a step that can never open a g
       // (2) prints the warning codes.
       expect(warnings.map((w) => w.code)).toEqual([]);
     });
+
+    it('guard with a misspelt gate key (choises): exactly ONE error, message B, and no unknown-key warning', () => {
+      const { errors, warnings } = refusal(
+        gateWorkflow(
+          'guard',
+          "    description: check\n    abort_unless: ['work.ok == true']",
+          '      choises: [approve]',
+        ),
+      );
+      // (1) red when the misspelt key raises an error, or B goes; (2) prints the error list.
+      expect(errors).toEqual([MSG_B('work', 'guard', 10)]);
+      // The unknown-key warning is hidden on every refused block, guard and finalizer included.
+      // (1) red when it is hidden only on a refused auto/agent block (the check reads
+      //     `gateWithoutTrust` instead of `gateBlockRefused`): an UNKNOWN_GATE_KEY warning
+      //     appears; (2) prints the warning codes.
+      expect(warnings.map((w) => w.code)).toEqual([]);
+    });
+
+    it.each([
+      ['on_expiry without timeout_seconds', '      on_expiry: abort'],
+      [
+        'reminder_seconds not below timeout_seconds',
+        '      timeout_seconds: 60\n      reminder_seconds: 90',
+      ],
+    ])(
+      'guard with trust: human_confirmed and gate %s: TWO errors, the trust refusal and message B, and no warning',
+      (_case, block) => {
+        const { errors, warnings } = refusal(
+          gateWorkflow(
+            'guard',
+            "    description: check\n    abort_unless: ['work.ok == true']\n    trust: human_confirmed",
+            block,
+          ),
+        );
+        // (1) red when another error joins them (or one goes); (2) prints the error list.
+        expect(errors).toHaveLength(2);
+        expect(errors[0]).toContain("Step 'work': 'trust' is not valid on execution: guard steps");
+        expect(errors[1]).toBe(MSG_B('work', 'guard', 11));
+        // The second advisory site (on_expiry and reminder) has its own gate-trust check, which a
+        // gate-trust value on a guard passes. (1) red when that site reads `gateTrusted` alone (a
+        // DEAD_GATE_CONFIG warning appears); (2) prints the warning codes.
+        expect(warnings.map((w) => w.code)).toEqual([]);
+      },
+    );
+
+    it.each([
+      {
+        case: 'a guard, gate: null',
+        doc: gateWorkflow(
+          'guard',
+          "    description: check\n    abort_unless: ['work.ok == true']",
+          '',
+        ),
+        kind: 'guard' as const,
+        gateLine: 10,
+        stepLine: 6,
+      },
+      {
+        case: 'a guard, gate: a string',
+        doc: gateWorkflow(
+          'guard',
+          "    description: check\n    abort_unless: ['work.ok == true']",
+          '      approve',
+        ),
+        kind: 'guard' as const,
+        gateLine: 10,
+        stepLine: 6,
+      },
+      {
+        case: 'a finalizer, gate: null',
+        doc: FINALIZER_WF('', ''),
+        kind: 'finalizer' as const,
+        gateLine: 15,
+        stepLine: 10,
+      },
+    ])(
+      '$case: TWO errors, message B and "\'gate\' must be an object"',
+      ({ doc, kind, gateLine, stepLine }) => {
+        const { errors } = refusal(doc);
+        // (1) red when a block that is not an object is still hidden behind B on a guard or
+        //     finalizer (B alone), or B is not minted for it (the object error alone); (2) prints
+        //     the error list.
+        expect(errors).toEqual([
+          MSG_B('work', kind, gateLine),
+          `Step 'work': 'gate' must be an object (step at line ${stepLine})`,
+        ]);
+      },
+    );
   });
 
   describe('a step whose kind is not known', () => {

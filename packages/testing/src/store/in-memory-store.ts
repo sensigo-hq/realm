@@ -37,9 +37,47 @@ import {
   type LoadBearingRunRecordField,
   type SettlementDelta,
   type Attributed,
+  type LeaseHold,
   type LeasePort,
+  type OutboundLedger,
+  checkOutboundRequest,
+  leaseOutbound,
+  openQuestionOf,
+  markOutbound,
+  type ArtifactDeletionReport,
+  type OutboundEntry,
+  type OutboundEntryView,
+  type OutboundLeaseRequest,
+  type OutboundMarkRequest,
+  type OutboundResult,
+  type PendingGate,
 } from '@sensigo/realm';
 import { REALM_TESTING_BRAND } from '../brand.js';
+
+/**
+ * #729 CW-2a: every lease hold an `InMemoryStore` with leases has been given in a `claimStep` call. A
+ * hold names at most one claim, so a second call with it throws before any write — across every
+ * store of this module, so a hold cannot be spent once on each of two stores.
+ */
+const SPENT_HOLDS = new WeakSet<LeaseHold>();
+
+/** #729 CW-2a: marks `hold` used by this call, or throws when an earlier call used it. */
+function spendHold(hold: LeaseHold, runId: string, stepName: string): void {
+  if (SPENT_HOLDS.has(hold)) {
+    throw new WorkflowError(
+      `Lease '${hold.id}' was already given to a claimStep call; a lease names at most one claim. ` +
+        `Step '${stepName}' of run '${runId}' was not claimed, and nothing was written.`,
+      {
+        code: 'ENGINE_INTERNAL',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+        details: { runId, stepName, lease_id: hold.id },
+      },
+    );
+  }
+  SPENT_HOLDS.add(hold);
+}
 
 /**
  * The tombstone horizon of a store that never deletes a run (#616 PR-2c c4-i; the design owner,
@@ -78,6 +116,89 @@ function rowOf(record: RunRecord): RunRow {
     in_progress_steps: [...record.in_progress_steps],
     failed_steps: [...record.failed_steps],
   };
+}
+
+// #597 D1a: the outbound ledger this store keeps (its `outbound` member). Rows live in a map per run;
+// the rules are core's (`checkOutboundRequest`, `leaseOutbound`, `markOutbound`). Exported from this
+// module only, not from the package: a test reaches it as `new InMemoryStore().outbound`.
+
+/** A row's bytes: the UTF-8 length of each of its text fields (numbers are not counted). */
+function bytesOf(row: OutboundEntry): number {
+  let bytes = 0;
+  for (const value of Object.values(row))
+    if (typeof value === 'string') bytes += Buffer.byteLength(value, 'utf8');
+  return bytes;
+}
+
+/** The order rows are read in: `created_at`, then `entry_key` (code-unit order, as SQLite's BINARY). */
+function byCreatedThenKey(a: OutboundEntry, b: OutboundEntry): number {
+  if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
+  return a.entry_key < b.entry_key ? -1 : a.entry_key > b.entry_key ? 1 : 0;
+}
+
+/**
+ * The in-memory outbound ledger. `lease` and `mark` check the request, take ONE raw reading of the
+ * store's clock, then read the run's open question (`openGateOf`: none on a sealed run, as core's
+ * `openQuestionOf` reads it) and its rows and write the row core
+ * returns, all in one synchronous stretch: no `await` comes between the read and the write, so two
+ * concurrent calls cannot both decide on the same rows. `read`, `statAllForRun` and `deleteAllForRun`
+ * take no reading. Nothing it does writes to the run.
+ */
+export class InMemoryOutboundLedger implements OutboundLedger {
+  private readonly rows = new Map<string, Map<string, OutboundEntry>>();
+
+  constructor(
+    private readonly clock: Clock,
+    private readonly openGateOf: (runId: string) => PendingGate | undefined,
+  ) {}
+
+  private rowsOf(runId: string): OutboundEntry[] {
+    return [...(this.rows.get(runId)?.values() ?? [])];
+  }
+
+  private put(runId: string, row: OutboundEntry): void {
+    let run = this.rows.get(runId);
+    if (run === undefined) this.rows.set(runId, (run = new Map()));
+    run.set(row.entry_key, row);
+  }
+
+  async lease(runId: string, request: OutboundLeaseRequest): Promise<OutboundResult> {
+    checkOutboundRequest('lease', request);
+    const at = takeRawReading(this.clock);
+    const { result, write } = leaseOutbound(
+      this.openGateOf(runId),
+      this.rowsOf(runId),
+      request,
+      at,
+    );
+    if (write !== undefined) this.put(runId, write);
+    return result;
+  }
+
+  async mark(runId: string, request: OutboundMarkRequest): Promise<OutboundResult> {
+    checkOutboundRequest('mark', request);
+    const at = takeRawReading(this.clock);
+    const { result, write } = markOutbound(this.rowsOf(runId), request, at);
+    if (write !== undefined) this.put(runId, write);
+    return result;
+  }
+
+  async read(runId: string): Promise<OutboundEntryView[]> {
+    return this.rowsOf(runId)
+      .sort(byCreatedThenKey)
+      .map(({ lease_token: _token, ...view }) => view);
+  }
+
+  async statAllForRun(runId: string): Promise<{ bytes: number }> {
+    return { bytes: this.rowsOf(runId).reduce((sum, row) => sum + bytesOf(row), 0) };
+  }
+
+  /** Deletes the run's rows; an absent run is zero, never an error. */
+  async deleteAllForRun(runId: string): Promise<ArtifactDeletionReport> {
+    const bytes = this.rowsOf(runId).reduce((sum, row) => sum + bytesOf(row), 0);
+    this.rows.delete(runId);
+    return { bytes_deleted: bytes };
+  }
 }
 
 /** In-memory implementation of RunStore. Uses a Map keyed by run ID. No I/O, no locking. */
@@ -126,16 +247,34 @@ export class InMemoryStore implements RunStore {
   declare readonly leases?: LeasePort | null;
 
   /**
+   * #597 D1a: the outbound ledger this store keeps (an `InMemoryOutboundLedger` on this store's clock,
+   * reading this store's runs' open questions), or `null` when it was built with `outbound: null`.
+   */
+  readonly outbound: OutboundLedger | null;
+
+  /**
    * @param options.clock The store's clock (#715 (a), D-3); defaults to core's shared
    *   `systemClock`. This is a defaulted AUTHORITY — it reads nothing at construction — not a
    *   parameter default that reads a clock at the call (`now = new Date()`), which is what #715's
    *   clock-reading lint forbids.
    * @param options.leases #729 CW-1b: a lease port (`createLeaseDouble()`, for example); unset or
    *   `null`, the store keeps no claim leases.
+   * @param options.outbound #597 D1a: `null` builds the store without an outbound ledger; unset, it
+   *   keeps one.
    */
-  constructor(options?: { clock?: Clock; leases?: LeasePort | null }) {
+  constructor(options?: { clock?: Clock; leases?: LeasePort | null; outbound?: null }) {
     this.clock = options?.clock ?? systemClock;
     if (options?.leases !== undefined) this.leases = options.leases;
+    this.outbound =
+      options?.outbound === null
+        ? null
+        : new InMemoryOutboundLedger(this.clock, (runId) => {
+            // #597 D1a correction 1: core's one reading of an open question, none on a sealed run.
+            const run = this.runs.get(runId);
+            return run !== undefined && openQuestionOf(run) !== undefined
+              ? run.pending_gate
+              : undefined;
+          });
   }
 
   /**
@@ -337,7 +476,13 @@ export class InMemoryStore implements RunStore {
     stepName: string,
     definition: WorkflowDefinition,
     claimant?: Attributed,
+    hold?: LeaseHold,
   ): Promise<Snapshot> {
+    // #729 CW-2a: with leases, a hold is used by its first call, whether that call writes or is
+    // refused; a later call with it throws here, before anything is read or written. Without leases
+    // the store ignores it, as `JsonFileStore` does (Realm never passes one to such a store).
+    const lease = this.keepsLeases && hold !== undefined ? hold : undefined;
+    if (lease !== undefined) spendHold(lease, runId, stepName);
     // issue #188: read the record SYNCHRONOUSLY (a direct Map.get, not `await this.get(...)`) so
     // the read → eligibility-check → write below is one indivisible synchronous stretch. This is
     // what makes claimStep single-owner for concurrent same-process calls (the cross-cutting
@@ -402,6 +547,8 @@ export class InMemoryStore implements RunStore {
           token,
           since: at.toISOString(),
           ...(claimant !== undefined ? { holder: claimant } : {}),
+          // #729 CW-2a: the lease the caller holds, in the claim's one write.
+          ...(lease !== undefined ? { lease: { id: lease.id } } : {}),
         },
       },
       run_phase: deriveRunPhase(run),

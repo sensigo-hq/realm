@@ -22,6 +22,7 @@ import type {
   SubmitGateOptions,
 } from './execution-loop.js';
 import type { ReclaimStepOptions } from './reclaim-step.js';
+import type { ClaimStepForDriveOptions, ReleaseDriveClaimOptions } from './drive-claim.js';
 import type { getWorkflowForRun } from '../workflow/registrar.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 
@@ -261,6 +262,26 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('object', 'options'),
     typed('object', 'options', 'traceBufferStore'),
   ],
+  // #729, the claim window (CW-2a): `driver` is the `driver_shape` row's, as for every entry.
+  claimStepForDrive: [
+    need('string', 'runId'),
+    need('string', 'stepName'),
+    need('object', 'options'),
+    need('object', 'options', 'definition'),
+    need('object', 'options', 'definition', 'steps'),
+    need('registry', 'options', 'registry'),
+  ],
+  releaseDriveClaim: [
+    need('string', 'runId'),
+    need('string', 'stepName'),
+    need('object', 'options'),
+    need('object', 'options', 'definition'),
+    need('object', 'options', 'definition', 'steps'),
+    need('object', 'options', 'hold'),
+    need('string', 'options', 'hold', 'id'),
+    need('function', 'options', 'hold', 'close'),
+    typed('array', 'options', 'evidence'),
+  ],
 };
 
 /**
@@ -356,6 +377,16 @@ const GET_WORKFLOW_FOR_RUN_MEMBERS = [
 const RECLAIM_STEP_MEMBERS = [
   'traceBufferStore',
 ] as const satisfies readonly (keyof ReclaimStepOptions)[];
+const CLAIM_STEP_FOR_DRIVE_MEMBERS = [
+  'definition',
+  'registry',
+  'driver',
+] as const satisfies readonly (keyof ClaimStepForDriveOptions)[];
+const RELEASE_DRIVE_CLAIM_MEMBERS = [
+  'definition',
+  'hold',
+  'evidence',
+] as const satisfies readonly (keyof ReleaseDriveClaimOptions)[];
 
 const _membersExhaustive: [
   ListsEveryKey<ExecuteStepOptions, typeof EXECUTE_STEP_MEMBERS>,
@@ -365,7 +396,9 @@ const _membersExhaustive: [
   ListsEveryKey<SubmitGateOptions, typeof SUBMIT_HUMAN_RESPONSE_MEMBERS>,
   ListsEveryKey<Parameters<typeof getWorkflowForRun>[2], typeof GET_WORKFLOW_FOR_RUN_MEMBERS>,
   ListsEveryKey<ReclaimStepOptions, typeof RECLAIM_STEP_MEMBERS>,
-] = [true, true, true, true, true, true, true];
+  ListsEveryKey<ClaimStepForDriveOptions, typeof CLAIM_STEP_FOR_DRIVE_MEMBERS>,
+  ListsEveryKey<ReleaseDriveClaimOptions, typeof RELEASE_DRIVE_CLAIM_MEMBERS>,
+] = [true, true, true, true, true, true, true, true, true];
 void _membersExhaustive;
 
 /**
@@ -385,6 +418,8 @@ export const OPTION_MEMBERS: Readonly<
   submitHumanResponse: { container: 'options', members: SUBMIT_HUMAN_RESPONSE_MEMBERS },
   getWorkflowForRun: { container: 'opts', members: GET_WORKFLOW_FOR_RUN_MEMBERS },
   reclaimStep: { container: 'options', members: RECLAIM_STEP_MEMBERS },
+  claimStepForDrive: { container: 'options', members: CLAIM_STEP_FOR_DRIVE_MEMBERS },
+  releaseDriveClaim: { container: 'options', members: RELEASE_DRIVE_CLAIM_MEMBERS },
 };
 
 /** One defect, as the error's details name it: names and type words only. */

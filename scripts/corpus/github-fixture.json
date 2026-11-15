@@ -1,0 +1,28 @@
+{
+  "GET /repos/:o/:r/pulls/:n/files": {
+    "status": 200,
+    "body": [
+      {
+        "filename": "src/webhooks/retry.ts",
+        "patch": "@@ -12,14 +12,22 @@ export async function deliverWebhook(event: ChargeEvent): Promise<void> {\n-  await post(event.endpoint, event.payload);\n+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {\n+    try {\n+      await post(event.endpoint, event.payload);\n+      return;\n+    } catch (err) {\n+      await sleep(1000);\n+    }\n+  }\n }"
+      },
+      {
+        "filename": "src/webhooks/config.ts",
+        "patch": "@@ -3,3 +3,4 @@\n export const WEBHOOK_TIMEOUT_MS = 5000;\n+export const MAX_RETRIES = 5;"
+      },
+      {
+        "filename": "test/webhooks/retry.test.ts",
+        "patch": "@@ -0,0 +1,11 @@\n+import { deliverWebhook } from '../../src/webhooks/retry';\n+\n+it('retries a failed delivery', async () => {\n+  post.mockRejectedValueOnce(new Error('timeout'));\n+  post.mockResolvedValueOnce(undefined);\n+  await deliverWebhook(event);\n+  expect(post).toHaveBeenCalledTimes(2);\n+});"
+      }
+    ]
+  },
+  "GET /repos/:o/:r/pulls/:n": {
+    "status": 200,
+    "body": {
+      "title": "Retry failed charge webhooks",
+      "base": { "ref": "main" },
+      "head": { "sha": "9f2c1ab7d4e86c03b5a1f0e2d7c4498a6b3e5d10" }
+    }
+  },
+  "POST /repos/:o/:r/issues/:n/comments": { "status": 201, "echo": ["body"] }
+}

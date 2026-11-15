@@ -82,7 +82,7 @@ describe('#729 CW-1b — the lease facts’ words', () => {
     // is the law the contract checks (lease-facts-contract.ts, run in both files above).
     claim(
       TESTING,
-      "The laws of a store with claim leases about the runs it returns: a run with an in-progress claim that names a lease carries `lease_facts`, what the store's lease port found about that lease (added after version 0.49.0). Each case builds its own store through the adapter's `makeStore()`, which gives the store a lease port, a lease another program holds (`heldLease()`; for a store with real locks, a program in another process), and every id its port was asked about (`probed()`). Nothing in Realm writes a claim's lease yet, so a case writes two leased claims through the store's own `update`: one on the held lease, one on a lease no program held. Each case reads the facts with `leaseFactOf`.",
+      "The laws of a store with claim leases about the runs it returns: a run with an in-progress claim that names a lease carries `lease_facts`, what the store's lease port found about that lease (added after version 0.49.0). Each case builds its own store through the adapter's `makeStore()`, which gives the store a lease port, a lease another program holds (`heldLease()`; for a store with real locks, a program in another process), and every id its port was asked about (`probed()`). A case writes two leased claims through the store's own `update`: one on the held lease, one on a lease no program held. Each case reads the facts with `leaseFactOf`.",
     );
     for (const row of [
       '| `LF_GET` | `get` returns `held` for the claim on the held lease and `absent` for the other. |',
@@ -122,13 +122,13 @@ describe('#729 CW-1b — the lease facts’ words', () => {
     // both files; a store without leases needs no change: core's lease-facts-cw1b ("a store written
     // before CW-1b works unchanged"); the three functions take or return a fact for a leased claim
     // and are unchanged for any other: core's lease-facts-cw1b (the classifyClaim table, the
-    // consumers, "an unleased claim's results are exactly today's"); "nothing in Realm takes a lease
-    // yet": claim-lease-witness-cw1 (no `hold(` call in production source). Part 2a's sentence: the
+    // consumers, "an unleased claim's results are exactly today's"); "no Realm command takes a lease
+    // yet": claim-lease-witness-cw1 (only its listed files call `hold(`; #729 CW-2a). Part 2a's sentence: the
     // callbacks' snapshot, core's lease-facts-reach-cw1b2 (f) cells; `composeWaysAt`'s `lease_facts`,
     // that file's composeWaysAt cell; `drainFinalizers`' `snapshot` (correction 1): no cell executes it
     // (the correction adds none), its field is held by core's build.
     claimChangelog(
-      "- **A run a store returns can carry the facts about its claims' leases** (`lease_facts`, optional): `@sensigo/realm-store-sqlite` attaches them, and `InMemoryStore` does when given a lease port; a store without leases needs no change. `classifyClaim`, `describeClaimHolder` and `classifyInProgressClaims` take or return a lease fact for a claim that names a lease, and are unchanged for any other. Nothing in Realm takes a lease yet. `advanceRun`'s `onTaken` and `onNotRecorded` receive the run's re-read snapshot, with its lease facts, as an optional last argument, `composeWaysAt` takes `lease_facts` in its input, and `drainFinalizers`' result carries the run's `snapshot`.",
+      "- **A run a store returns can carry the facts about its claims' leases** (`lease_facts`, optional): `@sensigo/realm-store-sqlite` attaches them, and `InMemoryStore` does when given a lease port; a store without leases needs no change. `classifyClaim`, `describeClaimHolder` and `classifyInProgressClaims` take or return a lease fact for a claim that names a lease, and are unchanged for any other. No Realm command takes a lease yet. `advanceRun`'s `onTaken` and `onNotRecorded` receive the run's re-read snapshot, with its lease facts, as an optional last argument, `composeWaysAt` takes `lease_facts` in its input, and `drainFinalizers`' result carries the run's `snapshot`.",
     );
   });
 });
