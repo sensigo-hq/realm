@@ -644,6 +644,10 @@ export function startGateReminderTimers(
   if (gate === undefined) return (): void => {};
   const startMs = opened.at.getTime();
   const cancels: Array<() => void> = [];
+  // #597 D1b correction 1: closing is final. Once the cleanup ran, no waiter is registered, no attempt
+  // starts, and an attempt in flight registers no retry and makes no unfenced post (one already past
+  // its lease is not interrupted: its post is a fact, and its mark is still written).
+  let closed = false;
   // #964: the last line posted. A reminder never repeats the escalation's line, nor the escalation a
   // reminder's (they read the same when the gate names no owner and both are composed at one reading).
   let last: { what: 'Reminder' | 'Escalation'; text: string } | undefined;
@@ -657,6 +661,7 @@ export function startGateReminderTimers(
   };
   // #964: a waiter on the store's clock, given the clock's reading when it fires.
   const at = (whenMs: number, fire: (nowMs: number) => void): void => {
+    if (closed) return;
     cancels.push(clock.at(new Date(whenMs), () => fire(clock.now().getTime())));
   };
   const composedAt = (whenMs: number, nowMs: number): Date =>
@@ -681,7 +686,7 @@ export function startGateReminderTimers(
     nowMs: number,
     kind: Kind,
   ): void => {
-    if (skip(nowMs)) return;
+    if (closed || skip(nowMs)) return;
     const text = compose(nowMs, kind !== 'retry');
     if (repeats(text, what)) return;
     if (ledger === undefined) {
@@ -695,7 +700,7 @@ export function startGateReminderTimers(
       if (last === mine) last = before;
     };
     const retry = (deadline: string | undefined): void => {
-      if (kind === 'retry') return;
+      if (kind === 'retry' || closed) return;
       const deadlineMs = deadline !== undefined ? parseStamp(deadline) : undefined;
       at(deadlineMs ?? clock.now().getTime() + OUTBOUND_LEASE_SECONDS * 1000, (retryMs) =>
         attempt(what, leaseWhat, skip, compose, retryMs, 'retry'),
@@ -710,6 +715,11 @@ export function startGateReminderTimers(
     }).then((outcome) => {
       switch (outcome.kind) {
         case 'lease_threw':
+          // Closed meanwhile: nothing is posted, so the line (which says one is) is not printed.
+          if (closed) {
+            restore();
+            return;
+          }
           if (!leaseThrowWarned) {
             leaseThrowWarned = true;
             console.warn(leaseThrewLine(thrownText(outcome.error)));
@@ -886,6 +896,7 @@ export function startGateReminderTimers(
   );
 
   return () => {
+    closed = true;
     for (const cancel of cancels) cancel();
     cancels.length = 0;
   };

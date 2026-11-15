@@ -367,3 +367,228 @@ describe('#597 D1b — inspect and list say what the outbound ledger recorded', 
     });
   });
 });
+
+// ── Correction 1: the lines are about ONE question ───────────────────────────────────────────────
+// The ledger keys a question's rows by its gate id, and `read` returns every row of the run, so a run
+// that asks a second question holds the first question's rows too. The lines count the open
+// question's rows only; with no question open, the rows of the question that owns the newest row.
+
+/** Two questions in a row, each every 10 min, at most 3. */
+const TWO: WorkflowDefinition = loadWorkflowFromString(
+  [
+    'id: outbound-lines-d1b-two',
+    'name: outbound-lines-d1b-two',
+    'version: 1',
+    'steps:',
+    '  q1:',
+    '    description: Ask first.',
+    '    execution: auto',
+    '    trust: human_confirmed',
+    '    gate:',
+    '      choices: [approve, reject]',
+    '      reminder_seconds: 600',
+    '      reminder_max: 3',
+    '  q2:',
+    '    description: Ask again.',
+    '    execution: auto',
+    '    trust: human_confirmed',
+    '    depends_on: [q1]',
+    '    gate:',
+    '      choices: [approve, reject]',
+    '      reminder_seconds: 600',
+    '      reminder_max: 3',
+  ].join('\n'),
+);
+const twoStore = {
+  async register() {},
+  async get() {
+    return TWO;
+  },
+  async list() {
+    return [TWO];
+  },
+};
+declareReleaseLine(twoStore);
+
+interface TwoRig {
+  readonly clock: SettableClock;
+  readonly store: InMemoryStore;
+  readonly ledger: OutboundLedger;
+  readonly runId: string;
+  readonly g1: string;
+  readonly g2: string;
+}
+
+/** One lease (120 s) at `ms` after T, marked `sent` at the same reading. */
+async function sent(r: TwoRig, what: OutboundLeaseRequest['what'], ms: number): Promise<void> {
+  await r.clock.set(at(ms));
+  const token = `t-${JSON.stringify(what)}-${ms}`;
+  const leased = await r.ledger.lease(r.runId, { what, leaseToken: token, leaseSeconds: 120 });
+  if (!leased.applied) throw new Error(`fixture: ${leased.reason}`);
+  const marked = await r.ledger.mark(r.runId, {
+    what,
+    leaseToken: token,
+    result: 'sent',
+    outcome: 'ok',
+  });
+  if (!marked.applied) throw new Error(`fixture: ${marked.reason}`);
+}
+
+/**
+ * A run whose first question (opened at T) got reminders 1–3 and the escalation if `g1Rows`, was
+ * answered at 35 min, and whose second question opened at 36 min and is open.
+ */
+async function twoQuestions(g1Rows = true): Promise<TwoRig> {
+  const clock = settableClock(at(0));
+  const store = new InMemoryStore({ clock });
+  const { record } = await store.create({ workflowId: TWO.id, workflowVersion: 1, params: {} });
+  const ask = async (step: string): Promise<string> => {
+    const r = await executeStep(store, TWO, {
+      runId: record.id,
+      command: step,
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    if (r.status !== 'confirm_required') throw new Error(`fixture: ${step} ${r.status}`);
+    return (await store.get(record.id)).record.pending_gate!.gate_id;
+  };
+  const g1 = await ask('q1');
+  const rig = { clock, store, ledger: store.outbound!, runId: record.id, g1, g2: '' };
+  if (g1Rows) {
+    for (const k of [1, 2, 3])
+      await sent(rig, { type: 'reminder', gateId: g1, occurrence: k }, k * 10 * MIN);
+    await sent(rig, { type: 'escalation', gateId: g1 }, 30 * MIN);
+  }
+  await clock.set(at(35 * MIN));
+  await answer(store, record.id, g1);
+  await clock.set(at(36 * MIN));
+  return { ...rig, g2: await ask('q2') };
+}
+
+async function answer(store: InMemoryStore, runId: string, gateId: string): Promise<void> {
+  const r = await submitHumanResponse(store, TWO, {
+    runId,
+    gateId,
+    choice: 'approve',
+    route: 'cli',
+  });
+  if (r.status !== 'ok') throw new Error(`fixture: ${r.status}`);
+}
+
+/** `inspect`'s ledger lines and the line before the first, and `list`'s ledger part, at `ms`. */
+async function readTwo(
+  r: TwoRig,
+  ms: number,
+): Promise<{ inspect: string[]; before: string | undefined; list: string }> {
+  await r.clock.set(at(ms));
+  const out = stripSpanMarks(await inspectRun(r.runId, r.store, twoStore)).split('\n');
+  const first = out.findIndex((l) => l.startsWith('Reminders: ') || l.startsWith('Escalation: '));
+  const row = stripSpanMarks(
+    (await listRuns(undefined, r.store)).split('\n').find((l) => l.includes(r.runId)) ?? '(no row)',
+  );
+  const i = row.indexOf('  reminders:');
+  return {
+    inspect: ledgerLines(out),
+    before: first > 0 ? out[first - 1]?.trimStart().split(':')[0] : undefined,
+    list: i >= 0 ? row.slice(i) : '(no ledger part)',
+  };
+}
+
+describe('#597 D1b correction 1 — the lines are about one question', () => {
+  it('two questions, the second open with only its reminder 3 sent: `inspect` and `list` say the second question’s, and no escalation', async () => {
+    // (a) red when the first question's rows are counted too (`4 sent`, an `Escalation:` line from
+    //     the first question, `of at most` from its row); (b) prints both reads.
+    const r = await twoQuestions();
+    await sent(r, { type: 'reminder', gateId: r.g2, occurrence: 3 }, 66 * MIN);
+    expect(await readTwo(r, 70 * MIN)).toEqual({
+      inspect: ['Reminders: 1 sent (of at most 3), last 4m ago (2030-01-01T01:06:00Z); 2 skipped'],
+      before: 'To answer',
+      list: '  reminders: 1 sent (of at most 3), last 4m ago (2030-01-01T01:06:00Z); 2 skipped',
+    });
+  });
+
+  it('the second question open with no rows of its own, the first question’s rows present: `none recorded`', async () => {
+    // (a) red when the first question's rows stand in for the open one's; (b) prints both reads.
+    const r = await twoQuestions();
+    expect(await readTwo(r, 40 * MIN)).toEqual({
+      inspect: ['Reminders: none recorded'],
+      before: 'To answer',
+      list: '  reminders: none recorded',
+    });
+  });
+
+  it('the same run finished (no question open): the lines are the newest row’s question’s, the second one’s; `list` prints none', async () => {
+    // (a) red when a finished run sums both questions' rows, or keeps the first question's; (b)
+    //     prints both reads.
+    const r = await twoQuestions();
+    await sent(r, { type: 'reminder', gateId: r.g2, occurrence: 3 }, 66 * MIN);
+    await r.clock.set(at(68 * MIN));
+    await answer(r.store, r.runId, r.g2);
+    expect(await readTwo(r, 70 * MIN)).toEqual({
+      inspect: ['Reminders: 1 sent (of at most 3), last 4m ago (2030-01-01T01:06:00Z); 2 skipped'],
+      before: 'Updated',
+      list: '(no ledger part)',
+    });
+  });
+
+  it('a finished run whose rows all belong to its first question (the second got none): the first question’s lines, as they were', async () => {
+    // (a) red when a finished run's lines are lost because its last question has no row, or invent
+    //     rows for it; (b) prints both reads.
+    const r = await twoQuestions();
+    await r.clock.set(at(68 * MIN));
+    await answer(r.store, r.runId, r.g2);
+    expect(await readTwo(r, 70 * MIN)).toEqual({
+      inspect: [
+        'Reminders: 3 sent (of at most 3), last 40m ago (2030-01-01T00:30:00Z)',
+        'Escalation: sent 40m ago (2030-01-01T00:30:00Z)',
+      ],
+      before: 'Updated',
+      list: '(no ledger part)',
+    });
+  });
+
+  it('the docs’ `list` samples: a waiting row with no authored schedule ends `opened 0s ago (…)  reminders: none recorded`', async () => {
+    // (a) red when the waiting row's last part differs from the samples in human-gates.md and
+    //     realm-run-reading.md (docs-597-d1b quotes them); (b) prints the row.
+    const r = await waiting(undefined, undefined, UNSCHEDULED);
+    const row = await listed(r, 0);
+    expect(row.slice(row.indexOf('gate: '))).toBe(
+      'gate: q opened 0s ago (2030-01-01T00:00:00Z)  reminders: none recorded',
+    );
+  });
+
+  it('a row whose key does not parse, and a row of a question whose id starts with the open one’s, are not counted', async () => {
+    // (a) red when the question is matched by prefix (`startsWith`), or an unparsable key is read;
+    //     (b) prints the lines.
+    const { rowsOfOneQuestion, outboundWords } = await import('../lib/outbound-words.js');
+    const view = (entry_key: string, occurrence: number) => ({
+      entry_key,
+      type: 'reminder' as const,
+      occurrence,
+      of_max: 3,
+      status: 'sent' as const,
+      lease_deadline: '2030-01-01T00:12:00.000Z',
+      attempts: 1,
+      sent_at: '2030-01-01T00:10:00.000Z',
+      created_at: '2030-01-01T00:10:00.000Z',
+    });
+    const rows = [
+      view('gate:g-1:reminder:1', 1),
+      view('gate:g-10:reminder:2', 2),
+      view('gate:g-1:reminder:x', 3),
+      view('not-a-key', 3),
+    ];
+    const open = rowsOfOneQuestion(rows, 'g-1');
+    const newest = rowsOfOneQuestion([...rows, view('gate:g-10:escalationx', 4)], undefined);
+    expect({
+      open: open.map((row) => row.entry_key),
+      words: outboundWords(open, at(70 * MIN), true).reminders,
+      newest: newest.map((row) => row.entry_key),
+    }).toEqual({
+      open: ['gate:g-1:reminder:1'],
+      words: '1 sent (of at most 3), last 1h 0m ago (2030-01-01T00:10:00Z)',
+      // the newest parsable row is `gate:g-10:reminder:2`: its question's rows only
+      newest: ['gate:g-10:reminder:2'],
+    });
+  });
+});

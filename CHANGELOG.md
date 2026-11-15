@@ -20,7 +20,7 @@ All notable changes to this project are documented here.
 
 **6. `register` and `watch` refuse a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.** Run `realm workflow validate` on each file with a `trigger:` block, or `realm workflow validate --registered <id>` on each stored one, and fix what the refusal names. Such a trigger's requests that passed its filter were refused: all of them for a required parameter left unfilled, and those carrying a misnamed parameter's value. A stored copy keeps running as it was until you register it again.
 
-**7. Answer or let open Slack questions expire before you upgrade.** A question open at the upgrade may get one repeated reminder when its agent restarts (the 0.49 reminders left no record).
+**7. Answer or let open Slack questions expire before you upgrade.** A question open at the upgrade may get a repeated reminder or escalation when its agent restarts (the 0.49 reminders and escalations left no record).
 
 ### Added
 

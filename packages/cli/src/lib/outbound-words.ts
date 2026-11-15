@@ -1,7 +1,8 @@
 // outbound-words.ts — issue #597, D1b: what `realm run inspect` and `realm run list` say about a run's
 // outbound ledger (`store.outbound`, D1a): the reminders and the escalation a `realm agent` leased and
-// sent for the run's open question, counted from the ledger's rows alone (a view, never the lease
-// token), by status and type, at the run read's own reading.
+// sent for ONE question of the run, counted from that question's rows (a view, never the lease token),
+// by status and type, at the run read's own reading. The question is the open one; when none is open,
+// the one that owns the newest row (correction 1: a run's earlier questions' rows are never counted).
 //
 // Reminders: `N sent (of at most M), last <when>; K skipped; U not confirmed; F failed (not retried)`.
 // N counts the sent reminder rows; M is the first reminder row's `of_max`; `last` is the latest
@@ -33,6 +34,33 @@ export async function readOutboundRows(
   } catch {
     return undefined;
   }
+}
+
+/** A row's key, `gate:<gate_id>:reminder:<k>` or `gate:<gate_id>:escalation`: its question part. */
+const ENTRY_KEY = /^gate:(.+):(?:reminder:\d+|escalation)$/;
+
+/** The question a row belongs to, or `undefined` when its key does not parse (the row is ignored). */
+function questionOf(row: OutboundEntryView): string | undefined {
+  return ENTRY_KEY.exec(row.entry_key)?.[1];
+}
+
+/**
+ * The rows the lines are about: the open question's (`openGateId`), or, with no question open, the
+ * rows of the question that owns the newest row (the last parsable row `read` returns, which orders
+ * by `created_at` then key). A row of any other question, or one whose key does not parse, is left
+ * out.
+ */
+export function rowsOfOneQuestion(
+  rows: readonly OutboundEntryView[],
+  openGateId: string | undefined,
+): readonly OutboundEntryView[] {
+  let gateId = openGateId;
+  if (gateId === undefined) {
+    for (let i = rows.length - 1; i >= 0 && gateId === undefined; i -= 1)
+      gateId = questionOf(rows[i]!);
+  }
+  if (gateId === undefined) return [];
+  return rows.filter((row) => questionOf(row) === gateId);
 }
 
 /** The two parts' words, without their labels; a part with nothing to say is absent. */

@@ -626,3 +626,104 @@ describe('#597 D1b — the catch-up at attach', () => {
     expect({ atAttach, texts }).toEqual({ atAttach: [], texts: [open('35m')] });
   });
 });
+
+describe('#597 D1b correction 1 — closing the question is final', () => {
+  // The cleanup cancels the waiters registered so far; an attempt in flight when it runs (its lease
+  // call or its post not answered yet) must register no retry and make no unfenced post afterwards.
+
+  it('closed while the lease call is pending, the lease then answers `lease_held`: nothing fires at the deadline (no second lease call)', async () => {
+    // (a) red when the retry is registered after the cleanup (a lease call at the deadline); (b)
+    //     prints the lease calls, the posts and the waiters left.
+    const r = await rig(SERIES);
+    let leases = 0;
+    let release: ((answer: OutboundResult) => void) | undefined;
+    const clear = await start(r, {
+      ledger: wrap(r.ledger, {
+        lease: () => {
+          leases += 1;
+          return new Promise<OutboundResult>((resolve) => {
+            release = resolve;
+          });
+        },
+      }),
+    });
+    await r.clock.set(plus(10 * MIN));
+    await settle();
+    clear(); // the question closes while the lease call is pending
+    release!(heldUntil(plus(11 * MIN)));
+    await settle();
+    await r.clock.set(plus(13 * MIN));
+    await settle();
+    expect({ leases, texts, waiting: r.clock.waiting() }).toEqual({
+      leases: 1,
+      texts: [],
+      waiting: 0,
+    });
+  });
+
+  it('closed while the post is pending, Slack’s answer would be retried (`invalid_auth`): no retry', async () => {
+    // (a) red when the unmarked post's retry is registered after the cleanup (a second post); (b)
+    //     prints the posts, the row and the waiters left.
+    let answerPost: ((response: Response) => void) | undefined;
+    answer = () =>
+      new Promise<Response>((resolve) => {
+        answerPost = resolve;
+      });
+    const r = await rig(SERIES);
+    const clear = await start(r);
+    await r.clock.set(plus(10 * MIN));
+    await settle(); // leased; the post is in flight
+    clear();
+    answerPost!(slackResponse({ json: { ok: false, error: 'invalid_auth' } }));
+    await settle();
+    await r.clock.set(plus(13 * MIN));
+    await settle();
+    expect({ posts: texts.length, rows: await statuses(r), waiting: r.clock.waiting() }).toEqual({
+      posts: 1,
+      rows: { '1': 'pending' },
+      waiting: 0,
+    });
+  });
+
+  it('closed while the post is pending, Slack took it: the attempt past its lease is not interrupted, its mark is written', async () => {
+    // (a) red when closing drops the mark of a post that was made (the row would stay pending and
+    //     read "not confirmed"); (b) prints the row.
+    let answerPost: ((response: Response) => void) | undefined;
+    answer = () =>
+      new Promise<Response>((resolve) => {
+        answerPost = resolve;
+      });
+    const r = await rig(SERIES);
+    const clear = await start(r);
+    await r.clock.set(plus(10 * MIN));
+    await settle();
+    clear();
+    answerPost!(slackResponse({ json: { ok: true } }));
+    await settle();
+    expect({ posts: texts.length, rows: await statuses(r) }).toEqual({
+      posts: 1,
+      rows: { '1': 'sent' },
+    });
+  });
+
+  it('closed while the lease call is pending, the lease then throws at a scheduled instant: no unfenced post, and no line saying one was posted', async () => {
+    // (a) red when the unfenced post is made after the cleanup, or the line saying a reminder is
+    //     posted unrecorded prints; (b) prints the posts and the lines.
+    const r = await rig(SERIES);
+    let fail: ((error: Error) => void) | undefined;
+    const clear = await start(r, {
+      ledger: wrap(r.ledger, {
+        lease: () =>
+          new Promise<OutboundResult>((_resolve, reject) => {
+            fail = reject;
+          }),
+      }),
+    });
+    await r.clock.set(plus(10 * MIN));
+    await settle();
+    clear();
+    fail!(new Error('database is locked'));
+    await settle();
+    expect({ texts, warns }).toEqual({ texts: [], warns: [] });
+  });
+});
