@@ -10,7 +10,7 @@
 // before any of its rows go ({@link deleteRunIfDeletable}); a refused run writes nothing and leaves the
 // batch's other runs deleted. A deletable run's rows go by each store's own code: the run's rows
 // (stamped with the batch's one reading, the primitive's), then its trace lines and seals, then its
-// failed attempts. The replay store keeps nothing per run, and the duplicate-webhook memory clears
+// failed attempts, then its outbound ledger rows (#597 D1c-1). The replay store keeps nothing per run, and the duplicate-webhook memory clears
 // its own expired ids.
 //
 // After the batches, when at least one run was deleted: the free pages go back in steps of
@@ -30,8 +30,10 @@
 // and the batches already committed stand. A vacuum or a checkpoint that fails is carried in the
 // report; it never hides the deletes.
 //
-// The figures: each deleted run's bytes are the three stores' own measures (unit 14's
-// `storedBytesOfRun`, the trace rows' bytes, the failed attempts' stored size), so a preview of an
+// The figures: each deleted run's bytes are the stores' own measures (unit 14's `storedBytesOfRun`,
+// the trace rows' bytes, the failed attempts' stored size, and the outbound rows' text bytes, which
+// `realm run purge`'s preview counts only once D1c-2 lists the ledger store: nothing writes those rows
+// before then), so a preview of an
 // unchanged run equals its receipt; `stored_bytes_deleted` sums them. `file_bytes_reclaimed` is the
 // store file's size on disk before the first batch minus its size after the checkpoint, never
 // negative. Pages of a deleted run still in the log, never checkpointed, do not show in it: it is a
@@ -48,6 +50,7 @@ import {
   ARTIFACT as FAILED_ATTEMPTS,
   deleteFailedAttemptRowsOfRun,
 } from './failed-attempt-store.js';
+import { ARTIFACT as OUTBOUND, deleteOutboundRowsOfRun } from './outbound-ledger.js';
 import { ARTIFACT as RUNS, deleteRunIfDeletable } from './run-store.js';
 import { ARTIFACT as TRACE_BUFFER, deleteTraceRowsOfRun } from './trace-buffer-store.js';
 
@@ -68,7 +71,7 @@ export interface PurgeSelection {
 
 /** What the purge did with one run it attempted. */
 export type PurgeRunOutcome =
-  /** Deleted: its bytes, the three stores' receipts. */
+  /** Deleted: its bytes, the stores' receipts (#597 D1c-1: the outbound rows' too). */
   | { readonly runId: string; readonly outcome: 'purged'; readonly bytes_deleted: number }
   /** Not there when its batch read it (something else deleted it first): nothing written. */
   | { readonly runId: string; readonly outcome: 'already_gone' }
@@ -216,12 +219,14 @@ async function purgeBatch(
           }
           const trace = own(TRACE_BUFFER)(() => deleteTraceRowsOfRun(tx, runId));
           const attempts = own(FAILED_ATTEMPTS)(() => deleteFailedAttemptRowsOfRun(tx, runId));
+          // #597 D1c-1: the run's outbound ledger rows, with the run, in the same transaction.
+          const outbound = own(OUTBOUND)(() => deleteOutboundRowsOfRun(tx, runId));
           outcomes.push({
             runId,
             outcome: 'purged',
-            bytes_deleted: judged.bytes + trace.bytes + attempts.bytes,
+            bytes_deleted: judged.bytes + trace.bytes + attempts.bytes + outbound.bytes,
           });
-          checks.push(judged, trace, attempts);
+          checks.push(judged, trace, attempts, outbound);
         }
         return { outcomes, checks };
       },

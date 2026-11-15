@@ -15,8 +15,8 @@ import { rootRawArgs } from '../lib/option-value-guard.js';
 
 /**
  * The line `realm db migrate` prints for one event of the store file `file`. Exported for the cell
- * that holds the step line to the page's words: no step can run on the built CLI while only schema
- * version 1 exists.
+ * that holds the step line to the page's words (#597 D1c-1: the built CLI also runs the first real
+ * step, from schema version 1 to 2).
  */
 export function lineOf(file: string, event: MigrateProgress): string {
   switch (event.kind) {

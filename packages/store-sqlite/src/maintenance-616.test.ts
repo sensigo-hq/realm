@@ -42,7 +42,12 @@ import {
 import { constants, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { WorkflowError, type Clock, type CreateRunOptions } from '@sensigo/realm';
+import {
+  REALM_STORE_SCHEMA_VERSION,
+  WorkflowError,
+  type Clock,
+  type CreateRunOptions,
+} from '@sensigo/realm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { versionNewerError } from './connection.js';
 import { openDatabase } from './driver.js';
@@ -111,14 +116,26 @@ async function maintain(
   return handle;
 }
 
-/** A home with a store holding `runs` runs, made by the open and closed again; its ids. */
-async function storeWithRuns(path: string, runs = 2): Promise<string[]> {
-  const h = await openRealmHome({ home: path });
+/**
+ * A home with a store holding `runs` runs, made by the open and closed again; its ids. #597 D1c-1:
+ * `seams` makes it at another schema version (`V1`: a version-1 file, as 0.49.0 wrote it).
+ */
+async function storeWithRuns(
+  path: string,
+  runs = 2,
+  seams?: Parameters<typeof openHome>[1],
+): Promise<string[]> {
+  const h = await (seams === undefined
+    ? openRealmHome({ home: path })
+    : openHome({ home: path }, seams));
   const ids: string[] = [];
   for (let i = 0; i < runs; i++) ids.push((await h.runStore.create(RUN)).record.id);
   h.close();
   return ids;
 }
+
+/** #597 D1c-1: the open's seam that makes a version-1 file (the ladder's older file). */
+const V1 = { schemaVersion: 1 } as const;
 
 /** A rejection as a reader sees it: a typed refusal's code and message, or a plain error's message. */
 async function outcome(promise: Promise<unknown>): Promise<string> {
@@ -248,7 +265,7 @@ describe('#616 PR-2c c6 — the maintenance entry and realm db backup', () => {
     expect({ opened, found, report }).toEqual({
       opened: 'opened',
       found: ids,
-      report: { path: copy, bytes: statSync(copy).size, schemaVersion: 1, quickCheck: 'ok' },
+      report: { path: copy, bytes: statSync(copy).size, schemaVersion: 2, quickCheck: 'ok' },
     });
   });
 
@@ -491,7 +508,7 @@ describe('#616 PR-2c c6 — the maintenance entry and realm db backup', () => {
     it('(a) a Realm at version 2 opens a version-1 file for maintenance and copies it as it is; its ordinary open refuses the file as older', async () => {
       const root = tmp();
       const live = join(root, '.realm');
-      await storeWithRuns(live);
+      await storeWithRuns(live, 2, V1);
       const seams = { schemaVersion: 2, versions: ladder() };
       const m = await maintain(live, seams);
       const copy = join(root, 'copy.db');
@@ -515,7 +532,7 @@ describe('#616 PR-2c c6 — the maintenance entry and realm db backup', () => {
 
     it('(b) a Realm whose oldest held version is 2 refuses a version-1 file, also for maintenance', async () => {
       const live = join(tmp(), '.realm');
-      await storeWithRuns(live, 1);
+      await storeWithRuns(live, 1, V1);
       const versions = new Map([...ladder()].filter(([v]) => v > 1));
       // (1) red when "older" admits a version this Realm holds no schema for (the file opens);
       //     (2) prints the refusal.
@@ -528,7 +545,7 @@ describe('#616 PR-2c c6 — the maintenance entry and realm db backup', () => {
       const live = join(tmp(), '.realm');
       await storeWithRuns(live, 1);
       const foreign = await openForeignConnection(live);
-      foreign.exec('PRAGMA user_version = 2');
+      foreign.exec(`PRAGMA user_version = ${REALM_STORE_SCHEMA_VERSION + 1}`);
       foreign.close();
       // (1) red when the maintenance option admits a newer file too (the entry opens it);
       //     (2) prints both outcomes' codes.
@@ -854,7 +871,7 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
         left: leftovers(target),
       }).toEqual({
         report: 'resolved',
-        copy: { version: 1, mode: 'wal' },
+        copy: { version: 2, mode: 'wal' },
         mode: '600',
         left: [],
       });
@@ -986,7 +1003,7 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
         expect({ outcome: result, left: leftovers(target), copy: copyHeader(target) }).toEqual({
           outcome: 'resolved',
           left: [],
-          copy: { version: 1, mode: 'wal' },
+          copy: { version: 2, mode: 'wal' },
         });
       },
     );

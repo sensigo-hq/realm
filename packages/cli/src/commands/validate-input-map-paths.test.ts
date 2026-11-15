@@ -464,7 +464,8 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       'CHANGELOG.md',
       '**3. A `gate:` block on a step that declares no gate trust is refused when the file is loaded.** Set `trust: human_confirmed` on the step, or remove the block, as its refusal says; `realm workflow validate --registered <id>` reports a stored copy.',
     );
-    // The two items sit in [Unreleased]'s Upgrading section, numbered on from its item 1.
+    // The two items sit in [Unreleased]'s Upgrading section, numbered on from its item 1 (#597 D1c-1's
+    // store-format item, landed after them, is 4).
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     const unreleased = changelog.slice(
       changelog.indexOf('## [Unreleased]'),
@@ -474,7 +475,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       unreleased.indexOf('### Upgrading'),
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
     );
-    expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual(['**1. ', '**2. ', '**3. ']);
+    expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual(['**1. ', '**2. ', '**3. ', '**4. ']);
   });
 });
 

@@ -613,7 +613,7 @@ realm run purge <run-id> [--force]
 realm run purge --older-than <duration> [--workflow <id>] [--force]
 ```
 
-Deletes finished runs, with their refused answers and trace entries. A deleted run cannot be brought back. Runs that have not ended are never deleted.
+Deletes finished runs, with their refused answers and trace entries, and any `outbound` rows. A deleted run cannot be brought back. Runs that have not ended are never deleted.
 
 | Flag                      | What it does                                                   |
 | ------------------------- | -------------------------------------------------------------- |
