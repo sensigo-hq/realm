@@ -37,6 +37,7 @@ import {
 } from './diagnostics.js';
 import { createSourcePositionCollector, type SourcePositionMap } from './source-positions.js';
 import { resolveTemplates } from './template-resolver.js';
+import { checkInputMapPaths, type NotCheckedPath } from './input-map-paths.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
 import { isCredentialName } from '../utils/redaction.js';
@@ -855,7 +856,7 @@ export function resolveAgentProfiles(definition: WorkflowDefinition, workflowDir
 function loadWorkflowFromFileCore(
   filePath: string,
   registry?: ExtensionRegistry,
-): { definition: WorkflowDefinition; warnings: LoaderWarning[] } {
+): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
   let content: string;
   try {
     content = readFileSync(filePath, 'utf8');
@@ -868,7 +869,7 @@ function loadWorkflowFromFileCore(
       retryable: false,
     });
   }
-  const { definition, warnings } = parseWorkflowString(content, registry, {
+  const { definition, warnings, notChecked } = parseWorkflowString(content, registry, {
     allowExtensions: true,
   });
   // issue #424 — CHOKEPOINT 2. Everything past the parse can throw with `warnings` already
@@ -926,7 +927,7 @@ function loadWorkflowFromFileCore(
     throw err;
   }
 
-  return { definition, warnings };
+  return { definition, warnings, notChecked };
 }
 
 /**
@@ -949,11 +950,13 @@ export function loadWorkflowFromFile(
  * Same as `loadWorkflowFromFile`, but prints nothing and returns every collected LoaderWarning
  * alongside the definition (issue #169). Opt-in for callers that want to surface warnings
  * themselves (validate/register/watch/`--strict`) instead of the default console.warn behavior.
+ * `notChecked` (fix 1, unit 1) lists the `input_map` paths into data the workflow declares no
+ * shape for, which `validate` reports.
  */
 export function loadWorkflowFromFileWithDiagnostics(
   filePath: string,
   registry?: ExtensionRegistry,
-): { definition: WorkflowDefinition; warnings: LoaderWarning[] } {
+): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
   return loadWorkflowFromFileCore(filePath, registry);
 }
 
@@ -980,12 +983,12 @@ export function loadWorkflowFromString(
 
 /**
  * Same as `loadWorkflowFromString`, but prints nothing and returns every collected LoaderWarning
- * alongside the definition (issue #169).
+ * alongside the definition (issue #169), and the `input_map` paths not checked (fix 1, unit 1).
  */
 export function loadWorkflowFromStringWithDiagnostics(
   content: string,
   registry?: ExtensionRegistry,
-): { definition: WorkflowDefinition; warnings: LoaderWarning[] } {
+): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
   return parseWorkflowString(content, registry, { allowExtensions: false });
 }
 
@@ -1206,7 +1209,7 @@ function parseWorkflowString(
   content: string,
   registry: ExtensionRegistry | undefined,
   opts: { allowExtensions: boolean },
-): { definition: WorkflowDefinition; warnings: LoaderWarning[] } {
+): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
   // Step 1: Parse YAML
   //
   // issue #392: the position collector rides THIS parse via js-yaml's own listener — there is no
@@ -3849,6 +3852,15 @@ function parseWorkflowString(
       }
     }
 
+    // Fix 1, unit 1: every `input_map` path a step consumes, judged against what the workflow
+    // declares (`input-map-paths.ts`). Last, once every step is known, and before the throw below,
+    // so its findings ride a refusal for another reason too (#424) — every problem in one pass.
+    const inputMapPaths = checkInputMapPaths(
+      { steps: stepsRaw, params_schema: doc['params_schema'] },
+      (segments) => sourceMap.posOf(segments),
+    );
+    warnings.push(...inputMapPaths.warnings);
+
     if (errors.length > 0) {
       throw new WorkflowError(`Invalid workflow: ${errors.join('; ')}`, {
         // issue #425: the pre-join strings — see the profile collector above.
@@ -3862,7 +3874,7 @@ function parseWorkflowString(
     // Step 4: Stamp schema version and return typed result
     const definition = doc as unknown as WorkflowDefinition;
     definition.schema_version = CURRENT_WORKFLOW_SCHEMA_VERSION;
-    return { definition, warnings };
+    return { definition, warnings, notChecked: inputMapPaths.notChecked };
   } catch (err) {
     if (err instanceof WorkflowError) attachLoaderWarnings(err, warnings);
     throw err;

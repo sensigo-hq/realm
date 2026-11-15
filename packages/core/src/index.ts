@@ -1065,6 +1065,9 @@ export {
   isExtensionKey,
 } from './workflow/diagnostics.js';
 export type { WarningCode, LoaderWarning } from './workflow/diagnostics.js';
+// fix 1, unit 1: the `input_map` paths `validate` lists as not checked (its `--json` `not_checked`).
+export type { NotCheckedPath } from './workflow/input-map-paths.js';
+export type { NotCheckedWhy } from './workflow/path-resolver.js';
 
 // Structured output eligibility — the L0 prevention layer (issue #236)
 export {
