@@ -80,6 +80,14 @@ export type {
   LeaseFactsContractCase,
   LeaseFactsTestStore,
 } from './store/lease-facts-contract.js';
+// issue #729, the claim window (CW-2a): the laws of a claim taken under a lease its caller holds.
+export { leasedClaimContract, LEASED_CLAIM_LAWS } from './store/leased-claim-contract.js';
+export type {
+  LeasedClaimLaw,
+  LeasedClaimContractAdapter,
+  LeasedClaimContractCase,
+  LeasedClaimTestStore,
+} from './store/leased-claim-contract.js';
 // issue #597, D1a: the laws of a store's outbound ledger (`RunStore.outbound`).
 export { outboundLedgerContract, OUTBOUND_LEDGER_LAWS } from './store/outbound-ledger-contract.js';
 export type {

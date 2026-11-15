@@ -2,8 +2,9 @@
 // port. A claim lease is a lock the operating system keeps while the program holding it runs, and
 // lets go of the moment that program ends, however it ends; any other program can ask, without
 // waiting on the holder, whether it is held. Core declares the port, its answers and its closed
-// reason lists; a store does the I/O behind it (R19: core stays I/O-free). Nothing in Realm takes a
-// lease yet: later units of the claim window do (CW-2 writes a claim's lease, CW-5 holds one per drive).
+// reason lists; a store does the I/O behind it (R19: core stays I/O-free). Core's `claimStepForDrive`
+// takes one and has the store write it in the step's claim (CW-2a); no Realm command calls it yet
+// (CW-5's `realm agent` will hold one per drive).
 import type { RunRecord } from '../types/run-record.js';
 
 /** Why a store could not make a lease: a closed list, from the error the operating system or SQLite gave. */

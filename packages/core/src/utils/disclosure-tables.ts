@@ -365,7 +365,8 @@ function skipDetailTable(value: unknown): ClassTable {
 }
 
 /** #729, the claim window (CW-1): a claim's lease, a table of its own so that a key a stored lease
- *  holds beyond its id is walked as any unclassified field. Written by nothing yet. */
+ *  holds beyond its id is walked as any unclassified field. Written by a store's `claimStep` when its
+ *  caller passes the lease it holds (CW-2a). */
 const CLAIM_LEASE_TABLE = {
   id: 'fact',
 } as const satisfies Row<NonNullable<ClaimRecord['lease']>>;

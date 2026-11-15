@@ -485,6 +485,14 @@ export {
 export type { ClaimState, InProgressClaimInfo } from './engine/claim-liveness.js';
 export { reclaimStep } from './engine/reclaim-step.js';
 export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine/reclaim-step.js';
+// #729, the claim window (CW-2a): a drive takes a step's claim under its lease, and gives it back.
+export { claimStepForDrive, releaseDriveClaim } from './engine/drive-claim.js';
+export type {
+  ClaimStepForDriveOptions,
+  DriveClaim,
+  ReleaseDriveClaimOptions,
+  DriveRelease,
+} from './engine/drive-claim.js';
 export {
   classifyRunHealth,
   DEFAULT_IDLE_THRESHOLD_MS,

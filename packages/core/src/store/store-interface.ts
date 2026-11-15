@@ -6,7 +6,7 @@ import type { Attributed } from '../engine/holder.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 import type { Snapshot } from '../engine/snapshot.js';
 import type { Clock } from '../utils/clock.js';
-import type { LeasePort } from './lease-port.js';
+import type { LeaseHold, LeasePort } from './lease-port.js';
 import type { LeaseFacts } from './lease-facts.js';
 import type { OutboundLedger } from './outbound-ledger.js';
 
@@ -179,8 +179,9 @@ export interface RunStore {
    * operating system keeps while the program holding it runs and lets go of when that program ends;
    * `probe` says whether one is held, as a fact with how it is known. The engine's admission refuses a
    * `leases` that is present and neither `null` nor an object with `hold` and `probe` functions
-   * (`store_leases`). The SQLite store keeps leases; `InMemoryStore` leaves it unset unless it is given a lease port. Nothing in Realm
-   * takes a lease yet.
+   * (`store_leases`). The SQLite store keeps leases; `InMemoryStore` leaves it unset unless it is given a lease port. No Realm
+   * command takes a lease yet: core's `claimStepForDrive` takes one (CW-2a), and CW-5's `realm agent`
+   * will call it.
    */
   readonly leases?: LeasePort | null;
 
@@ -303,12 +304,22 @@ export interface RunStore {
    *
    * Returns the claimed record with the claim's one reading (#715): the deadline, `since` and
    * `updated_at` are all minted from it.
+   *
+   * **The claim's lease (#729, the claim window, CW-2a).** `hold` is a lease the caller holds, made by
+   * this store's own `leases.hold()`. A store that keeps leases (`leases` is a port) writes
+   * `claims[stepName].lease = { id: hold.id }` in the claim's one write; without `hold` it writes no
+   * `lease`, exactly as before. A hold names at most one claim: it is used by its first `claimStep`
+   * call, whether that call writes or is refused (a store's own busy retry inside one call is not a
+   * second use), and any later call with it, for any step of any run, throws `ENGINE_INTERNAL` before
+   * any write, the record unchanged. Realm never passes a hold to a store without leases, so a store
+   * that keeps none ignores the parameter and needs no change.
    */
   claimStep(
     runId: string,
     stepName: string,
     definition: WorkflowDefinition,
     claimant?: Attributed,
+    hold?: LeaseHold,
   ): Promise<Snapshot>;
 
   /**

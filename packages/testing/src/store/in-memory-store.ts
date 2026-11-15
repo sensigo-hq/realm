@@ -37,6 +37,7 @@ import {
   type LoadBearingRunRecordField,
   type SettlementDelta,
   type Attributed,
+  type LeaseHold,
   type LeasePort,
   type OutboundLedger,
   checkOutboundRequest,
@@ -52,6 +53,31 @@ import {
   type PendingGate,
 } from '@sensigo/realm';
 import { REALM_TESTING_BRAND } from '../brand.js';
+
+/**
+ * #729 CW-2a: every lease hold an `InMemoryStore` with leases has been given in a `claimStep` call. A
+ * hold names at most one claim, so a second call with it throws before any write — across every
+ * store of this module, so a hold cannot be spent once on each of two stores.
+ */
+const SPENT_HOLDS = new WeakSet<LeaseHold>();
+
+/** #729 CW-2a: marks `hold` used by this call, or throws when an earlier call used it. */
+function spendHold(hold: LeaseHold, runId: string, stepName: string): void {
+  if (SPENT_HOLDS.has(hold)) {
+    throw new WorkflowError(
+      `Lease '${hold.id}' was already given to a claimStep call; a lease names at most one claim. ` +
+        `Step '${stepName}' of run '${runId}' was not claimed, and nothing was written.`,
+      {
+        code: 'ENGINE_INTERNAL',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+        details: { runId, stepName, lease_id: hold.id },
+      },
+    );
+  }
+  SPENT_HOLDS.add(hold);
+}
 
 /**
  * The tombstone horizon of a store that never deletes a run (#616 PR-2c c4-i; the design owner,
@@ -450,7 +476,13 @@ export class InMemoryStore implements RunStore {
     stepName: string,
     definition: WorkflowDefinition,
     claimant?: Attributed,
+    hold?: LeaseHold,
   ): Promise<Snapshot> {
+    // #729 CW-2a: with leases, a hold is used by its first call, whether that call writes or is
+    // refused; a later call with it throws here, before anything is read or written. Without leases
+    // the store ignores it, as `JsonFileStore` does (Realm never passes one to such a store).
+    const lease = this.keepsLeases && hold !== undefined ? hold : undefined;
+    if (lease !== undefined) spendHold(lease, runId, stepName);
     // issue #188: read the record SYNCHRONOUSLY (a direct Map.get, not `await this.get(...)`) so
     // the read → eligibility-check → write below is one indivisible synchronous stretch. This is
     // what makes claimStep single-owner for concurrent same-process calls (the cross-cutting
@@ -515,6 +547,8 @@ export class InMemoryStore implements RunStore {
           token,
           since: at.toISOString(),
           ...(claimant !== undefined ? { holder: claimant } : {}),
+          // #729 CW-2a: the lease the caller holds, in the claim's one write.
+          ...(lease !== undefined ? { lease: { id: lease.id } } : {}),
         },
       },
       run_phase: deriveRunPhase(run),

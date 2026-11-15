@@ -1149,8 +1149,10 @@ export interface ClaimRecord {
   since?: string;
   /**
    * #729, the claim window (CW-1): the claim lease the program that took this step held while it
-   * worked — its id, which the store's lease port probes. Written by nothing yet (CW-2 writes it) and
-   * shown on no surface; a claim without it has no lease.
+   * worked — its id, which the store's lease port probes. A store that keeps leases writes it in
+   * `claimStep`'s one write when the caller passes the lease it holds (CW-2a: core's
+   * `claimStepForDrive`, which no Realm command calls yet); a claim a gate keeps while it waits for a
+   * person names none. Shown on no surface; a claim without it has no lease.
    */
   lease?: { id: string };
 }
