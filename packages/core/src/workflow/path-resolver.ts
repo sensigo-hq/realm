@@ -782,7 +782,12 @@ function canHoldList(level: Obj): boolean {
   );
 }
 
-function isClosedLevel(level: Obj): boolean {
+/**
+ * A level is closed when it says `additionalProperties: false` and uses none of the keywords that can
+ * let other fields in. Exported as the one rule for "closed" (fix 1, piece 2b reads it for a
+ * webhook's `params_schema`).
+ */
+export function isClosedLevel(level: Obj): boolean {
   return (
     level['additionalProperties'] === false &&
     OPENING_KEYWORDS.every((k) => !Object.prototype.hasOwnProperty.call(level, k))
