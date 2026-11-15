@@ -605,6 +605,12 @@ describe('piece 2a — check 10: one index, and never a stopped load', () => {
     handler: h
     depends_on: [classify]
     when: "classify.urgent == true"
+  later:
+    description: later
+    execution: auto
+    handler: h
+    depends_on: [classify]
+    when: "classify.categry == 'bug'"
 `,
   );
 
@@ -641,9 +647,15 @@ describe('piece 2a — check 10: one index, and never a stopped load', () => {
       if (reader === 'bad') throw new Error('planted: a bug in the when check');
       return original.call(this, reader, s, settlement);
     });
-    // (1) red when there is no catch around a `when` leaf (the load throws); (2) prints both.
+    // (1) red when there is no catch around a `when` leaf (the load throws), or when the `when`
+    //     loop stops at the first leaf it failed on (`later`'s finding is lost); (2) prints both.
     expect(findings(MIXED)).toEqual({
-      when: [],
+      when: [
+        "WHEN_PATH_UNRESOLVABLE: Step 'later': when 'classify.categry == 'bug'' reads " +
+          "'classify.categry', which can never be found: step 'classify' has no field 'categry' " +
+          `there, and its schema allows no other fields. ${NEVER} Did you mean 'category'? ` +
+          `(line ${lineOf(MIXED, `when: "classify.categry`)})`,
+      ],
       notChecked: [
         { surface: 'when', step: 'bad', key: 'when', path: 'classify.urgent', why: 'check_failed' },
       ],
