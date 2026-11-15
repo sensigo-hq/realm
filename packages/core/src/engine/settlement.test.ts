@@ -28,6 +28,8 @@
 //     store.settleStep?.bind(store)`, the dormancy guard C.1 deletes) that this literal scan
 //     could not see; they are direct calls now.
 //   abandon-run.ts (1): the `seal_run` delta (D-21) — the run-level seal moved off `update()`.
+//   drive-claim.ts (1): `releaseDriveClaim`'s `release_step` (#729, the claim window, CW-2a) — a
+//     drive gives back the claim it took under its lease, fenced on the claim's own token.
 // GONE: #291 4a's second write — the late answer's expiry is enacted INSIDE the settle_gate write
 // (A.8 (iii)), so submitHumanResponse no longer issues an `expire_gate` after a refusal.
 //
@@ -49,10 +51,11 @@ const SCANNED_ROOTS = [
 ];
 
 const INVOCATION = '.settleStep(';
-// The twelve members, each with its mechanism, are listed in the header (#715 (b)).
-const EXPECTED_SITE_COUNT = 12;
+// The thirteen members, each with its mechanism, are listed in the header (#715 (b); #729 CW-2a).
+const EXPECTED_SITE_COUNT = 13;
 const MIGRATED_FILE = join(PACKAGES_DIR, 'core', 'src', 'engine', 'execution-loop.ts');
 const SEAL_RUN_FILE = join(PACKAGES_DIR, 'core', 'src', 'engine', 'abandon-run.ts');
+const DRIVE_CLAIM_FILE = join(PACKAGES_DIR, 'core', 'src', 'engine', 'drive-claim.ts');
 
 /** Every non-test, non-declaration .ts source file under `root`, recursively. */
 function sourceFiles(root: string): string[] {
@@ -86,7 +89,7 @@ function findInvocationSites(): { file: string; line: number; text: string }[] {
   return sites;
 }
 
-describe('RunStore.settleStep is MIGRATED at exactly twelve sites — increment 2 PR-D + issue #291 + #715 (b)', () => {
+describe('RunStore.settleStep is MIGRATED at exactly thirteen sites — increment 2 PR-D + issue #291 + #715 (b) + #729 CW-2a', () => {
   it('the scan itself is wired correctly (finds at least one .ts source file per root)', () => {
     for (const root of SCANNED_ROOTS) {
       expect(
@@ -96,7 +99,7 @@ describe('RunStore.settleStep is MIGRATED at exactly twelve sites — increment 
     }
   });
 
-  it(`EXACTLY ${EXPECTED_SITE_COUNT} '.settleStep(' invocation sites exist (complete/fail/handler-abort/gate-open/gate-resolution/guard-chain/capability-release/compensating-unclaim/expire-gate-execute-step/lease-finalizer/mark-finalizer/seal-run-abandon)`, () => {
+  it(`EXACTLY ${EXPECTED_SITE_COUNT} '.settleStep(' invocation sites exist (complete/fail/handler-abort/gate-open/gate-resolution/guard-chain/capability-release/compensating-unclaim/expire-gate-execute-step/lease-finalizer/mark-finalizer/seal-run-abandon/drive-claim-release)`, () => {
     const sites = findInvocationSites();
     expect(
       sites.length,
@@ -107,16 +110,17 @@ describe('RunStore.settleStep is MIGRATED at exactly twelve sites — increment 
     ).toBe(EXPECTED_SITE_COUNT);
   });
 
-  it('every invocation site lives in execution-loop.ts, but the ONE seal_run in abandon-run.ts — none anywhere else (mcp-server stays clean)', () => {
+  it('every invocation site lives in execution-loop.ts, but the ONE seal_run in abandon-run.ts and the ONE release in drive-claim.ts — none anywhere else (mcp-server stays clean)', () => {
     const sites = findInvocationSites();
     const elsewhere = sites.filter((s) => s.file !== MIGRATED_FILE);
-    // (a) red when a settle call appears in any other file, or abandon-run.ts's seal leaves or
-    // doubles; (b) prints each site found outside execution-loop.ts.
+    // (a) red when a settle call appears in any other file, or abandon-run.ts's seal or
+    // drive-claim.ts's release leaves or doubles; (b) prints each site found outside
+    // execution-loop.ts.
     expect(
       elsewhere.map((s) => s.file),
       `'.settleStep(' invocation site(s) OUTSIDE execution-loop.ts:\n` +
         elsewhere.map((s) => `  ${s.file}:${s.line}: ${s.text}`).join('\n'),
-    ).toEqual([SEAL_RUN_FILE]);
+    ).toEqual([SEAL_RUN_FILE, DRIVE_CLAIM_FILE]);
   });
 
   it('settlement.ts declares applySettlement and selectFinalizers as its exported surface (sanity check on the module this pin is about)', () => {

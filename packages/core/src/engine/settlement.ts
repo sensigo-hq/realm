@@ -728,8 +728,13 @@ function applyOpenGate(fresh: RunRecord, delta: OpenGateDelta, at: Date): Settle
   // APPLY OPEN: pending_gate set (the delta's gate, its instants minted from `at`); evidence append; CLAIM RETAINED + step
   // stays in_progress (execution-loop.ts:2958 — retention keeps isComplete sound, G-1). Never
   // terminalizes (design record §4.1) — run_phase still derives (§4.5: transform-owned uniformly).
+  // #729, the claim window (CW-2a, design record C5 §4.3): the kept claim names no lease — it now
+  // waits on a person, not on a program — so its `lease` goes in this same write; its token and every
+  // other field stay.
+  const { lease: _lease, ...kept } = claim;
   const withGate: RunRecord = {
     ...fresh,
+    ...(claim.lease !== undefined ? { claims: { ...fresh.claims, [step]: kept } } : {}),
     evidence: [...fresh.evidence, ...evidence],
     pending_gate: pendingGate,
   };

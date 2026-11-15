@@ -33,14 +33,14 @@ describe('#729 CW-1 — the claim lease’s words', () => {
   it("core-library.md's `leases` row", () => {
     // What each part executes: the lease port's answers — store-sqlite's contract-leases-cw1 (every
     // law, real locks) and claim-lease-cw1 (a probe that does not throw on an unsearchable folder);
-    // the refusal, and a store without it or with `null` admitted — core's admission.test.ts; "nothing in Realm takes a lease
-    // yet" — claim-lease-witness-cw1 (no `hold(` call in production source). The count sentence is
+    // the refusal, and a store without it or with `null` admitted — core's admission.test.ts; "no Realm command takes a lease
+    // yet" — claim-lease-witness-cw1 (only core's claimStepForDrive and the leased-claim laws call `hold(`; #729 CW-2a). The count sentence is
     // docs-715b's c4 cell (computed from the built interface). "may still change until the claim
     // window's last unit ships" says what may change, not what the code does: no cell executes it
     // (the owner's compatibility policy, e531209a).
     claim(
       CORE,
-      "| `leases` | No | Without it, or `null`, the store keeps no claim leases. Otherwise its lease port, an object with `hold()` and `probe(id)`. A claim lease is a lock the operating system keeps while the program holding it runs, and lets go of when that program ends. `probe` says whether a lease is held: `held`, `not_held`, `absent`, or `unknown` with a reason; it never throws. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. Nothing in Realm takes a lease yet. The lease port may still change until the claim window's last unit ships. Added after version 0.49.0. |",
+      "| `leases` | No | Without it, or `null`, the store keeps no claim leases. Otherwise its lease port, an object with `hold()` and `probe(id)`. A claim lease is a lock the operating system keeps while the program holding it runs, and lets go of when that program ends. `probe` says whether a lease is held: `held`, `not_held`, `absent`, or `unknown` with a reason; it never throws. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. No Realm command takes a lease yet. The lease port may still change until the claim window's last unit ships. Added after version 0.49.0. |",
     );
   });
 
@@ -59,7 +59,7 @@ describe('#729 CW-1 — the claim lease’s words', () => {
     // The two counts (40 values, 39 types) are docs-616-c12's C10 and docs-715a's type-count cell.
     claim(
       TESTING,
-      '`storeClockContract`, `STORE_CLOCK_LAWS`, `leasePortContract`, `LEASE_PORT_LAWS`, `createLeaseDouble`, `leaseFactsContract`, `LEASE_FACTS_LAWS` |',
+      '`storeClockContract`, `STORE_CLOCK_LAWS`, `leasePortContract`, `LEASE_PORT_LAWS`, `createLeaseDouble`, `leaseFactsContract`, `LEASE_FACTS_LAWS`, `leasedClaimContract`, `LEASED_CLAIM_LAWS` |',
     );
     // The section: each law's line is the law the contract checks (lease-port-contract.ts, run in
     // contract-leases-cw1); the evidence line is the contract's own print; the refusal of an
@@ -106,11 +106,11 @@ describe('#729 CW-1 — the claim lease’s words', () => {
   it('the CHANGELOG entry', () => {
     // The refusal, and a store without `leases` admitted ("a store you wrote needs no change"):
     // admission.test.ts; the store's folder: contract-leases-cw1's L4D (the folder is
-    // `claim-leases/` through the module's constant); "nothing in Realm takes one yet":
-    // claim-lease-witness-cw1; the testing package's exports: docs-616-c12's C10 and the index; the
+    // `claim-leases/` through the module's constant); "no Realm command takes one yet":
+    // claim-lease-witness-cw1 (#729 CW-2a: only its listed files call `hold(`); the testing package's exports: docs-616-c12's C10 and the index; the
     // last sentence says what may change, not what the code does: no cell executes it.
     claimChangelog(
-      "- **A run store can keep claim leases.** `RunStore` has a new optional property, `leases`: a store without it, or with `null`, keeps none, as before, so a store you wrote needs no change. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. `@sensigo/realm-store-sqlite`'s store keeps claim leases in `claim-leases/` in the Realm home, as locks the operating system lets go of when the program holding one ends; nothing in Realm takes one yet. `@sensigo/realm-testing` adds `leasePortContract`, `LEASE_PORT_LAWS` and `createLeaseDouble`. The lease port may still change until the claim window's last unit ships.",
+      "- **A run store can keep claim leases.** `RunStore` has a new optional property, `leases`: a store without it, or with `null`, keeps none, as before, so a store you wrote needs no change. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. `@sensigo/realm-store-sqlite`'s store keeps claim leases in `claim-leases/` in the Realm home, as locks the operating system lets go of when the program holding one ends; no Realm command takes one yet. `@sensigo/realm-testing` adds `leasePortContract`, `LEASE_PORT_LAWS` and `createLeaseDouble`. The lease port may still change until the claim window's last unit ships.",
     );
   });
 });
