@@ -69,7 +69,13 @@ export type WarningCode =
   // fix 1, piece 4: a handler or adapter a step needs that the project does not provide
   // (`name-check.ts`). Advice only, never a refusal: another runner may provide the name (#134).
   | 'HANDLER_NOT_PROVIDED'
-  | 'ADAPTER_NOT_PROVIDED';
+  | 'ADAPTER_NOT_PROVIDED'
+  // fix 1, piece 3a-i: a template's filter Realm does not have, a filter argument no value accepts,
+  // and a templated field that is not text (`template-check.ts`). Refused at the boundary, lenient in
+  // execution: a template with one of them failed or misrendered when the step ran.
+  | 'TEMPLATE_FILTER_UNKNOWN'
+  | 'TEMPLATE_FILTER_ARGUMENT'
+  | 'TEMPLATED_FIELD_NOT_TEXT';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -173,6 +179,10 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   // fix 1, piece 4 — a warning everywhere; `--strict` fails on it as on any warning.
   HANDLER_NOT_PROVIDED: 'warn',
   ADAPTER_NOT_PROVIDED: 'warn',
+  // fix 1, piece 3a-i — refused by validate, register and watch; printed by run, test, agent, listen.
+  TEMPLATE_FILTER_UNKNOWN: 'error',
+  TEMPLATE_FILTER_ARGUMENT: 'error',
+  TEMPLATED_FIELD_NOT_TEXT: 'error',
 };
 
 /**
