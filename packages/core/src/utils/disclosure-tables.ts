@@ -26,6 +26,7 @@ import type {
   CacheReference,
   WorkflowContextSnapshot,
 } from '../types/run-record.js';
+import type { OutboundEntryView } from '../store/outbound-ledger.js';
 import {
   CACHE_REQUESTERS,
   CACHE_REQUESTS,
@@ -368,6 +369,23 @@ function skipDetailTable(value: unknown): ClassTable {
 const CLAIM_LEASE_TABLE = {
   id: 'fact',
 } as const satisfies Row<NonNullable<ClaimRecord['lease']>>;
+
+/** #597 D1a: an outbound ledger row as the port returns it (never its lease token): closed words,
+ *  counts, times and keys, each a fact. A field added to the view fails to compile here until it is
+ *  classed. Shown by nothing yet. */
+export const OUTBOUND_VIEW_TABLE = {
+  entry_key: 'fact',
+  type: 'fact',
+  occurrence: 'fact',
+  of_max: 'fact',
+  status: 'fact',
+  lease_deadline: 'fact',
+  attempts: 'fact',
+  last_at: 'fact',
+  last_outcome: 'fact',
+  sent_at: 'fact',
+  created_at: 'fact',
+} as const satisfies Row<OutboundEntryView>;
 
 /** A claim: its token is the claim's proof, shown as a fact on record views as it is today; export
  *  replaces a live one with its own marker. */

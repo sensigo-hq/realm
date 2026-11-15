@@ -96,6 +96,59 @@ export function reminderScheduleOf(snapshot: Snapshot): ReminderSchedule | undef
   return { max, occurrences, ...(next !== undefined ? { next } : {}) };
 }
 
+/**
+ * #597 D1a: whether reminder `k` of an open question is its FINAL one, the one definition of "final":
+ * the question has an authored `reminder_seconds`, its `expires_at` is set, and
+ * `opened_at + k·reminder_seconds ≥ expires_at`. An `opened_at` or `expires_at` that cannot be read
+ * reads as unset (as {@link reminderScheduleOf} reads it), so no reminder is final.
+ */
+export function isFinalReminder(gate: PendingGate, k: number): boolean {
+  if (gate.reminder_seconds === undefined || gate.expires_at === undefined) return false;
+  const openedAtMs = parseStamp(gate.opened_at);
+  const expiresAtMs = parseStamp(gate.expires_at);
+  if (openedAtMs === undefined || expiresAtMs === undefined) return false;
+  return openedAtMs + k * gate.reminder_seconds * 1000 >= expiresAtMs;
+}
+
+/**
+ * #597 D1a: whether reminder `what.occurrence` (k), or the escalation, of an open question may go out
+ * at `at` — pure, of the frozen question, shared by the outbound ledger and the notifier. It never
+ * judges whether a reminder is due yet: whoever sends decides that.
+ * - The escalation (every question): not when the question declares `on_expiry` and `at ≥ expires_at`
+ *   (the expiry closes the question and says so).
+ * - A reminder of a question with an authored `reminder_seconds`: k from 1 to `reminder_max` (3 when
+ *   it carries none), `opened_at` readable, the occurrence before k earlier than `expires_at` (when it
+ *   is set and k > 1), and — unless k is the final ({@link isFinalReminder}) — not closed by the
+ *   expiry as the escalation is. A question with `timeout_seconds` and no `on_expiry` (finding-only)
+ *   is never closed by its expiry.
+ * - A reminder of a question with no authored schedule: only k = 1, never closed here (whether that
+ *   one reminder is final depends on when its sender started: the notifier's own fact).
+ * An `expires_at` that cannot be read reads as unset.
+ */
+export function reminderEligibility(
+  gate: PendingGate,
+  what:
+    { readonly type: 'reminder'; readonly occurrence: number } | { readonly type: 'escalation' },
+  at: Date,
+): boolean {
+  const closed =
+    gate.on_expiry !== undefined &&
+    gate.expires_at !== undefined &&
+    isPastDeadline(gate.expires_at, at);
+  if (what.type === 'escalation') return !closed;
+  const k = what.occurrence;
+  if (gate.reminder_seconds === undefined) return k === 1;
+  const openedAtMs = parseStamp(gate.opened_at);
+  if (!Number.isInteger(k) || k < 1 || k > (gate.reminder_max ?? 3) || openedAtMs === undefined)
+    return false;
+  const expiresAtMs = gate.expires_at !== undefined ? parseStamp(gate.expires_at) : undefined;
+  const previousBeforeExpiry =
+    expiresAtMs === undefined ||
+    k === 1 ||
+    openedAtMs + (k - 1) * gate.reminder_seconds * 1000 < expiresAtMs;
+  return previousBeforeExpiry && (isFinalReminder(gate, k) || !closed);
+}
+
 /** #715 (b) (02 §D.3, D6-21, R14): what a reminder view says it does not know. */
 export const REMINDER_BASIS_CLAUSE =
   'no send is recorded; reminders are sent only while a process attends this question';

@@ -248,11 +248,11 @@ describe('#715 (a) — the docs sentences', () => {
     );
     claim(TESTING, 'The file store reads a clock file, only when it sits beside `runs/`.');
     // The type count cell below.
-    claim(TESTING, 'The 43 types are named in the group that uses them.');
+    claim(TESTING, 'The 46 types are named in the group that uses them.');
     // C16 (the family takes an adapter and returns cases).
     claim(
       TESTING,
-      'Each of the 7 contract functions takes an adapter that describes your store and returns a list of cases.',
+      'Each of the 8 contract functions takes an adapter that describes your store and returns a list of cases.',
     );
     claim(
       TESTING,
@@ -449,7 +449,7 @@ describe('#715 (a) — the facts two docs sentences rest on', () => {
     ]);
   });
 
-  it('the testing package exports 43 types (testing-package.md, "The 43 types")', () => {
+  it('the testing package exports 46 types (testing-package.md, "The 46 types")', () => {
     // (a) red when a type is added or dropped without the page; (b) prints the count.
     const index = read('packages/testing/src/index.ts');
     const names = [...index.matchAll(/export type \{([^}]*)\}/g)].flatMap((m) =>
@@ -458,6 +458,6 @@ describe('#715 (a) — the facts two docs sentences rest on', () => {
         .map((n) => n.trim())
         .filter((n) => n !== ''),
     );
-    expect(new Set(names).size, names.join(', ')).toBe(43);
+    expect(new Set(names).size, names.join(', ')).toBe(46);
   });
 });
