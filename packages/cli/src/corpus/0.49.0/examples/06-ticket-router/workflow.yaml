@@ -1,0 +1,251 @@
+# examples/06-ticket-router/workflow.yaml
+# Support Ticket Router — reads a ticket, identifies it, classifies it, then routes
+# to exactly one of five category-specific handlers via when-conditions.
+#
+# Demonstrates: when-condition routing. Each handler step declares a when expression;
+# the engine evaluates it after classify_ticket completes. Only the matching handler
+# becomes eligible — the others are moved to skipped_steps automatically. No routing
+# logic in agent prompts, no SKILL.md rules, no if/else in agent code.
+id: ticket-router
+name: Support Ticket Router
+version: 1
+
+params_schema:
+  type: object
+  additionalProperties: false
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: 'Path to the support ticket text file'
+
+services:
+  tickets:
+    adapter: filesystem
+    trust: engine_delivered
+
+steps:
+  read_ticket:
+    description: Load the support ticket from disk
+    execution: auto
+    depends_on: []
+    uses_service: tickets
+    operation: read
+    input_map:
+      path: run.params.path
+
+  identify_ticket:
+    description: >
+      Extract structured identity fields from the raw ticket text. Output is
+      validated before classify_ticket starts — the classifier cannot receive
+      incomplete or malformed extraction data.
+    execution: agent
+    depends_on: [read_ticket]
+    prompt: |
+      Extract identity fields from the support ticket below.
+
+      Required fields:
+      - customer_id: the customer ID, format CUST-NNNN
+      - product_area: the product or service area this ticket concerns
+        (e.g. "billing", "payment gateway", "account management", "API")
+      - product_version: the software version mentioned, or "unknown" if not stated
+      - reported_issue: one sentence describing the problem as reported
+        (10–300 characters)
+
+      Return exactly these four fields. Any field missing or using an invalid
+      format will be rejected before this response is accepted.
+
+      Ticket:
+      {{ context.resources.read_ticket.content }}
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [customer_id, product_area, product_version, reported_issue]
+      properties:
+        customer_id:
+          type: string
+          pattern: '^CUST-[0-9]{4}$'
+        product_area:
+          type: string
+          minLength: 2
+          maxLength: 80
+        product_version:
+          type: string
+          minLength: 1
+          maxLength: 40
+        reported_issue:
+          type: string
+          minLength: 10
+          maxLength: 300
+
+  classify_ticket:
+    description: >
+      Classify the ticket using the identity extracted by identify_ticket.
+      Output category and priority as discrete fields — these values are used by
+      when-conditions on the five handler steps to determine which handler fires.
+    execution: agent
+    depends_on: [identify_ticket]
+    prompt: |
+      Classify this {{ context.resources.identify_ticket.product_area }} support ticket.
+
+      Reported issue: {{ context.resources.identify_ticket.reported_issue }}
+
+      Required fields:
+      - category: one of: bug | feature_request | billing | account | other
+      - priority: one of: low | medium | high | critical
+      - summary: one or two sentences for the support queue, explaining the issue
+        and suggested routing (10–300 characters)
+
+      Return exactly these three fields. Any category or priority value outside the
+      allowed values will be rejected before your response is accepted.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [category, priority, summary]
+      properties:
+        category:
+          type: string
+          enum: [bug, feature_request, billing, account, other]
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+        summary:
+          type: string
+          minLength: 10
+          maxLength: 300
+    display: '{{ priority }}: {{ category }} — {{ summary }}'
+
+  handle_billing:
+    description: >
+      Draft a reply for a billing inquiry. Only eligible when classify_ticket
+      produced category == 'billing'. All other handlers are skipped.
+    execution: agent
+    depends_on: [classify_ticket]
+    when: "classify_ticket.category == 'billing'"
+    prompt: |
+      Draft a reply for this billing support ticket.
+
+      Customer: {{ context.resources.identify_ticket.customer_id }}
+      Issue: {{ context.resources.identify_ticket.reported_issue }}
+      Classification: {{ context.resources.classify_ticket.summary }}
+
+      Acknowledge the billing issue, confirm receipt, and state the next step
+      (e.g. escalation to billing team, timeline for resolution). Keep the reply
+      under 150 words — professional, direct, no filler phrases.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [response_draft]
+      properties:
+        response_draft:
+          type: string
+          minLength: 20
+    display: '{{ response_draft }}'
+
+  handle_bug:
+    description: >
+      Draft a reply for a bug report. Only eligible when classify_ticket
+      produced category == 'bug'.
+    execution: agent
+    depends_on: [classify_ticket]
+    when: "classify_ticket.category == 'bug'"
+    prompt: |
+      Draft a reply for this bug report.
+
+      Customer: {{ context.resources.identify_ticket.customer_id }}
+      Product area: {{ context.resources.identify_ticket.product_area }}
+      Version: {{ context.resources.identify_ticket.product_version }}
+      Issue: {{ context.resources.identify_ticket.reported_issue }}
+      Classification: {{ context.resources.classify_ticket.summary }}
+
+      Acknowledge the bug, ask for any reproduction steps not already provided,
+      and state that the ticket has been escalated to engineering. Keep under 150 words.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [response_draft]
+      properties:
+        response_draft:
+          type: string
+          minLength: 20
+    display: '{{ response_draft }}'
+
+  handle_feature:
+    description: >
+      Draft a reply for a feature request. Only eligible when classify_ticket
+      produced category == 'feature_request'.
+    execution: agent
+    depends_on: [classify_ticket]
+    when: "classify_ticket.category == 'feature_request'"
+    prompt: |
+      Draft a reply for this feature request.
+
+      Customer: {{ context.resources.identify_ticket.customer_id }}
+      Product area: {{ context.resources.identify_ticket.product_area }}
+      Issue: {{ context.resources.identify_ticket.reported_issue }}
+      Classification: {{ context.resources.classify_ticket.summary }}
+
+      Acknowledge the feature request, confirm it has been logged, and set
+      expectations appropriately (no delivery commitments). Keep under 150 words.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [response_draft]
+      properties:
+        response_draft:
+          type: string
+          minLength: 20
+    display: '{{ response_draft }}'
+
+  handle_account:
+    description: >
+      Draft a reply for an account issue. Only eligible when classify_ticket
+      produced category == 'account'.
+    execution: agent
+    depends_on: [classify_ticket]
+    when: "classify_ticket.category == 'account'"
+    prompt: |
+      Draft a reply for this account management ticket.
+
+      Customer: {{ context.resources.identify_ticket.customer_id }}
+      Issue: {{ context.resources.identify_ticket.reported_issue }}
+      Classification: {{ context.resources.classify_ticket.summary }}
+
+      Acknowledge the account issue, confirm receipt, and state the next step
+      (e.g. account team review, verification process). Keep under 150 words.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [response_draft]
+      properties:
+        response_draft:
+          type: string
+          minLength: 20
+    display: '{{ response_draft }}'
+
+  handle_other:
+    description: >
+      Draft a reply for a ticket that does not fit the other categories. Only
+      eligible when classify_ticket produced category == 'other'.
+    execution: agent
+    depends_on: [classify_ticket]
+    when: "classify_ticket.category == 'other'"
+    prompt: |
+      Draft a reply for this general support ticket.
+
+      Customer: {{ context.resources.identify_ticket.customer_id }}
+      Product area: {{ context.resources.identify_ticket.product_area }}
+      Issue: {{ context.resources.identify_ticket.reported_issue }}
+      Classification: {{ context.resources.classify_ticket.summary }}
+
+      Acknowledge the ticket, confirm it has been received and assigned,
+      and state that someone will follow up within 24 hours. Keep under 150 words.
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [response_draft]
+      properties:
+        response_draft:
+          type: string
+          minLength: 20
+    display: '{{ response_draft }}'

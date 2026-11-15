@@ -1,0 +1,83 @@
+{
+  "id": "code-reviewer",
+  "name": "Code Reviewer",
+  "version": 1,
+  "params_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "path"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the diff file to review"
+      }
+    }
+  },
+  "services": {
+    "diffs": {
+      "adapter": "filesystem",
+      "trust": "engine_delivered"
+    }
+  },
+  "steps": {
+    "read_diff": {
+      "description": "Load the diff file from disk",
+      "execution": "auto",
+      "depends_on": [],
+      "uses_service": "diffs",
+      "operation": "read",
+      "input_map": {
+        "path": "run.params.path"
+      }
+    },
+    "review_changes": {
+      "description": "Review the diff and produce a structured assessment. All fields are required and validated by the engine before this step can complete.\n",
+      "execution": "agent",
+      "depends_on": [
+        "read_diff"
+      ],
+      "prompt": "Review the following code diff and produce a structured assessment.\n\nRequired fields:\n- severity: overall severity of the change — exactly one of: critical, high, medium, low\n- summary: one or two sentences describing what the diff does and why it matters\n  (minimum 20 characters)\n- breaking_changes: true if any existing caller, interface, or contract is broken; false otherwise\n- action_required: true if the author or a downstream consumer must take action before merging\n  or deploying; false otherwise\n\nReturn exactly these four fields. Any severity value outside the allowed enum\nwill be rejected before your response is accepted.\n\nDiff:\n{{ context.resources.read_diff.content }}\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "severity",
+          "summary",
+          "breaking_changes",
+          "action_required"
+        ],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 20
+          },
+          "breaking_changes": {
+            "type": "boolean"
+          },
+          "action_required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "display": "{{ severity }}: {{ summary }}\n\nBreaking changes: {{ breaking_changes }}\nAction required: {{ action_required }}\n"
+    },
+    "record_review": {
+      "description": "Record the structured code review",
+      "execution": "auto",
+      "depends_on": [
+        "review_changes"
+      ]
+    }
+  }
+}
