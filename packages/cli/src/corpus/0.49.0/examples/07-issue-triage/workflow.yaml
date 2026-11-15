@@ -1,0 +1,132 @@
+# examples/07-issue-triage/workflow.yaml
+# Issue Triage — fetches a GitHub issue, triages it with an LLM agent, pauses for
+# human approval, then posts a comment and applies labels if approved.
+#
+# Demonstrates: GitHubAdapter (get_issue, post_comment, apply_labels), agent step
+# with human gate, parallel write steps with when-condition routing on gate choice,
+# resolution_messages for both approval paths.
+id: issue-triage
+name: Issue Triage
+version: 1
+
+params_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    repo:
+      type: string
+      description: 'GitHub repository in owner/repo format (e.g. acme/api-service)'
+    issue_number:
+      type: integer
+      description: 'The GitHub issue number to triage'
+  required: [repo, issue_number]
+
+services:
+  github:
+    adapter: github
+    trust: engine_delivered
+
+steps:
+  fetch_issue:
+    description: Fetch the issue details from GitHub
+    execution: auto
+    depends_on: []
+    uses_service: github
+    service_method: fetch
+    operation: get_issue
+    input_map:
+      repo: run.params.repo
+      issue_number: run.params.issue_number
+
+  triage_issue:
+    description: >
+      Classify the issue severity and draft a triage comment. Pauses for human
+      approval — the agent's output (severity, labels, comment_draft) is displayed
+      to the reviewer before any writes reach GitHub.
+    execution: agent
+    depends_on: [fetch_issue]
+    trust: human_confirmed
+    # issue #236 — TEACHING artifact: this step opts into Anthropic grammar-constrained
+    # ("strict") decoding for its submit tool. Never exercised by CI (no live API in CI) — it
+    # demonstrates the opt-in shape, not a tested behavior. Eligible with ZERO caveats: every
+    # property below is `required` (no optional-emission caveat), and the schema uses only
+    # keywords the grammar itself can enforce — see docs/reference/yaml-schema.md's
+    # `structured_output` section for the full gate table.
+    structured_output: strict
+    prompt: |
+      Triage GitHub issue #{{ run.params.issue_number }} in {{ run.params.repo }}.
+
+      ISSUE
+      Title: {{ context.resources.fetch_issue.title }}
+      Body:
+      {{ context.resources.fetch_issue.body }}
+
+      Produce a triage output for the engineering team:
+      - severity: one of critical, high, medium, low
+        (critical = service down or data loss; high = significant degradation;
+        medium = user-impacting bug without outage; low = minor or no user impact)
+      - labels: array of label strings for issue type and priority (e.g. ["bug", "P1", "memory-leak"])
+      - comment_draft: a concise internal triage note — not a customer reply
+        - One sentence stating the assessed severity and reason
+        - 2–3 concrete next steps for the responding engineer
+        - No greetings, no "thank you for reporting", no customer-facing language; under 150 words
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+        labels:
+          type: array
+          items:
+            type: string
+        comment_draft:
+          type: string
+      required: [severity, labels, comment_draft]
+    display: |
+      Severity: {{ severity }}
+      Labels: {{ labels }}
+
+      {{ comment_draft }}
+    gate:
+      choices: [approve, reject]
+      message: |
+        {{ context.resources.fetch_issue.title }}
+        {{ run.params.repo }} · Issue #{{ run.params.issue_number }}
+
+        Severity: {{ context.resources.triage_issue.severity | upper }}
+        Labels:
+        {{ context.resources.triage_issue.labels | bullets }}
+
+        Draft comment:
+        {{ context.resources.triage_issue.comment_draft }}
+      resolution_messages:
+        approve: 'Approved — comment and labels will be posted to GitHub.'
+        reject: 'Rejected — no writes posted to GitHub.'
+
+  post_comment:
+    description: Post the approved triage comment on the GitHub issue
+    execution: auto
+    depends_on: [triage_issue]
+    when: "triage_issue.choice == 'approve'"
+    uses_service: github
+    service_method: create
+    operation: post_comment
+    input_map:
+      repo: run.params.repo
+      issue_number: run.params.issue_number
+      body: context.resources.triage_issue.comment_draft
+
+  apply_labels:
+    description: Apply the triage labels to the GitHub issue
+    execution: auto
+    depends_on: [triage_issue]
+    when: "triage_issue.choice == 'approve'"
+    uses_service: github
+    service_method: create
+    operation: apply_labels
+    input_map:
+      repo: run.params.repo
+      issue_number: run.params.issue_number
+      labels: context.resources.triage_issue.labels
