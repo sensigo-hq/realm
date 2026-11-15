@@ -1033,6 +1033,41 @@ async function curatedStates(): Promise<State[]> {
     registry: boom,
   });
   const { record: failed } = await store.get(failing.record.id);
+  // #729 CW-2b: the held member (`held_claim`): an agent step in progress under this call's lease,
+  // alone, under another step's open or due question, and the same claim judged under another lease;
+  // an auto step held under the lease. `side` is an independent agent step beside the question.
+  const leasedClaim = (step: string, lease: string) => ({
+    [step]: { deadline: null, token: `t-${step}`, lease: { id: lease } },
+  });
+  const withSide = (d: WorkflowDefinition): WorkflowDefinition =>
+    ({
+      ...d,
+      id: `${d.id}-agent-side`,
+      steps: { ...d.steps, side: { description: 'Side.', execution: 'agent', depends_on: [] } },
+    }) as WorkflowDefinition;
+  const sideOpen = withSide(gated());
+  const sideDue = withSide(gated('settle_default'));
+  const heldSide = async (d: WorkflowDefinition) => {
+    const { record } = await atQuestion(store, d);
+    return {
+      ...record,
+      in_progress_steps: [...record.in_progress_steps, 'side'],
+      claims: { ...record.claims, ...leasedClaim('side', 'L') },
+    } as RunRecord;
+  };
+  const sideOpenRecord = await heldSide(sideOpen);
+  const sideDueRecord = await heldSide(sideDue);
+  const heldA = {
+    ...BASE,
+    in_progress_steps: ['a'],
+    claims: leasedClaim('a', 'L'),
+  } as unknown as RunRecord;
+  const heldB = {
+    ...BASE,
+    completed_steps: ['a'],
+    in_progress_steps: ['b'],
+    claims: leasedClaim('b', 'L'),
+  } as unknown as RunRecord;
   return [
     s('fresh', W, BASE, ctxOf(W)),
     s('held, unknown age', W, held, ctxOf(W)),
@@ -1091,6 +1126,27 @@ async function curatedStates(): Promise<State[]> {
       ctxOf(plain),
     ),
     s('ended', W, ended, ctxOf(W)),
+    s('held, this call’s lease', W, heldA, ctxOf(W, { held_claim: { step: 'a', lease_id: 'L' } })),
+    s('held, another lease', W, heldA, ctxOf(W, { held_claim: { step: 'a', lease_id: 'M' } })),
+    s(
+      'held, this call’s lease, question open on another step',
+      sideOpen,
+      sideOpenRecord,
+      ctxOf(sideOpen, { held_claim: { step: 'side', lease_id: 'L' } }),
+    ),
+    s(
+      'held, this call’s lease, question due on another step',
+      sideDue,
+      sideDueRecord,
+      ctxOf(sideDue, { held_claim: { step: 'side', lease_id: 'L' } }),
+      pastDeadline(sideDueRecord),
+    ),
+    s(
+      'held, an auto step under this call’s lease',
+      W,
+      heldB,
+      ctxOf(W, { held_claim: { step: 'b', lease_id: 'L' } }),
+    ),
     s('definition absent', undefined, BASE, ABSENT),
     s('definition absent, question open', undefined, open.record, ABSENT),
     s('load failed', W, BASE, loadFailed),
@@ -1175,6 +1231,54 @@ describe('#729 PR-0 — the laws over curated run states', () => {
         owed.filter((step) => state.definition?.steps[step]?.execution === 'auto').sort(),
       );
     }
+  });
+
+  it('#729 CW-2b, the held member: the agent step held under this call’s lease is offered and admitted — alone, past an open or a due question on another step — and never listed held elsewhere; under another lease, and an auto step, neither', async () => {
+    const held = (await curatedStates()).filter((st) => st.ctx.held_claim !== undefined);
+    const seen = held.map((st) => {
+      const snap = writtenSnapshot(st.record, st.at);
+      const step = st.ctx.held_claim!.step;
+      const composed = composeWaysOn(snap, st.ctx);
+      const admission = admitWay('run_step', snap, st.ctx, { run_id: st.record.id, command: step });
+      return {
+        state: st.name,
+        offered: composed.ways.some((w) => w.verb === 'run_step' && w.step === step),
+        admitted: 'ok' in admission ? true : admission.code,
+        heldElsewhere: composed.unavailable.some(
+          (u) => u.step === step && u.code === 'held_elsewhere',
+        ),
+      };
+    });
+    // (1) red when the held step is judged as another program's (the due or open question first, or
+    //     listed held elsewhere), or a claim under another lease or an auto step is admitted under the
+    //     held member; (2) prints, per state, whether the step is offered, the admission and the list.
+    expect(seen).toEqual([
+      { state: 'held, this call’s lease', offered: true, admitted: true, heldElsewhere: false },
+      {
+        state: 'held, another lease',
+        offered: false,
+        admitted: 'held_elsewhere',
+        heldElsewhere: true,
+      },
+      {
+        state: 'held, this call’s lease, question open on another step',
+        offered: true,
+        admitted: true,
+        heldElsewhere: false,
+      },
+      {
+        state: 'held, this call’s lease, question due on another step',
+        offered: true,
+        admitted: true,
+        heldElsewhere: false,
+      },
+      {
+        state: 'held, an auto step under this call’s lease',
+        offered: false,
+        admitted: 'held_elsewhere',
+        heldElsewhere: true,
+      },
+    ]);
   });
 
   it('OFFER_EQUALS_ADMISSION for the lever (T-17, INPUT_IN_CONTRACT_ADMITTED): admitted with input that fits its input_schema, refused with input that does not', () => {

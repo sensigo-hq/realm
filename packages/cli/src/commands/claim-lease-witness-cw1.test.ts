@@ -18,6 +18,12 @@
 //      and the core library's reference) hold while no production file calls either. Their
 //      definitions in `drive-claim.ts` are not calls; the cell also checks that it read them, so a
 //      walk that misses the file cannot pass for an empty one.
+//   5. only the files of a closed list pass `executeChain` a `heldClaim` (#729 CW-2b), checked both
+//      ways: an `executeChain(` call whose arguments hold a property named `heldClaim`, or any object
+//      literal with that property (options built beside the call). The list is empty: "No Realm
+//      command passes it yet" (the CHANGELOG) holds while no production file does. The cell also
+//      checks it read the option's declaration in `ExecuteChainOptions`. It cannot see an options
+//      object built with a computed key, or passed through a spread of one built elsewhere.
 //
 // WHAT IT SEES: every `.ts` file under `packages/*/src` but tests (`*.test.ts`), declarations and the
 // `test-support` folders. WHAT IT CANNOT SEE: a call through a computed name (`port[name]()`), a call
@@ -40,6 +46,10 @@ const LEASE_MODULE = 'store-sqlite/src/claim-lease.ts';
  *  `releaseDriveClaim(`, each with its reason. Empty: no Realm command calls them yet (CW-5's
  *  `realm agent` will be the first entry here). */
 const DRIVE_ENTRY_CALLERS: Readonly<Record<string, string>> = {};
+
+/** #729 CW-2b: the production files that may pass `executeChain` a `heldClaim`, each with its reason.
+ *  Empty: no Realm command passes it yet (CW-5's `realm agent` will be the first entry here). */
+const HELD_CLAIM_PASSERS: Readonly<Record<string, string>> = {};
 
 /** #729 CW-2a: the two engine entries a drive takes and gives back its claim through. */
 const DRIVE_ENTRIES = ['claimStepForDrive', 'releaseDriveClaim'];
@@ -148,6 +158,36 @@ function callsOf(sf: ts.SourceFile, names: readonly string[]): { name: string; l
   return out;
 }
 
+/** #729 CW-2b: the property names `heldClaim` written in object literals (`{ heldClaim: … }`,
+ *  `{ heldClaim }`), each with its line — inside an `executeChain(` call or beside one. */
+function heldClaimProperties(sf: ts.SourceFile): number[] {
+  const out: number[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) &&
+      (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
+      node.name.text === 'heldClaim'
+    ) {
+      out.push(lineOf(sf, node));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** #729 CW-2b: whether a file declares the `heldClaim` member of an interface named `ExecuteChainOptions`. */
+function declaresHeldClaim(sf: ts.SourceFile): boolean {
+  return sf.statements.some(
+    (st) =>
+      ts.isInterfaceDeclaration(st) &&
+      st.name.text === 'ExecuteChainOptions' &&
+      st.members.some(
+        (m) => ts.isPropertySignature(m) && ts.isIdentifier(m.name) && m.name.text === 'heldClaim',
+      ),
+  );
+}
+
 /** The names of the functions a file declares at its top level (`export async function f(`). */
 function declaredFunctions(sf: ts.SourceFile): string[] {
   return sf.statements.flatMap((s) =>
@@ -240,5 +280,23 @@ describe('#729 CW-1 — the claim lease’s source witness', () => {
       calling: [...new Set(calls.map((c) => c.file))].sort(),
       definedIn: definedIn.sort(),
     }).toEqual({ outside: [], calling: listed, definedIn: [...DRIVE_ENTRIES].sort() });
+  });
+
+  it('only the listed files pass executeChain a heldClaim — none today — and the walk read the option', () => {
+    const passes = files.flatMap((path) =>
+      heldClaimProperties(parse(path)).map((line) => ({ file: rel(path), line })),
+    );
+    const listed = Object.keys(HELD_CLAIM_PASSERS).sort();
+    const declaredIn = files.filter((path) => declaresHeldClaim(parse(path))).map(rel);
+    // (1) red when a production file outside the list writes a `heldClaim` property (a command
+    //     passing it makes "No Realm command passes it yet" false), a listed file no longer does, or
+    //     the walk no longer reads the option's declaration (it would then see nothing); (2) prints
+    //     each one outside the list with its file and line, the files that pass it, and where the
+    //     option is declared.
+    expect({
+      outside: passes.filter((p) => !listed.includes(p.file)).map((p) => `${p.file}:${p.line}`),
+      passing: [...new Set(passes.map((p) => p.file))].sort(),
+      declaredIn,
+    }).toEqual({ outside: [], passing: listed, declaredIn: ['core/src/engine/execution-loop.ts'] });
   });
 });
