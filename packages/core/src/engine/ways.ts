@@ -1159,6 +1159,22 @@ export interface WaysContext {
    * engine — and that absence IS their identity on this axis: no judge treats absence as a party.
    */
   party?: Party;
+  /**
+   * #729, the claim window (CW-2b): the step this call holds under a lease, when an `executeChain`
+   * call was given `heldClaim` for an agent step — its name and the lease's id. While the step is in
+   * progress and its claim names that lease, it is this call's own: offered to it (and so admitted,
+   * R26), past an open or due question on another step, and never listed as held elsewhere. A claim
+   * that names no lease or another, and every call without it, are judged as before.
+   */
+  held_claim?: { step: string; lease_id: string };
+}
+
+/**
+ * #729 CW-2b: whether `run`'s step `step` is in progress under a claim that names the lease
+ * `lease_id` — the one rule for "this call's lease holds the step", for the ways and for the engine.
+ */
+export function isHeldUnder(run: RunRecord, step: string, leaseId: string): boolean {
+  return run.in_progress_steps.includes(step) && run.claims?.[step]?.lease?.id === leaseId;
 }
 
 /** The ways on, the ways not available, and what they were judged on. */
@@ -1634,9 +1650,17 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
   }
 
   // run_step — every agent step the view offers; every step it refuses (C82); the steps the open
-  // question holds (Q7: question_open); every step held elsewhere (T-11).
+  // question holds (Q7: question_open); every step held elsewhere (T-11). #729 CW-2b: the agent step
+  // this call holds under its lease (`held_claim`) is offered to it, an open question on another step
+  // notwithstanding, and is neither held elsewhere nor waiting on the answer.
   const enactorFailed = ctx.enactor.kind === 'load_failed';
-  for (const step of pending.agent_steps) {
+  const heldHere =
+    ctx.held_claim !== undefined &&
+    definition.steps[ctx.held_claim.step]?.execution === 'agent' &&
+    isHeldUnder(run, ctx.held_claim.step, ctx.held_claim.lease_id)
+      ? ctx.held_claim.step
+      : undefined;
+  for (const step of [...pending.agent_steps, ...(heldHere !== undefined ? [heldHere] : [])]) {
     if (enactorFailed) continue;
     ways.push({
       verb: 'run_step',
@@ -1650,7 +1674,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
     unavailable.push(refusedEntry(entry, snap, definition));
   }
   if (respond !== undefined && pending.expiry_due === undefined) {
-    for (const step of pending.waiting_on_answer ?? []) {
+    for (const step of (pending.waiting_on_answer ?? []).filter((s) => s !== heldHere)) {
       unavailable.push({
         verb: 'run_step',
         step,
@@ -1665,7 +1689,9 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
       });
     }
   }
-  const held = run.in_progress_steps.filter((step) => step !== run.pending_gate?.step_name);
+  const held = run.in_progress_steps.filter(
+    (step) => step !== run.pending_gate?.step_name && step !== heldHere,
+  );
   for (const step of held) {
     const facts = heldFacts(snap, step);
     unavailable.push({

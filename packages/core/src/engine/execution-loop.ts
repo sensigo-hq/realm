@@ -27,6 +27,7 @@ import {
   classifyStop,
   composeWaysOn,
   heldFacts,
+  isHeldUnder,
   waysStoreOf,
   isRaceStop,
   type NotRecordedKind,
@@ -63,6 +64,7 @@ import type {
 import { isGateTrust } from '../types/workflow-definition.js';
 import type { RunStore, StoreSettlement } from '../store/store-interface.js';
 import type { LeaseFacts } from '../store/lease-facts.js';
+import type { LeaseHold } from '../store/lease-port.js';
 import { persistsField } from '../store/store-fidelity.js';
 import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
 import { storeDeclaresSeal, storeDeclaresNonceCarriage } from '../store/trace-buffer-store.js';
@@ -378,6 +380,15 @@ export interface ExecuteChainOptions {
   party?: Party;
   /** @see ExecuteStepOptions.disclosure — the named step and every step the chain runs. */
   disclosure?: DisclosureSet;
+  /**
+   * #729, the claim window (CW-2b): the lease under which `claimStepForDrive` took the named agent
+   * step's claim. The step is saved under that claim: no claim is taken, and every write is fenced on
+   * the record's own token. When, at the save, the claim no longer names the lease, the answer is not
+   * saved and the call is refused `STATE_CLAIM_LOST` (`claim_removed`). The steps the chain runs after
+   * it take their own claims. For a step that is not an agent step it changes nothing. `executeStep`
+   * does not take it.
+   */
+  heldClaim?: { hold: LeaseHold };
 }
 
 /** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
@@ -761,7 +772,7 @@ function waysContext(
   registry: ExtensionRegistry | undefined,
   // issue #729 (the Q3 unit): `party` only at the admission (Step 2, `byNameRefusal`) — never on a
   // reply's composed ways (`waysOf`): the offer side is the door's (`narrowForDoor`).
-  extra: Pick<WaysContext, 'opening_token' | 'presented' | 'party'> = {},
+  extra: Pick<WaysContext, 'opening_token' | 'presented' | 'party' | 'held_claim'> = {},
 ): WaysContext {
   return {
     definition: { ok: definition },
@@ -792,9 +803,33 @@ function waysOf(
   definition: WorkflowDefinition,
   snap: Snapshot,
   registry: ExtensionRegistry | undefined,
-  extra: Pick<WaysContext, 'opening_token' | 'presented'> = {},
+  extra: Pick<WaysContext, 'opening_token' | 'presented' | 'held_claim'> = {},
 ): Pick<EngineReply, 'ways' | 'unavailable' | 'basis'> {
   return composeWaysOn(snap, waysContext(store, definition, registry, extra));
+}
+
+/**
+ * #729 CW-2b: a call's reply ways — `waysOf` with the step the call holds under its lease
+ * (`held_claim`, when it holds one), so a reply never tells the call that another program holds its
+ * own step. Built once per `executeStep` body; every reply that carries ways composes them through it.
+ */
+type ReplyWays = (
+  snap: Snapshot,
+  extra?: Pick<WaysContext, 'opening_token' | 'presented'>,
+) => Pick<EngineReply, 'ways' | 'unavailable' | 'basis'>;
+
+/** #729 CW-2b: the {@link ReplyWays} of one call. */
+function replyWaysOf(
+  store: Pick<RunStore, 'persistsClaims'>,
+  definition: WorkflowDefinition,
+  registry: ExtensionRegistry | undefined,
+  held: WaysContext['held_claim'],
+): ReplyWays {
+  return (snap, extra = {}) =>
+    waysOf(store, definition, snap, registry, {
+      ...extra,
+      ...(held !== undefined ? { held_claim: held } : {}),
+    });
 }
 
 /** issue #729 PR-0 (D3 A-1): whether a composition offers a way that moves the run on. */
@@ -1183,6 +1218,8 @@ function makeErrorEnvelope(
   err: WorkflowError,
   definition?: WorkflowDefinition,
   extraWarnings?: string[],
+  // #729 CW-2b: the call's reply ways (its held step), when the call has them.
+  ways?: ReplyWays,
 ): EngineReply {
   const run = snapshot?.record ?? null;
   const hint =
@@ -1211,7 +1248,9 @@ function makeErrorEnvelope(
   ) {
     return {
       ...baseWithWarnings,
-      ...waysOf(store, definition, snapshot, options.registry),
+      ...(ways !== undefined
+        ? ways(snapshot)
+        : waysOf(store, definition, snapshot, options.registry)),
     };
   }
   return snapshot !== null ? judgedOn(baseWithWarnings, snapshot) : baseWithWarnings;
@@ -1550,6 +1589,37 @@ function claimRemovedRefusal(step: string, run: RunRecord, reply: EngineReply): 
 }
 
 /**
+ * The reply to a save whose claim was taken away before its outcome was written: `STATE_CLAIM_LOST`
+ * with the `claim_removed` refusal (#729 PR-0, T-1; Amendment 15: its way on is the progress ways
+ * offered on the record `at` holds — the step again, if it is still eligible; else why none exists:
+ * another call holds the step, or it has settled). One composer (#729 CW-2b): the settle's own
+ * `claim_lost` refusal, and Step 3 under a held claim that no longer names its lease.
+ */
+function claimLostReply(
+  store: Pick<RunStore, 'persistsClaims'>,
+  options: ExecuteStepOptions,
+  definition: WorkflowDefinition,
+  at: Snapshot,
+  extraWarnings: string[] | undefined,
+  evidence: EvidenceSnapshot[],
+  ways?: ReplyWays,
+): EngineReply {
+  const err = new WorkflowError(
+    `Step '${options.command}': this attempt's outcome was NOT recorded — the claim was lost ` +
+      `(settled by another writer, or the run advanced).`,
+    {
+      code: 'STATE_CLAIM_LOST',
+      category: 'STATE',
+      agentAction: 'resolve_precondition',
+      retryable: false,
+      details: { runId: options.runId, step: options.command },
+    },
+  );
+  const lost = makeErrorEnvelope(store, options, at, err, definition, extraWarnings, ways);
+  return { ...lost, evidence, refusal: claimRemovedRefusal(options.command, at.record, lost) };
+}
+
+/**
  * Builds the EngineReply for a `settle_step`/`open_gate` REFUSAL (design record §7's
  * result/code table) — shared by the three migrated `settle_step` seal sites (issue #279,
  * increment 1, PR-B) AND the migrated gate-open site (issue #279, increment 2, PR-D; `kind:
@@ -1572,6 +1642,8 @@ function buildSettlementRefusalEnvelope(
   allEvidence: EvidenceSnapshot[],
   traceWarnings: string[],
   kind: 'settle_step' | 'open_gate' = 'settle_step',
+  // #729 CW-2b: the call's reply ways (its held step).
+  ways?: ReplyWays,
 ): EngineReply {
   const refusedAt = settledSnapshot(result);
   const extraWarnings = traceWarnings.length > 0 ? traceWarnings : undefined;
@@ -1600,31 +1672,20 @@ function buildSettlementRefusalEnvelope(
           },
         },
       );
-      return makeErrorEnvelope(store, options, refusedAt, err, definition, extraWarnings);
+      return makeErrorEnvelope(store, options, refusedAt, err, definition, extraWarnings, ways);
     }
-    case 'claim_lost': {
-      const err = new WorkflowError(
-        `Step '${options.command}': this attempt's outcome was NOT recorded — the claim was lost ` +
-          `(settled by another writer, or the run advanced).`,
-        {
-          code: 'STATE_CLAIM_LOST',
-          category: 'STATE',
-          agentAction: 'resolve_precondition',
-          retryable: false,
-          details: { runId: options.runId, step: options.command },
-        },
-      );
-      const lost = makeErrorEnvelope(store, options, refusedAt, err, definition, extraWarnings);
+    case 'claim_lost':
       // #729 PR-0 (T-1): the step's claim was removed before its outcome was written
-      // (`claim_removed`, write-tagged: found by the settle). Amendment 15: its way on is the progress
-      // ways offered on the record the settle read (the step again, if it is still eligible); else
-      // why none exists — another call holds the step, or it has settled.
-      return {
-        ...lost,
-        evidence: allEvidence,
-        refusal: claimRemovedRefusal(options.command, result.run, lost),
-      };
-    }
+      // (`claim_removed`, write-tagged: found by the settle).
+      return claimLostReply(
+        store,
+        options,
+        definition,
+        refusedAt,
+        extraWarnings,
+        allEvidence,
+        ways,
+      );
     case 'run_terminal': {
       const err = new WorkflowError(
         `Run '${options.runId}' is terminal; cannot settle step '${options.command}'.`,
@@ -1636,7 +1697,7 @@ function buildSettlementRefusalEnvelope(
           details: { runId: options.runId, run_phase: result.run.run_phase },
         },
       );
-      return makeErrorEnvelope(store, options, refusedAt, err, definition, extraWarnings);
+      return makeErrorEnvelope(store, options, refusedAt, err, definition, extraWarnings, ways);
     }
     case 'gate_mismatch': {
       // kind-discriminated (Deliverable 2): open_gate's gate_mismatch means a DIFFERENT step's
@@ -1659,7 +1720,7 @@ function buildSettlementRefusalEnvelope(
         details: { runId: options.runId, step: options.command },
         ...(open !== undefined ? { remedy: [respondWayOfGate(options.runId, open)] } : {}),
       });
-      return makeErrorEnvelope(store, options, refusedAt, err, definition, extraWarnings);
+      return makeErrorEnvelope(store, options, refusedAt, err, definition, extraWarnings, ways);
     }
     default:
       // run_not_terminal / ledger_not_pending / lease_held / lease_lost / rank_blocked /
@@ -1691,6 +1752,8 @@ async function buildAlreadySettledEnvelope(
     lease_facts?: LeaseFacts;
   },
   traceWarnings: string[],
+  // #729 CW-2b: the call's reply ways (its held step).
+  ways?: ReplyWays,
 ): Promise<EngineReply> {
   // #715 (b) (01 §C.4): the snapshot `run` comes from — the settle's, or the drain's (#729 CW-1b part
   // 2: with its lease facts).
@@ -1728,7 +1791,7 @@ async function buildAlreadySettledEnvelope(
     errors: [],
     context_hint: `Step '${options.command}' was already settled (a duplicate/retried attempt) — no action was taken.`,
     run_phase: snap.record.run_phase,
-    ...waysOf(store, definition, snap, options.registry),
+    ...(ways !== undefined ? ways(snap) : waysOf(store, definition, snap, options.registry)),
   };
 }
 
@@ -2229,11 +2292,13 @@ async function executeStepAs(
   via: EnactedVia,
   // #729 PR-0 (G5-7): who supplies the step's input — the engine (`engineStepAs`) or the caller.
   inputBy: 'engine' | 'caller' = 'caller',
+  // #729 CW-2b: `executeChain`'s `heldClaim`, for its named step only — never an option of the step.
+  heldClaim?: { hold: LeaseHold },
 ): Promise<EngineReply> {
   // decisions C109, C110: the line Step 1.5's expiry enactment writes rides EVERY reply this call
   // returns, once — core prints nothing, so a reply that dropped it would hide the enactment.
   const expiry: { line?: string; receipt?: ExpiryReceipt } = {};
-  const reply = await executeStepBody(store, definition, options, expiry, via, inputBy);
+  const reply = await executeStepBody(store, definition, options, expiry, via, inputBy, heldClaim);
   return withExpiryLineOnce(reply, expiry.line, expiry.receipt);
 }
 
@@ -2248,7 +2313,20 @@ async function executeStepBody(
   expiry: { line?: string; receipt?: ExpiryReceipt },
   via: EnactedVia,
   inputBy: 'engine' | 'caller',
+  heldClaim: { hold: LeaseHold } | undefined,
 ): Promise<EngineReply> {
+  // #729, the claim window (CW-2b): the agent step this call holds under the lease `claimStepForDrive`
+  // took its claim with (`executeChain`'s `heldClaim`). For any other step, `heldClaim` changes
+  // nothing. `ways` composes every reply's ways with it, so no reply tells this call that another
+  // program holds its own step.
+  const held: WaysContext['held_claim'] =
+    heldClaim !== undefined && definition.steps[options.command]?.execution === 'agent'
+      ? { step: options.command, lease_id: heldClaim.hold.id }
+      : undefined;
+  /** #729 CW-2b: whether `record`'s claim of the step still names this call's lease. */
+  const heldIn = (record: RunRecord): boolean =>
+    held !== undefined && isHeldUnder(record, held.step, held.lease_id);
+  const ways = replyWaysOf(store, definition, options.registry, held);
   // Step 1: Load run — #729 PR-0 (A-9): through the one snapshot constructor, which takes the call's
   // reading BEFORE the load; every judgement this call makes about the run is made at it. #729 CW-1b
   // part 2: `snap` is the store's snapshot, its lease facts included; `run` and
@@ -2301,11 +2379,13 @@ async function executeStepBody(
     // call on an eligible engine step is refused here, before anything is claimed or written.
     waysContext(store, definition, options.registry, {
       ...(options.party !== undefined ? { party: options.party } : {}),
+      // #729 CW-2b: the step this call holds is admitted — past another step's question too.
+      ...(held !== undefined ? { held_claim: held } : {}),
     }),
     { run_id: options.runId, command: options.command, params: options.input },
   );
   if (!('ok' in admission) && NOT_CALLABLE_CODES.has(admission.code)) {
-    const composed = waysOf(store, definition, snap, options.registry);
+    const composed = ways(snap);
     return {
       command: options.command,
       run_id: options.runId,
@@ -2392,7 +2472,7 @@ async function executeStepBody(
   const refusalOf = (): Pick<EngineReply, 'ways' | 'unavailable' | 'basis' | 'refusal'> & {
     eligible_steps: string[];
   } => {
-    const composed = waysOf(store, definition, snap, options.registry);
+    const composed = ways(snap);
     const refusal = composed.unavailable.find(
       (u) =>
         u.verb === 'run_step' && u.step === options.command && u.code === 'refused_before_claim',
@@ -2506,10 +2586,15 @@ async function executeStepBody(
       // CAS loser — retry ONCE on fresh state, WITH a countability re-check on the fresh record.
       try {
         const { record: fresh } = await store.get(options.runId);
+        // #729 CW-2b (L13): under a held claim the step stays in progress under this call's lease, so
+        // the count needs the run open and the claim still naming the lease; a question open on
+        // another step does not stop it.
         if (
-          !fresh.terminal_state &&
-          fresh.pending_gate === undefined &&
-          findEligibleSteps(definition, fresh).includes(options.command)
+          held !== undefined
+            ? !fresh.terminal_state && heldIn(fresh)
+            : !fresh.terminal_state &&
+              fresh.pending_gate === undefined &&
+              findEligibleSteps(definition, fresh).includes(options.command)
         ) {
           const freshN = (fresh.validation_rejections?.[options.command] ?? 0) + 1;
           // CAS on fresh.version closes the re-check's own TOCTOU: a claim landing after the
@@ -2619,6 +2704,7 @@ async function executeStepBody(
           withCount(err, countdown),
           definition,
           countWarnings.length > 0 ? countWarnings : undefined,
+          ways,
         );
         // #729 PR-0 (C66, #688): an engine step's input is the engine's, so its refusal rides the
         // reply as data (an agent step's input is its own answer, C3: returned as it is). T-13 (a):
@@ -2660,6 +2746,7 @@ async function executeStepBody(
           withCount(err as WorkflowError, countdown),
           definition,
           countWarnings.length > 0 ? countWarnings : undefined,
+          ways,
         );
       }
       // FALL THROUGH — exhaustion armed.
@@ -2735,6 +2822,8 @@ async function executeStepBody(
           },
         }),
         definition,
+        undefined,
+        ways,
       );
     }
 
@@ -2781,7 +2870,15 @@ async function executeStepBody(
           } catch (err) {
             // On enforce rejection: do NOT delete the WAL — agent retries with WAL preserved.
             if (exhaustion === null) {
-              return makeErrorEnvelope(store, options, snap, err as WorkflowError, definition);
+              return makeErrorEnvelope(
+                store,
+                options,
+                snap,
+                err as WorkflowError,
+                definition,
+                undefined,
+                ways,
+              );
             }
             // issue #220: exhaustion is already armed by an earlier Step 2b/2c rejection — the
             // enforce-gate YIELDS its return (rather than returning) so a persistently-invalid
@@ -2835,8 +2932,30 @@ async function executeStepBody(
     pendingRun = next.record;
   };
   try {
-    // issue #625 (holder slice): the program taking the step is the claim's `holder`.
-    holdPending(await store.claimStep(options.runId, options.command, definition, options.driver));
+    if (held !== undefined) {
+      // #729 CW-2b: the claim this call holds under its lease — no claim is taken. The run is read
+      // fresh (the rejection count's own write may have moved its version); while the claim still
+      // names the lease, its snapshot is held and every later write and settle is fenced on the
+      // record's own token. Otherwise the answer is not saved: `STATE_CLAIM_LOST`, nothing written.
+      const fresh = await store.get(options.runId);
+      if (!heldIn(fresh.record)) {
+        return claimLostReply(
+          store,
+          options,
+          definition,
+          fresh,
+          traceWarnings.length > 0 ? traceWarnings : undefined,
+          [],
+          ways,
+        );
+      }
+      holdPending(fresh);
+    } else {
+      // issue #625 (holder slice): the program taking the step is the claim's `holder`.
+      holdPending(
+        await store.claimStep(options.runId, options.command, definition, options.driver),
+      );
+    }
   } catch (err) {
     if (err instanceof WorkflowError) {
       if (err.code === 'STATE_STEP_ALREADY_CLAIMED') {
@@ -2861,7 +2980,7 @@ async function executeStepBody(
           reply_kind: 'blocked',
           context_hint: `Step '${options.command}' was already claimed by another process.`,
           run_phase: freshRun.run_phase,
-          ...waysOf(store, definition, fresh, options.registry),
+          ...ways(fresh),
           // #729 PR-0 (T-1): the claim's refusal in the one vocabulary — `held_elsewhere`, or what
           // the fresh record now says of the step (it may have settled meanwhile).
           refusal: byNameRefusal(store, definition, fresh, options) ?? {
@@ -2896,7 +3015,7 @@ async function executeStepBody(
             : traceWarnings.length > 0
               ? traceWarnings
               : undefined;
-        return makeErrorEnvelope(store, options, freshSnap, err, definition, extraWarnings);
+        return makeErrorEnvelope(store, options, freshSnap, err, definition, extraWarnings, ways);
       }
       return makeErrorEnvelope(
         store,
@@ -2905,6 +3024,7 @@ async function executeStepBody(
         err,
         definition,
         traceWarnings.length > 0 ? traceWarnings : undefined,
+        ways,
       );
     }
     return makeErrorEnvelope(
@@ -2919,13 +3039,16 @@ async function executeStepBody(
       }),
       definition,
       traceWarnings.length > 0 ? traceWarnings : undefined,
+      ways,
     );
   }
 
   // issue #625 (holder slice): the dropped-claimant warning — a program was named, the store keeps
   // claims, and the claim it returned does not carry the name (a `claimStep` forwarder that does not
   // pass the fourth argument on). Advisory only; the step runs.
+  // #729 CW-2b: not under a held claim — this call took no claim; `claimStepForDrive` wrote its own.
   if (
+    held === undefined &&
     options.driver !== undefined &&
     store.persistsClaims === true &&
     pendingRun.claims?.[options.command]?.holder === undefined
@@ -2964,18 +3087,22 @@ async function executeStepBody(
       // compensating_unclaim audit line (:679 semantics). LOG-ONLY for ALL results (applied / NOOP
       // / any refusal / a thrown infra error) — no envelope change on any settle outcome; the
       // ENGINE_STORE_FAILED envelope below is the disclosure regardless.
-      const unclaimToken = pendingRun.claims?.[options.command]?.token;
-      const delta: ReleaseStepDelta = {
-        kind: 'release_step',
-        step: options.command,
-        ...(unclaimToken !== undefined ? { claimToken: unclaimToken } : {}),
-        // #715 (b): an EVENT instant — the store's clock, read when the un-claim's work ends.
-        evidence: [buildCompensatingUnclaimEvidence(options.command, store.clock.now())],
-      };
-      try {
-        await store.settleStep(options.runId, delta, definition);
-      } catch {
-        // Log-only — see the comment above; never surfaces as its own error.
+      // #729 CW-2b: under a held claim the claim is the drive's, so it is not released here: the
+      // drive gives it back itself (`releaseDriveClaim`). The reply below is the same.
+      if (held === undefined) {
+        const unclaimToken = pendingRun.claims?.[options.command]?.token;
+        const delta: ReleaseStepDelta = {
+          kind: 'release_step',
+          step: options.command,
+          ...(unclaimToken !== undefined ? { claimToken: unclaimToken } : {}),
+          // #715 (b): an EVENT instant — the store's clock, read when the un-claim's work ends.
+          evidence: [buildCompensatingUnclaimEvidence(options.command, store.clock.now())],
+        };
+        try {
+          await store.settleStep(options.runId, delta, definition);
+        } catch {
+          // Log-only — see the comment above; never surfaces as its own error.
+        }
       }
       const unclaimEnvelopeWarnings = mergeWarnings(traceWarnings);
       return makeErrorEnvelope(
@@ -2994,6 +3121,7 @@ async function executeStepBody(
         }),
         definition,
         unclaimEnvelopeWarnings.length > 0 ? unclaimEnvelopeWarnings : undefined,
+        ways,
       );
     }
 
@@ -3441,6 +3569,7 @@ async function executeStepBody(
                 err,
                 definition,
                 traceWarnings.length > 0 ? traceWarnings : undefined,
+                ways,
               );
             }
             const internal = new WorkflowError('Failed to persist run update', {
@@ -3456,6 +3585,7 @@ async function executeStepBody(
               internal,
               definition,
               traceWarnings.length > 0 ? traceWarnings : undefined,
+              ways,
             );
           }
           if (!result.applied) {
@@ -3466,6 +3596,7 @@ async function executeStepBody(
                 options,
                 { ...result, reason: 'already_settled' },
                 traceWarnings,
+                ways,
               );
             }
             return buildSettlementRefusalEnvelope(
@@ -3475,6 +3606,8 @@ async function executeStepBody(
               result,
               [abortEvidence],
               traceWarnings,
+              'settle_step',
+              ways,
             );
           }
           // applied: true — abort is UNCONDITIONALLY terminal (transitioned is always true here;
@@ -3515,7 +3648,7 @@ async function executeStepBody(
             context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
             run_phase: finalSnap.record.run_phase,
             reply_kind: 'ok',
-            ...waysOf(store, definition, finalSnap, options.registry),
+            ...ways(finalSnap),
           };
         }
 
@@ -3948,14 +4081,11 @@ async function executeStepBody(
       let blockedWays: Pick<EngineReply, 'ways' | 'unavailable' | 'basis'> = noWays();
       if (blockedAction !== 'stop' && blockStoreWarning === undefined) {
         try {
-          blockedWays = waysOf(
-            store,
-            definition,
+          blockedWays = ways(
             // the release write's snapshot; the unwritten draft at the reading it was built at, with
             // the facts of the claim's snapshot it was built from.
             persistedBlocked ??
               writtenSnapshot(blockedRun, gateExpiryCheckNow, pendingSnap.lease_facts),
-            options.registry,
           );
         } catch {
           // a step's prompt can throw for an unresolvable template reference; fall back to none.
@@ -4014,6 +4144,7 @@ async function executeStepBody(
           err,
           definition,
           traceWarnings.length > 0 ? traceWarnings : undefined,
+          ways,
         );
       }
       const internal = new WorkflowError('Failed to persist run update', {
@@ -4029,6 +4160,7 @@ async function executeStepBody(
         internal,
         definition,
         traceWarnings.length > 0 ? traceWarnings : undefined,
+        ways,
       );
     }
     if (!result.applied) {
@@ -4039,6 +4171,7 @@ async function executeStepBody(
           options,
           { ...result, reason: 'already_settled' },
           traceWarnings,
+          ways,
         );
       }
       // WAL/sealFenced gates become result.applied (BU-12): claim_lost ⇒ the WAL SURVIVES
@@ -4050,6 +4183,8 @@ async function executeStepBody(
         result,
         allEvidence,
         traceWarnings,
+        'settle_step',
+        ways,
       );
     }
 
@@ -4133,7 +4268,7 @@ async function executeStepBody(
     let migratedWays: Pick<EngineReply, 'ways' | 'unavailable' | 'basis'> = noWays();
     if (migratedEffectiveAction !== 'stop') {
       try {
-        migratedWays = waysOf(store, definition, finalSnap, options.registry);
+        migratedWays = ways(finalSnap);
       } catch {
         // a step's prompt can throw for an unresolvable template reference; fall back to none.
       }
@@ -4245,6 +4380,7 @@ async function executeStepBody(
             }),
             definition,
             traceWarnings.length > 0 ? traceWarnings : undefined,
+            ways,
           );
         }
         throw err;
@@ -4268,6 +4404,7 @@ async function executeStepBody(
           }),
           definition,
           traceWarnings.length > 0 ? traceWarnings : undefined,
+          ways,
         );
       }
       resolvedGateMessage = raw;
@@ -4387,6 +4524,7 @@ async function executeStepBody(
           err,
           definition,
           traceWarnings.length > 0 ? traceWarnings : undefined,
+          ways,
         );
       }
       const internal = new WorkflowError('Failed to open gate', {
@@ -4402,6 +4540,7 @@ async function executeStepBody(
         internal,
         definition,
         traceWarnings.length > 0 ? traceWarnings : undefined,
+        ways,
       );
     }
 
@@ -4423,7 +4562,7 @@ async function executeStepBody(
           errors: [],
           context_hint: `Step '${options.command}' was already settled (a duplicate/retried attempt) — no action was taken.`,
           run_phase: noopRun.run_phase,
-          ...waysOf(store, definition, settledSnapshot(result), options.registry),
+          ...ways(settledSnapshot(result)),
         };
       }
       if (result.reason === 'already_open') {
@@ -4445,7 +4584,7 @@ async function executeStepBody(
           context_hint: `Run is already paused at gate '${liveGate.gate_id}'.`,
           run_phase: result.run.run_phase,
           reply_kind: 'confirm_required',
-          ...waysOf(store, definition, settledSnapshot(result), options.registry, {
+          ...ways(settledSnapshot(result), {
             presented: 'with_gate',
           }),
           gate: {
@@ -4481,6 +4620,7 @@ async function executeStepBody(
         allEvidence,
         traceWarnings,
         'open_gate',
+        ways,
       );
     }
 
@@ -4504,7 +4644,7 @@ async function executeStepBody(
       context_hint: `Run is paused at gate '${gate_id}'.`,
       run_phase: gateRun.run_phase,
       reply_kind: 'confirm_required',
-      ...waysOf(store, definition, settledSnapshot(result), options.registry, {
+      ...ways(settledSnapshot(result), {
         presented: 'with_gate',
         ...(gateClaimToken !== undefined ? { opening_token: gateClaimToken } : {}),
       }),
@@ -4550,6 +4690,7 @@ async function executeStepBody(
         err,
         definition,
         traceWarnings.length > 0 ? traceWarnings : undefined,
+        ways,
       );
     }
     const internal = new WorkflowError('Failed to persist run update', {
@@ -4565,6 +4706,7 @@ async function executeStepBody(
       internal,
       definition,
       traceWarnings.length > 0 ? traceWarnings : undefined,
+      ways,
     );
   }
   if (!result.applied) {
@@ -4575,6 +4717,7 @@ async function executeStepBody(
         options,
         { ...result, reason: 'already_settled' },
         traceWarnings,
+        ways,
       );
     }
     // WAL/sealFenced gates become result.applied (BU-12): claim_lost ⇒ the WAL SURVIVES.
@@ -4585,6 +4728,8 @@ async function executeStepBody(
       result,
       allEvidence,
       traceWarnings,
+      'settle_step',
+      ways,
     );
   }
 
@@ -4669,7 +4814,7 @@ async function executeStepBody(
   // issue #625 PR-2a (decisions C33, C34): the reply's view is judged with the CALL's registry —
   // the same fact `get_run_state` reads on this server — and a step that cannot run is named, never
   // passed over as "waiting for other steps".
-  const migratedWays = waysOf(store, definition, finalSnap, options.registry);
+  const migratedWays = ways(finalSnap);
   const migratedPending = describePending(definition, finalSnap, options.registry);
   // #729 PR-0 (Table rows 20–26, 32): the hint says what happened; the way on — the `inspect` way
   // on an ended run, the run's next ways otherwise — is the door's sentence after it.
@@ -7585,7 +7730,9 @@ async function executeChainBody(
     };
   }
 
-  const { caller: _caller, ...stepOptions } = options;
+  // #729 CW-2b: `heldClaim` reaches the named step only, as the step body's own parameter — never as
+  // an option the step takes, and never the steps the chain runs after it.
+  const { caller: _caller, heldClaim, ...stepOptions } = options;
   const effectiveOptions: ExecuteStepOptions = {
     ...stepOptions,
     registry: options.registry ?? createDefaultRegistry(),
@@ -7600,7 +7747,7 @@ async function executeChainBody(
 
   // The named step, through the caller's dispatcher (a bare named step records `driven_step`).
   const named = stampStoppedStep(
-    await executeStepAs(store, definition, effectiveOptions, via),
+    await executeStepAs(store, definition, effectiveOptions, via, 'caller', heldClaim),
     options.command,
   );
   let result: EngineReply = named;
