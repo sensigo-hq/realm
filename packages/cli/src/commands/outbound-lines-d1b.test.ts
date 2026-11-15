@@ -54,6 +54,26 @@ const GATED: WorkflowDefinition = loadWorkflowFromString(
   ].join('\n'),
 );
 
+/** The same workflow with no authored reminder schedule: the ledger's `of_max` is 1. */
+const UNSCHEDULED: WorkflowDefinition = loadWorkflowFromString(
+  [
+    'id: outbound-lines-d1b-default',
+    'name: outbound-lines-d1b-default',
+    'version: 1',
+    'steps:',
+    '  q:',
+    '    description: Ask.',
+    '    execution: auto',
+    '    trust: human_confirmed',
+    '    gate:',
+    '      choices: [approve, reject]',
+    '  after:',
+    '    description: After.',
+    '    execution: agent',
+    '    depends_on: [q]',
+  ].join('\n'),
+);
+
 // Declared, so the run's definition resolves (and `inspect` prints the question and `To answer:`).
 const workflowStore = {
   async register() {},
@@ -74,12 +94,16 @@ interface Rig {
   readonly gateId: string;
 }
 
-/** A run waiting at `q`, its question (every 10 min, at most 3) opened at T. */
-async function waiting(store?: InMemoryStore, clock?: SettableClock): Promise<Rig> {
+/** A run waiting at `q`, its question (every 10 min, at most 3; or `def`'s) opened at T. */
+async function waiting(
+  store?: InMemoryStore,
+  clock?: SettableClock,
+  def: WorkflowDefinition = GATED,
+): Promise<Rig> {
   const c = clock ?? settableClock(at(0));
   const s = store ?? new InMemoryStore({ clock: c });
-  const { record } = await s.create({ workflowId: GATED.id, workflowVersion: 1, params: {} });
-  const step = await executeStep(s, GATED, {
+  const { record } = await s.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const step = await executeStep(s, def, {
     runId: record.id,
     command: 'q',
     input: {},
@@ -146,8 +170,9 @@ async function listed(
 describe('#597 D1b — inspect and list say what the outbound ledger recorded', () => {
   it('counts: sent; sent + skipped; failed; rows with none sent; each line exactly as the grammar, instants through the one formatter', async () => {
     // (a) red when a count is wrong (skipped not the highest occurrence minus the rows; failed not
-    //     counted), `of at most` is not the row's `of_max`, `last` is not the latest `sent_at` or is
-    //     judged at another reading, or a zero part prints; (b) prints each case's lines.
+    //     counted), `of at most` is not the row's `of_max` (3 for the schedule, 1 with none), `last`
+    //     is not the latest `sent_at` or is judged at another reading, or a zero part prints; (b)
+    //     prints each case's lines.
     const sent = await waiting();
     await row(sent, reminder(sent, 1), 10 * MIN, 'sent');
     const skipped = await waiting();
@@ -157,16 +182,21 @@ describe('#597 D1b — inspect and list say what the outbound ledger recorded', 
     const twoSent = await waiting();
     await row(twoSent, reminder(twoSent, 1), 10 * MIN, 'sent');
     await row(twoSent, reminder(twoSent, 2), 20 * MIN, 'sent');
+    const unscheduled = await waiting(undefined, undefined, UNSCHEDULED);
+    await row(unscheduled, reminder(unscheduled, 1), 10 * MIN, 'sent');
     expect({
       sent: ledgerLines(await inspected(sent, 70 * MIN)),
       skipped: ledgerLines(await inspected(skipped, 70 * MIN)),
       failed: ledgerLines(await inspected(failed, 70 * MIN)),
       twoSent: ledgerLines(await inspected(twoSent, 70 * MIN)),
+      unscheduled: ledgerLines(await inspected(unscheduled, 70 * MIN)),
     }).toEqual({
       sent: ['Reminders: 1 sent (of at most 3), last 1h 0m ago (2030-01-01T00:10:00Z)'],
       skipped: ['Reminders: 1 sent (of at most 3), last 40m ago (2030-01-01T00:30:00Z); 2 skipped'],
       failed: ['Reminders: 0 sent (of at most 3); 1 failed (not retried)'],
       twoSent: ['Reminders: 2 sent (of at most 3), last 50m ago (2030-01-01T00:20:00Z)'],
+      // A gate with no authored schedule: its one reminder.
+      unscheduled: ['Reminders: 1 sent (of at most 1), last 1h 0m ago (2030-01-01T00:10:00Z)'],
     });
   });
 
