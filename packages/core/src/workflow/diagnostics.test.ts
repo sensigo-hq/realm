@@ -13,7 +13,7 @@ import {
 } from './diagnostics.js';
 
 describe('DEFAULT_POLICY / resolveSeverity', () => {
-  it('exactly three codes are "error" — the issue #170 flip and the input_map path that can never be found (fix 1, unit 1), and nothing rode along with them', () => {
+  it('exactly five codes are "error" — the issue #170 flip, the input_map path that can never be found (fix 1, unit 1) and the two `when` codes (piece 2a), and nothing rode along with them', () => {
     // Written as a whole-table assertion rather than spot checks: the risk this guards is another
     // code quietly acquiring 'error' severity, which no per-code test would ever see.
     const errored = Object.entries(DEFAULT_POLICY)
@@ -24,6 +24,8 @@ describe('DEFAULT_POLICY / resolveSeverity', () => {
       'INPUT_MAP_PATH_UNRESOLVABLE',
       'UNKNOWN_STEP_KEY',
       'UNKNOWN_WORKFLOW_KEY',
+      'WHEN_CHOICE_NOT_OFFERED',
+      'WHEN_PATH_UNRESOLVABLE',
     ]);
   });
 

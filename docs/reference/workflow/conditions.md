@@ -235,6 +235,7 @@ Because a skipped step has no entry, `$settlement.<step>.failed == null` in a `w
 ## Rules the loader applies
 
 - A `when` path must start with `run.params`, or with a step listed in the step's own `depends_on`. A `$settlement` path must name such a step too: `'$settlement' paths must reference a direct dependency (one-hop rule)`.
+- A `when` path is also checked against what the workflow declares: a field a closed schema does not have, a `$settlement` field other than its three, or a parameter a closed `params_schema` does not have is refused, and so is a comparison of a gate's `choice` with a choice the gate does not offer (for a gate that offers `refund` and `deny`, `approve.choice == 'refnd'` gets "Did you mean 'refund'?"). A path that may be absent gets a warning, unless the condition tests it with `== null` or `!= null`, or reads `$settlement`. Running a workflow does not refuse these. This was added after version 0.49.0.
 - On an `auto` or `agent` step, a `preconditions` path, and on a guard, an `abort_unless` path, must start with a step of the workflow, or with `$settlement`. A `run.…` path, a `context.…` path and a name that is no step are refused, each with what to write instead.
 
   ```text
@@ -246,7 +247,7 @@ Because a skipped step has no entry, `$settlement.<step>.failed == null` in a `w
 - `preconditions` must be a list: `'preconditions' must be an array of strings`.
 - A `when` list must not be empty: `'when' array must not be empty`.
 - A step cannot be named `run`, `context` or `$settlement`: `Step name 'run' is reserved and cannot be used as a step identifier`.
-- Field names are not checked. A misspelt field is a path that finds nothing.
+- A misspelt field of a handler's output is not checked, and one of a schema that allows other fields gets only a warning: when the workflow runs, each is a path that finds nothing.
 
 ## See also
 

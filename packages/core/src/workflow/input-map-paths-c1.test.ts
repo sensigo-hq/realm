@@ -366,12 +366,14 @@ describe('correction 1 — check 5: N3, a throw while judging never stops a load
       ],
       notChecked: [
         {
+          surface: 'input_map',
           step: 'bad',
           key: 'x',
           path: 'context.resources.propose.amount_cents',
           why: 'check_failed',
         },
         {
+          surface: 'input_map',
           step: 'good',
           key: 'z',
           path: 'context.resources.fetch.total',
@@ -407,12 +409,19 @@ describe('correction 1 — check 5: N3, a throw while judging never stops a load
       warnings: [],
       notChecked: [
         {
+          surface: 'input_map',
           step: 'broken',
           key: 'a',
           path: 'context.resources.propose.amount_cents',
           why: 'check_failed',
         },
-        { step: 'broken', key: 'b', path: 'run.params.x', why: 'check_failed' },
+        {
+          surface: 'input_map',
+          step: 'broken',
+          key: 'b',
+          path: 'run.params.x',
+          why: 'check_failed',
+        },
       ],
     });
   });

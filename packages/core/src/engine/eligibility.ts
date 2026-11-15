@@ -538,8 +538,11 @@ export function triggerRuleSatisfied(step: StepDefinition, run: RunRecord): bool
   }
 }
 
-/** Parse a `when` RHS literal, flagging the bare `null` token (drives the 1c presence-test). */
-function parseWhenRhs(rhs: string): { value: unknown; isBareNull: boolean } {
+/**
+ * Parse a `when` RHS literal, flagging the bare `null` token (drives the 1c presence-test). Exported
+ * for the loader's `when` check (fix 1, piece 2a), so a right-hand side is parsed one way only.
+ */
+export function parseWhenRhs(rhs: string): { value: unknown; isBareNull: boolean } {
   if ((rhs.startsWith("'") && rhs.endsWith("'")) || (rhs.startsWith('"') && rhs.endsWith('"'))) {
     return { value: rhs.slice(1, -1), isBareNull: false };
   }

@@ -53,7 +53,13 @@ export type WarningCode =
   // (`input-map-paths.ts`). A path that can never be found is a typo, so it is refused at the
   // boundary and lenient in execution, as an unknown key is; one that may be absent is advice.
   | 'INPUT_MAP_PATH_UNRESOLVABLE'
-  | 'INPUT_MAP_PATH_UNCERTAIN';
+  | 'INPUT_MAP_PATH_UNCERTAIN'
+  // fix 1, piece 2a: a `when` condition judged against what the workflow declares (`when-paths.ts`).
+  // A path that can never be found, or a gate's answer compared with a choice it does not offer, is
+  // refused at the boundary and lenient in execution; one that may be absent is advice.
+  | 'WHEN_PATH_UNRESOLVABLE'
+  | 'WHEN_CHOICE_NOT_OFFERED'
+  | 'WHEN_PATH_UNCERTAIN';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -146,6 +152,10 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   // agent, listen and workflow test print it and go on.
   INPUT_MAP_PATH_UNRESOLVABLE: 'error',
   INPUT_MAP_PATH_UNCERTAIN: 'warn',
+  // fix 1, piece 2a — the same boundary for a `when` condition that cannot work as written.
+  WHEN_PATH_UNRESOLVABLE: 'error',
+  WHEN_CHOICE_NOT_OFFERED: 'error',
+  WHEN_PATH_UNCERTAIN: 'warn',
 };
 
 /**

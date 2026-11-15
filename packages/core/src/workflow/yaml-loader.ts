@@ -38,6 +38,7 @@ import {
 import { createSourcePositionCollector, type SourcePositionMap } from './source-positions.js';
 import { resolveTemplates } from './template-resolver.js';
 import { checkInputMapPaths, type NotCheckedPath } from './input-map-paths.js';
+import type { WhenLeaf } from './when-paths.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
 import { isCredentialName } from '../utils/redaction.js';
@@ -565,7 +566,8 @@ function validateSettlementReference(
 /**
  * Change 2 (when-only): a `when` leaf's `step.field` reference must resolve to `run.params.*` or to a
  * step in this step's DIRECT `depends_on` (one-hop membership — no graph traversal). Field names are
- * not checked (agent-step outputs aren't statically declared).
+ * checked later, once every step is known, against what the workflow declares (`when-paths.ts`,
+ * fix 1, piece 2a).
  */
 function validateWhenReference(
   path: string,
@@ -1841,6 +1843,9 @@ function parseWorkflowString(
     // The workflow's step names in declared order: a precondition's or a guard's path must start
     // with one of them (issue #933).
     const stepNames = Object.keys(stepsRaw);
+    // Fix 1, piece 2a: the `when` leaves every check below accepted, judged against what the
+    // workflow declares at the end (`when-paths.ts`), so a leaf gets at most one finding.
+    const admittedWhen: WhenLeaf[] = [];
     for (const [stepName, stepRaw] of Object.entries(stepsRaw)) {
       if (typeof stepRaw !== 'object' || stepRaw === null || Array.isArray(stepRaw)) {
         errors.push(withStepLine(stepName, `Step '${stepName}' must be an object`));
@@ -3155,22 +3160,31 @@ function parseWorkflowString(
       // Validate when: string | string[] of single-comparison/bare-path leaves (implicit AND).
       if ('when' in step && step['when'] !== undefined) {
         const rawWhen = step['when'];
+        // A leaf these checks accept, on a kind that reads `when` (auto, agent, guard), is judged
+        // against what the workflow declares too (piece 2a); a finalizer's `when` is refused.
+        const readsWhen =
+          stepKind !== undefined && STEP_KEY_REGISTRY.when[stepKind].c === 'consumed';
+        const checkWhenLeaf = (leaf: string): void => {
+          const before = errors.length;
+          validateConditionLeaf(
+            'when',
+            leaf,
+            stepName,
+            dependsOn,
+            stepNames,
+            stepKind,
+            errors,
+            withStepLine,
+          );
+          if (readsWhen && errors.length === before) admittedWhen.push({ step: stepName, leaf });
+        };
         if (typeof rawWhen === 'string') {
           if (rawWhen.trim() === '') {
             errors.push(
               withStepLine(stepName, `Step '${stepName}': 'when' must be a non-empty string`),
             );
           } else {
-            validateConditionLeaf(
-              'when',
-              rawWhen,
-              stepName,
-              dependsOn,
-              stepNames,
-              stepKind,
-              errors,
-              withStepLine,
-            );
+            checkWhenLeaf(rawWhen);
           }
         } else if (Array.isArray(rawWhen)) {
           if (rawWhen.length === 0) {
@@ -3187,16 +3201,7 @@ function parseWorkflowString(
                   ),
                 );
               } else {
-                validateConditionLeaf(
-                  'when',
-                  leaf,
-                  stepName,
-                  dependsOn,
-                  stepNames,
-                  stepKind,
-                  errors,
-                  withStepLine,
-                );
+                checkWhenLeaf(leaf);
               }
             }
           }
@@ -3853,11 +3858,17 @@ function parseWorkflowString(
     }
 
     // Fix 1, unit 1: every `input_map` path a step consumes, judged against what the workflow
-    // declares (`input-map-paths.ts`). Last, once every step is known, and before the throw below,
-    // so its findings ride a refusal for another reason too (#424) — every problem in one pass.
+    // declares (`input-map-paths.ts`); piece 2a: and every `when` leaf the checks above accepted,
+    // over the same index. Last, once every step is known, and before the throw below, so its
+    // findings ride a refusal for another reason too (#424) — every problem in one pass.
     const inputMapPaths = checkInputMapPaths(
       { steps: stepsRaw, params_schema: doc['params_schema'] },
       (segments) => sourceMap.posOf(segments),
+      {
+        leaves: admittedWhen,
+        choicesOf: (name) =>
+          gateChoicesOf(stepsRaw[name] as Pick<StepDefinition, 'gate' | 'input_schema'>),
+      },
     );
     warnings.push(...inputMapPaths.warnings);
 

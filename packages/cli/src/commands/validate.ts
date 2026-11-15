@@ -161,11 +161,18 @@ function printValidationOutcome(
   if (!strictFailing && definition.description !== undefined) {
     console.log(`  ${definition.description}`);
   }
-  // Fix 1, unit 1: after the result (and its description), only when some path was not checked.
-  const notCheckedLine = renderNotCheckedLine(notChecked);
-  if (notCheckedLine !== undefined) console.log(notCheckedLine);
-  const checkFailedLine = renderCheckFailedLine(notChecked);
-  if (checkFailedLine !== undefined) console.log(checkFailedLine);
+  // Fix 1, unit 1: after the result (and its description), only when some path was not checked;
+  // piece 2a: the `when` conditions' lines after them, by the same counting rule.
+  const inputMap = notChecked.filter((n) => n.surface === 'input_map');
+  const when = notChecked.filter((n) => n.surface === 'when');
+  for (const line of [
+    renderNotCheckedLine(inputMap),
+    renderCheckFailedLine(inputMap),
+    renderWhenNotCheckedLine(when),
+    renderWhenCheckFailedLine(when),
+  ]) {
+    if (line !== undefined) console.log(line);
+  }
   return strictFailing;
 }
 
@@ -194,6 +201,26 @@ function renderCheckFailedLine(notChecked: readonly NotCheckedPath[]): string | 
   return (
     `Not checked: ${paths.length} input_map path(s), because Realm's own check failed on them: ` +
     paths.map((n) => `${n.step}.${n.key}`).join(', ')
+  );
+}
+
+/** Fix 1, piece 2a — the `when` conditions on data the workflow declares no shape for. */
+function renderWhenNotCheckedLine(notChecked: readonly NotCheckedPath[]): string | undefined {
+  const conditions = notChecked.filter((n) => n.why !== 'check_failed');
+  if (conditions.length === 0) return undefined;
+  return (
+    `Not checked: ${conditions.length} when condition(s) on data the workflow declares no shape ` +
+    `for: ${conditions.map((n) => `${n.step}: ${n.path}`).join(', ')}`
+  );
+}
+
+/** Fix 1, piece 2a — the `when` conditions Realm's own check failed on (#123's named exception). */
+function renderWhenCheckFailedLine(notChecked: readonly NotCheckedPath[]): string | undefined {
+  const conditions = notChecked.filter((n) => n.why === 'check_failed');
+  if (conditions.length === 0) return undefined;
+  return (
+    `Not checked: ${conditions.length} when condition(s), because Realm's own check failed on ` +
+    `them: ${conditions.map((n) => `${n.step}: ${n.path}`).join(', ')}`
   );
 }
 
@@ -406,8 +433,9 @@ interface ValidateJsonEmit {
    */
   extensionKeys: readonly string[];
   /**
-   * Fix 1, unit 1 — the `input_map` paths into data the workflow declares no shape for, as
-   * `{ step, key, path, why }` (`why: check_failed` when the check itself failed on the path).
+   * Fix 1, unit 1 — the `input_map` paths (and, piece 2a, the `when` conditions) that read data the
+   * workflow declares no shape for, as `{ surface, step, key, path, why }` (`why: check_failed` when
+   * the check itself failed on the path).
    * Emitted on EVERY arm. The list on a success arm and on the two arms refused by policy (file and
    * `--registered`), where the file loaded and its paths were judged (correction 1, N2); `[]` on
    * every other refusal or load-failure arm.
@@ -444,7 +472,9 @@ const VALIDATE_JSON_TABLE: ClassTable = {
   extension_keys: 'fact',
   // fix 1, unit 1: step names, map keys and reason codes are facts; the path is the author's text,
   // a diagnostic copy like the messages.
-  not_checked: { nested: { step: 'fact', key: 'fact', path: 'bounded', why: 'fact' } },
+  not_checked: {
+    nested: { surface: 'fact', step: 'fact', key: 'fact', path: 'bounded', why: 'fact' },
+  },
   // issue #600 caching PR 5 (Δ3): sizes, counts, verdict and cause words, segment names, step ids, a
   // model id and floor numbers — never prompt text.
   cacheability: 'fact',

@@ -17,9 +17,14 @@
 // not checked, `why: check_failed`, and every other leaf is judged as usual; a throw while building
 // the shared answers lists every leaf so. That is a named exception to the #123 rule (an internal
 // bug is thrown, never relabelled): a bug in this check is shown by `validate`, never thrown.
+//
+// Piece 2a: the `when` leaves the loader's existing checks accepted are judged here too
+// (`when-paths.ts`), over the same index and under the same catch.
 import { consumesInputMap, type InputMapStep } from '../engine/input-map.js';
 import { capText } from '../utils/redaction.js';
 import { resolveSeverity, type LoaderWarning, type WarningCode } from './diagnostics.js';
+import { absentWhy } from './path-reasons.js';
+import { judgeWhenLeaf, whenLeafPath, type WhenLeaf } from './when-paths.js';
 import {
   INPUT_MAP_SURFACE,
   PathIndex,
@@ -31,13 +36,18 @@ import {
 } from './path-resolver.js';
 import type { SourcePosition } from './source-positions.js';
 
-/** An `input_map` path into data the workflow declares no shape for (`validate --json`'s `not_checked`). */
+/**
+ * An `input_map` path or a `when` condition that reads data the workflow declares no shape for
+ * (`validate --json`'s `not_checked`).
+ */
 export interface NotCheckedPath {
-  /** The step whose `input_map` holds the path. */
+  /** Where the path is read: an `input_map` leaf, or a `when` condition (piece 2a). */
+  surface: 'input_map' | 'when';
+  /** The step whose `input_map` (or `when`) holds the path. */
   step: string;
-  /** The map's dotted key chain. */
+  /** The map's dotted key chain; `when` for a condition. */
   key: string;
-  /** The path as written, trimmed. */
+  /** The path as written, trimmed: for a condition, its left-hand path. */
   path: string;
   /** The two shape reasons, or `check_failed` when the check itself failed on this path. */
   why: NotCheckedWhy | 'check_failed';
@@ -54,14 +64,20 @@ const MAX_DEPTH = 10;
 
 /**
  * Judges every leaf of every consumed `input_map` in `workflow`, in the steps' order and each map's
- * key order — every finding in one pass, never stopping at the first.
+ * key order, then each `when` leaf in `when.leaves` (piece 2a) — every finding in one pass, never
+ * stopping at the first, over one shared index.
  *
  * `positionOf` resolves a key's place in the source (the loader's `SourcePositionMap.posOf`); a
  * finding cites the key's own line, else the step's (`(step at line N)`), else nothing.
+ * `when.choicesOf` gives a step's gate choices (the loader's `gateChoicesOf`).
  */
 export function checkInputMapPaths(
   workflow: PathWorkflow,
   positionOf: (segments: readonly string[]) => SourcePosition | undefined,
+  when?: {
+    leaves: readonly WhenLeaf[];
+    choicesOf: (stepName: string) => readonly string[];
+  },
 ): InputMapPathFindings {
   const findings: InputMapPathFindings = { warnings: [], notChecked: [] };
   const leaves: Leaf[] = [];
@@ -76,7 +92,8 @@ export function checkInputMapPaths(
       leaves.push({ stepName, keys, rawPath }),
     );
   }
-  if (leaves.length === 0) return findings;
+  const whenLeaves = when?.leaves ?? [];
+  if (leaves.length === 0 && whenLeaves.length === 0) return findings;
 
   let index: PathIndex | undefined;
   try {
@@ -95,9 +112,38 @@ export function checkInputMapPaths(
     }
     if (judged === undefined) {
       findings.notChecked.push({
+        surface: 'input_map',
         step: leaf.stepName,
         key: leaf.keys.join('.'),
         path: leaf.rawPath.trim(),
+        why: 'check_failed',
+      });
+      continue;
+    }
+    if (judged.notChecked !== undefined) findings.notChecked.push(judged.notChecked);
+    if (judged.warning !== undefined) findings.warnings.push(judged.warning);
+  }
+  for (const leaf of whenLeaves) {
+    let judged: LeafFindings | undefined;
+    if (index !== undefined && when !== undefined) {
+      try {
+        judged = judgeWhenLeaf(index, leaf, when.choicesOf, positionOf);
+      } catch {
+        judged = undefined;
+      }
+    }
+    if (judged === undefined) {
+      let path: string;
+      try {
+        path = whenLeafPath(leaf.leaf);
+      } catch {
+        path = leaf.leaf.trim();
+      }
+      findings.notChecked.push({
+        surface: 'when',
+        step: leaf.step,
+        key: 'when',
+        path,
         why: 'check_failed',
       });
       continue;
@@ -116,7 +162,7 @@ interface Leaf {
 }
 
 /** One leaf's findings, pushed only once all of them are built. */
-interface LeafFindings {
+export interface LeafFindings {
   warning?: LoaderWarning;
   notChecked?: NotCheckedPath;
 }
@@ -165,7 +211,7 @@ function judgeLeaf(
       text: absentWords(stepName, key, path, judgement.cause),
     };
   } else if (judgement.verdict === 'not_checked') {
-    findings.notChecked = { step: stepName, key, path, why: judgement.why };
+    findings.notChecked = { surface: 'input_map', step: stepName, key, path, why: judgement.why };
     if (judgement.stepCause !== undefined) {
       cause = {
         code: 'INPUT_MAP_PATH_UNCERTAIN',
@@ -298,32 +344,8 @@ function absentWords(stepName: string, key: string, path: string, cause: AbsentC
     case 'default_only':
     case 'list_position':
       return (
-        `${opening} reads '${p}', which may be absent when this step runs (${why(cause)}); the ` +
+        `${opening} reads '${p}', which may be absent when this step runs (${absentWhy(cause)}); the ` +
         `step then receives no value for '${k}'.`
       );
-  }
-}
-
-/** Row 9's `<why>`. */
-function why(
-  cause: Extract<
-    AbsentCause,
-    { rule: 'trigger_rule' | 'optional' | 'default_only' | 'list_position' }
-  >,
-): string {
-  switch (cause.rule) {
-    case 'trigger_rule':
-      return cause.through === undefined
-        ? `this step's trigger_rule lets it run when '${cause.step}' did not complete`
-        : `step '${cause.through}''s trigger_rule lets it run when '${cause.step}' did not complete`;
-    case 'optional':
-      return `'${capText(cause.field)}' is optional in its schema`;
-    case 'default_only':
-      return (
-        `'${capText(cause.field)}' is only in default_output, which the step records only when ` +
-        `its answers are refused too often`
-      );
-    case 'list_position':
-      return `'${cause.position}' is a position in a list that may be shorter`;
   }
 }
