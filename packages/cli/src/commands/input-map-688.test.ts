@@ -159,7 +159,8 @@ describe('#688 — the docs sentences it adds about the way out and an unresolve
     );
     claim(
       'docs/reference/workflow/input-map-and-templates.md',
-      "There is no error and no warning, when the file is loaded or when the step runs — unless the step's `input_schema` requires the key: then the step is refused before its claim (`'<step>' cannot run (input_schema): …`), and its way out names the `input_map` or the `input_schema`.",
+      // Fix 1, unit 1: the file is now checked when it loads (validate-input-map-paths.test.ts).
+      "When the step runs there is no error and no warning — unless the step's `input_schema` requires the key: then the step is refused before its claim (`'<step>' cannot run (input_schema): …`), and its way out names the `input_map` or the `input_schema`.",
     );
   });
 

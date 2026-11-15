@@ -48,7 +48,12 @@ export type WarningCode =
   // #627 W (F31, W-l1): a gated step's `instructions` or the workflow's `protocol.rules` names an
   // answer tool. Advice, never a refusal: the text is forwarded labelled as the author's (W-t1) and
   // Realm's own rule follows it; a text match finds tool names, not every phrasing.
-  | 'AUTHOR_TEXT_NAMES_ANSWER_TOOL';
+  | 'AUTHOR_TEXT_NAMES_ANSWER_TOOL'
+  // fix 1, unit 1 (data paths): an `input_map` path judged against what the workflow declares
+  // (`input-map-paths.ts`). A path that can never be found is a typo, so it is refused at the
+  // boundary and lenient in execution, as an unknown key is; one that may be absent is advice.
+  | 'INPUT_MAP_PATH_UNRESOLVABLE'
+  | 'INPUT_MAP_PATH_UNCERTAIN';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -137,6 +142,10 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   REALM_RELEASE_LINE_MISMATCH: 'warn',
   // #627 W (F31) — advice about author text; the load goes on.
   AUTHOR_TEXT_NAMES_ANSWER_TOOL: 'warn',
+  // fix 1, unit 1 — validate, register and watch refuse a path that can never be found; run,
+  // agent, listen and workflow test print it and go on.
+  INPUT_MAP_PATH_UNRESOLVABLE: 'error',
+  INPUT_MAP_PATH_UNCERTAIN: 'warn',
 };
 
 /**

@@ -13,14 +13,18 @@ import {
 } from './diagnostics.js';
 
 describe('DEFAULT_POLICY / resolveSeverity', () => {
-  it('exactly two codes are "error" — the issue #170 flip, and nothing rode along with it', () => {
-    // Written as a whole-table assertion rather than two spot checks: the risk this guards is a
-    // THIRD code quietly acquiring 'error' severity, which no per-code test would ever see.
+  it('exactly three codes are "error" — the issue #170 flip and the input_map path that can never be found (fix 1, unit 1), and nothing rode along with them', () => {
+    // Written as a whole-table assertion rather than spot checks: the risk this guards is another
+    // code quietly acquiring 'error' severity, which no per-code test would ever see.
     const errored = Object.entries(DEFAULT_POLICY)
       .filter(([, severity]) => severity === 'error')
       .map(([code]) => code)
       .sort();
-    expect(errored).toEqual(['UNKNOWN_STEP_KEY', 'UNKNOWN_WORKFLOW_KEY']);
+    expect(errored).toEqual([
+      'INPUT_MAP_PATH_UNRESOLVABLE',
+      'UNKNOWN_STEP_KEY',
+      'UNKNOWN_WORKFLOW_KEY',
+    ]);
   });
 
   it('resolveSeverity looks up the default policy when none is given', () => {
