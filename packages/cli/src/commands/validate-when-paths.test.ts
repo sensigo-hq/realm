@@ -9,6 +9,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import { validateCommand } from './validate.js';
 import { registerCommand } from './register.js';
 import { runCommand } from './run.js';
@@ -184,6 +185,49 @@ describe('validate and register — fix 1, piece 2a: `when` conditions', () => {
       'Valid: triage v1 (2 steps)',
       "Not checked: 1 when condition(s), because Realm's own check failed on them: escalate: classify.category",
     ]);
+  });
+  it('check 13, the Upgrading item: `validate --registered <id>` refuses a stored copy whose condition cannot work', async () => {
+    // A copy stored before this release: the registry is written directly, past the loader that
+    // would refuse it today (validate-registered.test.ts's seeding).
+    await h.home.workflowStore.register({
+      id: 'triage',
+      name: 'Triage',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        classify: {
+          description: 'Classify the ticket',
+          execution: 'agent',
+          input_schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['category'],
+            properties: { category: { type: 'string' } },
+          },
+        },
+        escalate: {
+          description: 'Escalate a bug',
+          execution: 'auto',
+          handler: 'escalate',
+          depends_on: ['classify'],
+          when: "classify.categry == 'bug'",
+        },
+      },
+    } as never);
+    await expect(
+      validateCommand.parseAsync(['--registered', 'triage', '--json'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    const out = JSON.parse(lines(logSpy).join('\n')) as {
+      valid: boolean;
+      diagnostics: { code: string; key?: string }[];
+    };
+    // (1) red when a stored copy's conditions are not judged; (2) prints the verdict and the codes.
+    expect({
+      valid: out.valid,
+      codes: out.diagnostics
+        .filter((d) => d.code.startsWith('WHEN_'))
+        .map((d) => `${d.code} ${d.key}`),
+    }).toEqual({ valid: false, codes: ['WHEN_PATH_UNRESOLVABLE when'] });
   });
 });
 
