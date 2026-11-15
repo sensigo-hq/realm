@@ -6,8 +6,12 @@
 //      of the lock (CW-PR-02), so no other file function may creep into the one module that opens them;
 //   2. no production source outside that module names the folder `claim-leases` in a literal: the
 //      module is the one place that makes or opens it;
-//   3. no production source calls a lease port's `hold(`: nothing in Realm takes a lease yet (the
-//      CHANGELOG and the core library's reference say so; CW-2 and CW-5 are the units that will).
+//   3. only the files of a closed list call a lease port's `hold(` (#729 CW-2a): core's
+//      `claimStepForDrive` (the one engine entry that takes a lease) and realm-testing's leased-claim
+//      laws (which take their holds from the store's port, as a drive does). The list is checked both
+//      ways: a call in another file is refused, and so is a listed file that no longer calls it (the
+//      list would then be wider than the code). No Realm command takes a lease yet (the CHANGELOG and
+//      the core library's reference say so; CW-5 is the unit that will).
 //
 // WHAT IT SEES: every `.ts` file under `packages/*/src` but tests (`*.test.ts`), declarations and the
 // `test-support` folders. WHAT IT CANNOT SEE: a call through a computed name (`port[name]()`), a call
@@ -25,6 +29,13 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const LEASE_MODULE = 'store-sqlite/src/claim-lease.ts';
+
+/** #729 CW-2a: the production files that may call a lease port's `hold(`, each with its reason. */
+const HOLD_CALLERS: Readonly<Record<string, string>> = {
+  'core/src/engine/drive-claim.ts': 'claimStepForDrive takes the lease a drive claims a step under',
+  'testing/src/store/leased-claim-contract.ts':
+    "the leased-claim laws take their holds from the store's own port",
+};
 
 /** What the lease module may take from `node:fs`: make, close, delete, mkdir, stat, access, constants. */
 const ALLOWED_FS = [
@@ -150,13 +161,19 @@ describe('#729 CW-1 — the claim lease’s source witness', () => {
     }).toEqual({ files: true, inTheModule: 1, elsewhere: [] });
   });
 
-  it('no production source calls a lease port’s hold(): nothing in Realm takes a lease yet', () => {
+  it('only the listed files call a lease port’s hold(), and each listed file does', () => {
     const calls = files.flatMap((path) =>
-      holdCalls(parse(path)).map((line) => `${rel(path)}:${line}`),
+      holdCalls(parse(path)).map((line) => ({ file: rel(path), line })),
     );
-    // (1) red when production code calls `hold(` on anything (the sentences "nothing in Realm takes a
-    //     lease yet" in the CHANGELOG and the core library's reference then go false); (2) prints each
-    //     file and line.
-    expect(calls).toEqual([]);
+    const listed = Object.keys(HOLD_CALLERS).sort();
+    // (1) red when another production file calls `hold(` (a command taking a lease makes the
+    //     sentences "no Realm command takes a lease yet" in the CHANGELOG and the core library's
+    //     reference false), or a listed file no longer calls it (the list is then wider than the
+    //     code); (2) prints each call outside the list with its file and line, and the files that do
+    //     call it.
+    expect({
+      outside: calls.filter((c) => !listed.includes(c.file)).map((c) => `${c.file}:${c.line}`),
+      calling: [...new Set(calls.map((c) => c.file))].sort(),
+    }).toEqual({ outside: [], calling: listed });
   });
 });

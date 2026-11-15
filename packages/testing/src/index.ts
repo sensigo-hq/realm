@@ -80,6 +80,14 @@ export type {
   LeaseFactsContractCase,
   LeaseFactsTestStore,
 } from './store/lease-facts-contract.js';
+// issue #729, the claim window (CW-2a): the laws of a claim taken under a lease its caller holds.
+export { leasedClaimContract, LEASED_CLAIM_LAWS } from './store/leased-claim-contract.js';
+export type {
+  LeasedClaimLaw,
+  LeasedClaimContractAdapter,
+  LeasedClaimContractCase,
+  LeasedClaimTestStore,
+} from './store/leased-claim-contract.js';
 
 // Clocks and test locations (issue #715 (a); D5 §6, D6-1, D6-20, D6-54)
 export { settableClock, steppingClock, countingClock } from './clock/settable-clock.js';
