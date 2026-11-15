@@ -433,9 +433,9 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     //     counts the codes); (2) prints the sentence.
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 24 warning codes. Five of them count as errors: an unknown key at the top of the file or on a step, an `input_map` path that can never be found, and a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer, make `validate`, `register` and `watch` fail.",
+      "The loader has 27 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.",
     );
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 24 warning codes');
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 27 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
       '| `INPUT_MAP_PATH_UNRESOLVABLE` | Error | An `input_map` path can never be found. Added after version 0.49.0. |',
@@ -466,7 +466,8 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       '**3. A `gate:` block on a step that declares no gate trust is refused when the file is loaded.** Set `trust: human_confirmed` on the step, or remove the block, as its refusal says; `realm workflow validate --registered <id>` reports a stored copy.',
     );
     // The two items sit in [Unreleased]'s Upgrading section, numbered on from its item 1 (#597 D1c-1's
-    // store-format item, landed after them, is 4; fix 1 piece 2a's `when` item is 5).
+    // store-format item, landed after them, is 4; fix 1 piece 2a's `when` item is 5; piece 2b's
+    // `params_map` item is 6).
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     const unreleased = changelog.slice(
       changelog.indexOf('## [Unreleased]'),
@@ -476,7 +477,14 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       unreleased.indexOf('### Upgrading'),
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
     );
-    expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual(['**1. ', '**2. ', '**3. ', '**4. ', '**5. ']);
+    expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual([
+      '**1. ',
+      '**2. ',
+      '**3. ',
+      '**4. ',
+      '**5. ',
+      '**6. ',
+    ]);
   });
 });
 

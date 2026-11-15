@@ -41,6 +41,7 @@ import { checkInputMapPaths, type NotCheckedPath } from './input-map-paths.js';
 import type { WhenLeaf } from './when-paths.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
+import { checkParamsMap } from './params-map-check.js';
 import { isCredentialName } from '../utils/redaction.js';
 import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
 import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from '../engine/claim-liveness.js';
@@ -3764,6 +3765,13 @@ function parseWorkflowString(
       normalizeTriggerFilter(triggerRaw); // canonicalise shorthand BEFORE validation
       errors.push(...validateTriggerStructure(triggerRaw));
       validateResultMap(triggerRaw, stepNames, errors, withTopLevelLine);
+      // Fix 1, piece 2b: `params_map` against `params_schema`. After the trigger's own checks, and
+      // whatever they found, so every problem is reported in one pass (#424).
+      warnings.push(
+        ...checkParamsMap(triggerRaw, doc['params_schema'], (segments) =>
+          sourceMap.posOf(segments),
+        ),
+      );
     }
 
     // Step 3c: workflow-level context blocks (issue #553). These four rules need nothing but the
