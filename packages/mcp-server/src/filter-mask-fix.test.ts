@@ -6,6 +6,9 @@
 //
 // Each assertion carries the two questions of `~/.claude/TESTING-RULES.md` rule 8 next to it:
 // (1) what turns it red, (2) what it prints then.
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -18,6 +21,9 @@ import { createRealmMcpServer } from './server.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { logMasked, MCP_ENVELOPE_TABLE, toolContentOf } from './render-reply.js';
 import { makeTempHome, type TempHome } from './test-support/temp-home.js';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const flat = (t: string): string => t.replace(/\s+/g, ' ');
 
 const K = 'fm-mcp-declared-7f3e';
 const E = 'fm-mcp-environment-91ac';
@@ -62,16 +68,16 @@ const GATED = wf('fm-gated', {
 const AGENT = wf('fm-agent', {
   a: { description: 'A.', execution: 'agent', depends_on: [], prompt: SHOWN },
 });
-/** A gate and an agent step side by side: while the question waits, the agent step is offered. */
-const SIDE = wf('fm-side', {
+/** A gate step whose instructions (the opening reply's `gate.agent_hint`) show the fake. */
+const HINT = wf('fm-hint', {
   g: {
     description: 'G.',
     execution: 'auto',
     trust: 'human_confirmed',
     depends_on: [],
+    instructions: 'Hint: {{ run.params.k | upper }}',
     gate: { choices: ['approve'], message: 'Approve?' },
   },
-  a: { description: 'A.', execution: 'agent', depends_on: [], prompt: SHOWN },
 });
 /** An agent step whose prompt's fixed text holds a planted span mark. */
 const MARKED_HEAD = wf('fm-marked-head', {
@@ -102,7 +108,7 @@ afterEach(async () => {
 async function connect() {
   const h = await makeTempHome();
   handles.push(h);
-  for (const d of [GATED, AGENT, SIDE, MARKED_HEAD, PLAIN_HEAD])
+  for (const d of [GATED, AGENT, HINT, MARKED_HEAD, PLAIN_HEAD])
     await h.stores.workflowStore.register(d);
   const server = createRealmMcpServer({
     ...h.stores,
@@ -284,6 +290,73 @@ describe('the filter-mask fix — the MCP door', () => {
     });
   });
 
+  it('(1, correction 1) a gate step’s instructions showing the fake through `| upper` reach the client as `gate.agent_hint`, masked', async () => {
+    const call = await connect();
+    const started = await call('start_run', { workflow_id: HINT.id, params: { k: K } });
+    // (1) red when the instructions site renders without the set (the upper-cased fake in the
+    //     hint); (2) prints the hint and the leak check.
+    expect({ hint: field(started.body, 'gate', 'agent_hint'), leaks: leaks(started.text) }).toEqual(
+      {
+        // The door introduces the author's text as theirs.
+        hint: "From the workflow's author: Hint: [REDACTED]",
+        leaks: false,
+      },
+    );
+  });
+
+  it('(3) present_question: the form’s next `run_step` prompt is masked with the door’s set; the form’s question is the stored one, unchanged (the intended asymmetry)', async () => {
+    const h = await makeTempHome();
+    handles.push(h);
+    await h.stores.workflowStore.register(GATED);
+    const server = createRealmMcpServer({
+      ...h.stores,
+      gateAnswers: 'asked',
+      disclosureProvider: async () => set(),
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client(
+      { name: 'fm-present', version: '0' },
+      { capabilities: { elicitation: { form: {} } } },
+    );
+    // The first form (start_run's) is declined; the second (present_question's) is answered.
+    const messages: string[] = [];
+    client.setRequestHandler(ElicitRequestSchema, async (req) => {
+      messages.push(String((req.params as { message?: string }).message ?? ''));
+      return messages.length === 1
+        ? { action: 'decline' }
+        : { action: 'accept', content: { choice: 'approve' } };
+    });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    const text = async (name: string, args: Record<string, unknown>): Promise<string> =>
+      ((await client.callTool({ name, arguments: args })) as { content: Array<{ text: string }> })
+        .content[0]!.text;
+    const started = JSON.parse(
+      await text('start_run', { workflow_id: GATED.id, params: { k: K, e: E } }),
+    ) as Obj;
+    const runId = started['run_id'] as string;
+    const gateId = field(
+      JSON.parse(await text('get_run_state', { run_id: runId })),
+      'pending_gate',
+      'gate_id',
+    ) as string;
+    const presented = await text('present_question', { run_id: runId, gate_id: gateId });
+    // (1) red when present_question's form path composes its ways without the door's set (the
+    //     upper-cased fake in the next step's prompt), or when the door's set re-masks the form's
+    //     question (its environment value, shown at the declared tier, would be hidden); (2) prints
+    //     the prompt, the form's question line and the leak check.
+    expect({
+      forms: messages.length,
+      prompt: promptOf(JSON.parse(presented) as Obj),
+      questionEnvLine: messages[1]!.split('\n').find((l) => l.startsWith('Env:')),
+      leaks: leaks(presented),
+    }).toEqual({
+      forms: 2,
+      prompt: 'Upper: [REDACTED]\nPlain: [REDACTED]\nEnv: [REDACTED]',
+      questionEnvLine: `Env: ${E.toUpperCase()}`,
+      leaks: false,
+    });
+  });
+
   it('(8) a declared value with a planted span mark is masked in the reply walk (the run’s params)', async () => {
     const call = await connect();
     const started = await call('start_run', { workflow_id: AGENT.id, params: { k: MARKED } });
@@ -333,5 +406,24 @@ describe('the filter-mask fix — the MCP door', () => {
         sha256: '8dc8b3b4694f08fb55e294349b29f4e9821290ed6b0e7345727cd5d0a8c75b07',
       },
     });
+  });
+  it('(correction 1, 2) the two pages say what the receipt’s `hidden` counts: this reply’s own mask, not a marker a template rendered', () => {
+    const sought = [
+      [
+        'docs/reference/mcp/tools.md',
+        "`hidden` (how many values were replaced with `[REDACTED]` by this reply's own mask, by kind: `declared`, `environment`, `pattern`; a value hidden before a template's filters ran (a step's prompt, a gate's instructions) shows its marker and is not counted here)",
+      ],
+      [
+        'docs/guides/connect-an-mcp-client.md',
+        "`hidden` counts what was replaced with `[REDACTED]` by this reply's own mask, by kind (a value hidden before a template's filters ran, in a step's prompt or a gate's instructions, shows its marker and is not counted here);",
+      ],
+    ] as const;
+    // (1) red when either clause leaves its page or a word differs; (2) prints each page and found.
+    expect(
+      sought.map(([page, text]) => [
+        page,
+        flat(readFileSync(join(ROOT, page), 'utf8')).includes(flat(text)),
+      ]),
+    ).toEqual(sought.map(([page]) => [page, true]));
   });
 });

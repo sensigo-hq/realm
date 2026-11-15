@@ -943,8 +943,9 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       [AMP],
     );
     // (a) red when the filters run before the mask again (`upperSent`: the upper-cased fake reaches
-    //     the model); when LINES is removed (`firstLineHidden`); when G2 is removed
-    //     (`firstPartHidden`). (b) prints the facts.
+    //     the model). The four `truncate` facts hold now before the sink's rules run: the whole value
+    //     is the marker before `truncate` cuts it (LINES and G2 keep their own pins, at the rules'
+    //     own cells). (b) prints the facts.
     expect({
       upperSent: upper.includes(SECRET.toUpperCase()),
       truncatedLinesCut: !truncatedLines.includes(TWO_LINES),
