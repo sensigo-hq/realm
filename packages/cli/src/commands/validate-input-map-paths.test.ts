@@ -462,9 +462,9 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     //     counts the codes); (2) prints the sentence.
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 29 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.",
+      "The loader has 32 warning codes. Ten of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; and a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text.",
     );
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 29 warning codes');
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 32 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
       '| `INPUT_MAP_PATH_UNRESOLVABLE` | Error | An `input_map` path can never be found. Added after version 0.49.0. |',
@@ -496,7 +496,8 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     );
     // The two items sit in [Unreleased]'s Upgrading section, numbered on from its item 1 (#597 D1c-1's
     // store-format item, landed after them, is 4; fix 1 piece 2a's `when` item is 5; piece 2b's
-    // `params_map` item is 6; #597 D1b's Slack questions item is 7; the filter-mask scan's item is 8).
+    // `params_map` item is 6; #597 D1b's Slack questions item is 7; fix 1 piece 3a-i's template item
+    // is 8; the filter-mask scan's item is 9).
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     const unreleased = changelog.slice(
       changelog.indexOf('## [Unreleased]'),
@@ -515,6 +516,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       '**6. ',
       '**7. ',
       '**8. ',
+      '**9. ',
     ]);
   });
 });

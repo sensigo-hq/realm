@@ -86,7 +86,9 @@ export type CacheNotJudgedCause =
   | 'model_unknown'
   | 'no_minimum_stated'
   | 'near_floor'
-  | 'profile_unavailable';
+  | 'profile_unavailable'
+  /** Fix 1, piece 3a-i: the step's prompt is not text, or rendering it from the files throws. */
+  | 'prompt_unrenderable';
 
 /** One step's blocks on one layout, and the tokens the host adds to its count. */
 export interface CacheabilityStepInput {
