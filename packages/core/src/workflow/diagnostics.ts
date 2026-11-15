@@ -70,6 +70,12 @@ export type WarningCode =
   // (`name-check.ts`). Advice only, never a refusal: another runner may provide the name (#134).
   | 'HANDLER_NOT_PROVIDED'
   | 'ADAPTER_NOT_PROVIDED'
+  // fix 1, piece 3a-i: a template's filter Realm does not have, a filter argument no value accepts,
+  // and a templated field that is not text (`template-check.ts`). Refused at the boundary, lenient in
+  // execution: a template with one of them failed or misrendered when the step ran.
+  | 'TEMPLATE_FILTER_UNKNOWN'
+  | 'TEMPLATE_FILTER_ARGUMENT'
+  | 'TEMPLATED_FIELD_NOT_TEXT'
   // #603 A3a: with a Slack notifier that reads replies, a gate naming someone who is not a Slack
   // member ID — no reply from them can count (the CLI mints it at the admission). Advice.
   | 'GATE_ANSWERER_NOT_SLACK_ID';
@@ -176,6 +182,10 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   // fix 1, piece 4 — a warning everywhere; `--strict` fails on it as on any warning.
   HANDLER_NOT_PROVIDED: 'warn',
   ADAPTER_NOT_PROVIDED: 'warn',
+  // fix 1, piece 3a-i — refused by validate, register and watch; printed by run, test, agent, listen.
+  TEMPLATE_FILTER_UNKNOWN: 'error',
+  TEMPLATE_FILTER_ARGUMENT: 'error',
+  TEMPLATED_FIELD_NOT_TEXT: 'error',
   // #603 A3a — a warning; `--strict` fails on it as on any warning.
   GATE_ANSWERER_NOT_SLACK_ID: 'warn',
 };

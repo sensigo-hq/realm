@@ -154,7 +154,7 @@ interface LayoutResult {
 
 interface StepResult {
   step: string;
-  kind: 'tools' | 'profile_unavailable' | 'sized';
+  kind: 'tools' | 'profile_unavailable' | 'prompt_unrenderable' | 'sized';
   layouts: LayoutResult[];
   /** The clause after the sizes, for rows 5–11 (the same on every layout). */
   cause?: { cause: CacheNotJudgedCause; detail?: string };
@@ -296,7 +296,26 @@ export async function buildCacheabilityReport(
     for (const [name] of agentSteps.filter((_, i) => results[i]!.kind === 'sized')) {
       // #715 (b) (3-B rev 4): validate has no run store; the instant only fills a context snapshot
       // the render discards (an `outside` read, in the clock census).
-      const rendered = await renderStepPromptWithBoundary(definition, name, new Date());
+      // Fix 1, piece 3a-i: a prompt that is not text, or whose render from the files throws, gives no
+      // head and the step is not sized: never a size without its prompt, never a crash before the
+      // loader's refusal is printed.
+      let rendered: Awaited<ReturnType<typeof renderStepPromptWithBoundary>>;
+      try {
+        const prompt = definition.steps[name]?.prompt as unknown;
+        if (prompt !== undefined && typeof prompt !== 'string') throw new TypeError('not text');
+        rendered = await renderStepPromptWithBoundary(definition, name, new Date());
+      } catch {
+        results[agentSteps.findIndex(([n]) => n === name)] = {
+          step: name,
+          kind: 'prompt_unrenderable',
+          layouts: adapters.map((adapter) => ({
+            adapter,
+            verdict: 'not_judged',
+            cause: 'prompt_unrenderable',
+          })),
+        };
+        continue;
+      }
       if (rendered === undefined) continue;
       const size = discloseSplitSize(rendered.text, rendered.stable.chars, set, 'all');
       const raw = rendered.text.slice(0, rendered.stable.chars);
@@ -518,6 +537,9 @@ function stepLine(report: CacheabilityReport, result: StepResult): string {
   }
   if (result.kind === 'profile_unavailable') {
     return `cache: ${result.step} — profile text not stored in the registered copy: sizes not computed — register the workflow again to store it`;
+  }
+  if (result.kind === 'prompt_unrenderable') {
+    return `cache: ${result.step} — its prompt cannot be rendered when the file is checked: sizes not computed`;
   }
   const layouts = result.layouts;
   const ratio = report.flags.ratio;

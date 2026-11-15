@@ -421,11 +421,11 @@ describe('fix 1, piece 2b — the words the docs and the changelog carry (check 
     expect(example(unfilledRow).length).toBeGreaterThan(20);
   });
 
-  it('loader-diagnostics.md: 30 codes, seven of them errors, the three new rows', () => {
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 30 warning codes');
+  it('loader-diagnostics.md: 33 codes, ten of them errors, the three new rows', () => {
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 33 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 30 warning codes. Seven of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; and a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.",
+      "The loader has 33 warning codes. Ten of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; and a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text.",
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
@@ -460,7 +460,8 @@ describe('fix 1, piece 2b — the words the docs and the changelog carry (check 
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
     );
     // (1) red when the item is misnumbered or lost; (2) prints the numbers. #597 D1b's Slack
-    // questions item, landed after this one, is 7; #603 A3a's Slack answerer item is 8.
+    // questions item, landed after this one, is 7; fix 1 piece 3a-i's template item is 8; #603 A3a's
+    // Slack answerer item is 9.
     expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual([
       '**1. ',
       '**2. ',
@@ -470,6 +471,7 @@ describe('fix 1, piece 2b — the words the docs and the changelog carry (check 
       '**6. ',
       '**7. ',
       '**8. ',
+      '**9. ',
     ]);
   });
 });
