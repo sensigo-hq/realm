@@ -191,8 +191,9 @@ describe('fix 1, piece 3b — no declared value through a filter (check 1)', () 
       planted: PLANTED,
     });
     // (a) red when the gate print renders `display` over the gate's raw preview (not disclosed
-    //     first); (b) prints the gate body and the fragments shown.
-    expect({ gate: run.gate, leaks: leaks(run.all) }).toEqual({
+    //     first); (b) prints the gate body and the fragments it shows. (The result line after the
+    //     answer is the cells above.)
+    expect({ gate: run.gate, leaks: leaks(run.gate ?? '') }).toEqual({
       gate: `   ${MASKED_LINE} D: [REDACTED]`,
       leaks: [],
     });
