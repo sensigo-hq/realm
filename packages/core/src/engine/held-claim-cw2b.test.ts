@@ -500,9 +500,11 @@ describe('#729 CW-2b — executeChain saves an agent step under the claim the dr
     };
     const reply = await chain(store, d, runId, 'work', { category: 'x' }, { heldClaim: { hold } });
     const after = (await store.get(runId)).record;
-    // (1) red when the held claim reaches the chained step (it then takes no claim of its own); (2)
-    //     prints the reply's status, every claim taken with whether it was given a hold and its lease,
-    //     and the steps completed.
+    // (1) red when the chain stops after the held save, or a chained step claims with a hold or
+    //     under a lease. A held claim that reached the loop shows here only with the engine's
+    //     agent-only rule off too, because the chain runs only auto steps (red-first E9); (2)
+    //     prints the reply's status, every claim taken with whether it was given a hold and its
+    //     lease, and the steps completed.
     expect({ status: reply.status, claims, completed: after.completed_steps }).toEqual({
       status: 'ok',
       claims: [{ step: 'next', hold: false, lease: undefined }],
@@ -519,7 +521,9 @@ describe('#729 CW-2b — executeChain saves an agent step under the claim the dr
       const { store, runId } = await leased(d);
       const hold = await takeHeld(store, runId, 'job', d);
       const reply = await chain(store, d, runId, 'job', {}, { heldClaim: { hold } });
-      // (1) red when the held branch is applied to an auto step (it is then saved); (2) prints the
+      // (1) red when the held branch is applied to an auto step (it is then saved). That needs
+      //     the engine's, the composer's and the admission's agent-only rules all off (red-first
+      //     E11a2): with only the first two off, the admission still refuses it; (2) prints the
       //     reply's status and refusal's code.
       expect({ status: reply.status, refusal: reply.refusal?.code }).toEqual({
         status: 'blocked',

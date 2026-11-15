@@ -55,10 +55,11 @@ describe('#729 CW-2b — the held claim’s words', () => {
     // The option names the lease `claimStepForDrive` took the claim under: core's held-claim-cw2b
     // (every check takes the claim with it); saved under it, no second claim: check 1; refused when
     // the claim no longer names the lease at the save: checks 3a and 3b; the chained steps' own
-    // claims: check 9; "No Realm command passes it yet": claim-lease-witness-cw1's closed list of
-    // production `heldClaim` properties, empty.
+    // claims: check 9; the `held_claim` member: core's ways.test.ts (the CW-2b held member, with
+    // R26); "No Realm command passes it yet": claim-lease-witness-cw1's closed list of production
+    // `heldClaim` properties, empty.
     claimChangelog(
-      "- **`executeChain` can save an agent step under a claim the caller already holds.** Its new option `heldClaim: { hold }` names the lease under which `claimStepForDrive` took the step's claim. The step is saved under that claim, and no second claim is taken. If the step's claim no longer names the lease when the answer is saved, the answer is not saved and the call is refused. The steps the chain runs after it take their own claims. No Realm command passes it yet.",
+      "- **`executeChain` can save an agent step under a claim the caller already holds.** Its new option `heldClaim: { hold }` names the lease under which `claimStepForDrive` took the step's claim. The step is saved under that claim, and no second claim is taken. If the step's claim no longer names the lease when the answer is saved, the answer is not saved and the call is refused. The steps the chain runs after it take their own claims. `WaysContext`, the context `composeWaysOn` and `admitWay` take, gains the matching optional member `held_claim: { step, lease_id }`. No Realm command passes it yet.",
     );
   });
 });
