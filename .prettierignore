@@ -9,3 +9,8 @@ website/.astro/
 website/src/content/
 website/public/live/
 website/src/live/manifest.json
+
+# CP-7: each published release's corpus, as scripts/corpus/record.mjs wrote it from the published
+# package. The cells compare it parsed, so its formatting is never the check; formatting it would
+# change recorded files. The cells and the rules file beside the folders stay checked.
+packages/cli/src/corpus/[0-9]*/

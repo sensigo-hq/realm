@@ -1,0 +1,42 @@
+{
+  "about": "CP-7: what the corpus recorder (scripts/corpus/record.mjs) and the corpus cells (packages/cli/src/corpus/corpus.test.ts) both read. The recorder applies it to what the published release wrote; the cells apply it to what the current store, importer, composer and loader produce, and to the recorded side, before comparing. A change here changes both sides at once.",
+  "work_placeholder": {
+    "about": "The recorder's WORK folder (and its realpath), wherever it appears in a recorded file's text, becomes this path; the cells replace the manifest's WORK the same way on the current side (the stored copy in realm.db keeps the raw path).",
+    "value": "/realm-corpus/work"
+  },
+  "uuid": {
+    "about": "Every id minted by randomUUID: the run's id, gate ids, lease tokens, request_id, the WAL and sealed lines' nonce. Each distinct v4 UUID in an artifact's text becomes a fixed v4 UUID numbered by first appearance in that text (key order kept), so two places that held the same id still hold the same placeholder.",
+    "pattern": "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+    "placeholder_prefix": "00000000-0000-4000-8000-"
+  },
+  "keys": {
+    "about": "Values replaced wherever the key appears: placeholders of the same shape the readers check (an integer for a process id, an ISO instant for a stamp, an absolute path for a path).",
+    "values": {
+      "agent_pid": 4242,
+      "exported_at": "2026-01-01T09:00:00.000Z",
+      "source_dir": "/realm-corpus/host/source-dir",
+      "trust_root": "/realm-corpus/host/trust-root",
+      "source_path": "/realm-corpus/host/source-path"
+    },
+    "nested": {
+      "about": "A value that is volatile only under its parent key: a schema entry's source.path (a host path); an extension identity entry's captured_at (the host's clock, not the test clock) and pid.",
+      "values": {
+        "source.path": "/realm-corpus/host/source-path",
+        "extension_identity.captured_at": "2026-01-01T09:00:00.000Z",
+        "extension_identity.pid": 4242
+      }
+    }
+  },
+  "runtime_only_workflow_keys": {
+    "about": "The keys the loader stamps on a definition that are not the workflow file's: left out of a recorded definition and of the current one. The names of core's RUNTIME_ONLY_WORKFLOW_KEYS (packages/core/src/types/workflow-definition.ts), which @sensigo/realm does not export.",
+    "values": [
+      "source_dir",
+      "trust_root",
+      "resolved_profiles",
+      "schema_version",
+      "origin",
+      "model",
+      "agent"
+    ]
+  }
+}

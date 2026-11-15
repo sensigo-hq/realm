@@ -1,0 +1,83 @@
+# examples/01-code-reviewer/workflow.yaml
+# Code Reviewer — loads a unified diff from disk, asks an agent to produce
+# a structured review with severity, summary, breaking_changes, and
+# action_required, then records the result.
+#
+# Demonstrates: depends_on chains, agent step input_schema
+# enforcement, and how prose rules in a skill file become structural constraints.
+# No custom handlers, no TypeScript, no build step.
+id: code-reviewer
+name: Code Reviewer
+version: 1
+
+params_schema:
+  type: object
+  additionalProperties: false
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: 'Path to the diff file to review'
+
+services:
+  diffs:
+    adapter: filesystem
+    trust: engine_delivered
+
+steps:
+  read_diff:
+    description: Load the diff file from disk
+    execution: auto
+    depends_on: []
+    uses_service: diffs
+    operation: read
+    input_map:
+      path: run.params.path
+
+  review_changes:
+    description: >
+      Review the diff and produce a structured assessment. All fields are required
+      and validated by the engine before this step can complete.
+    execution: agent
+    depends_on: [read_diff]
+    prompt: |
+      Review the following code diff and produce a structured assessment.
+
+      Required fields:
+      - severity: overall severity of the change — exactly one of: critical, high, medium, low
+      - summary: one or two sentences describing what the diff does and why it matters
+        (minimum 20 characters)
+      - breaking_changes: true if any existing caller, interface, or contract is broken; false otherwise
+      - action_required: true if the author or a downstream consumer must take action before merging
+        or deploying; false otherwise
+
+      Return exactly these four fields. Any severity value outside the allowed enum
+      will be rejected before your response is accepted.
+
+      Diff:
+      {{ context.resources.read_diff.content }}
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [severity, summary, breaking_changes, action_required]
+      properties:
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+        summary:
+          type: string
+          minLength: 20
+        breaking_changes:
+          type: boolean
+        action_required:
+          type: boolean
+    display: |
+      {{ severity }}: {{ summary }}
+
+      Breaking changes: {{ breaking_changes }}
+      Action required: {{ action_required }}
+
+  record_review:
+    description: Record the structured code review
+    execution: auto
+    depends_on: [review_changes]

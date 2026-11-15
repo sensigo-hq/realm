@@ -1,0 +1,34 @@
+# scripts/corpus/one-step/workflow.yaml — the corpus recorder's second run (CP-7): one agent step with
+# an input schema and no services, answered by scripts/corpus/provider-module.mjs. Its stored run and
+# export bundle are recorded beside 08-pr-review's in packages/cli/src/corpus/<version>/.
+id: corpus-one-step
+name: Corpus one step
+version: 1
+
+params_schema:
+  type: object
+  additionalProperties: false
+  required: [note]
+  properties:
+    note:
+      type: string
+      description: 'The note to summarise'
+
+steps:
+  summarise:
+    description: Summarise the note in one sentence and count its words.
+    execution: agent
+    depends_on: []
+    prompt: |
+      Summarise this note in one sentence and count its words.
+
+      Note: {{ run.params.note }}
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [summary, word_count]
+      properties:
+        summary:
+          type: string
+        word_count:
+          type: integer
