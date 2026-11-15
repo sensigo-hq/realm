@@ -440,6 +440,18 @@ function parseFilters(expr: string): Array<{ name: string; args: string[] }> {
   });
 }
 
+/**
+ * Fix 1, piece 3b: one placeholder's parts by the filter chain's own split — its path (the text
+ * before the first unquoted `|`, trimmed) and its chain as {@link parseFilters} reads it. `display`
+ * renders by it; an expression with no unquoted `|` has an empty chain.
+ */
+export function placeholderParts(expr: string): {
+  path: string;
+  filters: Array<{ name: string; args: string[] }>;
+} {
+  return { path: splitOnUnquotedPipes(expr)[0]!.trim(), filters: parseFilters(expr) };
+}
+
 // ─── renderTemplate ────────────────────────────────────────────────────────────
 
 /**

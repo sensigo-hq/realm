@@ -106,7 +106,8 @@ describe('#715 (b) 03 §B.2 — inspect and list say each age with its instant, 
     const { store, runId } = await waitingAt(T + 90_000);
     const row = (await listRuns(undefined, store)).split('\n').find((l) => l.includes(runId));
     expect(stripSpanMarks(row ?? '(no row)').replace(/^\S+ {2}\S+ v1 {2}\S+ {2}/, '')).toBe(
-      '2030-01-01T00:00:00.000Z  0 step(s)  gate: q opened 1m ago (2030-01-01T00:00:00Z)  EXPIRED 30s ago (2030-01-01T00:01:00Z)',
+      // #597 D1b: an `InMemoryStore` keeps an outbound ledger, and this question has no reminder row.
+      '2030-01-01T00:00:00.000Z  0 step(s)  gate: q opened 1m ago (2030-01-01T00:00:00Z)  EXPIRED 30s ago (2030-01-01T00:01:00Z)  reminders: none recorded',
     );
   });
 });

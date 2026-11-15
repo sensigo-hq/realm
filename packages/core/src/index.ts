@@ -1003,6 +1003,7 @@ export {
   CUT_SENTENCE,
   endsWithCutSentence,
   renderDisplay,
+  displayPaths,
   stripSpanMarks,
 } from './engine/question-view.js';
 export type { QuestionView } from './engine/question-view.js';

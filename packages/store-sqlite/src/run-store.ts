@@ -545,7 +545,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
 
   /**
    * The home's outbound ledger (#597 D1c-2): the `outbound` table beside the runs, over the same
-   * primitive. A lease or a mark never writes the run. No Realm command uses it yet (D1b).
+   * primitive. A lease or a mark never writes the run. `realm agent`'s Slack reminders use it (#597 D1b).
    */
   readonly outbound: SqliteOutboundLedger;
 

@@ -491,7 +491,7 @@ describe('the `display` pages — the preview on every surface that shows one', 
     );
     claim(
       'docs/reference/workflow/input-map-and-templates.md',
-      "| `display`      | `realm agent` prints the step's result, and a surface shows the step's gate. | Fields of the step's own output | No      | Nothing is printed in its place.             | Nothing is printed in its place.   |",
+      "| `display` | `realm agent` prints the step's result, and a surface shows the step's gate. | Fields of the step's own output | Yes | Nothing is printed in its place. | The expression is left as written; where values show as their shapes (the Slack post, log mode), a value that is not a list or a map shows its shape. |",
     );
     claim(
       'docs/guides/agent-steps.md',

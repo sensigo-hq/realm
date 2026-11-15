@@ -162,7 +162,7 @@ describe('inspectRun — Gate: line (issue #291)', () => {
     // an hour after the opening, at the reading "in 59m" — beside the words.
     const next = Date.parse(run.pending_gate!.opened_at) + 3_600_000;
     expect(result).toContain(
-      `, next reminder: 1 of 3 scheduled in 59m (${zOf(next)}) (no send is recorded; reminders are sent only while a process attends this question)`,
+      `, next reminder: 1 of 3 scheduled in 59m (${zOf(next)}) (reminders are sent only while a process attends this question)`,
     );
     expect(result).not.toMatch(/reminder (due|overdue)/);
   });
@@ -178,7 +178,7 @@ describe('inspectRun — Gate: line (issue #291)', () => {
     });
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore());
     expect(result).toContain(
-      ', no further reminder is scheduled (no send is recorded; reminders are sent only while a process attends this question)',
+      ', no further reminder is scheduled (reminders are sent only while a process attends this question)',
     );
     expect(result).not.toContain('overdue');
   });

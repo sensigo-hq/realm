@@ -153,12 +153,18 @@ export const LIVE_CLAIM_MARKER = '[redacted-live-claim]';
 /** {@link scrubEmail}'s marker. */
 export const REDACTED_EMAIL_MARKER = '[REDACTED_EMAIL]';
 
+/** Fix 1, piece 3b: a text that is wholly one named marker or one shape — the closed form of
+ *  {@link NAMED_MARKER}'s members, anchored. `display` leaves such a value as it is, unfiltered.
+ *  The one pattern: `NAMED_MARKER` is built from it. */
+export const WHOLE_NAMED_MARKER =
+  /^(?:\[REDACTED(?:_EMAIL|: not checked)?\](?:#\d+)?|\[redacted-live-claim\]|‹\d+ characters?, not kept›|‹(?:string, \d+ characters?|array, \d+ items?|object, \d+ keys?|number|boolean|bigint|symbol|function|cycle)›)$/;
+
 /** Every named marker (I11): `disclose` never matches inside one, so disclosing twice changes
  *  nothing. With D6's five, the shapes `disclosure-walk.ts`'s `shapeOf` writes (`‹string, 12
  *  characters›`, `‹string, 1 character›`, `‹object, 3 keys›`, `‹cycle›`, …): a member such as
- *  `characters` must not match inside them; and a walked key's `[REDACTED]#2` (F25). */
-const NAMED_MARKER =
-  /\[REDACTED(?:_EMAIL|: not checked)?\](?:#\d+)?|\[redacted-live-claim\]|‹\d+ characters?, not kept›|‹(?:string, \d+ characters?|array, \d+ items?|object, \d+ keys?|number|boolean|bigint|symbol|function|cycle)›/g;
+ *  `characters` must not match inside them; and a walked key's `[REDACTED]#2` (F25).
+ *  {@link WHOLE_NAMED_MARKER} without its anchors (`^(?:` … `)$`), found anywhere in a text. */
+const NAMED_MARKER = new RegExp(WHOLE_NAMED_MARKER.source.slice('^(?:'.length, -')$'.length), 'g');
 
 /**
  * #729 PR-3 (D1 D5): the named markers an INBOUND value carries — an answer, a model's output, a

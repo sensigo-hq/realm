@@ -121,7 +121,7 @@ realm run list --status gate_waiting
 It prints:
 
 ```text
-64993bb2-6f65-47d9-801c-d008e9291a00  announce v1  gate_waiting  2026-10-01T20:13:36.512Z  2 step(s)  gate: review opened 0s ago (2026-10-01T20:13:36Z)
+64993bb2-6f65-47d9-801c-d008e9291a00  announce v1  gate_waiting  2026-10-01T20:13:36.512Z  2 step(s)  gate: review opened 0s ago (2026-10-01T20:13:36Z)  reminders: none recorded
 ```
 
 `realm run inspect <run-id>` shows the gate's ID, its question as the person reads it, its choices and the command that answers it (the question and the command were added after version 0.47.0):
