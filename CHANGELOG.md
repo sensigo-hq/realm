@@ -22,6 +22,8 @@ All notable changes to this project are documented here.
 
 **7. Answer or let open Slack questions expire before you upgrade.** A question open at the upgrade may get a repeated reminder or escalation when its agent restarts (the 0.49 reminders and escalations left no record).
 
+**8. `register` and `watch` refuse a template filter Realm does not have, an argument no value accepts, or a templated field that is not text.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and fix what the refusal names. A stored copy keeps running as it was until you register it again.
+
 ### Added
 
 - **`--shutdown-grace <seconds>` on `realm serve` and `realm listen`**: how long requests being answered get to finish after Ctrl+C or `SIGTERM`; 30 by default; 0 to 2147483.
@@ -57,6 +59,7 @@ All notable changes to this project are documented here.
 - **BREAKING: `realm workflow validate`, `register` and `watch` refuse a `when` condition that reads a path that can never be found, or that compares a gate's answer with a choice the gate does not offer**, with its line and a did-you-mean (for example `approve.choice == 'refnd'`: "Did you mean 'refund'?"). Such a condition never worked as written. A path that may be absent gets a warning, and `validate` lists a condition on data the workflow declares no shape for as not checked; `not_checked` entries in `--json` now carry `surface`. Running a workflow is not refused.
 - **BREAKING: `realm workflow validate`, `register` and `watch` refuse a webhook `params_map` that names a parameter a closed `params_schema` does not have, or that leaves a required parameter unfilled**, with its line and, for a misspelt name, a did-you-mean. `realm listen` answered `400 params_invalid` to every request that passed its filter when a required parameter was left unfilled, and to each one carrying the value of a name a closed `params_schema` does not have. A name an open `params_schema` does not list gets a warning. `realm listen` is not changed: it mounts such a file and prints each finding as a warning.
 - `realm workflow validate`, `register` and `watch` warn when the handler or adapter a step needs is not one the project provides, naming what it does provide and, when one is close, a did-you-mean. Such a step was blocked when it ran (a cleanup step was left pending), with no word at load. It is a warning, not a refusal, because another runner may provide the name; `--strict` fails on it, as on any warning.
+- **BREAKING: `realm workflow validate`, `register` and `watch` refuse a template filter Realm does not have, a filter argument no value accepts, and a templated field that is not text**, with the line and, when one is close, a did-you-mean. Such a template failed or misrendered when the step ran; `validate` crashed on an agent step whose prompt was not text. Running a workflow is not refused.
 
 ### Fixed
 

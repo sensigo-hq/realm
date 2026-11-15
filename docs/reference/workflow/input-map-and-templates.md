@@ -118,7 +118,7 @@ A template expression is a path between double braces, optionally followed by fi
 | `gate.message` | The gate opens.                                                              | All four roots                  | Yes     | The step stops: `GATE_MESSAGE_UNRESOLVABLE`. | The step stops: `FILTER_UNKNOWN`.                                                                                                                     |
 | `display`      | `realm agent` prints the step's result, and a surface shows the step's gate. | Fields of the step's own output | Yes     | Nothing is printed in its place.             | The expression is left as written; where values show as their shapes (the Slack post, log mode), a value that is not a list or a map shows its shape. |
 
-`instructions` and `description` are not read for expressions. They are passed on as written.
+`instructions` are read for expressions only on a step with a gate, when the gate opens; on other steps they, and `description` always, are passed on as written.
 
 A prompt with these lines:
 
@@ -151,7 +151,7 @@ and with a filter that does not exist:
 FILTER_UNKNOWN: gate.message uses unknown filter 'shout'
 ```
 
-In both cases the run stays open, with the step not done. `realm workflow validate` does not check the paths or filter names in a template; these errors appear when the run reaches the step.
+In both cases the run stays open, with the step not done. `realm workflow validate`, `register` and `watch` refuse a filter Realm does not have, an argument no value accepts, and a templated field that is not text; the paths in a template are not checked yet. This was added after version 0.49.0.
 
 In `display`, a path is a field of the step's own output, without a root: `{{ note }}`. Filters work as in other templates: `{{ note | upper }}`, and `default` fills a missing value. A filter that cannot apply to a value that is there leaves the placeholder as written; where values show as their shapes, a value that is not a list or a map shows its shape. In `display`, a list or a map is written as JSON on one line. This was added after version 0.49.0. With this template:
 
