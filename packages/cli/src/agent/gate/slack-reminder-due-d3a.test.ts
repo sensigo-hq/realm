@@ -376,17 +376,26 @@ describe('#597 D3a — the nudge on every gate', () => {
     // (a) red when the nudge's closure by the expiry is lost (a nudge after the question closed);
     //     (b) prints the posts.
     const gate = { expires_at: plus(20 * MIN).toISOString(), on_expiry: 'abort' };
-    const live = await rig(gate);
-    const one = await start(live, { escalationMs: 30 * MIN });
-    await live.clock.set(plus(31 * MIN));
-    await settle();
-    one();
-    const waiter = [...texts];
+    const waiter: Record<string, string[]> = {};
+    // With no ledger the waiter's own closure is the only guard (the ledger's lease refuses it too).
+    for (const ledger of [undefined, 'none'] as const) {
+      texts.length = 0;
+      const live = await rig(gate);
+      const one = await start(live, {
+        escalationMs: 30 * MIN,
+        ...(ledger !== undefined ? { ledger } : {}),
+      });
+      await live.clock.set(plus(31 * MIN));
+      await settle();
+      one();
+      waiter[ledger ?? 'ledger'] = [...texts];
+    }
+    texts.length = 0;
     const later = await rig(gate);
     const two = await start(later, { takenOver: true, at: plus(35 * MIN), escalationMs: 30 * MIN });
     await settle();
     two();
-    expect({ waiter, catchUp: texts }).toEqual({ waiter: [], catchUp: [] });
+    expect({ waiter, catchUp: texts }).toEqual({ waiter: { ledger: [], none: [] }, catchUp: [] });
   });
 });
 
@@ -525,8 +534,8 @@ describe('#597 D3a — the same-line rule', () => {
   });
 
   it('a takeover: a reminder sent within the minute before the nudge’s instant consumes the nudge; a nudge sent so consumes the reminder; with an owner, neither', async () => {
-    // (a) red when the rows are not read (the consumed item posted), or read with an owner; (b) prints
-    //     the posts of each case.
+    // (a) red when the rows are not read (the consumed item posted), read with an owner, or a line sent
+    //     more than a minute before consumes; (b) prints the posts of each case.
     const got: Record<string, string[]> = {};
     for (const owner of [undefined, '@ana'] as const) {
       // The reminder (29:30) was sent by the stopped agent; the nudge (30:00) is the latest passed.
@@ -555,12 +564,27 @@ describe('#597 D3a — the same-line rule', () => {
       await settle();
       two();
       got[`reminder after a sent nudge, ${owner ?? 'no owner'}`] = [...texts];
+      // A reminder sent at 25:00, more than a minute before the nudge's instant (30:00): not the same line.
+      texts.length = 0;
+      const c = await rig(owner !== undefined ? { owner } : {});
+      await sentBefore(c, { type: 'reminder', occurrence: 1 }, plus(25 * MIN));
+      const three = await start(c, {
+        takenOver: true,
+        at: plus(35 * MIN),
+        reminderIntervalMs: 25 * MIN,
+        escalationMs: 30 * MIN,
+      });
+      await settle();
+      three();
+      got[`nudge after a reminder sent 5 minutes before, ${owner ?? 'no owner'}`] = [...texts];
     }
     expect(got).toEqual({
       'nudge after a sent reminder, no owner': [],
       'reminder after a sent nudge, no owner': [],
       'nudge after a sent reminder, @ana': [owned('35m')],
       'reminder after a sent nudge, @ana': [open('15m')],
+      'nudge after a reminder sent 5 minutes before, no owner': [open('35m')],
+      'nudge after a reminder sent 5 minutes before, @ana': [owned('35m')],
     });
   });
 });

@@ -81,6 +81,70 @@ describe('#597 D3a — dueReminderWork, the whole grid', () => {
   });
 });
 
+describe('#597 D3a — dueReminderWork, the states a sender reads', () => {
+  const sent = (key: string, atMs: number) => ({
+    entry_key: `gate:g1:${key}`,
+    type: key === 'escalation' ? ('escalation' as const) : ('reminder' as const),
+    ...(key === 'escalation' ? {} : { occurrence: Number(key.split(':')[1]) }),
+    status: 'sent' as const,
+    lease_deadline: new Date(atMs + MIN).toISOString(),
+    attempts: 1,
+    sent_at: new Date(atMs).toISOString(),
+    created_at: new Date(atMs).toISOString(),
+  });
+
+  it('the latest passed item already sent: nothing is due, and no earlier one is walked back to', () => {
+    const g = gate({ reminder_seconds: 600, reminder_max: 3 });
+    // (a) red when an earlier unsent occurrence becomes due; (b) prints the states.
+    expect(
+      states(
+        dueReminderWork(
+          g,
+          { ...settings, escalationThresholdMs: 999 * MIN },
+          OPENED_MS,
+          [sent('reminder:2', OPENED_MS + 20 * MIN)],
+          at(25 * MIN),
+        ),
+      ),
+    ).toEqual([
+      'occurrence1@10m:passed',
+      'occurrence2@20m:passed',
+      'occurrence3@30m:future',
+      'nudge@999m:future',
+    ]);
+  });
+
+  it("an `on_expiry` gate's nudge at or after `expires_at` is not due; a finding-only gate's is", () => {
+    const closes = gate({ expires_at: '2033-01-01T00:20:00.000Z', on_expiry: 'abort' });
+    const stays = gate({ expires_at: '2033-01-01T00:20:00.000Z' });
+    const big = { reminderIntervalMs: 999 * MIN, escalationThresholdMs: 30 * MIN };
+    // (a) red when the nudge's closure by the expiry is lost; (b) prints the states.
+    expect({
+      closes: states(dueReminderWork(closes, big, OPENED_MS, [], at(35 * MIN))),
+      stays: states(dueReminderWork(stays, big, OPENED_MS, [], at(35 * MIN))),
+    }).toEqual({
+      closes: ['nudge@30m:passed', 'one_shot1@999m:future'],
+      stays: ['nudge@30m:due', 'one_shot1@999m:future'],
+    });
+  });
+
+  it('the same-line rule: a sent line of the other leg within the minute consumes; with an owner, or earlier than the minute, it does not', () => {
+    const near = [sent('reminder:1', OPENED_MS + 29 * MIN + 30_000)];
+    const far = [sent('reminder:1', OPENED_MS + 25 * MIN)];
+    const s = { reminderIntervalMs: 25 * MIN, escalationThresholdMs: 30 * MIN };
+    // (a) red when the rule ignores the owner, the window, or the leg; (b) prints the states.
+    expect({
+      near: states(dueReminderWork(gate(), s, OPENED_MS, near, at(35 * MIN))),
+      owner: states(dueReminderWork(gate({ owner: '@ana' }), s, OPENED_MS, near, at(35 * MIN))),
+      far: states(dueReminderWork(gate(), s, OPENED_MS, far, at(35 * MIN))),
+    }).toEqual({
+      near: ['one_shot1@25m:passed', 'nudge@30m:consumed'],
+      owner: ['one_shot1@25m:passed', 'nudge@30m:due'],
+      far: ['one_shot1@25m:passed', 'nudge@30m:due'],
+    });
+  });
+});
+
 describe('#597 D3a — reminderAnchorOf, the post’s time clamped', () => {
   it('between `opened_at` and the reading; the reading when `ts` or `opened_at` cannot be read', () => {
     const g = gate();
