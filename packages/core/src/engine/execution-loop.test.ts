@@ -1660,13 +1660,13 @@ describe('executeStep', () => {
     expect(reviewed.gate?.gate_id).not.toBe(confirmed.gate?.gate_id);
   });
 
-  // issue #524 — the gate-remedy silence's engine-side claim-truth: the loader's new
-  // DEAD_GATE_CONFIG block advisory claims "no gate is ever minted" without gate trust, and "the
-  // engine mints a gate only where trust requires human confirmation" otherwise. Driven at Step
-  // 5b directly (the mint site, `isGateTrust(stepDef!.trust)` at execution-loop.ts) — this is the
-  // gate MINT decision, not gate EXPIRY (gate-expiry.test.ts drives applyExpireGate/
+  // issue #524, fix 2 — the engine-side claim-truth of the loader's refusal of a `gate:` block on
+  // an auto step without gate trust (message A): "Realm would never open this gate" — no gate is
+  // minted without gate trust, whatever the block declares — and with gate trust one is. Driven
+  // at Step 5b directly (the mint site, `isGateTrust(stepDef!.trust)` at execution-loop.ts) —
+  // this is the gate MINT decision, not gate EXPIRY (gate-expiry.test.ts drives applyExpireGate/
   // applySettleGate on an ALREADY-open gate and never reaches this site at all).
-  describe('issue #524 — gate-mint claim-truth (the DEAD_GATE_CONFIG block advisory)', () => {
+  describe('issue #524, fix 2 — gate-mint claim-truth (message A: no gate without gate trust)', () => {
     async function mintOrNot(trust: unknown, gate?: Record<string, unknown>) {
       const def: WorkflowDefinition = {
         id: 'gate-524-wf',

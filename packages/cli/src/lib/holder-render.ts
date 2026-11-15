@@ -11,6 +11,7 @@ import {
   deriveRunPhase,
   describeClaimHolder,
   isAnswerEntry,
+  leaseFactOf,
   offeredResumeWay,
   operatorEndingSentence,
   resumeWay,
@@ -39,12 +40,21 @@ import type {
   OutcomeDoorWords,
   PendingGate,
   RunRecord,
+  Snapshot,
 } from '@sensigo/realm';
 import { PLAIN, RUN_PHASE_WORDS, writerSetFor, type RenderCtx } from '../output/writer.js';
 import { cliCommandOf, respondLines } from '../commands/ways-renderer.js';
 
 /** The one phrase for a recorded name that cannot be printed; defined in core (#729 PR-6a c1). */
 export { UNSHOWABLE_NAME };
+
+/**
+ * #729 CW-1b part 2: what a line reads a claim's lease fact from when its caller passes no snapshot
+ * (a caller outside Realm, or a callback from a core that passes none): a snapshot with no facts, so
+ * a claim that names a lease reads `not_checked` (part 1's rule for a missing fact), never `held` or
+ * `not_held`. Realm's own callers pass the snapshot the record came from.
+ */
+export const NO_SNAPSHOT: Pick<Snapshot, 'lease_facts'> = Object.freeze({});
 
 /** How a name is known, as words — never the class token (`from the OS user`, not `derived`). */
 export const BY_SOURCE_WORDS: Record<BySourceClass, string> = {
@@ -228,10 +238,16 @@ export function answerNotRecordedLine(
   keepsClaims: boolean,
   kind?: NotRecordedKind,
   ctx: RenderCtx = PLAIN,
+  // #729 CW-1b part 2: the snapshot `run` came from, its lease facts read for the claim.
+  snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
 ): string | undefined {
   const notRecorded = "this drive's answer was not recorded";
   const takenArm = (): string => {
-    const described = describeClaimHolder(run.claims?.[step], keepsClaims);
+    const described = describeClaimHolder(
+      run.claims?.[step],
+      keepsClaims,
+      leaseFactOf(snapshot, run.claims?.[step]),
+    );
     const at = described.since !== undefined ? ` at ${described.since}` : '';
     return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}; ${notRecorded}.`;
   };
@@ -274,6 +290,8 @@ export function outcomeNotRecordedLine(
   step: string,
   keepsClaims: boolean,
   ctx: RenderCtx = PLAIN,
+  // #729 CW-1b part 2: the snapshot `run` came from, its lease facts read for the claim.
+  snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
 ): string {
   const notRecorded = "this program's outcome for it was not recorded";
   // F7: the arm is core's classifier's kind, never read again here. Decision C199: on a run that has
@@ -282,7 +300,11 @@ export function outcomeNotRecordedLine(
   // classifier never names it another program's take.
   switch (kind) {
     case 'held_elsewhere': {
-      const described = describeClaimHolder(run.claims?.[step], keepsClaims);
+      const described = describeClaimHolder(
+        run.claims?.[step],
+        keepsClaims,
+        leaseFactOf(snapshot, run.claims?.[step]),
+      );
       const at = described.since !== undefined ? ` at ${described.since}` : '';
       return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}; ${notRecorded}.`;
     }

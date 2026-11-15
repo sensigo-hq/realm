@@ -55,9 +55,9 @@ export type WarningCode =
  * source (`findUnknownKeys` below, for the unknown-key family) — `renderLoaderWarning` never
  * reconstructs it from the structured fields; it only ECHOES `message` verbatim, prefixed with
  * `⚠ `. `scope` is always present. `id`/`step`/`key`/`did_you_mean` are populated by the
- * unknown-key family and by the codes that name a specific key — `DEAD_GATE_CONFIG` carries
- * `key: 'gate'` (`yaml-loader.ts`), and `SCHEMA_STRICT_ADVISORY` carries the schema key plus a
- * position (issue #586). They exist for consumers that want the PARTS (a machine reader, a
+ * unknown-key family and by the codes that name a specific key — `SCHEMA_STRICT_ADVISORY` carries
+ * the schema key plus a position (issue #586), and `AUTHOR_TEXT_NAMES_ANSWER_TOOL` the field whose
+ * text names the tool (`instructions` or `protocol`, `yaml-loader.ts`). They exist for consumers that want the PARTS (a machine reader, a
  * different renderer), not for `renderLoaderWarning` to recompose from — that would risk a second,
  * drifting copy of the same prose. Codes that name nothing narrower than their scope carry just
  * `code`/`severity`/`message`.

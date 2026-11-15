@@ -64,6 +64,7 @@ export async function resumeRun(
     applyResume,
     RESUMABLE_PHASES,
     classifyClaim,
+    leaseFactOf,
     DRAIN_LEASE_MAX,
     deriveRunPhase,
     getWorkflowForRun,
@@ -72,7 +73,9 @@ export async function resumeRun(
     parseStamp,
   } = await import('@sensigo/realm');
   // #715 (b) (D6-17): the one read; its reading is the instant every check below is made at.
-  const { record: run, at: runAt } = await runStore.get(runId);
+  // #729 CW-1b part 2: `read` whole, so the claims are judged with the lease facts it carries.
+  const read = await runStore.get(runId);
+  const { record: run, at: runAt } = read;
 
   // §5.1 — structural, phase-independent (RESUME_REFUSES_ABORTED pin): an aborted run is never
   // resumable, checked directly against aborted_at rather than relying on RESUMABLE_PHASES
@@ -182,7 +185,7 @@ export async function resumeRun(
   for (const step of run.in_progress_steps) {
     const claim = run.claims?.[step];
     if (claim === undefined) continue; // absent — released inside applyResume
-    const state = classifyClaim(claim, now);
+    const state = classifyClaim(claim, now, leaseFactOf(read, claim));
     if (state === 'healthy') {
       throw new WorkflowError(
         `Step '${step}' has a HEALTHY claim (deadline ${claim.deadline}) — a live runner is ` +
@@ -258,7 +261,6 @@ export const resumeCommand = new Command('resume')
           cannotGoOnHere,
           composeWaysAt,
           deriveRunPhase,
-          writtenSnapshot,
         } = await import('@sensigo/realm');
         const { advanceNeedsWords, cannotGoOnLines } = await import('./ways-renderer.js');
         // #715 (b) (02 §B.1, D6-17): the resume's own write — never a second load.
@@ -267,10 +269,13 @@ export const resumeCommand = new Command('resume')
           retryVerb: 'resume again',
           verb: 'resume',
         });
-        const pending = describePending(wf, writtenSnapshot(resumed, resumedAt), undefined);
+        const pending = describePending(wf, written, undefined);
         // #729 PR-0 (A-10): the run's ways, composed once by core with no registry (an observer,
         // C33), for both the owed line and the cannot-go-on lines.
-        const composed = composeWaysAt(resumed, resumedAt, { definition: wf });
+        const composed = composeWaysAt(resumed, resumedAt, {
+          definition: wf,
+          lease_facts: written.lease_facts,
+        });
         // issue #923 (C33): resume loads no project code, so the code an owed step needs is a
         // condition said before the `:` (`advanceNeedsWords`, the one producer), never judged here.
         const advance = composed.ways.find((w) => w.verb === 'advance');
