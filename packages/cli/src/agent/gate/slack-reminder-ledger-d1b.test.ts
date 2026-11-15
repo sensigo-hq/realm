@@ -632,8 +632,8 @@ describe('#597 D1b correction 1 — closing the question is final', () => {
   // call or its post not answered yet) must register no retry and make no unfenced post afterwards.
 
   it('closed while the lease call is pending, the lease then answers `lease_held`: nothing fires at the deadline (no second lease call)', async () => {
-    // (a) red when the retry is registered after the cleanup (a lease call at the deadline); (b)
-    //     prints the lease calls, the posts and the waiters left.
+    // (a) red when the retry is registered after the cleanup (a waiter left behind, or a lease call
+    //     at the deadline); (b) prints the lease calls, the posts and the waiters.
     const r = await rig(SERIES);
     let leases = 0;
     let release: ((answer: OutboundResult) => void) | undefined;
@@ -652,18 +652,21 @@ describe('#597 D1b correction 1 — closing the question is final', () => {
     clear(); // the question closes while the lease call is pending
     release!(heldUntil(plus(11 * MIN)));
     await settle();
+    // No retry is registered once the cleanup ran (a waiter here would be one, left behind).
+    const registered = r.clock.waiting();
     await r.clock.set(plus(13 * MIN));
     await settle();
-    expect({ leases, texts, waiting: r.clock.waiting() }).toEqual({
+    expect({ leases, texts, registered, waiting: r.clock.waiting() }).toEqual({
       leases: 1,
       texts: [],
+      registered: 0,
       waiting: 0,
     });
   });
 
   it('closed while the post is pending, Slack’s answer would be retried (`invalid_auth`): no retry', async () => {
-    // (a) red when the unmarked post's retry is registered after the cleanup (a second post); (b)
-    //     prints the posts, the row and the waiters left.
+    // (a) red when the unmarked post's retry is registered after the cleanup (a waiter left behind,
+    //     or a second post); (b) prints the posts, the row and the waiters.
     let answerPost: ((response: Response) => void) | undefined;
     answer = () =>
       new Promise<Response>((resolve) => {
@@ -676,11 +679,18 @@ describe('#597 D1b correction 1 — closing the question is final', () => {
     clear();
     answerPost!(slackResponse({ json: { ok: false, error: 'invalid_auth' } }));
     await settle();
+    const registered = r.clock.waiting();
     await r.clock.set(plus(13 * MIN));
     await settle();
-    expect({ posts: texts.length, rows: await statuses(r), waiting: r.clock.waiting() }).toEqual({
+    expect({
+      posts: texts.length,
+      rows: await statuses(r),
+      registered,
+      waiting: r.clock.waiting(),
+    }).toEqual({
       posts: 1,
       rows: { '1': 'pending' },
+      registered: 0,
       waiting: 0,
     });
   });
