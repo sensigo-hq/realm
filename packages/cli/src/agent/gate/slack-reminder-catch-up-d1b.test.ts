@@ -218,19 +218,22 @@ describe('#597 D1b — the catch-up’s signal is the question post’s takeover
   }, 20_000);
 
   it('a store with no ledger (`outbound` null, or absent): a takeover sends no catch-up, and the next reminder posts as before', async () => {
-    // (a) red when a store with no ledger gets a catch-up, or its reminders stop; (b) prints the
-    //     posts and the lines.
+    // (a) red when a store with no ledger gets a catch-up, its reminders stop, or a line about a
+    //     ledger prints; (b) prints the posts and the lines.
     const got: Record<string, unknown> = {};
     for (const outbound of ['null', 'absent'] as const) {
       fetchSpy.mockClear();
       lines.length = 0;
       const o = await opened(outbound);
       seedStoppedWriter(o.runId, o.gate);
-      got[outbound] = await attach(o, plus(30 * MIN));
+      const attached = await attach(o, plus(30 * MIN));
+      // Today's path prints nothing about a ledger (a seam that passed a missing ledger on would
+      // print the lease's warning and still post).
+      got[outbound] = { ...attached, ledgerLines: lines.filter((l) => l.includes('ledger')) };
     }
     expect(got, shown()).toEqual({
-      null: { atAttach: [], afterLater: [open('30m')], questionPosts: 0 },
-      absent: { atAttach: [], afterLater: [open('30m')], questionPosts: 0 },
+      null: { atAttach: [], afterLater: [open('30m')], questionPosts: 0, ledgerLines: [] },
+      absent: { atAttach: [], afterLater: [open('30m')], questionPosts: 0, ledgerLines: [] },
     });
   }, 30_000);
 });
