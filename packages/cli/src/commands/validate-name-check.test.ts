@@ -88,6 +88,27 @@ steps:
     on_outcome: [fail]
 `;
 
+/** Correction 1 (c): two cleanup steps on `fail`, the first misspelt, the second provided. */
+const TWO_CLEANUPS = `id: fin
+name: Fin
+version: 1
+steps:
+  work:
+    description: Work.
+    execution: auto
+    handler: send_refund
+  cleanup:
+    description: Clean up.
+    execution: finalizer
+    handler: sned_refund
+    on_outcome: [fail]
+  cleanup_b:
+    description: Clean up more.
+    execution: finalizer
+    handler: send_refund
+    on_outcome: [fail]
+`;
+
 /** Check 7's file: check 1's slip beside a pass-1 warning (an unknown `retry` key). */
 const WITH_OTHER_WARNING = `id: refunds
 name: Refunds
@@ -236,7 +257,8 @@ describe('validate, register and watch — fix 1, piece 4: names the project doe
       warnings: [
         "⚠ Step 'cleanup': handler 'sned_refund' is not one this project provides (it provides: " +
           'check_quotes, send_refund), so when a run here ends in a way its ' +
-          "'on_outcome' selects, this cleanup step is left pending instead of running. " +
+          "'on_outcome' selects, this cleanup step, and every cleanup step after it, is left pending " +
+          'instead of running. ' +
           REMEDY('handler', 'sned_refund') +
           " Did you mean 'send_refund'? (line 12)",
       ],
@@ -380,6 +402,88 @@ steps:
       ],
     });
   });
+  it('correction 1 (a): a service with no value (YAML null) that a step uses — `validate` exits 0 with no stack, `--json` is one JSON object, `register` stores it', async () => {
+    const yaml = `id: nullsvc
+name: Null service
+version: 1
+services:
+  mail:
+steps:
+  a:
+    description: A.
+    execution: auto
+    uses_service: mail
+    operation: send
+`;
+    const file = write(yaml);
+    const plain = await validate([file]);
+    const plainOut = [...lines(warnSpy), ...lines(errSpy), ...lines(logSpy)];
+    logSpy.mockClear();
+    const json = await validate([file, '--json']);
+    const out = JSON.parse(lines(logSpy).join('\n')) as { valid: boolean };
+    exitSpy.mockClear();
+    const reg = await exitOf(() => registerCommand.parseAsync([dir], { from: 'user' }));
+    // (1) red when the service's value is read as a map: a TypeError and its stack, exit 1, a
+    // `--json` that is not JSON, and nothing stored; (2) prints what each gave.
+    expect({
+      plain,
+      stack: [...plainOut, ...lines(errSpy)].some((l) => l.includes('TypeError')),
+      valid: plainOut.includes('Valid: nullsvc v1 (1 step)'),
+      json,
+      jsonValid: out.valid,
+      reg,
+      stored: (await h.home.workflowStore.list()).map((d) => d.id),
+    }).toEqual({
+      plain: 0,
+      stack: false,
+      valid: true,
+      json: 0,
+      jsonValid: true,
+      reg: 0,
+      stored: ['nullsvc'],
+    });
+  });
+
+  it("correction 1 (b): a handler taken through a YAML merge key — the warning ends with the step's line", async () => {
+    manifest(['send_refund']);
+    const code = await validate([
+      write(`id: merge
+name: Merge
+version: 1
+steps:
+  a: &base
+    description: A.
+    execution: auto
+    handler: sned_refund
+  b:
+    <<: *base
+    description: B.
+`),
+    ]);
+    // (1) red when the fallback is removed (the line left off); (2) prints the endings.
+    expect({
+      code,
+      ends: lines(warnSpy).map((l) => l.slice(l.lastIndexOf('?') + 1)),
+    }).toEqual({ code: 0, ends: [' (line 8)', ' (step at line 9)'] });
+  });
+
+  it('correction 1 (c): two cleanup steps on the selected outcome, the first misspelt — the warning says every cleanup step after it is left pending', async () => {
+    manifest(['send_refund']);
+    const code = await validate([write(TWO_CLEANUPS)]);
+    // (1) red when the words (c) do not say the later cleanup steps are left pending, or the later
+    // step (its handler provided) is warned too; (2) prints the warnings.
+    expect({ code, warnings: lines(warnSpy) }).toEqual({
+      code: 0,
+      warnings: [
+        "⚠ Step 'cleanup': handler 'sned_refund' is not one this project provides (it provides: " +
+          'check_quotes, send_refund), so when a run here ends in a way its ' +
+          "'on_outcome' selects, this cleanup step, and every cleanup step after it, is left pending " +
+          'instead of running. ' +
+          REMEDY('handler', 'sned_refund') +
+          " Did you mean 'send_refund'? (line 12)",
+      ],
+    });
+  });
 });
 
 describe('the words — fix 1, piece 4', () => {
@@ -423,6 +527,26 @@ describe('the words — fix 1, piece 4', () => {
         "The adapter a step's service names is not one the project provides. Added after version 0.49.0.",
       ],
     ]);
+  });
+
+  it('correction 1 (d): services-profiles-and-context.md and step-handlers.md say the names are warned, and no longer that they are not checked', () => {
+    const services = read('docs/reference/workflow/services-profiles-and-context.md');
+    const guide = read('docs/guides/step-handlers.md');
+    // (1) red when a new sentence is missing or an old one stays; (2) prints the four checks.
+    expect({
+      servicesNow: services.includes(
+        '`realm workflow validate`, `register` and `watch` warn when no adapter of that name is provided by the project (`ADAPTER_NOT_PROVIDED`, added after version 0.49.0). A step whose adapter cannot be found is blocked when the run reaches it.',
+      ),
+      servicesOld: services.includes(
+        'Whether an adapter of that name exists is not checked when the file is loaded.',
+      ),
+      guideNow: guide.includes(
+        '`realm workflow validate` warns about it, with "Did you mean \'order_total\'?" (added after version 0.49.0); the step is still blocked when the run reaches it.',
+      ),
+      guideOld: guide.includes(
+        '`realm workflow validate` does not catch this; it shows up when the step runs.',
+      ),
+    }).toEqual({ servicesNow: true, servicesOld: false, guideNow: true, guideOld: false });
   });
 
   it('check 9: the CHANGELOG line under [Unreleased] → Changed', () => {

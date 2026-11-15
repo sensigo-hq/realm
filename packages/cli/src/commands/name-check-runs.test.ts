@@ -155,4 +155,35 @@ describe('check 6 — the runs the warnings describe (fix 1, piece 4)', () => {
       line: logged().includes('Cleanup step left pending'),
     }).toEqual({ phase: 'completed', pending: false, line: false });
   }, 20_000);
+  it('correction 1 (c): a run whose first selected cleanup step has no handler here leaves it and every cleanup step after it pending', async () => {
+    mocks.question.mockImplementationOnce(async () => '{}');
+    await run(`id: fin
+name: Fin
+version: 1
+steps:
+  work:
+    description: Work.
+    execution: auto
+    handler: explode
+  cleanup:
+    description: Clean up.
+    execution: finalizer
+    handler: sned_refund
+    on_outcome: [fail]
+  cleanup_b:
+    description: Clean up more.
+    execution: finalizer
+    handler: send_refund
+    on_outcome: [fail]
+`);
+    const rec = await readRecord();
+    // (1) red when the later cleanup step runs although its handler is provided, or either is not
+    // left pending; (2) prints the state and the line.
+    expect({
+      phase: rec.run_phase,
+      cleanup: rec.finalizer_ledger?.['cleanup']?.status,
+      cleanupB: rec.finalizer_ledger?.['cleanup_b']?.status,
+      line: logged().includes("Cleanup steps left pending: 'cleanup', 'cleanup_b'"),
+    }).toEqual({ phase: 'failed', cleanup: 'pending', cleanupB: 'pending', line: true });
+  }, 20_000);
 });

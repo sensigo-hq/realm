@@ -201,7 +201,8 @@ steps:
     expect(got.map((w) => `${w.code} [${w.step}]: ${w.message}`)).toEqual([
       "HANDLER_NOT_PROVIDED [cleanup]: Step 'cleanup': handler 'sned_refund' is not one this " +
         'project provides (it provides: check_quotes, send_refund), so when a run here ends in a ' +
-        "way its 'on_outcome' selects, this cleanup step is left pending instead of running. " +
+        "way its 'on_outcome' selects, this cleanup step, and every cleanup step after it, is left " +
+        'pending instead of running. ' +
         REMEDY('handler', 'sned_refund') +
         " Did you mean 'send_refund'? (line 12)",
     ]);
@@ -316,6 +317,77 @@ steps:
       'HANDLER_NOT_PROVIDED hb',
       'ADAPTER_NOT_PROVIDED mailr',
       'HANDLER_NOT_PROVIDED hc',
+    ]);
+  });
+  it('correction 1 (a): a service with no value (YAML null) that a step uses is skipped — no throw, no finding', () => {
+    const yaml = `id: nullsvc
+name: Null service
+version: 1
+services:
+  mail:
+steps:
+  a:
+    description: A.
+    execution: auto
+    uses_service: mail
+    operation: send
+    handler: not_a_handler
+`;
+    // (1) red when the service's value is read as a map (the TypeError), or the step's handler is
+    // judged instead; (2) prints the findings.
+    expect(findings(yaml, {})).toEqual([]);
+  });
+
+  it('correction 1 (a) twin: a service with a value beside the null one is still judged', () => {
+    const yaml = `id: nullsvc
+name: Null service
+version: 1
+services:
+  mail:
+  store:
+    adapter: stor
+    trust: engine_delivered
+steps:
+  a:
+    description: A.
+    execution: auto
+    uses_service: mail
+    operation: send
+  b:
+    description: B.
+    execution: auto
+    uses_service: store
+    operation: get
+`;
+    // (1) red when the skip drops every service; (2) prints the codes and keys.
+    expect(findings(yaml, {}).map((w) => `${w.code} ${w.key}`)).toEqual([
+      'ADAPTER_NOT_PROVIDED stor',
+    ]);
+  });
+
+  it("correction 1 (b): a handler taken through a YAML merge key gets the step's line, named as the step's", () => {
+    const yaml = `id: merge
+name: Merge
+version: 1
+steps:
+  a: &base
+    description: A.
+    execution: auto
+    handler: sned_refund
+  b:
+    <<: *base
+    description: B.
+`;
+    // (1) red when the fallback is removed (no line) or names no anchor; (2) prints the endings.
+    expect(
+      findings(yaml, { handlers: ['send_refund'] }).map((w) => ({
+        step: w.step,
+        end: w.message.slice(w.message.lastIndexOf('?') + 1),
+        line: w.line,
+      })),
+    ).toEqual([
+      { step: 'a', end: ' (line 8)', line: 8 },
+      { step: 'b', end: ' (step at line 9)', line: undefined },
     ]);
   });
 });

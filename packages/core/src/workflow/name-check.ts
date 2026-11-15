@@ -46,7 +46,11 @@ export function checkProvidedNames(
   positionOf: (segments: readonly string[]) => SourcePosition | undefined,
 ): LoaderWarning[] {
   if (!isObj(stepsRaw)) return [];
-  const services = isObj(servicesRaw) ? servicesRaw : {};
+  // A service entry that is not a map (YAML null: `mail:` with nothing under it) is skipped, so a step
+  // that uses it needs nothing here; reading its `adapter` would throw (correction 1).
+  const services = isObj(servicesRaw)
+    ? Object.fromEntries(Object.entries(servicesRaw).filter(([, v]) => isObj(v)))
+    : {};
   const provided = {
     handler: [...new Set([...registry.names('handler'), ...(declared?.handlers ?? [])])].sort(),
     adapter: [...new Set([...registry.names('adapter'), ...(declared?.adapters ?? [])])].sort(),
@@ -64,7 +68,8 @@ export function checkProvidedNames(
             'HANDLER_NOT_PROVIDED',
             `Step '${capText(stepName)}': handler '${capText(handler)}' is not one this project ` +
               `provides (it provides: ${list(provided.handler)}), so when a run here ends in a way ` +
-              `its 'on_outcome' selects, this cleanup step is left pending instead of running. ` +
+              `its 'on_outcome' selects, this cleanup step, and every cleanup step after it, is left ` +
+              `pending instead of running. ` +
               REMEDY('handler', handler),
             handler,
             provided.handler,
