@@ -149,9 +149,12 @@ export function reminderEligibility(
   return previousBeforeExpiry && (isFinalReminder(gate, k) || !closed);
 }
 
-/** #715 (b) (02 §D.3, D6-21, R14): what a reminder view says it does not know. */
+/**
+ * #715 (b) (02 §D.3, D6-21, R14): what a reminder view says about the schedule's basis. #597 D1b: "no
+ * send is recorded" is dropped, because the outbound ledger's line beside it now says what was sent.
+ */
 export const REMINDER_BASIS_CLAUSE =
-  'no send is recorded; reminders are sent only while a process attends this question';
+  'reminders are sent only while a process attends this question';
 
 /**
  * #715 (b) (02 §D.3, Amendment 9): a reminder schedule in words, for `inspect` and `list` — the

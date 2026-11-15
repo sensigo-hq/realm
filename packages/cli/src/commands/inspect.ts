@@ -126,6 +126,7 @@ import {
 } from '../output/writer.js';
 import { readRunManifest, type RunManifest } from '../lib/read-run-manifest.js';
 import { openCliHome } from '../lib/home.js';
+import { outboundWords, readOutboundRows, rowsOfOneQuestion } from '../lib/outbound-words.js';
 
 /**
  * Renders one skipped step's reason inline (issue #111) — kind plus the salient detail.
@@ -1761,6 +1762,23 @@ export async function inspectRun(
     if (respond !== undefined) {
       lines.push(`  To answer: ${CLI_COMMANDS.respond(respond, undefined, { driveFlags: '' })}`);
     }
+  }
+
+  // #597 D1b: what the store's outbound ledger recorded of the question's reminders and escalation,
+  // after the open question's block (or after `Updated:` when none is open), at this read's reading.
+  // A store with no ledger, a run with neither an open question nor rows, or a read that throws: no
+  // line at all.
+  const gateOpen = derivedPhase === 'gate_waiting' && run.pending_gate !== undefined;
+  const readRows = await readOutboundRows(store, runId);
+  // Correction 1: one question's rows — the open one's, else the newest row's question.
+  const outboundRows =
+    readRows !== undefined
+      ? rowsOfOneQuestion(readRows, gateOpen ? run.pending_gate!.gate_id : undefined)
+      : undefined;
+  if (outboundRows !== undefined && (outboundRows.length > 0 || gateOpen)) {
+    const words = outboundWords(outboundRows, runAt, gateOpen);
+    if (words.reminders !== undefined) lines.push(`Reminders: ${words.reminders}`);
+    if (words.escalation !== undefined) lines.push(`Escalation: ${words.escalation}`);
   }
 
   // issue #221: typed run-health findings — the SAME shared classifyRunHealth predicate the three

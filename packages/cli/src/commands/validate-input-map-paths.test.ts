@@ -467,7 +467,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     );
     // The two items sit in [Unreleased]'s Upgrading section, numbered on from its item 1 (#597 D1c-1's
     // store-format item, landed after them, is 4; fix 1 piece 2a's `when` item is 5; piece 2b's
-    // `params_map` item is 6).
+    // `params_map` item is 6; #597 D1b's Slack questions item is 7).
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     const unreleased = changelog.slice(
       changelog.indexOf('## [Unreleased]'),
@@ -484,6 +484,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       '**4. ',
       '**5. ',
       '**6. ',
+      '**7. ',
     ]);
   });
 });

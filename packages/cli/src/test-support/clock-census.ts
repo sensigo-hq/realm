@@ -34,6 +34,11 @@ export const CENSUS: Record<string, Entry> = {
     'read',
     "#964: a question reminder's or escalation's waiter, reading the store's clock once when it fires: compared with the occurrence instants, opened_at and expires_at (startGateReminderTimers), to compose its age and to skip what a later due occurrence or the question's expiry replaces",
   ],
+  'cli/src/agent/gate/slack-gate-notifier.ts#retry#clock.now()': [
+    1,
+    'read',
+    "#597 D1b: a reminder's one retry after a held lease or an unmarked post, when the refusal carried no lease deadline: it waits OUTBOUND_LEASE_SECONDS from the store's clock's reading",
+  ],
   'cli/src/agent/gate/slack-gate-server.ts#startSlackGateServer#Date.now()': [
     1,
     'outside',

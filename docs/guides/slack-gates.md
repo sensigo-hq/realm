@@ -189,6 +189,8 @@ A reminder reads ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:
 
 No message in the thread names a command. The command that carries out an expired question's `on_expiry`, `realm run drain --expired`, is printed where `realm agent` runs when it attends the thread with a bot token; with only `webhook_url`, nothing in `realm agent` carries the expiry out or prints it (#882).
 
+`realm agent` records its reminders and the escalation in the store's outbound ledger, beside the run; nothing is written to the run. Before it posts one, it leases it there; once Slack took it, it marks it sent. So when two `realm agent`s attend one question, each reminder is posted once, and an agent started again does not post a reminder that was already sent. A post Slack did not take is tried once more about two minutes later, unless Slack refused it because the channel is gone or archived. When the store cannot record a reminder that is due, `realm agent` posts it anyway and says so once; a catch-up or a retry is not posted then. A `realm agent` started again while a question is open, which uses the stopped agent's question post, posts at once the latest reminder that came due, if it was not sent yet, with the time the question has really been open; the ones before it are not posted. It does so only for a gate with its own `reminder_seconds`, and never for the reminder that says the time ran out. `realm run inspect` and `realm run list` show what was recorded (see [Reading runs](../reference/cli/realm-run-reading.md)). Added after version 0.49.0.
+
 ## The command line still works
 
 Every Slack gate can also be answered with `realm run respond`. `realm agent` notices the answer and carries on, whichever way it arrived.
