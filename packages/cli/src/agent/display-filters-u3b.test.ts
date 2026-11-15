@@ -38,7 +38,7 @@ import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 /** A declared fake with lower-case letters (so `upper` changes it) and dashes (so `split` parts it). */
 const SECRET = 'sk-live-u3b-4f9a8b7c6d5e3a2b';
 /** The same fake with a span mark planted inside it (U+E000, the writer's own print-time mark). */
-const PLANTED = `${SECRET.slice(0, 9)}${SECRET.slice(9)}`;
+const PLANTED = `${SECRET.slice(0, 9)}\uE000${SECRET.slice(9)}`;
 /** An environment value: swept on a pipe (every tier), shown on a terminal (the declared tier). */
 const ENV_NAME = 'U3B_SWEPT_VALUE';
 const ENV_VALUE = 'u3b-environment-value-8c2f-0aa1';
@@ -174,10 +174,8 @@ describe('fix 1, piece 3b — no declared value through a filter (check 1)', () 
         token: SECRET,
         planted: PLANTED,
       });
-      // (a) red when the result line renders `display` from the output as on the base (disclosed only
-      //     in log mode: the writer's mask then misses the upper-cased fake, its first characters and
-      //     its parts), and for D when the span marks are not stripped before the walk (the planted
-      //     fake passes the walk, `upper` changes it, the writer strips the mark and prints it); (b)
+      // (a) red when the result line renders `display` from output not masked first (as on the base
+      //     outside log mode), and for D when the span marks are not stripped before the mask; (b)
       //     prints the line and the fragments it shows.
       expect({ line: run.result, leaks: leaks(run.all) }).toEqual({
         line: `${MASKED_LINE} D: [REDACTED]`,
@@ -257,8 +255,8 @@ describe("fix 1, piece 3b — example 08's display (check 2)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
     const lines = shown();
-    // (a) red when filters are not applied at this print (the list prints as nothing), or a filter
-    //     runs before the mask (the upper-cased fake); (b) prints the preview line and the leaks.
+    // (a) red when filters are not applied at this print (the list prints as nothing), or a value
+    //     is not masked before its filter; (b) prints the preview line and the fragments shown.
     expect({
       preview: lines.find((l) => l.startsWith('  Preview: ')),
       leaks: leaks(lines.join('\n')),
