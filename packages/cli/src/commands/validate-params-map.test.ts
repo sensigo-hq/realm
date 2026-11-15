@@ -12,6 +12,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import { validateCommand } from './validate.js';
 import { registerCommand } from './register.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -155,6 +156,45 @@ describe('validate and register — fix 1, piece 2b: `params_map`', () => {
       ],
     });
   });
+  it('check 8, the Upgrading item: `validate --registered <id>` refuses a stored copy whose params_map leaves a required parameter unfilled', async () => {
+    // A copy stored before this release: the registry is written directly, past the loader that
+    // would refuse it today (validate-registered.test.ts's seeding).
+    await h.home.workflowStore.register({
+      id: 'tickets',
+      name: 'Tickets',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      trigger: {
+        type: 'webhook',
+        path: '/tickets',
+        auth: { mode: 'shared_secret', header: 'X-Token', secret_from: 'WH_SECRET' },
+        params_map: { ticket_id: 'body.id' },
+      },
+      params_schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['source'],
+        properties: { ticket_id: { type: 'string' }, source: { type: 'string' } },
+      },
+      steps: { record: { description: 'Record the ticket.', execution: 'auto' } },
+    } as never);
+    await expect(
+      validateCommand.parseAsync(['--registered', 'tickets', '--json'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    const out = JSON.parse(
+      vi
+        .mocked(console.log)
+        .mock.calls.map((c: unknown[]) => String(c[0]))
+        .join('\n'),
+    ) as { valid: boolean; diagnostics: { code: string; key?: string }[] };
+    // (1) red when a stored copy's params_map is not judged; (2) prints the verdict and the codes.
+    expect({
+      valid: out.valid,
+      codes: out.diagnostics
+        .filter((d) => d.code.startsWith('PARAMS_MAP_'))
+        .map((d) => `${d.code} ${d.key}`),
+    }).toEqual({ valid: false, codes: ['PARAMS_MAP_REQUIRED_UNMAPPED source'] });
+  });
 });
 
 describe('realm listen (built) — fix 1, piece 2b: item 3, executed', () => {
@@ -247,6 +287,24 @@ describe('realm listen (built) — fix 1, piece 2b: item 3, executed', () => {
       through: { status: 400, error: 'params_invalid' },
       dropped: { status: 200, body: { status: 'ignored' } },
     });
+  }, 60_000);
+  it("the closed arm's claim: listen answers 400 params_invalid to a request carrying the misnamed value, and starts a run from one without it", async () => {
+    writeFileSync(join(root, 'project', 'workflow.yaml'), MISSPELT, 'utf8');
+    const { port, output } = await startListen();
+    // (1) red when the escalation is applied at `realm listen` (it refuses to mount); (2) prints
+    //     listen's lines.
+    expect(output()).toContain(MISSPELT_FINDING.replace('⚠ ', ''));
+    const carrying = await post(port, { id: '102' });
+    const without = await post(port, { other: 1 });
+    // (1) red when the claim is false (the misnamed value starts a run, or its absence is refused);
+    //     (2) prints both replies.
+    expect({
+      carrying: {
+        status: carrying.status,
+        error: (JSON.parse(carrying.body) as Record<string, unknown>)['error'],
+      },
+      without: without.status,
+    }).toEqual({ carrying: { status: 400, error: 'params_invalid' }, without: 202 });
   }, 60_000);
 });
 
