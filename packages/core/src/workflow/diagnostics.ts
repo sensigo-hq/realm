@@ -65,7 +65,11 @@ export type WarningCode =
   // refused at the boundary and lenient in execution; a name an open schema does not list is advice.
   | 'PARAMS_MAP_UNKNOWN_PARAM'
   | 'PARAMS_MAP_REQUIRED_UNMAPPED'
-  | 'PARAMS_MAP_UNDECLARED_PARAM';
+  | 'PARAMS_MAP_UNDECLARED_PARAM'
+  // fix 1, piece 4: a handler or adapter a step needs that the project does not provide
+  // (`name-check.ts`). Advice only, never a refusal: another runner may provide the name (#134).
+  | 'HANDLER_NOT_PROVIDED'
+  | 'ADAPTER_NOT_PROVIDED';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -166,6 +170,9 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   PARAMS_MAP_UNKNOWN_PARAM: 'error',
   PARAMS_MAP_REQUIRED_UNMAPPED: 'error',
   PARAMS_MAP_UNDECLARED_PARAM: 'warn',
+  // fix 1, piece 4 — a warning everywhere; `--strict` fails on it as on any warning.
+  HANDLER_NOT_PROVIDED: 'warn',
+  ADAPTER_NOT_PROVIDED: 'warn',
 };
 
 /**

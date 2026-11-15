@@ -48,6 +48,7 @@ import {
   admitProjectExtensions,
   ExtensionLoadError,
   admittedDefinitionOf,
+  registryWarnings,
 } from '../lib/load-workflow-for-admission.js';
 import { parseProvider } from './agent.js';
 import type { ProviderName } from '../agent/providers/llm-provider.js';
@@ -889,6 +890,8 @@ async function validateRegistered(
 
   let sentinelWarnings: string[] | undefined;
   let releaseLineWarnings: LoaderWarning[] | undefined;
+  // Fix 1, piece 4: the extensions pass's own findings (a handler or adapter not provided).
+  let registryFindings: LoaderWarning[] = [];
   // issue #600 caching PR 5: the economics file the extensions pass resolved, when it ran.
   let cacheEconomicsPath: string | undefined;
   for (const check of applicable) {
@@ -943,7 +946,10 @@ async function validateRegistered(
       releaseLineWarnings = loaded.releaseLineWarnings;
       cacheEconomicsPath = loaded.cacheEconomicsPath;
       try {
-        loadWorkflowFromStringWithDiagnostics(stripped, loaded.registry);
+        registryFindings = registryWarnings(
+          loadWorkflowFromStringWithDiagnostics(stripped, loaded.registry, loaded.declaredNames)
+            .warnings,
+        );
       } catch (err) {
         exitOnLoadFailure(err, json ? registeredCtx(definition.id, warningsOf(err)) : undefined);
       }
@@ -957,6 +963,7 @@ async function validateRegistered(
     ...wrapReleaseLineWarnings(releaseLineWarnings),
     ...loaderWarnings,
     ...findRetryWithoutExplicitTimeout(definition),
+    ...registryFindings,
     ...wrapSentinelWarnings(sentinelWarnings),
   ];
   // #600 D1 (G-5): the folder's profile texts, kept for the note below, when the loader audit read them
