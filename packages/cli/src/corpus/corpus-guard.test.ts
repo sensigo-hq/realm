@@ -5,7 +5,9 @@
 // changelog at Part B step 2), and a marker may stand only at the topmost heading: the release being
 // cut. So a release whose recording was forgotten turns this red at the next release cut. It also
 // fails a folder holding a marker and artifacts both, and a folder or marker naming a version the
-// changelog has no heading for. The cells under (6) pin the sentences that tell a person so.
+// changelog has no heading for. The cells under (7) require each exception file
+// (`<version>/…/*.after-roundtrip.json`, an intended shape change) to be named in CHANGELOG.md, as the
+// compatibility page says it is. The cells under (6) pin the sentences that tell a person so.
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,6 +151,53 @@ describe('the corpus guard: every release from 0.49.0 on has its corpus or its P
   });
 });
 
+/** Every exception file under the corpus folders, as its path relative to `packages/cli/src/corpus/`. */
+function exceptionFiles(root: string): string[] {
+  const found: string[] = [];
+  const walk = (dir: string, rel: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = rel === '' ? entry.name : `${rel}/${entry.name}`;
+      if (entry.isDirectory()) walk(join(dir, entry.name), path);
+      else if (entry.name.endsWith('.after-roundtrip.json')) found.push(path);
+    }
+  };
+  for (const version of corpusFolders(root).keys()) walk(join(root, version), version);
+  return found.sort();
+}
+
+/** The exception files CHANGELOG.md does not name, in backticks, in any section. */
+function unnamedExceptions(changelog: string, files: readonly string[]): string[] {
+  return files.filter((file) => !changelog.includes(`\`${file}\``));
+}
+
+describe('the corpus guard: every exception file is named in the changelog', () => {
+  // The compatibility page: a meant change "lands as a reviewed exception file beside the artifact and
+  // is named in the changelog". Any section counts: the line written under `## [Unreleased]` with the
+  // change stays true after the release renames that section, and the file stays beside its artifact.
+  it('(7) each `*.after-roundtrip.json` under the corpus folders has its path in CHANGELOG.md, in backticks', () => {
+    const changelog = readFileSync(join(REPO, 'CHANGELOG.md'), 'utf8');
+    const unnamed = unnamedExceptions(changelog, exceptionFiles(HERE));
+    expect(
+      unnamed.map(
+        (file) =>
+          `packages/cli/src/corpus/${file} is not named in CHANGELOG.md: name it under ## [Unreleased], in backticks: \`${file}\``,
+      ),
+    ).toEqual([]);
+  });
+
+  it('(7) the rule knows a named, an unnamed and an earlier-section file', () => {
+    const changelog =
+      '## [Unreleased]\n\n- `0.49.0/runs/one-step.realm.after-roundtrip.json`\n\n## [0.49.0] — 2026-11-11\n\n- `0.49.0/examples/01-code-reviewer/definition.after-roundtrip.json`\n';
+    expect(
+      unnamedExceptions(changelog, [
+        '0.49.0/examples/01-code-reviewer/definition.after-roundtrip.json',
+        '0.49.0/runs/08-pr-review.realm.after-roundtrip.json',
+        '0.49.0/runs/one-step.realm.after-roundtrip.json',
+      ]),
+    ).toEqual(['0.49.0/runs/08-pr-review.realm.after-roundtrip.json']);
+  });
+});
+
 describe('(6) the words that tell a person about the corpus', () => {
   it('the compatibility page says the stored data is recorded and read back, after the stored-data paragraph', () => {
     const page = readFileSync(join(REPO, 'docs/reference/compatibility.md'), 'utf8');
@@ -188,8 +237,10 @@ describe('(6) the words that tell a person about the corpus', () => {
     const record =
       'Prepare the published packages once: `mkdir <nm> && cd <nm> && npm install --no-save ' +
       '@sensigo/realm-cli@<version> @sensigo/realm-testing@<version>` (a registry read; no sign-in). Then, in the ' +
-      'repository root, in a clean environment: `env -i PATH="$PATH" HOME=<any folder> NM=<nm> WORK=<a fixed empty ' +
-      'folder outside any home, with no package.json or .git above it> node scripts/corpus/record.mjs <version>`. ' +
+      'repository root, in a clean environment: `env -i PATH="$PATH" HOME=<a folder that is not above WORK> ' +
+      'NM=<nm> WORK=/tmp/realm-corpus/work node scripts/corpus/record.mjs <version>`. WORK is that folder on every ' +
+      'machine and must be empty: two recordings then agree in every text file, and the stored runs keep its path ' +
+      '(the recorder refuses a WORK that is not empty or lies under a home). ' +
       "It records the release's corpus into `packages/cli/src/corpus/<version>/` and deletes the `PENDING` " +
       'marker; the CLI it runs never sees your HOME. Commit the folder on a branch and open its PR; the corpus ' +
       'cells and the guard must be green.';

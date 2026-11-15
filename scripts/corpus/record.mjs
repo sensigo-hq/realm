@@ -17,18 +17,22 @@
 //
 // Usage (the release checklist, Part B step 7a), from the repository root:
 //   mkdir <nm> && cd <nm> && npm install --no-save @sensigo/realm-cli@<v> @sensigo/realm-testing@<v>
-//   env -i PATH="$PATH" HOME=<any folder> NM=<nm> WORK=<empty folder> node scripts/corpus/record.mjs <v>
-// WORK is a fixed absolute folder outside any home with no package.json or .git above it: the stored
-// runs keep its path, and the gzipped store is committed as it is. The CLI runs with exactly
-// { PATH, HOME: <WORK>/home }, so it never sees the caller's HOME or a real ~/.realm.
+//   env -i PATH="$PATH" HOME=<a folder that is not above WORK> NM=<nm> WORK=/tmp/realm-corpus/work \
+//     node scripts/corpus/record.mjs <v>
+// WORK is that one empty folder on every machine (outside any home, with no package.json or .git
+// above it): the stored runs keep its path, and the gzipped store is committed as it is. The CLI runs
+// with { PATH, HOME: <WORK>/home } (the drives also with REALM_OPERATOR), so it never sees the
+// caller's HOME or a real ~/.realm.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-/** Bumped when what the recorder writes, or how, changes. */
-const RECORDER_VERSION = 1;
+/** Bumped when what the recorder writes, or how, changes (2: it refuses a recording that names the
+ * machine it ran on). */
+const RECORDER_VERSION = 2;
 /** The test clock's instant: every stamp the CLI writes is this, and every duration 0. */
 const START = '2026-01-01T09:00:00.000Z';
 /** The mock GitHub's port, fixed so two recordings differ only in what the rules replace. */
@@ -60,10 +64,14 @@ const version = process.argv[2];
 if (version === undefined || !/^\d+\.\d+\.\d+$/.test(version)) {
   stop('give the release version as the one argument, for example 0.49.0');
 }
-const { NM, WORK } = process.env;
-if (!NM || !path.isAbsolute(NM))
+if (!process.env.NM || !path.isAbsolute(process.env.NM))
   stop('NM must be the absolute path of the folder holding the published packages');
-if (!WORK || !path.isAbsolute(WORK)) stop('WORK must be an absolute path');
+if (!process.env.WORK || !path.isAbsolute(process.env.WORK)) stop('WORK must be an absolute path');
+// Resolved once, before any use: `…/work` and `…/work/` record the same text in every file. As given,
+// a trailing separator was replaced before the folder's own name and turned `<WORK>/project` into
+// `/realm-corpus/workproject` in every recorded path (NM's likewise in the manifest's transcript).
+const NM = path.resolve(process.env.NM);
+const WORK = path.resolve(process.env.WORK);
 
 // 2. NM holds the published packages at this version (the CLI, the testing package, and the loader's).
 function installedVersion(name) {
@@ -404,26 +412,29 @@ function scrub(value) {
 }
 const pretty = (value) => JSON.stringify(value, null, 2) + '\n';
 
-// 10. The corpus folder.
-fs.mkdirSync(path.join(CORPUS, 'runs'), { recursive: true });
-fs.mkdirSync(path.join(CORPUS, 'project'), { recursive: true });
+// 10. What the corpus folder will hold, built whole before anything is written into it.
+const outputs = new Map(); // path relative to CORPUS → text or bytes
+const copyTree = (from, to) => {
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    const source = path.join(from, entry.name);
+    const target = path.posix.join(to, entry.name);
+    if (entry.isDirectory()) copyTree(source, target);
+    else outputs.set(target, fs.readFileSync(source));
+  }
+};
 for (const name of examples) {
-  const from = path.join(realWork, 'examples', name);
-  const to = path.join(CORPUS, 'examples', name);
-  fs.cpSync(from, to, { recursive: true });
-  fs.writeFileSync(path.join(to, 'definition.json'), pretty(scrub(definitions[name])));
+  copyTree(path.join(realWork, 'examples', name), `examples/${name}`);
+  outputs.set(`examples/${name}/definition.json`, pretty(scrub(definitions[name])));
 }
 for (const [name, bundle] of Object.entries(bundles)) {
-  fs.writeFileSync(path.join(CORPUS, 'runs', `${name}.realm.json`), pretty(scrub(bundle)));
+  outputs.set(`runs/${name}.realm.json`, pretty(scrub(bundle)));
 }
-fs.writeFileSync(
-  path.join(CORPUS, 'realm.db.gz'),
-  zlib.gzipSync(fs.readFileSync(path.join(realWork, 'realm.db')), { level: 9 }),
-);
-fs.writeFileSync(path.join(CORPUS, 'project/realm.yaml'), realmYaml);
-fs.writeFileSync(path.join(CORPUS, 'project/stand-in.env'), STAND_IN_ENV);
-fs.writeFileSync(
-  path.join(CORPUS, 'manifest.json'),
+const rawStore = fs.readFileSync(path.join(realWork, 'realm.db'));
+outputs.set('realm.db.gz', zlib.gzipSync(rawStore, { level: 9 }));
+outputs.set('project/realm.yaml', realmYaml);
+outputs.set('project/stand-in.env', STAND_IN_ENV);
+outputs.set(
+  'manifest.json',
   pretty({
     version,
     integrity,
@@ -442,5 +453,69 @@ fs.writeFileSync(
     transcript,
   }),
 );
+
+// 11. Nothing that names this machine: the OS user name, the host name, the caller's HOME, or a path
+// under /home/, /Users/ or /root/, in any text file or the raw store (searched as bytes, the gzipped
+// copy is made from it). A name counts as a whole word, a folder as a path start, so the CLI's own
+// <WORK>/home (`/realm-corpus/work/home` once scrubbed) and words such as `trust_root` are not hits.
+// One hit stops the recording, naming the file and the kind of thing found, never the word itself,
+// and nothing is written into the corpus folder.
+const escaped = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const wholeWord = (word) => new RegExp(`(?<![A-Za-z0-9_])${escaped(word)}(?![A-Za-z0-9_])`);
+const pathStart = (folder) =>
+  new RegExp(`(?<![A-Za-z0-9._~-])${escaped(folder)}(?![A-Za-z0-9._~-])`);
+let osUser;
+try {
+  osUser = os.userInfo().username;
+} catch {
+  osUser = undefined;
+}
+const callerHomes = [];
+if (
+  process.env.HOME !== undefined &&
+  process.env.HOME !== '' &&
+  path.resolve(process.env.HOME) !== '/'
+) {
+  callerHomes.push(path.resolve(process.env.HOME));
+  try {
+    callerHomes.push(fs.realpathSync(process.env.HOME));
+  } catch {
+    // A HOME that does not exist cannot be in a recording by its realpath.
+  }
+}
+const machine = [
+  ...(osUser ? [{ kind: 'the OS user name', test: wholeWord(osUser) }] : []),
+  ...(os.hostname() ? [{ kind: 'the host name', test: wholeWord(os.hostname()) }] : []),
+  ...[...new Set(callerHomes)].map((home) => ({
+    kind: "the caller's HOME",
+    test: pathStart(home),
+  })),
+  {
+    kind: 'a path under /home/, /Users/ or /root/',
+    test: /(?<![A-Za-z0-9._~-])\/(?:home|Users|root)\//,
+  },
+];
+const scanned = [
+  ...[...outputs].filter(([name]) => name !== 'realm.db.gz'),
+  ['realm.db (the store the gzipped copy is made from)', rawStore],
+];
+for (const [name, value] of scanned) {
+  const text = typeof value === 'string' ? value : value.toString('latin1');
+  for (const { kind, test } of machine) {
+    if (test.test(text)) {
+      stop(
+        `${name} would hold ${kind}, so the recording would carry the machine it ran on: nothing was ` +
+          `written into ${path.relative(REPO, CORPUS)}. WORK is part of every stored path: use ` +
+          'WORK=/tmp/realm-corpus/work and a HOME that is not above it (Part B step 7a).',
+      );
+    }
+  }
+}
+
+// 12. The corpus folder.
+for (const [name, value] of outputs) {
+  fs.mkdirSync(path.join(CORPUS, path.dirname(name)), { recursive: true });
+  fs.writeFileSync(path.join(CORPUS, name), value);
+}
 fs.rmSync(path.join(CORPUS, 'PENDING'), { force: true });
 console.log(`recorded ${version} into ${path.relative(REPO, CORPUS)}`);

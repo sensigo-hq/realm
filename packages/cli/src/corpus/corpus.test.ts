@@ -15,9 +15,13 @@
 //          fails).
 // Both sides go through corpus-rules.json (the recorder applied it too) and are compared as text
 // after parsing (key order and values kept, whitespace out). (iv) An intended change is a reviewed
-// exception file beside the artifact, `<artifact>.after-roundtrip.json` (for a bundle it is the
-// comparator of (i), (ii-a) and (ii-b) alike); one equal to the artifact fails as stale. A missing or
-// unreadable artifact fails; nothing is skipped.
+// exception file beside the artifact, named after it without its `.json`: for example
+// `runs/08-pr-review.realm.after-roundtrip.json` beside `runs/08-pr-review.realm.json` (for a bundle
+// it is the comparator of (i), (ii-a) and (ii-b) alike), and `examples/<name>/definition.after-roundtrip.json`
+// beside `definition.json`; a shape red's last line names the file to write; one equal to the
+// artifact fails as stale; any other file under `runs/` or `examples/<name>/` fails, naming the files
+// allowed there; and corpus-guard.test.ts requires each exception file to be named in CHANGELOG.md.
+// A missing or unreadable artifact fails; nothing is skipped.
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
@@ -176,13 +180,32 @@ function missingFrom(recorded: Json, current: Json | undefined, path = ''): stri
     : [`~ ${path}: ${shown(recorded)} → ${shown(current)}`];
 }
 
-/** Requires `actual` to equal `expected` as compared text; on failure, the places they differ. */
-function expectSameShape(actual: Json, expected: Json, what: string): void {
-  const lines = shapeDiff(expected, actual);
-  expect(
-    text(actual),
-    `${what} differs from the recorded shape:\n${lines.slice(0, 40).join('\n')}`,
-  ).toBe(text(expected));
+/** The exception file the cells read beside an artifact: its name without `.json`, then this. */
+function exceptionFileOf(artifact: string): string {
+  return artifact.replace(/\.json$/, '.after-roundtrip.json');
+}
+
+/** A shape red's last line: where a person who means the change writes its new shape. */
+function meantChange(artifact: string): string {
+  return `if this change is meant, write the new shape to ${rel(exceptionFileOf(artifact))}`;
+}
+
+/** At most 40 lines of a diff, then how many more there are. */
+function first40(lines: readonly string[]): string {
+  const shown =
+    lines.length > 40 ? [...lines.slice(0, 40), `… and ${lines.length - 40} more`] : lines;
+  return shown.join('\n');
+}
+
+/**
+ * Requires `actual` to equal `expected` as compared text. On failure: the places they differ, then,
+ * last, the exception file to write if the change is meant (`artifact` is the file it is beside).
+ */
+function expectSameShape(actual: Json, expected: Json, what: string, artifact: string): void {
+  if (text(actual) === text(expected)) return;
+  throw new Error(
+    `${what} differs from the recorded shape:\n${first40(shapeDiff(expected, actual))}\n${meantChange(artifact)}`,
+  );
 }
 
 function readJson(file: string): Json {
@@ -197,7 +220,7 @@ const rel = (file: string): string => relative(REPO, file);
  */
 function comparator(file: string): Json {
   const original = readJson(file);
-  const exception = file.replace(/\.json$/, '.after-roundtrip.json');
+  const exception = exceptionFileOf(file);
   if (!existsSync(exception)) return original;
   const expected = readJson(exception);
   if (text(scrub(expected)) === text(scrub(original))) {
@@ -377,6 +400,7 @@ describe('the corpus: each published release read back by this tree', () => {
             scrub(record, works()),
             scrub(expected),
             `${version} ${name}: the stored run`,
+            bundleFile(name),
           );
         }
       });
@@ -418,6 +442,7 @@ describe('the corpus: each published release read back by this tree', () => {
             scrub(record, works()),
             scrub(expected),
             `${version} ${name}: the imported run`,
+            file,
           );
         }
       });
@@ -444,6 +469,7 @@ describe('the corpus: each published release read back by this tree', () => {
             scrub(bundle, works()),
             scrub(expected),
             `${version} ${name}: the bundle`,
+            bundleFile(name),
           );
         }
       });
@@ -460,8 +486,57 @@ describe('the corpus: each published release read back by this tree', () => {
           // The example's folder in the corpus stands where it stood in WORK when it was recorded.
           const current = scrub(kept, [folder]);
           const lines = missingFrom(recorded, current);
-          expect(lines, `${version} ${name}: what the current loader no longer gives`).toEqual([]);
+          if (lines.length > 0) {
+            throw new Error(
+              `${version} ${name}: what the current loader no longer gives:\n${first40(lines)}\n` +
+                meantChange(join(dir, 'definition.json')),
+            );
+          }
         }
+      });
+
+      it('(iv) every file under runs/ and examples/ is an artifact the cells read or its exception file', () => {
+        const problems: string[] = [];
+        const allowedRuns = runNames().flatMap((n) => [
+          `${n}.realm.json`,
+          `${n}.realm.after-roundtrip.json`,
+        ]);
+        for (const entry of readdirSync(join(folder, 'runs')).sort()) {
+          if (!allowedRuns.includes(entry)) {
+            problems.push(
+              `${rel(join(folder, 'runs', entry))} is not a file the cells read; allowed in runs/: ${allowedRuns.join(', ')}`,
+            );
+          }
+        }
+        const examples = manifest().examples;
+        for (const entry of readdirSync(join(folder, 'examples')).sort()) {
+          if (!examples.includes(entry)) {
+            problems.push(
+              `${rel(join(folder, 'examples', entry))} is not an example the manifest names; allowed in examples/: ${examples.join(', ')}`,
+            );
+          }
+        }
+        const allowedFiles = [
+          'workflow.yaml',
+          'definition.json',
+          'definition.after-roundtrip.json',
+        ];
+        for (const name of examples) {
+          for (const entry of readdirSync(join(folder, 'examples', name), {
+            withFileTypes: true,
+          })) {
+            const allowed = entry.isDirectory()
+              ? entry.name === 'profiles'
+              : allowedFiles.includes(entry.name);
+            if (!allowed) {
+              problems.push(
+                `${rel(join(folder, 'examples', name, entry.name))} is not a file the cells read; allowed in ` +
+                  `examples/${name}/: ${allowedFiles.join(', ')} and the profiles/ folder`,
+              );
+            }
+          }
+        }
+        expect(problems, `${version}: files the cells do not read`).toEqual([]);
       });
     });
   }

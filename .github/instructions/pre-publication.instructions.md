@@ -271,7 +271,7 @@ It prints `function`.
 
 **7a. Record the release's corpus**
 
-Prepare the published packages once: `mkdir <nm> && cd <nm> && npm install --no-save @sensigo/realm-cli@<version> @sensigo/realm-testing@<version>` (a registry read; no sign-in). Then, in the repository root, in a clean environment: `env -i PATH="$PATH" HOME=<any folder> NM=<nm> WORK=<a fixed empty folder outside any home, with no package.json or .git above it> node scripts/corpus/record.mjs <version>`. It records the release's corpus into `packages/cli/src/corpus/<version>/` and deletes the `PENDING` marker; the CLI it runs never sees your HOME. Commit the folder on a branch and open its PR; the corpus cells and the guard must be green.
+Prepare the published packages once: `mkdir <nm> && cd <nm> && npm install --no-save @sensigo/realm-cli@<version> @sensigo/realm-testing@<version>` (a registry read; no sign-in). Then, in the repository root, in a clean environment: `env -i PATH="$PATH" HOME=<a folder that is not above WORK> NM=<nm> WORK=/tmp/realm-corpus/work node scripts/corpus/record.mjs <version>`. WORK is that folder on every machine and must be empty: two recordings then agree in every text file, and the stored runs keep its path (the recorder refuses a WORK that is not empty or lies under a home). It records the release's corpus into `packages/cli/src/corpus/<version>/` and deletes the `PENDING` marker; the CLI it runs never sees your HOME. Commit the folder on a branch and open its PR; the corpus cells and the guard must be green.
 
 **8. Create the GitHub Release**
 
