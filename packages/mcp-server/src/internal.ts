@@ -61,3 +61,9 @@ export {
   answerByPart,
   accountLabelOf,
 } from './form-path.js';
+
+// CP-1 PR 1: the types public declarations reference that were not exported (a user could not name
+// them): each is tagged `@public` at its declaration.
+export type { FailedAttemptStoreLike } from './tools/start-run.js';
+export type { LockRetries, TraceBufferLockProfile } from './json-trace-buffer-store.js';
+export type { OperatorRoute } from './render-reply.js';

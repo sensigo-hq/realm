@@ -194,6 +194,7 @@ function logDedup(fields: Record<string, unknown>): void {
  * Used anywhere a `JsonFileFailedAttemptStore`-like store is threaded through as an injectable
  * option. #616 PR-2a (ii-b): no longer `listOrphans` — nothing the library or its tools run calls
  * it, and a store without it (SQLite's) can be handed.
+ * @public
  */
 export type FailedAttemptStoreLike = Pick<
   JsonFileFailedAttemptStore,

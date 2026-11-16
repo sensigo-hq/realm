@@ -17,7 +17,9 @@
 // first, real case.
 
 /** One candidate orphan artifact — an absolute path this store owns, plus enough metadata for the
- *  caller to apply its own age floor. */
+ *  caller to apply its own age floor.
+ * @public
+ */
 export interface OrphanArtifact {
   /** Absolute path. The store owns its own filename layout — the caller never reconstructs one. */
   path: string;
@@ -28,6 +30,7 @@ export interface OrphanArtifact {
   mtimeMs: number;
 }
 
+/** @public */
 export interface OrphanSweepableStore {
   /**
    * Returns this store's artifacts whose `runId` is NOT in `liveRunIds` — candidate orphans, each

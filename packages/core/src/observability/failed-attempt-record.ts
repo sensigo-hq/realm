@@ -38,7 +38,10 @@ export interface BuildFailedAttemptInput {
   trace_entry_count: number;
 }
 
-/** A single whitelisted Ajv error — value echoes (`params`/`data`) are intentionally excluded. */
+/**
+ * A single whitelisted Ajv error — value echoes (`params`/`data`) are intentionally excluded.
+ * @public
+ */
 export interface ValidationErrorSummaryEntry {
   instancePath: string;
   schemaPath: string;
@@ -58,7 +61,10 @@ export interface ValidationErrorSummaryEntry {
   missing_property?: string;
 }
 
-/** Metadata-only record describing a failed agent-step validation attempt. */
+/**
+ * Metadata-only record describing a failed agent-step validation attempt.
+ * @public
+ */
 export interface FailedAttemptRecord {
   run_id: string;
   workflow_id: string;

@@ -318,6 +318,7 @@ function escapedSpellingHides(shown: string, tier: DisclosureTier, ctx: WalkCont
  * leaf (`walkValue` calls the same two functions on a string; a cell checks equality over the disclosure-law corpus),
  * exported so the MCP door can tell when the walk would transform a prompt beyond `disclose` — on
  * such a prompt the door publishes no `stable_prefix`.
+ * @public
  */
 export function discloseLeaf(text: string, set: DisclosureSet, tier: DisclosureTier): string {
   const ctx: WalkContext = {

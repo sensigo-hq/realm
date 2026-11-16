@@ -53,6 +53,7 @@ const cache = new Map<string, Promise<PriceSource>>();
  * `price_list_error`. The composed source asks the file first, and the list only for a model the
  * file does not have; with neither, `no_price_source`. With the default importer, the result is
  * cached by `economicsPath` for the process's life: an edited file is read again after a restart.
+ * @public
  */
 export function loadPriceSource(
   opts: { economicsPath?: string; importList?: () => Promise<unknown> } = {},

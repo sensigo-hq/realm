@@ -26,6 +26,7 @@ import {
  * them under `adapters:` in realm.yaml and the CLI loader constructs them with their
  * secret-resolved config. Library consumers composing registries by hand can still
  * `registry.register(...)` their own instances on top of this.
+ * @public
  */
 export function createDefaultRegistry(): ExtensionRegistry {
   const r = new ExtensionRegistry();

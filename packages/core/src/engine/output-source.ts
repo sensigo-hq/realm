@@ -15,6 +15,7 @@ import type { StepDefinition, WorkflowDefinition } from '../types/workflow-defin
  *  - `not_a_bare_step`: the step has a handler or a service, or is not an `auto` step — its output is
  *    its own, and the field is never written for it;
  *  - `predates_output_source`: a bare `auto` step's entry written before the field existed.
+ * @public
  */
 export const OUTPUT_SOURCE_ABSENT_CAUSES = [
   'not_an_output_entry',
@@ -22,6 +23,7 @@ export const OUTPUT_SOURCE_ABSENT_CAUSES = [
   'not_a_bare_step',
   'predates_output_source',
 ] as const;
+/** @public */
 export type OutputSourceAbsentCause = (typeof OUTPUT_SOURCE_ABSENT_CAUSES)[number];
 
 /**
@@ -42,6 +44,7 @@ export function isBareAutoStep(step: StepDefinition | undefined): boolean {
  * `auto` step, and a step whose `execution` is missing or unknown. The one predicate admission's
  * `required_parts` row and `makeCall`'s dispatcher branch both serve. A step that is not an object
  * (`null`, a string, … — a definition the host built wrong) is not one: no error escapes here.
+ * @public
  */
 export function callsHostDispatcher(step: StepDefinition | undefined): boolean {
   if (step === null || typeof step !== 'object') return false;
@@ -57,6 +60,7 @@ export function callsHostDispatcher(step: StepDefinition | undefined): boolean {
  * `output_source`; otherwise `{ absent_cause }`, the first {@link OUTPUT_SOURCE_ABSENT_CAUSES} member
  * that holds. `definition` is the run's workflow, when the reader has it. `realm run inspect` renders
  * it; a reader of an export, which writes the record as stored, derives the absence with it too.
+ * @public
  */
 export function outputSourceOf(
   entry: Pick<EvidenceSnapshot, 'step_id' | 'kind' | 'output_summary' | 'output_source'>,

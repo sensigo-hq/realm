@@ -20,6 +20,7 @@ export const OUTBOUND_LEASE_MAX = 300;
  * One row of a run's ledger, AS A STORE KEEPS IT — for store implementers only: it carries the lease
  * token, the holder's proof, so it is never rendered and never returned by the port (every entry the
  * port returns is an {@link OutboundEntryView}). An unset field is omitted, never `null`.
+ * @beta
  */
 export interface OutboundEntry {
   /** `gate:<gate_id>:reminder:<k>` or `gate:<gate_id>:escalation`; derived by core, never passed. */
@@ -49,13 +50,17 @@ export interface OutboundEntry {
   readonly created_at: string;
 }
 
-/** A ledger row as the port returns it: the row without its lease token. */
+/**
+ * A ledger row as the port returns it: the row without its lease token.
+ * @beta
+ */
 export type OutboundEntryView = Omit<OutboundEntry, 'lease_token'>;
 
 /**
  * A lease of one reminder or of the escalation of a run's open question. `leaseToken` is the caller's
  * own (1–200 characters); `leaseSeconds` a positive finite number, cut to {@link OUTBOUND_LEASE_MAX};
  * `occurrence` a positive whole number.
+ * @beta
  */
 export interface OutboundLeaseRequest {
   readonly what:
@@ -68,6 +73,7 @@ export interface OutboundLeaseRequest {
 /**
  * The mark of a leased reminder or escalation: `sent` with the outcome `ok`, or `failed` with
  * `refused:<code>`, the code 1–64 characters of `a`–`z`, `0`–`9` and `_`.
+ * @beta
  */
 export interface OutboundMarkRequest {
   readonly what: OutboundLeaseRequest['what'];
@@ -80,6 +86,7 @@ export interface OutboundMarkRequest {
  * What a lease or a mark answers. A refusal's `reason` is one of eight words; `already_leased`,
  * `lease_held`, `outbound_done` and `already_marked` carry the row, and so does `lease_lost` when a
  * row exists.
+ * @beta
  */
 export type OutboundResult =
   | { readonly applied: true; readonly entry: OutboundEntryView }
@@ -102,6 +109,7 @@ export type OutboundResult =
  * of the store's clock, refused or applied, and a malformed request throws before it; `read`,
  * `statAllForRun` and `deleteAllForRun` take none. A run that does not exist is no error: `lease`
  * answers `gate_not_open`, `read` answers no rows, and the purge pair reports zero.
+ * @beta
  */
 export interface OutboundLedger extends PerRunArtifactStore {
   lease(runId: string, request: OutboundLeaseRequest): Promise<OutboundResult>;
