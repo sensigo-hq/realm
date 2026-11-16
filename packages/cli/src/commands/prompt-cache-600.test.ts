@@ -116,6 +116,13 @@ function env(extra: Record<string, string> = {}): Record<string, string> {
   return { PATH: process.env['PATH'] ?? '', HOME: home, ...extra };
 }
 
+/** How long a spawned CLI may run before it is killed. A cold start on a loaded machine has taken
+ *  more than 20 s, and the old 20 s limit then killed the CLI before it created its run (counted runs,
+ *  2026-11-15 and -16). Each cell's limit is 240 s: room for several CLIs at the kill limit. */
+const KILL_AFTER_MS = 60_000;
+/** What a killed CLI adds to its stderr. */
+const KILLED_LINE = `\n[test] the built CLI was killed after ${String(KILL_AFTER_MS / 1000)} s, before it ended: a loaded machine, or a hang.\n`;
+
 type Done = { code: number | null; stdout: string; stderr: string };
 
 /** Runs the built CLI to its end (async: an in-test server must be able to answer). */
@@ -130,7 +137,11 @@ function runCli(args: string[], childEnv: Record<string, string>): Promise<Done>
     let stderr = '';
     child.stdout.on('data', (c: Buffer) => (stdout += c.toString()));
     child.stderr.on('data', (c: Buffer) => (stderr += c.toString()));
-    const timer = setTimeout(() => child.kill('SIGKILL'), 20_000);
+    const timer = setTimeout(() => {
+      // Said in what the cell prints, so a slow machine is named rather than read as "no run".
+      stderr += KILLED_LINE;
+      child.kill('SIGKILL');
+    }, KILL_AFTER_MS);
     child.on('close', (code) => {
       clearTimeout(timer);
       resolve({ code, stdout, stderr });
@@ -236,7 +247,7 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
     expect(r.stdout).toContain(
       "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 5 minutes, 1 hour or not at all, as auto chooses per step from that step's own earlier runs (realm agent's default; turn it off with --prompt-cache off).",
     );
-  }, 30_000);
+  }, 240_000);
 
   // G16. (a) red when resolveProvider drops the value; (b) prints the system field and the facts.
   it("G16 --prompt-cache long: ttl '1h' is sent, the source is stated, and no cache_auto is recorded", async () => {
@@ -256,7 +267,7 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
     expect(r.stdout).toContain(
       "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 1 hour (set by --prompt-cache long).",
     );
-  }, 30_000);
+  }, 240_000);
 });
 
 describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C3)', () => {
@@ -274,7 +285,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       runs: (await runFiles()).length,
       startLine: r.stdout.includes(OPENAI_CUSTOM_LONG),
     }).toEqual({ refused: false, runs: 1, startLine: true });
-  }, 30_000);
+  }, 240_000);
 
   // G18. (a) red when promptCache is dropped from the sibling condition; (b) prints stderr.
   it('G18 --provider-module with --prompt-cache → refused with the sibling message', async () => {
@@ -288,7 +299,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
         'Error: --provider-module cannot be combined with --provider, --model, --base-url, --strict-base-url, --prompt-cache, or --cache-diagnostics on',
       runs: [],
     });
-  }, 30_000);
+  }, 240_000);
 
   // G19, caching 3-B (row 5): ACCEPTED — listen no longer refuses the flag; it goes on to read the
   // workflows (this fixture's has no trigger block, so it stops THERE, after the old refusal's
@@ -321,7 +332,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       readWorkflows: true,
       first: expect.any(String),
     });
-  }, 30_000);
+  }, 240_000);
 
   // G19b, the create path. (a) red when the create-path check is removed; (b) prints stderr.
   it('G19b a workflow with no agent step → refused, for any stated value, off included; no run file', async () => {
@@ -345,7 +356,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       [1, 'refused'],
     ]);
     expect(await runFiles()).toEqual([]);
-  }, 60_000);
+  }, 240_000);
 
   // M11 (issue #899), the create path: a workflow whose every agent step calls tools now has a
   // step to apply the setting to. (a) red when the refusal reads `singleShot > 0` again; (b) prints
@@ -360,7 +371,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       stderr: notTheRefusal(r.stderr, 'prompt-cache-600-tools'),
       runFiles: (await runFiles()).length,
     }).toEqual({ code: r.code, stderr: 'not the refusal', runFiles: 1 });
-  }, 60_000);
+  }, 240_000);
 
   // G19b, the attach path. (a) red when the attach-path check runs after resolveRunAttach (the
   // extensions_load_failed run is re-opened, so its file changes) or is removed; (b) prints stderr
@@ -406,7 +417,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       { code: 1, refused: true, unchanged: true },
     ]);
     expect((await h.home.runStore.get(failed.id)).record.terminal_state).toBe(true);
-  }, 60_000);
+  }, 240_000);
 
   // M11 (issue #899), the attach path: --run-id of a run of a workflow whose every agent step calls
   // tools is not refused, and the drive attaches (the run file changes). (a) red when the refusal
@@ -443,7 +454,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       runFiles: (await runFiles()).length,
       changed: JSON.stringify((await store.get(run.id)).record) !== before,
     }).toEqual({ code: r.code, stderr: 'not the refusal', runFiles: 1, changed: true });
-  }, 60_000);
+  }, 240_000);
 
   // G19b, the controls. (a) red when the flag-less command is refused, or the listen child's
   // exemption is removed; (b) prints both streams.
@@ -469,7 +480,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     expect(child.stderr).not.toContain('--prompt-cache has nothing to apply to');
     expect(child.stdout).toContain('Caching: no step is cached; this workflow has no agent step.');
     expect(await runFiles()).toHaveLength(2);
-  }, 60_000);
+  }, 240_000);
 });
 
 describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', () => {
@@ -496,7 +507,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
     expect(blockedCommand(r), r.stderr).toBe(
       `realm agent --run-id ${runId} --provider anthropic --model claude-x --prompt-cache long`,
     );
-  }, 30_000);
+  }, 240_000);
 
   // caching 3-B (row 1): OpenAI applies the setting now, so the command repeats it. (a) red when
   // the command drops a setting OpenAI applies, or the start line keeps the old words; (b) prints
@@ -521,7 +532,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
       `realm agent --run-id ${runId} --provider openai --model gpt-x --prompt-cache long`,
     );
     expect(r.stdout).toContain(OPENAI_CUSTOM_LONG);
-  }, 30_000);
+  }, 240_000);
 
   // caching 3-B (row 1): OpenAI's re-attach and Go on: lines on a drive the operator started.
   // (a) red when the command drops the stated setting; (b) prints the command.
@@ -543,7 +554,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
     expect(blockedCommand(r), r.stderr).toBe(
       `realm agent --run-id ${runId} --provider openai --model gpt-x --prompt-cache long`,
     );
-  }, 30_000);
+  }, 240_000);
 
   // (a) red when the command repeats the runner's default; (b) prints the command.
   it('guard: no flag: the command never repeats the default', async () => {
@@ -553,7 +564,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
     );
     const runId = (await runFiles())[0]!;
     expect(blockedCommand(r), r.stderr).toBe(`realm agent --run-id ${runId} --model claude-x`);
-  }, 30_000);
+  }, 240_000);
 });
 
 describe('realm agent --cache-diagnostics: a flag that cannot act is refused at load (caching 3-M B2b)', () => {
@@ -665,7 +676,7 @@ describe('realm agent --cache-diagnostics: a flag that cannot act is refused at 
         offRefused: off.stderr.includes(ACTS) || off.stderr.includes(COMBINED),
       }).toEqual({ args, code: 1, message: words, runs: 0, offRefused: false });
     },
-    60_000,
+    240_000,
   );
 
   // Check 3, a custom address: read from the built provider. (a) red when the address branch is
@@ -708,7 +719,7 @@ describe('realm agent --cache-diagnostics: a flag that cannot act is refused at 
     } finally {
       await stub.close();
     }
-  }, 60_000);
+  }, 240_000);
 
   // Check 3, --provider-module: the sentence has no closing sentence, today or now. (a) red when
   // `--cache-diagnostics on` is dropped from the condition, or `off` is caught by it; (b) prints the
@@ -729,7 +740,7 @@ describe('realm agent --cache-diagnostics: a flag that cannot act is refused at 
       runs: 0,
       offRefused: false,
     });
-  }, 60_000);
+  }, 240_000);
 
   // Check 3, --run-id of a registered run with no agent step: a separate site. (a) red when the
   // --run-id guard is not widened (the drive attaches); (b) prints the exit code, the message and
@@ -752,7 +763,7 @@ describe('realm agent --cache-diagnostics: a flag that cannot act is refused at 
       unchanged: true,
       offRefused: false,
     });
-  }, 60_000);
+  }, 240_000);
 
   // Check 3, the accepted direction. No address is set, and the workflow blocks before any model
   // call, so accepted means one run and no refusal line; the blocked drive itself exits 1.
@@ -776,7 +787,7 @@ describe('realm agent --cache-diagnostics: a flag that cannot act is refused at 
         runs: (await runFiles()).length,
       }).toEqual({ extra, refused: false, code: 1, runs: 1 });
     },
-    30_000,
+    240_000,
   );
 
   // Check 4. Real case: listen has already answered 202, so a refusal would exit a child and leave
@@ -805,7 +816,7 @@ describe('realm agent --cache-diagnostics: a flag that cannot act is refused at 
         runs: (await runFiles()).length,
       }).toEqual({ name, refused: false, first: '', runs: 1 });
     },
-    30_000,
+    240_000,
   );
 });
 
@@ -893,6 +904,6 @@ describe("realm agent --cache-diagnostics at Anthropic's own address: what is se
         stderr: '',
       });
     },
-    30_000,
+    240_000,
   );
 });
