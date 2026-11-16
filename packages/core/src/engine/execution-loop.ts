@@ -125,7 +125,7 @@ import {
   stripSpanMarks,
 } from './question-view.js';
 import { discloseGate } from '../utils/disclosure-tables.js';
-import type { DisclosureSet } from '../utils/redaction.js';
+import { tierFor, type DisclosureSet } from '../utils/redaction.js';
 import { consumesInputMap, resolveInputMap } from './input-map.js';
 import { formatDuration, formatLagWords } from '../utils/duration.js';
 import { loadWorkflowContext } from './workflow-context-loader.js';
@@ -344,6 +344,13 @@ export interface SubmitGateOptions {
    * waits on it (Realm cannot see the prompt).
    */
   clientPromptRequested?: boolean;
+  /**
+   * The filter-mask fix (Amendment 1): the door's disclosure set, used only for the reply's ways —
+   * a `run_step` way's prompt is rendered with each value masked before its filters, at the set's
+   * audience tier. The MCP door passes its set (its reply shows the next step's prompt to the
+   * client); the CLI and Slack pass none: none of them shows a step's prompt.
+   */
+  disclosure?: DisclosureSet;
   /**
    * #603 A3a: the account the calling door says sent this answer, as its channel reports it, and the
    * forms that name that account (for Slack user `U1`: `U1` and `<@U1>`; default: `user` alone). With
@@ -789,7 +796,10 @@ function waysContext(
   registry: ExtensionRegistry | undefined,
   // issue #729 (the Q3 unit): `party` only at the admission (Step 2, `byNameRefusal`) — never on a
   // reply's composed ways (`waysOf`): the offer side is the door's (`narrowForDoor`).
-  extra: Pick<WaysContext, 'opening_token' | 'presented' | 'party' | 'held_claim'> = {},
+  extra: Pick<
+    WaysContext,
+    'opening_token' | 'presented' | 'party' | 'held_claim' | 'disclosure'
+  > = {},
 ): WaysContext {
   return {
     definition: { ok: definition },
@@ -820,9 +830,18 @@ function waysOf(
   definition: WorkflowDefinition,
   snap: Snapshot,
   registry: ExtensionRegistry | undefined,
+  // The filter-mask fix (B2): the host's set — a `run_step` way's prompt masks each value before
+  // its filters; absent, the prompt renders as before.
+  disclosure: DisclosureSet | undefined,
   extra: Pick<WaysContext, 'opening_token' | 'presented' | 'held_claim'> = {},
 ): Pick<EngineReply, 'ways' | 'unavailable' | 'basis'> {
-  return composeWaysOn(snap, waysContext(store, definition, registry, extra));
+  return composeWaysOn(
+    snap,
+    waysContext(store, definition, registry, {
+      ...extra,
+      ...(disclosure !== undefined ? { disclosure } : {}),
+    }),
+  );
 }
 
 /**
@@ -841,9 +860,10 @@ function replyWaysOf(
   definition: WorkflowDefinition,
   registry: ExtensionRegistry | undefined,
   held: WaysContext['held_claim'],
+  disclosure: DisclosureSet | undefined,
 ): ReplyWays {
   return (snap, extra = {}) =>
-    waysOf(store, definition, snap, registry, {
+    waysOf(store, definition, snap, registry, disclosure, {
       ...extra,
       ...(held !== undefined ? { held_claim: held } : {}),
     });
@@ -1267,7 +1287,7 @@ function makeErrorEnvelope(
       ...baseWithWarnings,
       ...(ways !== undefined
         ? ways(snapshot)
-        : waysOf(store, definition, snapshot, options.registry)),
+        : waysOf(store, definition, snapshot, options.registry, options.disclosure)),
     };
   }
   return snapshot !== null ? judgedOn(baseWithWarnings, snapshot) : baseWithWarnings;
@@ -1324,6 +1344,9 @@ export function pendingGateQuestion(
   definition: WorkflowDefinition,
   // #715 (b) (02 §D.4): the record and the reading the fallback is rendered at (a read, now).
   snapshot: Snapshot,
+  // The filter-mask fix (B2): the host's set — each value masked before its filters, at the declared
+  // tier (a question's); absent, the fallback renders as before.
+  options: { disclosure?: DisclosureSet } = {},
 ): string | undefined {
   const run = snapshot.record;
   const gate = run.pending_gate;
@@ -1345,7 +1368,12 @@ export function pendingGateQuestion(
           }
         : {}),
     },
-    { time: { at: snapshot.at } },
+    {
+      time: { at: snapshot.at },
+      ...(options.disclosure !== undefined
+        ? { disclosure: { set: options.disclosure, tier: 'declared' as const } }
+        : {}),
+    },
   );
 }
 
@@ -1808,7 +1836,9 @@ async function buildAlreadySettledEnvelope(
     errors: [],
     context_hint: `Step '${options.command}' was already settled (a duplicate/retried attempt) — no action was taken.`,
     run_phase: snap.record.run_phase,
-    ...(ways !== undefined ? ways(snap) : waysOf(store, definition, snap, options.registry)),
+    ...(ways !== undefined
+      ? ways(snap)
+      : waysOf(store, definition, snap, options.registry, options.disclosure)),
   };
 }
 
@@ -2343,7 +2373,7 @@ async function executeStepBody(
   /** #729 CW-2b: whether `record`'s claim of the step still names this call's lease. */
   const heldIn = (record: RunRecord): boolean =>
     held !== undefined && isHeldUnder(record, held.step, held.lease_id);
-  const ways = replyWaysOf(store, definition, options.registry, held);
+  const ways = replyWaysOf(store, definition, options.registry, held, options.disclosure);
   // Step 1: Load run — #729 PR-0 (A-9): through the one snapshot constructor, which takes the call's
   // reading BEFORE the load; every judgement this call makes about the run is made at it. #729 CW-1b
   // part 2: `snap` is the store's snapshot, its lease facts included; `run` and
@@ -4358,6 +4388,12 @@ async function executeStepBody(
           }
         : {};
     let resolvedGateMessage: string | undefined;
+    // The filter-mask fix (B2): a question masks each value before its filters, at the declared tier
+    // whatever door opened the gate — one question text per gate (the sink passes stay).
+    const questionDisclosure =
+      options.disclosure !== undefined
+        ? { disclosure: { set: options.disclosure, tier: 'declared' as const } }
+        : {};
     // #729 PR-4 (01 (b)): the message's first render strips and masks each resolved value with the
     // host's set and records its length (never cuts); an unresolved placeholder never passes the hook.
     const messageSubstitutions =
@@ -4381,6 +4417,7 @@ async function executeStepBody(
             ...(messageSubstitutions?.onSubstitution !== undefined
               ? { onSubstitution: messageSubstitutions.onSubstitution }
               : {}),
+            ...questionDisclosure,
           },
         );
       } catch (err) {
@@ -4444,7 +4481,7 @@ async function executeStepBody(
                   runParams: run.params,
                   ...wfCtxSpreadEarly,
                 },
-                { strict: true, onSubstitution, time: 'stored' },
+                { strict: true, onSubstitution, time: 'stored', ...questionDisclosure },
               ),
           }
         : {}),
@@ -4506,7 +4543,18 @@ async function executeStepBody(
               runParams: run.params,
               ...wfCtxSpreadEarly,
             },
-            { time: { at } },
+            {
+              time: { at },
+              // The filter-mask fix (B2): each value masked before its filters, at the set's tier.
+              ...(options.disclosure !== undefined
+                ? {
+                    disclosure: {
+                      set: options.disclosure,
+                      tier: tierFor(options.disclosure.audience),
+                    },
+                  }
+                : {}),
+            },
           )
         : undefined;
 
@@ -5384,6 +5432,8 @@ async function composeExpiredGateEnvelope(
   // F1: the question's `expires_at` as read BEFORE the expiry's write (the settled record no longer
   // holds it) — the line's lag and the reply's `expired_at`/`overdue_ms`.
   expiresAt: string | undefined,
+  // The filter-mask fix (Amendment 1): the door's set, for the reply's ways only.
+  disclosure: DisclosureSet | undefined,
 ): Promise<EngineReply> {
   const expiryReply = await composeExpiryReply(
     store,
@@ -5396,6 +5446,7 @@ async function composeExpiredGateEnvelope(
     expireResult,
     via,
     expiresAt,
+    disclosure,
   );
   // issue #625 — two facts, both kept, on every form of this reply:
   //  1. this answer was NOT recorded — the gate's expiry beat it. `answer_recorded: false` is the
@@ -5468,6 +5519,8 @@ async function composeExpiryReply(
   via: AnswerCaller,
   // F1: the question's pre-settle `expires_at` (see composeExpiredGateEnvelope).
   expiresAt: string | undefined,
+  // The filter-mask fix (Amendment 1): the door's set, for the reply's ways only.
+  disclosure: DisclosureSet | undefined,
 ): Promise<EngineReply> {
   // #715 (b) (D6-17): the snapshot of the write `finalRun` comes from — its own, or the drain's
   // (#729 CW-1b part 2: its lease facts included); `finalRun` is set only through `holdFinal`.
@@ -5544,7 +5597,7 @@ async function composeExpiryReply(
           errors: [],
           context_hint: LATE_SAME_CHOICE_SENTENCE,
           run_phase: finalRun.run_phase,
-          ...waysOf(store, definition, finalSnap, registry),
+          ...waysOf(store, definition, finalSnap, registry, disclosure),
           ...(finalRun.terminal_state ? {} : { names_next: true as const }),
         },
         stepName,
@@ -5577,7 +5630,7 @@ async function composeExpiryReply(
       {
         ...envelope,
         warnings: mergeWarnings([], enacted.line, ...drainWarnings),
-        ...waysOf(store, definition, finalSnap, registry),
+        ...waysOf(store, definition, finalSnap, registry, disclosure),
         ...(finalRun.terminal_state ? {} : { names_next: true as const }),
       },
       stepName,
@@ -5826,7 +5879,7 @@ async function submitHumanResponseBody(
                 : `Gate '${options.gateId}' was already resolved with choice '${options.choice}' — no action was taken.`,
               run_phase: noopRun.run_phase,
               reply_kind: 'ok',
-              ...waysOf(store, definition, noopSnap, options.registry),
+              ...waysOf(store, definition, noopSnap, options.registry, options.disclosure),
               ...(gateSettledByTimeout(noopRun, stepName) && !noopRun.terminal_state
                 ? { names_next: true as const }
                 : {}),
@@ -5879,7 +5932,13 @@ async function submitHumanResponseBody(
           const conflictRefusal = answerRefusal(settledSnapshot(result));
           const conflictWithNext: EngineReply = {
             ...conflictReply,
-            ...waysOf(store, definition, settledSnapshot(result), options.registry),
+            ...waysOf(
+              store,
+              definition,
+              settledSnapshot(result),
+              options.registry,
+              options.disclosure,
+            ),
             ...(result.run.terminal_state ? {} : { names_next: true as const }),
             ...(conflictOutcome !== undefined ? { outcome: conflictOutcome } : {}),
             ...(conflictRefusal !== undefined ? { refusal: conflictRefusal } : {}),
@@ -5968,7 +6027,13 @@ async function submitHumanResponseBody(
               err.message,
               result.run.run_phase,
             ),
-            waysOf(store, definition, settledSnapshot(result), options.registry),
+            waysOf(
+              store,
+              definition,
+              settledSnapshot(result),
+              options.registry,
+              options.disclosure,
+            ),
             answerRefusal(settledSnapshot(result)),
           );
         }
@@ -6100,6 +6165,7 @@ async function submitHumanResponseBody(
         },
         via,
         result.lateAnswer.expiresAt,
+        options.disclosure,
       );
     }
 
@@ -6172,7 +6238,7 @@ async function submitHumanResponseBody(
             context_hint: migratedOrientation,
             run_phase: finalRun.run_phase,
             reply_kind: 'ok',
-            ...waysOf(store, definition, finalSnap, options.registry),
+            ...waysOf(store, definition, finalSnap, options.registry, options.disclosure),
             names_next: true,
             ...(finalRun.defaulted_steps?.length
               ? { defaulted_steps: finalRun.defaulted_steps }
@@ -6888,10 +6954,15 @@ async function advanceLoop(
   const afterRaces = (reply: EngineReply): EngineReply =>
     races.length === 0
       ? reply
-      : composeAfterRaces(store, definition, snap, options.registry, reply, {
-          lastRan,
-          races,
-        });
+      : composeAfterRaces(
+          store,
+          definition,
+          snap,
+          options.registry,
+          reply,
+          { lastRan, races },
+          options.disclosure,
+        );
   // decision C187: a guard the loop records is told to the host as it is recorded, so a host that
   // prints as the steps run prints it in its place.
   const pushGuard = (entry: ChainedStepEntry): void => {
@@ -7136,7 +7207,13 @@ async function advanceLoop(
             reply_kind: 'ok',
             context_hint: `Run '${options.runId}' is already terminal (${guardSettleResult.run.run_phase}); guard '${guardName}' was not evaluated.`,
             run_phase: guardSettleResult.run.run_phase,
-            ...waysOf(store, definition, settledSnapshot(guardSettleResult), options.registry),
+            ...waysOf(
+              store,
+              definition,
+              settledSnapshot(guardSettleResult),
+              options.registry,
+              options.disclosure,
+            ),
           };
         }
         // gate_mismatch/choice_not_eligible/already_open/already_released and every other kind's
@@ -7193,7 +7270,7 @@ async function advanceLoop(
           context_hint: migratedContextHint,
           run_phase: finalGuard.record.run_phase,
           reply_kind: 'ok',
-          ...waysOf(store, definition, finalGuard, options.registry),
+          ...waysOf(store, definition, finalGuard, options.registry, options.disclosure),
           guards: [{ step: guardName, outcome: guardSettleOutcome }],
           ...(loopEnding !== undefined
             ? {
@@ -7223,7 +7300,7 @@ async function advanceLoop(
       result = {
         ...result,
         run_version: run.version,
-        ...waysOf(store, definition, snap, options.registry),
+        ...waysOf(store, definition, snap, options.registry, options.disclosure),
         // issue #279 (increment 2, PR-D): non-abort settled_outcome_divergence warnings accumulated
         // during the guard loop above (the ADVANCE leg) must reach whichever envelope returns —
         // this rebuild is the first point after the loop `result` is touched again.
@@ -7244,7 +7321,7 @@ async function advanceLoop(
         ...result,
         run_version: run.version,
         run_phase: deriveRunPhase(run),
-        ...waysOf(store, definition, snap, options.registry),
+        ...waysOf(store, definition, snap, options.registry, options.disclosure),
       });
     }
 
@@ -7327,7 +7404,10 @@ async function advanceLoop(
       // decision C24: the step's own reply judged its ways with no registry (the capability check
       // reports 'unknown', so the act stayed offered for the step that just failed to dispatch).
       // Judge them again on the record as it is now, with this call's registry.
-      return { ...stepResult, ...waysOf(store, definition, afterSnap, options.registry) };
+      return {
+        ...stepResult,
+        ...waysOf(store, definition, afterSnap, options.registry, options.disclosure),
+      };
     }
     try {
       hold(await store.get(options.runId));
@@ -7426,6 +7506,8 @@ function composeAfterRaces(
   registry: ExtensionRegistry,
   reply: EngineReply,
   context: { lastRan: string | undefined; races: readonly LoopRace[] },
+  // The filter-mask fix (B2): the host's set, for the reply's ways.
+  disclosure: DisclosureSet | undefined,
 ): EngineReply {
   const run = snap.record;
   const ranHere = context.races.some((r) => r.stop.ran_here);
@@ -7440,7 +7522,7 @@ function composeAfterRaces(
     ...rest,
     run_version: run.version,
     run_phase: deriveRunPhase(run),
-    ...waysOf(store, definition, snap, registry),
+    ...waysOf(store, definition, snap, registry, disclosure),
     ...(run.terminal_state ? {} : { names_next: true as const }),
     context_hint: head + tail,
     races: context.races.map(raceEntryOf),
@@ -7669,7 +7751,7 @@ async function advanceRunBody(
         ...nothingRanHint(snap, expiryCarriedOut, expiryGuards),
         run_phase: deriveRunPhase(stored),
         reply_kind: 'ok',
-        ...waysOf(store, definition, snap, registry),
+        ...waysOf(store, definition, snap, registry, options.disclosure),
       },
       chainedSteps: chained,
       depth0Warnings,
@@ -7797,7 +7879,7 @@ async function executeChainBody(
       reply_kind: 'ok',
       context_hint: `Run '${options.runId}' is already terminal (${derivedPhase}); no steps executed.`,
       run_phase: derivedPhase,
-      ...waysOf(store, definition, entry, options.registry),
+      ...waysOf(store, definition, entry, options.registry, options.disclosure),
     };
   }
 

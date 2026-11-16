@@ -47,7 +47,7 @@ import {
   type PreconditionFacts,
 } from './pending.js';
 import { capabilityRefusalWords, requirementForStep } from './capability.js';
-import { capText } from '../utils/redaction.js';
+import { capText, tierFor, type DisclosureSet } from '../utils/redaction.js';
 import { quotedNames } from '../utils/list-words.js';
 import { consumesInputMap, newRunCanChangeInput, refusedInputField } from './input-map.js';
 
@@ -1167,6 +1167,12 @@ export interface WaysContext {
    * that names no lease or another, and every call without it, are judged as before.
    */
   held_claim?: { step: string; lease_id: string };
+  /**
+   * The filter-mask fix (B2): the host's disclosure set. A `run_step` way's prompt is rendered with
+   * each value masked BEFORE its template filters, at the set's audience tier, so a filter never
+   * turns a hidden value into a form the sink's mask no longer knows. Absent: rendered as before.
+   */
+  disclosure?: DisclosureSet;
 }
 
 /**
@@ -1191,6 +1197,8 @@ export function stepBrief(
   // prompt is rendered per reply, so a `from_now` in it is judged at the snapshot's `at`.
   snapshot: Snapshot,
   step: string,
+  // The filter-mask fix (B2): the host's set (`WaysContext.disclosure`); absent, as before.
+  disclosure?: DisclosureSet,
 ): StepBrief {
   const run = snapshot.record;
   const def = definition.steps[step];
@@ -1211,7 +1219,12 @@ export function stepBrief(
                 }
               : {}),
           },
-          { time: { at: snapshot.at } },
+          {
+            time: { at: snapshot.at },
+            ...(disclosure !== undefined
+              ? { disclosure: { set: disclosure, tier: tierFor(disclosure.audience) } }
+              : {}),
+          },
         )
       : undefined;
   return {
@@ -1448,6 +1461,8 @@ function refusedEntry(
   // there (#729 CW-1b part 2: the snapshot itself, its lease facts included).
   snap: Snapshot,
   definition: WorkflowDefinition,
+  // The filter-mask fix (B2): the host's set, for a remedy's step brief.
+  disclosure: DisclosureSet | undefined,
 ): Unavailable {
   const run = snap.record;
   const def = definition.steps[entry.step];
@@ -1480,7 +1495,7 @@ function refusedEntry(
       conditions: [],
       run_id: run.id,
       step: entry.step,
-      brief: stepBrief(definition, snap, entry.step),
+      brief: stepBrief(definition, snap, entry.step, disclosure),
     });
   }
   const param =
@@ -1667,11 +1682,11 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
       conditions: [],
       run_id: run.id,
       step,
-      brief: stepBrief(definition, snap, step),
+      brief: stepBrief(definition, snap, step, ctx.disclosure),
     });
   }
   for (const entry of pending.cannot_run) {
-    unavailable.push(refusedEntry(entry, snap, definition));
+    unavailable.push(refusedEntry(entry, snap, definition, ctx.disclosure));
   }
   if (respond !== undefined && pending.expiry_due === undefined) {
     for (const step of (pending.waiting_on_answer ?? []).filter((s) => s !== heldHere)) {
@@ -1721,7 +1736,9 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
   } else if (advance !== undefined) {
     ways.push(advance);
   } else {
-    unavailable.push(advanceUnavailable(run, definition, pending, respond, held, ways, snap));
+    unavailable.push(
+      advanceUnavailable(run, definition, pending, respond, held, ways, snap, ctx.disclosure),
+    );
   }
 
   // abandon — refused while a question is open (`abandon-run.ts`), remedy [respond]; at a question
@@ -1764,6 +1781,9 @@ export function composeWaysAt(
     registry?: ExtensionRegistry;
     persistsClaims?: boolean;
     lease_facts?: LeaseFacts | undefined;
+    /** The filter-mask fix (B2): the host's set — a `run_step` way's prompt masks each value before
+     *  its filters (`WaysContext.disclosure`). */
+    disclosure?: DisclosureSet;
   },
 ): ComposedWays {
   return composeWaysOn(writtenSnapshot(record, at, input.lease_facts), {
@@ -1773,6 +1793,7 @@ export function composeWaysAt(
         ? { kind: 'this_program', registry: input.registry }
         : { kind: 'observer' },
     store: { persistsClaims: input.persistsClaims === true },
+    ...(input.disclosure !== undefined ? { disclosure: input.disclosure } : {}),
   });
 }
 
@@ -1792,6 +1813,8 @@ function advanceUnavailable(
   // #715 (b) (02 §D.4): the snapshot (its reading: a refused step's remedy brief renders there; #729
   // CW-1b: the held step's lease fact).
   snap: Snapshot,
+  // The filter-mask fix (B2): the host's set, for a refused step's remedy brief.
+  disclosure: DisclosureSet | undefined,
 ): Unavailable {
   if (respond !== undefined) {
     return {
@@ -1824,11 +1847,11 @@ function advanceUnavailable(
   // remedies (correct the workflow; the operator's lever; a new run only where one can help).
   const refused = pending.cannot_run.find((e) => e.refused_by !== 'capability');
   if (offeredSteps.length === 0 && refused !== undefined) {
-    return { ...refusedEntry(refused, snap, definition), verb: 'advance' };
+    return { ...refusedEntry(refused, snap, definition, disclosure), verb: 'advance' };
   }
   const missing = pending.cannot_run.find((e) => e.refused_by === 'capability');
   if (offeredSteps.length === 0 && missing !== undefined) {
-    const entry = refusedEntry(missing, snap, definition);
+    const entry = refusedEntry(missing, snap, definition, disclosure);
     return { ...entry, verb: 'advance' };
   }
   // Amendment 15: the agent's steps are the way on; else nothing is left to do.

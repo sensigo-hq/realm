@@ -67,12 +67,16 @@ export function composeToolWays(
   // #729 CW-1b part 2: the snapshot the tool last read or wrote, with its lease facts.
   snapshot: Snapshot,
   registry: ExtensionRegistry | undefined,
+  // The filter-mask fix (B2): the door's set — a `run_step` way's prompt masks each value before its
+  // filters; absent, the prompt renders as before.
+  disclosure?: DisclosureSet,
 ): Pick<EngineReply, 'ways' | 'unavailable' | 'basis'> {
   return composeWaysOn(snapshot, {
     definition: { ok: definition },
     enactor: registry !== undefined ? { kind: 'this_program', registry } : { kind: 'observer' },
     // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
     store: waysStoreOf(runStore),
+    ...(disclosure !== undefined ? { disclosure } : {}),
   });
 }
 
@@ -497,7 +501,7 @@ export async function handleStartRun(
     context_hint: handBackHint({ run, current: handedBack, definition, deduped }),
     run_phase: deriveRunPhase(createdRun),
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
-    ...composeToolWays(runStore, definition, handedBack, registry),
+    ...composeToolWays(runStore, definition, handedBack, registry, disclosure),
     // decisions C45, C57, C64: the hand-back says what comes next on a live run (the renderer's).
     ...(createdRun.terminal_state ? {} : { names_next: true as const }),
   };

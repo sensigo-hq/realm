@@ -254,6 +254,8 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('object', 'options', 'shown'),
     typed('principal', 'options', 'principal'),
     typed('boolean', 'options', 'clientPromptRequested'),
+    // The filter-mask fix (Amendment 1): the door's set, for the reply's ways.
+    typed('object', 'options', 'disclosure'),
     // #603 A3a: the account the door says sent the answer, and the project's answerers.
     typed('object', 'options', 'channelEvidence'),
     need('string', 'options', 'channelEvidence', 'user'),
@@ -385,6 +387,7 @@ const SUBMIT_HUMAN_RESPONSE_MEMBERS = [
   'shown',
   'principal',
   'clientPromptRequested',
+  'disclosure',
   'channelEvidence',
   'projectAnswerers',
 ] as const satisfies readonly (keyof SubmitGateOptions)[];

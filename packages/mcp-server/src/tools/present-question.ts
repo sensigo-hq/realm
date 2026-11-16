@@ -120,11 +120,16 @@ export async function handlePresentQuestion(
     registryRole(stores, 'present_question', 'handlePresentQuestion'),
     RealmExtensionRegistry,
   );
+  // The filter-mask fix (B2): the door's set for the ways — this reply's and the reply after a form's
+  // answer (a `run_step` way's prompt masks each value before its filters) — from the run and workflow
+  // this call read; the form's own question is composed as before.
+  const waysDisclosure = await disclosureOfTool(stores).setFor(definition, run);
   const ctx: WaysContext = {
     definition: { ok: definition },
     enactor: registry !== undefined ? { kind: 'this_program', registry } : { kind: 'observer' },
     // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
     store: waysStoreOf(runStore),
+    disclosure: waysDisclosure,
   };
   const open = run.pending_gate;
   const gate =
@@ -182,7 +187,9 @@ export async function handlePresentQuestion(
   const host = { ...mcpHostOf(stores), readVersion: snap.record.version };
   const refusal = judged();
   if (refusal !== undefined) return mcpReplyOf(renderReply(refuse(refusal), host));
-  const deps = formDepsOf(stores, runStore, definition, registry);
+  const formDeps = formDepsOf(stores, runStore, definition, registry);
+  // The filter-mask fix (B2): the set only for the ways — the form's question is composed as before.
+  const deps = formDeps !== undefined ? { ...formDeps, waysDisclosure } : formDeps;
   if (deps === undefined || call === undefined) {
     // No way to send a form on this server (a door built without one): the door's own code.
     const respond = base.ways.filter((w) => w.verb === 'respond');
