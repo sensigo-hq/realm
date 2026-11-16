@@ -110,7 +110,7 @@ function derived(): Map<Pair, Command[]> {
 }
 
 describe('#920 C-2 — every value-taking option is classified exactly once', () => {
-  it('1. the two tables and the command tree agree (25 + 61 = 86)', () => {
+  it('1. the two tables and the command tree agree (26 + 61 = 87)', () => {
     // (a) red when a guarded row is deleted, an option is added to a command, or a row is in two
     // tables; (b) prints the unclassified, extra and duplicated (leaf, flag) pairs only.
     const tree = derived();
@@ -136,8 +136,9 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
       },
       JSON.stringify({ inTwo, unclassified, notInTree, shared }),
     ).toEqual({
-      counts: { guarded: 25, ownCheck: 61 },
-      tree: 86,
+      // The filter-mask fix, PR 2: `realm db check --project` is guarded (26, 87).
+      counts: { guarded: 26, ownCheck: 61 },
+      tree: 87,
       inTwo: [],
       unclassified: [],
       notInTree: [],

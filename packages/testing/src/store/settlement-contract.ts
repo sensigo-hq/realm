@@ -184,6 +184,12 @@ export const SETTLEMENT_LAWS = [
    *  that refuses, delays or alters an answer on a wrong token — or that does not return the
    *  verdict — fails this law. */
   'GATE_PROOF_NEVER_GATES_THE_ANSWER',
+  // #603 A3a — who may answer is judged inside the answer's write.
+  /** An answer whose sender the question does not let answer is refused `answerer_mismatch` with the
+   *  allowed names and the sender, and leaves the record unchanged (version too); the question stays
+   *  open, and the named sender's answer then applies, its entry recording `admitted_by: 'owner'`. A
+   *  late answer from such a sender carries out the expiry instead: the expiry is judged first. */
+  'ANSWERER_REFUSAL_WRITES_NOTHING',
   /** Not a real settlement law — a wiring-gap sentinel (see `settlementContract`'s own doc: a
    *  store declaring `settleStep` with no `settlementFixture` supplied gets ONE failing case
    *  tagged with this, never a silent zero-cases pass). */
@@ -6494,6 +6500,105 @@ function routeClockCases(adapter: SettlementContractAdapter): SettlementContract
   ];
 }
 
+// ---------------------------------------------------------------------------
+// ANSWERER_REFUSAL_WRITES_NOTHING (#603 A3a)
+// ---------------------------------------------------------------------------
+
+function answererRefusalCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  const bob = { user: 'U0BOB', forms: ['U0BOB', '<@U0BOB>'] };
+  const owned = (onExpiry?: 'abort'): OpeningGate => ({
+    ...makePendingGate('gated', { gateId: 'owned-gate', ...(onExpiry ? { onExpiry } : {}) }),
+    owner: 'U0ALICE',
+  });
+  return [
+    {
+      law: 'ANSWERER_REFUSAL_WRITES_NOTHING',
+      name: `[${adapter.storeName}] an answer from a sender the question does not name refuses answerer_mismatch and writes nothing; the owner's answer then applies`,
+      run: async () => {
+        const settleStep = bindSettle(adapter.store);
+        const def = minimalDefinition(['gated']);
+        const { run, token } = await createClaimed(adapter.store, def, 'gated');
+        const open = { kind: 'open_gate' as const, step: 'gated', claimToken: token, evidence: [] };
+        assertApplied(await settleStep(run.id, { ...open, pendingGate: owned() }, def), 'open');
+        const before = (await adapter.store.get(run.id)).record;
+        const answer = (sender: { user: string; forms: string[] }) =>
+          settleStep(
+            run.id,
+            {
+              kind: 'settle_gate',
+              gateId: 'owned-gate',
+              choice: 'approve',
+              sender,
+              evidence: [makeEvidence('gated', { kind: 'gate_response' })],
+            },
+            def,
+          );
+        const refused = await answer(bob);
+        assertRefused(refused, 'answerer_mismatch', 'a sender the question does not name');
+        if (refused.allowed?.join(',') !== 'U0ALICE' || refused.sender !== 'U0BOB') {
+          throw new Error(
+            `expected allowed [U0ALICE] and sender U0BOB, got ${JSON.stringify({ allowed: refused.allowed, sender: refused.sender })}`,
+          );
+        }
+        const after = (await adapter.store.get(run.id)).record;
+        if (after.version !== before.version || after.pending_gate?.gate_id !== 'owned-gate') {
+          throw new Error(
+            `a refused answer must leave the record unchanged: version ${before.version} → ${after.version}, gate ${after.pending_gate?.gate_id}`,
+          );
+        }
+        const applied = await answer({ user: 'U0ALICE', forms: ['U0ALICE', '<@U0ALICE>'] });
+        assertApplied(applied, "the owner's answer");
+        const entry = applied.run.evidence.find((e) => e.kind === 'gate_response');
+        if (applied.run.pending_gate !== undefined || entry?.admitted_by !== 'owner') {
+          throw new Error(
+            `the owner's answer must settle the gate and record admitted_by 'owner', got ${entry?.admitted_by}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'ANSWERER_REFUSAL_WRITES_NOTHING',
+      name: `[${adapter.storeName}] a late answer from a sender the question does not name carries out the expiry — the expiry is judged first`,
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: owned('abort'),
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(opened, 'open_gate');
+          const late = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            {
+              kind: 'settle_gate',
+              gateId: 'owned-gate',
+              choice: 'approve',
+              sender: bob,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(late, 'a late answer from a sender the question does not name');
+          if (late.lateAnswer === undefined) {
+            throw new Error('expected the expiry carried out (lateAnswer), not the answer');
+          }
+        }),
+    },
+  ];
+}
+
 export function settlementContract(adapter: SettlementContractAdapter): SettlementContractCase[] {
   // #715 (b) (D-19): `settleStep` is required — every store runs every law (the empty pass for a store
   // without it, and the stampSeal-without-settleStep wiring case, are gone with that store).
@@ -6567,5 +6672,7 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
     ...expireDefaultResolveCases(adapter),
     // issue #625 (the holder slice).
     ...gateProofCases(adapter),
+    // #603 A3a.
+    ...answererRefusalCases(adapter),
   ];
 }

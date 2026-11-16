@@ -54,7 +54,17 @@ function makeMessage(eventOverrides: Record<string, unknown> = {}): { data: stri
     data: JSON.stringify({
       type: 'events_api',
       envelope_id: 'Ev123',
-      payload: { event_id: 'Ev123', event, type: 'events_api' },
+      // Socket Mode's payload is the Events API's own body (docs.slack.dev, using-socket-mode.md
+      // §4): `team_id` beside `event`, of type `event_callback` (#603 A3a, AU-10).
+      payload: {
+        token: 'XXYYZZ',
+        team_id: 'T123ABC456',
+        api_app_id: 'A123ABC456',
+        event_id: 'Ev123',
+        event_time: 1704067300,
+        event,
+        type: 'event_callback',
+      },
     }),
   };
 }
@@ -89,6 +99,21 @@ describe('connectSocketMode', () => {
     expect(onEvent.mock.calls[0]![0]).toMatchObject({
       text: 'approve',
       user: 'U123',
+      thread_ts: 'gate.ts',
+    });
+  });
+
+  it("#603 A3a check 15: with no team on the event, the payload's team_id; user, ts and thread_ts are carried", async () => {
+    const onEvent = vi.fn<(event: SlackGateEvent) => void>();
+    connectSocketMode({ appToken: 'xapp-test', threadTs: 'gate.ts', onEvent });
+    await flushPromises();
+    MockWebSocket.instances[0]!.emit('message', makeMessage());
+    const { team, user, ts, thread_ts } = onEvent.mock.calls[0]?.[0] ?? ({} as SlackGateEvent);
+    // (1) red when this intake drops `team`; (2) prints what it passed.
+    expect({ team, user, ts, thread_ts }).toEqual({
+      team: 'T123ABC456',
+      user: 'U123',
+      ts: '1704067300.001',
       thread_ts: 'gate.ts',
     });
   });

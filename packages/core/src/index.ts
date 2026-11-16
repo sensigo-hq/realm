@@ -513,6 +513,9 @@ export {
   reminderEligibility,
 } from './engine/gate-timing.js';
 export type { ReminderSchedule, ReminderOccurrence } from './engine/gate-timing.js';
+// #597 D3a: one place for "which reminder is due": the question post's anchor and the whole grid.
+export { dueReminderWork, reminderAnchorOf, SAME_LINE_WINDOW_MS } from './engine/reminder-due.js';
+export type { ReminderItem, ReminderSettings } from './engine/reminder-due.js';
 // issue #729 PR-0 (D4 P-8, A-15): the one parser of stored instants and the one due test of a
 // stored deadline; ε, the one clock-skew constant.
 export {
@@ -1008,6 +1011,9 @@ export {
 } from './engine/question-view.js';
 export type { QuestionView } from './engine/question-view.js';
 export { composePersonNotice, durationWords } from './engine/person-notice.js';
+// #603 A3a: the one rule of who may answer a question (the settling write and the Slack door).
+export { judgeAnswerer } from './engine/answerer.js';
+export type { AnswererQuestion, AnswererVerdict } from './engine/answerer.js';
 export type { PersonNotice, PersonNoticeEvent } from './engine/person-notice.js';
 // decision C183 (issue #760, correction H2): the ONE spelling of a control character a terminal line
 // shows — the CLI's printers and the `check_quotes` warning share it.

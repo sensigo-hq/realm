@@ -26,12 +26,14 @@ import {
   type Snapshot,
   type Clock,
   judgedSnapshotOf,
-  reminderScheduleOf,
-  isFinalReminder,
-  isPastDeadline,
   reminderEligibility,
+  dueReminderWork,
+  reminderAnchorOf,
+  type ReminderItem,
+  type OutboundEntryView,
   type OutboundLeaseRequest,
   type OutboundLedger,
+  judgeAnswerer,
 } from '@sensigo/realm';
 import { stripMarks, withoutMarks, writerCtx, writerSetFor } from '../../output/writer.js';
 import { cliCommandOf } from '../../commands/ways-renderer.js';
@@ -43,7 +45,14 @@ import {
   terminalRespondLines,
 } from '../../lib/holder-render.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
-import { startSlackGateServer } from './slack-gate-server.js';
+import { startSlackGateServer, type SlackGateEvent } from './slack-gate-server.js';
+import {
+  closedInSlack,
+  memberMentions,
+  orList,
+  senderForms,
+  slackMemberId,
+} from './slack-accounts.js';
 import { connectSocketMode } from './slack-socket-client.js';
 import { deadlineSignal, readWithin, SLACK_CALL_DEADLINE_MS } from './slack-call.js';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
@@ -237,8 +246,11 @@ const SLACK_MENTION = [
   /^<!(here|channel|everyone)>$/,
 ] as const;
 
-/** The owner as Slack shows it: a mention passes through whole, anything else escaped. */
+/** The owner as Slack shows it: a mention passes through whole, anything else escaped. #603 A3a: a
+ *  bare member ID is shown as its mention, so it pings. */
 export function slackOwner(owner: string): string {
+  const id = slackMemberId(owner);
+  if (id !== undefined) return `<@${id}>`;
   return SLACK_MENTION.some((form) => form.test(owner)) ? owner : slackEscape(owner);
 }
 
@@ -297,7 +309,9 @@ function notRecordedWords(notice: Extract<PersonNotice, { kind: 'answer_late' }>
 /**
  * #729 PR-4 (02): one notice as Slack shows it. The opening post is four blocks — the header, the
  * view in its own block, the choices and the person's route, and (when the view was cut) the way to
- * the whole output; every other kind is one thread line, naming no operator command (G9).
+ * the whole output; every other kind is one thread line, naming no operator command (G9) — except, on
+ * a host that does not listen in the thread, a reminder's (#597 D3a): it says so and gives the
+ * respond command, as the question post does there.
  */
 export function renderSlack(
   notice: PersonNotice,
@@ -310,9 +324,12 @@ export function renderSlack(
       // #729 PR-4 correction (A1): the route is keyed on whether Realm LISTENS in the thread, never
       // on the transport; the one respond command is always there (the ids a terminal answer needs).
       const command = slackEscape(cliCommandOf(notice.respond as RespondWay)!);
-      const route = host.listens
-        ? `Reply in this thread with ${choices}, or from a terminal:\n\`\`\`${command}\`\`\``
-        : `*Gate requires a terminal response — open a terminal and run:*\n\`\`\`${command}\`\`\``;
+      // #603 A3a: a question that names no Slack account counts no reply in its thread (W3).
+      const route = !host.listens
+        ? `*Gate requires a terminal response — open a terminal and run:*\n\`\`\`${command}\`\`\``
+        : closedInSlack(notice)
+          ? `Replies in this thread are not counted: no one this question names is a Slack member ID. Answer it from a terminal:\n\`\`\`${command}\`\`\``
+          : `Reply in this thread with ${choices}, or from a terminal:\n\`\`\`${command}\`\`\``;
       return {
         text: '⏸ Workflow gate waiting for approval',
         blocks: questionBlocks(notice, route),
@@ -327,7 +344,11 @@ export function renderSlack(
         notice.elapsed !== undefined
           ? `has been open for ${notice.elapsed}${since}`
           : 'is still open';
-      return { blocks: [], text: `${mention}⏰ gate ${step} ${open}. Please respond.` };
+      // #597 D3a: nobody reads a reply in the thread, so the reminder gives the terminal's way.
+      const ask = host.listens
+        ? 'Please respond.'
+        : `Realm is not reading replies in this thread right now — to respond, open a terminal and run:\n\`\`\`${slackEscape(cliCommandOf(notice.respond as RespondWay)!)}\`\`\``;
+      return { blocks: [], text: `${mention}⏰ gate ${step} ${open}. ${ask}` };
     }
     case 'expiry_reminder': {
       // #715 (b) (D-29, D6-72): the deadline beside the words, as plain text (no Slack date token).
@@ -363,6 +384,17 @@ export function renderSlack(
             ? 'Not recorded: this run stopped before your reply arrived.'
             : `⚠️ Couldn't record your response (\`${notice.code}\`). Try again.`,
       };
+    case 'answerer_refused': {
+      // #603 A3a (W1, W2): told privately — the member IDs that can answer, or that no one can here.
+      const who = memberMentions(notice.allowed);
+      return {
+        blocks: [],
+        text:
+          who.length > 0
+            ? `Not recorded: only ${orList(who)} can answer this question. Your reply changed nothing.`
+            : "Not recorded: this question can't be answered in Slack. Your reply changed nothing.",
+      };
+    }
     case 'question_closed': {
       // #729 PR-4 correction (C1): a channel post has no thread, so it names its gate and run.
       const subject =
@@ -522,49 +554,81 @@ export async function postSlackReply(
 }
 
 /**
- * Issue #291 ([F-A2-1]/[F-A2-2]/[F-A2-3] — the authored notify clock); #729 PR-4 (02): one firing of
- * the reminder timer, as the person's notice — `isFinal` (only ever true when `gate.expires_at` is
- * frozen) composes the `expiry_reminder` (the enforcement fact, never soliciting a doomed response),
- * any other firing the plain `reminder`. G9: the operator's command that carries out the expiry
- * (`realm run drain --expired`) is printed on this console, never posted to the person's thread.
+ * #603 A3a: a reply in the thread that only `user` sees (chat.postEphemeral, the bot's `chat:write`),
+ * walked with every tier as a thread reply is. Never throws; returns Slack's verdict.
  */
-function reminderFiring(
-  gate: PendingGate,
-  runId: string,
-  display: string | undefined,
-  isFinal: boolean,
-  count: number,
-  scheduledAt: Date,
-  now: Date,
-  listens: boolean,
-  // #597 D1b: false for a retry of the same occurrence, so the final's console line prints once.
-  operatorLine = true,
-): string {
-  // #715 (b) (02 §D.3, D-29) and #964: the notice is composed at `now` — the occurrence's scheduled
-  // instant when it fires at most REMINDER_GRACE_MS late, else the store clock's reading when it
-  // fires — "open for (now − opened_at)", "expired (now − expires_at) ago"; never the host's clock.
+async function postSlackEphemeral(
+  botToken: string,
+  channelId: string,
+  threadTs: string,
+  user: string,
+  text: string,
+): Promise<SlackVerdict> {
+  return sendToSlack(
+    'https://slack.com/api/chat.postEphemeral',
+    {
+      channel: channelId,
+      user,
+      thread_ts: threadTs,
+      text: disclose(stripMarks(text), slackSet(), 'all').text,
+    },
+    botToken,
+  );
+}
+
+/** #603 A3a: Slack's own words for a call it did not take (W5's last part). */
+function slackErrorOf(verdict: Exclude<SlackVerdict, { ok: true }>): string {
+  if (verdict.cause === 'refused') return verdict.reason;
+  if (verdict.cause === 'timeout') return `no answer within ${SLACK_CALL_DEADLINE_MS / 1000} s`;
+  return errorText(verdict);
+}
+
+/**
+ * #597 D3a: the ONE text of a reminder item as Slack shows it — an authored occurrence, the final, the
+ * one-shot of a question with no authored schedule, or the nudge — composed at `now`, for a host that
+ * listens in the thread or not. Issue #291 [F-A2-1]–[F-A2-3]; #729 PR-4 (02): a final composes the
+ * `expiry_reminder` (the enforcement fact, never soliciting a doomed response), any other item the
+ * `reminder` notice, the nudge with its owner named (`escalation`). Pure: it prints nothing (the
+ * final's operator line is {@link expiryOperatorLine}, printed by a caller that chooses to). The
+ * notifier's waiters and a takeover's catch-up compose through it.
+ */
+export function composeReminderPost(input: {
+  readonly gate: PendingGate;
+  readonly runId: string;
+  readonly display: string | undefined;
+  readonly item: Pick<ReminderItem, 'what' | 'kind' | 'isFinal' | 'atMs'>;
+  readonly now: Date;
+  readonly listens: boolean;
+}): string {
+  const { gate, runId, display, item, now, listens } = input;
   const base = {
     run_id: runId,
     gate,
     view: slackView(gate, display),
     respond: respondWayOfGate(runId, gate),
   };
-  if (isFinal && gate.on_expiry !== undefined && operatorLine) {
-    console.log(
-      `  ⏰ gate '${gate.step_name}' expired — ${writerCtx().cmd('realm run drain --expired')} carries out its on_expiry (${gate.on_expiry}).`,
-    );
-  }
-  const notice = isFinal
+  const notice = item.isFinal
     ? composePersonNotice({ kind: 'expiry_reminder', ...base, now })
     : composePersonNotice({
         kind: 'reminder',
         ...base,
-        scheduled_at: scheduledAt.toISOString(),
-        count,
-        escalation: false,
+        scheduled_at: new Date(item.atMs).toISOString(),
+        count: item.what.type === 'reminder' ? item.what.occurrence : 1,
+        escalation: item.kind === 'nudge',
         now,
       });
   return renderSlack(notice, { mode: 'bot', listens }).text;
+}
+
+/**
+ * The operator's console line when the final reminder of a question its expiry closes is sent. G9:
+ * the command that carries out the expiry (`realm run drain --expired`) is printed on this console,
+ * never posted to the person's thread. None for a question with no `on_expiry`.
+ */
+export function expiryOperatorLine(gate: PendingGate): string | undefined {
+  return gate.on_expiry !== undefined
+    ? `  ⏰ gate '${gate.step_name}' expired — ${writerCtx().cmd('realm run drain --expired')} carries out its on_expiry (${gate.on_expiry}).`
+    : undefined;
 }
 
 /**
@@ -589,9 +653,17 @@ export interface ReminderLedger {
 /** #597 D1b: the console line for a lease call that throws is printed once per process. */
 let leaseThrowWarned = false;
 
+/** #597 D3a: the console line for a question post's time that cannot be read, once per process. */
+let postTimeWarned = false;
+
+/** #597 D3a: the operator's line when the question post's Slack time cannot be read. */
+const postTimeLine = (ts: string): string =>
+  `  ⚠  The question post's time (${ts}) could not be read: its reminder and escalation count from this agent's start.`;
+
 /** #597 D1b: a test's seam: the process's "warned once" as a fresh process has it. */
 export function resetLeaseThrowWarningForTests(): void {
   leaseThrowWarned = false;
+  postTimeWarned = false;
 }
 
 /** #597 D1b: the operator's line when a lease call throws (a busy, fenced or newer store). */
@@ -601,19 +673,17 @@ const leaseThrewLine = (cause: string): string =>
 /**
  * Starts reminder and escalation timers for an open gate.
  *
- * Issue #291 (Deliverable 6 — the authored notify clock): the REMINDER leg repeats when the gate
- * carries a frozen `reminder_seconds` ([F-A2-1]; record-keyed precedence over `reminderIntervalMs`
- * [F-A2-2] — the author's declared value always wins when present). #715 (b) (02 §D.3, D-29; D6-21,
- * D6-27): its occurrences are the run's SCHEDULE — core's one function, `reminderScheduleOf`, at the
- * snapshot's reading: occurrence k at `opened_at + k·reminder_seconds`, k ≤ `reminder_max`, each
- * before the frozen `expires_at`; the occurrence after the last one, when it is within
- * `reminder_max` and lands at or after `expires_at`, is the FINAL one, with the enforcement fact's
- * wording (never soliciting a doomed response). A notifier started late (a restarted `realm agent`)
- * registers only the occurrences its reading has not passed — missed ones are skipped, never sent in
- * a burst; #597 D1b: one that took over a stopped agent's post sends one catch-up reminder, below.
- * When the author declared NO `reminder_seconds`, the OPERATOR fallback
- * (`reminderIntervalMs`) stays SINGLE-SHOT ([F-A2-3]), as the ESCALATION leg does: one each,
- * `reminderIntervalMs` / `escalationThresholdMs` after the snapshot's reading.
+ * #597 D3a: the instants are core's `dueReminderWork` grid, at the snapshot's reading — the one place
+ * "which reminder is due" is decided. Issue #291 (Deliverable 6): the REMINDER leg repeats when the
+ * gate carries a frozen `reminder_seconds` ([F-A2-1]; the author's value always wins [F-A2-2]); #715 (b)
+ * (02 §D.3, D-29): occurrence k at `opened_at + k·reminder_seconds`, k ≤ `reminder_max`, each before
+ * the frozen `expires_at`, then the FINAL one, with the enforcement fact's wording. With NO
+ * `reminder_seconds`, one reminder (`reminderIntervalMs`, [F-A2-3]); and for every gate one nudge
+ * (`escalationThresholdMs`). #597 D3a: the one reminder and the nudge count from when the question was
+ * posted (`threadTs`, clamped between `opened_at` and the reading), so a restart does not restart
+ * their clock. Only the items this reading has not passed are armed (the final also at the reading);
+ * missed ones are skipped, never sent in a burst. #597 D1b, D3a: an agent that took over a stopped
+ * agent's post sends ONE catch-up item, below.
  *
  * #964: every one waits on the store's `clock`, which re-reads the wall clock at least once a minute,
  * so after the machine sleeps the waits that came due fire together within a minute of waking. Each
@@ -643,6 +713,13 @@ export function startGateReminderTimers(
   const gate = opened.record.pending_gate;
   if (gate === undefined) return (): void => {};
   const startMs = opened.at.getTime();
+  // #597 D3a: the one reminder and the nudge count from the question post's own time.
+  const anchor = reminderAnchorOf(gate, threadTs, opened.at);
+  if (anchor.tsUnreadable && !postTimeWarned) {
+    postTimeWarned = true;
+    console.warn(postTimeLine(threadTs));
+  }
+  const settings = { reminderIntervalMs, escalationThresholdMs };
   const cancels: Array<() => void> = [];
   // #597 D1b correction 1: closing is final. Once the cleanup ran, no waiter is registered, no attempt
   // starts, and an attempt in flight registers no retry and makes no unfenced post (one already past
@@ -766,134 +843,75 @@ export function startGateReminderTimers(
     });
   };
 
-  const schedule = reminderScheduleOf(opened);
-  if (schedule !== undefined) {
-    // The authored cycle: every scheduled occurrence this reading has not passed, then the final one.
-    const cycle: Array<{ k: number; whenMs: number; isFinal: boolean }> = [];
-    for (const occurrence of schedule.occurrences) {
-      if (schedule.next === undefined || occurrence.k < schedule.next.k) continue;
-      cycle.push({ k: occurrence.k, whenMs: parseStamp(occurrence.at)!, isFinal: false });
-    }
-    const openedAtMs = parseStamp(gate.opened_at);
-    const finalK = schedule.occurrences.length + 1;
-    // #597 D1a: whether the occurrence after the last is the final one, and within the cap, is core's
-    // (`isFinalReminder`, `reminderEligibility`), as the ledger reads it.
-    const finalReminder = { type: 'reminder', occurrence: finalK } as const;
-    if (
-      openedAtMs !== undefined &&
-      isFinalReminder(gate, finalK) &&
-      reminderEligibility(gate, finalReminder, opened.at)
-    ) {
-      const finalMs = openedAtMs + finalK * gate.reminder_seconds! * 1000;
-      if (finalMs >= startMs) cycle.push({ k: finalK, whenMs: finalMs, isFinal: true });
-    }
-    for (const { k, whenMs, isFinal } of cycle) {
-      // A later occurrence already due posts instead; #597 D1a: closed by the expiry unless it is
-      // the final one, as the ledger judges it.
-      const skip = (nowMs: number): boolean =>
-        cycle.some((later) => later.k > k && later.whenMs <= nowMs) ||
-        !reminderEligibility(gate, { type: 'reminder', occurrence: k }, new Date(nowMs));
-      const compose = (nowMs: number, operatorLine: boolean): string =>
-        reminderFiring(
-          gate,
-          runId,
-          display,
-          isFinal,
-          k,
-          new Date(whenMs),
-          composedAt(whenMs, nowMs),
-          listens,
-          operatorLine,
-        );
-      const lease = { type: 'reminder', gateId, occurrence: k } as const;
-      at(whenMs, (nowMs) => attempt('Reminder', lease, skip, compose, nowMs, 'scheduled'));
-    }
-    // #597 D1b: the catch-up. An agent that took over a stopped agent's post sends ONE reminder for
-    // the latest occurrence its reading has passed (`at ≥ instant`), with the true age; the ones
-    // before it read as skipped. Never the final (the expiry's timer posts the closing line), and
-    // never for a first-time post.
-    if (ledger?.takenOver === true) {
-      const passed = schedule.occurrences.filter((o) => isPastDeadline(o.at, opened.at));
-      const latest = passed[passed.length - 1];
-      if (latest !== undefined) {
-        const whenMs = parseStamp(latest.at)!;
-        attempt(
-          'Reminder',
-          { type: 'reminder', gateId, occurrence: latest.k },
-          (nowMs) =>
-            !reminderEligibility(gate, { type: 'reminder', occurrence: latest.k }, new Date(nowMs)),
-          (nowMs, operatorLine) =>
-            reminderFiring(
-              gate,
-              runId,
-              display,
-              false,
-              latest.k,
-              new Date(whenMs),
-              composedAt(whenMs, nowMs),
-              listens,
-              operatorLine,
-            ),
-          startMs,
-          'catch_up',
-        );
-      }
-    }
-  } else {
-    // [F-A2-3]: the operator fallback — one reminder, `reminderIntervalMs` after this reading.
-    const whenMs = startMs + reminderIntervalMs;
-    const isFinal = gate.expires_at !== undefined && (expiresAtMs ?? NaN) <= whenMs;
-    at(whenMs, (nowMs) =>
-      attempt(
-        'Reminder',
-        { type: 'reminder', gateId, occurrence: 1 },
-        (n) => !isFinal && closedBy(n),
-        (n, operatorLine) =>
-          reminderFiring(
-            gate,
-            runId,
-            display,
-            isFinal,
-            1,
-            new Date(whenMs),
-            composedAt(whenMs, n),
-            listens,
-            operatorLine,
-          ),
-        nowMs,
-        'scheduled',
-      ),
+  // #597 D3a: one item's lease, its closure by the expiry (as the ledger judges it), and its text,
+  // composed at `composedAt`; the final's operator line is printed here, once (never on a retry).
+  const leaseOf = (item: ReminderItem): OutboundLeaseRequest['what'] =>
+    item.what.type === 'reminder'
+      ? { type: 'reminder', gateId, occurrence: item.what.occurrence }
+      : { type: 'escalation', gateId };
+  const closedFor = (item: ReminderItem, nowMs: number): boolean =>
+    item.kind === 'one_shot'
+      ? !item.isFinal && closedBy(nowMs)
+      : !reminderEligibility(gate, item.what, new Date(nowMs));
+  const composeOf =
+    (item: ReminderItem) =>
+    (nowMs: number, operatorLine: boolean): string => {
+      const line = item.isFinal && operatorLine ? expiryOperatorLine(gate) : undefined;
+      if (line !== undefined) console.log(line);
+      return composeReminderPost({
+        gate,
+        runId,
+        display,
+        item,
+        now: composedAt(item.atMs, nowMs),
+        listens,
+      });
+    };
+  const whatOf = (item: ReminderItem): 'Reminder' | 'Escalation' =>
+    item.kind === 'nudge' ? 'Escalation' : 'Reminder';
+
+  // Every item this reading has not passed, in the grid's order; the final also at the reading.
+  const grid = dueReminderWork(gate, settings, anchor.anchorMs, [], opened.at);
+  const armed = grid.filter(
+    (item) => item.state === 'future' || (item.kind === 'final' && item.atMs === startMs),
+  );
+  // The authored cycle: a later occurrence already due posts instead.
+  const cycle = armed.filter((item) => item.kind === 'occurrence' || item.kind === 'final');
+  const kOf = (item: ReminderItem): number =>
+    item.what.type === 'reminder' ? item.what.occurrence : 0;
+  for (const item of armed) {
+    const skip = (nowMs: number): boolean =>
+      (cycle.includes(item) &&
+        cycle.some((later) => kOf(later) > kOf(item) && later.atMs <= nowMs)) ||
+      closedFor(item, nowMs);
+    at(item.atMs, (nowMs) =>
+      attempt(whatOf(item), leaseOf(item), skip, composeOf(item), nowMs, 'scheduled'),
     );
   }
 
-  const escalationMs = startMs + escalationThresholdMs;
-  at(escalationMs, (nowMs) =>
-    attempt(
-      'Escalation',
-      { type: 'escalation', gateId },
-      // #597 D1a: the escalation's closure by the expiry is core's, as the ledger judges it.
-      (n) => !reminderEligibility(gate, { type: 'escalation' }, new Date(n)),
-      // #729 PR-4 (02): the escalation is the `reminder` notice with its owner named, its own post,
-      // composed as a reminder is (#715 (b), D-29; #964).
-      (n) =>
-        renderSlack(
-          composePersonNotice({
-            kind: 'reminder',
-            run_id: runId,
-            gate,
-            view: slackView(gate, display),
-            respond: respondWayOfGate(runId, gate),
-            scheduled_at: new Date(escalationMs).toISOString(),
-            count: 1,
-            escalation: true,
-            now: composedAt(escalationMs, n),
-          }),
-          { mode: 'bot', listens },
-        ).text,
-      nowMs,
-      'scheduled',
-    ),
-  );
+  // #597 D1b, D3a: the catch-up. An agent that took over a stopped agent's post sends ONE item: the
+  // one the grid says is due at the attach reading (the reminder or the nudge, authored or not), with
+  // the true age; the passed ones before it are skipped. Never a final (only its own waiter posts it),
+  // and never for a first-time post. On a gate that names no owner the ledger's rows are read first,
+  // so a line the other leg already posted is not repeated; a read that throws posts nothing.
+  if (ledger?.takenOver === true) {
+    const catchUp = (rows: readonly OutboundEntryView[]): void => {
+      const due = dueReminderWork(gate, settings, anchor.anchorMs, rows, opened.at).find(
+        (item) => item.state === 'due',
+      );
+      if (due === undefined || due.isFinal) return;
+      attempt(
+        whatOf(due),
+        leaseOf(due),
+        (nowMs) => closedFor(due, nowMs),
+        composeOf(due),
+        startMs,
+        'catch_up',
+      );
+    };
+    if (gate.owner !== undefined) catchUp([]);
+    else void ledger.outbound.read(runId).then(catchUp, () => {});
+  }
 
   return () => {
     closed = true;
@@ -966,6 +984,9 @@ export interface BidirectionalGateParams {
   /** #597 D1b: the question's post was a stopped agent's, taken over: the one catch-up reminder
    *  applies when the store keeps an outbound ledger. Absent for a first-time post. */
   postTakenOver?: boolean;
+  /** #603 A3a: the project's answerers (`notifiers.slack_gate.config.answerers`), passed with each
+   *  answer — they answer a question that names no one. */
+  projectAnswerers?: string[];
 }
 
 /**
@@ -1025,6 +1046,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     driver,
     postFile,
     postTakenOver,
+    projectAnswerers,
   } = params;
 
   let clarificationCount = 0;
@@ -1066,8 +1088,30 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     void p.finally(() => inFlight.delete(p));
   };
 
-  const processCandidate = async (text: string): Promise<void> => {
+  // #603 A3a: told privately, never in the thread's public lines; a failure is said here (W5).
+  const tellPrivately = async (user: string, allowed: readonly string[]): Promise<void> => {
+    if (gateThreadTs === undefined) return;
+    const notice = composePersonNotice({ kind: 'answerer_refused', run_id: runId, gate, allowed });
+    const text = renderSlack(notice, { mode: 'bot', listens }).text;
+    const verdict = await postSlackEphemeral(
+      slackBotToken,
+      slackChannelId,
+      gateThreadTs,
+      user,
+      text,
+    );
+    if (!verdict.ok) {
+      console.warn(
+        `Slack: could not tell ${user} privately that their reply to gate '${gate.step_name}' was not recorded: ${slackErrorOf(verdict)}.`,
+      );
+    }
+  };
+
+  const processCandidate = async (event: SlackGateEvent): Promise<void> => {
     if (abortController.signal.aborted) return;
+    const { text } = event;
+    // #603 A3a: the account Slack reports for the reply, and the forms that name it.
+    const forms = senderForms(event.user);
 
     // Gate choices must be exact (case-insensitive). No LLM interpretation — gate responses
     // are irreversible writes and must reflect unambiguous intent.
@@ -1115,6 +1159,15 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           route: 'slack',
           // decision C151: an expiry this late answer carries out names `realm agent`.
           caller: 'agent',
+          // #603 A3a: who sent it, as Slack reports it; the write compares it with the question.
+          channelEvidence: {
+            user: event.user,
+            forms,
+            ...(event.team !== undefined ? { team: event.team } : {}),
+            ts: event.ts,
+            thread_ts: event.thread_ts,
+          },
+          ...(projectAnswerers !== undefined ? { projectAnswerers } : {}),
           ...(registry !== undefined ? { registry } : {}),
           ...(driver !== undefined ? { driver } : {}),
         });
@@ -1182,6 +1235,14 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
             }),
           );
           abortController.abort();
+        } else if (result.status === 'error' && result.error_code === 'STATE_ANSWERER_MISMATCH') {
+          // #603 A3a: someone the question does not let answer — told privately, the question stays
+          // open, and the public "Couldn't record" line keeps its one post.
+          const facts = result.error?.facts;
+          await tellPrivately(
+            event.user,
+            facts !== undefined && 'allowed' in facts ? facts.allowed : [],
+          );
         } else if (result.status === 'error' && result.error_code === 'STATE_RUN_TERMINAL') {
           // #729 PR-6a (B9): the run ended before this reply arrived, with nothing to say what the
           // question met — told once; no retry can record it.
@@ -1242,6 +1303,8 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
       } catch (err) {
         await postSubmitError(err instanceof Error ? err.message : String(err), 'ENGINE_INTERNAL');
       }
+    } else if ('refused' in judgeAnswerer(gate, forms, projectAnswerers)) {
+      // #603 A3a: a message from someone who may not answer gets nothing, and uses no clarification.
     } else if (clarificationCount < 2 && gateThreadTs !== undefined) {
       clarificationCount++;
       await postSlackReply(
@@ -1267,7 +1330,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         if (seenEventIds.has(event.event_id)) return;
         seenEventIds.add(event.event_id);
         track(
-          processCandidate(event.text).catch((err) => {
+          processCandidate(event).catch((err) => {
             console.warn(
               `Candidate processing failed: ${err instanceof Error ? err.message : String(err)}`,
             );
@@ -1286,7 +1349,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         seenEventIds.add(event.event_id);
         if (event.thread_ts !== gateThreadTs) return;
         track(
-          processCandidate(event.text).catch((err) => {
+          processCandidate(event).catch((err) => {
             console.warn(
               `Candidate processing failed: ${err instanceof Error ? err.message : String(err)}`,
             );
@@ -1299,6 +1362,14 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     // person's way to answer is the terminal's (#729 PR-4 correction, A2).
     console.log(
       '  ℹ  Gate notification posted; no listener is configured (app_token for Socket Mode, or signing_secret + events_port for the Events API under notifiers.slack_gate in realm.yaml), so the answer comes from the terminal:',
+    );
+    terminalWayOwed = true;
+  }
+
+  // #603 A3a (W4): a question no Slack account can answer — said here, then the terminal's way.
+  if (listens && gateThreadTs !== undefined && closedInSlack(gate)) {
+    console.log(
+      `Slack: no one gate '${gate.step_name}' names is a Slack member ID, so replies in its thread are not counted.`,
     );
     terminalWayOwed = true;
   }
@@ -1564,6 +1635,8 @@ export interface SlackGateHandlerConfig {
   registry?: ExtensionRegistry;
   /** Issue #625: the program this handler runs in — forwarded to the attendant. */
   driver?: Attributed;
+  /** #603 A3a: the project's answerers (`notifiers.slack_gate.config.answerers`). */
+  answerers?: string[];
   /**
    * #729 PR-6b (B): the Realm home `realm agent` opened its store in. With a bot token, the question
    * post's channel and `ts` are kept in a file under its `slack-posts/` while the question is open, so
@@ -1655,6 +1728,7 @@ export function createSlackGateHandler(
         ...(config.driver !== undefined ? { driver: config.driver } : {}),
         ...(post.file !== undefined ? { postFile: post.file } : {}),
         ...(post.takenOver === true ? { postTakenOver: true } : {}),
+        ...(config.answerers !== undefined ? { projectAnswerers: config.answerers } : {}),
       });
     } else if (config.webhookUrl !== undefined) {
       // One-way webhook + inline poll loop (avoids circular dependency with run-agent.ts).

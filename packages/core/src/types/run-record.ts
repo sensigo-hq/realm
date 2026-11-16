@@ -939,6 +939,14 @@ export interface EvidenceSnapshot {
    */
   claim_proof?: GateClaimVerdict;
   /**
+   * #603 A3a: present only on a `gate_response` entry the ANSWER wrote, judged inside its write — how
+   * the answer's sender was let through: `owner`, `answerers` or `project_answerers` (the account the
+   * channel reported is on that list), `no_named_answerer` (the question named no one, so anyone
+   * counted) or `owner_not_checked_on_route` (the question names someone, and the answer carried no
+   * channel evidence to compare). Absent on an expiry's entry and on entries written before it.
+   */
+  admitted_by?: AdmittedBy;
+  /**
    * Issue #291 (D1 §5 / [F12]): present only on a `gate_response` snapshot minted by
    * `applyExpireGate` — discriminates WHICH enforce-clock disposition produced this snapshot,
    * for the late-response envelope strings to read. `responded_by` on the SAME snapshot is
@@ -1037,10 +1045,16 @@ export interface PendingGate {
   choices: string[];
   opened_at: string;
   /**
-   * Slack user ID or handle declared on the step's gate config.
+   * The person expected to answer, stored as written: a Slack member ID (`U…`/`W…`), its mention
+   * `<@U…>`, or any name. In Slack only a member ID matches a reply.
    * Optional — absent when the workflow step has no owner field.
    */
   owner?: string;
+  /**
+   * #603 A3a: Slack member IDs who may also answer in Slack — the gate's `answerers`, frozen when
+   * the question opens. Absent when the gate lists none.
+   */
+  answerers?: string[];
   /**
    * Developer-authored gate message resolved from run data at gate-open time.
    * Present only when gate.message is configured on the step. Never derived from step.prompt.
@@ -1701,7 +1715,23 @@ export interface AnswerFacts {
   route: string;
   /** Present only on an answer from a form: the renderer that showed the question. */
   shown?: { renderer: string };
+  /** #603 A3a: present only when the door passed it — the account that sent the answer, as the
+   *  channel reports it (Slack's statement, never verified by Realm). */
+  channel_evidence?: ChannelEvidence;
 }
+
+/** #603 A3a: the account a channel's door says sent an answer, as the channel reports it. */
+export interface ChannelEvidence {
+  /** The workspace the account belongs to; absent when the channel did not say. */
+  team?: string;
+  user: string;
+  ts?: string;
+  thread_ts?: string;
+}
+
+/** #603 A3a: how an answer's sender was let through, or why it was not compared. */
+export type AdmittedBy =
+  'owner' | 'answerers' | 'project_answerers' | 'no_named_answerer' | 'owner_not_checked_on_route';
 
 /** #627 W: what an answer's entry holds about its route — the facts, or a library caller's absence. */
 export type AnswerOnRecord = AnswerFacts | { absent: 'route_not_declared' };

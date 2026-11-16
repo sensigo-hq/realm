@@ -26,8 +26,11 @@ export {
   type CheckFinding,
   type CheckNotChecked,
   type CheckNotRun,
+  type CheckOptions,
   type CheckReport,
 } from './store-check.js';
+// The filter-mask fix, PR 2: the kinds of changed form the `declared_forms` check names.
+export { FORM_KINDS, type FormKind } from './store-check-forms.js';
 export type { SqliteRunStore } from './run-store.js';
 export type {
   PurgeCheckpoint,

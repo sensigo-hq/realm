@@ -496,12 +496,17 @@ const _retryKeysExtraCheck: _RetryKeysExtra extends never
 export interface GateConfig {
   choices?: string[];
   /**
-   * Slack user ID or handle of the person responsible for resolving this gate.
-   * Used for notification targeting and escalation.
+   * The person expected to answer, stored as written: a Slack member ID (`U…`/`W…`), its mention
+   * `<@U…>`, or any name. In Slack only a member ID matches a reply.
    * Optional — notifications work without it.
    * Example: '@mihai.lupu' or 'U012AB3CD'
    */
   owner?: string;
+  /**
+   * Slack member IDs who may also answer in Slack. #603 A3a: a non-empty list of non-empty strings
+   * (the loader refuses anything else), frozen on the question when it opens.
+   */
+  answerers?: string[];
   /**
    * Developer-authored template string presented to the human reviewer when this gate opens.
    * Supports {{ context.resources.STEP.FIELD }} and {{ run.params.FIELD }} references.
@@ -577,6 +582,7 @@ export interface GateConfig {
 export const KNOWN_GATE_KEYS = [
   'choices',
   'owner',
+  'answerers',
   'message',
   'resolution_messages',
   'timeout_seconds',
