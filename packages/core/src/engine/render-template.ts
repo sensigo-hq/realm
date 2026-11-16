@@ -4,6 +4,8 @@
 // Unknown references are left as-is. Object/array values are JSON-stringified.
 import type { WorkflowContextSnapshot } from '../types/run-record.js';
 import type { ContextWrapperFormat } from '../types/workflow-definition.js';
+import { discloseValueAt } from '../utils/disclosure-walk.js';
+import { WHOLE_NAMED_MARKER, type DisclosureSet, type DisclosureTier } from '../utils/redaction.js';
 import { splitOnUnquotedDelimiter } from './comparison-expr.js';
 
 /**
@@ -466,6 +468,16 @@ export function placeholderParts(expr: string): {
  */
 export const TEMPLATE_PLACEHOLDER = /\{\{([^{}]+)\}\}/g;
 
+/**
+ * The filter-mask fix (B1): what a render masks each resolved value with, BEFORE its filters run — the
+ * host's disclosure set and the tier the render site names (a gate's question: `declared`; a step's
+ * prompt and instructions: the set's audience tier).
+ */
+export interface RenderDisclosure {
+  readonly set: DisclosureSet;
+  readonly tier: DisclosureTier;
+}
+
 /** #729 PR-4: renderTemplate's options. */
 export interface RenderTemplateOptions {
   strict?: boolean;
@@ -489,6 +501,14 @@ export interface RenderTemplateOptions {
    * With none, a `from_now` placeholder is left as written: the filter never reads a clock.
    */
   time?: RenderTime;
+  /**
+   * The filter-mask fix (B1): when given, each RESOLVED value is masked before its filter chain runs
+   * (the disclosure walk over its string leaves and keys, at the given tier), so a filter never sees
+   * a hidden value and never changes one into a form the sink's mask no longer knows. A value that
+   * is wholly a marker stops its chain: it is shown as the marker. The hooks keep their contracts
+   * ({@link onSubstitution} still sees the final string). Without it, values render as before.
+   */
+  disclosure?: RenderDisclosure;
 }
 
 /**
@@ -514,6 +534,9 @@ export interface PlaceholderEvent {
  * - undefined/unresolvable or type_mismatch: left as {{ expression }}
  * - unknown_filter in strict mode: throws UnknownFilterError
  * - unknown_filter in lenient mode: leaves placeholder intact
+ * - every filter NAME in a chain is checked before any filter runs, so an unknown name is reported
+ *   even where an earlier filter would fail on the value (the filter-mask fix, B1)
+ * - with `options.disclosure`: each resolved value masked before its filters (see the option)
  *
  * Handles the workflow.context.* namespace when workflowContext is provided.
  */
@@ -539,6 +562,12 @@ export function renderTemplate(
       ? options.onSubstitution(rendered, path)
       : rendered;
   };
+  // The filter-mask fix (B1): a resolved value as the render site masks it, before any filter.
+  const disclosure = options?.disclosure;
+  const masked = (value: unknown): unknown =>
+    disclosure !== undefined && value !== undefined
+      ? discloseValueAt(value, disclosure.set, disclosure.tier)
+      : value;
   const replacementOf = (expr: string): string => {
     const pipeIdx = expr.indexOf('|');
     const hasFilters = pipeIdx !== -1;
@@ -551,7 +580,7 @@ export function renderTemplate(
     if (rawPath.startsWith('workflow.context.') && context.workflowContext) {
       if (!hasFilters) {
         const value = resolveWorkflowContextRef(rawPath, context.workflowContext);
-        return value === undefined ? `{{ ${fullExpr} }}` : resolved(value, rawPath);
+        return value === undefined ? `{{ ${fullExpr} }}` : resolved(String(masked(value)), rawPath);
       }
     }
 
@@ -568,15 +597,33 @@ export function renderTemplate(
     if (!hasFilters) {
       // Original coercion behaviour.
       if (rawValue === undefined) return `{{ ${fullExpr} }}`;
-      if (typeof rawValue === 'string') return resolved(rawValue, rawPath);
-      return resolved(JSON.stringify(rawValue, null, 2), rawPath);
+      const value = masked(rawValue);
+      if (typeof value === 'string') return resolved(value, rawPath);
+      return resolved(JSON.stringify(value, null, 2), rawPath);
     }
 
     // Filter chain processing.
     const filters = parseFilters(expr);
-    let current: unknown = rawValue;
+    // The filter-mask fix (B1): every filter NAME is checked before any filter runs, for every value
+    // (a hidden one stops its chain early, so a later unknown name would otherwise go unreported).
+    for (const { name } of filters) {
+      if (!Object.hasOwn(FILTER_STABILITY, name)) {
+        if (options?.strict === true) throw new UnknownFilterError(name);
+        return `{{ ${fullExpr} }}`;
+      }
+    }
+    let current: unknown = masked(rawValue);
 
     for (const { name, args } of filters) {
+      // B1: a value that is wholly a marker (a member masked whole, or a shape) is shown as it is —
+      // no filter re-cases, cuts or reads it. Only on a masking render: without a set, as before.
+      if (
+        disclosure !== undefined &&
+        typeof current === 'string' &&
+        WHOLE_NAMED_MARKER.test(current)
+      ) {
+        break;
+      }
       const result = applyFilter(current, name, args, options?.time);
       if (!result.ok) {
         if (result.reason === 'unknown_filter') {

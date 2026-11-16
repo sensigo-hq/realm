@@ -10,6 +10,7 @@ import { canonicalJson } from '../store/params-hash.js';
 import {
   buildDisclosureSet,
   disclose,
+  stripSpanMarkText,
   WHOLE_NAMED_MARKER,
   type DisclosureSet,
 } from '../utils/redaction.js';
@@ -26,22 +27,21 @@ import { TEMPLATE_PLACEHOLDER, applyFilter, placeholderParts } from './render-te
  */
 export const VIEW_BUDGET = 600;
 
-const SPAN_MARKS = /[\uE000-\uE002]/g;
-
 /**
  * The span marks (U+E000–E002) removed, each character singly — from a text, or from every string
  * of a JSON value, keys included. The marks are the CLI writer's print-time spans; one planted in
  * run data would part a declared value and defeat the law's whole-value match, so they go before a
- * value is masked. (`pending.ts`'s module-private `visibleText` removes whole span heads only and is
- * not this.)
+ * value is masked. The one-string strip is `utils/redaction.ts`'s `stripSpanMarkText` (the
+ * filter-mask fix: the disclosure walk strips with it, and `utils/` never imports the engine).
+ * (`pending.ts`'s module-private `visibleText` removes whole span heads only and is not this.)
  */
 export function stripSpanMarks(text: string): string;
 export function stripSpanMarks<T>(value: T): T;
 export function stripSpanMarks(value: unknown): unknown {
-  if (typeof value === 'string') return value.replace(SPAN_MARKS, '');
+  if (typeof value === 'string') return stripSpanMarkText(value);
   // JSON never escapes U+E000–E002, so the marks are removed from the serialised text.
   const json = JSON.stringify(value);
-  return json === undefined ? value : JSON.parse(json.replace(SPAN_MARKS, ''));
+  return json === undefined ? value : JSON.parse(stripSpanMarkText(json));
 }
 
 /** A value at a dot path of a step's output; `undefined` when the path finds nothing. */

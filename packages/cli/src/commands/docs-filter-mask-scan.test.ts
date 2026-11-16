@@ -37,6 +37,11 @@ describe('the filter-mask fix, PR 2 — the words of `realm db check --project`'
     claimChangelog(
       "**9. If a template showed a declared secret through a filter, find the runs that hold it, then rotate it.** If a workflow template showed a declared secret through a filter (`upper`, `lower`, `capitalize`, `title`, `truncate`) before this version, the filtered form reached the question or the prompt (see Fixed). After item 4's migration, run `realm db check --project <your project folder>`: it names each stored run that holds such a form, and the field that holds it. Rotate those secrets and purge those runs: a run still waiting at its question is answered first (`realm run respond <id> --gate <gate id> --choice reject`; `realm run inspect <id>` shows the gate id, and the stored question as it was opened — the filtered form included), a run still in progress is abandoned first (`realm run abandon <id>`), then `realm run purge <id> --force`; until the run is purged the scan names the same form again, at the answered question's `evidence seq <n>: gate_message`. Run it before you rotate: it looks for your current declared values. Values under 8 characters, and forms made by `replace` or `split`, are not found. A form sent to a model provider or posted to Slack is not stored here: if such a template ran as an agent step's prompt or a Slack-notified gate, rotate that secret regardless.",
     );
+    // PR 1's Fixed line gains the scan's clause (the merge of #1194); PR 1's own cell
+    // (filter-mask-fix "(13)") pins the whole line.
+    claimChangelog(
+      "until it is answered, and the release notes' Upgrading section says how to find and rotate what was shown; a reply's `disclosure.hidden`",
+    );
     // The inventory row `realm db check --project — option, takes a value` (kept-surface-changelog).
     claimChangelog(
       '- **`realm db check --project`** `<dir>`: names the stored runs that hold a changed form of a declared value.',
