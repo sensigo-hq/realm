@@ -477,7 +477,8 @@ const THIS = 'this file';
 
 describe('#616 c8a2 — check 6: the page says what the command does', { timeout: 120_000 }, () => {
   it.each([
-    ['the usage', '`realm db check [--json]`', `${THIS}, check 1`],
+    // The filter-mask fix, PR 2: the synopsis gains `--project` (db-check-declared-forms runs it).
+    ['the usage', '`realm db check [--json] [--project <dir>]`', `${THIS}, check 1`],
     [
       'it writes nothing',
       'Reports on the store file without changing it: it opens the file read-only. `db check` writes nothing to the store file; SQLite may create or update its two side files beside it (`realm.db-wal`, `realm.db-shm`), as any open of the store does.',
@@ -500,7 +501,7 @@ describe('#616 c8a2 — check 6: the page says what the command does', { timeout
     ],
     [
       'the exit code',
-      '**Exit code:** 0 when every check ran and found nothing. 1 when a problem is found or a check could not run, and 1 when the command refuses, with one `Error:` line on standard error and nothing on standard output. A file Realm cannot write to exits 1, a read-only copy included (`findings[].code` is `not_writable`).',
+      "**Exit code:** 0 when every check ran and found nothing. 1 when a problem is found or a check could not run, and 1 when the command refuses, with one `Error:` line on standard error and nothing on standard output — the `--project` refusal for a secret that cannot be resolved follows its `Error:` line with the resolver's lines naming each `${secret:NAME}`, never a value. A file Realm cannot write to exits 1, a read-only copy included (`findings[].code` is `not_writable`).",
       `${THIS}, checks 1, 2 and 3`,
     ],
     [

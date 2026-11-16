@@ -50,6 +50,7 @@ import {
   admittedDefinitionOf,
   registryWarnings,
 } from '../lib/load-workflow-for-admission.js';
+import { slackAnswererWarnings } from '../lib/slack-answerer-warnings.js';
 import { parseProvider } from './agent.js';
 import type { ProviderName } from '../agent/providers/llm-provider.js';
 import {
@@ -946,10 +947,14 @@ async function validateRegistered(
       releaseLineWarnings = loaded.releaseLineWarnings;
       cacheEconomicsPath = loaded.cacheEconomicsPath;
       try {
-        registryFindings = registryWarnings(
-          loadWorkflowFromStringWithDiagnostics(stripped, loaded.registry, loaded.declaredNames)
-            .warnings,
-        );
+        registryFindings = [
+          ...registryWarnings(
+            loadWorkflowFromStringWithDiagnostics(stripped, loaded.registry, loaded.declaredNames)
+              .warnings,
+          ),
+          // #603 A3a: as the admission makes them, on the stored copy.
+          ...slackAnswererWarnings(definition, loaded.notifiers?.slack_gate),
+        ];
       } catch (err) {
         exitOnLoadFailure(err, json ? registeredCtx(definition.id, warningsOf(err)) : undefined);
       }

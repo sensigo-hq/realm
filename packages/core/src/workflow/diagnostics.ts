@@ -75,7 +75,10 @@ export type WarningCode =
   // execution: a template with one of them failed or misrendered when the step ran.
   | 'TEMPLATE_FILTER_UNKNOWN'
   | 'TEMPLATE_FILTER_ARGUMENT'
-  | 'TEMPLATED_FIELD_NOT_TEXT';
+  | 'TEMPLATED_FIELD_NOT_TEXT'
+  // #603 A3a: with a Slack notifier that reads replies, a gate naming someone who is not a Slack
+  // member ID — no reply from them can count (the CLI mints it at the admission). Advice.
+  | 'GATE_ANSWERER_NOT_SLACK_ID';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -183,6 +186,8 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   TEMPLATE_FILTER_UNKNOWN: 'error',
   TEMPLATE_FILTER_ARGUMENT: 'error',
   TEMPLATED_FIELD_NOT_TEXT: 'error',
+  // #603 A3a — a warning; `--strict` fails on it as on any warning.
+  GATE_ANSWERER_NOT_SLACK_ID: 'warn',
 };
 
 /**

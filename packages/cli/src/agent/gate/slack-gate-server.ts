@@ -15,6 +15,20 @@ export interface SlackGateEvent {
   text: string;
   /** Slack event timestamp (format: '1234567890.123456'). */
   ts: string;
+  /** #603 A3a: the author's workspace — the event's own `team` when Slack sends it, else the
+   *  payload's `team_id`; absent when neither is there. */
+  team?: string;
+}
+
+/** #603 A3a: the workspace an event names (the event's `team`, else the payload's `team_id`). */
+export function eventTeam(
+  event: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): string | undefined {
+  const own = event['team'];
+  if (typeof own === 'string' && own !== '') return own;
+  const outer = payload['team_id'];
+  return typeof outer === 'string' && outer !== '' ? outer : undefined;
 }
 
 export interface SlackGateServerOptions {
@@ -120,7 +134,15 @@ export function startSlackGateServer(options: SlackGateServerOptions): { close()
 
       if (!threadTs || !user || !text || !ts || !eventId) return;
 
-      onEvent({ event_id: eventId, thread_ts: threadTs, user, text, ts });
+      const team = eventTeam(event, payload);
+      onEvent({
+        event_id: eventId,
+        thread_ts: threadTs,
+        user,
+        text,
+        ts,
+        ...(team !== undefined ? { team } : {}),
+      });
     });
   });
 

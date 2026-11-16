@@ -151,7 +151,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
   it('the post has four parts; every post carries one `realm run respond`, the thread sentence first when Realm listens', () => {
     claim(
       SLACK,
-      "It has four parts: the gate's name (and its `owner`, when set); your gate message, with the step's output below it when room is left; how to answer; and, when the message was cut to fit, the command that shows the step's whole output. How to answer is one `realm run respond` command; when Realm listens in the thread (`app_token`, or `signing_secret` and `events_port`), the post says `Reply in this thread with` and the choices first.",
+      "It has four parts: the gate's name (and its `owner`, when set); your gate message, with the step's output below it when room is left; how to answer; and, when the message was cut to fit, the command that shows the step's whole output. How to answer is one `realm run respond` command; when Realm listens in the thread (`app_token`, or `signing_secret` and `events_port`), the post says `Reply in this thread with` and the choices first, unless no one the question names is a Slack member ID: then it says `Replies in this thread are not counted`.",
     );
     const cut = gate({ owner: '@ana', resolved_message: `Q\n\n${CUT_SENTENCE(1, 900)}` });
     const opening = (g: PendingGate, mode: 'bot' | 'webhook') =>
@@ -167,12 +167,15 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
       );
     // (a) red when a part is dropped, the owner is not in the header, the bot's route changes, the
     //     bot post (listener-attended, correction A1) carries no command, or the webhook renders
-    //     one command per choice; (b) prints the parts and counts.
+    //     one command per choice; (b) prints the parts and counts. #603 A3a: this owner, '@ana',
+    //     names no Slack member ID, so the listening post says replies are not counted (W3).
     expect({
       heading: bot.text,
       parts: bot.blocks.length,
       owner: texts(bot.blocks)[0],
-      botRoute: texts(bot.blocks)[2]!.startsWith('Reply in this thread with `send` or `discard`'),
+      botRoute: texts(bot.blocks)[2]!.startsWith(
+        'Replies in this thread are not counted: no one this question names is a Slack member ID. Answer it from a terminal:',
+      ),
       cutWay: texts(bot.blocks)[3]!.startsWith("The step's whole output: realm run inspect"),
       botCommands: (texts(bot.blocks)[2]!.match(/realm run respond/g) ?? []).length,
       webhookCommands: (texts(hook.blocks)[2]!.match(/realm run respond/g) ?? []).length,
@@ -190,7 +193,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
   it('text is shown as written; an owner written as a Slack mention still pings', () => {
     claim(
       SLACK,
-      'Text from the workflow and the agent is shown as written: `<`, `>` and `&` do not become Slack markup. An `owner` written as a Slack mention still pings: a person (`<@U024BE7LH>`, or `<@W…>` on Enterprise Grid), a user group (`<!subteam^SAZ94GDB8>`), or `<!here>`, `<!channel>` and `<!everyone>`. Any other `owner`, such as `@ana`, is shown as written.',
+      'Text from the workflow and the agent is shown as written: `<`, `>` and `&` do not become Slack markup. An `owner` written as a Slack mention still pings: a person (`<@U024BE7LH>`, or `<@W…>` on Enterprise Grid), a user group (`<!subteam^SAZ94GDB8>`), or `<!here>`, `<!channel>` and `<!everyone>`. A bare member ID such as `U024BE7LH` is shown as a mention too. Any other `owner`, such as `@ana`, is shown as written and matches no reply.',
     );
     const owners = [
       '<@U024BE7LH>',
@@ -230,9 +233,11 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
   });
 
   it('the reminders, the escalation, the expiry reminder and the closed lines, in their words; durations in `formatDuration`’s forms', () => {
+    // #597 D3a: the form for a host that does not read replies is executed in
+    // slack-reminder-due-d3a "one compose function; the not-listening words".
     claim(
       SLACK,
-      'A reminder reads ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.``; the escalation is the same line with the gate\'s `owner` first. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`, with the instant beside them in UTC; a reminder more than a minute late is counted to the moment it is posted. Added after version 0.49.0. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or `This question is closed: it was answered — send, by "alice" (as stated), from a terminal, at 2026-11-12T10:02:14Z.` (the name is left out when that answer names nobody; version 0.49.0 said ``it was answered elsewhere as `send` ``)',
+      'A reminder reads ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.``; the escalation is the same line with the gate\'s `owner` first. When Realm is not reading replies in the thread, the reminder and the escalation say so instead and give the command: ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Realm is not reading replies in this thread right now — to respond, open a terminal and run:``, then the `realm run respond` command. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`, with the instant beside them in UTC; a reminder more than a minute late is counted to the moment it is posted. Added after version 0.49.0. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or `This question is closed: it was answered — send, by "alice" (as stated), from a terminal, at 2026-11-12T10:02:14Z.` (the name is left out when that answer names nobody; version 0.49.0 said ``it was answered elsewhere as `send` ``)',
     );
     const now = new Date('2026-10-27T10:12:00.000Z');
     const g = gate({ owner: '@ana' });
@@ -319,9 +324,13 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
   });
 
   it('no thread message names a command; the drain command is the console’s', () => {
+    // #597 D3a: scoped to while Realm reads replies; a host that does not gets the command in its
+    // reminders (slack-reminder-due-d3a "one compose function"). "(the question's own post gives the
+    // terminal way as well)": slack-gate-notifier.test.ts "question_opened, bot and webhook …" (the
+    // listening route ends `or from a terminal:` and the respond command).
     claim(
       SLACK,
-      "No message in the thread names a command. The command that carries out an expired question's `on_expiry`, `realm run drain --expired`, is printed where `realm agent` runs when it attends the thread with a bot token; with only `webhook_url`, nothing in `realm agent` carries the expiry out or prints it (#882).",
+      "While Realm is reading replies in the thread (a bot token with an `app_token` or a `signing_secret`), none of the lines Realm adds under the question names a command (the question's own post gives the terminal way as well). The command that carries out an expired question's `on_expiry`, `realm run drain --expired`, is printed where `realm agent` runs when it attends the thread with a bot token; with only `webhook_url`, nothing in `realm agent` carries the expiry out or prints it (#882).",
     );
     const g = gate({ expires_at: '2026-10-27T10:00:01.000Z', on_expiry: 'settle_default' });
     const now = new Date('2026-10-27T10:30:00.000Z');
@@ -632,7 +641,11 @@ describe('#964 — the Slack guide and the CHANGELOG on a reminder after the com
     // reads as if it had been posted on time)" — cells 1, 2; "the later ones stay on their planned
     // times" — cell 4; "The escalation, if it came due, is posted too, as its own line" — cell 5; "when
     // the gate names no `owner` and the reminder and the escalation would read the same, only the first
-    // of them is posted" — cells 7a, 7b, 7c and 6b; "A reminder that comes due while the computer is
+    // of them is posted" — cells 7a, 7b, 7c and 6b; "A `realm agent` started again does not post, at
+    // once, a reminder or an escalation when the other one was posted no earlier than a minute before
+    // the due one's time" — slack-reminder-due-d3a "the same-line sentence's own case" (and "a
+    // takeover: a reminder sent within the minute …"); a nudge still in the future at the takeover is
+    // not covered (#597 D3 R15); "A reminder that comes due while the computer is
     // awake is posted at its time" — cells 3–4 (k = 19, 20) and gate-notify-clock.test.ts; "If the time
     // limit … has passed by the time a reminder would be posted …, no plain reminder and no escalation
     // are posted" — cells 6, 10 and 11; "and so is the reminder that says the time ran out, if its own
@@ -646,7 +659,7 @@ describe('#964 — the Slack guide and the CHANGELOG on a reminder after the com
     // longer holds the words, or an old clause is back; (b) prints the sentence.
     claim(
       SLACK,
-      "When the computer sleeps while a question is open, the last reminder that came due during the sleep is posted within a minute of waking, once, with the time the question has really been open (a reminder at most a minute late reads as if it had been posted on time); the ones that came due in between are not posted, and the later ones stay on their planned times. The escalation, if it came due, is posted too, as its own line; when the gate names no `owner` and the reminder and the escalation would read the same, only the first of them is posted. A reminder that comes due while the computer is awake is posted at its time. If the time limit of a question that closes at its limit (`on_expiry`) has passed by the time a reminder would be posted (up to a minute after waking), no plain reminder and no escalation are posted: the question's closing line is, and so is the reminder that says the time ran out, if its own time has come by then. A question with no `on_expiry` is still open after its time limit, so its reminders follow the rules above. (`timeout_seconds`, `on_expiry` and `owner` are set on the gate: see [Gates](../reference/workflow/gates.md).) Added after version 0.49.0.",
+      "When the computer sleeps while a question is open, the last reminder that came due during the sleep is posted within a minute of waking, once, with the time the question has really been open (a reminder at most a minute late reads as if it had been posted on time); the ones that came due in between are not posted, and the later ones stay on their planned times. The escalation, if it came due, is posted too, as its own line; when the gate names no `owner` and the reminder and the escalation would read the same, only the first of them is posted. A `realm agent` started again does not post, at once, a reminder or an escalation when the other one was posted no earlier than a minute before the due one's time. A reminder that comes due while the computer is awake is posted at its time. If the time limit of a question that closes at its limit (`on_expiry`) has passed by the time a reminder would be posted (up to a minute after waking), no plain reminder and no escalation are posted: the question's closing line is, and so is the reminder that says the time ran out, if its own time has come by then. A question with no `on_expiry` is still open after its time limit, so its reminders follow the rules above. (`timeout_seconds`, `on_expiry` and `owner` are set on the gate: see [Gates](../reference/workflow/gates.md).) Added after version 0.49.0.",
     );
     claim(
       SLACK,

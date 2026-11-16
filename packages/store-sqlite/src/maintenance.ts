@@ -94,7 +94,7 @@ import { loadSqlite, openDatabase, type DatabaseLike } from './driver.js';
 import { assertLocalFilesystem, SYSTEM_PROBE } from './filesystem-gate.js';
 import { DATABASE_FILE, systemErrorText } from './home.js';
 import { openForCheck, openRealmDb, type OpenSeams } from './open-file.js';
-import { runCheck, type CheckReport } from './store-check.js';
+import { runCheck, type CheckOptions, type CheckReport } from './store-check.js';
 import { staleStampsOf } from './run-scan.js';
 import { migrateSchema, type SchemaStepReport } from './schema-ladder.js';
 
@@ -148,8 +148,9 @@ export interface MaintenanceCheckHome {
    * resolves to the published report (`store-check.ts`). It never rejects for a finding. It rejects with
    * the store's busy refusal (`STATE_RUN_BUSY`, past its budget), with any error of the integrity check
    * other than a damaged file's (passed on as every store read passes it), and after `close()`.
+   * `options.declaredValues` (the filter-mask fix, PR 2) adds the `declared_forms` check.
    */
-  check(): Promise<CheckReport>;
+  check(options?: CheckOptions): Promise<CheckReport>;
   /** Closes the handle's connection. A second `close()` does nothing. */
   close(): void;
 }
@@ -890,14 +891,18 @@ async function openCheck(
   let closed = false;
   return {
     path: source,
-    async check(): Promise<CheckReport> {
+    async check(options?: CheckOptions): Promise<CheckReport> {
       if (closed) throw new Error(`The maintenance handle on ${source} is closed.`);
-      return runCheck(file, {
-        path: source,
-        sqliteVersion,
-        filesystem,
-        platform: probe.platform,
-      });
+      return runCheck(
+        file,
+        {
+          path: source,
+          sqliteVersion,
+          filesystem,
+          platform: probe.platform,
+        },
+        options,
+      );
     },
     close(): void {
       if (closed) return;

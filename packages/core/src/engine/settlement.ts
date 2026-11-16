@@ -61,6 +61,7 @@ import { deriveDefaultedSteps } from './defaulted-steps.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { omitClaim } from './claim-liveness.js';
 import { judgeGateProof, type GateClaimVerdict } from './holder.js';
+import { judgeAnswerer } from './answerer.js';
 import { DRAIN_LEASE_MAX } from './lifecycle.js';
 import { parseStamp, isPastDeadline } from './instants.js';
 import { evaluateGuardConditions, type GuardConditionResult } from './precondition.js';
@@ -897,6 +898,19 @@ function applySettleGate(
       if (!enacted.applied) return enacted;
       return { ...enacted, lateAnswer: { gateId, choice, gateClaim, expiresAt } };
     }
+    // #603 A3a: who may answer — judged after the expiry (a late reply carries the expiry out, as
+    // before) and before the choice; an answer with no channel evidence is not compared. A refused
+    // sender writes nothing, and the question stays open.
+    const answerer = judgeAnswerer(fresh.pending_gate, delta.sender?.forms, delta.projectAnswerers);
+    if ('refused' in answerer) {
+      return {
+        applied: false,
+        reason: 'answerer_mismatch',
+        run: fresh,
+        allowed: answerer.refused.allowed,
+        sender: delta.sender!.user, // refused only when the answer carries a sender
+      };
+    }
     if (!fresh.pending_gate.choices.includes(choice)) {
       return {
         applied: false,
@@ -922,7 +936,9 @@ function applySettleGate(
       evidence: [
         ...rest.evidence,
         ...evidence.map((e) =>
-          e.kind === 'gate_response' ? { ...e, claim_proof: verdictOnly(gateClaim) } : e,
+          e.kind === 'gate_response'
+            ? { ...e, claim_proof: verdictOnly(gateClaim), admitted_by: answerer.admitted }
+            : e,
         ),
       ],
       settled: { ...rest.settled, [stepName]: { token: gateId, outcome: 'gate', choice } },

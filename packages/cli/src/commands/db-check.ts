@@ -7,8 +7,22 @@
 // set after the report is printed, and never by exiting inside the `try`, which would skip `close()`.
 // Every refusal is a typed one, printed by the entry as one `Error:` line with exit code 1
 // (`lib/expected-refusal.ts`).
+//
+// The filter-mask fix, PR 2: `--project <dir>` reads the project's `realm.yaml` and resolves its
+// `${secret:NAME}` values as the read commands do (`lib/read-run-manifest.ts`: no project code runs),
+// then asks the check to look for their changed forms (the store's `declared_forms` check). The values
+// cross in process only; the writer is given them too, so a value that reached a printed line would be
+// masked. A folder with no `realm.yaml`, a manifest that cannot be read or is invalid, or a secret it
+// names that cannot be resolved is refused before the store is opened: nothing is scanned.
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { Command } from 'commander';
-import type { DisclosureClass } from '@sensigo/realm';
+import {
+  collectManifestSecretRefs,
+  parseDeploymentManifest,
+  WorkflowError,
+  type DisclosureClass,
+} from '@sensigo/realm';
 import {
   openRealmHomeForMaintenance,
   type CheckFacts,
@@ -17,7 +31,8 @@ import {
   type CheckNotRun,
   type CheckReport,
 } from '@sensigo/realm-store-sqlite';
-import { printJsonByTable } from '../output/writer.js';
+import { addDeclaredDisclosure, printJsonByTable } from '../output/writer.js';
+import { resolveManifestSecrets } from '../extensions/manifest-secrets.js';
 
 /**
  * The class of every key of the report. A key added to the store's report and left out here fails
@@ -57,6 +72,10 @@ const CHECK_JSON_TABLE = {
       count_is_lower_bound: 'fact',
       examples: 'bounded',
       examples_of: 'fact',
+      // The filter-mask fix, PR 2: a script purges by `run_id`; none of the three holds a value.
+      run_id: 'fact',
+      path: 'fact',
+      kind: 'fact',
     } satisfies Record<keyof CheckFinding, DisclosureClass>,
   },
   not_run: {
@@ -177,16 +196,78 @@ function reportLines(report: CheckReport): string[] {
   ];
 }
 
+/** A refusal of `--project`, before the store is opened. */
+function projectRefused(message: string, path: string, reason: string): WorkflowError {
+  return new WorkflowError(`realm db check --project: ${message}`, {
+    code: 'STATE_STORE_CHECK_REFUSED',
+    category: 'STATE',
+    agentAction: 'report_to_user',
+    retryable: false,
+    details: { path, reason },
+  });
+}
+
+/**
+ * The project's declared values: its `realm.yaml`'s `${secret:NAME}` values, resolved from the sources
+ * it declares, as the read commands resolve them. Every failure is a refusal that names no value.
+ */
+function declaredValuesOf(dir: string): Record<string, string> {
+  const root = resolve(dir);
+  const path = join(root, 'realm.yaml');
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (err) {
+    const code = (err as { code?: unknown }).code;
+    if (code === 'ENOENT') throw projectRefused(`no realm.yaml in ${root}.`, path, 'no_manifest');
+    throw projectRefused(
+      `cannot read '${path}': ${typeof code === 'string' ? code : String(err)}.`,
+      path,
+      'manifest_unreadable',
+    );
+  }
+  const parsed = parseDeploymentManifest(text);
+  if ('error' in parsed) {
+    throw projectRefused(
+      parsed.error.kind === 'yaml'
+        ? `'${path}' is not valid YAML.`
+        : `'${path}' is invalid: ${parsed.error.errors[0] ?? 'invalid'}.`,
+      path,
+      'manifest_invalid',
+    );
+  }
+  try {
+    const refs = collectManifestSecretRefs(parsed.document);
+    return resolveManifestSecrets(refs, parsed.document.secrets, root, 'real').values;
+  } catch (err) {
+    // The resolver's one error names every `${secret:NAME}` it could not resolve, and no value.
+    throw projectRefused(
+      `${err instanceof Error ? err.message : String(err)}\nNothing was scanned.`,
+      path,
+      'secret_unresolved',
+    );
+  }
+}
+
 export const dbCheckCommand = new Command('check')
   .description(
     "Report on the store file without writing it: SQLite's integrity check, the file's settings, version and schema, every run's stored record, the tables against each other, and what this version does not check",
   )
   .option('--json', 'Print the report as JSON on stdout, and nothing else')
-  .action(async (opts: { json?: boolean }) => {
+  .option(
+    '--project <dir>',
+    "Also name each stored run that holds a changed form (upper-cased, lower-cased, capitalised, title-cased or truncated) of a secret the project's realm.yaml declares",
+  )
+  .action(async (opts: { json?: boolean; project?: string }) => {
+    // Refused before the store is opened: nothing is scanned.
+    const declared = opts.project === undefined ? undefined : declaredValuesOf(opts.project);
+    if (declared !== undefined) addDeclaredDisclosure(declared, undefined);
     const home = await openRealmHomeForMaintenance({ verb: 'check' });
     let status: CheckReport['status'];
     try {
-      const report = await home.check();
+      const report = await home.check(
+        declared === undefined ? undefined : { declaredValues: Object.values(declared) },
+      );
       status = report.status;
       if (opts.json === true) printJsonByTable(report, CHECK_JSON_TABLE);
       else for (const line of reportLines(report)) console.log(line);

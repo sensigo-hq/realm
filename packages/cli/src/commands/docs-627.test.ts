@@ -853,11 +853,11 @@ describe('#627 W correction 1 — the claims F asks for', () => {
       '- the prompt of `realm workflow run`, when you run by hand.',
     ];
     for (const place of PLACES) claim(TRUST, place);
-    // "records the choice and how it arrived": answer-record-627 :: "`realm run respond` records
-    // route cli …" and form-627 cell 21 (route mcp_form). The default's sentence: this file's "who
-    // can answer follows the value" (the tools per session) and door-627 :: "cell 11 — …" (no
-    // session lists a marked answer tool).
-    claim(TRUST, 'It records the choice and how it arrived.');
+    // "records how the answer arrived": answer-record-627 :: "`realm run respond` records route cli
+    // …" and form-627 cell 21 (route mcp_form); #603 A3a: the rest of the sentence is
+    // docs-603-a3a's. The default's sentence: this file's "who can answer follows the value" (the
+    // tools per session) and door-627 :: "cell 11 — …" (no session lists a marked answer tool).
+    claim(TRUST, 'Realm records how the answer arrived, and the account as Slack reports it.');
     claim(
       TRUST,
       "By default, no agent gets a tool that records a gate answer through Realm's MCP server: in an app that shows forms the person answers in the app's form; elsewhere a person answers in a terminal on the server's machine with `realm run respond`.",
@@ -865,7 +865,7 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     const text = flat(readFileSync(join(ROOT, TRUST), 'utf8'));
     const list = text
       .slice(text.indexOf('There are five places it can come from:'))
-      .split(' **Realm does not check who answers.**')[0]!;
+      .split(' **In Slack, Realm checks who answers.**')[0]!;
     // (a) red when the page's list holds a place no cell above names, or drops one; (b) prints the
     //     list's items.
     expect(

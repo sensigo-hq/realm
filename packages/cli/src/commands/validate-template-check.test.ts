@@ -301,7 +301,7 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     }).toEqual({ refuse: true, instructions: true, oldRefuse: false, oldInstructions: false });
   });
 
-  it('loader-diagnostics.md: 32 codes, ten of them errors, the errors list and the three rows', () => {
+  it('loader-diagnostics.md: 33 codes, ten of them errors, the errors list and the three rows', () => {
     const page = readFileSync(join(ROOT, 'docs/reference/workflow/loader-diagnostics.md'), 'utf8');
     const rows = page
       .split('\n')
@@ -315,8 +315,8 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     const at = rows.findIndex((r) => r[0] === '`ADAPTER_NOT_PROVIDED`');
     // (1) red when a count, the list or a row is missing or changed; (2) prints them.
     expect({
-      lists: flat(page).includes('lists all 32 warning codes'),
-      count: flat(page).includes('The loader has 32 warning codes. Ten of them count as errors'),
+      lists: flat(page).includes('lists all 33 warning codes'),
+      count: flat(page).includes('The loader has 33 warning codes. Ten of them count as errors'),
       list: flat(page).includes(
         'or leaves a required one unfilled; and a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text. The others are advice',
       ),
@@ -327,7 +327,8 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
       lists: true,
       count: true,
       list: true,
-      rows: 32,
+      // #603 A3a: GATE_ANSWERER_NOT_SLACK_ID, a warning, after the three rows.
+      rows: 33,
       errors: 10,
       three: [
         [
@@ -349,7 +350,7 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     });
   });
 
-  it('CHANGELOG.md: the BREAKING line under Changed, and Upgrading item 8', () => {
+  it("CHANGELOG.md: the BREAKING line under Changed, and Upgrading item 8 (#603 A3a's is 11)", () => {
     const log = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     const start = log.indexOf('## [Unreleased]');
     const unreleased = log.slice(start, log.indexOf('\n## [', start + 1));
