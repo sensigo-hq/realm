@@ -269,6 +269,11 @@ export {
   presentDoorVerdict,
   presentWayOfGate,
   doorWithholdsAnswers,
+  // #922: a held step's state (at composition, and from a composed entry), and the one table of a
+  // reclaim condition's words.
+  heldStateAt,
+  heldStateOf,
+  reclaimConditionWords,
 } from './engine/ways.js';
 export type {
   Party,
@@ -284,6 +289,8 @@ export type {
   AbandonWay,
   RegisterWay,
   PresentWay,
+  ReclaimWay,
+  HeldState,
   WayOn,
   WayOf,
   CodeTag,

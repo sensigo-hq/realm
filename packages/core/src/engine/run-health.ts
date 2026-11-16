@@ -781,6 +781,9 @@ function classifyRecordHealth(
     const composed = composeWaysAt(run, now, {
       definition: opts.definition,
       ...(opts.registry !== undefined ? { registry: opts.registry } : {}),
+      // #922: this pure classifier has no store; `cannotGoOnUntilCorrected` reads no reclaim way, so
+      // whether the store keeps claims does not change its answer.
+      persistsClaims: false,
       lease_facts: snapshot.lease_facts,
     });
     if (cannotGoOnUntilCorrected(composed)) {
