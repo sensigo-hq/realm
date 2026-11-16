@@ -176,16 +176,20 @@ export function passedSnippet(value: unknown, cap = 200): string {
  * encoded text spells — one ending in a lone `\`, which the walk cannot read — as the serializer did
  * before.
  *
+ * The span marks are stripped FIRST, on both branches (the filter-mask fix, B3): a mark planted
+ * inside a value would part it and defeat the match, so it goes before any mask (the walk strips
+ * every string and key it reads, and the encoded output is stripped before its pass).
+ *
  * A result `JSON.stringify` cannot encode (`undefined`, a function, a symbol) reads `undefined`, as
  * before; one it throws on (a cycle, a BigInt) throws, as before.
  */
 export function serializeToolResult(result: unknown): string {
   const set = agentDisclosureSet();
-  if (typeof result === 'string') return stripMarks(disclose(result, set, 'all').text);
+  if (typeof result === 'string') return disclose(stripMarks(result), set, 'all').text;
   const encoded = JSON.stringify(result) as string | undefined;
   if (encoded === undefined) return 'undefined';
   const shown = discloseValue(JSON.parse(encoded) as unknown, set, 'agent').value;
-  return stripMarks(disclose(JSON.stringify(shown), set, 'all').text);
+  return disclose(stripMarks(JSON.stringify(shown)), set, 'all').text;
 }
 
 /** The `error` text for a Class-B result whose content carries no readable text at all. */

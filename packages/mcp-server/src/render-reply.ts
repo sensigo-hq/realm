@@ -61,6 +61,7 @@ import {
   discloseLeaf,
   discloseReply,
   discloseSplit,
+  stripSpanMarks,
   tierFor,
   withheldCauseOf,
   weakestDeclared,
@@ -1984,7 +1985,9 @@ export function toolContentOf(
   guardWayOut?: string,
 ): ToolResult {
   if (typeof reply === 'string') {
-    const text = disclose(reply, disclosure.set, 'all').text;
+    // The filter-mask fix (B3): the span marks stripped BEFORE the mask (a planted mark would part a
+    // hidden value and defeat the match).
+    const text = disclose(stripSpanMarks(reply), disclosure.set, 'all').text;
     return {
       content: [
         {
@@ -2312,7 +2315,8 @@ function maskedForLog(text: string): string {
     declaredCause: 'embedder_none',
     audience: 'log',
   }).set;
-  return disclose(text, set, 'all').text;
+  // The filter-mask fix (B3): the span marks stripped BEFORE the mask.
+  return disclose(stripSpanMarks(text), set, 'all').text;
 }
 
 /** Writes one line to stderr, masked with the environment's set for a log (never a raw error). */

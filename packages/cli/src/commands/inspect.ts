@@ -174,6 +174,8 @@ function openQuestionLine(
       question = pendingGateQuestion(
         definition,
         writtenSnapshot({ ...run, pending_gate: gate }, snap.at, snap.lease_facts),
+        // The filter-mask fix (B2): each value masked before its filters, with this terminal's set.
+        { disclosure: viewSetFor('private') },
       );
     } catch {
       return "  Question: not shown — the step's prompt could not be rendered";

@@ -175,7 +175,7 @@ Note: Pack with care. / upper: PACK WITH CARE. / other step:
 
 A filter takes the value on its left and gives a new value. Filters are applied from left to right. An argument follows the filter's name after a colon. Several arguments are separated by commas. An argument that contains a space or a comma goes in quotes.
 
-If a filter is given a kind of value it does not work on, the whole expression is left as written. `default` is not reached in that case: it replaces a value that is missing, not a filter that could not be applied.
+If a filter is given a kind of value it does not work on, the whole expression is left as written. `default` is not reached in that case: it replaces a value that is missing, not a filter that could not be applied. A value that Realm hides whole is shown as `[REDACTED]` instead: it is hidden before any filter runs, and no filter changes it.
 
 In the examples, `s.` stands for `context.resources.scan.`, and `⏎` marks a line break in the result.
 

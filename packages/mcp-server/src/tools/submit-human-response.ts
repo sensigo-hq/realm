@@ -160,6 +160,9 @@ export async function handleSubmitHumanResponse(
     retryVerb: 'retry',
     verb: 'retry',
   });
+  // The filter-mask fix (Amendment 1): the door's set for the reply's ways (a `run_step` way's prompt
+  // masks each value before its filters), from the run and workflow this call read — no store read.
+  const waysDisclosure = await disclosureOfTool(stores).setFor(definition, run);
 
   // Per-definition registry (project extensions) — awaited before the call (fail-fast),
   // provider wins over `registry`. Mirrors execute-step.ts. Threaded into submitHumanResponse
@@ -195,6 +198,7 @@ export async function handleSubmitHumanResponse(
     // more, so `client_prompt_requested` is never written from here.
     route: 'mcp',
     principal: principalOfStores(stores),
+    disclosure: waysDisclosure,
   });
   const reply = withOutcomeWords(engineReply);
   // decision C211 (walk c14 W3-4's class): an answer that ended the run with cleanup steps left

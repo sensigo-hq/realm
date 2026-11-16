@@ -59,6 +59,7 @@ import {
   type ActorAbsent,
   runReadError,
   type WorkflowRegistrar,
+  type DisclosureSet,
 } from '@sensigo/realm';
 import { mcpHostOf } from './start-run.js';
 import type { McpDoor } from '../door.js';
@@ -917,7 +918,7 @@ export async function handleGetRunState(
     step_names?: string[] | undefined;
     cursor?: string | undefined;
   },
-  stores: HandleRunStateStores,
+  stores: HandleRunStateStores & WithDoorDisclosure,
 ): Promise<WithPersonBlock<RunStateSummary>> {
   assertToolStores(stores, 'handleGetRunState', ['runStore']);
   // #872 (b1): "asked" — every attempted step's detail, or the named steps' — read ONCE by every
@@ -997,6 +998,7 @@ export async function handleGetRunState(
               : { kind: 'observer' },
         // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
         store: waysStoreOf(runStore),
+        ...(waysSet !== undefined ? { disclosure: waysSet } : {}),
       }),
       mcpHostOf(stores),
     );
@@ -1008,6 +1010,13 @@ export async function handleGetRunState(
     workflow_id: run.workflow_id,
   };
   let definition: WorkflowDefinition | undefined;
+  // The filter-mask fix (B2): the door's set for the run's ways — asked once the definition is read
+  // (no store read: a `run_step` way's prompt exists only with a definition).
+  let waysSet: DisclosureSet | undefined;
+  const waysOn = async (read: WorkflowDefinition): Promise<void> => {
+    waysDefinition = { ok: read };
+    waysSet ??= await disclosureOfTool(stores).setFor(read, run);
+  };
   // issue #558 PR-T — the failure the definition read produced, when it produced one.
   let definitionError: { code: string; message: string; class?: string } | undefined;
   let pending: ReturnType<typeof describePending> | undefined;
@@ -1023,7 +1032,7 @@ export async function handleGetRunState(
     if (stores?.workflowStore === undefined) return undefined;
     try {
       const read = await stores.workflowStore.get(run.workflow_id);
-      waysDefinition = { ok: read };
+      await waysOn(read);
       return read;
     } catch (err) {
       const absence = definitionAbsenceOf(err, run);
@@ -1069,7 +1078,7 @@ export async function handleGetRunState(
             return undefined;
           })
         : undefined;
-    if (definition !== undefined) waysDefinition = { ok: definition };
+    if (definition !== undefined) await waysOn(definition);
     if (definition === undefined) {
       nextActionsStatus = 'workflow_unresolved';
     } else {

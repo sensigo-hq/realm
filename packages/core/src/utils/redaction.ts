@@ -153,6 +153,20 @@ export const LIVE_CLAIM_MARKER = '[redacted-live-claim]';
 /** {@link scrubEmail}'s marker. */
 export const REDACTED_EMAIL_MARKER = '[REDACTED_EMAIL]';
 
+/** The CLI writer's print-time span marks, U+E000–E002. */
+const SPAN_MARKS = /[\uE000-\uE002]/g;
+
+/**
+ * The span marks (U+E000–E002) removed from a text, each character singly. One planted in run data
+ * would part a hidden value and defeat the whole-value match, so they go before a value is masked:
+ * the disclosure walk's text step calls this before every match (the filter-mask fix, B3).
+ * `engine/question-view.ts`'s `stripSpanMarks` calls it for a text and for every string of a JSON
+ * value.
+ */
+export function stripSpanMarkText(text: string): string {
+  return text.replace(SPAN_MARKS, '');
+}
+
 /** Fix 1, piece 3b: a text that is wholly one named marker or one shape — the closed form of
  *  {@link NAMED_MARKER}'s members, anchored. `display` leaves such a value as it is, unfiltered.
  *  The one pattern: `NAMED_MARKER` is built from it. */
