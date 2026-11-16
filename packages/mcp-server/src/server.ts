@@ -51,7 +51,11 @@ import {
 } from './door.js';
 import type { ElicitFn } from './form-path.js';
 
-/** @public */
+/**
+ * What `createRealmMcpServer` is given: the four stores, which it requires, and the registry,
+ * prices and other settings it may take.
+ * @public
+ */
 export interface RealmMcpServerOptions {
   /** Extension registry for resolving service adapters and step handlers at runtime. */
   registry?: ExtensionRegistry;

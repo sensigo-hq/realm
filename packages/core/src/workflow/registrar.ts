@@ -38,7 +38,11 @@ import {
 export type ProbeFailureClass =
   'missing' | 'unreadable' | 'not_a_file' | 'empty' | 'registry_broken';
 
-/** @public */
+/**
+ * What a registry's probe found for a workflow id before any bytes are parsed: the file's size, or
+ * the class of failure and its path (`probe`).
+ * @public
+ */
 export type ProbeResult =
   | { ok: true; bytes: number }
   | { ok: false; class: ProbeFailureClass; errno?: string; path: string };
@@ -567,7 +571,10 @@ export interface RegistryListing {
   mismatched: Array<{ file: string; id: string }>;
 }
 
-/** @public */
+/**
+ * Where a program registers its workflows and reads them back by id.
+ * @public
+ */
 export interface WorkflowRegistrar {
   /** Persist a WorkflowDefinition under its id, overwriting any previous registration. */
   register(definition: WorkflowDefinition): Promise<void>;

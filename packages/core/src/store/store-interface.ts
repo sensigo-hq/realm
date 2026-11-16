@@ -66,7 +66,11 @@ export type LoadBearingRunRecordField =
   // believes the run's outcome was. A `settleStep`-declaring store MUST declare it.
   | 'sealed_by';
 
-/** @public */
+/**
+ * What a run store is given to create a run: the workflow and its version, the params, and an
+ * idempotency key with the rule for a key already used (`RunStore.create`).
+ * @public
+ */
 export interface CreateRunOptions {
   workflowId: string;
   workflowVersion: number;
@@ -137,7 +141,11 @@ export type CreateResult = Snapshot & { created: boolean };
  */
 export type StoreSettlement = SettlementResult & { at: Date; lease_facts?: LeaseFacts };
 
-/** @public */
+/**
+ * Where a program keeps its runs: it creates, reads, updates, lists, claims and settles them,
+ * reading the time from its own clock.
+ * @public
+ */
 export interface RunStore {
   /**
    * The clock this store reads the time from (#715, D5 §1.1, D6-1, D6-5; required from #715 (b)).

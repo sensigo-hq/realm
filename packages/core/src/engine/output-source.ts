@@ -23,7 +23,11 @@ export const OUTPUT_SOURCE_ABSENT_CAUSES = [
   'not_a_bare_step',
   'predates_output_source',
 ] as const;
-/** @public */
+/**
+ * Why an evidence entry says nothing about where its output came from (`outputSourceOf`'s
+ * `absent_cause`).
+ * @public
+ */
 export type OutputSourceAbsentCause = (typeof OUTPUT_SOURCE_ABSENT_CAUSES)[number];
 
 /**

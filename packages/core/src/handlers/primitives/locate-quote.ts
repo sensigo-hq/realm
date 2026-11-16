@@ -33,7 +33,11 @@ export const QUOTE_STATES = [
   'unquoted',
 ] as const;
 
-/** @public */
+/**
+ * How a quote was found in its source: whole, reformatted, stitched from parts in order or out of
+ * order, or not found; `unquoted` is for a value given with no quote.
+ * @public
+ */
 export type QuoteState = (typeof QUOTE_STATES)[number];
 
 /**
@@ -45,7 +49,11 @@ export interface QuoteSpan {
   readonly end: number;
 }
 
-/** @public */
+/**
+ * What `locateQuote` returns for a quote: how it was found, where each part is, how often it
+ * occurs, and the nearest piece when it was not found.
+ * @public
+ */
 export interface QuoteCheck {
   readonly state: QuoteState;
   /** Where each part was found: one span for `exact` / `reformatted`, one per part when stitched,

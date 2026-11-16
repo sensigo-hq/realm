@@ -18,7 +18,11 @@ export const LEASE_UNAVAILABLE_REASONS = [
   'io_error',
 ] as const;
 
-/** @beta */
+/**
+ * Why a store could not make a claim lease, from the error the operating system or SQLite gave
+ * (`LeaseHoldResult`'s `unavailable`).
+ * @beta
+ */
 export type LeaseUnavailableReason = (typeof LEASE_UNAVAILABLE_REASONS)[number];
 
 /**
@@ -34,7 +38,10 @@ export const LEASE_PROBE_REASONS = [
   'io_error',
 ] as const;
 
-/** @public */
+/**
+ * Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
+ * @public
+ */
 export type LeaseProbeReason = (typeof LEASE_PROBE_REASONS)[number];
 
 /**

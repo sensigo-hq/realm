@@ -8,10 +8,18 @@ import type { RaceStopKind, ReplyKind, Unavailable, WayOn } from '../engine/ways
 import type { Basis } from '../engine/snapshot.js';
 import type { EnactedVia } from '../engine/execution-loop.js';
 
-/** @public */
+/**
+ * The status of an engine reply: `ok`, `error`, `blocked` (the wrong step for the run's state) or
+ * `confirm_required` (a question is open) (`EngineReply.status`).
+ * @public
+ */
 export type RunStatus = 'ok' | 'error' | 'blocked' | 'confirm_required';
 
-/** @public */
+/**
+ * What a `blocked` reply says can be called instead: the steps that can be called now
+ * (`EngineReply.blocked_reason`).
+ * @public
+ */
 export interface BlockedReason {
   /**
    * The steps that can be called now: the agent steps the run's view offers and the `auto` steps
@@ -21,7 +29,11 @@ export interface BlockedReason {
   eligible_steps: string[];
 }
 
-/** @public */
+/**
+ * The question a reply opens: its id, step, preview and choices, what to show the person, and its
+ * deadline when it has one (`EngineReply.gate`).
+ * @public
+ */
 export interface GateInfo {
   gate_id: string;
   step_name: string;

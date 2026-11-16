@@ -1,11 +1,19 @@
 // Step handler — custom business logic for a workflow step.
 
-/** @public */
+/**
+ * What a handler is given as input: the step's params, after its `input_map` when it has one
+ * (`StepHandler.execute`'s first argument).
+ * @public
+ */
 export interface StepHandlerInputs {
   params: Record<string, unknown>;
 }
 
-/** @public */
+/**
+ * What a handler is told about the run: its id and params, the step's `config`, and earlier steps'
+ * outputs (`StepHandler.execute`'s second argument).
+ * @public
+ */
 export interface StepContext {
   run_id: string;
   run_params: Record<string, unknown>;
@@ -18,7 +26,11 @@ export interface StepContext {
   resources?: Record<string, unknown>;
 }
 
-/** @public */
+/**
+ * What a handler returns: the step's output, and optionally a state update, a clean abort or a
+ * warning (`StepHandler.execute`'s result).
+ * @public
+ */
 export interface StepHandlerResult {
   /**
    * Output data to record in the evidence chain. Required unless `abort` is set.
@@ -44,7 +56,11 @@ export interface StepHandlerResult {
   warn?: { message: string };
 }
 
-/** @public */
+/**
+ * A program's code for an `auto` step named by `handler:`: registered under its `id`, and called
+ * with the step's input and the run's context.
+ * @public
+ */
 export interface StepHandler {
   readonly id: string;
   /**
