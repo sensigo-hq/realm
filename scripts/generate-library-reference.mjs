@@ -378,7 +378,9 @@ function firstSentence(text) {
   }
   return flat;
 }
-const cell = (text) => text.replace(/\|/g, '\\|');
+// A table cell: backslashes first, then pipes (a `|` would end the cell; a backslash before it would
+// undo its escape).
+const cell = (text) => text.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
 const anchor = (name) => name.toLowerCase().replace(/[^a-z0-9_-]/g, '');
 const byName = (a, b) => {
   const x = a.toLowerCase();
