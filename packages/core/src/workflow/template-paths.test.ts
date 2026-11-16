@@ -83,7 +83,7 @@ steps:
 
 const GATE_STOPS = 'the gate does not open, and the run stays open with the step not done';
 const DEFAULT_FIX =
-  "Add '| default: <text>' as its first filter, keeping after it only filters that take text";
+  "Add '| default: <value>' as its first filter, keeping after it only filters that take that value";
 
 describe('fix 1, piece 3a-ii-a — paths in approval questions and display', () => {
   afterEach(() => {
@@ -198,7 +198,7 @@ steps:
         own('ok', "N {{ notes | default: 'n/a' }} {{ notes | default: 'none' | upper }}"),
       ),
       upperThenDefault: q("N {{ context.resources.review.notes | upper | default: 'n/a' }}"),
-      defaultThenRound: q('A {{ context.resources.review.amount | default: 0 | round: 2 }}'),
+      defaultThenRound: q("A {{ context.resources.review.amount | default: '0' | round: 2 }}"),
     }).toEqual({
       bare: [
         `TEMPLATE_PATH_NO_DEFAULT: Step 'approve': gate.message reads 'context.resources.review.notes' in '{{ context.resources.review.notes }}', which may be missing when the gate opens ('notes' is optional in its schema), so then ${GATE_STOPS}. ${DEFAULT_FIX}, or make 'notes' required. (line 24)`,
@@ -213,7 +213,7 @@ steps:
         `TEMPLATE_PATH_NO_DEFAULT: Step 'approve': gate.message reads 'context.resources.review.notes' in '{{ context.resources.review.notes | upper | default: 'n/a' }}', which may be missing when the gate opens ('notes' is optional in its schema), so then the question shows the placeholder as written. ${DEFAULT_FIX}, or make 'notes' required. (line 24)`,
       ],
       defaultThenRound: [
-        "TEMPLATE_PATH_NO_DEFAULT: Step 'approve': gate.message reads 'context.resources.review.amount' in '{{ context.resources.review.amount | default: 0 | round: 2 }}', which may be missing when the gate opens ('amount' is optional in its schema), so then the question shows the placeholder as written. The filters after '| default' give nothing from its text, so its default is never shown. (line 24)",
+        "TEMPLATE_PATH_NO_DEFAULT: Step 'approve': gate.message reads 'context.resources.review.amount' in '{{ context.resources.review.amount | default: '0' | round: 2 }}', which may be missing when the gate opens ('amount' is optional in its schema), so then the question shows the placeholder as written. The filters after '| default' give nothing from its value, so its default is never shown. (line 24)",
       ],
     });
   });
@@ -684,6 +684,27 @@ steps:
         "an approval question reads only 'context.resources.<step>.', 'run.params.' and 'workflow.context.<name>'",
       ],
       context: ["'workflow.context' must be followed by the name of a workflow_context entry"],
+    });
+  });
+
+  it('the default piece, check 5: one parse through the fill check — a bare `default: 0` before round fills; quoted it does not; before `upper` it does not, with the new words', () => {
+    const q = (m: string) => found(question(m));
+    // (1) red when a reader does not pass the quote flags (the bare 0 read as text: refused); (2)
+    // prints the findings.
+    expect({
+      bare: q('A {{ context.resources.review.amount | default: 0 | round: 2 }}'),
+      quoted: q("A {{ context.resources.review.amount | default: '0' | round: 2 }}").map(
+        (m) => m.split(':')[0],
+      ),
+      upper: q('N {{ context.resources.review.notes | default: 0 | upper }}').map(
+        (m) => m.split(', so then ')[1],
+      ),
+    }).toEqual({
+      bare: [],
+      quoted: ['TEMPLATE_PATH_NO_DEFAULT'],
+      upper: [
+        "the question shows the placeholder as written. The filters after '| default' give nothing from its value, so its default is never shown. (line 24)",
+      ],
     });
   });
 

@@ -81,11 +81,15 @@ type ArgumentVerdict =
  * `'stored'` time, applied to each sample. Out of range when any sample throws a RangeError; no value
  * accepted when no sample returns ok; else `undefined` (a value accepts it).
  */
-function judgeArguments(name: string, args: string[]): ArgumentVerdict | undefined {
+function judgeArguments(
+  name: string,
+  args: string[],
+  quoted?: readonly boolean[],
+): ArgumentVerdict | undefined {
   let gave = false;
   for (const sample of SAMPLES) {
     try {
-      if (applyFilter(sample, name, args, 'stored').ok) gave = true;
+      if (applyFilter(sample, name, args, 'stored', quoted).ok) gave = true;
     } catch (err) {
       if (err instanceof RangeError) {
         return { cause: 'out_of_range', kind: typeof sample === 'number' ? 'number' : 'text' };
@@ -102,7 +106,7 @@ function judgeArguments(name: string, args: string[]): ArgumentVerdict | undefin
 export function hasFilterFinding(expr: string): boolean {
   for (const filter of placeholderParts(expr.trim()).filters) {
     if (!KNOWN_FILTERS.includes(filter.name)) return true;
-    if (judgeArguments(filter.name, filter.args) !== undefined) return true;
+    if (judgeArguments(filter.name, filter.args, filter.quoted) !== undefined) return true;
   }
   return false;
 }
@@ -187,7 +191,7 @@ export function checkTemplates(
             );
             break; // a filter after an unknown one is not judged
           }
-          const verdict = judgeArguments(filter.name, filter.args);
+          const verdict = judgeArguments(filter.name, filter.args, filter.quoted);
           if (verdict !== undefined) {
             findings.push(
               finding(

@@ -45,7 +45,7 @@ export interface TemplateLeaf {
   expr: string;
   /** Its path, before the first filter. */
   path: string;
-  filters: ReadonlyArray<{ name: string; args: string[] }>;
+  filters: ReadonlyArray<{ name: string; args: string[]; quoted: boolean[] }>;
 }
 
 type Obj = Record<string, unknown>;
@@ -83,7 +83,8 @@ export function templateLeaves(stepsRaw: unknown): TemplateLeaf[] {
 /**
  * Whether the placeholder's filters, run in order on a missing value, give a value: every filter
  * succeeds and the result is not `undefined` or `null`. Only `default` accepts a missing value, and
- * the filters after it must take its text.
+ * the filters after it must take its value: a bare number or true/false keeps its type (the one
+ * parse's quote flags, as the renderer reads them).
  */
 function filledByDefault(filters: TemplateLeaf['filters']): boolean {
   if (filters.length === 0) return false;
@@ -91,7 +92,7 @@ function filledByDefault(filters: TemplateLeaf['filters']): boolean {
   for (const filter of filters) {
     let result: ReturnType<typeof applyFilter>;
     try {
-      result = applyFilter(value, filter.name, filter.args, 'stored');
+      result = applyFilter(value, filter.name, filter.args, 'stored', filter.quoted);
     } catch {
       return false;
     }
@@ -123,9 +124,9 @@ const ROOT_REASON: Record<TemplateField, string> = {
 };
 
 const DEFAULT_FIX =
-  "Add '| default: <text>' as its first filter, keeping after it only filters that take text";
+  "Add '| default: <value>' as its first filter, keeping after it only filters that take that value";
 const NOT_FILLED =
-  "The filters after '| default' give nothing from its text, so its default is never shown.";
+  "The filters after '| default' give nothing from its value, so its default is never shown.";
 
 /**
  * Judges one placeholder over the workflow's shared index; `positionOf` resolves a key's place in
