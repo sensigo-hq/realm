@@ -91,6 +91,9 @@ export function applyFilter(
   args: string[],
   // #715 (b) (02 §D.4): the render instant; with none, `from_now` leaves its placeholder (no clock).
   time?: RenderTime,
+  // Fix 1, the default piece: per argument, whether it was written in quotes, from the one parse.
+  // Absent, every argument counts as quoted, so a direct caller keeps today's result.
+  quoted?: readonly boolean[],
 ): FilterResult {
   switch (filterName) {
     case 'bullets': {
@@ -106,7 +109,9 @@ export function applyFilter(
     }
 
     case 'default': {
-      const fallback = args[0] ?? '';
+      // Fix 1, the default piece: a fallback written without quotes keeps its type when it is a JSON
+      // number or true/false (`| default: 0 | round: 2` gives `0.00`); anything else is text.
+      const fallback = quoted?.[0] === false ? typedLiteral(args[0] ?? '') : (args[0] ?? '');
       if (value === null || value === undefined) return { ok: true, value: fallback };
       return { ok: true, value };
     }
@@ -401,15 +406,29 @@ export function applyFilter(
   }
 }
 
+// Whether a single token is written in matching outer quotes.
+function isQuoted(token: string): boolean {
+  return (
+    (token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))
+  );
+}
+
 // Strip outer matching quotes from a single token.
 function stripOuterQuotes(token: string): string {
-  if (
-    (token.startsWith('"') && token.endsWith('"')) ||
-    (token.startsWith("'") && token.endsWith("'"))
-  ) {
-    return token.slice(1, -1);
-  }
-  return token;
+  return isQuoted(token) ? token.slice(1, -1) : token;
+}
+
+/** A JSON number: no leading zero (`007` stays text), an optional fraction and exponent. */
+const JSON_NUMBER = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/;
+
+/**
+ * Fix 1, the default piece: an argument written without quotes, as `default` reads it — a JSON number
+ * as a number, `true` or `false` as true or false, anything else as the text it is.
+ */
+function typedLiteral(text: string): unknown {
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  return JSON_NUMBER.test(text) ? Number(text) : text;
 }
 
 // splitOnUnquotedDelimiter now lives in comparison-expr.ts (shared with condition splitting) and is
@@ -420,25 +439,33 @@ function splitOnUnquotedPipes(expr: string): string[] {
 }
 
 // Parses a comma-separated filter argument list with quote awareness.
-// Calls splitOnUnquotedDelimiter, then strips outer quotes and trims each token.
-// An empty or whitespace-only raw string returns [].
-function parseFilterArgs(raw: string): string[] {
-  if (!raw.trim()) return [];
-  return splitOnUnquotedDelimiter(raw, ',').map((token) => stripOuterQuotes(token.trim()));
+// Calls splitOnUnquotedDelimiter, then strips outer quotes and trims each token; `quoted` says, per
+// argument, whether it was written in quotes (fix 1, the default piece).
+// An empty or whitespace-only raw string returns no argument.
+function parseFilterArgs(raw: string): { args: string[]; quoted: boolean[] } {
+  if (!raw.trim()) return { args: [], quoted: [] };
+  const tokens = splitOnUnquotedDelimiter(raw, ',').map((token) => token.trim());
+  return { args: tokens.map(stripOuterQuotes), quoted: tokens.map(isQuoted) };
+}
+
+/** One filter of a chain: its name, its arguments, and whether each was written in quotes. */
+export interface ParsedFilter {
+  name: string;
+  args: string[];
+  quoted: boolean[];
 }
 
 // Parse the filter chain from the pipe-separated expression tail.
-// Returns an array of { name, args } entries.
-function parseFilters(expr: string): Array<{ name: string; args: string[] }> {
+// Returns an array of { name, args, quoted } entries.
+function parseFilters(expr: string): ParsedFilter[] {
   const segments = splitOnUnquotedPipes(expr).slice(1); // first segment is the path
   return segments.map((seg) => {
     const colonIdx = seg.indexOf(':');
     if (colonIdx === -1) {
-      return { name: seg.trim(), args: [] };
+      return { name: seg.trim(), args: [], quoted: [] };
     }
     const name = seg.slice(0, colonIdx).trim();
-    const args = parseFilterArgs(seg.slice(colonIdx + 1));
-    return { name, args };
+    return { name, ...parseFilterArgs(seg.slice(colonIdx + 1)) };
   });
 }
 
@@ -449,7 +476,7 @@ function parseFilters(expr: string): Array<{ name: string; args: string[] }> {
  */
 export function placeholderParts(expr: string): {
   path: string;
-  filters: Array<{ name: string; args: string[] }>;
+  filters: ParsedFilter[];
 } {
   return { path: splitOnUnquotedPipes(expr)[0]!.trim(), filters: parseFilters(expr) };
 }
@@ -614,7 +641,7 @@ export function renderTemplate(
     }
     let current: unknown = masked(rawValue);
 
-    for (const { name, args } of filters) {
+    for (const { name, args, quoted } of filters) {
       // B1: a value that is wholly a marker (a member masked whole, or a shape) is shown as it is —
       // no filter re-cases, cuts or reads it. Only on a masking render: without a set, as before.
       if (
@@ -624,7 +651,7 @@ export function renderTemplate(
       ) {
         break;
       }
-      const result = applyFilter(current, name, args, options?.time);
+      const result = applyFilter(current, name, args, options?.time, quoted);
       if (!result.ok) {
         if (result.reason === 'unknown_filter') {
           if (options?.strict === true) {

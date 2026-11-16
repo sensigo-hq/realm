@@ -62,14 +62,14 @@ function displayValueAt(path: string, vars: Record<string, unknown>): unknown {
  */
 function displayChain(
   value: unknown,
-  filters: ReadonlyArray<{ name: string; args: string[] }>,
+  filters: ReadonlyArray<{ name: string; args: string[]; quoted: boolean[] }>,
 ): { ok: true; value: unknown } | { ok: false } {
   let current = value;
-  for (const { name, args } of filters) {
+  for (const { name, args, quoted } of filters) {
     if (typeof current === 'string' && WHOLE_NAMED_MARKER.test(current)) break;
     let result: ReturnType<typeof applyFilter>;
     try {
-      result = applyFilter(current, name, args, 'stored');
+      result = applyFilter(current, name, args, 'stored', quoted);
     } catch {
       return { ok: false };
     }
