@@ -11,10 +11,10 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
-import { hostname } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,7 +41,13 @@ import {
   REMINDER_POLL_MS,
   type ReminderWorkflow,
 } from './listen-reminders.js';
-import { startListen, type ListenDeps, type Logger, type WorkflowEntry } from './listen.js';
+import {
+  listenCommand,
+  startListen,
+  type ListenDeps,
+  type Logger,
+  type WorkflowEntry,
+} from './listen.js';
 import { startGateReminderTimers } from '../agent/gate/slack-gate-notifier.js';
 import { slackPostPath } from '../agent/gate/slack-post-file.js';
 import { slackResponse } from '../agent/test-support/slack-response.js';
@@ -264,19 +270,30 @@ describe('#597 D3b — the post file and the due item', { timeout: 30_000 }, () 
     // (a) red when a final of a question its expiry closes is posted ("the run will be stopped"), or
     //     a finding-only final is withheld; (b) prints the posts.
     const r = await rig();
-    await question(r, {
+    const authored = await question(r, {
       reminder_seconds: 600,
       reminder_max: 3,
       expires_at: at(30 * MIN).toISOString(),
       on_expiry: 'abort',
     });
-    await question(r, { expires_at: at(5 * MIN).toISOString(), on_expiry: 'abort' });
+    const oneShot = await question(r, {
+      expires_at: at(5 * MIN).toISOString(),
+      on_expiry: 'abort',
+    });
     await question(r, { expires_at: at(5 * MIN).toISOString(), timeout_seconds: 300 });
     await r.clock.set(at(35 * MIN));
     await passOf(r)();
-    expect(slack.posts.map((p) => p.text)).toEqual([
-      '⏰ gate `review` expired 30m ago (2033-01-01T00:05:00Z) — nothing will be done automatically; it is still waiting for a response.',
-    ]);
+    // The `--sweep-expired-gates` help: "--send-reminders only posts reminders" — the two questions
+    // past their limit are still waiting after the pass (no expiry carried out).
+    const phases = await Promise.all(
+      [authored, oneShot].map(async (q) => (await r.store.get(q.runId)).record.run_phase),
+    );
+    expect({ posts: slack.posts.map((p) => p.text), phases }).toEqual({
+      posts: [
+        '⏰ gate `review` expired 30m ago (2033-01-01T00:05:00Z) — nothing will be done automatically; it is still waiting for a response.',
+      ],
+      phases: ['gate_waiting', 'gate_waiting'],
+    });
   });
 
   it('a `failed` row posts nothing and prints no line', async () => {
@@ -1011,6 +1028,52 @@ describe('#597 D3b — the words', { timeout: 30_000 }, () => {
       'docs/reference/cli/realm-listen.md',
       '`realm listen` does not read replies in the thread, so each reminder it posts says `Realm is not reading replies in this thread right now — to respond, open a terminal and run:` and gives the `realm run respond` command.',
     );
+    // The rest of the section, each sentence executed by the cell named beside it.
+    for (const sentence of [
+      // "the five post files" (stopped / running), the texts' ages, "only the grid's due item".
+      "For each question whose `realm agent` has stopped, it posts the reminder or the escalation that has come due, in the question's own thread, as the agent would have: counted from when the question was posted, once, with the time the question has really been open.",
+      // the start-up lines; "a workflow that is not covered"; "the five post files".
+      "It covers a question only when its workflow is mounted with a `notifiers.slack_gate` that has a `bot_token` and a `channel_id`, which it posts with, and the stopped agent's question post file is on this machine",
+      // "the five post files" (another host: one line, nothing posted; no file: silent).
+      'A question posted from another machine, or by an agent that stopped before it wrote that file, gets no reminders from it.',
+      // "never the final of an `on_expiry` gate".
+      'It never posts the reminder that says the time ran out of a question that closes at its limit (`on_expiry`).',
+      // "exactly once" (both cells).
+      "It records each reminder in the store's outbound ledger, as the agents do, so an agent that comes back and `realm listen` never both post the same one.",
+      // INFERRED (D1 R1, R13): not executed here.
+      'A restart while a reminder is being posted can post that one again, and the first start after an upgrade can post one reminder to each such question.',
+      // "cools THAT workflow only" (timeout, ratelimited, the auth class, HTTP 503); "`not_in_channel`".
+      "When Slack does not take a post because of a problem with the whole workflow (an outage, a rate limit, a revoked token, a bot removed from the channel), that workflow's reminders pause.",
+      // "the probes".
+      '`realm listen` checks Slack again after 1, 2, 4 … up to 30 minutes and resumes when a reminder is taken.',
+      // The settings are read once at start (`reminderSenderOf`): not executed here.
+      'A new token needs a restart of `realm listen`.',
+      // "attempts 1, 2, 7" and "attempts 8"; "isolation".
+      'Any other post Slack does not take is tried again later, each time a little later, up to 8 tries in all.',
+      // The table row; the built CLI cell; "a failed bind …" (the 60-second timer).
+      "Every 60 seconds, posts the due Slack reminder or escalation of each waiting question whose `realm agent` has stopped, in the question's own thread. See below. Added after version 0.49.0.",
+    ])
+      claim('docs/reference/cli/realm-listen.md', sentence);
+    // The log table: exactly the sender's lines, each one asserted where it is printed above.
+    const logRows = read('docs/reference/cli/realm-listen.md')
+      .split('\n')
+      .filter((l) => l.startsWith('| `') && l.includes('`listen: reminders: '))
+      .map((l) => /`(listen: reminders: [^`]*)`/.exec(l)![1]);
+    expect(logRows).toEqual([
+      'listen: reminders: covering workflows <ids>',
+      'listen: reminders: no mounted workflow has a Slack bot token and channel; nothing to remind',
+      'listen: reminders: the store keeps no outbound ledger; not sent',
+      'listen: reminders: no home folder known; not sent',
+      'listen: reminders: no usable post for run <run>, question <gate>: not reminded',
+      'listen: reminders: Slack did not take a reminder for workflow <id> (<code>): reminders for it wait; checking again in about <n> min',
+      'listen: reminders: Slack took a reminder for workflow <id> again: reminders for it resume',
+      'listen: reminders: Slack refused <what> of run <run> (<code>): tried again later',
+      'listen: reminders: <what> of run <run> not confirmed after 8 tries; not tried again',
+      'listen: reminders: the store refused a lease for run <run> (<error>); nothing sent for it',
+      'listen: reminders: <what> of run <run> posted, could not be recorded: <error>',
+      'listen: reminders: <what> of run <run> posted, but another sender had sent it: duplicate certain',
+      'listen: reminders: pass failed {"error"}',
+    ]);
     claim(
       'docs/reference/cli/realm-listen.md',
       '`--sweep-expired-gates` is separate and is not needed. Without it, the reminders of a question that closes at its time limit stop at that limit, and the question stays open until something carries it out.',
@@ -1040,6 +1103,83 @@ describe('#597 D3b — the words', { timeout: 30_000 }, () => {
       flat(
         "- **`realm listen --send-reminders`** (issue #597): every 60 seconds, `realm listen` posts the due Slack reminder or escalation of each waiting question whose `realm agent` has stopped, into the question's own thread, through the store's outbound ledger, so it and an agent that comes back never both post it. A post Slack does not take because of a Slack-wide problem pauses that workflow's reminders, and `realm listen` checks Slack again after 1, 2, 4 … up to 30 minutes.",
       ),
+    );
+  });
+
+  it('the help: `--send-reminders` says what it does; `--sweep-expired-gates` no longer says listen never touches gates', () => {
+    // (a) red when either help text changes; (b) prints both. "only posts reminders": "never the final
+    //     …" (the questions past their limit still wait); the rest: as the realm-listen.md section.
+    const help = (long: string): string | undefined =>
+      listenCommand.options.find((o) => o.long === long)?.description;
+    expect({ send: help('--send-reminders'), sweep: help('--sweep-expired-gates') }).toEqual({
+      send: "OPT-IN (issue #597): every 60 seconds, post the due Slack reminder or escalation of each waiting question whose realm agent has stopped, into the question's own thread, with the bot token and channel the workflow's notifiers.slack_gate carries. Default OFF.",
+      sweep:
+        'OPT-IN (issue #291): store-wide sweep interval, a whole number of seconds from 1 to 2147483, that enacts expired, enactable gates across every run this store holds. Default OFF — listen carries out no expired gate unless this is set (--send-reminders only posts reminders). Never drains finalizers itself — see: realm run drain --expired.',
+    });
+  });
+});
+
+describe('#597 D3b — the built CLI', { timeout: 90_000 }, () => {
+  it('`--send-reminders` reaches the sender with the home folder and the workflow’s Slack settings; without it, no reminders line', async () => {
+    // (a) red when the command line drops the flag, the home folder or the workflow's
+    //     `notifiers.slack_gate` (each prints another line, or none); (b) prints both runs' lines.
+    const CLI = join(ROOT, 'packages/cli/dist/index.js');
+    const root = mkdtempSync(join(tmpdir(), 'realm-d3b-cli-'));
+    onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+    const home = join(root, 'home');
+    const wf = join(root, 'wf');
+    mkdirSync(home);
+    mkdirSync(wf);
+    writeFileSync(
+      join(wf, 'workflow.yaml'),
+      'id: d3b-cli\nname: d3b cli\nversion: 1\ntrigger:\n  type: webhook\n  path: /hook-d3b\n  auth:\n    mode: none\nsteps:\n  ask:\n    description: Answer.\n    execution: agent\n',
+    );
+    writeFileSync(
+      join(wf, 'realm.yaml'),
+      [
+        'version: 1',
+        'notifiers:',
+        '  slack_gate:',
+        '    type: slack',
+        '    config:',
+        '      bot_token: "${secret:SLACK_BOT}"',
+        `      channel_id: ${CHANNEL}`,
+        '',
+      ].join('\n'),
+    );
+    writeFileSync(join(wf, '.env'), 'SLACK_BOT=xoxb-fake-d3b\n');
+    const reminderLines = async (extra: string[]): Promise<string[]> => {
+      const proc = spawn(
+        process.execPath,
+        [CLI, 'listen', '.', '--model', 'm', '--provider', 'anthropic', '--port', '0', ...extra],
+        {
+          cwd: wf,
+          env: { PATH: process.env['PATH'] ?? '', HOME: home, ANTHROPIC_API_KEY: 'k-fake-d3b' },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+      onTestFinished(() => {
+        if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
+      });
+      let text = '';
+      proc.stdout!.on('data', (d: Buffer) => (text += d.toString()));
+      proc.stderr!.on('data', (d: Buffer) => (text += d.toString()));
+      const exited = new Promise<void>((r) => proc.once('exit', () => r()));
+      const by = performance.now() + 30_000;
+      while (!/realm listen on /.test(text) && proc.exitCode === null && performance.now() < by) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      if (!/realm listen on /.test(text))
+        throw new Error(`listen did not start: ${text.slice(0, 600)}`);
+      proc.kill('SIGTERM');
+      await exited;
+      return text.split('\n').filter((l) => l.startsWith('listen: reminders:'));
+    };
+    expect({ on: await reminderLines(['--send-reminders']), off: await reminderLines([]) }).toEqual(
+      {
+        on: ['listen: reminders: covering workflows d3b-cli'],
+        off: [],
+      },
     );
   });
 });
