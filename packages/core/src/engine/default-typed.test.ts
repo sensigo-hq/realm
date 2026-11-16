@@ -100,14 +100,14 @@ describe('fix 1, the default piece — a bare number or true/false keeps its typ
     // (1) red when a sentence is missing or changed, or the old "take its text" stays; (2) prints them.
     expect({
       page: page.includes(
-        'An argument that contains a space or a comma goes in quotes. Written without quotes, a number (`0`, `-3`, `1.5`, `2e3`; `007` stays text), `true` or `false` given to `default` keeps its type, so `| default: 0 | round: 2` gives `0.00`; in quotes it is text.',
+        'An argument that contains a space or a comma goes in quotes. Written without quotes, a number (`0`, `-3`, `1.5`, `2e3`; `007` stays text), `true` or `false` given to `default` keeps its type, so `| default: 0 | round: 2` gives `0.00`; in quotes it is text. Quote a long code: a whole number of more than 15 digits can lose its last digits.',
       ),
       value: page.includes('the filters after it take its value'),
       oldText: [page, log, flat('docs/reference/workflow/loader-diagnostics.md')].some((t) =>
         t.includes('the filters after it take its text'),
       ),
       changed: log.includes(
-        "- **`| default: 0` gives the number 0, and `| default: true` the value true, so a filter that needs a number can follow it**; in quotes the fallback stays text, as before, and so does a leading-zero spelling such as `007`. Three spellings print differently: `default: 1.50` prints `1.5`, `default: 2e3` prints `2000`, and a text filter after a bare number or true/false (`default: 0 | upper`) no longer applies; `realm workflow validate` reports it in an approval question or `display` where the workflow declares the path's shape.",
+        "- **`| default: 0` gives the number 0, and `| default: true` the value true, so a filter that needs a number can follow it**; in quotes the fallback stays text, as before, and so does a leading-zero spelling such as `007`. A bare number prints the way that number prints: `default: 1.50` prints `1.5`, `default: 2e3` prints `2000`, and a whole number of more than 15 digits can lose its last digits, so quote a long code. A text filter after a bare number or true/false (`default: 0 | upper`) no longer applies; `realm workflow validate` reports it in an approval question or `display` where the workflow declares the path's shape.",
       ),
       upgrading: log.includes(
         "**13. A bare number or true/false given to `| default` keeps its type, in stored workflows too.** If a template follows one with a filter that takes only text, quote the fallback (`default: '0' | upper`). `realm workflow validate` (`--registered <id>` for a stored one) names such a chain in an approval question or `display` when the workflow declares the path's shape; look for one yourself in prompts, step instructions and paths it lists as not checked.",

@@ -173,7 +173,7 @@ Note: Pack with care. / upper: PACK WITH CARE. / other step:
 
 ### Filters
 
-A filter takes the value on its left and gives a new value. Filters are applied from left to right. An argument follows the filter's name after a colon. Several arguments are separated by commas. An argument that contains a space or a comma goes in quotes. Written without quotes, a number (`0`, `-3`, `1.5`, `2e3`; `007` stays text), `true` or `false` given to `default` keeps its type, so `| default: 0 | round: 2` gives `0.00`; in quotes it is text.
+A filter takes the value on its left and gives a new value. Filters are applied from left to right. An argument follows the filter's name after a colon. Several arguments are separated by commas. An argument that contains a space or a comma goes in quotes. Written without quotes, a number (`0`, `-3`, `1.5`, `2e3`; `007` stays text), `true` or `false` given to `default` keeps its type, so `| default: 0 | round: 2` gives `0.00`; in quotes it is text. Quote a long code: a whole number of more than 15 digits can lose its last digits.
 
 If a filter is given a kind of value it does not work on, the whole expression is left as written. `default` is not reached in that case: it replaces a value that is missing, not a filter that could not be applied. A value that Realm hides whole is shown as `[REDACTED]` instead: it is hidden before any filter runs, and no filter changes it.
 
