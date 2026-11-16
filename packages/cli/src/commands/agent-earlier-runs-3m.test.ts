@@ -60,6 +60,13 @@ afterEach(async () => {
   await h.cleanup();
 });
 
+/** How long a spawned CLI may run before it is killed. A cold start on a loaded machine has taken
+ *  more than 20 s, and the old 20 s limit then killed the CLI before it created its run (counted runs,
+ *  2026-11-15 and -16). Each cell's limit is 240 s: room for several CLIs at the kill limit. */
+const KILL_AFTER_MS = 60_000;
+/** What a killed CLI adds to its stderr. */
+const KILLED_LINE = `\n[test] the built CLI was killed after ${String(KILL_AFTER_MS / 1000)} s, before it ended: a loaded machine, or a hang.\n`;
+
 type Done = { code: number | null; stderr: string };
 
 /** The built CLI's `realm agent`, to its end, on the scratch home. */
@@ -77,7 +84,13 @@ function agent(args: string[]): Promise<Done> {
     });
     let stderr = '';
     child.stderr.on('data', (c: Buffer) => (stderr += c.toString()));
-    const timer = setTimeout(() => child.kill('SIGKILL'), 20_000);
+    const timer = setTimeout(() => {
+      // Said where a reader looks, so a slow machine is named rather than read as "no run" (a later
+      // read of the missing run fails with the store's own error).
+      stderr += KILLED_LINE;
+      process.stderr.write(KILLED_LINE);
+      child.kill('SIGKILL');
+    }, KILL_AFTER_MS);
     child.on('close', (code) => {
       clearTimeout(timer);
       resolve({ code, stderr });
@@ -143,7 +156,7 @@ describe('caching 3-M C2 — check 2: through the command, both callers', () => 
         request_id: before?.request_id,
       });
     },
-    60_000,
+    240_000,
   );
 });
 
@@ -219,7 +232,7 @@ describe('caching 3-M C2 — check 7: no read when nothing can use it', () => {
     await agentInProcess(['--workflow', workflowFile, '--model', 'claude-x']);
     // (a) red when no read is made on this path, or one is made per step; (b) prints the count.
     expect(scan.mock.calls.length).toBe(1);
-  }, 60_000);
+  }, 240_000);
 
   it.each(NO_READ)(
     '%s → no `scan`',
@@ -238,7 +251,7 @@ describe('caching 3-M C2 — check 7: no read when nothing can use it', () => {
         drove: true,
       });
     },
-    60_000,
+    240_000,
   );
 });
 
@@ -289,5 +302,5 @@ describe('caching 3-M C2 correction 1 — check 3: the own id on `--run-id`, thr
     // comes first and one other run is left unread); (b) prints the ids read right after the scan.
     const afterScan = calls.slice(calls.indexOf('scan') + 1, calls.indexOf('scan') + 7);
     expect([...afterScan].sort()).toEqual([...others].sort());
-  }, 60_000);
+  }, 240_000);
 });
