@@ -334,8 +334,9 @@ describe('#597 D3b — the post file and the due item', { timeout: 30_000 }, () 
     expect({ printed, posts: slack.posts.length }).toEqual({ printed: [], posts: 4 });
   });
 
-  it('a `failed` row posts nothing and prints no line', async () => {
-    // (a) red when a failed row is posted again or logged; (b) prints the posts and lines.
+  it('a `failed` row (the channel is gone): ONE line that says it is not tried again, then nothing posted or printed', async () => {
+    // (a) red when a failed row is posted again, its refusal is silent, or its line repeats; (b)
+    //     prints the posts and lines.
     const r = await rig();
     const q = await question(r);
     slack.post = refused('channel_not_found');
@@ -346,7 +347,7 @@ describe('#597 D3b — the post file and the due item', { timeout: 30_000 }, () 
     await r.clock.set(at(3 * 60 * MIN));
     // The second pass through a ledger that counts its leases: the grid still names the failed item
     // due (only `sent` ends an item, D3a), so the sender asks once and the ledger refuses (`skipped`):
-    // nothing posted, nothing printed, the row unchanged.
+    // nothing posted, no new line, the row unchanged.
     let leases = 0;
     const counting: OutboundLedger = {
       lease: (id, req) => {
@@ -370,12 +371,36 @@ describe('#597 D3b — the post file and the due item', { timeout: 30_000 }, () 
       leases: 1,
       posts: 1,
       rows: { '1': 'failed/1' },
-      lines: { info: [], warn: [], error: [] },
+      lines: {
+        info: [],
+        warn: [
+          `listen: reminders: Slack refused reminder 1 of run ${q.runId} (channel_not_found): not tried again`,
+        ],
+        error: [],
+      },
     });
   });
 });
 
 describe('#597 D3b — exactly once, through the ledger', { timeout: 30_000 }, () => {
+  it('a post Slack took but did not answer in time is posted again (the docs: "can post that one again")', async () => {
+    // (a) red when the claim is false (a timed-out post is never posted again); (b) prints the posts.
+    const r = await rig();
+    const q = await question(r);
+    await r.clock.set(at(25 * MIN));
+    slack.post = hangs();
+    const pass = passOf(r);
+    await pass();
+    // Past the pause's first probe and the row's spacing (its lease deadline + 1 minute).
+    slack.post = ok;
+    await r.clock.set(at(28 * MIN));
+    await pass();
+    expect({
+      posts: slack.posts.map((p) => p.text.startsWith('⏰ gate `review` has been open for')),
+      row: await statusOf(r, q.runId),
+    }).toEqual({ posts: [true, true], row: { '1': 'sent/2' } });
+  });
+
   it('an agent that takes the question over in the same instant: ONE post in all', async () => {
     // (a) red when the sender posts without the ledger (two posts); (b) prints the posts.
     const r = await rig();
@@ -616,6 +641,30 @@ describe('#597 D3b — a Slack-wide problem pauses the workflow', { timeout: 30_
     });
   });
 
+  it('`ratelimited` on every post with `auth.test` ok: the attempts come 1, 2, 4 … 30 minutes apart (a pause entered again backs off)', async () => {
+    // (a) red when a pause entered again after a passing probe keeps its wait; (b) prints the
+    //     minutes of the attempts.
+    const r = await rig();
+    for (let i = 0; i < 8; i += 1) await question(r);
+    await r.clock.set(at(25 * MIN));
+    slack.post = refused('ratelimited');
+    const pass = passOf(r);
+    await pass();
+    const t0 = r.clock.now().getTime();
+    const attempts: number[] = [];
+    for (let m = 1; m <= 64; m += 1) {
+      await r.clock.set(new Date(t0 + m * MIN));
+      const before = slack.posts.length;
+      await pass();
+      for (let i = before; i < slack.posts.length; i += 1) attempts.push(m);
+    }
+    expect({ attempts, auths: slack.auths, warn: r.logger.lines.warn.length }).toEqual({
+      attempts: [1, 3, 7, 15, 31, 61],
+      auths: 6,
+      warn: 1,
+    });
+  });
+
   it('isolation: a refused code outside the Slack-wide set waits that row only, the second workflow posts in the same pass, ONE line per (workflow, code); a channel-class code marks `failed` and does not cool; an HTTP 4xx is the row’s own', async () => {
     // (a) red when a row's own refusal pauses the workflow, or its line repeats; (b) prints the
     //     posts, lines and rows.
@@ -646,7 +695,7 @@ describe('#597 D3b — a Slack-wide problem pauses the workflow', { timeout: 30_
       ],
       locked: locked.map((l) => l.replace(/run \S+ \(/, 'run <run> (')),
       lockedRun: [a1.runId, a3.runId].some((id) => locked[0]?.includes(id)),
-      others: r.logger.lines.warn.filter((l) => !l.includes('(thread_locked)')),
+      others: r.logger.lines.warn.filter((l) => !l.includes('(thread_locked)')).sort(),
     }).toEqual({
       posts: 4,
       rows: [{ '1': 'pending/1' }, { '1': 'pending/1' }, { '1': 'pending/1' }, { '1': 'failed/1' }],
@@ -656,8 +705,47 @@ describe('#597 D3b — a Slack-wide problem pauses the workflow', { timeout: 30_
       lockedRun: true,
       others: [
         `listen: reminders: Slack refused reminder 1 of run ${a2.runId} (HTTP 404): tried again later`,
-      ],
+        `listen: reminders: Slack refused reminder 1 of run ${b.runId} (channel_not_found): not tried again`,
+      ].sort(),
     });
+  });
+
+  it('a permanent refusal does not cool: the same workflow’s next question is still tried in the same pass; ONE line per (workflow, code)', async () => {
+    // (a) red when a channel-class refusal holds the rest of its workflow, is silent, or its line
+    //     repeats per question; (b) prints the posts, rows and lines.
+    const r = await rig();
+    const gone = [await question(r), await question(r), await question(r)];
+    const archived = await question(r);
+    const other = await question(r, {}, { workflowId: WF2 });
+    await r.clock.set(at(25 * MIN));
+    slack.post = (_url, init) =>
+      String(init.body).includes(archived.runId)
+        ? refused('is_archived')()
+        : refused('channel_not_found')();
+    await passOf(r, { workflows: [WF, WF2] })();
+    const named = (l: string): string => l.replace(/run \S+ \(/, 'run <run> (');
+    const rows = await Promise.all([...gone, archived, other].map((q) => statusOf(r, q.runId)));
+    expect({
+      posts: slack.posts.length,
+      rows,
+      warn: r.logger.lines.warn.map(named).sort(),
+      info: r.logger.lines.info,
+    }).toEqual({
+      posts: 5,
+      rows: [0, 1, 2, 3, 4].map(() => ({ '1': 'failed/1' })),
+      warn: [
+        'listen: reminders: Slack refused reminder 1 of run <run> (channel_not_found): not tried again',
+        'listen: reminders: Slack refused reminder 1 of run <run> (channel_not_found): not tried again',
+        'listen: reminders: Slack refused reminder 1 of run <run> (is_archived): not tried again',
+      ],
+      info: [],
+    });
+    // The two `channel_not_found` lines are one per workflow: one names a question of each.
+    const lines = r.logger.lines.warn.filter((l) => l.includes('(channel_not_found)'));
+    expect([
+      gone.some((q) => lines.some((l) => l.includes(q.runId))),
+      lines.some((l) => l.includes(other.runId)),
+    ]).toEqual([true, true]);
   });
 });
 
@@ -873,6 +961,36 @@ describe('#597 D3b — the runner', { timeout: 30_000 }, () => {
       afterBudget: 0,
       afterStop: 0,
       after: 1,
+    });
+  });
+
+  it('a probe that passes but ends past the budget starts no post; the next pass posts', async () => {
+    // (a) red when the send after a passing `auth.test` ignores the budget; (b) prints the posts and
+    //     probes per pass.
+    const r = await rig();
+    await question(r);
+    await r.clock.set(at(25 * MIN));
+    slack.post = refused('invalid_auth');
+    let at45 = false;
+    vi.spyOn(performance, 'now').mockImplementation(() => (at45 ? 45_000 : 0));
+    const pass = passOf(r);
+    await pass();
+    // Past the probe's time (26) and the row's spacing (its lease deadline + 1 minute: 28).
+    await r.clock.set(at(28 * MIN));
+    slack.post = ok;
+    slack.auth = () => {
+      at45 = true;
+      return ok();
+    };
+    const before = { posts: slack.posts.length, auths: slack.auths };
+    await pass();
+    const cut = { posts: slack.posts.length - before.posts, auths: slack.auths - before.auths };
+    at45 = false;
+    slack.auth = ok;
+    await pass();
+    expect({ cut, next: slack.posts.length - before.posts - cut.posts }).toEqual({
+      cut: { posts: 0, auths: 1 },
+      next: 1,
     });
   });
 });
@@ -1200,9 +1318,10 @@ describe('#597 D3b — the words', { timeout: 30_000 }, () => {
     // that has a bot_token and a channel_id": the start-up lines and "a workflow that is not
     // covered"; "another machine … gets no reminders": "the five post files"; "never the reminder
     // that says the time ran out of a question that closes at its limit": "never the final …"; the
-    // sentence and the command: the literal texts; "never both post": "exactly once"; "a restart …
-    // can post that one again" and "the first start after an upgrade can post one reminder to each
-    // such question": INFERRED (D1 R1, R13), not executed here; "--sweep-expired-gates is separate":
+    // sentence and the command: the literal texts; "do not both post a reminder once it is
+    // recorded": "exactly once"; "a restart … can post that one again": INFERRED (D1 R1), not
+    // executed here; "a post Slack took but did not answer in time": "a post Slack took but did not
+    // answer in time is posted again"; "--sweep-expired-gates is separate":
     // "separate loops"; the pause, the probes and "resumes when a reminder is taken": "the probes",
     // "`not_in_channel`"; "A new token needs a restart": the settings are captured at start
     // (`reminderSenderOf`), not executed here; "up to 8 tries in all": "attempts 8"; the stop: "shutdown".
@@ -1216,24 +1335,33 @@ describe('#597 D3b — the words', { timeout: 30_000 }, () => {
     );
     // The rest of the section, each sentence executed by the cell named beside it.
     for (const sentence of [
-      // "the five post files" (stopped / running), the texts' ages, "only the grid's due item".
-      "For each question whose `realm agent` has stopped, it posts the reminder or the escalation that has come due, in the question's own thread, as the agent would have: counted from when the question was posted, once, with the time the question has really been open.",
-      // the start-up lines; "a workflow that is not covered"; "the five post files".
-      "It covers a question only when its workflow is mounted with a `notifiers.slack_gate` that has a `bot_token` and a `channel_id`, which it posts with, and the stopped agent's question post file is on this machine",
+      // "the five post files" (stopped / running), the texts' ages, "only the grid's due item"; the
+      // parenthesis: "the age" (60 s late reads 10m, 61 s 11m).
+      "For each question whose `realm agent` has stopped, it posts the reminder or the escalation that has come due, in the question's own thread, as the agent would have: counted from when the question was posted, once, with the time the question has really been open (a reminder at most a minute late reads as if it had been posted on time, as the agent's does).",
+      // the start-up lines; "a workflow that is not covered"; "the five post files"; the built CLI
+      // (a workflow with a `trigger:` block, its `notifiers.slack_gate`, under `HOME`). Unpinned
+      // here, executed by the walk: a workflow with no `trigger:` is not mounted (D3-WK2-18), and
+      // another `HOME` never reminds (D3-WK2-19).
+      "It covers a question only when its workflow is one this `realm listen` mounts (a workflow with a `trigger:` block it serves) with a `notifiers.slack_gate` that has a `bot_token` and a `channel_id`, which it posts with, and the stopped agent's question post file is on this machine, under the home folder `realm listen` runs with (`HOME`), the same the agents use",
       // "the five post files" (another host: one line, nothing posted; no file: silent).
       'A question posted from another machine, or by an agent that stopped before it wrote that file, gets no reminders from it.',
       // "never the final of an `on_expiry` gate".
       'It never posts the reminder that says the time ran out of a question that closes at its limit (`on_expiry`).',
       // "exactly once" (both cells).
-      "It records each reminder in the store's outbound ledger, as the agents do, so an agent that comes back and `realm listen` never both post the same one.",
-      // INFERRED (D1 R1, R13): not executed here.
-      'A restart while a reminder is being posted can post that one again, and the first start after an upgrade can post one reminder to each such question.',
+      "It records each reminder in the store's outbound ledger, as the agents do, so an agent that comes back and `realm listen` do not both post a reminder once it is recorded.",
+      // The restart: INFERRED (D1 R1), not executed here; the post not answered in time: "a post
+      // Slack took but did not answer in time is posted again".
+      'A restart while a reminder is being posted, or a post Slack took but did not answer in time, can post that one again.',
       // "cools THAT workflow only" (timeout, ratelimited, the auth class, HTTP 503); "`not_in_channel`".
       "When Slack does not take a post because of a problem with the whole workflow (an outage, a rate limit, a revoked token, a bot removed from the channel), that workflow's reminders pause.",
       // "the probes".
       '`realm listen` checks Slack again after 1, 2, 4 … up to 30 minutes and resumes when a reminder is taken.',
       // The settings are read once at start (`reminderSenderOf`): not executed here.
       'A new token needs a restart of `realm listen`.',
+      // "a `failed` row (the channel is gone)" and "a permanent refusal does not cool" (the line, not
+      // tried again); "`realm run inspect` shows it": D1b's `inspect` cells (`F failed (not
+      // retried)`, realm-run-reading.md), and the walk (D3-WK2-10).
+      'A post Slack refuses because the channel is gone or archived is not tried again: that reminder is marked failed, `realm run inspect` shows it, and `realm listen` logs one line.',
       // "attempts 1, 2, 7" and "attempts 8"; "isolation".
       'Any other post Slack does not take is tried again later, each time a little later, up to 8 tries in all.',
       // The log row of `pass failed`: "a pass that throws" and "one question's failure".
@@ -1256,6 +1384,7 @@ describe('#597 D3b — the words', { timeout: 30_000 }, () => {
       'listen: reminders: Slack did not take a reminder for workflow <id> (<code>): reminders for it wait; checking again in about <n> min',
       'listen: reminders: Slack took a reminder for workflow <id> again: reminders for it resume',
       'listen: reminders: Slack refused <what> of run <run> (<code>): tried again later',
+      'listen: reminders: Slack refused <what> of run <run> (<code>): not tried again',
       'listen: reminders: <what> of run <run> not confirmed after 8 tries; not tried again',
       'listen: reminders: the store refused a lease for run <run> (<error>); nothing sent for it',
       'listen: reminders: <what> of run <run> posted, could not be recorded: <error>',
@@ -1272,7 +1401,7 @@ describe('#597 D3b — the words', { timeout: 30_000 }, () => {
     );
     claim(
       'docs/guides/slack-gates.md',
-      "If that process stops, the reminders stop, unless `realm listen --send-reminders` runs on the same machine with the workflow mounted: it then posts them in the question's thread, saying that Realm is not reading replies there",
+      "If that process stops, the reminders stop, unless `realm listen --send-reminders` runs on the same machine, with the same home folder (`HOME`), and mounts the workflow (one with a `trigger:` block): it then posts them in the question's thread, saying that Realm is not reading replies there",
     );
     claim(
       'docs/reference/workflow/gates.md',
@@ -1289,7 +1418,7 @@ describe('#597 D3b — the words', { timeout: 30_000 }, () => {
       ),
     ).toContain(
       flat(
-        "- **`realm listen --send-reminders`** (issue #597): every 60 seconds, `realm listen` posts the due Slack reminder or escalation of each waiting question whose `realm agent` has stopped, into the question's own thread, through the store's outbound ledger, so it and an agent that comes back never both post it. A post Slack does not take because of a Slack-wide problem pauses that workflow's reminders, and `realm listen` checks Slack again after 1, 2, 4 … up to 30 minutes.",
+        "- **`realm listen --send-reminders`** (issue #597): every 60 seconds, `realm listen` posts the due Slack reminder or escalation of each waiting question whose `realm agent` has stopped, into the question's own thread, through the store's outbound ledger, so it and an agent that comes back do not both post a reminder once it is recorded. A post Slack does not take because of a Slack-wide problem pauses that workflow's reminders, and `realm listen` checks Slack again after 1, 2, 4 … up to 30 minutes.",
       ),
     );
   });

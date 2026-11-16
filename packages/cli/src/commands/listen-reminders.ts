@@ -156,6 +156,9 @@ export function makeReminderPass(
   const waitIndex = new Map<string, number>();
   const owed = new Set<string>();
   const waitMs = (wf: string): number => PROBE_WAITS_MIN[waitIndex.get(wf) ?? 0]! * 60_000;
+  const longerWait = (wf: string): void => {
+    waitIndex.set(wf, Math.min((waitIndex.get(wf) ?? 0) + 1, PROBE_WAITS_MIN.length - 1));
+  };
 
   const pause = (wf: string, code: string, nowMs: number): void => {
     if (!owed.has(wf)) {
@@ -164,11 +167,15 @@ export function makeReminderPass(
       logger.warn(
         `listen: reminders: Slack did not take a reminder for workflow ${wf} (${code}): reminders for it wait; checking again in about ${waitMs(wf) / 60_000} min${auth}`,
       );
+    } else {
+      // Correction 1: entered again before Slack took a send (a probe passed, the post did not): the
+      // wait grows as after a failed probe; it returns to the first wait only at a send Slack took.
+      longerWait(wf);
     }
     paused.set(wf, { code, blind: BLIND_CODES.has(code), probeAtMs: nowMs + waitMs(wf) });
   };
   const probeFailed = (wf: string, nowMs: number): void => {
-    waitIndex.set(wf, Math.min((waitIndex.get(wf) ?? 0) + 1, PROBE_WAITS_MIN.length - 1));
+    longerWait(wf);
     paused.get(wf)!.probeAtMs = nowMs + waitMs(wf);
   };
   const taken = (wf: string): void => {
@@ -251,7 +258,9 @@ export function makeReminderPass(
       if (reading.getTime() < deadlineMs + 2 ** (row.attempts - 1) * 60_000) return false;
     }
     if (pausedNow?.blind === true && !probeDue()) return true;
-    if (!live()) return true;
+    // Correction 1: the budget guards the send too, not only the probe before it (an `auth.test`
+    // that passed can end past the budget).
+    if (!live() || spent()) return true;
     const nowMs = runStore.clock.now().getTime();
     const text = composeReminderPost({
       gate,
@@ -277,7 +286,14 @@ export function makeReminderPass(
     let hold = false;
     switch (outcome.kind) {
       case 'skipped':
+        break;
       case 'failed':
+        // Correction 1: a permanent refusal (the channel is gone or archived): the row is `failed`
+        // and never tried again. Said once per workflow and code; no cool-down.
+        say(
+          `failed:${wfId}:${outcome.code}`,
+          `Slack refused ${words} of run ${run.id} (${outcome.code}): not tried again`,
+        );
         break;
       case 'lease_threw':
         say(

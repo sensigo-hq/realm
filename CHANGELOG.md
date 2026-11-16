@@ -53,7 +53,7 @@ All notable changes to this project are documented here.
 - `WaysContext`, `composeWaysAt` and `submitHumanResponse` take an optional `disclosure` set, and `pendingGateQuestion` an optional set, so a program that composes ways, answers a question or renders the fallback question masks each value before its template filters run.
 - **`realm db check --project`** `<dir>`: names the stored runs that hold a changed form of a declared value.
 
-- **`realm listen --send-reminders`** (issue #597): every 60 seconds, `realm listen` posts the due Slack reminder or escalation of each waiting question whose `realm agent` has stopped, into the question's own thread, through the store's outbound ledger, so it and an agent that comes back never both post it. A post Slack does not take because of a Slack-wide problem pauses that workflow's reminders, and `realm listen` checks Slack again after 1, 2, 4 … up to 30 minutes.
+- **`realm listen --send-reminders`** (issue #597): every 60 seconds, `realm listen` posts the due Slack reminder or escalation of each waiting question whose `realm agent` has stopped, into the question's own thread, through the store's outbound ledger, so it and an agent that comes back do not both post a reminder once it is recorded. A post Slack does not take because of a Slack-wide problem pauses that workflow's reminders, and `realm listen` checks Slack again after 1, 2, 4 … up to 30 minutes.
 
 ### Changed
 
