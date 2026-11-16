@@ -142,6 +142,13 @@ describe('#603 A3b — the MCP answer tool names the account that answered, as i
     });
   });
 
+  it('a route a door declared as `account` is another route, never the label maker', async () => {
+    // The door words gained an `account` member (the label by route); a route of that name is not it.
+    const { error, at } = await later({ route: 'account', respondedBy: 'alice' });
+    // (a) red when the route's words are read from the label maker; (b) prints the sentence.
+    expect(error).toBe(beaten(', by "alice" (as stated)', "through route 'account'", at));
+  });
+
   it('without an account the sentence is today’s, word for word', async () => {
     const { error, at } = await later({ route: 'cli', respondedBy: 'alice' });
     // (a) red when an answer with no account gains a part; (b) prints the sentence.
