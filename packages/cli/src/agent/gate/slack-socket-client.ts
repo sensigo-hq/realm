@@ -1,7 +1,7 @@
 // slack-socket-client.ts — Slack Socket Mode WebSocket client for gate thread event delivery.
 // Opens a persistent WebSocket connection to Slack (no public URL required).
 // Used when notifiers.slack_gate.app_token (xapp-...) is configured alongside bot_token.
-import type { SlackGateEvent } from './slack-gate-server.js';
+import { eventTeam, type SlackGateEvent } from './slack-gate-server.js';
 
 import { deadlineSignal, readWithin, SLACK_CALL_DEADLINE_MS } from './slack-call.js';
 
@@ -151,7 +151,16 @@ export function connectSocketMode(config: SlackSocketConfig): { close(): void } 
         const ts = msgEvent['ts'] as string | undefined;
         if (!ts) return;
 
-        onEvent({ event_id: eventId, thread_ts: threadTs, user, text, ts });
+        // #603 A3a: Socket Mode's payload is the Events API's, so its workspace is read the same way.
+        const team = eventTeam(msgEvent, payload);
+        onEvent({
+          event_id: eventId,
+          thread_ts: threadTs,
+          user,
+          text,
+          ts,
+          ...(team !== undefined ? { team } : {}),
+        });
       }
     });
 

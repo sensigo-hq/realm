@@ -39,6 +39,8 @@ export interface SlackGateNotifierConfig {
     events_port?: number;
     reminder_interval_ms?: number;
     escalation_threshold_ms?: number;
+    /** #603 A3a: Slack member IDs who may answer a question that names no one. */
+    answerers?: string[];
   };
 }
 
@@ -138,6 +140,11 @@ export const DEPLOYMENT_MANIFEST_JSON_SCHEMA = {
                 events_port: { type: 'integer', minimum: 1, maximum: 65535 },
                 reminder_interval_ms: { type: 'integer', minimum: 1 },
                 escalation_threshold_ms: { type: 'integer', minimum: 1 },
+                answerers: {
+                  type: 'array',
+                  minItems: 1,
+                  items: { type: 'string', minLength: 1 },
+                },
               },
             },
           },
@@ -216,6 +223,16 @@ export function validateDeploymentManifest(raw: unknown): string[] {
     if (slack.app_token !== undefined && slack.signing_secret !== undefined) {
       errors.push(
         `notifiers.slack_gate: 'app_token' and 'signing_secret' are mutually exclusive — Socket Mode and the Events API are alternative reply channels; configure one.`,
+      );
+    }
+    // #603 A3a (the inert-config policy): only a notifier that reads replies reads `answerers`.
+    const readsReplies =
+      slack.bot_token !== undefined &&
+      slack.channel_id !== undefined &&
+      (slack.app_token !== undefined || slack.signing_secret !== undefined);
+    if (slack.answerers !== undefined && !readsReplies) {
+      errors.push(
+        `notifiers.slack_gate: 'answerers' needs a notifier that reads replies ('bot_token' and 'channel_id', with 'app_token' or 'signing_secret'); without one no Slack reply is read, so the list can answer nothing. Add the reply settings or remove 'answerers'.`,
       );
     }
   }

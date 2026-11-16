@@ -66,6 +66,7 @@ import {
   sha256HexOf,
 } from './extension-identity.js';
 import { resolveManifestSecrets, type SecretMode } from './manifest-secrets.js';
+import { namesSlackAccount } from '../agent/gate/slack-accounts.js';
 import {
   addDeclaredDisclosure,
   noteDeclaredStanding,
@@ -788,9 +789,18 @@ async function applyDeploymentManifest(
   let notifiers: LoadedProjectExtensions['notifiers'];
   const slackGate = ctx.document.notifiers?.slack_gate;
   if (slackGate !== undefined) {
-    notifiers = {
-      slack_gate: interpolateConfigTree(slackGate.config, resolveName),
-    };
+    const config = interpolateConfigTree(slackGate.config, resolveName);
+    // #603 A3a (W7b): an `answerers` entry no Slack reply can match is refused, by the one predicate.
+    // Named as written (a secret's value is never printed); a secret in sentinel mode is not judged.
+    const written = slackGate.config.answerers ?? [];
+    (config.answerers ?? []).forEach((entry, i) => {
+      const raw = written[i] ?? entry;
+      if (namesSlackAccount(entry) || (resolved.sentinel && raw.includes('${secret:'))) return;
+      throw new Error(
+        `Deployment manifest '${ctx.path}' is invalid:\n  notifiers.slack_gate: 'answerers' entry '${raw}' is not a Slack member ID (U… or W…, or its mention), so it would match no reply.`,
+      );
+    });
+    notifiers = { slack_gate: config };
   }
 
   return {

@@ -204,8 +204,9 @@ describe('(6) the words that tell a person about the corpus', () => {
     const paragraph = page
       .split('\n')
       .find((line) => line.startsWith('Stored data has its own guard.'));
+    // #603 A3a: the parenthesis names the Slack answerer rule too (its words: docs-603-a3a).
     const before =
-      "except where the changelog says otherwise (once so far, 0.42.0's `trust` check). ";
+      "except where the changelog says otherwise (so far 0.42.0's `trust` check, and the Slack answerer rule: a gate whose `owner` is not a Slack member ID can no longer be answered in its Slack thread, in a registered workflow as in a question open when you upgrade). ";
     const sought =
       "Each release's export files and stored runs, and the shapes its loader gives the example workflows, are " +
       'recorded from the published package into the repository (`packages/cli/src/corpus/<version>/`, from 0.49.0 ' +
