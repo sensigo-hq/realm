@@ -43,6 +43,7 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`unreadableFactsOf`](#unreadablefactsof) | function | The facts a damaged-file error carries, or `undefined` for any other error — the ONE reader (#729 PR-0: it keys on the facts' `scope`, Amendment 7e). |
 | [`unreadableRunFilesError`](#unreadablerunfileserror) | function | issue #719 (R10, B3, C3) — a decision over EVERY run fails closed when any run file cannot be read: ONE error naming every such file, and nothing is written. |
 | [`unreadableRunFilesOf`](#unreadablerunfilesof) | function | The facts of a decision that failed closed over damaged run files, or `undefined` for any other error — the ONE reader of `unreadableRunFilesError`'s facts (#729 PR-0: keyed on `scope`). |
+| [`withLibraryWords`](#withlibrarywords) | function | The complete renderer from a program's partial one: the program's function for each verb it gave one, Realm's own words (`LIBRARY_WORDS`) for every other verb — a verb added in a later minor release included, until the program writes its own. |
 | [`ExtensionRegistry`](#extensionregistry) | class | The handlers, service adapters and processors a program registers by name; the engine looks a step's handler or adapter up in it. |
 | [`JsonFileStore`](#jsonfilestore) | class | GLOBAL LOCK ORDER (issue #184): run-file lock BEFORE key lock, never the reverse. |
 | [`ActorAbsent`](#actorabsent) | interface | What stands in for a program's name when the record has none: `by: null` and the cause; read where an `Attributed` would be. |
@@ -95,6 +96,7 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`LibraryHost`](#libraryhost) | type | The library door's static settings: none yet — an embedder decides what to show. |
 | [`NoRemedy`](#noremedy) | type | Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`). |
 | [`NotRecordedKind`](#notrecordedkind) | type | The four kinds of a race in which this call's handler ran (`ran_here: true`). |
+| [`PartialWayRenderer`](#partialwayrenderer) | type | The renderer a program supplies when it words some of a reply's `ways` itself: any of `WayRenderer`'s functions, each one optional. |
 | [`Party`](#party) | type | Who can take a way on a run: the operator, the agent, or the person a question is asked of (`WAY_PARTIES`, `ForWay.for`). |
 | [`PreClaimRefusal`](#preclaimrefusal) | type | The checks that refuse a step before it is claimed: its trust, its precondition, its input schema, its capability. |
 | [`RaceStopKind`](#racestopkind) | type | The six race kinds: another program got there first, and the loop goes on with what is left. |
@@ -715,6 +717,20 @@ error — the ONE reader of `unreadableRunFilesError`'s facts (#729 PR-0: keyed 
 
 ```ts
 function unreadableRunFilesOf(err: unknown): UnreadableRunFilesFacts | undefined;
+```
+
+### withLibraryWords
+
+function · public
+
+The complete renderer from a program's partial one: the program's function for each verb it gave
+one, Realm's own words (`LIBRARY_WORDS`) for every other verb — a verb added in a later minor
+release included, until the program writes its own. A member given as `undefined` counts as not
+given. String words only, as `LIBRARY_WORDS` gives them: a renderer with another output type has no
+default and is written whole, as a `WayRenderer`.
+
+```ts
+function withLibraryWords<Host>(partial: PartialWayRenderer<Host>): WayRenderer<string, Host>;
 ```
 
 ## Classes
@@ -1848,6 +1864,20 @@ The four kinds of a race in which this call's handler ran (`ran_here: true`).
 
 ```ts
 type NotRecordedKind = Extract<RaceStopKind, 'held_elsewhere' | 'step_settled' | 'run_ended' | 'claim_removed'>;
+```
+
+### PartialWayRenderer
+
+type · public
+
+The renderer a program supplies when it words some of a reply's `ways` itself: any of
+`WayRenderer`'s functions, each one optional. `withLibraryWords` completes it with
+Realm's own words (`LIBRARY_WORDS`), so a verb added in a later minor release renders with
+Realm's words until the program writes its own. String words only, as `LIBRARY_WORDS` gives them:
+a renderer with another output type has no default and is written whole, as a `WayRenderer`.
+
+```ts
+type PartialWayRenderer<Host> = Partial<WayRenderer<string, Host>>;
 ```
 
 ### Party
