@@ -95,6 +95,18 @@ function judgeArguments(name: string, args: string[]): ArgumentVerdict | undefin
   return gave ? undefined : { cause: 'no_value_accepted' };
 }
 
+/**
+ * Fix 1, piece 3a-ii-a: whether one placeholder gets a finding here — an unknown filter, or an
+ * argument no value accepts — so the path check gives it no second one.
+ */
+export function hasFilterFinding(expr: string): boolean {
+  for (const filter of placeholderParts(expr.trim()).filters) {
+    if (!KNOWN_FILTERS.includes(filter.name)) return true;
+    if (judgeArguments(filter.name, filter.args) !== undefined) return true;
+  }
+  return false;
+}
+
 /** Item 3: the type word for a value that is not text. */
 function typeWord(value: unknown): string {
   if (value === null || value === undefined) return 'empty';

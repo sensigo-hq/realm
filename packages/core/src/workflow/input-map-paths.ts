@@ -25,6 +25,7 @@ import { capText } from '../utils/redaction.js';
 import { resolveSeverity, type LoaderWarning, type WarningCode } from './diagnostics.js';
 import { absentWhy } from './path-reasons.js';
 import { judgeWhenLeaf, whenLeafPath, type WhenLeaf } from './when-paths.js';
+import { judgeTemplateLeaf, type TemplateLeaf } from './template-paths.js';
 import {
   INPUT_MAP_SURFACE,
   PathIndex,
@@ -42,15 +43,21 @@ import type { SourcePosition } from './source-positions.js';
  * @public
  */
 export interface NotCheckedPath {
-  /** Where the path is read: an `input_map` leaf, or a `when` condition (piece 2a). */
-  surface: 'input_map' | 'when';
+  /**
+   * Where the path is read: an `input_map` leaf, a `when` condition (piece 2a), or a template
+   * placeholder in `gate.message` or `display` (piece 3a-ii-a).
+   */
+  surface: 'input_map' | 'when' | 'template';
   /** The step whose `input_map` (or `when`) holds the path. */
   step: string;
-  /** The map's dotted key chain; `when` for a condition. */
+  /** The map's dotted key chain; `when` for a condition; the field's name for a template. */
   key: string;
   /** The path as written, trimmed: for a condition, its left-hand path. */
   path: string;
-  /** The two shape reasons, or `check_failed` when the check itself failed on this path. */
+  /**
+   * The shape reasons (and `added_from_file`, a context entry only the file loader adds), or
+   * `check_failed` when the check itself failed on this path.
+   */
   why: NotCheckedWhy | 'check_failed';
 }
 
@@ -79,6 +86,8 @@ export function checkInputMapPaths(
     leaves: readonly WhenLeaf[];
     choicesOf: (stepName: string) => readonly string[];
   },
+  /** Piece 3a-ii-a: the `gate.message` and `display` placeholders to judge (`templateLeaves`). */
+  templates: readonly TemplateLeaf[] = [],
 ): InputMapPathFindings {
   const findings: InputMapPathFindings = { warnings: [], notChecked: [] };
   const leaves: Leaf[] = [];
@@ -94,7 +103,7 @@ export function checkInputMapPaths(
     );
   }
   const whenLeaves = when?.leaves ?? [];
-  if (leaves.length === 0 && whenLeaves.length === 0) return findings;
+  if (leaves.length === 0 && whenLeaves.length === 0 && templates.length === 0) return findings;
 
   let index: PathIndex | undefined;
   try {
@@ -145,6 +154,29 @@ export function checkInputMapPaths(
         step: leaf.step,
         key: 'when',
         path,
+        why: 'check_failed',
+      });
+      continue;
+    }
+    if (judged.notChecked !== undefined) findings.notChecked.push(judged.notChecked);
+    if (judged.warning !== undefined) findings.warnings.push(judged.warning);
+  }
+  // Piece 3a-ii-a: the template placeholders, over the same index and under the same catch.
+  for (const leaf of templates) {
+    let judged: LeafFindings | undefined;
+    if (index !== undefined) {
+      try {
+        judged = judgeTemplateLeaf(index, leaf, positionOf);
+      } catch {
+        judged = undefined;
+      }
+    }
+    if (judged === undefined) {
+      findings.notChecked.push({
+        surface: 'template',
+        step: leaf.step,
+        key: leaf.field,
+        path: leaf.path,
         why: 'check_failed',
       });
       continue;
@@ -303,6 +335,12 @@ function neverWords(
           `and allows no others.`,
         cause.didYouMean,
       );
+    // Piece 3a-ii-a's rows, which no `input_map` path reaches: its surface has no context root and
+    // does not read the step's own output.
+    case 'own_settlement':
+    case 'own_choice':
+    case 'no_context_entry':
+      return { text: `${opening} reads '${p}', which can never be found.` };
   }
 }
 

@@ -41,6 +41,7 @@ import { checkInputMapPaths, type NotCheckedPath } from './input-map-paths.js';
 import type { WhenLeaf } from './when-paths.js';
 import { checkProvidedNames, type DeclaredNames } from './name-check.js';
 import { checkTemplates } from './template-check.js';
+import { templateLeaves } from './template-paths.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
 import { checkParamsMap } from './params-map-check.js';
@@ -3899,14 +3900,20 @@ function parseWorkflowString(
     // declares (`input-map-paths.ts`); piece 2a: and every `when` leaf the checks above accepted,
     // over the same index. Last, once every step is known, and before the throw below, so its
     // findings ride a refusal for another reason too (#424) — every problem in one pass.
+    // Piece 3a-ii-a: and every path in an approval question and in `display`, over the same index.
     const inputMapPaths = checkInputMapPaths(
-      { steps: stepsRaw, params_schema: doc['params_schema'] },
+      {
+        steps: stepsRaw,
+        params_schema: doc['params_schema'],
+        workflow_context: doc['workflow_context'],
+      },
       (segments) => sourceMap.posOf(segments),
       {
         leaves: admittedWhen,
         choicesOf: (name) =>
           gateChoicesOf(stepsRaw[name] as Pick<StepDefinition, 'gate' | 'input_schema'>),
       },
+      templateLeaves(stepsRaw),
     );
     warnings.push(...inputMapPaths.warnings);
 

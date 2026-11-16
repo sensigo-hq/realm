@@ -352,7 +352,10 @@ ${schema}`;
           'refund',
           workflow,
         ),
-      ).toEqual({ verdict: 'may_be_absent', cause: { rule: 'undeclared_field', step: 'propose' } });
+      ).toEqual({
+        verdict: 'may_be_absent',
+        cause: { rule: 'undeclared_field', step: 'propose', didYouMean: 'amount_cents' },
+      });
     },
   );
 });
