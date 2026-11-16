@@ -1588,6 +1588,7 @@ function applyMarkFinalizer(fresh: RunRecord, delta: MarkFinalizerDelta): Settle
  *
  * `result.run` on `applied: true` is the AS-APPLIED transform output — see
  * {@link SettlementResult}'s own doc for the never-a-re-read invariant this carries.
+ * @public
  */
 export function applySettlement(
   fresh: RunRecord,

@@ -37,6 +37,7 @@ export const SIDECAR_SUFFIX = '.attempts.jsonl';
  */
 export const FAILED_ATTEMPT_SIDECAR_MAX_BYTES = 256 * 1024;
 
+/** @public */
 export interface FailedAttemptReadResult {
   /** Parsed records, in append order; torn/unparseable lines are skipped. */
   records: FailedAttemptRecord[];
@@ -51,6 +52,7 @@ export interface FailedAttemptReadResult {
  * order); the per-run artifact methods delete or measure what the store holds for a run.
  * `JsonFileFailedAttemptStore` is Realm's file store; a holder that also needs `listOrphans` takes
  * that class.
+ * @public
  */
 export interface FailedAttemptStore extends PerRunArtifactStore {
   /** Append one already-serialized record line for `runId`. Best-effort: never throws. */
@@ -64,6 +66,7 @@ export interface FailedAttemptStore extends PerRunArtifactStore {
  * append never throws/propagates. Lock-free: each line is ≤PIPE_BUF, so a single O_APPEND write is
  * atomic and interleave-safe across concurrent processes (the size bound is what buys lock-freedom —
  * the deliberate difference from the WAL store).
+ * @public
  */
 export class JsonFileFailedAttemptStore implements FailedAttemptStore, OrphanSweepableStore {
   private readonly runsDir: string;

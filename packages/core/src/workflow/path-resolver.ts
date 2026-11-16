@@ -174,6 +174,7 @@ export type AbsentCause =
 /**
  * Why a path was not checked. Piece 3a-ii-a: `added_from_file` is `workflow.context.schema`, an entry
  * the file loader adds from a `schema.json` beside the file when the workflow declares none.
+ * @public
  */
 export type NotCheckedWhy = 'producer_declares_no_shape' | 'no_params_schema' | 'added_from_file';
 

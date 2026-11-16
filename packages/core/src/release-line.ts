@@ -33,6 +33,7 @@ function isBrand(value: unknown): value is RealmBrand {
  * The release line an object carries: realm's own classes through PR-B's mark, a host's class or
  * object through {@link declareReleaseLine}. `undefined` when it carries none. One property read,
  * inside a `try`; total.
+ * @public
  */
 export function releaseLineOf(value: unknown): RealmBrand | undefined {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
@@ -112,6 +113,7 @@ function mismatchError(
  *
  * A class: the line goes on its prototype. A plain object: a non-enumerable own property. A target
  * that already carries this generation: nothing to do. Another generation: refused.
+ * @public
  */
 export function declareReleaseLine(
   target: object | (abstract new (...args: never[]) => object),

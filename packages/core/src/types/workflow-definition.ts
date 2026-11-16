@@ -6,6 +6,7 @@ import type { McpServerConfig } from './mcp-types.js';
 // anything from this file).
 import { closestKey } from '../workflow/diagnostics.js';
 
+/** @public */
 export type ExecutionMode = 'auto' | 'agent' | 'guard' | 'finalizer';
 
 /**
@@ -16,10 +17,12 @@ export type ExecutionMode = 'auto' | 'agent' | 'guard' | 'finalizer';
  * `complete`/`always` on that specific seal shape; never fires on a clean complete or on a pure
  * fail/abort seal — see `docs/reference/yaml-schema.md`'s `execution: finalizer` trigger table).
  * OR-membership when given as an array.
+ * @public
  */
 export type FinalizerTrigger =
   'complete' | 'fail' | 'abort' | 'always' | 'completed_with_failed_steps';
 
+/** @public */
 export interface ProtocolConfig {
   /** Override for the generated quick-start paragraph. */
   quick_start?: string;
@@ -33,8 +36,10 @@ export interface ProtocolConfig {
 // RESERVATION of the value — no challenge mechanism exists, so today it is an exact alias of
 // `human_confirmed` (see the behavioural-equivalence pin in `execution-loop.test.ts`); issue #531
 // owns the implement-or-permanently-alias decision.
+/** @public */
 export type TrustLevel = 'auto' | 'human_confirmed' | 'human_reviewed';
 
+/** @public */
 export type ServiceTrust = 'engine_delivered' | 'engine_managed' | 'agent_provided';
 
 /**
@@ -365,6 +370,7 @@ export function buildTrustRefusal(args: {
   return `${prefix}${armClause} — ${consequence}. ${tail}`;
 }
 
+/** @public */
 export interface JsonSchema {
   type?: string;
   required?: string[];
@@ -376,6 +382,7 @@ export interface JsonSchema {
   [key: string]: unknown;
 }
 
+/** @public */
 export interface RateLimitConfig {
   /** Maximum number of requests per second. Used as the token refill rate. */
   requests_per_second?: number;
@@ -399,24 +406,32 @@ export interface RateLimitConfig {
   max_retry_seconds?: number;
 }
 
+/** @public */
 export interface ServiceDefinition {
   adapter: string;
   trust: ServiceTrust;
   rate_limit?: RateLimitConfig;
 }
 
-/** A single parameter declaration in a template. */
+/**
+ * A single parameter declaration in a template.
+ * @public
+ */
 export interface TemplateParam {
   required?: boolean;
   default?: string;
 }
 
-/** A named reusable step group with parameter placeholders. */
+/**
+ * A named reusable step group with parameter placeholders.
+ * @public
+ */
 export interface TemplateDefinition {
   params?: Record<string, TemplateParam>;
   steps: Record<string, StepDefinition>;
 }
 
+/** @public */
 export interface RetryConfig {
   max_attempts: number;
   backoff?: 'linear' | 'exponential' | 'fixed';
@@ -492,6 +507,7 @@ const _retryKeysExtraCheck: _RetryKeysExtra extends never
  * (`reminder_seconds`/`reminder_max`). See `docs/reference/yaml-schema.md`'s `structured_output`-
  * adjacent `## Gate timeout` section for the full authoring/enactment/disclosure contract; the
  * loader (`yaml-loader.ts`) is the normative validator for every field below.
+ * @public
  */
 export interface GateConfig {
   choices?: string[];
@@ -606,6 +622,7 @@ const _gateKeysExtraCheck: _GateKeysExtra extends never
 /**
  * Controls when a step becomes eligible based on its dependencies' outcomes.
  * Default: 'all_success'.
+ * @public
  */
 export type TriggerRule =
   'all_success' | 'all_failed' | 'all_done' | 'one_failed' | 'one_success' | 'none_failed';
@@ -618,10 +635,13 @@ export type TriggerRule =
  * - { [key: string]: InputMapNode }: a nested object (recursive)
  *
  * The $literal sentinel must appear alone — no sibling keys are permitted.
+ * @public
  */
 export type LiteralNode = { $literal: unknown };
+/** @public */
 export type InputMapNode = string | LiteralNode | { [key: string]: InputMapNode };
 
+/** @public */
 export interface StepDefinition {
   description: string;
   execution: ExecutionMode;
@@ -938,6 +958,7 @@ const _stepKeysExtraCheck: _StepKeysExtra extends never
   ? true
   : ['KNOWN_STEP_KEYS has a key StepDefinition does not declare', _StepKeysExtra] = true;
 
+/** @public */
 export interface WorkflowDefinition {
   id: string;
   name: string;
@@ -1110,7 +1131,10 @@ const _workflowKeysOverlapCheck: _WorkflowKeysOverlap extends never
   ? true
   : ['KNOWN_WORKFLOW_KEYS and RUNTIME_ONLY_WORKFLOW_KEYS overlap', _WorkflowKeysOverlap] = true;
 
-/** A single named entry in the workflow_context section. */
+/**
+ * A single named entry in the workflow_context section.
+ * @public
+ */
 export interface WorkflowContextEntry {
   /** Absolute file path — resolved from the YAML-relative path at registration time. */
   source: { path: string };
@@ -1118,7 +1142,10 @@ export interface WorkflowContextEntry {
   description?: string;
 }
 
-/** Wrapper format applied to {{ workflow.context.NAME }} template references. */
+/**
+ * Wrapper format applied to {{ workflow.context.NAME }} template references.
+ * @public
+ */
 export type ContextWrapperFormat = 'xml' | 'brackets' | 'none';
 
 // ─── Webhook Trigger ───────────────────────────────────────────────────────────
@@ -1126,7 +1153,10 @@ export type ContextWrapperFormat = 'xml' | 'brackets' | 'none';
 // auth modes, not all signatures) — `shared_secret` (header token; primary) plus the HMAC
 // presets github/stripe/hmac, and a documented `none` escape hatch.
 
-/** Header-token auth — the request carries a user-configured header equal to a shared secret. */
+/**
+ * Header-token auth — the request carries a user-configured header equal to a shared secret.
+ * @public
+ */
 export interface AuthSharedSecret {
   mode: 'shared_secret';
   /** Request header carrying the token (matched case-insensitively), e.g. 'Authorization'. */
@@ -1135,13 +1165,19 @@ export interface AuthSharedSecret {
   secret_from: string;
 }
 
-/** GitHub HMAC-SHA256 hex body signature (header 'X-Hub-Signature-256'). */
+/**
+ * GitHub HMAC-SHA256 hex body signature (header 'X-Hub-Signature-256').
+ * @public
+ */
 export interface AuthGithub {
   mode: 'github';
   secret_from: string;
 }
 
-/** Stripe timestamped HMAC body signature (header 'Stripe-Signature'). */
+/**
+ * Stripe timestamped HMAC body signature (header 'Stripe-Signature').
+ * @public
+ */
 export interface AuthStripe {
   mode: 'stripe';
   secret_from: string;
@@ -1149,7 +1185,10 @@ export interface AuthStripe {
   max_age_seconds?: number;
 }
 
-/** Generic HMAC body signature with a configurable header / algorithm / encoding. */
+/**
+ * Generic HMAC body signature with a configurable header / algorithm / encoding.
+ * @public
+ */
 export interface AuthHmac {
   mode: 'hmac';
   secret_from: string;
@@ -1165,22 +1204,31 @@ export interface AuthHmac {
   max_age_seconds?: number;
 }
 
-/** Documented, discouraged escape hatch — accept without verification (trusted network / localhost only). */
+/**
+ * Documented, discouraged escape hatch — accept without verification (trusted network / localhost only).
+ * @public
+ */
 export interface AuthNone {
   mode: 'none';
 }
 
+/** @public */
 export type WebhookAuth = AuthSharedSecret | AuthGithub | AuthStripe | AuthHmac | AuthNone;
 
 // Dot-notation: each segment is a property name or zero-based numeric array index.
+/** @public */
 export type FilterCondition =
   { header: string; value: string | string[] } | { path: string; value: string | string[] };
 
-/** Post-normalisation form (loader converts shorthand → { all: [...] }). Max 8 conditions. */
+/**
+ * Post-normalisation form (loader converts shorthand → { all: [...] }). Max 8 conditions.
+ * @public
+ */
 export interface TriggerFilter {
   all: FilterCondition[];
 }
 
+/** @public */
 export interface DedupConfig {
   /** Dot-path to the unique event ID (e.g. 'body.id' or 'headers.x-gorgias-...').
    *  The dot-path root is { headers, body } (plural 'headers') — matching params_map and the runtime
@@ -1196,6 +1244,7 @@ export interface DedupConfig {
   on_missing_id?: 'skip' | 'reject';
 }
 
+/** @public */
 export interface WebhookTrigger {
   type: 'webhook';
   /** URL path for this webhook. Default: /<workflow-id>. */
@@ -1215,4 +1264,5 @@ export interface WebhookTrigger {
   result_map?: Record<string, string>;
 }
 
+/** @public */
 export type TriggerDefinition = WebhookTrigger;

@@ -15,6 +15,7 @@ import type { Clock } from '../utils/clock.js';
  * A `clock.now()` that returns an invalid `Date` fails here, loud, instead of as a `RangeError` from
  * `toISOString()` later. A READ takes it BEFORE it loads (D6-16): every statement about what it then
  * loads holds at the reading; a listing's `read_at` is this raw value.
+ * @public
  */
 export function takeRawReading(clock: Clock): Date {
   const r = clock.now();
@@ -29,6 +30,7 @@ export function takeRawReading(clock: Clock): Date {
  * ahead lifts the reading by at most ε ({@link CLOCK_SKEW_EPSILON_MS}), so no deadline is minted more
  * than ε late. An `updated_at` that does not parse is ignored (D6-68), never `NaN`. PURE: reads no
  * clock. Returns a fresh `Date`.
+ * @public
  */
 export function floorAtRecord(r: Date, record: { updated_at: string }): Date {
   const rMs = r.getTime();
@@ -47,6 +49,7 @@ export function floorAtRecord(r: Date, record: { updated_at: string }): Date {
  * reading of the program that opened it. An identity entry's `captured_at` is outside class and
  * never folded (D6-67). It is {@link foldReading} of the one raw reading.
  * Returns a fresh `Date`.
+ * @public
  */
 export function takeReading(
   clock: Clock,
@@ -84,6 +87,7 @@ export function foldReading(
  * the holder's `created_at` (not `h + 1 ms`) and the canonical order is decided by the id — a known
  * boundary of D6-60's "up to ε". Beyond ε the cap wins and the successor may sort before its holder
  * (a named residual, D6-29(b)). A `created_at` that does not parse floors nothing (D6-68).
+ * @public
  */
 export function floorAtHolder(reading: Date, holderCreatedAt?: string): Date {
   const rMs = reading.getTime();

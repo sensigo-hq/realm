@@ -51,9 +51,7 @@ import {
 } from './door.js';
 import type { ElicitFn } from './form-path.js';
 
-/** `offered`, the old name of `permitted`: the `gateAnswers` option's TSDoc says so. */
-type GateAnswersOldName = 'offered';
-
+/** @public */
 export interface RealmMcpServerOptions {
   /** Extension registry for resolving service adapters and step handlers at runtime. */
   registry?: ExtensionRegistry;
@@ -154,7 +152,7 @@ export interface RealmMcpServerOptions {
    * `'offered'` is the old name of `'permitted'`, and still works. It reads back as `permitted`. A
    * value that is not one of these throws (no server is built). `effectiveGateAnswers()` logs it.
    */
-  gateAnswers?: 'asked' | 'permitted' | 'withheld' | GateAnswersOldName;
+  gateAnswers?: 'asked' | 'permitted' | 'withheld' | 'offered';
   /**
    * #627 W: the value of the `--gate-answers` flag, as the `realm mcp` / `realm serve` bins pass it
    * (source `flag`). An embedder uses `gateAnswers`.
@@ -271,6 +269,7 @@ export { createDefaultRegistry };
  * under the name `filesystem`. Pass a custom `registry` to add your own handlers and
  * adapters — when you do, include `FileSystemAdapter` explicitly if your workflows use it,
  * or start from `createDefaultRegistry()` and add your extensions on top.
+ * @public
  */
 export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer {
   // #627 W (§5.1): the gate-answers value and the form wait, judged before anything is built — a

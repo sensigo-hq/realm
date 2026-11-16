@@ -12,7 +12,10 @@ import type { RunStore } from '../store/store-interface.js';
 import { NO_LEASE_FACTS, type LeaseFacts } from '../store/lease-facts.js';
 import type { DefinitionAbsence, LoadErrorCode } from './ways.js';
 
-/** One record and the reading it is judged at (#715 D6-17). Built only by this module. */
+/**
+ * One record and the reading it is judged at (#715 D6-17). Built only by this module.
+ * @public
+ */
 export interface Snapshot {
   readonly record: RunRecord;
   /** The clock reading taken BEFORE the record was loaded (D6-16), or the reading its write used. */
@@ -43,6 +46,7 @@ export async function loadSnapshot(store: Pick<RunStore, 'get'>, runId: string):
  *
  * #729 CW-1b: with `facts`, the `lease_facts` from `leaseFactsOf` when the store has a lease port; a
  * snapshot with no facts (none passed, or `NO_LEASE_FACTS`) is `{ record, at }` exactly, as before.
+ * @public
  */
 export function writtenSnapshot(record: RunRecord, at: Date, facts?: LeaseFacts): Snapshot {
   if (facts === undefined || facts === NO_LEASE_FACTS) return { record, at };
@@ -109,12 +113,16 @@ export function attachJudged<T extends object>(reply: T): T {
  * door's disclosed view. Carried privately: a copy of the reply (`{ ...reply }`, `structuredClone`,
  * JSON) does not carry it, and a reply from another loaded copy of core is not known here.
  * `undefined` when the reply loaded no run (no `basis`).
+ * @public
  */
 export function judgedSnapshotOf(reply: object): Snapshot | undefined {
   return JUDGED.get(reply);
 }
 
-/** A reply's stamp about one record (#715 D6-18, D6-59). */
+/**
+ * A reply's stamp about one record (#715 D6-18, D6-59).
+ * @public
+ */
 export interface Stamp {
   /** The snapshot's `at`, ISO 8601: the instant every time statement about the record was judged at. */
   as_of: string;
@@ -142,6 +150,7 @@ export function stampOf(snapshot: Snapshot, basis?: 'test_clock'): Stamp {
  * The program that judges the ways (D2 D-9): this program with its registry, an observer that passed
  * none (C33: a read surface never executes project code), or a program whose project code failed to
  * load. A renderer sees the kind and the error code only — never the registry or an `Error` (A-9).
+ * @public
  */
 export type EnactorBasis =
   | { kind: 'this_program' }
@@ -153,12 +162,14 @@ export type EnactorBasis =
  * or why it is absent — in the ONE vocabulary of `definition_absent`'s facts (A-5's arms), never a
  * second list. Not the author's `version:` (P-7: not identity). #493's content hash enters with
  * #493, its producer (the membership rule) — no run records one today.
+ * @public
  */
 export type DefinitionBasis = { workflow_id: string } | { absent: DefinitionAbsence };
 
 /**
  * What a reply's ways were judged on (D2 D-9, D3 A-9): the record's stamp, the enactor's kind, whether
  * the store persists claims (absent ⇒ false, fail closed) and the definition.
+ * @public
  */
 export interface Basis extends Stamp {
   enactor: EnactorBasis;

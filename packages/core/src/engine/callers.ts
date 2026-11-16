@@ -11,6 +11,7 @@ import { WorkflowError } from '../types/workflow-error.js';
  * `agent` is `realm agent`, `run` is `realm workflow run`, `respond` is `realm run respond`). No
  * word names a call that is not made (round 20's finding 5: `executeEngineStep` admits its own call).
  * Never a free string: `command` is `advanceRun`'s free label.
+ * @public
  */
 export const ENTRY_CALLERS = {
   advanceRun: ['advanceRun', 'advance_run', 'advance', 'start_run', 'agent'],
@@ -25,17 +26,28 @@ export type NamedEntry = keyof typeof ENTRY_CALLERS;
 
 /** `advanceRun`'s callers (decisions C124, C133). */
 export const ADVANCE_CALLERS = ENTRY_CALLERS.advanceRun;
+/** @public */
 export type AdvanceCaller = (typeof ENTRY_CALLERS.advanceRun)[number];
-/** `executeStep`'s callers (decision C151). */
+/**
+ * `executeStep`'s callers (decision C151).
+ * @public
+ */
 export type StepCaller = (typeof ENTRY_CALLERS.executeStep)[number];
 /**
  * `executeEngineStep`'s callers (decisions C151, C155): its own word and `realm agent`'s — it admits
  * its own call, so a refusal names `executeEngineStep`.
+ * @public
  */
 export type EngineStepCaller = (typeof ENTRY_CALLERS.executeEngineStep)[number];
-/** `executeChain`'s callers (decision C151). */
+/**
+ * `executeChain`'s callers (decision C151).
+ * @public
+ */
 export type ChainCaller = (typeof ENTRY_CALLERS.executeChain)[number];
-/** `submitHumanResponse`'s callers (decision C151). */
+/**
+ * `submitHumanResponse`'s callers (decision C151).
+ * @public
+ */
 export type AnswerCaller = (typeof ENTRY_CALLERS.submitHumanResponse)[number];
 
 /** A value as the refusal names it: a string quoted, a number, boolean or `null` as written. */

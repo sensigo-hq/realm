@@ -8,8 +8,10 @@ import type { RaceStopKind, ReplyKind, Unavailable, WayOn } from '../engine/ways
 import type { Basis } from '../engine/snapshot.js';
 import type { EnactedVia } from '../engine/execution-loop.js';
 
+/** @public */
 export type RunStatus = 'ok' | 'error' | 'blocked' | 'confirm_required';
 
+/** @public */
 export interface BlockedReason {
   /**
    * The steps that can be called now: the agent steps the run's view offers and the `auto` steps
@@ -19,6 +21,7 @@ export interface BlockedReason {
   eligible_steps: string[];
 }
 
+/** @public */
 export interface GateInfo {
   gate_id: string;
   step_name: string;
@@ -61,6 +64,7 @@ export interface GateInfo {
  * true and the call gave one; `by.name` is read through core's one reader of a stated name
  * (`readStatedAnswerer`): no name, or a blank one, gives no `name`; a name that reader refuses gives
  * `name_absent: 'name_unreadable'` instead.
+ * @public
  */
 export interface Outcome {
   choice?: string;
@@ -98,7 +102,10 @@ export type OutcomeDoorWords = { readonly [R in AnswerRoute]: string } & {
   readonly other_route: (route: string) => string;
 };
 
-/** issue #729 PR-0 (T-3): one race a loop met — the step, the T-1 kind, whether this call's code ran. */
+/**
+ * issue #729 PR-0 (T-3): one race a loop met — the step, the T-1 kind, whether this call's code ran.
+ * @public
+ */
 export interface RaceEntry {
   step: string;
   kind: RaceStopKind;
@@ -110,6 +117,7 @@ export interface RaceEntry {
  * `on_expiry`, carried out by the call whose reply carries it (#715 (b), Amendment 3: no
  * `by_this_call` — it could no longer be false). `overdue` is read through `readInstant`:
  * the lag, or `{ absent: 'unparseable_stamp' }`; a question not yet due never reaches a receipt.
+ * @public
  */
 export interface ExpiryReceipt {
   gate_id: string;
@@ -126,6 +134,7 @@ export interface ExpiryReceipt {
  * it (`remedy`, every one judged), the step a stop is about when it is not the call's own (`about`,
  * T-1), and the typed facts of its code (`facts`, Amendment 7). The untyped remainder stays in
  * `error_details` until its code's unit types it (Amendment 11).
+ * @public
  */
 export interface ReplyError {
   remedy: WayOn[];
@@ -140,6 +149,7 @@ export interface ReplyError {
  * (`unavailable`), what they were judged on (`basis`), and the typed receipts. Ways are never stored:
  * a replayed request returns its first verdict with fresh ways. Each door renders it — MCP's
  * `renderReply`, the CLI's `CLI_COMMANDS`; the library carries it as it is.
+ * @public
  */
 export interface EngineReply {
   command: string;

@@ -1,9 +1,11 @@
 // Step handler — custom business logic for a workflow step.
 
+/** @public */
 export interface StepHandlerInputs {
   params: Record<string, unknown>;
 }
 
+/** @public */
 export interface StepContext {
   run_id: string;
   run_params: Record<string, unknown>;
@@ -16,6 +18,7 @@ export interface StepContext {
   resources?: Record<string, unknown>;
 }
 
+/** @public */
 export interface StepHandlerResult {
   /**
    * Output data to record in the evidence chain. Required unless `abort` is set.
@@ -41,6 +44,7 @@ export interface StepHandlerResult {
   warn?: { message: string };
 }
 
+/** @public */
 export interface StepHandler {
   readonly id: string;
   /**

@@ -252,6 +252,7 @@ export type McpEnvelope = Omit<
  * An operator route a launching program injects (D2 §5, P-6): `realm mcp` and `realm serve` hand the
  * CLI's renderer, so the person block can name the command an operator runs; the standalone
  * `realm-mcp` bin injects none.
+ * @public
  */
 export interface OperatorRoute {
   /** Renders an operator's way as the command that enacts it, or `null` when no command does. */

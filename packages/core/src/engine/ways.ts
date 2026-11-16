@@ -53,11 +53,18 @@ import { consumesInputMap, newRunCanChangeInput, refusedInputField } from './inp
 
 // ─── Parties and slots ──────────────────────────────────────────────────────────────────────────
 
-/** Who can take a way (PR0-CONTRACT §1): the operator, the agent, the person a question is asked of. */
+/**
+ * Who can take a way (PR0-CONTRACT §1): the operator, the agent, the person a question is asked of.
+ * @public
+ */
 export const PARTIES = ['operator', 'agent', 'asked_person'] as const;
+/** @public */
 export type Party = (typeof PARTIES)[number];
 
-/** A value the caller picks from a closed set (D1 spine 1): printed by each door's own rule (T-7). */
+/**
+ * A value the caller picks from a closed set (D1 spine 1): printed by each door's own rule (T-7).
+ * @public
+ */
 export type Slot<T> = { readonly one_of: readonly T[] };
 
 // ─── Conditions ─────────────────────────────────────────────────────────────────────────────────
@@ -74,6 +81,7 @@ export type Slot<T> = { readonly one_of: readonly T[] };
  * `override_claim_unknown_age` — each with its producer, never reserved here. The gate-answers default
  * (2026-11-14) removed `client_prompt`'s one producer, the MCP door's fallback row; the member and its
  * tag stay, as exported names, and nothing composes it now.
+ * @public
  */
 export type Cond =
   | {
@@ -97,8 +105,10 @@ export type Cond =
  * prompt). Beside {@link Cond}, never on {@link CODE_TAGS}, which tags UNAVAILABLE codes.
  * OFFER_EQUALS_ADMISSION compares offer and admission over conditions Realm judges, so it leaves a
  * `client`-tagged condition out of the compared set.
+ * @public
  */
 export const COND_TAGS = ['client'] as const;
+/** @public */
 export type CondTag = (typeof COND_TAGS)[number];
 
 // ─── The ways ───────────────────────────────────────────────────────────────────────────────────
@@ -106,6 +116,7 @@ export type CondTag = (typeof COND_TAGS)[number];
 /**
  * PR-0's verbs (option B) and #627 W's `present` (Amendment 2): PR-1 adds resume/drain/purge, PR-2
  * reclaim/validate/export, PR-7 start.
+ * @public
  */
 export const WAY_VERBS = [
   'respond',
@@ -116,6 +127,7 @@ export const WAY_VERBS = [
   'register',
   'present',
 ] as const;
+/** @public */
 export type WayVerb = (typeof WAY_VERBS)[number];
 
 /**
@@ -130,7 +142,8 @@ export const PROGRESS_VERBS = [
 ] as const satisfies readonly WayVerb[];
 export type ProgressVerb = (typeof PROGRESS_VERBS)[number];
 
-interface Base<V extends WayVerb> {
+/** @public */
+export interface Base<V extends WayVerb> {
   readonly verb: V;
   readonly conditions: readonly Cond[];
 }
@@ -139,6 +152,7 @@ interface Base<V extends WayVerb> {
  * What a `run_step` way says about its step (D1 spine 3, 4): the step's kind, its description, the
  * prompt the agent reads (template-resolved), the input schema an agent step's answer must fit, and —
  * a fact kept as data until #516 decides its meaning — the step's handler.
+ * @public
  */
 export interface StepBrief {
   execution: 'agent' | 'auto';
@@ -155,7 +169,10 @@ export interface StepBrief {
   stable_prefix?: StableBoundary;
 }
 
-/** Answer the run's open question (PR0-CONTRACT §1). */
+/**
+ * Answer the run's open question (PR0-CONTRACT §1).
+ * @public
+ */
 export type RespondWay = Base<'respond'> & {
   run_id: string;
   gate_id: string;
@@ -181,19 +198,31 @@ export type RespondWay = Base<'respond'> & {
   proof?: { claim_token: string };
 };
 
-/** Run one step: an agent step's answer, or (the operator's lever, T-17) an engine step's input. */
+/**
+ * Run one step: an agent step's answer, or (the operator's lever, T-17) an engine step's input.
+ * @public
+ */
 export type RunStepWay = Base<'run_step'> & { run_id: string; step: string; brief: StepBrief };
 
-/** Have the engine carry out what it owes (#625 PR-2a's act): a due expiry first, then steps. */
+/**
+ * Have the engine carry out what it owes (#625 PR-2a's act): a due expiry first, then steps.
+ * @public
+ */
 export type AdvanceWay = Base<'advance'> & {
   run_id: string;
   owed: readonly ({ step: string } | { expiry: DueExpiry })[];
 };
 
-/** Read the run's record. */
+/**
+ * Read the run's record.
+ * @public
+ */
 export type InspectWay = Base<'inspect'> & { run_id: string };
 
-/** End the run. */
+/**
+ * End the run.
+ * @public
+ */
 export type AbandonWay = Base<'abandon'> & { run_id: string };
 
 /**
@@ -206,6 +235,7 @@ export type AbandonWay = Base<'abandon'> & { run_id: string };
  * has a file: a copy in a database has none, so `path` alone cannot tell it from a copy that is not
  * there. The doors read it; the library's own words (`LIBRARY_WORDS`) do not, because the library's
  * repair is the same act either way.
+ * @public
  */
 export type RegisterWay = Base<'register'> & {
   workflow_id: string;
@@ -218,14 +248,21 @@ export type RegisterWay = Base<'register'> & {
  * #627 W (Amendment 2): show the open question again, as a form in the agent's own call — the MCP
  * door's `present_question`. The agent cannot answer through it: the person's accept records the
  * answer. No `step`: a renderer reads the step from the reply it already holds.
+ * @public
  */
 export type PresentWay = Base<'present'> & { run_id: string; gate_id: string };
 
-/** One way on, discriminated on `verb` (PR0-CONTRACT §1). */
+/**
+ * One way on, discriminated on `verb` (PR0-CONTRACT §1).
+ * @public
+ */
 export type WayOn =
   RespondWay | RunStepWay | AdvanceWay | InspectWay | AbandonWay | RegisterWay | PresentWay;
 
-/** The way of one verb. */
+/**
+ * The way of one verb.
+ * @public
+ */
 export type WayOf<V extends WayVerb> = Extract<WayOn, { verb: V }>;
 
 // ─── Who can take each verb ─────────────────────────────────────────────────────────────────────
@@ -257,6 +294,7 @@ export type CodeTag = (typeof CODE_TAGS)[number];
 /**
  * PR-0's codes (PR0-CONTRACT §1, T-1, T-21, A-5, A-7), each with its tag and the verbs it applies to.
  * One S7 law per code (rule 19): its cell in `ways.test.ts`. No member is reserved (Amendment 8).
+ * @public
  */
 export const UNAVAILABLE_CODES = {
   // respond
@@ -304,19 +342,27 @@ export const UNAVAILABLE_CODES = {
   asks_exhausted: { tag: 'door', verbs: ['present'] },
   door_withholds_answers: { tag: 'door', verbs: ['respond'] },
 } as const satisfies Record<string, { tag: CodeTag; verbs: readonly WayVerb[] }>;
+/** @public */
 export type UnavailableCode = keyof typeof UNAVAILABLE_CODES;
 
 /**
  * The code a failed load of a program's project code carries (A-5; Amendment 16, Q19): the error's
  * catalogue code, or `uncoded` — the loader throws plain errors too, and no catalogue code is minted
  * for them (a reader is never sent to the catalogue for a code that is not there).
+ * @public
  */
 export type LoadErrorCode = ErrorCode | 'uncoded';
 
-/** The checks that refuse a step before its claim (#625 PR-2a's `checkPreClaim`, minus capability). */
+/**
+ * The checks that refuse a step before its claim (#625 PR-2a's `checkPreClaim`, minus capability).
+ * @public
+ */
 export type RefusedCheck = 'trust' | 'precondition' | 'input_schema';
 
-/** How a `definition_absent` arose (A-5, T-21: `getWorkflowForRun`'s arms). */
+/**
+ * How a `definition_absent` arose (A-5, T-21: `getWorkflowForRun`'s arms).
+ * @public
+ */
 export const DEFINITION_ABSENCES = [
   'agent_copy_gone',
   'not_registered',
@@ -327,6 +373,7 @@ export const DEFINITION_ABSENCES = [
   // #627 W (W-r2): the stored copy was written by a LATER Realm (the mirror of `legacy`).
   'newer',
 ] as const;
+/** @public */
 export type DefinitionAbsence = (typeof DEFINITION_ABSENCES)[number];
 
 /**
@@ -347,7 +394,10 @@ export function isUnusableCopy(absent: DefinitionAbsence): boolean {
   }
 }
 
-/** The typed facts of each code (PR0-CONTRACT §1: `FactsOf<C>` typed per code). */
+/**
+ * The typed facts of each code (PR0-CONTRACT §1: `FactsOf<C>` typed per code).
+ * @public
+ */
 export interface FactsByCode {
   run_ended: { phase: RunPhase };
   question_settled: { gate_id: string };
@@ -422,6 +472,7 @@ export interface FactsByCode {
   /** #627 W: the party the door removed from the question's `respond` (the conservation law). */
   door_withholds_answers: { party: 'agent' };
 }
+/** @public */
 export type FactsOf<C extends UnavailableCode> = FactsByCode[C];
 
 /**
@@ -473,6 +524,7 @@ export const NO_REMEDY_CAUSES = [
   'already_settled',
   'engine_runs_it_when_owed',
 ] as const;
+/** @public */
 export type NoRemedy =
   | { cause: 'operator_command_untyped'; command: 'resume' | 'drain' | 'purge' | 'start' }
   | { cause: 'requires_other_program'; requirement: { kind: 'handler' | 'adapter'; name: string } }
@@ -483,7 +535,10 @@ export type NoRemedy =
 /** Amendment 15: another call holds the step — the wait is the act. */
 const HELD: NoRemedy = { cause: 'another_program_holds_it' };
 
-/** A way that cannot be taken now (PR0-CONTRACT §1). */
+/**
+ * A way that cannot be taken now (PR0-CONTRACT §1).
+ * @public
+ */
 export type Unavailable = {
   [C in UnavailableCode]: {
     verb: WayVerb;
@@ -555,6 +610,7 @@ export type RouteId = string;
 /**
  * Where a door setting came from (P-10). PR-0's kinds, and #627 W's `negotiated` (Amendment 10): its
  * only producer is `answers.forms.source`, with `ref` naming the client's `initialize` capability.
+ * @public
  */
 export type Source = {
   kind: 'flag' | 'env' | 'option' | 'config' | 'default' | 'negotiated';
@@ -569,8 +625,10 @@ export type Source = {
  * `withheld`: no answer way at all. The most restrictive value wins: `withheld` > `asked` >
  * `permitted`. `offered`, `permitted`'s name until version 0.49.0, is accepted where a value is given
  * ({@link GATE_ANSWERS_ALIASES}) and never read back.
+ * @public
  */
 export const GATE_ANSWERS_VALUES = ['asked', 'permitted', 'withheld'] as const;
+/** @public */
 export type GateAnswers = (typeof GATE_ANSWERS_VALUES)[number];
 
 /**
@@ -654,6 +712,7 @@ export interface Narrowed {
  * takes ONE way, its basis stamp and the host's static settings — never a record, view, definition,
  * registry, clock or snapshot (the renderer law; the import census and the `Date` ban witness it).
  * A door that never renders a verb returns `null`, with its reason in a comment.
+ * @public
  */
 export type WayRenderer<Out, Host> = {
   readonly [V in WayVerb]: (way: WayOf<V>, basis: Basis | undefined, host: Host) => Out | null;
@@ -685,6 +744,7 @@ function partiesAt(way: WayOn, serves: readonly Party[], row?: AnswersRow): Part
  * client shows no forms (and on a door that sends none) is on the `withheld` row — the same tools,
  * replies and protocol rules; F30's fallback row, which kept the agent's answer tool there, is gone.
  * A row is never printed as the value: the value is `answers.value`.
+ * @public
  */
 export type AnswersRow = 'permitted' | 'asked_forms' | 'withheld';
 export function answersRowOf(answers: DoorAnswers | undefined): AnswersRow | undefined {
@@ -848,8 +908,12 @@ function doorCannotEnact(way: WayOn, policy: DoorPolicy, reason?: 'engine_step')
 
 // ─── agent_action (D2 D-8, D3 A-2, D4 T-22) ─────────────────────────────────────────────────────
 
-/** The kinds of reply `agentActionOf` distinguishes (D2 D-8). */
+/**
+ * The kinds of reply `agentActionOf` distinguishes (D2 D-8).
+ * @public
+ */
 export const REPLY_KINDS = ['ok', 'confirm_required', 'refusal', 'blocked', 'error'] as const;
+/** @public */
 export type ReplyKind = (typeof REPLY_KINDS)[number];
 
 /**
@@ -968,6 +1032,7 @@ export function agentActionOf(
  * `not_eligible` (the claim's own re-check refused it, and the record shows nothing more). The last
  * three stop the loop: `capability_missing` (this program lacks the step's handler or adapter), and
  * the error kinds `failed` (the record lists the step the reply is about as failed) and `refused`.
+ * @public
  */
 export const STOP_KINDS = [
   'held_elsewhere',
@@ -980,12 +1045,19 @@ export const STOP_KINDS = [
   'failed',
   'refused',
 ] as const;
+/** @public */
 export type StopKind = (typeof STOP_KINDS)[number];
 
-/** The three kinds that stop a loop: what is left does not run. */
+/**
+ * The three kinds that stop a loop: what is left does not run.
+ * @public
+ */
 export type HaltStopKind = Extract<StopKind, 'capability_missing' | 'failed' | 'refused'>;
 
-/** The six race kinds: another program got there first, and the loop goes on with what is left. */
+/**
+ * The six race kinds: another program got there first, and the loop goes on with what is left.
+ * @public
+ */
 export type RaceStopKind = Exclude<StopKind, HaltStopKind>;
 
 /**
@@ -993,21 +1065,31 @@ export type RaceStopKind = Exclude<StopKind, HaltStopKind>;
  * (`ran_here` — true only when the step's own settle was refused: `held_elsewhere`, `step_settled`,
  * `run_ended` or `claim_removed` from `STATE_STEP_ALREADY_SETTLED`, `STATE_CLAIM_LOST` or
  * `STATE_RUN_TERMINAL`).
+ * @public
  */
 export interface RaceStop {
   kind: RaceStopKind;
   ran_here: boolean;
 }
 
-/** A stop that ends the loop. */
+/**
+ * A stop that ends the loop.
+ * @public
+ */
 export interface HaltStop {
   kind: HaltStopKind;
 }
 
-/** What {@link classifyStop} returns. */
+/**
+ * What {@link classifyStop} returns.
+ * @public
+ */
 export type StopClassification = RaceStop | HaltStop;
 
-/** The four kinds of a race in which this call's handler ran (`ran_here: true`). */
+/**
+ * The four kinds of a race in which this call's handler ran (`ran_here: true`).
+ * @public
+ */
 export type NotRecordedKind = Extract<
   RaceStopKind,
   'held_elsewhere' | 'step_settled' | 'run_ended' | 'claim_removed'
@@ -1018,7 +1100,10 @@ export function isRaceStop(stop: StopClassification | undefined): stop is RaceSt
   return stop !== undefined && 'ran_here' in stop;
 }
 
-/** The parts of a reply the classifier reads (T-1: the stop's step is the typed `about`). */
+/**
+ * The parts of a reply the classifier reads (T-1: the stop's step is the typed `about`).
+ * @public
+ */
 export interface StopReply {
   status: 'ok' | 'error' | 'blocked' | 'confirm_required';
   error_code?: string;
@@ -1026,7 +1111,10 @@ export interface StopReply {
   error?: { about?: string };
 }
 
-/** The parts of the re-read record the classifier reads. */
+/**
+ * The parts of the re-read record the classifier reads.
+ * @public
+ */
 export interface StopRecord {
   terminal_state?: boolean;
   pending_gate?: unknown;
@@ -1079,6 +1167,7 @@ const CAPABILITY_CODES: ReadonlySet<string> = new Set([
  *    `failed`; else → `refused`.
  *
  * `undefined` for any other reply (`ok`, `confirm_required`, a `blocked` reply rows 1–2 do not take).
+ * @public
  */
 export function classifyStop(
   reply: StopReply,
@@ -2480,6 +2569,7 @@ function judgeAdmission(
  * recorded role, or why it names none — `engine_input` for an entry whose input the engine built
  * (any step that is not an agent step), `not_recorded` for an agent step's entry written before the
  * field.
+ * @public
  */
 export function readSupplier(
   entry: Pick<EvidenceSnapshot, 'supplied_by' | 'step_id' | 'kind'>,
@@ -2534,7 +2624,10 @@ export function cannotGoOnUntilCorrected(composed: {
 
 // ─── The library door's words (PR0-CONTRACT §5) ─────────────────────────────────────────────────
 
-/** The library door's static settings: none yet — an embedder decides what to show. */
+/**
+ * The library door's static settings: none yet — an embedder decides what to show.
+ * @public
+ */
 export type LibraryHost = Readonly<Record<string, never>>;
 
 /**
@@ -2542,6 +2635,7 @@ export type LibraryHost = Readonly<Record<string, never>>;
  * library's own functions, never a CLI command or an MCP tool. Applied by embedders to a reply's
  * `ways`; never imported by core's composers (the witness reads that). A way's words come from the
  * way alone (the renderer law).
+ * @public
  */
 export const LIBRARY_WORDS: WayRenderer<string, LibraryHost> = {
   respond: (way) =>

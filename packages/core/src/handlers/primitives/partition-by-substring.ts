@@ -11,6 +11,7 @@
  * @param quoteField   The property name holding the quote string to test.
  * @param sourceText   The document text to search within.
  * @returns            { accepted: Record<string, unknown>[], rejected: Record<string, unknown>[] }
+ * @public
  */
 export function partitionBySubstring(
   candidates: Record<string, unknown>[],

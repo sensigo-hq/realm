@@ -26,11 +26,14 @@ import { normalizeEntryForBuffer } from '../engine/trace-normalizer.js';
  * declaration; `storeDeclaresSeal`/`storeDeclaresNonceCarriage`/`validateTraceCapabilities`
  * (this file) are the ONLY authoritative way to check a rung — no ad-hoc `typeof` checks for
  * these two rungs anywhere else in the codebase (TCK, tools, or engine).
+ * @public
  */
 export type TraceCapability = 'seal' | 'writer_nonce_carriage';
 
 /** Outcome of `sealFenced` (issue #197 PR-1, the `seal` rung — see `TraceBufferStore.sealFenced`
- *  for the full contract). */
+ *  for the full contract).
+ * @public
+ */
 export type SealResult =
   | { sealed: true }
   | {
@@ -48,6 +51,7 @@ export type SealResult =
  * `listSealedForRun`'s return type must be usable without any core-adjacent caller importing an
  * mcp-server-local type. The fs store's `WalLine` gains the identical optional `nonce` field and
  * stays structurally assignable to this type (never a separate, divergent shape).
+ * @public
  */
 export interface SealedWalLine {
   ts: number;
@@ -59,7 +63,9 @@ export interface SealedWalLine {
 
 /** One sealed artifact for a single (runId, stepId) key — issue #197 PR-1, part of the `seal`
  *  rung. A key may accumulate several sealed artifacts (repeated reclaim/settle-time seals),
- *  distinguished by ascending `seq`. */
+ *  distinguished by ascending `seq`.
+ * @public
+ */
 export interface SealedArtifact {
   step_id: string;
   /** Ascending, per-key sequence number (0-based) — distinguishes repeated seals of the same
@@ -93,6 +99,7 @@ export interface BufferFullDetails {
   total_bytes?: number;
 }
 
+/** @public */
 export interface AppendResult {
   /**
    * WRITER-scope numbers (issue #197 PR-1 re-documentation — values and meaning UNCHANGED for
@@ -127,6 +134,7 @@ export interface AppendResult {
  * non-declaring implementation is contractually required to IGNORE it, never throw or otherwise
  * error on receiving one; the tool layer (PR-2) is responsible for never passing a nonce to a
  * non-declaring store.
+ * @public
  */
 export interface AppendOptions {
   /** Client-minted, opaque per-step-attempt writer identity. Absent ⇒ the bare/anonymous writer
@@ -136,6 +144,7 @@ export interface AppendOptions {
   writerNonce?: string;
 }
 
+/** @public */
 export interface TraceBufferStore {
   /**
    * Declares which of the two optional capability-ladder rungs (issue #197 PR-1) this store
@@ -332,7 +341,9 @@ export interface TraceBufferStore {
 
 /** An AgentTraceEntry extended with engine-assigned ordering timestamp (milliseconds), and
  *  (issue #197 PR-1) the writer nonce that carried it, if any — re-attached from the line the
- *  entry was originally appended in. NEVER fabricated for a genuinely bare line. */
+ *  entry was originally appended in. NEVER fabricated for a genuinely bare line.
+ * @public
+ */
 export interface BufferedEntry extends AgentTraceEntry {
   _internalTs: number;
   _nonce?: string;
@@ -593,6 +604,7 @@ export function flattenWalBatches(batches: readonly SealedWalLine[]): BufferedEn
  * count, the byte-budget arithmetic) derives its answer from this representation via
  * `flattenWalBatches` (or direct batch arithmetic over it), reproducing the exact pre-#197
  * observable shape and byte formula for all-bare traffic — see `appendUnlocked`.
+ * @public
  */
 export class InMemoryTraceBufferStore implements TraceBufferStore {
   readonly traceCapabilities: ReadonlySet<TraceCapability> = new Set([

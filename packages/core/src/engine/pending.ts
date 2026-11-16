@@ -34,8 +34,12 @@ import { capabilityRefusalWords, requirementForStep } from './capability.js';
 import { parseStamp, isPastDeadline } from './instants.js';
 import { readDrivenBy, type Attributed, type ActorAbsent } from './holder.js';
 
-/** The checks that refuse a step before it is claimed, in the order `executeStep` runs them. */
+/**
+ * The checks that refuse a step before it is claimed, in the order `executeStep` runs them.
+ * @public
+ */
 export const PRE_CLAIM_REFUSALS = ['trust', 'precondition', 'input_schema', 'capability'] as const;
+/** @public */
 export type PreClaimRefusal = (typeof PRE_CLAIM_REFUSALS)[number];
 
 /**
@@ -51,8 +55,10 @@ export type AgentPreClaimRefusal = (typeof AGENT_PRE_CLAIM_REFUSALS)[number];
  * What a capability refusal was judged from (decision C41): `registry` — the caller's own registry
  * lacks the handler or adapter; `marker` — the caller passed no registry, so the run's own
  * `capability_blocks` marker (what the runner that last attempted the step lacked) is the fact.
+ * @public
  */
 export const CAPABILITY_BASES = ['registry', 'marker'] as const;
+/** @public */
 export type CapabilityBasis = (typeof CAPABILITY_BASES)[number];
 
 /** A refusal before the claim. `error` / `hint` carry what `executeStep` returns. */
@@ -77,7 +83,10 @@ export interface PreClaimRefused {
   precondition?: PreconditionFacts;
 }
 
-/** issue #729 PR-0 (E1 (b)): a failed precondition — its expression and the value read, escaped and bounded. */
+/**
+ * issue #729 PR-0 (E1 (b)): a failed precondition — its expression and the value read, escaped and bounded.
+ * @public
+ */
 export interface PreconditionFacts {
   expression: string;
   value: string;
@@ -293,6 +302,7 @@ export function engineStepInput(
  * One `auto` step the engine could run, judged for the caller's registry. The same shape names an
  * eligible agent step the run refuses before its claim (`PendingView.agent_refused`, decision C82):
  * `runnable_here: false`, `refused_by` (`trust` or `precondition`), `refusal`.
+ * @public
  */
 export interface EngineRunnable {
   step: string;
@@ -315,6 +325,7 @@ export interface EngineRunnable {
   precondition?: PreconditionFacts;
 }
 
+/** @public */
 export interface PendingView {
   /** The eligible agent steps the run offers, in definition order (each a `run_step` way). */
   agent_steps: string[];
@@ -360,7 +371,10 @@ export interface PendingView {
   waiting_on_answer?: string[];
 }
 
-/** An open question (decision C103): the step that asks it, its gate, and the choices it takes. */
+/**
+ * An open question (decision C103): the step that asks it, its gate, and the choices it takes.
+ * @public
+ */
 export interface OpenQuestion {
   step: string;
   gate_id: string;
@@ -390,7 +404,10 @@ export function openQuestionWords(question: OpenQuestion): string {
   return `the question on step '${question.step}' (choices: ${question.choices.join(', ')})`;
 }
 
-/** An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95). */
+/**
+ * An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95).
+ * @public
+ */
 export interface DueExpiry {
   gate_id: string;
   step: string;
@@ -924,6 +941,7 @@ export function owedWords(pending: PendingView): { steps: string; them: string; 
  * An eligible agent step is judged by the checks that read no input
  * ({@link AGENT_PRE_CLAIM_REFUSALS}, decision C82): one the run refuses is listed in
  * `agent_refused`, never in `agent_steps` or `agent_actions`.
+ * @public
  */
 export function describePending(
   definition: WorkflowDefinition,

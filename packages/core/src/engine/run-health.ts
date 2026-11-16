@@ -149,6 +149,7 @@ export const DEFAULT_IDLE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 /**
  * A single, typed run-health observation (issue #221) — the shared vocabulary every surface
  * renders from.
+ * @public
  */
 export interface RunHealthFinding {
   kind:
@@ -425,14 +426,35 @@ function findDriveFailing(snapshot: Snapshot): RunHealthFinding | undefined {
 }
 
 /**
+ * CP-1 PR 1: {@link classifyRunHealth}'s options, named (the bag `classifyRecordHealth` takes).
+ * @public
+ */
+export interface ClassifyRunHealthOptions {
+  idleThresholdMs?: number;
+  definition?: WorkflowDefinition;
+  /** issue #558 PR-T — the failure the CALLER got when it tried to resolve this run's
+   *  workflow copy. Additive to the existing bag; absent ⇒ zero `definition_unresolvable`
+   *  findings, never a crash. */
+  definitionError?: { code: string; message: string; class?: string };
+  /**
+   * issue #625 PR-2a (decision C46): the CALLER's registry. With one, a step's `capability_block`
+   * finding fires only when that registry lacks the step's requirement — a runner that has the
+   * handler or adapter is not blocked by another runner's old marker. Absent ⇒ the record alone
+   * decides (`inspect`, `--stuck`). The marker itself stays in `capability_blocks`.
+   */
+  registry?: ExtensionRegistry;
+}
+
+/**
  * Classifies a run's health into zero or more typed findings. Pure, read-only, definition-
  * optional, judged at the snapshot's `at` (#715 (b)). See the module doc above for the full branch-conditioning table
  * (design record §1, fold B1) and the honest-admission rule.
+ * @public
  */
 export function classifyRunHealth(
   // #715 (b) (D6-17): one snapshot — the record and the reading it is judged at; no default clock.
   snapshot: Snapshot,
-  opts?: Parameters<typeof classifyRecordHealth>[1],
+  opts?: ClassifyRunHealthOptions,
 ): RunHealthFinding[] {
   // #715 (b) (02 §D.1): the stamped-ahead finding is about the record and the reader's clock, on
   // any run — after every other finding.
@@ -511,21 +533,7 @@ void _everyKindListed;
 /** The run's findings but `record_stamped_ahead` — see {@link classifyRunHealth}. */
 function classifyRecordHealth(
   snapshot: Snapshot,
-  opts?: {
-    idleThresholdMs?: number;
-    definition?: WorkflowDefinition;
-    /** issue #558 PR-T — the failure the CALLER got when it tried to resolve this run's
-     *  workflow copy. Additive to the existing bag; absent ⇒ zero `definition_unresolvable`
-     *  findings, never a crash. */
-    definitionError?: { code: string; message: string; class?: string };
-    /**
-     * issue #625 PR-2a (decision C46): the CALLER's registry. With one, a step's `capability_block`
-     * finding fires only when that registry lacks the step's requirement — a runner that has the
-     * handler or adapter is not blocked by another runner's old marker. Absent ⇒ the record alone
-     * decides (`inspect`, `--stuck`). The marker itself stays in `capability_blocks`.
-     */
-    registry?: ExtensionRegistry;
-  },
+  opts?: ClassifyRunHealthOptions,
 ): RunHealthFinding[] {
   const { record: run, at: now } = snapshot;
   // issue #432: computed ONCE per classify call, ahead of every branch — the module's own D-3

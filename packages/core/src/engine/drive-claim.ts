@@ -26,7 +26,10 @@ import type { Attributed } from './holder.js';
 import { writtenSnapshot, type Snapshot } from './snapshot.js';
 import { admitWay, waysStoreOf, type Unavailable, type UnavailableCode } from './ways.js';
 
-/** What {@link claimStepForDrive} takes besides the store, the run and the step. */
+/**
+ * What {@link claimStepForDrive} takes besides the store, the run and the step.
+ * @beta
+ */
 export interface ClaimStepForDriveOptions {
   /** The run's workflow definition: what the step is judged against, and what `claimStep` checks. */
   definition: WorkflowDefinition;
@@ -47,6 +50,7 @@ export interface ClaimStepForDriveOptions {
  * - `refused`: the step was refused for another reason, by its code.
  * - `lease_unavailable`: the store could not make a lease, with why; no claim was taken.
  * - `unleased_store`: the store keeps no leases; nothing was held, read or written.
+ * @beta
  */
 export type DriveClaim =
   | { readonly kind: 'claimed'; readonly hold: LeaseHold; readonly since: string }
@@ -64,7 +68,10 @@ export type DriveClaim =
   | { readonly kind: 'lease_unavailable'; readonly reason: LeaseUnavailableReason }
   | { readonly kind: 'unleased_store' };
 
-/** What {@link releaseDriveClaim} takes besides the store, the run and the step. */
+/**
+ * What {@link releaseDriveClaim} takes besides the store, the run and the step.
+ * @beta
+ */
 export interface ReleaseDriveClaimOptions {
   /** The run's workflow definition, which the store's settle takes. */
   definition: WorkflowDefinition;
@@ -81,6 +88,7 @@ export interface ReleaseDriveClaimOptions {
  * - `not_released`: the store refused the release, with its own reason;
  * - `not_ours`: the step is not in progress, or its claim names no lease or another; nothing was
  *   written.
+ * @beta
  */
 export type DriveRelease =
   | { readonly kind: 'released'; readonly snapshot: Snapshot }
@@ -145,6 +153,7 @@ function answerOf(refusal: Unavailable, snap: Snapshot, step: string): DriveClai
  * closes the hold with the record it was judged on. Any other error is thrown unchanged, after the
  * hold is closed: with no record when `claimStep` threw it (the write may have landed), else with the
  * newest record the call holds, or none.
+ * @beta
  */
 export async function claimStepForDrive(
   store: RunStore,
@@ -217,6 +226,7 @@ export async function claimStepForDrive(
  * `released`, or `not_released` with the store's reason; otherwise ⇒ `not_ours`, nothing written. A
  * read or settle that throws is thrown unchanged. It never closes the hold: the caller does, with the
  * record it returns.
+ * @beta
  */
 export async function releaseDriveClaim(
   store: RunStore,

@@ -20,11 +20,13 @@
  * `SUM(octet_length(...))` expression on both its stat and its delete). The only guarantee ACROSS
  * the two methods is the L6 identity below. Cross-store sums are meaningful where the wired stores
  * share a measure, which the CLI's filesystem stores do.
+ * @public
  */
 export interface ArtifactDeletionReport {
   bytes_deleted: number;
 }
 
+/** @public */
 export interface PerRunArtifactStore {
   /**
    * Delete every on-disk artifact this store holds for `runId`. Idempotent (ENOENT-safe: a second

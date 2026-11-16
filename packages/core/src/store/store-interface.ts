@@ -51,6 +51,7 @@ import type { OutboundLedger } from './outbound-ledger.js';
  *    never a behavior change. Joining this CLOSED set (rather than an open one) is deliberate:
  *    bumping it forces every full-set-declaring store's own fidelity TCK to grow two new cases at
  *    the SAME compile, so a store cannot silently drift out of sync with what settleStep needs.
+ * @public
  */
 export type LoadBearingRunRecordField =
   | 'capability_blocks'
@@ -65,6 +66,7 @@ export type LoadBearingRunRecordField =
   // believes the run's outcome was. A `settleStep`-declaring store MUST declare it.
   | 'sealed_by';
 
+/** @public */
 export interface CreateRunOptions {
   workflowId: string;
   workflowVersion: number;
@@ -107,6 +109,7 @@ export interface CreateRunOptions {
  * - `consistent_snapshot` says whether the records were read as ONE cut: `true` for a store that reads
  *   them in one synchronous pass (the in-memory store), `false` for one that reads them one by one
  *   (the JSON-file store reads each file in turn, so two rows may come from different moments).
+ * @public
  */
 export interface Listing {
   snapshots: Snapshot[];
@@ -118,6 +121,7 @@ export interface Listing {
  * What a run store's `create` returns (#715 (b), D-15): the record with the reading the create
  * used, and whether it was written. A keyed create that returns an existing run (`created: false`)
  * has spent its reading too, and returns it.
+ * @public
  */
 export type CreateResult = Snapshot & { created: boolean };
 
@@ -129,9 +133,11 @@ export type CreateResult = Snapshot & { created: boolean };
  * #729 CW-1b: `lease_facts`, as on a {@link Snapshot}: what the store's lease port found about the
  * leases of `run`'s in-progress claims after the write (applied or refused). Present only when a
  * claim names a lease and the store has a lease port.
+ * @public
  */
 export type StoreSettlement = SettlementResult & { at: Date; lease_facts?: LeaseFacts };
 
+/** @public */
 export interface RunStore {
   /**
    * The clock this store reads the time from (#715, D5 §1.1, D6-1, D6-5; required from #715 (b)).
@@ -182,6 +188,7 @@ export interface RunStore {
    * (`store_leases`). The SQLite store keeps leases; `InMemoryStore` leaves it unset unless it is given a lease port. No Realm
    * command takes a lease yet: core's `claimStepForDrive` takes one (CW-2a), and CW-5's `realm agent`
    * will call it.
+   * @beta
    */
   readonly leases?: LeasePort | null;
 
@@ -192,6 +199,7 @@ export interface RunStore {
    * senders never both hold it and a restarted one finds what was done. The ledger is beside the run
    * record, never in it. `InMemoryStore` keeps one unless it is built with `outbound: null`. `realm
    * agent`'s Slack reminders use it (#597 D1b), and `realm run inspect` and `realm run list` show it.
+   * @beta
    */
   readonly outbound?: OutboundLedger | null;
 
@@ -319,6 +327,7 @@ export interface RunStore {
     stepName: string,
     definition: WorkflowDefinition,
     claimant?: Attributed,
+    /** @beta */
     hold?: LeaseHold,
   ): Promise<Snapshot>;
 
@@ -424,6 +433,7 @@ export interface RunStore {
  * Issue #367 (part 3): the outcome of a {@link RunStore.stampSeal} attempt. Both refusal reasons
  * are PREDICATE outcomes, returned rather than thrown, and both carry the record as it stands so
  * the caller can report on it without a second read.
+ * @public
  */
 export type StampSealResult =
   | { stamped: true; run: RunRecord }
@@ -441,6 +451,7 @@ export const SCAN_MAX_PAGE_SIZE = 1000;
  * `includePurged` once for the same filter). Every filter given must hold. `key` needs `workflow`: a
  * key is a key of one workflow. `created_since` and `updated_since` are stamps in the store's one
  * shape (`YYYY-MM-DDTHH:MM:SS.sssZ`), compared as text and inclusive.
+ * @public
  */
 export interface ScanFilter {
   workflow?: string;
@@ -457,6 +468,7 @@ export interface ScanFilter {
  * `projection` is `'record'` (the default: each run as `get()` returns it) or `'row'` (each run as a
  * {@link RunRow}); `after` starts the scan after that id (the last id of the page before, §6's
  * `--after` cursor).
+ * @public
  */
 export interface ScanOptions {
   pageSize: number;
@@ -469,6 +481,7 @@ export interface ScanOptions {
  * `run_phase` is the derived phase, `terminal_state` is the column's 0/1 as a boolean, `run_version` is
  * the record's `version` (M6's name) and `pending_gate` is the gate's id or `null`. No params, no
  * evidence.
+ * @public
  */
 export interface RunRow {
   id: string;
@@ -491,6 +504,7 @@ export interface RunRow {
  * A deleted run's tombstone as a scan with `include_purged` gives it (design §6): its id, its workflow,
  * when it was purged, its seal's arm, and the phase and derivation stamp it had when purged (its
  * record is gone, so its phase cannot be derived again).
+ * @public
  */
 export interface PurgedItem {
   kind: 'purged';
@@ -502,7 +516,10 @@ export interface PurgedItem {
   phase_version: string;
 }
 
-/** One item of a scan's page: a run in the scan's projection, or a tombstone. */
+/**
+ * One item of a scan's page: a run in the scan's projection, or a tombstone.
+ * @public
+ */
 export type ScanItem<P extends 'record' | 'row'> =
   { kind: 'run'; run: P extends 'record' ? Snapshot : RunRow } | PurgedItem;
 
@@ -512,6 +529,7 @@ export type ScanItem<P extends 'record' | 'row'> =
  * under WAL), how many rows read for the page carried a phase stamped by another derivation
  * (`derived_at_read`: each was derived at read; 0 when none), and, when the page is full, the cursor
  * the next page starts after (`next_after`, the page's last id).
+ * @public
  */
 export interface ScanPage<P extends 'record' | 'row'> {
   items: ScanItem<P>[];
@@ -529,6 +547,7 @@ export interface ScanPage<P extends 'record' | 'row'> {
  * holds it; `purged` lists the deleted runs that carried it, when no run does; `unseen` says no run
  * carries it and no kept tombstone records one. `since` is the tombstone horizon: a run purged at or
  * before it may have left no tombstone.
+ * @public
  */
 export type KeyAnswer =
   | { state: 'held'; run_id: string }

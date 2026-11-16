@@ -9,6 +9,7 @@
  * @param b     The reference string (pattern for regex/prefix, exact target for exact).
  * @param mode  "exact" | "prefix" | "regex"
  * @returns     true if a matches b under the given mode.
+ * @public
  */
 export function compareStrings(a: string, b: string, mode: 'exact' | 'prefix' | 'regex'): boolean {
   switch (mode) {

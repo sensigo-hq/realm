@@ -46,6 +46,7 @@ export const ABANDON_KILL_ADVISORY =
  * Concurrency: if `update()` raises `STATE_SNAPSHOT_MISMATCH`, the run is reloaded once — if it is now
  * abandoned, that is idempotent success; otherwise the mismatch is propagated (the run changed under
  * us — likely a live runner — and abandon should lose). No retry loop beyond the single reload.
+ * @public
  */
 export async function abandonRun(
   store: RunStore,
