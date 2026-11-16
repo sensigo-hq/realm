@@ -494,6 +494,14 @@ const WORDS: ReadonlyArray<readonly [string, string]> = [
     '.github/instructions/pre-publication.instructions.md',
     "`packages/core/src/inventory/api-report.frozen.txt` and `packages/mcp-server/src/inventory/api-report.frozen.txt` are written from their reports by `node scripts/freeze-api-report.mjs <report> 'frozen at v<version>'`, and added to the same commit: the changelog cell starts clean for the next release.",
   ],
+  [
+    'docs/reference/compatibility.md',
+    "A promised list of words — an exported list of literals, or a table keyed by them, that the API reports tag, such as `WAY_VERBS`, `UNAVAILABLE_CODES`, `STOP_KINDS` and `PARTIES`, and the types over them — may gain a member in a minor release, named in the changelog, and a type keyed by such a list (`WayRenderer`, one function per verb) gains the member with it; a program's switch over such a list keeps a default branch, and a program that renders ways builds its map with `PartialWayRenderer` completed by `withLibraryWords`, so a verb added later renders with Realm's words until the program writes its own; a program that writes the full `WayRenderer` itself adds a function when a verb is added.",
+  ],
+  [
+    'docs/reference/core-library.md',
+    "To render a reply's `ways` with your own words for some verbs and Realm's for the rest, build the map with `withLibraryWords({ respond: …, run_step: … })`; a verb Realm adds later renders with its own words until you write yours.",
+  ],
 ];
 
 /** The changelog's `## [Unreleased]` section. */

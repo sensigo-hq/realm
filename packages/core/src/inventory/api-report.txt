@@ -1973,6 +1973,9 @@ ParcelPanelAdapter · both · internal
 ParcelPanelAdapterConfig · type · internal
 ParcelPanelOrderBody · type · internal
 ParcelPanelShipment · type · internal
+PartialWayRenderer · type · public
+  type PartialWayRenderer<Host> = Partial<WayRenderer<string, Host>>;
+
 Party · type · public
   type Party = (typeof PARTIES)[number];
 
@@ -4390,6 +4393,9 @@ whitelistValidationRow · value · internal
 withDeclaredStanding · value · internal
 withEndedRunWays · value · internal
 withFullStop · value · internal
+withLibraryWords · value · public
+  function withLibraryWords<Host>(partial: PartialWayRenderer<Host>): WayRenderer<string, Host>;
+
 withPendingCleanup · value · internal
 withResumeOffer · value · internal
 withTestClockNotice · value · internal

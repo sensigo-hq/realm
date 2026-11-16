@@ -21,6 +21,8 @@ import {
   agentActionOf,
   basisOf,
   LIBRARY_WORDS,
+  withLibraryWords,
+  WAY_VERBS,
   readSupplier,
   agentRenderedList,
   composeWaysOn,
@@ -35,6 +37,10 @@ import {
   type UnavailableCode,
   type WayOn,
   type WaysContext,
+  type WayOf,
+  type WayVerb,
+  type LibraryHost,
+  type PartialWayRenderer,
 } from './ways.js';
 import { writtenSnapshot } from './snapshot.js';
 import { abandonRun } from './abandon-run.js';
@@ -1658,5 +1664,79 @@ describe('#729 PR-0 — the library door', () => {
       basisOf(writtenSnapshot(BASE, AT), ctxOf(W)).definition,
       basisOf(writtenSnapshot(BASE, AT), ABSENT).definition,
     ]).toEqual([{ workflow_id: 'w' }, { absent: 'not_registered' }]);
+  });
+});
+
+describe('CP-1 word lists — withLibraryWords: a program words the verbs it wants, Realm words the rest', () => {
+  // One way of each verb, built from the way types alone.
+  const ONE_OF_EACH: { readonly [V in WayVerb]: WayOf<V> } = {
+    respond: {
+      verb: 'respond',
+      conditions: [],
+      run_id: 'r1',
+      gate_id: 'g1',
+      step: 'approve',
+      choice: { one_of: ['yes', 'no'] },
+      holds: [],
+      presented: 'with_gate',
+    },
+    run_step: {
+      verb: 'run_step',
+      conditions: [],
+      run_id: 'r1',
+      step: 'draft',
+      brief: { execution: 'agent', description: 'Draft the reply' },
+    },
+    advance: { verb: 'advance', conditions: [], run_id: 'r1', owed: [{ step: 'notify' }] },
+    inspect: { verb: 'inspect', conditions: [], run_id: 'r1' },
+    abandon: { verb: 'abandon', conditions: [], run_id: 'r1' },
+    register: { verb: 'register', conditions: [], workflow_id: 'wf', path: 'wf.yaml' },
+    present: { verb: 'present', conditions: [], run_id: 'r1', gate_id: 'g1' },
+  };
+  type AnyEntry = (way: WayOn, basis: undefined, host: object) => string | null;
+  /** Each verb's words from `renderer`, or `(no function)` where it has none for the verb. */
+  const wordsOf = (renderer: object, host: object): Record<string, string | null> =>
+    Object.fromEntries(
+      WAY_VERBS.map((verb) => {
+        const entry = (renderer as Record<string, unknown>)[verb];
+        return [
+          verb,
+          typeof entry === 'function'
+            ? (entry as AnyEntry)(ONE_OF_EACH[verb], undefined, host)
+            : '(no function)',
+        ];
+      }),
+    );
+  const LIBRARY = wordsOf(LIBRARY_WORDS, {});
+
+  it('the verbs the program gives render with its words; every other verb with LIBRARY_WORDS’s, for the same way', () => {
+    // (a) red when the helper returns the program's map without completing it (every other verb
+    //     prints "(no function)"), or takes Realm's words over the program's; (b) prints each verb's
+    //     words.
+    expect(wordsOf(withLibraryWords({ respond: () => 'mine' }), {})).toEqual({
+      ...LIBRARY,
+      respond: 'mine',
+    });
+  });
+
+  it('a program’s own host reaches its functions: the type takes any host, not LibraryHost', () => {
+    // The call below is the compile check: with the helper's `Host` narrowed to `LibraryHost`,
+    // `npm run typecheck:tests` refuses it (TS2345). At run time: (a) red when the program's function
+    // does not get the host passed in; (b) prints each verb's words.
+    const renderer = withLibraryWords<{ ctx: number }>({ respond: (_w, _b, h) => String(h.ctx) });
+    expect(wordsOf(renderer, { ctx: 7 })).toEqual({ ...LIBRARY, respond: '7' });
+  });
+
+  it('a member given as undefined counts as not given: that verb renders with Realm’s words', () => {
+    // A program without `exactOptionalPropertyTypes`, or a JavaScript one, may write
+    // `{ run_step: flag ? mine : undefined }`; ours refuses it, hence the cast.
+    const renderer = withLibraryWords({
+      run_step: undefined,
+    } as unknown as PartialWayRenderer<LibraryHost>);
+    // (a) red when a plain spread leaves `undefined` over Realm's function (a TypeError on the call);
+    //     (b) prints the words, or the error.
+    expect(renderer.run_step(ONE_OF_EACH.run_step, undefined, {})).toBe(
+      LIBRARY_WORDS.run_step(ONE_OF_EACH.run_step, undefined, {}),
+    );
   });
 });
