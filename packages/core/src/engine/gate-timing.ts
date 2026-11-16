@@ -83,17 +83,29 @@ export function reminderScheduleOf(snapshot: Snapshot): ReminderSchedule | undef
   const gate = snapshot.record.pending_gate;
   if (gate === undefined || gate.reminder_seconds === undefined) return undefined;
   const max = gate.reminder_max ?? 3;
+  const occurrences = authoredOccurrences(gate);
+  const next = occurrences.find((o) => !isPastDeadline(o.at, snapshot.at));
+  return { max, occurrences, ...(next !== undefined ? { next } : {}) };
+}
+
+/**
+ * #597 D3a: an open question's authored occurrences — k at `opened_at + k·reminder_seconds`, k ≤ the
+ * frozen `reminder_max` (3 when it carries none), each before the frozen `expires_at` — the one
+ * arithmetic {@link reminderScheduleOf} and `dueReminderWork` read. None when the question has no
+ * authored `reminder_seconds` or its `opened_at` cannot be read.
+ */
+export function authoredOccurrences(gate: PendingGate): ReminderOccurrence[] {
+  if (gate.reminder_seconds === undefined) return [];
   const openedAtMs = parseStamp(gate.opened_at);
-  if (openedAtMs === undefined) return { max, occurrences: [] };
+  if (openedAtMs === undefined) return [];
   const expiresAtMs = gate.expires_at !== undefined ? parseStamp(gate.expires_at) : undefined;
   const occurrences: ReminderOccurrence[] = [];
-  for (let k = 1; k <= max; k++) {
+  for (let k = 1; k <= (gate.reminder_max ?? 3); k++) {
     const atMs = openedAtMs + k * gate.reminder_seconds * 1000;
     if (expiresAtMs !== undefined && atMs >= expiresAtMs) break;
     occurrences.push({ k, at: new Date(atMs).toISOString() });
   }
-  const next = occurrences.find((o) => !isPastDeadline(o.at, snapshot.at));
-  return { max, occurrences, ...(next !== undefined ? { next } : {}) };
+  return occurrences;
 }
 
 /**

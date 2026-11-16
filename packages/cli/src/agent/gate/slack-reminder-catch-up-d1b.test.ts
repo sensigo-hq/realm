@@ -153,6 +153,9 @@ async function attach(
     provider: {} as never,
     botToken: 'xoxb-d1b-fake-token',
     channelId: CHANNEL,
+    // #597 D3a: a host that listens in the thread, so its reminders read as they did (a host that
+    // does not listen now says so and gives the command: `slack-reminder-due-d3a.test.ts`).
+    appToken: 'xapp-fake',
     pollIntervalMs: 0,
     home,
   })(o.runId, o.gate);

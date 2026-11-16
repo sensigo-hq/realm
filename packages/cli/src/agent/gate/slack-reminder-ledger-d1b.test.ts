@@ -3,8 +3,8 @@
 // it, so a second agent or a restart does not repeat it, and a lost post is retried once at the
 // lease's deadline. A lease that throws at a reminder's own instant posts unrecorded (one console line
 // per process); at a catch-up or a retry it posts nothing. A restarted agent that took over the
-// question's post sends ONE catch-up reminder (never the final, never for a first-time post, never
-// without an authored schedule).
+// question's post sends ONE catch-up item, for any gate (#597 D3a: also with no authored schedule;
+// never the final, never for a first-time post).
 //
 // The ledger is a real one (`InMemoryStore({ clock }).outbound`) over a run whose question is open; the
 // store's clock is the notifier's wake clock, so the ledger reads the instant a waiter fires at.
@@ -610,8 +610,10 @@ describe('#597 D1b — the catch-up at attach', () => {
     expect({ texts, rows: await statuses(r) }).toEqual({ texts: [], rows: {} });
   });
 
-  it('a takeover of a gate with no authored schedule: no catch-up (its one reminder stays attach-relative)', async () => {
-    // (a) red when the default population gets a catch-up at attach; (b) prints the posts.
+  it('a takeover of a gate with no authored schedule at 25 minutes: ONE catch-up reminder, its row sent, nothing more at 35 minutes', async () => {
+    // (a) red when a takeover of the default population sends no catch-up (#597 D3a reverses D1b's
+    //     rule), or its one reminder posts again at its old attach-relative instant; (b) prints the
+    //     posts and the rows.
     const r = await rig({});
     const clear = await start(r, {
       reminderIntervalMs: 10 * MIN,
@@ -623,7 +625,11 @@ describe('#597 D1b — the catch-up at attach', () => {
     await r.clock.set(plus(35 * MIN));
     await settle();
     clear();
-    expect({ atAttach, texts }).toEqual({ atAttach: [], texts: [open('35m')] });
+    expect({ atAttach, texts, rows: await statuses(r) }).toEqual({
+      atAttach: [open('25m')],
+      texts: [open('25m')],
+      rows: { '1': 'sent' },
+    });
   });
 });
 

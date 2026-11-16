@@ -401,6 +401,7 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
       '**7. ',
       '**8. ',
       '**9. ',
+      '**10. ',
     ]);
   });
 });
