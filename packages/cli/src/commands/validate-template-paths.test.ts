@@ -257,7 +257,7 @@ describe('fix 1, piece 3a-ii-a — the words the docs and the changelog carry (c
     // (1) red when the new ending is missing or the old one stays; (2) prints both checks.
     expect({
       now: page.includes(
-        'a templated field that is not text; in an approval question and in `display`, a path that can never be found is refused, and so is a path in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value; the paths in a prompt and in step instructions are not checked yet. This was added after version 0.49.0.',
+        'a templated field that is not text; in an approval question and in `display`, a path that can never be found is refused, and so is a path in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value; in a prompt and in step instructions, a path that can never be found is refused too, and one that may be missing gets a warning. This was added after version 0.49.0.',
       ),
       old: page.includes('the paths in a template are not checked yet'),
     }).toEqual({ now: true, old: false });
@@ -281,13 +281,13 @@ describe('fix 1, piece 3a-ii-a — the words the docs and the changelog carry (c
       lists: page.includes('lists all 36 warning codes'),
       count: page.includes('The loader has 36 warning codes. Twelve of them count as errors'),
       list: page.includes(
-        'or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; and a path in an approval question or `display` that can never be found, or one in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value. The others are advice',
+        'or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; and a path in an approval question, `display`, a prompt or step instructions that can never be found, or one in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value. The others are advice',
       ),
       rows: rows.length,
       errors: rows.filter((r) => r[1] === 'Error').length,
       three: rows.slice(at + 1, at + 4),
       notChecked: page.includes(
-        "The `input_map` paths, `when` conditions and template references (in `gate.message` and `display`) that read data the workflow declares no shape for, or a context entry only a file adds: `surface` (`input_map`, `when` or `template`), `step`, `key` (`when` for a condition, the field's name for a template), `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, `added_from_file`, or `check_failed` when the check itself failed on that path).",
+        "The `input_map` paths, `when` conditions and template references (in `gate.message`, `display`, `prompt` and `instructions`) that read data the workflow declares no shape for, or a context entry only a file adds: `surface` (`input_map`, `when` or `template`), `step`, `key` (`when` for a condition, the field's name for a template), `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, `added_from_file`, or `check_failed` when the check itself failed on that path).",
       ),
     }).toEqual({
       lists: true,
@@ -299,7 +299,7 @@ describe('fix 1, piece 3a-ii-a — the words the docs and the changelog carry (c
         [
           '`TEMPLATE_PATH_UNRESOLVABLE`',
           'Error',
-          "A path in an approval question or a step's `display` can never be found. Added after version 0.49.0.",
+          "A path in an approval question, a step's `display`, a prompt or step instructions can never be found. Added after version 0.49.0.",
         ],
         [
           '`TEMPLATE_PATH_NO_DEFAULT`',
@@ -309,7 +309,7 @@ describe('fix 1, piece 3a-ii-a — the words the docs and the changelog carry (c
         [
           '`TEMPLATE_PATH_UNCERTAIN`',
           'Warning',
-          "A path in a step's `display` may be missing. Added after version 0.49.0.",
+          "A path in a step's `display`, a prompt or step instructions may be missing. Added after version 0.49.0.",
         ],
       ],
       notChecked: true,

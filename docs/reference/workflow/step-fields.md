@@ -301,6 +301,7 @@ steps:
 
 ```text
 Valid: every-step-field v1 (6 steps)
+Not checked: 1 template reference(s) on data the workflow declares no shape for, or a context entry only a file adds: summarise.prompt: context.resources.read_note.content
 Extensions: ./registry.mjs (adapters: 0, handlers: 2, processors: 0)
 ℹ Step 'summarise': structured_output caveat — this step declares tools — strict applies to tool-call arguments here, not to the step output; tool schemas are third-party and are assessed per tool at runtime (a tool whose schema is not strict-compatible simply rides unconstrained), and this step output stays post-hoc validated by realm
 cache: summarise — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged

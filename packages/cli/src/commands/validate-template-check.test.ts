@@ -289,7 +289,7 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     // (1) red when a new sentence is missing or an old one stays; (2) prints the four checks.
     expect({
       refuse: page.includes(
-        '`realm workflow validate`, `register` and `watch` refuse a filter Realm does not have, an argument no value accepts, and a templated field that is not text; in an approval question and in `display`, a path that can never be found is refused, and so is a path in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value; the paths in a prompt and in step instructions are not checked yet. This was added after version 0.49.0.',
+        '`realm workflow validate`, `register` and `watch` refuse a filter Realm does not have, an argument no value accepts, and a templated field that is not text; in an approval question and in `display`, a path that can never be found is refused, and so is a path in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value; in a prompt and in step instructions, a path that can never be found is refused too, and one that may be missing gets a warning. This was added after version 0.49.0.',
       ),
       instructions: page.includes(
         '`instructions` are read for expressions only on a step with a gate, when the gate opens; on other steps they, and `description` always, are passed on as written.',
