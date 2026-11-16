@@ -21,7 +21,11 @@ import { isPastDeadline } from './instants.js';
 import type { Snapshot } from './snapshot.js';
 import { leaseFactOf } from '../store/lease-facts.js';
 
-/** @public */
+/**
+ * What `reclaimStep` did: moved the claim out, so the step can run again; nothing, as the step was
+ * already settled or held no claim; or left a claim another program had just taken.
+ * @public
+ */
 export type ReclaimOutcome =
   /** The claim was moved out of `in_progress_steps` this call → the step is eligible again. */
   | 'reclaimed'
@@ -39,7 +43,11 @@ export type ReclaimOutcome =
    */
   | 'no_active_claim';
 
-/** @public */
+/**
+ * What `reclaimStep` returns: the run, the step, the outcome, and the claim's state and deadline
+ * before the call.
+ * @public
+ */
 export interface ReclaimResult {
   run: RunRecord;
   step: string;
@@ -124,7 +132,10 @@ function classifyNoActiveClaim(
   return { outcome: 'no_active_claim' };
 }
 
-/** @public */
+/**
+ * `reclaimStep`'s settings: the trace buffer store whose leftover trace for the step it clears.
+ * @public
+ */
 export interface ReclaimStepOptions {
   /**
    * Trace-buffer WAL store. The stale `(runId, stepName)` buffer is cleared best-effort so a

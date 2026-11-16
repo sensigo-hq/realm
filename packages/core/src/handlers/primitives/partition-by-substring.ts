@@ -10,7 +10,8 @@
  * @param candidates   Array of objects, each expected to have quoteField.
  * @param quoteField   The property name holding the quote string to test.
  * @param sourceText   The document text to search within.
- * @returns            { accepted: Record<string, unknown>[], rejected: Record<string, unknown>[] }
+ * @returns            The two groups, as
+ *   `{ accepted: Record<string, unknown>[], rejected: Record<string, unknown>[] }`.
  * @public
  */
 export function partitionBySubstring(

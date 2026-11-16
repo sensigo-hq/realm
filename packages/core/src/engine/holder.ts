@@ -26,7 +26,11 @@ import { isLeaseFact, type Unleased } from '../store/lease-facts.js';
  * @public
  */
 export const BY_SOURCE_CLASSES = ['stated', 'ambient', 'derived'] as const;
-/** @public */
+/**
+ * How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or
+ * `derived` from the OS user and host name (`Attributed.by_source`).
+ * @public
+ */
 export type BySourceClass = (typeof BY_SOURCE_CLASSES)[number];
 
 /**
@@ -57,10 +61,18 @@ export const ACTOR_ABSENT_CAUSES = [
   // An answer the gate's expiry wrote: no answer was recorded in time (produced by the step view).
   'settled_by_expiry',
 ] as const;
-/** @public */
+/**
+ * Why the record names no program for an act, worked out when the record is read and never stored
+ * (`ActorAbsent.absent_cause`).
+ * @public
+ */
 export type ActorAbsentCause = (typeof ACTOR_ABSENT_CAUSES)[number];
 
-/** @public */
+/**
+ * What stands in for a program's name when the record has none: `by: null` and the cause; read
+ * where an `Attributed` would be.
+ * @public
+ */
 export interface ActorAbsent {
   by: null;
   absent_cause: ActorAbsentCause;

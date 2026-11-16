@@ -26,7 +26,11 @@ export interface ArtifactDeletionReport {
   bytes_deleted: number;
 }
 
-/** @public */
+/**
+ * A store that keeps files of its own for each run and deletes them all for a run when asked, as
+ * `realm run purge` does.
+ * @public
+ */
 export interface PerRunArtifactStore {
   /**
    * Delete every on-disk artifact this store holds for `runId`. Idempotent (ENOENT-safe: a second

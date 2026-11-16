@@ -39,7 +39,10 @@ export const NOT_PRICED_CAUSES = [
   'price_list_error',
   'rate_missing',
 ] as const;
-/** @public */
+/**
+ * Why a request has no price, one member per producer (`PriceResult`'s `not_priced`).
+ * @public
+ */
 export type NotPricedCause = (typeof NOT_PRICED_CAUSES)[number];
 
 /**
@@ -57,7 +60,11 @@ export interface PriceUsage {
   cache_write_1h_tokens?: number;
 }
 
-/** @public */
+/**
+ * One request as a price source is asked to price it: the model, the request's start, the provider
+ * and endpoint, and its token counts (`PriceSource.price`).
+ * @public
+ */
 export interface PriceInput {
   /** The model the response named. */
   model: string;
@@ -93,7 +100,11 @@ export interface PricedBy {
   source_note?: string;
 }
 
-/** @public */
+/**
+ * A price source's answer: the price, with what the same request would cost with no caching and
+ * what priced it, or why it has no price.
+ * @public
+ */
 export type PriceResult =
   | { priced: { total: number; uncached_counterfactual: number }; priced_by: PricedBy }
   | { not_priced: NotPricedCause; detail?: string };

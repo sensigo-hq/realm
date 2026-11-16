@@ -57,7 +57,11 @@ export type FencePredicate =
   | { kind: 'run_at_version'; version: number }
   | { kind: 'step_not_in_progress' };
 
-/** @public */
+/**
+ * The names of the conditions a fenced trace-buffer write checks before it writes
+ * (`FencePredicate.kind`).
+ * @public
+ */
 export type FencePredicateKind = FencePredicate['kind'];
 
 /** Whether a member conditions one step — evaluated against the fenced method's own `stepId`.
@@ -72,7 +76,10 @@ export const FENCE_TARGETS_STEP = {
   step_not_in_progress: true,
 } as const satisfies Record<FencePredicateKind, boolean>;
 
-/** @public */
+/**
+ * The fence conditions that are about one step; only the per-step fenced methods accept them.
+ * @public
+ */
 export type StepScopedKind = {
   [K in FencePredicateKind]: (typeof FENCE_TARGETS_STEP)[K] extends true ? K : never;
 }[FencePredicateKind];

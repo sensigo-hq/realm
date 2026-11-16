@@ -175,7 +175,7 @@ function lockBusyError(walPath: string): WorkflowError {
 
 /**
  * File-based TraceBufferStore that persists WAL entries to JSONL files on disk.
- * WAL file path: <runsDir>/trace-buffer-<runId>-<base64url(stepId)>.jsonl
+ * WAL file path: `<runsDir>/trace-buffer-<runId>-<base64url(stepId)>.jsonl`
  *
  * Crash model: like `JsonFileStore`, this store never calls `fsync` — process-crash consistency
  * comes from `appendFile`'s per-line granularity plus `readWal`'s per-line, torn-line-tolerant

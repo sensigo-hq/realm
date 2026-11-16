@@ -5,7 +5,11 @@ import type { WayOn } from '../engine/ways.js';
 import type { ErrorObject } from 'ajv';
 import { brandClass, REALM_BRAND } from '../brand.js';
 
-/** @public */
+/**
+ * The broad kind of failure a `WorkflowError` reports: network, an outside service, the run's
+ * state, invalid input, the engine itself, or a resource (`WorkflowError.category`).
+ * @public
+ */
 export type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
 
 /**
@@ -35,7 +39,11 @@ export const AGENT_ACTIONS = [
   'await',
 ] as const satisfies readonly AgentAction[];
 
-/** @public */
+/**
+ * Every code a `WorkflowError` can carry, grouped by its category; a reply's error and the error
+ * catalogue name it (`WorkflowError.code`).
+ * @public
+ */
 export type ErrorCode =
   // NETWORK
   | 'NETWORK_TIMEOUT'
@@ -345,7 +353,11 @@ export type ErrorFactsOf<C extends ErrorCode> = C extends keyof ErrorFactsByCode
  */
 export type ErrorFacts = ErrorFactsByCode[keyof ErrorFactsByCode];
 
-/** @public */
+/**
+ * What a `WorkflowError` is built with: its code and category, what the agent does next, whether it
+ * may be tried again, and the optional facts, step and ways on.
+ * @public
+ */
 export interface WorkflowErrorOptions {
   code: ErrorCode;
   category: ErrorCategory;
@@ -390,7 +402,12 @@ export interface WorkflowErrorOptions {
   errors?: readonly string[];
 }
 
-/** @public */
+/**
+ * The error Realm throws and records, carrying a code, a category and what the agent does next; a
+ * handler throws one with `retryable: true` to have its step tried again when the step has a
+ * `retry` block.
+ * @public
+ */
 export class WorkflowError extends Error {
   readonly code: ErrorCode;
   readonly category: ErrorCategory;
