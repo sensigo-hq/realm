@@ -340,19 +340,34 @@ describe('#597 D3b — the post file and the due item', { timeout: 30_000 }, () 
     const q = await question(r);
     slack.post = refused('channel_not_found');
     await r.clock.set(at(25 * MIN));
-    const pass = passOf(r);
-    await pass();
+    await passOf(r)();
     const first = slack.posts.length;
     slack.post = ok;
     await r.clock.set(at(3 * 60 * MIN));
-    await pass();
+    // The second pass through a ledger that counts its leases: the grid still names the failed item
+    // due (only `sent` ends an item, D3a), so the sender asks once and the ledger refuses (`skipped`):
+    // nothing posted, nothing printed, the row unchanged.
+    let leases = 0;
+    const counting: OutboundLedger = {
+      lease: (id, req) => {
+        leases += 1;
+        return r.ledger.lease(id, req);
+      },
+      mark: (id, req) => r.ledger.mark(id, req),
+      read: (id) => r.ledger.read(id),
+      statAllForRun: (id) => r.ledger.statAllForRun(id),
+      deleteAllForRun: (id) => r.ledger.deleteAllForRun(id),
+    };
+    await passOf(r, { ledger: counting })();
     expect({
       first,
+      leases,
       posts: slack.posts.length,
       rows: await statusOf(r, q.runId),
       lines: r.logger.lines,
     }).toEqual({
       first: 1,
+      leases: 1,
       posts: 1,
       rows: { '1': 'failed/1' },
       lines: { info: [], warn: [], error: [] },
@@ -606,29 +621,42 @@ describe('#597 D3b — a Slack-wide problem pauses the workflow', { timeout: 30_
     //     posts, lines and rows.
     const r = await rig();
     const a1 = await question(r);
+    const a3 = await question(r);
     const a2 = await question(r);
     const b = await question(r, {}, { workflowId: WF2 });
     await r.clock.set(at(25 * MIN));
     slack.post = (_url, init) => {
       const text = String(init.body);
-      return text.includes(a1.runId)
+      return text.includes(a1.runId) || text.includes(a3.runId)
         ? refused('thread_locked')()
         : text.includes(a2.runId)
           ? Promise.resolve(slackResponse({ status: 404, text: 'no such thread' }))
           : refused('channel_not_found')();
     };
     await passOf(r, { workflows: [WF, WF2] })();
+    // Two questions of one workflow refused with one code: ONE line, naming the first one refused.
+    const locked = r.logger.lines.warn.filter((l) => l.includes('(thread_locked)'));
     expect({
       posts: slack.posts.length,
-      rows: [await statusOf(r, a1.runId), await statusOf(r, a2.runId), await statusOf(r, b.runId)],
-      warn: [...r.logger.lines.warn].sort(),
+      rows: [
+        await statusOf(r, a1.runId),
+        await statusOf(r, a3.runId),
+        await statusOf(r, a2.runId),
+        await statusOf(r, b.runId),
+      ],
+      locked: locked.map((l) => l.replace(/run \S+ \(/, 'run <run> (')),
+      lockedRun: [a1.runId, a3.runId].some((id) => locked[0]?.includes(id)),
+      others: r.logger.lines.warn.filter((l) => !l.includes('(thread_locked)')),
     }).toEqual({
-      posts: 3,
-      rows: [{ '1': 'pending/1' }, { '1': 'pending/1' }, { '1': 'failed/1' }],
-      warn: [
-        `listen: reminders: Slack refused reminder 1 of run ${a1.runId} (thread_locked): tried again later`,
+      posts: 4,
+      rows: [{ '1': 'pending/1' }, { '1': 'pending/1' }, { '1': 'pending/1' }, { '1': 'failed/1' }],
+      locked: [
+        'listen: reminders: Slack refused reminder 1 of run <run> (thread_locked): tried again later',
+      ],
+      lockedRun: true,
+      others: [
         `listen: reminders: Slack refused reminder 1 of run ${a2.runId} (HTTP 404): tried again later`,
-      ].sort(),
+      ],
     });
   });
 });
@@ -639,11 +667,14 @@ describe('#597 D3b — the outcomes', { timeout: 30_000 }, () => {
     //     prints the posts and lines.
     const r = await rig();
     const q = await question(r);
-    const other = await question(r);
+    const busy = new Set([(await question(r)).runId, (await question(r)).runId]);
     await r.clock.set(at(25 * MIN));
+    let leases = 0;
     const ledger: OutboundLedger = {
-      lease: (id, req) =>
-        id === other.runId ? Promise.reject(new Error('busy')) : r.ledger.lease(id, req),
+      lease: (id, req) => {
+        leases += 1;
+        return busy.has(id) ? Promise.reject(new Error('busy')) : r.ledger.lease(id, req);
+      },
       mark: () => Promise.reject(new Error('the store is read-only')),
       read: (id) => r.ledger.read(id),
       statAllForRun: (id) => r.ledger.statAllForRun(id),
@@ -651,16 +682,29 @@ describe('#597 D3b — the outcomes', { timeout: 30_000 }, () => {
     };
     const pass = passOf(r, { ledger });
     await pass();
+    // The pass goes on: each of the three questions asked for its lease.
+    const firstPass = leases;
     await r.clock.set(at(30 * MIN));
     await pass();
     await r.clock.set(at(40 * MIN));
     await pass();
-    expect({ posts: slack.posts.length, warn: [...r.logger.lines.warn].sort() }).toEqual({
+    const lease = r.logger.lines.warn.filter((l) => l.includes('refused a lease'));
+    expect({
+      firstPass,
+      posts: slack.posts.length,
+      mark: r.logger.lines.warn.filter((l) => !l.includes('refused a lease')),
+      lease: lease.map((l) => l.replace(/run \S+ \(/, 'run <run> (')),
+      leaseRun: [...busy].some((id) => lease[0]?.includes(id)),
+    }).toEqual({
+      firstPass: 3,
       posts: 1,
-      warn: [
+      mark: [
         `listen: reminders: reminder 1 of run ${q.runId} posted, could not be recorded: Error: the store is read-only`,
-        `listen: reminders: the store refused a lease for run ${other.runId} (Error: busy); nothing sent for it`,
-      ].sort(),
+      ],
+      lease: [
+        'listen: reminders: the store refused a lease for run <run> (Error: busy); nothing sent for it',
+      ],
+      leaseRun: true,
     });
   });
 
@@ -791,29 +835,39 @@ describe('#597 D3b — the runner', { timeout: 30_000 }, () => {
     await r.clock.set(at(25 * MIN));
     slack.post = refused('invalid_auth');
     slack.auth = refused('invalid_auth');
+    // The budget runs out, or the runner stops, at the question's ledger read: after the pass's own
+    // check before the question, before the probe.
+    let at45 = false;
+    let stopped = false;
+    let flip: 'budget' | 'stop' | undefined;
+    vi.spyOn(performance, 'now').mockImplementation(() => (at45 ? 45_000 : 0));
     const pass = makeReminderPass({
       runStore: r.store,
-      outbound: r.ledger,
+      outbound: {
+        lease: (id, req) => r.ledger.lease(id, req),
+        mark: (id, req) => r.ledger.mark(id, req),
+        read: (id) => {
+          if (flip === 'budget') at45 = true;
+          if (flip === 'stop') stopped = true;
+          return r.ledger.read(id);
+        },
+        statAllForRun: (id) => r.ledger.statAllForRun(id),
+        deleteAllForRun: (id) => r.ledger.deleteAllForRun(id),
+      },
       home: r.h.path,
       workflows: new Map([[WF, workflow(WF)]]),
       logger: r.logger,
     });
     await pass(() => true);
     await r.clock.set(at(27 * MIN));
-    // The budget runs out between the pass's own check and the probe (the pass's start and that
-    // check read 0; the probe's check reads 45 s).
-    const clockNow = vi.spyOn(performance, 'now');
-    clockNow
-      .mockImplementationOnce(() => 0)
-      .mockImplementationOnce(() => 0)
-      .mockImplementation(() => 45_000);
+    flip = 'budget';
     await pass(() => true);
     const afterBudget = slack.auths;
-    clockNow.mockImplementation(() => 0);
-    // The runner stops between the pass's own check and the probe.
-    let checks = 0;
-    await pass(() => (checks += 1) === 1);
+    at45 = false;
+    flip = 'stop';
+    await pass(() => !stopped);
     const afterStop = slack.auths;
+    flip = undefined;
     await pass(() => true);
     expect({ afterBudget, afterStop, after: slack.auths }).toEqual({
       afterBudget: 0,
