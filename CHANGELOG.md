@@ -55,6 +55,8 @@ All notable changes to this project are documented here.
 
 - **`realm listen --send-reminders`** (issue #597): every 60 seconds, `realm listen` posts the due Slack reminder or escalation of each waiting question whose `realm agent` has stopped, into the question's own thread, through the store's outbound ledger, so it and an agent that comes back do not both post a reminder once it is recorded. A post Slack does not take because of a Slack-wide problem pauses that workflow's reminders, and `realm listen` checks Slack again after 1, 2, 4 … up to 30 minutes.
 
+- `@sensigo/realm/internal` and `@sensigo/realm-mcp/internal`: each exports everything its main entry exports, from the same files, so a class is one object whichever entry imports it. Nothing moves: the main entries are unchanged before 1.0 (the compatibility page's road to 1.0 says what moves then).
+
 ### Changed
 
 - **The screens name the Slack account that answered, as Slack reports it.** `realm run inspect`'s answer line, which said '(not stated)', and the outcome sentences and the thread's receipt, which named no one, now name the account Slack reported for the reply. The MCP answer instruction offers `responded_by` for the person's own name. (#603)

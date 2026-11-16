@@ -122,8 +122,15 @@ describe('#616 PR-2c c10b-3a — createRealmMcpServerOnHome', () => {
 
 describe('#616 PR-2c c10b-3a — law (E): exactly one published package exports the opener', () => {
   const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-  const entry = (name: string): string =>
-    readFileSync(join(PACKAGES, name, 'src', 'index.ts'), 'utf8');
+  // CP-1 PR 3: a package with an internal entry keeps its export lines there (its `index.ts`
+  // re-exports it whole), so the scan reads `src/internal.ts` where it exists, else `src/index.ts`.
+  const entry = (name: string): string => {
+    const internal = join(PACKAGES, name, 'src', 'internal.ts');
+    return readFileSync(
+      existsSync(internal) ? internal : join(PACKAGES, name, 'src', 'index.ts'),
+      'utf8',
+    );
+  };
 
   it('the store package’s entry exports openRealmHome; no other entry names it, the door or the home entry', () => {
     const others = ['core', 'cli', 'mcp-server', 'testing'].map((name) => {

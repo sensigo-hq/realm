@@ -131,17 +131,13 @@ steps:
       - Risk level: {{ context.resources.review_security.risk_level }}
       - Confidence: {{ context.resources.review_security.confidence }}
       - Findings:
-        {% for finding in context.resources.review_security.findings %}
-        - {{ finding }}
-        {% endfor %}
+        {{ context.resources.review_security.findings | bullets | default: 'none found' }}
 
       Performance review:
       - Risk level: {{ context.resources.review_performance.risk_level }}
       - Confidence: {{ context.resources.review_performance.confidence }}
       - Findings:
-        {% for finding in context.resources.review_performance.findings %}
-        - {{ finding }}
-        {% endfor %}
+        {{ context.resources.review_performance.findings | bullets | default: 'none found' }}
 
       Return exactly these four fields:
       - agreed_risk_level: the higher of the two risk levels (critical > high > medium > low)
