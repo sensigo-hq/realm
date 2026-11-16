@@ -270,7 +270,11 @@ export function resolveReference(
   // A path that stops inside a root (`run`, `context.resources`) reads the whole object there; one
   // that stops inside `workflow.context` names no entry, so it never renders (piece 3a-ii-a).
   if (segments.length <= root.prefix.length) {
-    return root.data === 'context_entry' ? never({ rule: 'no_context_entry', name: '' }) : FOUND;
+    if (root.data !== 'context_entry') return FOUND;
+    // `workflow.context` names no entry; `workflow` alone is not the root at all (correction 1).
+    return segments.length === root.prefix.length
+      ? never({ rule: 'no_context_entry', name: '' })
+      : never({ rule: 'bad_root' });
   }
   return ctx.dispatch(root, segments.slice(root.prefix.length));
 }
@@ -715,7 +719,15 @@ class Context {
     // Piece 3a-ii-a: on a surface read once the step's work is done, the step's own output is there
     // (no step cause), but its gate's `choice` is not, unless its own answer declares one.
     const own = s === this.reader && this.surface.readsOwnOutput === true;
-    if (own && fields[0] === 'choice' && !this.index.declaresTop(s, 'choice')) {
+    // Correction 1: only a step whose own answer schema is declared (an agent step) is judged so; a
+    // bare step's own `choice` follows its chain and a handler step's declares no shape, as their
+    // other own fields do.
+    if (
+      own &&
+      fields[0] === 'choice' &&
+      this.index.shapeOf(s).kind === 'schemas' &&
+      !this.index.declaresTop(s, 'choice')
+    ) {
       return never({ rule: 'own_choice', step: s });
     }
     const field: FieldJudgement =

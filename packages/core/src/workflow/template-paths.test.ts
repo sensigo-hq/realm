@@ -595,6 +595,98 @@ steps:
     ]);
   });
 
+  it("correction 1 (a): a bare gated step's own `choice` follows its chain — nothing when its dependency declares it, refused when the dependency's closed answer lacks it", () => {
+    const yaml = (declares: boolean) => `id: bc
+name: BC
+version: 1
+steps:
+  review:
+    description: Review.
+    execution: agent
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [risk${declares ? ', choice' : ''}]
+      properties:
+        risk: { type: string }${declares ? '\n        choice: { type: string }' : ''}
+  confirm:
+    description: Confirm.
+    execution: auto
+    trust: human_confirmed
+    depends_on: [review]
+    gate:
+      choices: [approve, reject]
+      message: 'Chose {{ context.resources.confirm.choice }}'
+`;
+    // (1) red when the own_choice rule applies whatever the step's shape (as on a1113f46); (2) prints them.
+    expect({
+      declared: found(yaml(true)),
+      lacking: found(yaml(false)).map(
+        (m) => m.split(': Step')[0] + ' / ' + m.split('which ')[1]!.split(',')[0],
+      ),
+    }).toEqual({
+      declared: [],
+      lacking: [
+        "TEMPLATE_PATH_NO_DEFAULT / may be missing when the gate opens (step 'confirm' does not declare this path)",
+      ],
+    });
+  });
+
+  it("correction 1 (b): a gated handler step's own `choice` is listed as not checked, as its other own fields are", () => {
+    const yaml = `id: hc
+name: HC
+version: 1
+steps:
+  send:
+    description: Send.
+    execution: auto
+    trust: human_confirmed
+    handler: send_it
+    gate:
+      choices: [approve, reject]
+      message: 'Chose {{ context.resources.send.choice }} {{ context.resources.send.title }}'
+`;
+    // (1) red when the own_choice rule applies whatever the step's shape; (2) prints them.
+    expect({ found: found(yaml), listed: listed(yaml).map((n) => `${n.path}/${n.why}`) }).toEqual({
+      found: [],
+      listed: [
+        'context.resources.send.choice/producer_declares_no_shape',
+        'context.resources.send.title/producer_declares_no_shape',
+      ],
+    });
+  });
+
+  it("correction 1 (d): `{{ workflow }}` alone gets the question's root reason; `{{ workflow.context }}` keeps its own", () => {
+    const yaml = (m: string) => `id: w
+name: W
+version: 1
+steps:
+  approve:
+    description: Approve.
+    execution: auto
+    trust: human_confirmed
+    gate:
+      choices: [approve, reject]
+      message: '${m}'
+`;
+    const reason = (m: string) =>
+      found(yaml(m)).map((x) => x.split('which can never be found: ')[1]!.split(', so ')[0]);
+    // (1) red when `workflow` alone gets the context sentence (as on a1113f46); (2) prints them.
+    expect({
+      workflow: reason('{{ workflow }}'),
+      other: reason('{{ workflow.name }}'),
+      context: reason('{{ workflow.context }}'),
+    }).toEqual({
+      workflow: [
+        "an approval question reads only 'context.resources.<step>.', 'run.params.' and 'workflow.context.<name>'",
+      ],
+      other: [
+        "an approval question reads only 'context.resources.<step>.', 'run.params.' and 'workflow.context.<name>'",
+      ],
+      context: ["'workflow.context' must be followed by the name of a workflow_context entry"],
+    });
+  });
+
   it("input_map's bare `$settlement` gets the same fix (the shared stepFix)", () => {
     const yaml = `id: im
 name: IM
