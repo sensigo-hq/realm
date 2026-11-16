@@ -28,7 +28,7 @@ import type { OutboundLedger } from './outbound-ledger.js';
  *    re-snapshots when absent; a store that drops it loses snapshot HISTORY (current context
  *    self-heals via re-snapshot, but prior snapshots are gone).
  *  - `extension_identity` — read by the execution loop's drift-evidence append (issue #119) and
- *    `realm inspect --check-drift`; a store that drops it resets the drift baseline every
+ *    `realm run inspect --check-drift`; a store that drops it resets the drift baseline every
  *    execution, so drift can never accumulate or be detected.
  *  - `validation_rejections` — read by `countRejection`'s exhaustion-threshold gate (issue #220,
  *    execution-loop.ts) on every counted rejection; a store that drops it resets the count to
@@ -66,7 +66,11 @@ export type LoadBearingRunRecordField =
   // believes the run's outcome was. A `settleStep`-declaring store MUST declare it.
   | 'sealed_by';
 
-/** @public */
+/**
+ * What a run store is given to create a run: the workflow and its version, the params, and an
+ * idempotency key with the rule for a key already used (`RunStore.create`).
+ * @public
+ */
 export interface CreateRunOptions {
   workflowId: string;
   workflowVersion: number;
@@ -137,7 +141,11 @@ export type CreateResult = Snapshot & { created: boolean };
  */
 export type StoreSettlement = SettlementResult & { at: Date; lease_facts?: LeaseFacts };
 
-/** @public */
+/**
+ * Where a program keeps its runs: it creates, reads, updates, lists, claims and settles them,
+ * reading the time from its own clock.
+ * @public
+ */
 export interface RunStore {
   /**
    * The clock this store reads the time from (#715, D5 §1.1, D6-1, D6-5; required from #715 (b)).

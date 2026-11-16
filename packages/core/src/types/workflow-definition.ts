@@ -6,7 +6,11 @@ import type { McpServerConfig } from './mcp-types.js';
 // anything from this file).
 import { closestKey } from '../workflow/diagnostics.js';
 
-/** @public */
+/**
+ * The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer`
+ * (`StepDefinition.execution`).
+ * @public
+ */
 export type ExecutionMode = 'auto' | 'agent' | 'guard' | 'finalizer';
 
 /**
@@ -22,7 +26,11 @@ export type ExecutionMode = 'auto' | 'agent' | 'guard' | 'finalizer';
 export type FinalizerTrigger =
   'complete' | 'fail' | 'abort' | 'always' | 'completed_with_failed_steps';
 
-/** @public */
+/**
+ * A workflow's own words for the agent protocol: a quick-start paragraph that replaces the
+ * generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
+ * @public
+ */
 export interface ProtocolConfig {
   /** Override for the generated quick-start paragraph. */
   quick_start?: string;
@@ -36,10 +44,17 @@ export interface ProtocolConfig {
 // RESERVATION of the value — no challenge mechanism exists, so today it is an exact alias of
 // `human_confirmed` (see the behavioural-equivalence pin in `execution-loop.test.ts`); issue #531
 // owns the implement-or-permanently-alias decision.
-/** @public */
+/**
+ * The words a step's `trust` takes: `auto`, or `human_confirmed` and `human_reviewed`, which open
+ * a gate a person answers (`StepDefinition.trust`).
+ * @public
+ */
 export type TrustLevel = 'auto' | 'human_confirmed' | 'human_reviewed';
 
-/** @public */
+/**
+ * The words a workflow's `services: <name>: trust:` takes (`ServiceDefinition.trust`).
+ * @public
+ */
 export type ServiceTrust = 'engine_delivered' | 'engine_managed' | 'agent_provided';
 
 /**
@@ -370,7 +385,11 @@ export function buildTrustRefusal(args: {
   return `${prefix}${armClause} — ${consequence}. ${tail}`;
 }
 
-/** @public */
+/**
+ * The JSON Schema object a workflow gives for a step's input and for a run's params
+ * (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`).
+ * @public
+ */
 export interface JsonSchema {
   type?: string;
   required?: string[];
@@ -382,7 +401,11 @@ export interface JsonSchema {
   [key: string]: unknown;
 }
 
-/** @public */
+/**
+ * How fast Realm calls a service: requests per second, the burst it allows, and how long it waits
+ * after a 429 (`ServiceDefinition.rate_limit`).
+ * @public
+ */
 export interface RateLimitConfig {
   /** Maximum number of requests per second. Used as the token refill rate. */
   requests_per_second?: number;
@@ -406,7 +429,11 @@ export interface RateLimitConfig {
   max_retry_seconds?: number;
 }
 
-/** @public */
+/**
+ * A service a workflow declares under `services`: the adapter that calls it, its trust, and its
+ * rate limit (`WorkflowDefinition.services`).
+ * @public
+ */
 export interface ServiceDefinition {
   adapter: string;
   trust: ServiceTrust;
@@ -431,7 +458,11 @@ export interface TemplateDefinition {
   steps: Record<string, StepDefinition>;
 }
 
-/** @public */
+/**
+ * How a step is tried again after a failure: the most attempts, the backoff and its delays
+ * (`StepDefinition.retry`).
+ * @public
+ */
 export interface RetryConfig {
   max_attempts: number;
   backoff?: 'linear' | 'exponential' | 'fixed';
@@ -638,10 +669,18 @@ export type TriggerRule =
  * @public
  */
 export type LiteralNode = { $literal: unknown };
-/** @public */
+/**
+ * One node of a step's `input_map`: a dot-path string, a `$literal` value, or an object of further
+ * nodes (`StepDefinition.input_map`).
+ * @public
+ */
 export type InputMapNode = string | LiteralNode | { [key: string]: InputMapNode };
 
-/** @public */
+/**
+ * One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does,
+ * how it runs, the steps it waits for, and its input and settings.
+ * @public
+ */
 export interface StepDefinition {
   description: string;
   execution: ExecutionMode;
@@ -958,7 +997,11 @@ const _stepKeysExtraCheck: _StepKeysExtra extends never
   ? true
   : ['KNOWN_STEP_KEYS has a key StepDefinition does not declare', _StepKeysExtra] = true;
 
-/** @public */
+/**
+ * A workflow as the loaders return it: its id, name and version, its params schema, its steps, and
+ * its services, protocol and trigger when it has them.
+ * @public
+ */
 export interface WorkflowDefinition {
   id: string;
   name: string;
@@ -1212,11 +1255,20 @@ export interface AuthNone {
   mode: 'none';
 }
 
-/** @public */
+/**
+ * How a webhook trigger checks that a request is genuine: a shared secret, GitHub's or Stripe's
+ * signature, an HMAC, or none (`WebhookTrigger.auth`).
+ * @public
+ */
 export type WebhookAuth = AuthSharedSecret | AuthGithub | AuthStripe | AuthHmac | AuthNone;
 
 // Dot-notation: each segment is a property name or zero-based numeric array index.
-/** @public */
+/**
+ * One condition of a webhook trigger's filter: a header or a dot-path into the payload, and the
+ * value it must equal or the values one of which it must equal; a request that fails a condition is
+ * ignored.
+ * @public
+ */
 export type FilterCondition =
   { header: string; value: string | string[] } | { path: string; value: string | string[] };
 
@@ -1228,7 +1280,11 @@ export interface TriggerFilter {
   all: FilterCondition[];
 }
 
-/** @public */
+/**
+ * How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is
+ * remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
+ * @public
+ */
 export interface DedupConfig {
   /** Dot-path to the unique event ID (e.g. 'body.id' or 'headers.x-gorgias-...').
    *  The dot-path root is { headers, body } (plural 'headers') — matching params_map and the runtime
@@ -1244,7 +1300,11 @@ export interface DedupConfig {
   on_missing_id?: 'skip' | 'reject';
 }
 
-/** @public */
+/**
+ * A workflow's webhook trigger: the path it answers, how it checks requests, which requests it
+ * takes, how it drops repeats, and how it maps a payload to run params.
+ * @public
+ */
 export interface WebhookTrigger {
   type: 'webhook';
   /** URL path for this webhook. Default: /<workflow-id>. */
@@ -1264,5 +1324,9 @@ export interface WebhookTrigger {
   result_map?: Record<string, string>;
 }
 
-/** @public */
+/**
+ * What starts a workflow's runs from outside; today a webhook is the only kind
+ * (`WorkflowDefinition.trigger`).
+ * @public
+ */
 export type TriggerDefinition = WebhookTrigger;

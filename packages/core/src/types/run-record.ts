@@ -363,7 +363,11 @@ export const CACHE_STATES = [
   'partially_observed',
   'unobservable',
 ] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the
+ * provider reported (`StepCacheDetail.state`).
+ * @public
+ */
 export type CacheState = (typeof CACHE_STATES)[number];
 
 /**
@@ -377,7 +381,11 @@ export type CacheState = (typeof CACHE_STATES)[number];
  * @public
  */
 export const CACHE_BASES = ['provider_reported', 'unobservable'] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_BASES`: how a step's cache numbers are known, reported by the provider
+ * or not observable (`StepCacheDetail.basis`).
+ * @public
+ */
 export type CacheBasis = (typeof CACHE_BASES)[number];
 
 /**
@@ -401,7 +409,11 @@ export type PromptCacheSetting = (typeof PROMPT_CACHE_SETTINGS)[number];
  * @public
  */
 export const CACHE_REQUESTS = ['off', 'lifetime', 'provider_rules'] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_REQUESTS`: what Realm asked a provider to cache on a request, as
+ * stored (`UsageRecord.cache_requested`).
+ * @public
+ */
 export type CacheRequest = (typeof CACHE_REQUESTS)[number];
 
 /**
@@ -411,7 +423,11 @@ export type CacheRequest = (typeof CACHE_REQUESTS)[number];
  * @public
  */
 export const CACHE_REQUEST_SOURCES = ['stated', 'runner_default'] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_REQUEST_SOURCES`: whether a request's cache setting was stated with
+ * `--prompt-cache` or was the runner's default (`UsageRecord.cache_requested_source`).
+ * @public
+ */
 export type CacheRequestSource = (typeof CACHE_REQUEST_SOURCES)[number];
 
 /**
@@ -445,7 +461,11 @@ export const CACHE_AUTO_BASES = [
   'step_gaps_unreadable',
   'tool_step',
 ] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_AUTO_BASES`: what `--prompt-cache auto` based a request's chosen cache
+ * lifetime on (`CacheAuto.basis`).
+ * @public
+ */
 export type CacheAutoBasis = (typeof CACHE_AUTO_BASES)[number];
 
 /**
@@ -470,7 +490,11 @@ export const CACHE_AUTO_PRICE_CAUSES = [
   'input_zero',
   'rate_missing',
 ] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_AUTO_PRICE_CAUSES`: why `--prompt-cache auto` chose without prices
+ * (`CacheAutoPrices`'s `cause` when `from` is `none`).
+ * @public
+ */
 export type CacheAutoPriceCause = (typeof CACHE_AUTO_PRICE_CAUSES)[number];
 
 /**
@@ -486,7 +510,11 @@ export const CACHE_AUTO_RATES = [
   'cache_write_5m',
   'cache_write_1h',
 ] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_AUTO_RATES`: a price-file rate the `auto` choice reads, as a `missing`
+ * list in `CacheAutoPrices` names it.
+ * @public
+ */
 export type CacheAutoRate = (typeof CACHE_AUTO_RATES)[number];
 
 /**
@@ -519,7 +547,11 @@ export interface CacheAuto {
  * @public
  */
 export const REQUEST_ENDPOINTS = ['default', 'custom'] as const;
-/** @public */
+/**
+ * One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default
+ * address or a custom one (`UsageRecord.endpoint`).
+ * @public
+ */
 export type RequestEndpoint = (typeof REQUEST_ENDPOINTS)[number];
 
 /**
@@ -554,7 +586,11 @@ export type RequestFactAbsentCause = (typeof REQUEST_FACT_ABSENT_CAUSES)[number]
  * @public
  */
 export const CACHE_CONTROL_FIELDS = ['cache_control', 'prompt_cache_key'] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_CONTROL_FIELDS`: a cache field Realm itself adds to a request, as
+ * `CacheControlsRejected.fields` names the ones a custom endpoint refused.
+ * @public
+ */
 export type CacheControlField = (typeof CACHE_CONTROL_FIELDS)[number];
 
 /**
@@ -565,7 +601,11 @@ export type CacheControlField = (typeof CACHE_CONTROL_FIELDS)[number];
  * @public
  */
 export const CACHE_MARKED_PARTS = ['system', 'prompt', 'key', 'conversation'] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_MARKED_PARTS`: a part of a request that carried a cache marker, or
+ * OpenAI's key (`UsageRecord.cache_marked`).
+ * @public
+ */
 export type CacheMarkedPart = (typeof CACHE_MARKED_PARTS)[number];
 
 /**
@@ -596,7 +636,11 @@ export const CACHE_MISS_TYPES = [
   'unavailable',
   'unknown',
 ] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_MISS_TYPES`: Anthropic's reason a request's cache read fell short
+ * (`CacheMissReason.type`).
+ * @public
+ */
 export type CacheMissType = (typeof CACHE_MISS_TYPES)[number];
 
 /**
@@ -606,7 +650,11 @@ export type CacheMissType = (typeof CACHE_MISS_TYPES)[number];
  * @public
  */
 export const CACHE_DIAGNOSTICS_WORDS = ['no_divergence', 'pending', 'not_returned'] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_DIAGNOSTICS_WORDS`: what Anthropic said in words about a cache miss,
+ * for a request that named an earlier answer.
+ * @public
+ */
 export type CacheDiagnosticsWord = (typeof CACHE_DIAGNOSTICS_WORDS)[number];
 
 /**
@@ -637,7 +685,11 @@ export type CacheDiagnostics =
  * @public
  */
 export const CACHE_REFERENCE_SOURCES = ['run', 'earlier_run'] as const;
-/** @public */
+/**
+ * One of the words in `CACHE_REFERENCE_SOURCES`: where the copy of a request's predecessor was
+ * found, in this run or an earlier one (`CacheReference.from`).
+ * @public
+ */
 export type CacheReferenceSource = (typeof CACHE_REFERENCE_SOURCES)[number];
 
 /**
@@ -692,7 +744,11 @@ export interface CacheControlsRejected {
   fields: readonly CacheControlField[];
 }
 
-/** @public */
+/**
+ * One request a step sent to a model provider, as the record keeps it: its index and start, its
+ * token counts and its cache facts (`StepCacheDetail.requests`, `DriveFailureRecord.usage`).
+ * @public
+ */
 export interface UsageRecord {
   /**
    * 0-based, in wire order — across a step's schema-repair calls too. A step is 1 to 21+ wire
@@ -880,7 +936,11 @@ export interface StepCacheDetail {
  * @public
  */
 export const SUPPLIER_ROLES = ['agent'] as const;
-/** @public */
+/**
+ * One of the words in `SUPPLIER_ROLES`: who supplied a step's input or output, as an evidence entry
+ * records it (`EvidenceSnapshot.supplied_by`).
+ * @public
+ */
 export type SupplierRole = (typeof SUPPLIER_ROLES)[number];
 
 /**
@@ -888,7 +948,11 @@ export type SupplierRole = (typeof SUPPLIER_ROLES)[number];
  * @public
  */
 export const SUPPLIER_ABSENT_CAUSES = ['engine_input', 'not_recorded'] as const;
-/** @public */
+/**
+ * One of the words in `SUPPLIER_ABSENT_CAUSES`: why an evidence entry names no supplier
+ * (`readSupplier`'s `absent`).
+ * @public
+ */
 export type SupplierAbsentCause = (typeof SUPPLIER_ABSENT_CAUSES)[number];
 
 /**
@@ -904,10 +968,18 @@ export type SupplierAbsentCause = (typeof SUPPLIER_ABSENT_CAUSES)[number];
  * @public
  */
 export const OUTPUT_SOURCES = ['driven_step', 'dependency', 'run_params', 'none'] as const;
-/** @public */
+/**
+ * One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from
+ * (`EvidenceSnapshot.output_source`).
+ * @public
+ */
 export type OutputSource = (typeof OUTPUT_SOURCES)[number];
 
-/** @public */
+/**
+ * One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered
+ * question recorded, with its times, its input and output, its status and its hash.
+ * @public
+ */
 export interface EvidenceSnapshot {
   step_id: string;
   started_at: string;
@@ -1094,7 +1166,11 @@ export interface EvidenceSnapshot {
   exhausted_by?: 'attempts' | 'total_timeout';
 }
 
-/** @public */
+/**
+ * The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and
+ * choices shown to the person, when it opened, and its owner and time limit when set.
+ * @public
+ */
 export interface PendingGate {
   gate_id: string;
   step_name: string;
@@ -1529,7 +1605,12 @@ export interface DriveFailuresField {
   entries: DriveFailureRecord[];
 }
 
-/** @public */
+/**
+ * A run as its store keeps it: its workflow and version, its phase, its params, its evidence
+ * entries, the question it waits on and how it ended; a store's `get` returns it inside a
+ * `Snapshot`.
+ * @public
+ */
 export interface RunRecord {
   id: string;
   workflow_id: string;
@@ -1837,7 +1918,11 @@ export const PRINCIPAL_ABSENCES = [
   'door_authenticates_no_principal',
   'not_a_server_door',
 ] as const;
-/** @public */
+/**
+ * One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer
+ * (`Principal`'s `absent`).
+ * @public
+ */
 export type PrincipalAbsence = (typeof PRINCIPAL_ABSENCES)[number];
 
 /**

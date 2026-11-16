@@ -99,7 +99,11 @@ export interface BufferFullDetails {
   total_bytes?: number;
 }
 
-/** @public */
+/**
+ * What a trace buffer reports after an append: how many entries and bytes this writer holds against
+ * its limits, and the whole file's when the store keeps them (`TraceBufferStore.append`).
+ * @public
+ */
 export interface AppendResult {
   /**
    * WRITER-scope numbers (issue #197 PR-1 re-documentation — values and meaning UNCHANGED for
@@ -144,7 +148,11 @@ export interface AppendOptions {
   writerNonce?: string;
 }
 
-/** @public */
+/**
+ * Where an agent step's trace entries wait, per run and step, while the agent works; the engine
+ * reads them when it records the step's result.
+ * @public
+ */
 export interface TraceBufferStore {
   /**
    * Declares which of the two optional capability-ladder rungs (issue #197 PR-1) this store

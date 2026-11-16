@@ -30,7 +30,11 @@ export interface OrphanArtifact {
   mtimeMs: number;
 }
 
-/** @public */
+/**
+ * A store whose files for a run can outlive the run's own file, and that lists those left behind;
+ * it deletes nothing (`listOrphans`).
+ * @public
+ */
 export interface OrphanSweepableStore {
   /**
    * Returns this store's artifacts whose `runId` is NOT in `liveRunIds` — candidate orphans, each
