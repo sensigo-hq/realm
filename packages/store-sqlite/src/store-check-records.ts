@@ -22,6 +22,10 @@
 // "Row 54 addendum"): exactly the driver's `RangeError` with `code: 'ERR_OUT_OF_RANGE'`. Any other
 // error (the store's busy refusal included) is passed on. The check (`store-check.ts`) composes every
 // word of the report from what this returns.
+//
+// The filter-mask fix, PR 2: given declared values (`realm db check --project`), one more scan in the
+// same transaction, last, looks for their changed forms (`store-check-forms.ts`); without them it does
+// not run, and the pass carries no outcome for it.
 import {
   deriveRunPhase,
   REALM_STORE_SCHEMA,
@@ -33,6 +37,7 @@ import type { DatabaseLike } from './driver.js';
 import { isEvidencePlaceholder, isFieldPlaceholder, keyHashOf } from './run-rows.js';
 import { checkEvidenceEntries } from './schema-ladder.js';
 import { workflowVersionHash } from './workflow-store.js';
+import { scanDeclaredForms, type FormHit } from './store-check-forms.js';
 
 /**
  * One scan of the pass: it ran to its end, or SQLite's corrupt error stopped it (its code), or a stored
@@ -114,6 +119,10 @@ export interface RecordPass {
   readonly versionWrong: readonly { readonly workflowId: string; readonly hash: string }[];
   /** How many runs another phase derivation stamped. */
   readonly otherStamps: number;
+  /** The scan for declared values' changed forms; absent when no declared values were given. */
+  readonly forms?: ScanOutcome;
+  /** The places that hold a changed form, in the scan's order. */
+  readonly formHits: readonly FormHit[];
 }
 
 /** How many runs one page of the runs scan reads (the driver pages with `all()`; AUD-C8B1-09). */
@@ -261,6 +270,8 @@ interface Collected {
   pointerWrong: PointerWrong[];
   versions: ScanOutcome;
   versionWrong: { workflowId: string; hash: string }[];
+  forms?: ScanOutcome;
+  formHits: FormHit[];
 }
 
 const NOT_RUN: ScanOutcome = { done: false, errcode: 0 };
@@ -284,6 +295,7 @@ function collected(): Collected {
     pointerWrong: [],
     versions: NOT_RUN,
     versionWrong: [],
+    formHits: [],
   };
 }
 
@@ -569,9 +581,14 @@ function scanVersions(c: DatabaseLike, out: Collected): void {
 
 /**
  * The pass (see the module comment), on the check's read-only connection. `running` is the running
- * phase derivation's fingerprint. Rejects only with an error that is not SQLite's corrupt error.
+ * phase derivation's fingerprint; `declared`, the declared values whose changed forms are looked for
+ * (absent: that scan does not run). Rejects only with an error that is not SQLite's corrupt error.
  */
-export async function readRecords(db: RealmDb, running: string): Promise<RecordPass> {
+export async function readRecords(
+  db: RealmDb,
+  running: string,
+  declared?: readonly string[],
+): Promise<RecordPass> {
   let out = collected();
   let finished = false;
   try {
@@ -593,6 +610,11 @@ export async function readRecords(db: RealmDb, running: string): Promise<RecordP
         out.orphans = scan(() => scanOrphans(c, out));
         out.pointers = scan(() => scanPointers(c, out));
         out.versions = scan(() => scanVersions(c, out));
+        if (declared !== undefined) {
+          out.forms = scan(() => {
+            out.formHits = scanDeclaredForms(c, declared);
+          });
+        }
         finished = true;
       },
       { takesReading: false },
@@ -610,6 +632,7 @@ export async function readRecords(db: RealmDb, running: string): Promise<RecordP
       out.orphans,
       out.pointers,
       out.versions,
+      ...(out.forms === undefined ? [] : [out.forms]),
     ];
     const met = all.some((s) => s !== NOT_RUN && !s.done);
     if (!finished || !met) {
@@ -623,6 +646,7 @@ export async function readRecords(db: RealmDb, running: string): Promise<RecordP
         orphans: stopped,
         pointers: stopped,
         versions: stopped,
+        ...(declared === undefined ? {} : { forms: stopped }),
       };
     }
   }
