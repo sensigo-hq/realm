@@ -4,6 +4,7 @@
 // net). Each assertion names (a) the change that turns it red and (b) what it prints when it fails.
 import { describe, it, expect } from 'vitest';
 import { dueReminderWork, reminderAnchorOf } from './reminder-due.js';
+import * as entry from '../index.js';
 import type { PendingGate } from '../types/run-record.js';
 
 const OPENED_MS = Date.parse('2033-01-01T00:00:00.000Z');
@@ -141,6 +142,106 @@ describe('#597 D3a — dueReminderWork, the states a sender reads', () => {
       near: ['one_shot1@25m:passed', 'nudge@30m:consumed'],
       owner: ['one_shot1@25m:passed', 'nudge@30m:due'],
       far: ['one_shot1@25m:passed', 'nudge@30m:due'],
+    });
+  });
+});
+
+describe('#597 D3a correction 1 — the branches a sender reads', () => {
+  const sentAt = (key: string, atMs: number) => ({
+    entry_key: `gate:g1:${key}`,
+    type: key === 'escalation' ? ('escalation' as const) : ('reminder' as const),
+    ...(key === 'escalation' ? {} : { occurrence: Number(key.split(':')[1]) }),
+    status: 'sent' as const,
+    lease_deadline: new Date(atMs + MIN).toISOString(),
+    attempts: 1,
+    sent_at: new Date(atMs).toISOString(),
+    created_at: new Date(atMs).toISOString(),
+  });
+
+  it("the one-shot's closure: a one-shot that is not final is not due at or after `expires_at` on an `on_expiry` gate; on a finding-only gate it is", () => {
+    const s = { reminderIntervalMs: 10 * MIN, escalationThresholdMs: 999 * MIN };
+    const expires = '2033-01-01T00:20:00.000Z';
+    // (a) red when the one-shot's closure by the expiry is lost (due after its question closed) or
+    //     applied to a finding-only gate; (b) prints the states.
+    expect({
+      closes: states(
+        dueReminderWork(
+          gate({ expires_at: expires, on_expiry: 'abort' }),
+          s,
+          OPENED_MS,
+          [],
+          at(25 * MIN),
+        ),
+      ),
+      stays: states(dueReminderWork(gate({ expires_at: expires }), s, OPENED_MS, [], at(25 * MIN))),
+    }).toEqual({
+      closes: ['one_shot1@10m:passed', 'nudge@999m:future'],
+      stays: ['one_shot1@10m:due', 'nudge@999m:future'],
+    });
+  });
+
+  it('a FINAL reminder sent within the minute does not consume the nudge (their lines differ)', () => {
+    const g = gate({
+      reminder_seconds: 600,
+      reminder_max: 3,
+      expires_at: '2033-01-01T00:30:00.000Z',
+    });
+    const s = { reminderIntervalMs: 999 * MIN, escalationThresholdMs: 30 * MIN + 30_000 };
+    // (a) red when a final's row consumes the nudge (the same-line rule's "a reminder that is not
+    //     final" lost); (b) prints the states.
+    expect(
+      states(
+        dueReminderWork(
+          g,
+          s,
+          OPENED_MS,
+          [sentAt('reminder:3', OPENED_MS + 30 * MIN)],
+          at(35 * MIN),
+        ),
+      ),
+    ).toEqual([
+      'occurrence1@10m:passed',
+      'occurrence2@20m:passed',
+      'final3@30m:passed',
+      'nudge@30.5m:due',
+    ]);
+  });
+
+  it('a row not yet sent (`pending`) does not consume, however recent', () => {
+    const pending = {
+      entry_key: 'gate:g1:reminder:1',
+      type: 'reminder' as const,
+      occurrence: 1,
+      of_max: 1,
+      status: 'pending' as const,
+      lease_deadline: new Date(OPENED_MS + 31 * MIN).toISOString(),
+      attempts: 1,
+      created_at: new Date(OPENED_MS + 29 * MIN + 30_000).toISOString(),
+    };
+    const s = { reminderIntervalMs: 29 * MIN + 30_000, escalationThresholdMs: 30 * MIN };
+    // (a) red when the rule reads a row's time whatever its status (its `created_at`); (b) prints
+    //     the states.
+    expect(states(dueReminderWork(gate(), s, OPENED_MS, [pending], at(35 * MIN)))).toEqual([
+      'one_shot1@29.5m:passed',
+      'nudge@30m:due',
+    ]);
+  });
+});
+
+describe('#597 D3a correction 1 — the package entry', () => {
+  it('exports the due function, the anchor and the window, and not the ledger’s key function', () => {
+    // (a) red when the ledger's internal `keyOf` is exported from `@sensigo/realm` (through the
+    //     entry's `export *` of the ledger module), or a D3a export is lost; (b) prints what it found.
+    expect({
+      keyOf: 'keyOf' in entry,
+      dueReminderWork: typeof entry.dueReminderWork,
+      reminderAnchorOf: typeof entry.reminderAnchorOf,
+      SAME_LINE_WINDOW_MS: entry.SAME_LINE_WINDOW_MS,
+    }).toEqual({
+      keyOf: false,
+      dueReminderWork: 'function',
+      reminderAnchorOf: 'function',
+      SAME_LINE_WINDOW_MS: 60_000,
     });
   });
 });

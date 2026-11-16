@@ -468,17 +468,6 @@ describe('#597 D3a — the final', () => {
       },
     });
   });
-
-  it('the latest passed item already sent: the takeover posts nothing, and walks back to no earlier one', async () => {
-    // Occurrence 2 was sent by the stopped agent; occurrence 1 never was. (a) red when the catch-up
-    //     falls back to an earlier occurrence (occurrence 1 posted); (b) prints the posts and rows.
-    const r = await rig({ reminder_seconds: 600, reminder_max: 3 });
-    await sentBefore(r, { type: 'reminder', occurrence: 2 }, plus(20 * MIN));
-    const clear = await start(r, { takenOver: true, at: plus(25 * MIN) });
-    await settle();
-    clear();
-    expect({ texts, rows: await statuses(r) }).toEqual({ texts: [], rows: { '2': 'sent' } });
-  });
 });
 
 describe('#597 D3a — the same-line rule', () => {
@@ -586,6 +575,26 @@ describe('#597 D3a — the same-line rule', () => {
       'nudge after a reminder sent 5 minutes before, no owner': [open('35m')],
       'nudge after a reminder sent 5 minutes before, @ana': [owned('35m')],
     });
+  });
+});
+
+describe('#597 D3a correction 1 — the same-line sentence’s own case', () => {
+  it('a reminder posted at 29:30 by the stopped agent and a takeover at 30:10, the nudge due at 30:00: nothing is posted at once', async () => {
+    // slack-gates.md: "A `realm agent` started again does not post, at once, a reminder or an
+    // escalation when the other one was posted no earlier than a minute before the due one's time."
+    // (a) red when the takeover does not read the rows (it posts the nudge, the line the stopped
+    //     agent's reminder already said); (b) prints the posts and the rows.
+    const r = await rig({});
+    await sentBefore(r, { type: 'reminder', occurrence: 1 }, plus(29 * MIN + 30 * SEC));
+    const clear = await start(r, {
+      takenOver: true,
+      at: plus(30 * MIN + 10 * SEC),
+      reminderIntervalMs: 29 * MIN + 30 * SEC,
+      escalationMs: 30 * MIN,
+    });
+    await settle();
+    clear();
+    expect({ texts, rows: await statuses(r) }).toEqual({ texts: [], rows: { '1': 'sent' } });
   });
 });
 
@@ -754,11 +763,11 @@ describe('#597 D3a — the words', () => {
     // listening host's lines) and this file's (the command only when it does not listen).
     claim(
       'docs/guides/slack-gates.md',
-      "If nobody answers, Realm posts a reminder in the thread and an escalation, counted from when the question was posted: after 10 and 30 minutes by default. A `realm agent` started again that uses the stopped agent's question post keeps counting from the original post.",
+      "If nobody answers, Realm posts a reminder in the thread and an escalation, counted from when the question was posted (the reminders of a gate's own `reminder_seconds` count from when the gate opened): after 10 and 30 minutes by default. A `realm agent` started again that uses the stopped agent's question post keeps counting from the original post.",
     );
     claim(
       'docs/reference/deployment-manifest.md',
-      '| `reminder_interval_ms` | Integer | 1 or more. How long after the question is posted a reminder is posted. The default is 600000. |',
+      '| `reminder_interval_ms` | Integer | 1 or more. How long after the question is posted the one reminder of a gate with no `reminder_seconds` is posted. The default is 600000. |',
     );
     claim(
       'docs/reference/deployment-manifest.md',

@@ -322,10 +322,12 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
 
   it('no thread message names a command; the drain command is the console’s', () => {
     // #597 D3a: scoped to while Realm reads replies; a host that does not gets the command in its
-    // reminders (slack-reminder-due-d3a "one compose function").
+    // reminders (slack-reminder-due-d3a "one compose function"). "(the question's own post gives the
+    // terminal way as well)": slack-gate-notifier.test.ts "question_opened, bot and webhook …" (the
+    // listening route ends `or from a terminal:` and the respond command).
     claim(
       SLACK,
-      "While Realm is reading replies in the thread (a bot token with an `app_token` or a `signing_secret`), no message in the thread names a command. The command that carries out an expired question's `on_expiry`, `realm run drain --expired`, is printed where `realm agent` runs when it attends the thread with a bot token; with only `webhook_url`, nothing in `realm agent` carries the expiry out or prints it (#882).",
+      "While Realm is reading replies in the thread (a bot token with an `app_token` or a `signing_secret`), none of the lines Realm adds under the question names a command (the question's own post gives the terminal way as well). The command that carries out an expired question's `on_expiry`, `realm run drain --expired`, is printed where `realm agent` runs when it attends the thread with a bot token; with only `webhook_url`, nothing in `realm agent` carries the expiry out or prints it (#882).",
     );
     const g = gate({ expires_at: '2026-10-27T10:00:01.000Z', on_expiry: 'settle_default' });
     const now = new Date('2026-10-27T10:30:00.000Z');
@@ -636,9 +638,11 @@ describe('#964 — the Slack guide and the CHANGELOG on a reminder after the com
     // reads as if it had been posted on time)" — cells 1, 2; "the later ones stay on their planned
     // times" — cell 4; "The escalation, if it came due, is posted too, as its own line" — cell 5; "when
     // the gate names no `owner` and the reminder and the escalation would read the same, only the first
-    // of them is posted" — cells 7a, 7b, 7c and 6b; "and a `realm agent` started again does not post one
-    // when the other was posted no earlier than a minute before its time" — slack-reminder-due-d3a "a
-    // takeover: a reminder sent within the minute …"; "A reminder that comes due while the computer is
+    // of them is posted" — cells 7a, 7b, 7c and 6b; "A `realm agent` started again does not post, at
+    // once, a reminder or an escalation when the other one was posted no earlier than a minute before
+    // the due one's time" — slack-reminder-due-d3a "the same-line sentence's own case" (and "a
+    // takeover: a reminder sent within the minute …"); a nudge still in the future at the takeover is
+    // not covered (#597 D3 R15); "A reminder that comes due while the computer is
     // awake is posted at its time" — cells 3–4 (k = 19, 20) and gate-notify-clock.test.ts; "If the time
     // limit … has passed by the time a reminder would be posted …, no plain reminder and no escalation
     // are posted" — cells 6, 10 and 11; "and so is the reminder that says the time ran out, if its own
@@ -652,7 +656,7 @@ describe('#964 — the Slack guide and the CHANGELOG on a reminder after the com
     // longer holds the words, or an old clause is back; (b) prints the sentence.
     claim(
       SLACK,
-      "When the computer sleeps while a question is open, the last reminder that came due during the sleep is posted within a minute of waking, once, with the time the question has really been open (a reminder at most a minute late reads as if it had been posted on time); the ones that came due in between are not posted, and the later ones stay on their planned times. The escalation, if it came due, is posted too, as its own line; when the gate names no `owner` and the reminder and the escalation would read the same, only the first of them is posted, and a `realm agent` started again does not post one when the other was posted no earlier than a minute before its time. A reminder that comes due while the computer is awake is posted at its time. If the time limit of a question that closes at its limit (`on_expiry`) has passed by the time a reminder would be posted (up to a minute after waking), no plain reminder and no escalation are posted: the question's closing line is, and so is the reminder that says the time ran out, if its own time has come by then. A question with no `on_expiry` is still open after its time limit, so its reminders follow the rules above. (`timeout_seconds`, `on_expiry` and `owner` are set on the gate: see [Gates](../reference/workflow/gates.md).) Added after version 0.49.0.",
+      "When the computer sleeps while a question is open, the last reminder that came due during the sleep is posted within a minute of waking, once, with the time the question has really been open (a reminder at most a minute late reads as if it had been posted on time); the ones that came due in between are not posted, and the later ones stay on their planned times. The escalation, if it came due, is posted too, as its own line; when the gate names no `owner` and the reminder and the escalation would read the same, only the first of them is posted. A `realm agent` started again does not post, at once, a reminder or an escalation when the other one was posted no earlier than a minute before the due one's time. A reminder that comes due while the computer is awake is posted at its time. If the time limit of a question that closes at its limit (`on_expiry`) has passed by the time a reminder would be posted (up to a minute after waking), no plain reminder and no escalation are posted: the question's closing line is, and so is the reminder that says the time ran out, if its own time has come by then. A question with no `on_expiry` is still open after its time limit, so its reminders follow the rules above. (`timeout_seconds`, `on_expiry` and `owner` are set on the gate: see [Gates](../reference/workflow/gates.md).) Added after version 0.49.0.",
     );
     claim(
       SLACK,

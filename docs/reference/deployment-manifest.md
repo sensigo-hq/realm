@@ -269,16 +269,16 @@ A declared secret of 1 to 3 characters cannot be hidden: Realm cannot tell it ap
 
 `notifiers` has one key, `slack_gate`. It needs `type: slack` and a `config` block with any of 8 keys:
 
-| Key                       | Type    | Holds                                                                                             |
-| ------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
-| `webhook_url`             | String  | A Slack incoming-webhook address. Realm posts each gate to it.                                    |
-| `bot_token`               | String  | The Slack app's bot token. Realm posts each gate with it.                                         |
-| `channel_id`              | String  | The channel the bot posts to.                                                                     |
-| `app_token`               | String  | The app-level token. With it, Realm reads replies over Socket Mode.                               |
-| `signing_secret`          | String  | The app's signing secret. With it, Realm reads replies sent to `events_port`.                     |
-| `events_port`             | Integer | 1 to 65535. The port Realm listens on for Slack's requests.                                       |
-| `reminder_interval_ms`    | Integer | 1 or more. How long after the question is posted a reminder is posted. The default is 600000.     |
-| `escalation_threshold_ms` | Integer | 1 or more. How long after the question is posted an escalation is posted. The default is 1800000. |
+| Key                       | Type    | Holds                                                                                                                                    |
+| ------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `webhook_url`             | String  | A Slack incoming-webhook address. Realm posts each gate to it.                                                                           |
+| `bot_token`               | String  | The Slack app's bot token. Realm posts each gate with it.                                                                                |
+| `channel_id`              | String  | The channel the bot posts to.                                                                                                            |
+| `app_token`               | String  | The app-level token. With it, Realm reads replies over Socket Mode.                                                                      |
+| `signing_secret`          | String  | The app's signing secret. With it, Realm reads replies sent to `events_port`.                                                            |
+| `events_port`             | Integer | 1 to 65535. The port Realm listens on for Slack's requests.                                                                              |
+| `reminder_interval_ms`    | Integer | 1 or more. How long after the question is posted the one reminder of a gate with no `reminder_seconds` is posted. The default is 600000. |
+| `escalation_threshold_ms` | Integer | 1 or more. How long after the question is posted an escalation is posted. The default is 1800000.                                        |
 
 `realm agent` uses these settings. See [Answer gates from Slack](../guides/slack-gates.md).
 

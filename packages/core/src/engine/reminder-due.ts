@@ -7,7 +7,8 @@
 import type { PendingGate } from '../types/run-record.js';
 import { isPastDeadline, parseStamp } from './instants.js';
 import { authoredOccurrences, isFinalReminder, reminderEligibility } from './gate-timing.js';
-import { keyOf, type OutboundEntryView } from '../store/outbound-ledger.js';
+import type { OutboundEntryView } from '../store/outbound-ledger.js';
+import { keyOf } from '../store/outbound-entry-key.js';
 
 /** #597 D3a: the operator's reminder settings for a question with no authored schedule, and the nudge. */
 export interface ReminderSettings {
