@@ -83,7 +83,7 @@ describe('#729 PR-3 — the MCP pages: `disclosure` on every JSON reply', () => 
     );
     claim(
       TOOLS_PAGE,
-      "What Realm hid from the reply before the agent read it: `declared` (whether Realm knew the secrets a deployment manifest declares: `resolved`, `partial` or `unknown`, with `declared_cause` when not `resolved`), `environment` (`swept` when the server's environment variables were checked), `hidden` (how many values were replaced with `[REDACTED]`, by kind: `declared`, `environment`, `pattern`), `unchecked` (always `0` in this version), `unmaskable` (declared secrets too short to hide), `too_deep` (values shown as their type and size because they lie more than 64 levels deep) and, when the reply shows a gate's question, `question: declared_only` (the question hides only the declared secrets).",
+      "What Realm hid from the reply before the agent read it: `declared` (whether Realm knew the secrets a deployment manifest declares: `resolved`, `partial` or `unknown`, with `declared_cause` when not `resolved`), `environment` (`swept` when the server's environment variables were checked), `hidden` (how many values were replaced with `[REDACTED]` by this reply's own mask, by kind: `declared`, `environment`, `pattern`; a value hidden before a template's filters ran (a step's prompt, a gate's instructions) shows its marker and is not counted here), `unchecked` (always `0` in this version), `unmaskable` (declared secrets too short to hide), `too_deep` (values shown as their type and size because they lie more than 64 levels deep) and, when the reply shows a gate's question, `question: declared_only` (the question hides only the declared secrets).",
     );
     claim(
       CONNECT_PAGE,

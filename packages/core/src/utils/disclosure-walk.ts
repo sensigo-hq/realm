@@ -9,6 +9,7 @@
 import {
   disclose,
   isCredentialName,
+  stripSpanMarkText,
   tierFor,
   REDACTED_MARKER,
   type DeclaredCause,
@@ -278,8 +279,13 @@ function join(path: string, key: string): string {
   return path === '' ? key : `${path}.${key}`;
 }
 
+/**
+ * The walk's text step: every string leaf, every key and `discloseLeaf` go through it. The span
+ * marks are stripped FIRST (the filter-mask fix, B3): a mark planted inside a value would part it and
+ * defeat the match. `disclose` itself does not strip: the CLI writer's span-aware print relies on it.
+ */
 function discloseText(text: string, tier: DisclosureTier, ctx: WalkContext): string {
-  const out = disclose(text, ctx.set, tier);
+  const out = disclose(stripSpanMarkText(text), ctx.set, tier);
   ctx.tally.hidden.declared += out.hidden.declared;
   ctx.tally.hidden.environment += out.hidden.environment;
   ctx.tally.hidden.pattern += out.hidden.pattern;
@@ -572,6 +578,27 @@ export function discloseByTable(
   };
   if (options.withhold !== undefined) tally.withheld = true;
   return { value: walkTable(value, table, '', 0, ctx), tally };
+}
+
+/**
+ * The filter-mask fix (B1): a value as the template renderer masks it BEFORE its filters run, at a
+ * TIER the render site names (not an audience: nothing is shaped) — every string leaf and every key
+ * through the walk's text step (span marks stripped, every form of every member replaced), a number
+ * or boolean whose JSON text holds a member hidden whole, and at `all` a credential name's value
+ * hidden whole: the same walk a reply's `value` field gets. The input is never changed; the counts
+ * are not kept (the surface's own walk counts what IT hid).
+ */
+export function discloseValueAt(value: unknown, set: DisclosureSet, tier: DisclosureTier): unknown {
+  const ctx: WalkContext = {
+    set,
+    audience: set.audience,
+    tier,
+    tally: newTally(set.audience),
+    onUnclassified: undefined,
+    stack: new Set(),
+    withhold: undefined,
+  };
+  return walkValue(value, '', 0, { tier, shape: false, shapedAt: '' }, ctx);
 }
 
 const VALUE_ONLY: ClassTable = { value: 'value' };
