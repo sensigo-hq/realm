@@ -19,13 +19,17 @@ describe('CP-1 PR 3 — the words of the internal entry', () => {
       '`@sensigo/realm/internal` exports everything the main entry exports, from the same files. Until 1.0 every name is importable from either entry; a name Realm promises (the [compatibility page](compatibility.md) says which) is promised on both, and the rest may change in a minor release. From 1.0 on, the names Realm does not promise live only on the internal entry, which also changes only in a minor release. `@sensigo/realm-mcp/internal` is the same for the MCP package.';
     const page = read('docs/reference/core-library.md');
     // (1) red when the paragraph is reworded, or moved after the table (an H3 there would swallow
-    //     the table); (2) prints the paragraph and where it sits.
-    expect({
-      found: flat(page).includes(flat(paragraph)),
-      beforeTable: page.indexOf(paragraph) < page.indexOf('| Package '),
-      afterLine:
-        page.indexOf(paragraph) > page.indexOf('The package exports more than 200 values.'),
-    }).toEqual({ found: true, beforeTable: true, afterLine: true });
+    //     the table); (2) prints `found`, `beforeTable`, `afterLine` (when the paragraph is absent
+    //     `indexOf` is −1, so `afterLine` reads false too — `found: false` is the cause).
+    expect(
+      {
+        found: flat(page).includes(flat(paragraph)),
+        beforeTable: page.indexOf(paragraph) < page.indexOf('| Package '),
+        afterLine:
+          page.indexOf(paragraph) > page.indexOf('The package exports more than 200 values.'),
+      },
+      'core-library.md no longer carries the internal-entry paragraph after the "more than 200 values" line and before the package table',
+    ).toEqual({ found: true, beforeTable: true, afterLine: true });
   });
 
   it('CHANGELOG.md: the Added line under [Unreleased]', () => {
