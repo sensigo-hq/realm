@@ -47,6 +47,7 @@ import {
   CHECK_FINDING_CODES,
   CHECK_IDS,
   INTEGRITY_CHECK_LIMIT,
+  type CheckOptions,
   type CheckReport,
 } from './store-check.js';
 import { filterColumns } from './store-check-records.js';
@@ -77,10 +78,10 @@ function tmp(): string {
 const built: CheckReport[] = [];
 
 /** The entry opened for `'check'` on `home`, its report, and the handle closed. */
-async function check(home: string, seams = {}): Promise<CheckReport> {
+async function check(home: string, seams = {}, options?: CheckOptions): Promise<CheckReport> {
   const m = await openMaintenance({ home, verb: 'check' }, seams);
   try {
-    const report = await m.check();
+    const report = await m.check(options);
     built.push(report);
     return report;
   } finally {
@@ -205,11 +206,15 @@ describe('#616 PR-2c c8a1 — the check writes nothing to the store file', () =>
     };
     expect(before.wal.length).toBeGreaterThan(0);
     const report = await check(home);
-    // (1) red when the check runs the normal open (its fences appear in the home) or opens a
-    //     read-write connection (its close copies the WAL into realm.db and removes the WAL); (2)
+    // The filter-mask fix, PR 2 (correction 1): read-only with the declared-forms scan too.
+    const scanned = await check(home, {}, { declaredValues: ['Fake-Scan-Value-Alpha-01'] });
+    // (1) red when the check, or its declared-forms scan, runs the normal open (its fences appear in
+    //     the home) or opens a read-write connection (its close copies the WAL into realm.db and
+    //     removes the WAL); (2)
     //     prints whether each file is unchanged and what the home holds.
     expect({
       status: report.status,
+      scanned: scanned.status,
       db: before.db.equals(readFileSync(db)),
       wal: before.wal.equals(readFileSync(`${db}-wal`)),
       mtime: statSync(db).mtimeMs === before.mtime,
@@ -217,6 +222,7 @@ describe('#616 PR-2c c8a1 — the check writes nothing to the store file', () =>
       shm: existsSync(`${db}-shm`),
     }).toEqual({
       status: 'ok',
+      scanned: 'ok',
       db: true,
       wal: true,
       mtime: true,

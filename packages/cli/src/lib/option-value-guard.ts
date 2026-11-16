@@ -61,6 +61,8 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'reclaim', option: '--step' }, // realm run reclaim
   // #616 PR-2c c7: `realm db migrate --backup --no-backup` would take the flag as the copy's path.
   { command: 'migrate', option: '--backup' }, // realm db migrate
+  // The filter-mask fix, PR 2: `realm db check --project --json` would take the flag as the folder.
+  { command: 'check', option: '--project' }, // realm db check
 ];
 
 /** A string of two or more characters that starts with `-` (Commander's option-looking token). A lone

@@ -43,6 +43,7 @@ realm db backup --help — option, short -h, no value
 realm db check — command
 realm db check --help — option, short -h, no value
 realm db check --json — option, no value
+realm db check --project — option, takes a value
 realm db help — command, Commander's help
 realm db help <command> — argument 1, optional
 realm db migrate — command
