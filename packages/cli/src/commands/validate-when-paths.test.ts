@@ -321,12 +321,12 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
     ).toBe(true);
   }
 
-  it('loader-diagnostics.md: 33 codes, ten of them errors, the three `when` rows and `not_checked`', () => {
+  it('loader-diagnostics.md: 36 codes, twelve of them errors, the three `when` rows and `not_checked`', () => {
     // (1) red when a sentence or row is changed or lost; (2) prints it.
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 33 warning codes');
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 36 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 33 warning codes. Ten of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; and a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text.",
+      "The loader has 36 warning codes. Twelve of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; and a path in an approval question or `display` that can never be found, or one in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its text.",
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
@@ -342,15 +342,15 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      '| `not_checked` | The `input_map` paths and `when` conditions that read data the workflow declares no shape for: `surface` (`input_map` or `when`), `step`, `key` (`when` for a condition), `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, or `check_failed` when the check itself failed on that path). Empty when the file could not be loaded. Added after version 0.49.0. |',
+      "| `not_checked` | The `input_map` paths, `when` conditions and template references (in `gate.message` and `display`) that read data the workflow declares no shape for, or a context entry only a file adds: `surface` (`input_map`, `when` or `template`), `step`, `key` (`when` for a condition, the field's name for a template), `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, `added_from_file`, or `check_failed` when the check itself failed on that path). Empty when the file could not be loaded. Added after version 0.49.0. |",
     );
   });
 
-  it('loader-diagnostics.md: the table has one row per code, 33 (`DEFAULT_POLICY` in core)', () => {
+  it('loader-diagnostics.md: the table has one row per code, 36 (`DEFAULT_POLICY` in core)', () => {
     const page = readFileSync(join(ROOT, 'docs/reference/workflow/loader-diagnostics.md'), 'utf8');
     const rows = page.split('\n').filter((l) => /^\| `[A-Z][A-Z_]+` +\| (Error|Warning) /.test(l));
     // (1) red when a row is missing or doubled; (2) prints the count.
-    expect(rows.length).toBe(33);
+    expect(rows.length).toBe(36);
   });
 
   it('conditions.md: the new rule and the changed sentence', () => {
