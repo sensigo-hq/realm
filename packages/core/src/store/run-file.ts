@@ -35,7 +35,11 @@ export const STORED_FILE_CLASSES = [
   'legacy',
   'unreadable',
 ] as const;
-/** @public */
+/**
+ * What is wrong with a damaged stored file: empty, not JSON, not a run, filed under another id,
+ * from an earlier Realm, or unreadable (`UnreadableFileFacts.class`).
+ * @public
+ */
 export type StoredFileClass = (typeof STORED_FILE_CLASSES)[number];
 
 /**

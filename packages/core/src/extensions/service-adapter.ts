@@ -1,6 +1,9 @@
 // Service adapter — handles communication with a specific external API.
 
-/** @public */
+/**
+ * What a service adapter's call returns: the HTTP status and the data (`ServiceAdapter`'s methods).
+ * @public
+ */
 export interface ServiceResponse {
   status: number;
   data: unknown;

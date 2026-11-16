@@ -36,7 +36,10 @@ export interface ReplayRecord {
   created_at: string;
 }
 
-/** @public */
+/**
+ * Where replays of a run are kept: each saved with its overrides and results, and read back by id.
+ * @public
+ */
 export interface ReplayStore {
   /** Persist a replay record. Returns the stored record with its assigned ID. */
   save(record: Omit<ReplayRecord, 'id' | 'created_at'>): Promise<ReplayRecord>;

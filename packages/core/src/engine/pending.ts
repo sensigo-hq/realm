@@ -39,7 +39,11 @@ import { readDrivenBy, type Attributed, type ActorAbsent } from './holder.js';
  * @public
  */
 export const PRE_CLAIM_REFUSALS = ['trust', 'precondition', 'input_schema', 'capability'] as const;
-/** @public */
+/**
+ * The checks that refuse a step before it is claimed: its trust, its precondition, its input
+ * schema, its capability.
+ * @public
+ */
 export type PreClaimRefusal = (typeof PRE_CLAIM_REFUSALS)[number];
 
 /**
@@ -58,7 +62,11 @@ export type AgentPreClaimRefusal = (typeof AGENT_PRE_CLAIM_REFUSALS)[number];
  * @public
  */
 export const CAPABILITY_BASES = ['registry', 'marker'] as const;
-/** @public */
+/**
+ * What a capability refusal was judged from: the caller's own registry, or the run's marker when
+ * the caller passed none.
+ * @public
+ */
 export type CapabilityBasis = (typeof CAPABILITY_BASES)[number];
 
 /** A refusal before the claim. `error` / `hint` carry what `executeStep` returns. */
@@ -325,7 +333,11 @@ export interface EngineRunnable {
   precondition?: PreconditionFacts;
 }
 
-/** @public */
+/**
+ * What a run has left to do, as `describePending` returns it: the agent steps it offers, those it
+ * refuses, the guards waiting, the steps the engine can run, and every step that cannot run.
+ * @public
+ */
 export interface PendingView {
   /** The eligible agent steps the run offers, in definition order (each a `run_step` way). */
   agent_steps: string[];
