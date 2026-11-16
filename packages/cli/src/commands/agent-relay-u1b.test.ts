@@ -877,7 +877,7 @@ describe('U1b — exits, signals and the drain', () => {
     60_000,
   );
 
-  it('(g) a second SIGINT → SIGKILL to the group within 100 ms', async () => {
+  it('(g) a second SIGINT → SIGKILL to the group within 100 ms, or ten times this host’s own kill latency', async () => {
     const started = start(agentArgs(oneStep('twice', 'wait')), {
       env: env({ U1B_GRACEFUL: '1' }),
     });
@@ -888,13 +888,38 @@ describe('U1b — exits, signals and the drain', () => {
     started.child.kill('SIGINT');
     const deadIn = await waitDead(worker, 2000);
     const ran = await started.done;
+    // This host's own kill latency, measured in the same cell: a throwaway child sent SIGKILL
+    // directly, observed dead by the same poll. A fixed 100 ms was the flake (the third of U1b's
+    // load-timing cells, after n2 and s): on a shared CI runner the SIGKILL came, with the right
+    // signal and the first SIGINT survived, but past 100 ms. The bound is 100 ms or ten times the
+    // measured latency, whichever is larger; the figures are printed with the verdict. The broken
+    // case (no second-signal branch) still fails: the worker lives until the 10 s bound, far past
+    // either figure, and `waitDead` gives up at 2 s.
+    const probe = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+    });
+    await new Promise((r) => probe.once('spawn', r));
+    probe.kill('SIGKILL');
+    const killLatency = (await waitDead(probe.pid!, 2000)) ?? 2000;
+    const bound = Math.max(100, 10 * killLatency);
     // (a) red without the second-signal branch (the worker lives until the 10 s bound); (b) prints
-    //     whether the first SIGINT left it alive, how long the second took, the relay's end.
+    //     whether the first SIGINT left it alive, how long the second took against the bound and
+    //     the host's latency it came from, the relay's end.
     expect({
       survivedFirst,
-      killedFast: deadIn !== undefined && deadIn < 100,
+      killedFast: deadIn !== undefined && deadIn < bound,
+      deadIn,
+      bound,
+      killLatency,
       signal: ran.signal,
-    }).toEqual({ survivedFirst: true, killedFast: true, signal: 'SIGKILL' });
+    }).toEqual({
+      survivedFirst: true,
+      killedFast: true,
+      deadIn,
+      bound,
+      killLatency,
+      signal: 'SIGKILL',
+    });
   }, 60_000);
 
   it('(h) a handler leaves `sleep 30` holding the output → the relay ends within 5 s of the worker’s exit, one drain line, the code kept', async () => {

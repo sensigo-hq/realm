@@ -151,7 +151,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
   it('the post has four parts; every post carries one `realm run respond`, the thread sentence first when Realm listens', () => {
     claim(
       SLACK,
-      "It has four parts: the gate's name (and its `owner`, when set); your gate message, with the step's output below it when room is left; how to answer; and, when the message was cut to fit, the command that shows the step's whole output. How to answer is one `realm run respond` command; when Realm listens in the thread (`app_token`, or `signing_secret` and `events_port`), the post says `Reply in this thread with` and the choices first.",
+      "It has four parts: the gate's name (and its `owner`, when set); your gate message, with the step's output below it when room is left; how to answer; and, when the message was cut to fit, the command that shows the step's whole output. How to answer is one `realm run respond` command; when Realm listens in the thread (`app_token`, or `signing_secret` and `events_port`), the post says `Reply in this thread with` and the choices first, unless no one the question names is a Slack member ID: then it says `Replies in this thread are not counted`.",
     );
     const cut = gate({ owner: '@ana', resolved_message: `Q\n\n${CUT_SENTENCE(1, 900)}` });
     const opening = (g: PendingGate, mode: 'bot' | 'webhook') =>
@@ -167,12 +167,15 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
       );
     // (a) red when a part is dropped, the owner is not in the header, the bot's route changes, the
     //     bot post (listener-attended, correction A1) carries no command, or the webhook renders
-    //     one command per choice; (b) prints the parts and counts.
+    //     one command per choice; (b) prints the parts and counts. #603 A3a: this owner, '@ana',
+    //     names no Slack member ID, so the listening post says replies are not counted (W3).
     expect({
       heading: bot.text,
       parts: bot.blocks.length,
       owner: texts(bot.blocks)[0],
-      botRoute: texts(bot.blocks)[2]!.startsWith('Reply in this thread with `send` or `discard`'),
+      botRoute: texts(bot.blocks)[2]!.startsWith(
+        'Replies in this thread are not counted: no one this question names is a Slack member ID. Answer it from a terminal:',
+      ),
       cutWay: texts(bot.blocks)[3]!.startsWith("The step's whole output: realm run inspect"),
       botCommands: (texts(bot.blocks)[2]!.match(/realm run respond/g) ?? []).length,
       webhookCommands: (texts(hook.blocks)[2]!.match(/realm run respond/g) ?? []).length,
@@ -190,7 +193,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
   it('text is shown as written; an owner written as a Slack mention still pings', () => {
     claim(
       SLACK,
-      'Text from the workflow and the agent is shown as written: `<`, `>` and `&` do not become Slack markup. An `owner` written as a Slack mention still pings: a person (`<@U024BE7LH>`, or `<@W…>` on Enterprise Grid), a user group (`<!subteam^SAZ94GDB8>`), or `<!here>`, `<!channel>` and `<!everyone>`. Any other `owner`, such as `@ana`, is shown as written.',
+      'Text from the workflow and the agent is shown as written: `<`, `>` and `&` do not become Slack markup. An `owner` written as a Slack mention still pings: a person (`<@U024BE7LH>`, or `<@W…>` on Enterprise Grid), a user group (`<!subteam^SAZ94GDB8>`), or `<!here>`, `<!channel>` and `<!everyone>`. A bare member ID such as `U024BE7LH` is shown as a mention too. Any other `owner`, such as `@ana`, is shown as written and matches no reply.',
     );
     const owners = [
       '<@U024BE7LH>',

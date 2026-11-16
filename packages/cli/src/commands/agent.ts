@@ -110,6 +110,8 @@ export function buildManifestGateHandler(
     ...(slack.escalation_threshold_ms !== undefined && {
       escalationThresholdMs: slack.escalation_threshold_ms,
     }),
+    // #603 A3a: the project's answerers, passed with each answer the Slack door submits.
+    ...(slack.answerers !== undefined && { answerers: slack.answerers }),
   };
   return createSlackGateHandler(config);
 }

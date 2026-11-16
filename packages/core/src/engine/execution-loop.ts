@@ -351,6 +351,23 @@ export interface SubmitGateOptions {
    * client); the CLI and Slack pass none: none of them shows a step's prompt.
    */
   disclosure?: DisclosureSet;
+  /**
+   * #603 A3a: the account the calling door says sent this answer, as its channel reports it, and the
+   * forms that name that account (for Slack user `U1`: `U1` and `<@U1>`; default: `user` alone). With
+   * it, the answer's write lets the account answer only when the question does (`judgeAnswerer`) —
+   * otherwise `STATE_ANSWERER_MISMATCH`, and nothing is written — and records it, `forms` aside, as
+   * `answer.channel_evidence` beside the route. Without it the answer is not compared.
+   */
+  channelEvidence?: {
+    user: string;
+    forms?: string[];
+    team?: string;
+    ts?: string;
+    thread_ts?: string;
+  };
+  /** #603 A3a: the project's answerers, passed by the door with each answer — compared, with channel
+   *  evidence, only for a question that names no one. */
+  projectAnswerers?: string[];
 }
 
 export interface ExecuteChainOptions {
@@ -4493,6 +4510,8 @@ async function executeStepBody(
       preview: output,
       choices,
       ...(gateConfig?.owner !== undefined ? { owner: gateConfig.owner } : {}),
+      // #603 A3a: who else may answer in Slack, frozen as `owner` is.
+      ...(gateConfig?.answerers !== undefined ? { answerers: gateConfig.answerers } : {}),
       ...(minted.resolved_message !== undefined
         ? { resolved_message: minted.resolved_message }
         : {}),
@@ -5356,12 +5375,24 @@ function answerEntryFactsOf(options: SubmitGateOptions): AnswerEntryFacts {
   const principal: Principal = (options.principal !== undefined
     ? principalOf({ principal: options.principal })
     : undefined) ?? { absent: 'principal_not_passed' };
+  const evidence = options.channelEvidence;
   return {
     answer:
       options.route !== undefined
         ? {
             route: options.route,
             ...(options.shown !== undefined ? { shown: { renderer: options.shown.renderer } } : {}),
+            // #603 A3a: the channel's statement of who sent it, as the door passed it (no `forms`).
+            ...(evidence !== undefined
+              ? {
+                  channel_evidence: {
+                    ...(evidence.team !== undefined ? { team: evidence.team } : {}),
+                    user: evidence.user,
+                    ...(evidence.ts !== undefined ? { ts: evidence.ts } : {}),
+                    ...(evidence.thread_ts !== undefined ? { thread_ts: evidence.thread_ts } : {}),
+                  },
+                }
+              : {}),
           }
         : { absent: 'route_not_declared' },
     ...(options.driver !== undefined ? { driven_by: options.driver } : {}),
@@ -5734,6 +5765,18 @@ async function submitHumanResponseBody(
       choice: options.choice,
       ...(options.respondedBy !== undefined ? { respondedBy: options.respondedBy } : {}),
       ...(options.claimToken !== undefined ? { claimToken: options.claimToken } : {}),
+      // #603 A3a: the sender the channel evidence names, judged inside the write.
+      ...(options.channelEvidence !== undefined
+        ? {
+            sender: {
+              user: options.channelEvidence.user,
+              forms: options.channelEvidence.forms ?? [options.channelEvidence.user],
+            },
+          }
+        : {}),
+      ...(options.projectAnswerers !== undefined
+        ? { projectAnswerers: options.projectAnswerers }
+        : {}),
       evidence: gateResponseEvidence,
     };
 
@@ -5924,6 +5967,34 @@ async function submitHumanResponseBody(
               result.run.version,
               err,
               `Invalid choice '${options.choice}' for gate '${stepName}'.`,
+              result.run.run_phase,
+            ),
+            settledSnapshot(result),
+          );
+        }
+        case 'answerer_mismatch': {
+          // #603 A3a: the sender is not one the question lets answer — nothing was written and the
+          // question is still open. The facts: the names that may answer, as written, and the sender.
+          const allowed = result.allowed ?? [];
+          const sender = result.sender ?? '';
+          const err = new WorkflowError(
+            `The answer was not recorded: '${sender}' is not one of the names that may answer gate ` +
+              `'${options.gateId}' (${allowed.join(', ')}). The question is still open.`,
+            {
+              code: 'STATE_ANSWERER_MISMATCH',
+              category: 'STATE',
+              agentAction: 'report_to_user',
+              retryable: false,
+              facts: { allowed, sender },
+            },
+          );
+          return judgedOn(
+            errorEnvelope(
+              result.run.pending_gate!.step_name, // the arm only refuses on the open gate
+              options.runId,
+              result.run.version,
+              err,
+              err.message,
               result.run.run_phase,
             ),
             settledSnapshot(result),

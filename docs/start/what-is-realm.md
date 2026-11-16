@@ -58,7 +58,7 @@ post_approval: when_false: confirm_review.choice == 'approve' [lhs → "request_
 ## What Realm does not do
 
 - **It does not judge whether an answer is good.** It checks the shape of an answer, not its truth. A well-formed wrong answer is accepted.
-- **It does not check who answers a gate.** A gate is answered by one call, from the command line, from Slack, or through the same MCP connection the agent uses. Realm records the answer; it does not verify that a person gave it. If the agent must not be able to approve its own work, answer gates from a channel the agent cannot reach.
+- **It checks who answers a gate only in Slack.** A gate is answered by one call, from the command line, from Slack, or through the same MCP connection the agent uses. In Slack, when a question names who may answer, only those accounts count, as Slack reports them; the other routes are not compared with the gate's `owner`. Realm does not verify that a person gave the answer. If the agent must not be able to approve its own work, answer gates from a channel the agent cannot reach.
 - **It does not fully protect the record from later edits.** Runs are kept in one SQLite file on your machine. The store refuses an SQL UPDATE of a record entry, and `realm db check` reports an entry that no longer matches its stored hash. But someone who edits the file by hand and also rewrites that hash goes unnoticed, and `realm run inspect` and `realm run export` show the changed text without a warning. Nothing is signed.
 - **It does not schedule work.** A run starts when something starts it: an agent, a command, or a webhook. There is no built-in timer.
 

@@ -33,6 +33,7 @@ import {
   type OutboundEntryView,
   type OutboundLeaseRequest,
   type OutboundLedger,
+  judgeAnswerer,
 } from '@sensigo/realm';
 import { stripMarks, withoutMarks, writerCtx, writerSetFor } from '../../output/writer.js';
 import { cliCommandOf } from '../../commands/ways-renderer.js';
@@ -44,7 +45,14 @@ import {
   terminalRespondLines,
 } from '../../lib/holder-render.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
-import { startSlackGateServer } from './slack-gate-server.js';
+import { startSlackGateServer, type SlackGateEvent } from './slack-gate-server.js';
+import {
+  closedInSlack,
+  memberMentions,
+  orList,
+  senderForms,
+  slackMemberId,
+} from './slack-accounts.js';
 import { connectSocketMode } from './slack-socket-client.js';
 import { deadlineSignal, readWithin, SLACK_CALL_DEADLINE_MS } from './slack-call.js';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
@@ -246,8 +254,11 @@ const SLACK_MENTION = [
   /^<!(here|channel|everyone)>$/,
 ] as const;
 
-/** The owner as Slack shows it: a mention passes through whole, anything else escaped. */
+/** The owner as Slack shows it: a mention passes through whole, anything else escaped. #603 A3a: a
+ *  bare member ID is shown as its mention, so it pings. */
 export function slackOwner(owner: string): string {
+  const id = slackMemberId(owner);
+  if (id !== undefined) return `<@${id}>`;
   return SLACK_MENTION.some((form) => form.test(owner)) ? owner : slackEscape(owner);
 }
 
@@ -321,9 +332,12 @@ export function renderSlack(
       // #729 PR-4 correction (A1): the route is keyed on whether Realm LISTENS in the thread, never
       // on the transport; the one respond command is always there (the ids a terminal answer needs).
       const command = slackEscape(cliCommandOf(notice.respond as RespondWay)!);
-      const route = host.listens
-        ? `Reply in this thread with ${choices}, or from a terminal:\n\`\`\`${command}\`\`\``
-        : `*Gate requires a terminal response — open a terminal and run:*\n\`\`\`${command}\`\`\``;
+      // #603 A3a: a question that names no Slack account counts no reply in its thread (W3).
+      const route = !host.listens
+        ? `*Gate requires a terminal response — open a terminal and run:*\n\`\`\`${command}\`\`\``
+        : closedInSlack(notice)
+          ? `Replies in this thread are not counted: no one this question names is a Slack member ID. Answer it from a terminal:\n\`\`\`${command}\`\`\``
+          : `Reply in this thread with ${choices}, or from a terminal:\n\`\`\`${command}\`\`\``;
       return {
         text: '⏸ Workflow gate waiting for approval',
         blocks: questionBlocks(notice, route),
@@ -378,6 +392,17 @@ export function renderSlack(
             ? 'Not recorded: this run stopped before your reply arrived.'
             : `⚠️ Couldn't record your response (\`${notice.code}\`). Try again.`,
       };
+    case 'answerer_refused': {
+      // #603 A3a (W1, W2): told privately — the member IDs that can answer, or that no one can here.
+      const who = memberMentions(notice.allowed);
+      return {
+        blocks: [],
+        text:
+          who.length > 0
+            ? `Not recorded: only ${orList(who)} can answer this question. Your reply changed nothing.`
+            : "Not recorded: this question can't be answered in Slack. Your reply changed nothing.",
+      };
+    }
     case 'question_closed': {
       // #729 PR-4 correction (C1): a channel post has no thread, so it names its gate and run.
       const subject =
@@ -537,6 +562,36 @@ export async function postSlackReply(
   const line = slackFailureLine(verdict);
   console.warn(line !== undefined ? `  ⚠  ${line}` : `Slack reply failed: ${errorText(verdict)}`);
   return verdict;
+}
+
+/**
+ * #603 A3a: a reply in the thread that only `user` sees (chat.postEphemeral, the bot's `chat:write`),
+ * walked with every tier as a thread reply is. Never throws; returns Slack's verdict.
+ */
+async function postSlackEphemeral(
+  botToken: string,
+  channelId: string,
+  threadTs: string,
+  user: string,
+  text: string,
+): Promise<SlackVerdict> {
+  return sendToSlack(
+    'https://slack.com/api/chat.postEphemeral',
+    {
+      channel: channelId,
+      user,
+      thread_ts: threadTs,
+      text: disclose(stripMarks(text), slackSet(), 'all').text,
+    },
+    botToken,
+  );
+}
+
+/** #603 A3a: Slack's own words for a call it did not take (W5's last part). */
+function slackErrorOf(verdict: Exclude<SlackVerdict, { ok: true }>): string {
+  if (verdict.cause === 'refused') return verdict.reason;
+  if (verdict.cause === 'timeout') return `no answer within ${SLACK_CALL_DEADLINE_MS / 1000} s`;
+  return errorText(verdict);
 }
 
 /**
@@ -954,6 +1009,9 @@ export interface BidirectionalGateParams {
   /** #597 D1b: the question's post was a stopped agent's, taken over: the one catch-up reminder
    *  applies when the store keeps an outbound ledger. Absent for a first-time post. */
   postTakenOver?: boolean;
+  /** #603 A3a: the project's answerers (`notifiers.slack_gate.config.answerers`), passed with each
+   *  answer — they answer a question that names no one. */
+  projectAnswerers?: string[];
 }
 
 /**
@@ -1013,6 +1071,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     driver,
     postFile,
     postTakenOver,
+    projectAnswerers,
   } = params;
 
   let clarificationCount = 0;
@@ -1054,8 +1113,30 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     void p.finally(() => inFlight.delete(p));
   };
 
-  const processCandidate = async (text: string): Promise<void> => {
+  // #603 A3a: told privately, never in the thread's public lines; a failure is said here (W5).
+  const tellPrivately = async (user: string, allowed: readonly string[]): Promise<void> => {
+    if (gateThreadTs === undefined) return;
+    const notice = composePersonNotice({ kind: 'answerer_refused', run_id: runId, gate, allowed });
+    const text = renderSlack(notice, { mode: 'bot', listens }).text;
+    const verdict = await postSlackEphemeral(
+      slackBotToken,
+      slackChannelId,
+      gateThreadTs,
+      user,
+      text,
+    );
+    if (!verdict.ok) {
+      console.warn(
+        `Slack: could not tell ${user} privately that their reply to gate '${gate.step_name}' was not recorded: ${slackErrorOf(verdict)}.`,
+      );
+    }
+  };
+
+  const processCandidate = async (event: SlackGateEvent): Promise<void> => {
     if (abortController.signal.aborted) return;
+    const { text } = event;
+    // #603 A3a: the account Slack reports for the reply, and the forms that name it.
+    const forms = senderForms(event.user);
 
     // Gate choices must be exact (case-insensitive). No LLM interpretation — gate responses
     // are irreversible writes and must reflect unambiguous intent.
@@ -1103,6 +1184,15 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           route: 'slack',
           // decision C151: an expiry this late answer carries out names `realm agent`.
           caller: 'agent',
+          // #603 A3a: who sent it, as Slack reports it; the write compares it with the question.
+          channelEvidence: {
+            user: event.user,
+            forms,
+            ...(event.team !== undefined ? { team: event.team } : {}),
+            ts: event.ts,
+            thread_ts: event.thread_ts,
+          },
+          ...(projectAnswerers !== undefined ? { projectAnswerers } : {}),
           ...(registry !== undefined ? { registry } : {}),
           ...(driver !== undefined ? { driver } : {}),
         });
@@ -1170,6 +1260,14 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
             }),
           );
           abortController.abort();
+        } else if (result.status === 'error' && result.error_code === 'STATE_ANSWERER_MISMATCH') {
+          // #603 A3a: someone the question does not let answer — told privately, the question stays
+          // open, and the public "Couldn't record" line keeps its one post.
+          const facts = result.error?.facts;
+          await tellPrivately(
+            event.user,
+            facts !== undefined && 'allowed' in facts ? facts.allowed : [],
+          );
         } else if (result.status === 'error' && result.error_code === 'STATE_RUN_TERMINAL') {
           // #729 PR-6a (B9): the run ended before this reply arrived, with nothing to say what the
           // question met — told once; no retry can record it.
@@ -1230,6 +1328,8 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
       } catch (err) {
         await postSubmitError(err instanceof Error ? err.message : String(err), 'ENGINE_INTERNAL');
       }
+    } else if ('refused' in judgeAnswerer(gate, forms, projectAnswerers)) {
+      // #603 A3a: a message from someone who may not answer gets nothing, and uses no clarification.
     } else if (clarificationCount < 2 && gateThreadTs !== undefined) {
       clarificationCount++;
       await postSlackReply(
@@ -1255,7 +1355,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         if (seenEventIds.has(event.event_id)) return;
         seenEventIds.add(event.event_id);
         track(
-          processCandidate(event.text).catch((err) => {
+          processCandidate(event).catch((err) => {
             console.warn(
               `Candidate processing failed: ${err instanceof Error ? err.message : String(err)}`,
             );
@@ -1274,7 +1374,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         seenEventIds.add(event.event_id);
         if (event.thread_ts !== gateThreadTs) return;
         track(
-          processCandidate(event.text).catch((err) => {
+          processCandidate(event).catch((err) => {
             console.warn(
               `Candidate processing failed: ${err instanceof Error ? err.message : String(err)}`,
             );
@@ -1287,6 +1387,14 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     // person's way to answer is the terminal's (#729 PR-4 correction, A2).
     console.log(
       '  ℹ  Gate notification posted; no listener is configured (app_token for Socket Mode, or signing_secret + events_port for the Events API under notifiers.slack_gate in realm.yaml), so the answer comes from the terminal:',
+    );
+    terminalWayOwed = true;
+  }
+
+  // #603 A3a (W4): a question no Slack account can answer — said here, then the terminal's way.
+  if (listens && gateThreadTs !== undefined && closedInSlack(gate)) {
+    console.log(
+      `Slack: no one gate '${gate.step_name}' names is a Slack member ID, so replies in its thread are not counted.`,
     );
     terminalWayOwed = true;
   }
@@ -1552,6 +1660,8 @@ export interface SlackGateHandlerConfig {
   registry?: ExtensionRegistry;
   /** Issue #625: the program this handler runs in — forwarded to the attendant. */
   driver?: Attributed;
+  /** #603 A3a: the project's answerers (`notifiers.slack_gate.config.answerers`). */
+  answerers?: string[];
   /**
    * #729 PR-6b (B): the Realm home `realm agent` opened its store in. With a bot token, the question
    * post's channel and `ts` are kept in a file under its `slack-posts/` while the question is open, so
@@ -1643,6 +1753,7 @@ export function createSlackGateHandler(
         ...(config.driver !== undefined ? { driver: config.driver } : {}),
         ...(post.file !== undefined ? { postFile: post.file } : {}),
         ...(post.takenOver === true ? { postTakenOver: true } : {}),
+        ...(config.answerers !== undefined ? { projectAnswerers: config.answerers } : {}),
       });
     } else if (config.webhookUrl !== undefined) {
       // One-way webhook + inline poll loop (avoids circular dependency with run-agent.ts).

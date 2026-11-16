@@ -141,6 +141,16 @@ export interface SettleGateDelta {
    * `gateId` alone). Only "not passed" is absent: an empty string is a wrong value, not no value.
    */
   claimToken?: string;
+  /**
+   * #603 A3a: present only when the answer carries channel evidence — the account the channel says
+   * sent it, and the forms that name that account (for Slack user `U1`: `U1` and `<@U1>`). Judged
+   * inside the answer's write (`judgeAnswerer`): a sender the question does not let answer is refused
+   * `answerer_mismatch`, and nothing is written.
+   */
+  sender?: { user: string; forms: readonly string[] };
+  /** #603 A3a: the project's answerers the door passed — compared only for a question that names
+   *  no one. */
+  projectAnswerers?: readonly string[];
   evidence: EvidenceSnapshot[];
 }
 
@@ -295,6 +305,8 @@ export type SettlementRefusalReason =
   | 'gate_choice_conflict'
   | 'choice_not_eligible'
   | 'gate_open_wait'
+  // #603 A3a: settle_gate only — the answer's sender is not one the question lets answer.
+  | 'answerer_mismatch'
   // issue #291 (design record [F1]/[F3]): expire_gate refusals. (#715 (b): the settle_gate F3
   // write-free `gate_expired_pending` refusal is gone — a late answer's expiry is enacted in the
   // same write, see `lateAnswer` on the applied result.)
@@ -399,6 +411,10 @@ export type SettlementResult =
       /** Present ONLY when `reason === 'choice_not_eligible'` — the gate's valid choices (issue
        *  #279, increment 2, PR-C; design record §3 `settleGateArms`). */
       choices?: string[];
+      /** Present ONLY when `reason === 'answerer_mismatch'` (#603 A3a): the names that may answer,
+       *  as written, and the account the answer's channel evidence names. */
+      allowed?: string[];
+      sender?: string;
       /** Present ONLY when `reason === 'settled_outcome_divergence'` — a human-readable
        *  description of the persisted membership that conflicts with the delta's own outcome
        *  (issue #279, increment 2, PR-C; design record §3 `settleGuardArms`). */

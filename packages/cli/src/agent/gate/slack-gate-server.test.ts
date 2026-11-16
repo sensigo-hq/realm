@@ -65,6 +65,7 @@ describe('startSlackGateServer', () => {
 
     const body = JSON.stringify({
       type: 'event_callback',
+      team_id: 'T123ABC456',
       event_id: 'Ev001',
       event: {
         type: 'message',
@@ -105,6 +106,7 @@ describe('startSlackGateServer', () => {
 
     const body = JSON.stringify({
       type: 'event_callback',
+      team_id: 'T123ABC456',
       event_id: 'Ev002',
       event: { type: 'message', user: 'U1', text: 'hi', ts: '1.0', thread_ts: '1.0' },
     });
@@ -178,6 +180,7 @@ describe('startSlackGateServer', () => {
 
     const body = JSON.stringify({
       type: 'event_callback',
+      team_id: 'T123ABC456',
       event_id: 'Ev003',
       event: {
         type: 'message',
@@ -204,6 +207,49 @@ describe('startSlackGateServer', () => {
     expect(response.status).toBe(200);
     await new Promise<void>((r) => setTimeout(r, 30));
     expect(onEvent).not.toHaveBeenCalled();
+    server.close();
+  });
+
+  it("#603 A3a check 15: the event's own team wins over the payload's team_id; user, ts and thread_ts are carried", async () => {
+    const onEvent = vi.fn();
+    const server = startSlackGateServer({ port: BASE_PORT + 6, signingSecret: SECRET, onEvent });
+    await waitForServer(BASE_PORT + 6);
+    // Slack's documented Events API body (docs.slack.dev, events-api.md: `team_id` beside `event`).
+    const body = JSON.stringify({
+      token: 'XXYYZZ',
+      team_id: 'T123ABC456',
+      api_app_id: 'A123ABC456',
+      type: 'event_callback',
+      event_id: 'Ev603',
+      event_time: 1704067300,
+      event: {
+        type: 'message',
+        team: 'T999OTHER',
+        user: 'U123',
+        text: 'approve',
+        ts: '1704067300.001',
+        thread_ts: '1704067200.000',
+      },
+    });
+    const ts = nowTs();
+    await fetch(`http://localhost:${BASE_PORT + 6}/slack/events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Slack-Request-Timestamp': ts,
+        'X-Slack-Signature': signPayload(SECRET, ts, body),
+      },
+      body,
+    });
+    await new Promise<void>((r) => setTimeout(r, 30));
+    const { team, user, ts: at, thread_ts } = (onEvent.mock.calls[0]?.[0] ?? {}) as SlackGateEvent;
+    // (1) red when this intake drops `team` (or prefers the payload's); (2) prints what it passed.
+    expect({ team, user, ts: at, thread_ts }).toEqual({
+      team: 'T999OTHER',
+      user: 'U123',
+      ts: '1704067300.001',
+      thread_ts: '1704067200.000',
+    });
     server.close();
   });
 });

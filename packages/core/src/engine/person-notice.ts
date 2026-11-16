@@ -17,7 +17,7 @@ import { formatDuration, instantText } from '../utils/duration.js';
 /** The person's route: the respond way, without the claim proof only the opening call holds. */
 type Route = Omit<RespondWay, 'proof'>;
 
-/** A notice to the asked person: seven kinds, each one fact about their question (PD-5). */
+/** A notice to the asked person: eight kinds, each one fact about their question (PD-5). */
 export type PersonNotice =
   | {
       kind: 'question_opened';
@@ -28,6 +28,8 @@ export type PersonNotice =
       respond: Route;
       expires_at?: string;
       owner?: string;
+      /** #603 A3a: who else may answer, as the question stores it. */
+      answerers?: string[];
     }
   | {
       kind: 'reminder';
@@ -91,6 +93,15 @@ export type PersonNotice =
       step: string;
       choice: string;
       code: UnavailableCode | ErrorCode;
+    }
+  | {
+      /** #603 A3a: told privately to someone whose reply the question does not let answer. */
+      kind: 'answerer_refused';
+      run_id: string;
+      gate_id: string;
+      step: string;
+      /** The names that may answer, as written (`STATE_ANSWERER_MISMATCH`'s facts). */
+      allowed: string[];
     }
   | {
       kind: 'question_closed';
@@ -158,6 +169,12 @@ export type PersonNoticeEvent =
       code: UnavailableCode | ErrorCode;
     }
   | {
+      kind: 'answerer_refused';
+      run_id: string;
+      gate: PendingGate;
+      allowed: readonly string[];
+    }
+  | {
       kind: 'question_closed';
       run_id: string;
       gate: PendingGate;
@@ -212,6 +229,7 @@ export function composePersonNotice(event: PersonNoticeEvent): PersonNotice {
         respond: routeOf(event.respond),
         ...(gate.expires_at !== undefined ? { expires_at: gate.expires_at } : {}),
         ...(gate.owner !== undefined ? { owner: gate.owner } : {}),
+        ...(gate.answerers !== undefined ? { answerers: [...gate.answerers] } : {}),
       };
     case 'reminder': {
       const elapsed = durationWords(gate.opened_at, 'past_event', event.now);
@@ -267,6 +285,8 @@ export function composePersonNotice(event: PersonNoticeEvent): PersonNotice {
       };
     case 'answer_refused':
       return { kind: 'answer_refused', ...ids, choice: event.choice, code: event.code };
+    case 'answerer_refused':
+      return { kind: 'answerer_refused', ...ids, allowed: [...event.allowed] };
     case 'question_closed': {
       const by = event.outcome?.by.kind;
       if (by === 'timeout') return { kind: 'question_closed', ...ids, how: 'expired' };

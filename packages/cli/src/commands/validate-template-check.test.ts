@@ -301,7 +301,7 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     }).toEqual({ refuse: true, instructions: true, oldRefuse: false, oldInstructions: false });
   });
 
-  it('loader-diagnostics.md: 32 codes, ten of them errors, the errors list and the three rows', () => {
+  it('loader-diagnostics.md: 33 codes, ten of them errors, the errors list and the three rows', () => {
     const page = readFileSync(join(ROOT, 'docs/reference/workflow/loader-diagnostics.md'), 'utf8');
     const rows = page
       .split('\n')
@@ -315,8 +315,8 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     const at = rows.findIndex((r) => r[0] === '`ADAPTER_NOT_PROVIDED`');
     // (1) red when a count, the list or a row is missing or changed; (2) prints them.
     expect({
-      lists: flat(page).includes('lists all 32 warning codes'),
-      count: flat(page).includes('The loader has 32 warning codes. Ten of them count as errors'),
+      lists: flat(page).includes('lists all 33 warning codes'),
+      count: flat(page).includes('The loader has 33 warning codes. Ten of them count as errors'),
       list: flat(page).includes(
         'or leaves a required one unfilled; and a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text. The others are advice',
       ),
@@ -327,7 +327,8 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
       lists: true,
       count: true,
       list: true,
-      rows: 32,
+      // #603 A3a: GATE_ANSWERER_NOT_SLACK_ID, a warning, after the three rows.
+      rows: 33,
       errors: 10,
       three: [
         [
@@ -349,7 +350,7 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     });
   });
 
-  it('CHANGELOG.md: the BREAKING line under Changed, and Upgrading item 8', () => {
+  it("CHANGELOG.md: the BREAKING line under Changed, and Upgrading item 8 (#603 A3a's is 11)", () => {
     const log = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     const start = log.indexOf('## [Unreleased]');
     const unreleased = log.slice(start, log.indexOf('\n## [', start + 1));
@@ -358,8 +359,10 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
         unreleased.indexOf(`### ${name}`),
         unreleased.indexOf('\n### ', unreleased.indexOf(`### ${name}`) + 1),
       );
-    // (1) red when either is missing, moved, or misnumbered; (2) prints the checks. The filter-mask
-    // scan's item, landed after this one, is 9.
+    // (1) red when either is missing or moved, an item is lost from the middle, two items share a
+    // number, or the list stops before item 8; (2) prints the checks and the numbers found beside
+    // the run 1..N expected. A later item moves no pin here: it pins its own text in its own file.
+    const numbers = [...section('Upgrading').matchAll(/^\*\*(\d+)\./gm)].map((m) => Number(m[1]));
     expect({
       changed: section('Changed').includes(
         '- **BREAKING: `realm workflow validate`, `register` and `watch` refuse a template filter Realm does not have, a filter argument no value accepts, and a templated field that is not text**, with the line and, when one is close, a did-you-mean. Such a template failed or misrendered when the step ran; `validate` crashed on an agent step whose prompt was not text, or whose filter argument made its render throw. Running a workflow is not refused.',
@@ -367,7 +370,11 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
       upgrading: section('Upgrading').includes(
         '**8. `register` and `watch` refuse a template filter Realm does not have, an argument no value accepts, or a templated field that is not text.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and fix what the refusal names. A stored copy keeps running as it was until you register it again.',
       ),
-      numbers: [...section('Upgrading').matchAll(/^\*\*(\d+)\./gm)].map((m) => Number(m[1])),
-    }).toEqual({ changed: true, upgrading: true, numbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
+      numbers,
+    }).toEqual({
+      changed: true,
+      upgrading: true,
+      numbers: Array.from({ length: Math.max(numbers.length, 8) }, (_, i) => i + 1),
+    });
   });
 });
