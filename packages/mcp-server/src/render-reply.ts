@@ -405,6 +405,25 @@ function owedItems(way: WayOf<'advance'>): string[] {
 }
 
 /**
+ * #603 A3b (G5): the slot `call_with` offers for the person's own name. It is wrapped whole in `<` `>`
+ * as every placeholder there is, so an assistant that copies it unchanged states no name
+ * ({@link statesNoName}).
+ */
+export const RESPONDED_BY_PLACEHOLDER = "<the person's name, as they gave it; leave out if none>";
+
+/**
+ * #603 A3b (G5): a `responded_by` (after its trim) wrapped whole in `<` … `>` — the placeholder copied
+ * unchanged, or a near-copy — is recorded as no name stated.
+ */
+export function statesNoName(respondedBy: string): boolean {
+  return respondedBy.length >= 2 && respondedBy.startsWith('<') && respondedBy.endsWith('>');
+}
+
+/** #603 A3b (G5): the respond instruction's last sentence. */
+const PASS_THE_NAME =
+  "Pass the person's own name as responded_by when they gave one; never a guess.";
+
+/**
  * The MCP door's words for each verb (PR0-CONTRACT §5, Amendment 4): the instruction an agent
  * calls, from the way alone. `register` is an operator's way — on MCP never an instruction (`null`;
  * it is rendered as an elsewhere entry).
@@ -424,6 +443,7 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
           gate_id: way.gate_id,
           choice: `<${choices.join('|')}>`,
           ...token,
+          responded_by: RESPONDED_BY_PLACEHOLDER,
         },
       },
       human_readable:
@@ -432,8 +452,8 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
               way.proof !== undefined
                 ? ' with call_with, passing claim_token back unchanged — it shows that this answer comes from the conversation that opened the question.'
                 : '.'
-            }`
-          : `Human review required for step '${way.step}'. Ask the user to choose one of: ${choices.join(', ')}, then call submit_human_response with their choice. ${QUESTION_TEXT_WHERE} ${OPENER_PASSES_TOKEN}`,
+            } ${PASS_THE_NAME}`
+          : `Human review required for step '${way.step}'. Ask the user to choose one of: ${choices.join(', ')}, then call submit_human_response with their choice. ${QUESTION_TEXT_WHERE} ${OPENER_PASSES_TOKEN} ${PASS_THE_NAME}`,
       // #729 PR-0 (Part B, W-CENSUS-06): the choices are the way's data; no prose repeats them.
       orientation: `Run is paused at gate '${way.gate_id}'.`,
     };
@@ -1578,6 +1598,10 @@ export const OUTCOME_BY_TABLE = {
   name: 'bounded',
   // #729 PR-6a (B2 (2)): why the winner's stated name is not shown — realm's own word.
   name_absent: 'fact',
+  // #603 A3b: the account the channel reported is text from outside, bounded as a stated name is —
+  // never a fact; why it is not shown is realm's own word.
+  account: 'bounded',
+  account_absent: 'fact',
   basis: 'fact',
   cause: 'fact',
   step: 'fact',
@@ -2461,6 +2485,7 @@ export const DOOR_FACTS = {
   outcome_by: {
     kind: 'enum',
     name_absent: 'enum',
+    account_absent: 'enum',
     basis: 'enum',
     cause: 'enum',
     step: 'author_literal',

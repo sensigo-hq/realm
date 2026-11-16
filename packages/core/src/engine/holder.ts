@@ -98,6 +98,30 @@ export const CLAIM_PROOF_ABSENT_CAUSES = [
 ] as const;
 export type ClaimProofAbsentCause = (typeof CLAIM_PROOF_ABSENT_CAUSES)[number];
 
+/**
+ * #603 A3b: why an answer's view names no account its channel reported (`account`).
+ * `account_not_recorded`: the entry carries none (no channel reported one, or it was written before
+ * one was kept); `account_unreadable`: what it carries is not a name that can be shown.
+ */
+export const ACCOUNT_ABSENT_CAUSES = [
+  'settled_by_expiry',
+  'account_not_recorded',
+  'account_unreadable',
+] as const;
+export type AccountAbsentCause = (typeof ACCOUNT_ABSENT_CAUSES)[number];
+
+/**
+ * #603 A3b: why an answer's view shows no `admitted_by`. `admission_not_recorded`: the entry carries
+ * none (written by a program that wrote none); `admission_unreadable`: a value that is not one of the
+ * five.
+ */
+export const ADMITTED_BY_ABSENT_CAUSES = [
+  'settled_by_expiry',
+  'admission_not_recorded',
+  'admission_unreadable',
+] as const;
+export type AdmittedByAbsentCause = (typeof ADMITTED_BY_ABSENT_CAUSES)[number];
+
 // ---------------------------------------------------------------------------------------------
 // The one bound for a name
 // ---------------------------------------------------------------------------------------------
