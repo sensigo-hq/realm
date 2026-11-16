@@ -218,18 +218,28 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
     );
     claim(
       SLACK,
-      "When the answer ends the run, the reply says ``✅ Gate resolved: `send`. The run has ended.`` instead, and the run's ending is printed where `realm agent` runs.",
+      "When the answer ends the run, the reply says ``✅ Gate resolved: `send`, by U0ALICE (as Slack reports it). The run has ended.`` instead, and the run's ending is printed where `realm agent` runs.",
     );
     const g = gate({ resolution_messages: { send: 'Recorded: send.' } });
+    // #603 A3b: the recorded outcome of U0ALICE's Slack answer, as the notifier passes it.
+    const outcome = {
+      choice: 'send',
+      by: { kind: 'answer' as const, account: 'U0ALICE', basis: 'stated' as const },
+      via: 'slack',
+      step: g.step_name,
+      attempted: false,
+    };
     const recorded = (ended: boolean) =>
-      notice({ kind: 'answer_recorded', run_id: 'r1', gate: g, choice: 'send', ended });
+      notice({ kind: 'answer_recorded', run_id: 'r1', gate: g, choice: 'send', ended, outcome });
     // (a) red when the reply's words change, or the resolution message rides an ended run; (b)
     //     prints the two replies. (The ending's lines on the console: slack-gate-ending-625.test.ts.)
     expect([recorded(false), recorded(true)]).toEqual([
-      '✅ Gate resolved: `send`\nRecorded: send.',
-      '✅ Gate resolved: `send`. The run has ended.',
+      '✅ Gate resolved: `send`, by U0ALICE (as Slack reports it)\nRecorded: send.',
+      '✅ Gate resolved: `send`, by U0ALICE (as Slack reports it). The run has ended.',
     ]);
-    expect(read(SLACK)).toContain('✅ Gate resolved: `send`\nRecorded: send.');
+    expect(read(SLACK)).toContain(
+      '✅ Gate resolved: `send`, by U0ALICE (as Slack reports it)\nRecorded: send.',
+    );
   });
 
   it('the reminders, the escalation, the expiry reminder and the closed lines, in their words; durations in `formatDuration`’s forms', () => {

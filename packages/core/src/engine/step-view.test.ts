@@ -135,6 +135,9 @@ describe('composeStepViews — rule 3: shape and totality', () => {
           {
             answered_by: { by: null, absent_cause: 'not_stated' },
             claim_proof_absent: 'proof_not_recorded',
+            // #603 A3b: the entry carries no account and no admission.
+            account_absent: 'account_not_recorded',
+            admitted_by_absent: 'admission_not_recorded',
           },
         ],
       },
@@ -365,6 +368,9 @@ describe('composeStepViews — issue #625: answers', () => {
         choice: 'approve',
         answered_by: { by: 'alice', by_source: 'stated' },
         claim_proof: { proof: 'matched' },
+        // #603 A3b: the entry carries no account and no admission.
+        account_absent: 'account_not_recorded',
+        admitted_by_absent: 'admission_not_recorded',
       },
     ]);
   });
@@ -484,6 +490,9 @@ describe('composeStepViews — issue #625: answers', () => {
           ...(choice !== undefined ? { choice } : {}),
           answered_by: { by: null, absent_cause: 'settled_by_expiry' },
           claim_proof_absent: 'settled_by_expiry',
+          // #603 A3b: the expiry's entry names no account and no admission.
+          account_absent: 'settled_by_expiry',
+          admitted_by_absent: 'settled_by_expiry',
         },
       ]);
     },

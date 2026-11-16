@@ -35,7 +35,8 @@
 // never sets either) and, on THIS context only, `CostFigure.only_request_index` (the failure line
 // always sums: it reports spend, so one request's figure is shown as a floor of the sum, never as
 // that request's size).
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
+import { UNSHOWABLE_NAME } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import type {
   RunRecord,
@@ -328,6 +329,12 @@ const gateStepAnswer = {
   evidence_hash: 'g2',
   responded_by: 'alice',
   claim_proof: { proof: 'absent' as const },
+  // #603 A3b: a Slack answer — the account Slack reported, and how it was let through.
+  answer: {
+    route: 'slack',
+    channel_evidence: { team: 'T1', user: 'U0ALICE', ts: '1.2', thread_ts: '1.1' },
+  },
+  admitted_by: 'no_named_answerer' as const,
 };
 // An answer written before the proof existed, naming nobody: both absence words print.
 const oldGateExecution = {
@@ -1083,10 +1090,53 @@ const HOLDER_ANSWER_VIEW = {
         'Answer: reject · answered by (not stated) · how it arrived was not recorded · given at 2026-01-01T00:00:02Z · no claim token recorded',
       ),
   },
+  // #603 A3b (authorized by MA 2 at build): the account Slack reported, after the stated name.
+  account: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain('answered by "alice" (as stated), U0ALICE (as Slack reports it) · '),
+  },
+  // `account_unreadable`: the same run with an account that cannot be printed — the one phrase.
+  account_absent: {
+    surface: 'rendered',
+    probe: () =>
+      expect({
+        line: unreadableAccountOut.includes(
+          `answered by "alice" (as stated), ${UNSHOWABLE_NAME} · `,
+        ),
+        raw: unreadableAccountOut.includes('\u0007'),
+      }).toEqual({ line: true, raw: false }),
+  },
+  admitted_by: {
+    surface: 'waived',
+    reason: 'in the view and the export only; no human line (A3b constraint)',
+  },
+  admitted_by_absent: {
+    surface: 'waived',
+    reason: 'in the view and the export only; no human line (A3b constraint)',
+  },
 } satisfies Record<keyof AnswerView, DisclosureRoute>;
 
+/** #603 A3b: `realm run inspect` of context 1 with the gate step's account unreadable. */
+let unreadableAccountOut = '';
+
 describe('#625 PR-H — context 1b, the holder slice', () => {
-  it("only the three waivers the header names: the deadline (not printed), the token (one door) and the lease (the cost view does not show a claim's lease)", () => {
+  beforeAll(async () => {
+    const run = {
+      ...contextOneRun,
+      evidence: contextOneRun.evidence.map((e) =>
+        e === gateStepAnswer
+          ? {
+              ...gateStepAnswer,
+              answer: { route: 'slack', channel_evidence: { user: 'U0\u0007ALICE' } },
+            }
+          : e,
+      ),
+    } as typeof contextOneRun;
+    unreadableAccountOut = await inspectRun('run_ctx1', makeStore(run), workflowStore);
+  });
+
+  it("only the three waivers the header names: the deadline (not printed), the token (one door) and the lease (the cost view does not show a claim's lease); the answer view's only waivers are admitted_by and admitted_by_absent", () => {
     for (const registry of [HOLDER_CLAIM_RECORD, HOLDER_ATTRIBUTED, HOLDER_ANSWER_VIEW]) {
       for (const [field, route] of Object.entries(registry as Record<string, DisclosureRoute>)) {
         if (route.surface === 'waived') {
@@ -1103,10 +1153,17 @@ describe('#625 PR-H — context 1b, the holder slice', () => {
       .sort();
     expect(waived).toEqual(['deadline', 'lease', 'token']);
     expect(
-      [HOLDER_ATTRIBUTED, HOLDER_ANSWER_VIEW].flatMap((r) =>
-        Object.values(r as Record<string, DisclosureRoute>).filter((x) => x.surface === 'waived'),
+      Object.values(HOLDER_ATTRIBUTED as Record<string, DisclosureRoute>).filter(
+        (x) => x.surface === 'waived',
       ),
     ).toEqual([]);
+    // #603 A3b (authorized by MA 2 at build): `admitted_by` is in no human line.
+    expect(
+      Object.entries(HOLDER_ANSWER_VIEW as Record<string, DisclosureRoute>)
+        .filter(([, r]) => r.surface === 'waived')
+        .map(([f]) => f)
+        .sort(),
+    ).toEqual(['admitted_by', 'admitted_by_absent']);
   });
 
   it('runs every registry against the real rendered output', async () => {
