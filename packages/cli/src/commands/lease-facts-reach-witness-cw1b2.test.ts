@@ -52,7 +52,8 @@ const STORE_FILES = [
 ];
 
 /** Where `NO_LEASE_FACTS` may appear: its module, the snapshot module, the stores, core's export. */
-const NO_FACTS_ALLOWED = ['core/src/store/lease-facts.ts', 'core/src/index.ts', ...STORE_FILES];
+// CP-1 PR 3: core's export lines live in `internal.ts` (the main entry re-exports it whole).
+const NO_FACTS_ALLOWED = ['core/src/store/lease-facts.ts', 'core/src/internal.ts', ...STORE_FILES];
 
 /**
  * The functions whose snapshot parameter defaults to `NO_SNAPSHOT`, by name, with that parameter's
