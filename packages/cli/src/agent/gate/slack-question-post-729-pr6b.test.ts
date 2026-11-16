@@ -909,7 +909,7 @@ describe('#729 PR-6b — check 15: the docs’ new sentences', () => {
     ],
     [
       FILES,
-      "| `slack-posts/` | One small file per open Slack question that `realm agent` posted with a bot token: the channel, the post's timestamp, and which `realm agent` wrote it. Deleted when the question closes. A file stays when the question closed while no `realm agent` attended it, or when a restarted `realm agent` took the stopped one for one still running (the Slack guide says when); a file that stays can be deleted. Added after version 0.49.0. | `realm agent` |",
+      "| `slack-posts/` | One small file per open Slack question that `realm agent` posted with a bot token: the channel, the post's timestamp, and which `realm agent` wrote it. Deleted when the question closes. A file stays when the question closed while no `realm agent` attended it, or when a restarted `realm agent` took the stopped one for one still running (the Slack guide says when); a file that stays can be deleted. Added after version 0.49.0. `realm listen --send-reminders` reads it too, to find a stopped agent's question (added after version 0.49.0). | `realm agent`, `realm listen --send-reminders` |",
     ],
   ];
   it.each(sentences)('%s holds the sentence: %s', (page, sentence) => {

@@ -99,7 +99,7 @@ describe('listRuns — gate expiry rendering (issue #291)', () => {
     // an hour after the opening, at the reading "in 59m" — beside the words.
     const next = Date.parse(run.pending_gate!.opened_at) + 3_600_000;
     expect(result).toContain(
-      `  next reminder: 1 of 3 scheduled in 59m (${zOf(next)}) (reminders are sent only while a process attends this question)`,
+      `  next reminder: 1 of 3 scheduled in 59m (${zOf(next)}) (reminders are sent only while a realm agent attends this question, or realm listen --send-reminders is running)`,
     );
     expect(result).not.toMatch(/reminder (due|overdue)/);
   });
@@ -115,7 +115,7 @@ describe('listRuns — gate expiry rendering (issue #291)', () => {
     });
     const result = await listRuns(undefined, makeStore([run]));
     expect(result).toContain(
-      '  no further reminder is scheduled (reminders are sent only while a process attends this question)',
+      '  no further reminder is scheduled (reminders are sent only while a realm agent attends this question, or realm listen --send-reminders is running)',
     );
     expect(result).not.toContain('overdue');
   });

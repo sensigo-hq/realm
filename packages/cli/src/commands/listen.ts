@@ -125,6 +125,7 @@ import { RUN_PHASE_WORDS, cliDisclosureProvider, writerCtx } from '../output/wri
 import { DEPRECATIONS_SAID_ENV, addDeclaredValues } from '../output/writer.js';
 import { saidIds } from '@sensigo/realm';
 import { openCliHome } from '../lib/home.js';
+import { REMINDER_POLL_MS, reminderSenderOf, type ReminderSource } from './listen-reminders.js';
 
 const DEFAULT_TTL_MINUTES = 60;
 // Fixed signature-header names for the body-signature presets.
@@ -168,6 +169,8 @@ export interface ListenDeps {
     | 'persistedRunRecordFields'
     | 'clock'
     | 'resolveKey'
+    // #597 D3b: the ledger `--send-reminders` leases and marks through.
+    | 'outbound'
   >;
   dedupStoreFor: (workflowId: string) => DedupStore;
   // issue #744: settles once Node has said whether the agent started (`'spawn'`) or not
@@ -179,6 +182,8 @@ export interface ListenDeps {
    * run's own manifest (what the MCP door does). Default: the CLI writer's `cliDisclosureProvider`.
    */
   disclosureProvider?: (definition: WorkflowDefinition, run: RunRecord) => Promise<DisclosureSet>;
+  /** #597 D3b: the home folder (the Slack question post files are under it); absent, no sender. */
+  home?: string;
 }
 
 /** A mounted workflow: its definition, trigger, source directory, and pre-resolved secret. */
@@ -196,6 +201,9 @@ export interface WorkflowEntry {
   /** R1.1: for a workflow with `trigger.result_map`, the key its read codes are made with, derived
    *  from `secret` by `prepareListenWorkflows`; never stored. Absent, every read is refused. */
   readKey?: Buffer;
+  /** #597 D3b: the workflow's resolved `notifiers.slack_gate`, kept at startup for
+   *  `--send-reminders`; undefined when its manifest declares none. */
+  slackGate?: NonNullable<ReminderSource['slackGate']>;
 }
 
 export interface HandlerOptions {
@@ -1095,7 +1103,11 @@ export async function prepareListenWorkflows(
   const onReleaseLineWarning = onceReleaseLineSink((w) => deps.logger.warn(renderLoaderWarning(w)));
   for (const entry of routes.values()) {
     await deps.workflowStore.register(entry.definition);
-    const { manifest, registry } = await loadExtensions(entry.definition, { onReleaseLineWarning });
+    const { manifest, registry, notifiers } = await loadExtensions(entry.definition, {
+      onReleaseLineWarning,
+    });
+    // #597 D3b: kept, so `--send-reminders` posts with the settings the workflow's agent would use.
+    if (notifiers?.slack_gate !== undefined) entry.slackGate = notifiers.slack_gate;
     // #729 PR-3 correction 5 (J-5): kept, so each run this route creates is born naming its manifest.
     const startIdentity = startIdentityEntry(registry);
     if (startIdentity !== undefined) entry.startIdentity = startIdentity;
@@ -1130,6 +1142,8 @@ export interface ListenOptions {
    * Absent (the default) = the sweeper never runs — byte-identical to pre-#291 `listen` behavior.
    */
   sweepExpiredGatesIntervalMs?: number;
+  /** #597 D3b: `--send-reminders` — remind the waiting questions whose posting agent is gone. */
+  sendReminders?: boolean;
   /**
    * Issue #960: the seconds requests being answered get to finish after a stop (`--shutdown-grace`);
    * default 30. When they run out, the requests still open are cut.
@@ -1618,6 +1632,17 @@ export function startListen(
     sweeper !== undefined && sweepPeriodMs !== undefined
       ? setInterval(() => void sweeper.wake(), sweepPeriodMs)
       : undefined;
+  // #597 D3b: the opt-in reminder sender — its own runner, never the sweeper's; its first pass and its
+  // timer start once the server listens (below).
+  const reminders =
+    options.sendReminders === true
+      ? reminderSenderOf([...routes.values()], {
+          runStore: deps.runStore,
+          home: deps.home,
+          logger: deps.logger,
+        })
+      : undefined;
+  let reminderTimer: NodeJS.Timeout | undefined;
 
   // Issue #960: the stop. From the first signal `/health` answers 503 (U2); with `--shutdown-drain`
   // the server then goes on serving for that many seconds; then requests being answered get the
@@ -1628,6 +1653,8 @@ export function startListen(
   let stopped: Promise<void> | undefined;
   /** While the drain runs: ends it now and cuts everything (a second signal). */
   let endDrain: (() => void) | undefined;
+  /** #597 D3b: ends the wait for a reminder pass under way (a second signal). */
+  let endPassWait = (): void => {};
   let cut = 0;
   const shutdown = (reason: string): Promise<void> => {
     if (stopped !== undefined) return stopped;
@@ -1635,6 +1662,22 @@ export function startListen(
     deps.logger.info('listen: shutting down', { reason });
     if (sweepTimer !== undefined) clearInterval(sweepTimer);
     sweeper?.stop();
+    if (reminderTimer !== undefined) clearInterval(reminderTimer);
+    // #597 D3b: a reminder pass under way starts no new lease or probe; it is waited for at the same
+    // time as the grace, and no longer (the drain and the grace from this signal), or until a second
+    // signal.
+    const passUnderWay = reminders?.stop();
+    const passWait =
+      passUnderWay === undefined
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, (drainSeconds + graceSeconds) * 1000);
+            endPassWait = () => {
+              clearTimeout(timer);
+              resolve();
+            };
+            void passUnderWay.then(endPassWait);
+          });
     // R1.2: the waits too, in this turn and before any drain: none is held through `--shutdown-drain`.
     stop.abort();
     let outcome: Promise<StopOutcome>;
@@ -1654,7 +1697,7 @@ export function startListen(
     } else {
       outcome = tracker.stop(graceSeconds * 1000);
     }
-    stopped = outcome.then(async (result) => {
+    const connections = outcome.then(async (result) => {
       cut = result.cut;
       if (result.cut > 0) {
         deps.logger.error('listen: shutdown cut requests', {
@@ -1666,10 +1709,12 @@ export function startListen(
       // R1.2: a wait the stop cut ends once its connection has closed; its line comes first.
       await Promise.allSettled([...waits]);
     });
+    stopped = Promise.all([connections, passWait]).then(() => undefined);
     return stopped;
   };
   const onSignal = (sig: string): void => {
     if (stopped !== undefined) {
+      endPassWait();
       if (endDrain !== undefined) endDrain();
       else void tracker.cutAll();
       return;
@@ -1687,6 +1732,12 @@ export function startListen(
     });
     server.listen(options.port, options.host, () => {
       listening = true;
+      // #597 D3b: the first reminder pass once the server listens, never before (a failed bind starts
+      // none), and nothing when the stop has already begun.
+      if (reminders !== undefined && !stopping) {
+        void reminders.wake();
+        reminderTimer = setInterval(() => void reminders.wake(), REMINDER_POLL_MS);
+      }
       resolve({ server, shutdown });
     });
   });
@@ -2072,9 +2123,14 @@ export const listenCommand = new Command('listen')
     '--sweep-expired-gates <seconds>',
     'OPT-IN (issue #291): store-wide sweep interval, a whole number of seconds from 1 to 2147483, ' +
       'that enacts expired, enactable gates across every run this store holds. Default OFF — ' +
-      'listen never touches gates unless this is set. Never drains finalizers itself — see: ' +
-      'realm run drain --expired.',
+      'listen carries out no expired gate unless this is set (--send-reminders only posts ' +
+      'reminders). Never drains finalizers itself — see: realm run drain --expired.',
     parseWholeNumber('--sweep-expired-gates', 1, 2_147_483),
+  )
+  // #597 D3b: a boolean, off by default.
+  .option(
+    '--send-reminders',
+    "OPT-IN (issue #597): every 60 seconds, post the due Slack reminder or escalation of each waiting question whose realm agent has stopped, into the question's own thread, with the bot token and channel the workflow's notifiers.slack_gate carries. Default OFF.",
   )
   // issue #960: checked when the command line is read, like the five above.
   .option(
@@ -2104,6 +2160,7 @@ export const listenCommand = new Command('listen')
         dedupStore?: 'file' | 'memory';
         logLevel?: string;
         sweepExpiredGates?: number;
+        sendReminders?: boolean;
         shutdownGrace?: number;
         shutdownDrain?: number;
         llmTimeout?: number;
@@ -2231,6 +2288,7 @@ export const listenCommand = new Command('listen')
         },
         spawnAgent: makeAgentSpawner({ ...opts, model }, logger),
         logger,
+        home: home.path,
       };
 
       // Register routed workflows once + load their extension modules — fail-fast on any error.
@@ -2263,6 +2321,7 @@ export const listenCommand = new Command('listen')
             ...(sweepExpiredGatesSeconds !== undefined
               ? { sweepExpiredGatesIntervalMs: sweepIntervalMs(sweepExpiredGatesSeconds) }
               : {}),
+            ...(opts.sendReminders === true ? { sendReminders: true } : {}),
             ...(opts.shutdownGrace !== undefined
               ? { shutdownGraceSeconds: opts.shutdownGrace }
               : {}),

@@ -250,7 +250,7 @@ describe('R1.1 — realm-listen.md', () => {
       "| Two workflows with `result_map` have the same path but for a trailing slash (added after version 0.49.0) | `Error: listen: the read address '/refunds/runs/<run id>' is taken twice — workflow 'twin' conflicts with 'refunds'; give each workflow with a result_map its own trigger.path` |",
     );
     // R1.1 adds no flag; R1.2 adds `--max-wait` and `--max-waiting` (the table's 17 rows).
-    claim(LISTEN, 'This page lists its argument and 17 flags (13 in version 0.49.0),');
+    claim(LISTEN, 'This page lists its argument and 18 flags (13 in version 0.49.0),');
   });
 });
 

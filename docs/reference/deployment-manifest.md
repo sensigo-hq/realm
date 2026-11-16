@@ -280,7 +280,7 @@ A declared secret of 1 to 3 characters cannot be hidden: Realm cannot tell it ap
 | `reminder_interval_ms`    | Integer | 1 or more. How long after the question is posted the one reminder of a gate with no `reminder_seconds` is posted. The default is 600000. |
 | `escalation_threshold_ms` | Integer | 1 or more. How long after the question is posted an escalation is posted. The default is 1800000.                                        |
 
-`realm agent` uses these settings. See [Answer gates from Slack](../guides/slack-gates.md).
+`realm agent` uses these settings. `realm listen --send-reminders` reads `bot_token`, `channel_id`, `reminder_interval_ms` and `escalation_threshold_ms` (added after version 0.49.0). See [Answer gates from Slack](../guides/slack-gates.md).
 
 | The block                                 | Message                                                                                                                                                         |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
