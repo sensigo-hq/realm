@@ -494,9 +494,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       'CHANGELOG.md',
       '**3. A `gate:` block on a step that declares no gate trust is refused when the file is loaded.** Set `trust: human_confirmed` on the step, or remove the block, as its refusal says; `realm workflow validate --registered <id>` reports a stored copy.',
     );
-    // The two items sit in [Unreleased]'s Upgrading section, numbered on from its item 1 (#597 D1c-1's
-    // store-format item, landed after them, is 4; fix 1 piece 2a's `when` item is 5; piece 2b's
-    // `params_map` item is 6; #597 D1b's Slack questions item is 7; fix 1 piece 3a-i's template item is 8).
+    // The two items sit in [Unreleased]'s Upgrading section, as its items 2 and 3.
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
     const unreleased = changelog.slice(
       changelog.indexOf('## [Unreleased]'),
@@ -506,16 +504,11 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
       unreleased.indexOf('### Upgrading'),
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
     );
-    expect(upgrading.match(/^\*\*\d+\. /gm)).toEqual([
-      '**1. ',
-      '**2. ',
-      '**3. ',
-      '**4. ',
-      '**5. ',
-      '**6. ',
-      '**7. ',
-      '**8. ',
-    ]);
+    // (1) red when an item is lost from the middle, two items share a number, or the list stops
+    // before this file's own item 3; (2) prints the numbers found beside the run 1..N expected.
+    // Each item's own text is pinned by the file that added it, so a new item moves no pin here.
+    const numbers = [...upgrading.matchAll(/^\*\*(\d+)\. /gm)].map((m) => Number(m[1]));
+    expect(numbers).toEqual(Array.from({ length: Math.max(numbers.length, 3) }, (_, i) => i + 1));
   });
 });
 

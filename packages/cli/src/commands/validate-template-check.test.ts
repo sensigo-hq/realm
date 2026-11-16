@@ -358,7 +358,10 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
         unreleased.indexOf(`### ${name}`),
         unreleased.indexOf('\n### ', unreleased.indexOf(`### ${name}`) + 1),
       );
-    // (1) red when either is missing, moved, or misnumbered; (2) prints the checks.
+    // (1) red when either is missing or moved, an item is lost from the middle, two items share a
+    // number, or the list stops before item 8; (2) prints the checks and the numbers found beside
+    // the run 1..N expected. A later item moves no pin here: it pins its own text in its own file.
+    const numbers = [...section('Upgrading').matchAll(/^\*\*(\d+)\./gm)].map((m) => Number(m[1]));
     expect({
       changed: section('Changed').includes(
         '- **BREAKING: `realm workflow validate`, `register` and `watch` refuse a template filter Realm does not have, a filter argument no value accepts, and a templated field that is not text**, with the line and, when one is close, a did-you-mean. Such a template failed or misrendered when the step ran; `validate` crashed on an agent step whose prompt was not text, or whose filter argument made its render throw. Running a workflow is not refused.',
@@ -366,7 +369,11 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
       upgrading: section('Upgrading').includes(
         '**8. `register` and `watch` refuse a template filter Realm does not have, an argument no value accepts, or a templated field that is not text.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and fix what the refusal names. A stored copy keeps running as it was until you register it again.',
       ),
-      numbers: [...section('Upgrading').matchAll(/^\*\*(\d+)\./gm)].map((m) => Number(m[1])),
-    }).toEqual({ changed: true, upgrading: true, numbers: [1, 2, 3, 4, 5, 6, 7, 8] });
+      numbers,
+    }).toEqual({
+      changed: true,
+      upgrading: true,
+      numbers: Array.from({ length: Math.max(numbers.length, 8) }, (_, i) => i + 1),
+    });
   });
 });
