@@ -63,6 +63,24 @@ const CHANNEL = 'C123';
 const WF = 'd3b-a';
 const WF2 = 'd3b-b';
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 20));
+/**
+ * Waits, on the real clock, until `cond` holds. A sender's pass is a chain of real file and store
+ * reads, so a fixed pause is a guess that a loaded machine breaks (one cell failed once under load,
+ * 0 posts where 1 was expected, and passed 3 of 3 alone): where a cell needs the pass to have
+ * REACHED something, it waits for that event, with a bound far above any load and a message that
+ * names what never happened.
+ */
+const until = async (
+  cond: () => boolean | Promise<boolean>,
+  what: string,
+  ms = 15_000,
+): Promise<void> => {
+  const by = Date.now() + ms;
+  while (!(await cond())) {
+    if (Date.now() > by) throw new Error(`timed out after ${ms} ms waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+};
 
 const def = (id: string): WorkflowDefinition =>
   ({
@@ -905,7 +923,7 @@ describe('#597 D3b — the runner', { timeout: 30_000 }, () => {
     });
     const runner = makePollRunner(pass, 'reminders', r.logger);
     void runner.wake();
-    await settle();
+    await until(() => leases >= 1, 'the pass to reach its lease');
     let waited = false;
     const stopping = runner.stop().then(() => (waited = true));
     await settle();
@@ -1120,7 +1138,7 @@ describe('#597 D3b — `realm listen` and the sender', { timeout: 30_000 }, () =
       timer: timers.mock.calls.some(([, ms]) => ms === REMINDER_POLL_MS),
     };
     await listening(r, { runStore });
-    await settle();
+    await until(() => slack.posts.length >= 1, 'the first pass to post');
     expect({
       afterFail,
       scans: scans(),
@@ -1135,8 +1153,9 @@ describe('#597 D3b — `realm listen` and the sender', { timeout: 30_000 }, () =
   });
 
   it('separate loops: a Slack outage (every post times out) does not delay an expiry the sweeper carries out', async () => {
-    // (a) red when the sender runs inside the sweeper's pass (the expiry waits for the post); (b)
-    //     prints the run's phase and how long the enactment took.
+    // (a) red when the sender runs inside the sweeper's pass (the expiry waits for the post: the run
+    //     stays `gate_waiting` while the post is held, and the wait below names it); (b) prints what
+    //     never happened. No time bound: the sender is held in its post, so any speed passes.
     const r = await rig();
     await question(r);
     const expiring = await question(
@@ -1146,31 +1165,50 @@ describe('#597 D3b — `realm listen` and the sender', { timeout: 30_000 }, () =
     );
     await r.clock.set(at(25 * MIN));
     let release: () => void = () => {};
+    let posting = false;
     slack.post = () =>
-      new Promise<Response>((res) => (release = () => res(new Response('{"ok":true}'))));
+      new Promise<Response>((res) => {
+        posting = true;
+        release = () => res(new Response('{"ok":true}'));
+      });
     const timers = vi.spyOn(globalThis, 'setInterval');
+    const waiters: number[] = [];
+    const registered = r.clock.at.bind(r.clock);
+    vi.spyOn(r.clock, 'at').mockImplementation((when, fn) => {
+      waiters.push(when.getTime());
+      return registered(when, fn);
+    });
     await listening(r, { sweepMs: 30_000 });
-    await settle();
-    // The sweeper's first pass (its period is not waited for): it reads the gate and arms its waiter.
-    const sweep = timers.mock.calls.find(([, ms]) => ms === 30_000)?.[0] as () => void;
-    sweep();
-    await settle();
-    const started = Date.now();
-    await r.clock.set(at(27 * MIN));
-    for (
-      let i = 0;
-      i < 50 && (await r.store.get(expiring.runId)).record.run_phase === 'gate_waiting';
-      i += 1
-    )
-      await settle();
-    const phase = (await r.store.get(expiring.runId)).record.run_phase;
-    release();
-    expect({ phase, fast: Date.now() - started < 1000 }).toEqual({ phase: 'aborted', fast: true });
+    let phase = '';
+    try {
+      await until(() => posting, 'the sender to be held in its post');
+      // The sweeper's first pass (its period is not waited for): it reads the gate and arms its waiter.
+      const sweep = timers.mock.calls.find(([, ms]) => ms === 30_000)?.[0] as () => void;
+      sweep();
+      await until(
+        () => waiters.includes(at(26 * MIN).getTime()),
+        'the sweeper to arm its waiter at the question’s deadline',
+      );
+      await r.clock.set(at(27 * MIN));
+      await until(
+        async () =>
+          (phase = (await r.store.get(expiring.runId)).record.run_phase) !== 'gate_waiting',
+        'the sweeper to enact the expired question while the post is held',
+      );
+    } finally {
+      // The held post is let go on a pass or a fail alike: the stop at the end of the cell waits for it.
+      release();
+    }
+    expect({ posting, phase }).toEqual({ posting: true, phase: 'aborted' });
   });
 
   it('shutdown: the wait for a pass under way ends with the grace, at once with `--shutdown-grace 0` and on a second signal', async () => {
-    // (a) red when the stop waits for the pass beyond the grace (the wait doubles); (b) prints how
-    //     long each stop took.
+    // (a) red when the stop waits for the pass beyond the grace (the wait doubles) or does not wait
+    //     for it at all; (b) prints how long each stop took, in ms. The pass is held in its post
+    //     before the stop starts (waited for, not assumed); the bounds are ranges, because a loaded
+    //     machine stretches a wait and never shortens a timer: grace 1 waits its second (the lower
+    //     bound) and not a second wait on top of it (under 1.9 s), and the two immediate stops end
+    //     well inside the 600 s grace the held post would otherwise keep them for.
     const took: Record<string, number> = {};
     for (const [label, grace, second] of [
       ['grace 1', 1, false],
@@ -1180,10 +1218,14 @@ describe('#597 D3b — `realm listen` and the sender', { timeout: 30_000 }, () =
       const r = await rig();
       await question(r);
       await r.clock.set(at(25 * MIN));
-      slack.post = () => new Promise<Response>(() => {});
+      let inFlight = 0;
+      slack.post = () => {
+        inFlight += 1;
+        return new Promise<Response>(() => {});
+      };
       vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
       const { handle, signal } = await listening(r, { graceSeconds: grace });
-      await settle();
+      await until(() => inFlight >= 1, `the pass to be held in its post (${label})`);
       const started = Date.now();
       const stopped = handle.shutdown('test');
       if (second) {
@@ -1191,9 +1233,20 @@ describe('#597 D3b — `realm listen` and the sender', { timeout: 30_000 }, () =
         signal();
       }
       await stopped;
-      took[label] = Math.round((Date.now() - started) / 500) * 500;
+      took[label] = Date.now() - started;
     }
-    expect(took).toEqual({ 'grace 1': 1000, 'grace 0': 0, 'second signal': 0 });
+    expect(
+      {
+        'grace 1 waits its second, not two': took['grace 1']! >= 900 && took['grace 1']! < 1900,
+        'grace 0 at once': took['grace 0']! < 1000,
+        'second signal at once': took['second signal']! < 1000,
+      },
+      `the stops took (ms): ${JSON.stringify(took)}`,
+    ).toEqual({
+      'grace 1 waits its second, not two': true,
+      'grace 0 at once': true,
+      'second signal at once': true,
+    });
   });
 });
 
