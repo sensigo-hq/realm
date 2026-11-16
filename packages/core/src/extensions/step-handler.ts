@@ -11,7 +11,7 @@ export interface StepHandlerInputs {
 
 /**
  * What a handler is told about the run: its id and params, the step's `config`, and earlier steps'
- * outputs (`StepHandler.execute`'s second argument).
+ * outputs in `resources`, keyed by step id (`StepHandler.execute`'s second argument).
  * @public
  */
 export interface StepContext {

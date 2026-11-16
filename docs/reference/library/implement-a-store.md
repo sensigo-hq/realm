@@ -2408,5 +2408,5 @@ Names this job reaches whose entry is on another page.
 - [`WorkflowContextSnapshot`](read-a-runs-record.md#workflowcontextsnapshot): Snapshot of a single workflow context entry taken at run start.
 - [`WorkflowCopyFault`](write-a-handler.md#workflowcopyfault): What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2; #819 U2 `no_steps`, U3 `not_legacy_shape`).
 - [`WorkflowDefinition`](define-and-load-a-workflow.md#workflowdefinition): A workflow as the loaders return it: its id, name and version, its params schema, its steps, and its services, protocol and trigger when it has them.
-- [`WorkflowError`](write-a-handler.md#workflowerror): The error Realm throws and records, carrying a code, a category and what the agent does next; a handler throws one with `retryable: true` to have its step tried again.
+- [`WorkflowError`](write-a-handler.md#workflowerror): The error Realm throws and records, carrying a code, a category and what the agent does next; a handler throws one with `retryable: true` to have its step tried again when the step has a `retry` block.
 - [`WorkflowErrorOptions`](write-a-handler.md#workflowerroroptions): What a `WorkflowError` is built with: its code and category, what the agent does next, whether it may be tried again, and the optional facts, step and ways on.

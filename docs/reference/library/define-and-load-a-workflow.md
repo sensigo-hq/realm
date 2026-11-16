@@ -710,7 +710,7 @@ Names this job reaches whose entry is on another page.
 - [`Slot`](write-a-handler.md#slot): A value the caller picks from a closed set (D1 spine 1): printed by each door's own rule (T-7).
 - [`StableBoundary`](write-a-handler.md#stableboundary): Caching 3-B (C1): where a rendered text stops repeating between runs, in UTF-16 code units.
 - [`StepBrief`](write-a-handler.md#stepbrief): What a `run_step` way says about its step (D1 spine 3, 4): the step's kind, its description, the prompt the agent reads (template-resolved), the input schema an agent step's answer must fit, and — a fact kept as data until #516 decides its meaning — the step's handler.
-- [`StepContext`](write-a-handler.md#stepcontext): What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs (`StepHandler.execute`'s second argument).
+- [`StepContext`](write-a-handler.md#stepcontext): What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs in `resources`, keyed by step id (`StepHandler.execute`'s second argument).
 - [`StepHandler`](write-a-handler.md#stephandler): A program's code for an `auto` step named by `handler:`: registered under its `id`, and called with the step's input and the run's context.
 - [`StepHandlerInputs`](write-a-handler.md#stephandlerinputs): What a handler is given as input: the step's params, after its `input_map` when it has one (`StepHandler.execute`'s first argument).
 - [`StepHandlerResult`](write-a-handler.md#stephandlerresult): What a handler returns: the step's output, and optionally a state update, a clean abort or a warning (`StepHandler.execute`'s result).
@@ -725,5 +725,5 @@ Names this job reaches whose entry is on another page.
 - [`WayOn`](write-a-handler.md#wayon): One way on, discriminated on `verb` (PR0-CONTRACT §1).
 - [`WayVerb`](write-a-handler.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).
 - [`WorkflowCopyFault`](write-a-handler.md#workflowcopyfault): What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2; #819 U2 `no_steps`, U3 `not_legacy_shape`).
-- [`WorkflowError`](write-a-handler.md#workflowerror): The error Realm throws and records, carrying a code, a category and what the agent does next; a handler throws one with `retryable: true` to have its step tried again.
+- [`WorkflowError`](write-a-handler.md#workflowerror): The error Realm throws and records, carrying a code, a category and what the agent does next; a handler throws one with `retryable: true` to have its step tried again when the step has a `retry` block.
 - [`WorkflowErrorOptions`](write-a-handler.md#workflowerroroptions): What a `WorkflowError` is built with: its code and category, what the agent does next, whether it may be tried again, and the optional facts, step and ways on.

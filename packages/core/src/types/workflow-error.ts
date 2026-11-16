@@ -404,7 +404,8 @@ export interface WorkflowErrorOptions {
 
 /**
  * The error Realm throws and records, carrying a code, a category and what the agent does next; a
- * handler throws one with `retryable: true` to have its step tried again.
+ * handler throws one with `retryable: true` to have its step tried again when the step has a
+ * `retry` block.
  * @public
  */
 export class WorkflowError extends Error {

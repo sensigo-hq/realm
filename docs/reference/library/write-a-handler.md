@@ -18,7 +18,7 @@ Where the docs teach it: [Handlers](../handlers.md), [Project extensions](../pro
 | [`partitionBySubstring`](#partitionbysubstring) | function | Partitions a list of candidate objects into accepted and rejected groups. |
 | [`resolveResource`](#resolveresource) | function | Reads a named field from a prior step's output stored in context.resources. |
 | [`walkField`](#walkfield) | function | Recursively walks any value and collects all objects that contain a property named fieldName. |
-| [`WorkflowError`](#workflowerror) | class | The error Realm throws and records, carrying a code, a category and what the agent does next; a handler throws one with `retryable: true` to have its step tried again. |
+| [`WorkflowError`](#workflowerror) | class | The error Realm throws and records, carrying a code, a category and what the agent does next; a handler throws one with `retryable: true` to have its step tried again when the step has a `retry` block. |
 | [`AnswererMismatchFacts`](#answerermismatchfacts) | interface | #603 A3a: an answer refused because its sender is not one the question lets answer — the names that may (as written: the question's `owner` and `answerers`, or the project's list), and the account the channel reported for the sender. |
 | [`Base`](#base) | interface | What every way carries: its verb and the conditions it is offered with; each way type adds its own fields to it. |
 | [`DueExpiry`](#dueexpiry) | interface | An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95). |
@@ -41,7 +41,7 @@ Where the docs teach it: [Handlers](../handlers.md), [Project extensions](../pro
 | [`ServiceResponse`](#serviceresponse) | interface | What a service adapter's call returns: the HTTP status and the data (`ServiceAdapter`'s methods). |
 | [`StableBoundary`](#stableboundary) | interface | Caching 3-B (C1): where a rendered text stops repeating between runs, in UTF-16 code units. |
 | [`StepBrief`](#stepbrief) | interface | What a `run_step` way says about its step (D1 spine 3, 4): the step's kind, its description, the prompt the agent reads (template-resolved), the input schema an agent step's answer must fit, and — a fact kept as data until #516 decides its meaning — the step's handler. |
-| [`StepContext`](#stepcontext) | interface | What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs (`StepHandler.execute`'s second argument). |
+| [`StepContext`](#stepcontext) | interface | What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs in `resources`, keyed by step id (`StepHandler.execute`'s second argument). |
 | [`StepHandler`](#stephandler) | interface | A program's code for an `auto` step named by `handler:`: registered under its `id`, and called with the step's input and the run's context. |
 | [`StepHandlerInputs`](#stephandlerinputs) | interface | What a handler is given as input: the step's params, after its `input_map` when it has one (`StepHandler.execute`'s first argument). |
 | [`StepHandlerResult`](#stephandlerresult) | interface | What a handler returns: the step's output, and optionally a state update, a clean abort or a warning (`StepHandler.execute`'s result). |
@@ -110,7 +110,7 @@ candidates_found distinguishes between:
 
 `@param` rejected The rejected candidates from partitionBySubstring.
 
-`@returns` , rejected_count, candidates_found }
+`@returns` The counts, as `{ accepted_count, rejected_count, candidates_found }`.
 
 ```ts
 function countResults(accepted: Record<string, unknown>[], rejected: Record<string, unknown>[]): {
@@ -179,7 +179,8 @@ as a literal substring of sourceText. Matching is strict — no normalization.
 
 `@param` sourceText The document text to search within.
 
-`@returns` : Record<string, unknown>[], rejected: Record<string, unknown>[] }
+`@returns` The two groups, as
+`{ accepted: Record<string, unknown>[], rejected: Record<string, unknown>[] }`.
 
 ```ts
 function partitionBySubstring(candidates: Record<string, unknown>[], quoteField: string, sourceText: string): {
@@ -231,7 +232,8 @@ function walkField(data: unknown, fieldName: string): Record<string, unknown>[];
 class · public
 
 The error Realm throws and records, carrying a code, a category and what the agent does next; a
-handler throws one with `retryable: true` to have its step tried again.
+handler throws one with `retryable: true` to have its step tried again when the step has a
+`retry` block.
 
 ```ts
 class WorkflowError extends Error {
@@ -653,7 +655,7 @@ interface StepBrief {
 interface · public
 
 What a handler is told about the run: its id and params, the step's `config`, and earlier steps'
-outputs (`StepHandler.execute`'s second argument).
+outputs in `resources`, keyed by step id (`StepHandler.execute`'s second argument).
 
 ```ts
 interface StepContext {

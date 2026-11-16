@@ -2587,7 +2587,7 @@ Names this job reaches whose entry is on another page.
 - [`StampSealResult`](implement-a-store.md#stampsealresult): Issue #367 (part 3): the outcome of a `RunStore.stampSeal` attempt.
 - [`StepBrief`](write-a-handler.md#stepbrief): What a `run_step` way says about its step (D1 spine 3, 4): the step's kind, its description, the prompt the agent reads (template-resolved), the input schema an agent step's answer must fit, and — a fact kept as data until #516 decides its meaning — the step's handler.
 - [`StepCacheDetail`](read-a-runs-record.md#stepcachedetail): Issue #600 — the per-step roll-up plus the per-request detail.
-- [`StepContext`](write-a-handler.md#stepcontext): What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs (`StepHandler.execute`'s second argument).
+- [`StepContext`](write-a-handler.md#stepcontext): What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs in `resources`, keyed by step id (`StepHandler.execute`'s second argument).
 - [`StepDefinition`](define-and-load-a-workflow.md#stepdefinition): One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does, how it runs, the steps it waits for, and its input and settings.
 - [`StepDiagnostics`](read-a-runs-record.md#stepdiagnostics): Diagnostic metadata captured during step execution.
 - [`StepHandler`](write-a-handler.md#stephandler): A program's code for an `auto` step named by `handler:`: registered under its `id`, and called with the step's input and the run's context.
@@ -2630,6 +2630,6 @@ Names this job reaches whose entry is on another page.
 - [`WorkflowContextSnapshot`](read-a-runs-record.md#workflowcontextsnapshot): Snapshot of a single workflow context entry taken at run start.
 - [`WorkflowCopyFault`](write-a-handler.md#workflowcopyfault): What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2; #819 U2 `no_steps`, U3 `not_legacy_shape`).
 - [`WorkflowDefinition`](define-and-load-a-workflow.md#workflowdefinition): A workflow as the loaders return it: its id, name and version, its params schema, its steps, and its services, protocol and trigger when it has them.
-- [`WorkflowError`](write-a-handler.md#workflowerror): The error Realm throws and records, carrying a code, a category and what the agent does next; a handler throws one with `retryable: true` to have its step tried again.
+- [`WorkflowError`](write-a-handler.md#workflowerror): The error Realm throws and records, carrying a code, a category and what the agent does next; a handler throws one with `retryable: true` to have its step tried again when the step has a `retry` block.
 - [`WorkflowErrorOptions`](write-a-handler.md#workflowerroroptions): What a `WorkflowError` is built with: its code and category, what the agent does next, whether it may be tried again, and the optional facts, step and ways on.
 - [`WorkflowRegistrar`](implement-a-store.md#workflowregistrar): Where a program registers its workflows and reads them back by id.

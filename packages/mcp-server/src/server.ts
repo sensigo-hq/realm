@@ -264,10 +264,11 @@ export type DisclosedElicit = (
 export { createDefaultRegistry };
 
 /**
- * Creates and configures the Realm MCP server with its workflow tools. #627 W: which answer tool is
- * listed follows the gate-answers value and the session's forms (§5.2's table) — `submit_human_response`
- * under `permitted` only, `present_question` under `asked` in a session whose client shows forms,
- * neither under `withheld` or in an `asked` session whose client shows no forms.
+ * Creates and configures the Realm MCP server with its workflow tools. Which answer tool the server
+ * lists follows the `gate-answers` setting and whether the client shows forms:
+ * `submit_human_response` under `permitted` only, `present_question` under `asked` in a session
+ * whose client shows forms, neither under `withheld` or in an `asked` session whose client shows no
+ * forms.
  *
  * When no `registry` is provided, `FileSystemAdapter` is pre-registered automatically
  * under the name `filesystem`. Pass a custom `registry` to add your own handlers and

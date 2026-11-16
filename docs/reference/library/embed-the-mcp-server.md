@@ -53,10 +53,11 @@ Where the docs teach it: [Core library: serve MCP from your own program](../core
 
 function · public · from `@sensigo/realm-mcp`
 
-Creates and configures the Realm MCP server with its workflow tools. #627 W: which answer tool is
-listed follows the gate-answers value and the session's forms (§5.2's table) — `submit_human_response`
-under `permitted` only, `present_question` under `asked` in a session whose client shows forms,
-neither under `withheld` or in an `asked` session whose client shows no forms.
+Creates and configures the Realm MCP server with its workflow tools. Which answer tool the server
+lists follows the `gate-answers` setting and whether the client shows forms:
+`submit_human_response` under `permitted` only, `present_question` under `asked` in a session
+whose client shows forms, neither under `withheld` or in an `asked` session whose client shows no
+forms.
 
 When no `registry` is provided, `FileSystemAdapter` is pre-registered automatically
 under the name `filesystem`. Pass a custom `registry` to add your own handlers and
@@ -118,7 +119,7 @@ function loadPriceSource(opts?: {
 class · public · from `@sensigo/realm-mcp`
 
 File-based TraceBufferStore that persists WAL entries to JSONL files on disk.
-WAL file path: <runsDir>/trace-buffer-<runId>-<base64url(stepId)>.jsonl
+WAL file path: `<runsDir>/trace-buffer-<runId>-<base64url(stepId)>.jsonl`
 
 Crash model: like `JsonFileStore`, this store never calls `fsync` — process-crash consistency
 comes from `appendFile`'s per-line granularity plus `readWal`'s per-line, torn-line-tolerant
@@ -861,7 +862,7 @@ Names this job reaches whose entry is on another page.
 - [`StampSealResult`](implement-a-store.md#stampsealresult): Issue #367 (part 3): the outcome of a `RunStore.stampSeal` attempt.
 - [`StepBrief`](write-a-handler.md#stepbrief): What a `run_step` way says about its step (D1 spine 3, 4): the step's kind, its description, the prompt the agent reads (template-resolved), the input schema an agent step's answer must fit, and — a fact kept as data until #516 decides its meaning — the step's handler.
 - [`StepCacheDetail`](read-a-runs-record.md#stepcachedetail): Issue #600 — the per-step roll-up plus the per-request detail.
-- [`StepContext`](write-a-handler.md#stepcontext): What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs (`StepHandler.execute`'s second argument).
+- [`StepContext`](write-a-handler.md#stepcontext): What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs in `resources`, keyed by step id (`StepHandler.execute`'s second argument).
 - [`StepDefinition`](define-and-load-a-workflow.md#stepdefinition): One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does, how it runs, the steps it waits for, and its input and settings.
 - [`StepDiagnostics`](read-a-runs-record.md#stepdiagnostics): Diagnostic metadata captured during step execution.
 - [`StepHandler`](write-a-handler.md#stephandler): A program's code for an `auto` step named by `handler:`: registered under its `id`, and called with the step's input and the run's context.

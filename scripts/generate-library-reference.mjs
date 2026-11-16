@@ -363,6 +363,33 @@ for (const n of names.values()) {
   n.blockTags = decls.flatMap(blockTagsOf);
 }
 
+// A `<` followed by a letter outside a code span is an HTML tag to Markdown: GitHub and the website
+// drop it, and the text around it reads wrong (`<runsDir>/trace-buffer-<runId>-…` prints as
+// `/trace-buffer--…`). The committed-equals-generated cell cannot see that, so the text is refused
+// here, naming the entry; the fix is backticks in the source comment.
+const htmlLike = (text) =>
+  text
+    .split('`')
+    .filter((_part, i) => i % 2 === 0)
+    .flatMap((part) => part.match(/<[A-Za-z][^\s>]*>?/g) ?? []);
+for (const n of names.values()) {
+  const texts = [
+    ['its description', n.description],
+    ...n.blockTags.map((t) => [`its \`@${t.tagName}\``, t.text]),
+  ];
+  for (const [where, text] of texts) {
+    const found = htmlLike(text);
+    if (found.length > 0)
+      errors.push(
+        `\`${n.name}\`: ${where} holds ${found.map((f) => `\`${f}\``).join(', ')} outside a code span, which Markdown reads as an HTML tag: put it in backticks in the source comment`,
+      );
+  }
+}
+if (errors.length > 0) {
+  for (const e of [...new Set(errors)].sort()) console.error(e);
+  process.exit(1);
+}
+
 /** The first sentence of a description, for the index table: up to the first full stop that ends one. */
 function firstSentence(text) {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -468,6 +495,7 @@ function pageOf(job) {
 
 mkdirSync(outDir, { recursive: true });
 for (const job of jobs) writeFileSync(join(outDir, job.page), pageOf(job));
+console.log(`wrote ${jobs.length} pages to ${outDir}`);
 
 if (manifestFile !== undefined) {
   const manifest = {
