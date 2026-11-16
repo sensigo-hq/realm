@@ -5,6 +5,7 @@ import type { WorkflowRegistrar } from '@sensigo/realm';
 import type {
   ExtensionRegistry,
   Attributed,
+  AnswerArrival,
   AnswerView,
   EngineReply,
   RunRecord,
@@ -38,9 +39,11 @@ import {
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import {
   PEOPLE_DOOR_WORDS,
+  accountPhrase,
   answererPhrase,
   namedAnswerer,
   recordedAnswer,
+  recordedArrival,
 } from '../lib/holder-render.js';
 import { CLI_COMMANDS, cannotGoOnLines, owedItems, writerHost } from './ways-renderer.js';
 import {
@@ -188,12 +191,25 @@ function gateMismatchLines(result: EngineReply): string[] {
  * stated is said as `(not stated)` only when `--by` was given (`byGiven`) — with no `--by` and no
  * name, no clause, as before. No answer, or the gate's expiry's (no one answered): no clause.
  */
-export function answererClause(answer: AnswerView | undefined, byGiven: boolean): string {
+export function answererClause(
+  answer: AnswerView | undefined,
+  byGiven: boolean,
+  via?: AnswerArrival['via'],
+): string {
   if (answer === undefined) return '';
   const by = namedAnswerer(answer.answered_by);
   if (by === undefined) return '';
-  if (by.by === null && by.absent_cause !== 'name_unreadable' && !byGiven) return '';
-  return ` | answered by ${answererPhrase(by, 'as stated')}`;
+  // #603 A3b: an account the channel reported is said as a name is (its route's label).
+  const account = via !== undefined ? accountPhrase(answer, via) : undefined;
+  if (
+    by.by === null &&
+    by.absent_cause !== 'name_unreadable' &&
+    account === undefined &&
+    !byGiven
+  ) {
+    return '';
+  }
+  return ` | answered by ${answererPhrase(by, 'as stated', account)}`;
 }
 
 /**
@@ -449,6 +465,7 @@ export async function respondToGate(
   const answeredBy = answererClause(
     recordedAnswer(updatedRun, result.command),
     options.by !== undefined,
+    recordedArrival(updatedRun, result.command).via,
   );
   return {
     choice: options.choice,

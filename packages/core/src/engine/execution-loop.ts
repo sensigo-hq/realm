@@ -17,7 +17,7 @@ import type {
   OutputSource,
   Principal,
 } from '../types/run-record.js';
-import { answerViaOf, principalOf } from './answer-facts.js';
+import { answerAccountOf, answerViaOf, principalOf } from './answer-facts.js';
 import { isBareAutoStep as isBareAutoStepDef } from './output-source.js';
 import { boundRequestFacts } from './request-facts.js';
 import { overdueOf } from './instants.js';
@@ -1998,9 +1998,19 @@ export function outcomeOf(
         : stated.absent_cause === 'name_unreadable'
           ? { name_absent: 'name_unreadable' as const }
           : {};
+    // #603 A3b: the account the channel reported, through the one reader of it.
+    const reported = winning !== undefined ? answerAccountOf(winning) : undefined;
+    const account =
+      reported === undefined
+        ? {}
+        : 'user' in reported
+          ? { account: reported.user }
+          : reported.absent === 'account_unreadable'
+            ? { account_absent: 'account_unreadable' as const }
+            : {};
     return {
       ...choice,
-      by: { kind: 'answer', ...name, basis: 'stated' },
+      by: { kind: 'answer', ...name, ...account, basis: 'stated' },
       ...via,
       ...at,
       ...base,

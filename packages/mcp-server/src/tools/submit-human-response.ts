@@ -31,6 +31,7 @@ import {
   type WithPersonBlock,
   replySubject,
   setForSubject,
+  statesNoName,
 } from '../render-reply.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
@@ -135,6 +136,8 @@ export async function handleSubmitHumanResponse(
   if (args.responded_by !== undefined) {
     try {
       respondedBy = boundStatedName(args.responded_by, 'responded_by');
+      // #603 A3b (G5): the instruction's placeholder copied (wrapped whole in `<` `>`) names no one.
+      if (statesNoName(respondedBy)) respondedBy = undefined;
     } catch (err) {
       throw new WorkflowError(identityRefusalLine('responded_by', err, 'nothing was recorded'), {
         code: 'VALIDATION_ACTOR_INVALID',

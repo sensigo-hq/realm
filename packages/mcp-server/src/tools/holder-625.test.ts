@@ -384,6 +384,9 @@ describe('C2 — get_run_state on a run whose gate expired to its default (a rea
         // #729 PR-6a (B8): when the entry was written.
         at: expect.any(String),
         claim_proof_absent: 'settled_by_expiry',
+        // #603 A3b: the expiry's entry names no account and no admission.
+        account_absent: 'settled_by_expiry',
+        admitted_by_absent: 'settled_by_expiry',
       },
     ]);
     // The run went on: the step after the gate is what is owed now.
@@ -491,6 +494,9 @@ describe('get_run_state — who took each step; the token has one door and this 
         // #729 PR-6a (B8): when the answer was given.
         at: expect.any(String),
         claim_proof: { proof: 'matched' },
+        // #603 A3b: an MCP answer carries no account; the question names no one.
+        account_absent: 'account_not_recorded',
+        admitted_by: 'no_named_answerer',
       },
     ]);
   });
@@ -592,6 +598,9 @@ describe('the answer as data — an answer-only step, a planted name, a long nam
           // #729 PR-6a (B8): when the answer was given.
           at: expect.any(String),
           claim_proof: { proof: 'absent' },
+          // #603 A3b: copied from an MCP answer — no account; the question names no one.
+          account_absent: 'account_not_recorded',
+          admitted_by: 'no_named_answerer',
         },
       ],
     });

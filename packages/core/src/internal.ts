@@ -92,6 +92,9 @@ export {
   GATE_PROOFS,
   GATE_PROOF_CAUSES,
   CLAIM_PROOF_ABSENT_CAUSES,
+  // #603 A3b: why an answer's view names no account, or no admission.
+  ACCOUNT_ABSENT_CAUSES,
+  ADMITTED_BY_ABSENT_CAUSES,
   NAME_MAX_LENGTH,
   NAME_CAP_MARKER,
   NAME_REFUSAL_REASONS,
@@ -122,6 +125,8 @@ export type {
   GateProofCause,
   GateClaimVerdict,
   ClaimProofAbsentCause,
+  AccountAbsentCause,
+  AdmittedByAbsentCause,
   ProgramIdentityFacts,
 } from './engine/holder.js';
 /**
@@ -322,6 +327,8 @@ export type {
 // #627 W (§5.8): how a gate answer arrived — the one reading, and the form's evidence.
 export {
   answerViaOf,
+  // #603 A3b: the one reader of the account a channel reported for an answer.
+  answerAccountOf,
   answerArrivalOf,
   principalOf,
   shownViewEvidence,

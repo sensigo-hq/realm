@@ -37,7 +37,7 @@ import {
 } from '@sensigo/realm';
 import { stripMarks, withoutMarks, writerCtx, writerSetFor } from '../../output/writer.js';
 import { cliCommandOf } from '../../commands/ways-renderer.js';
-import { renderOutcome } from '@sensigo/realm-mcp';
+import { answerByPart, renderOutcome } from '@sensigo/realm-mcp';
 import {
   PEOPLE_DOOR_WORDS,
   cutWayLine,
@@ -370,7 +370,14 @@ export function renderSlack(
       };
     }
     case 'answer_recorded': {
-      const resolved = `✅ Gate resolved: \`${slackEscape(notice.choice)}\``;
+      // #603 A3b: who answered, through the one "by" part of the sentence-maker, escaped as the
+      // sentence is (no mention is built); none without a recorded outcome.
+      const outcome = notice.outcome;
+      const by =
+        outcome?.by.kind === 'answer'
+          ? slackEscape(answerByPart(outcome.by, outcome.via, PEOPLE_DOOR_WORDS))
+          : '';
+      const resolved = `✅ Gate resolved: \`${slackEscape(notice.choice)}\`${by}`;
       if (!notice.run_goes_on) return { blocks: [], text: `${resolved}. The run has ended.` };
       return {
         blocks: [],
@@ -1297,10 +1304,15 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           // (`answer_recorded`) — with the authored resolution message only when the run goes on —
           // and, when the answer ended the run, the operator's lines (the guard's sentence, its
           // reason, each finalizer's outcome) go to this console, never to the person's thread.
+          // #715 (b) (02 §D.3, D-29; D6-17): judged on the snapshot the engine judged its reply on —
+          // never a second load. #603 A3b: the receipt's "by" part reads the same snapshot.
+          const judged = judgedSnapshotOf(result);
+          const recorded =
+            judged !== undefined
+              ? outcomeOf(judged.record, gate.step_name, gate.expires_at, false)
+              : undefined;
           if (result.ended_by !== undefined) {
-            // #715 (b) (02 §D.3, D-29; D6-17): judged on the snapshot the engine judged its reply on
-            // — never a second load. With none, the ending and its reason, which are on the reply.
-            const judged = judgedSnapshotOf(result);
+            // With no judged snapshot, the ending and its reason, which are on the reply.
             const endingLines =
               judged !== undefined
                 ? describeAnswerEnding(result, judged.record, {
@@ -1321,6 +1333,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
               gate,
               choice: exactMatch,
               ended: result.ended_by !== undefined,
+              ...(recorded !== undefined ? { outcome: recorded } : {}),
             }),
           );
           abortController.abort();

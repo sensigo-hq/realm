@@ -70,7 +70,16 @@ export interface Outcome {
   choice?: string;
   attempted_choice?: string;
   by:
-    | { kind: 'answer'; name?: string; name_absent?: 'name_unreadable'; basis: 'stated' }
+    | {
+        kind: 'answer';
+        name?: string;
+        name_absent?: 'name_unreadable';
+        /** #603 A3b: the account the answer's channel reported (`answerAccountOf`), never verified;
+         *  `account_absent` when the record holds one that cannot be shown. */
+        account?: string;
+        account_absent?: 'account_unreadable';
+        basis: 'stated';
+      }
     | { kind: 'timeout' }
     | {
         kind: 'engine';
@@ -100,6 +109,9 @@ export interface Outcome {
  */
 export type OutcomeDoorWords = { readonly [R in AnswerRoute]: string } & {
   readonly other_route: (route: string) => string;
+  /** #603 A3b: the label of an account a channel reported, by the answer's route (`undefined` when it
+   *  names none or cannot be read) — so core names no platform. Never "verified". */
+  readonly account: (route: string | undefined) => string;
 };
 
 /**
