@@ -132,7 +132,8 @@ const ALLOWED: ReadonlyArray<readonly [string | RegExp, string]> = [
     'packages/core/src/store/json-file-store.ts',
     'reads a clock file through `resolveStoreClock`; a comment names the file',
   ],
-  ['packages/core/src/index.ts', 're-exports the helpers for the testing package'],
+  // CP-1 PR 3: core's export lines live in `internal.ts` (the main entry re-exports it whole).
+  ['packages/core/src/internal.ts', 're-exports the helpers for the testing package'],
   // #715 (b) (04 §B.4): where core itself reads a test clock's marks.
   ['packages/core/src/utils/clock.ts', 'defines the marks (`markTestClock`, `clockBasis`)'],
   ['packages/core/src/engine/snapshot.ts', "a reply's stamp states its basis (`as_of_basis`)"],
