@@ -1324,6 +1324,8 @@ interface Outcome {
         kind: 'answer';
         name?: string;
         name_absent?: 'name_unreadable';
+        account?: string;
+        account_absent?: 'account_unreadable';
         basis: 'stated';
     } | {
         kind: 'timeout';
