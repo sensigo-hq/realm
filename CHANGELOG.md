@@ -60,6 +60,7 @@ All notable changes to this project are documented here.
 - The types the library's public declarations referred to without exporting them are now exported, so a program can name them: `Base`, `ClassifiableRun`, `DeclaredNames`, `ExpireGateDelta`, `KIND`, `MemberKind`, `OpenGateDelta`, `RateLimiter`, `ReleaseStepDelta`, `RunRecordFieldProblem`, `STORED_FILE_CLASSES`, `SettleGateDelta`, `SettleGuardDelta`, `StepMeta` and `StepScopedKind` from `@sensigo/realm`, and `FailedAttemptStoreLike`, `LockRetries`, `OperatorRoute` and `TraceBufferLockProfile` from `@sensigo/realm-mcp`; `classifyRunHealth`'s options are named `ClassifyRunHealthOptions`.
 
 - `@sensigo/realm/internal` and `@sensigo/realm-mcp/internal`: each exports everything its main entry exports, from the same files, so a class is one object whichever entry imports it. Nothing moves: the main entries are unchanged before 1.0 (the compatibility page's road to 1.0 says what moves then).
+- The library reference: six pages under `docs/reference/library/`, one per job Realm supports, generated from the `@public`/`@beta` tags with each declaration and its description; a promised name without a description, or missing from its page, fails a test.
 
 ### Changed
 
