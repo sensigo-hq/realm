@@ -737,6 +737,45 @@ describe('#597 D3b — the runner', { timeout: 30_000 }, () => {
     await stopping;
     expect({ leases, before, waited }).toEqual({ leases: 1, before: false, waited: true });
   });
+
+  it('no new probe after the budget or after `stop()`: a paused workflow’s due `auth.test` is not called', async () => {
+    // (a) red when a probe starts past the budget or once the runner has stopped; (b) prints the
+    //     `auth.test` counts.
+    const r = await rig();
+    await question(r);
+    await r.clock.set(at(25 * MIN));
+    slack.post = refused('invalid_auth');
+    slack.auth = refused('invalid_auth');
+    const pass = makeReminderPass({
+      runStore: r.store,
+      outbound: r.ledger,
+      home: r.h.path,
+      workflows: new Map([[WF, workflow(WF)]]),
+      logger: r.logger,
+    });
+    await pass(() => true);
+    await r.clock.set(at(27 * MIN));
+    // The budget runs out between the pass's own check and the probe (the pass's start and that
+    // check read 0; the probe's check reads 45 s).
+    const clockNow = vi.spyOn(performance, 'now');
+    clockNow
+      .mockImplementationOnce(() => 0)
+      .mockImplementationOnce(() => 0)
+      .mockImplementation(() => 45_000);
+    await pass(() => true);
+    const afterBudget = slack.auths;
+    clockNow.mockImplementation(() => 0);
+    // The runner stops between the pass's own check and the probe.
+    let checks = 0;
+    await pass(() => (checks += 1) === 1);
+    const afterStop = slack.auths;
+    await pass(() => true);
+    expect({ afterBudget, afterStop, after: slack.auths }).toEqual({
+      afterBudget: 0,
+      afterStop: 0,
+      after: 1,
+    });
+  });
 });
 
 /** `realm listen` started in this process on a free port, its signal listeners collected. */
@@ -998,6 +1037,35 @@ describe('#597 D3b — the start-up lines', { timeout: 30_000 }, () => {
       error: ['listen: reminders: pass failed {"error":"Error: scan failed"}'],
     });
   });
+
+  it("one question's failure: ONE error line naming its run, and the pass goes on to the next question", async () => {
+    // (a) red when one question's throw ends the pass or is not logged with its run; (b) prints the
+    //     posts and the error lines.
+    const r = await rig();
+    const bad = await question(r);
+    const good = await question(r);
+    await r.clock.set(at(25 * MIN));
+    const ledger: OutboundLedger = {
+      lease: (id, req) => r.ledger.lease(id, req),
+      mark: (id, req) => r.ledger.mark(id, req),
+      read: async (id) => {
+        if (id === bad.runId) throw new Error('read failed');
+        return r.ledger.read(id);
+      },
+      statAllForRun: (id) => r.ledger.statAllForRun(id),
+      deleteAllForRun: (id) => r.ledger.deleteAllForRun(id),
+    };
+    await passOf(r, { ledger })();
+    expect({
+      posts: slack.posts.map((p) => p.text.includes(good.runId)),
+      error: r.logger.lines.error,
+    }).toEqual({
+      posts: [true],
+      error: [
+        `listen: reminders: pass failed {"run_id":"${bad.runId}","error":"Error: read failed"}`,
+      ],
+    });
+  });
 });
 
 describe('#597 D3b — the words', { timeout: 30_000 }, () => {
@@ -1050,6 +1118,8 @@ describe('#597 D3b — the words', { timeout: 30_000 }, () => {
       'A new token needs a restart of `realm listen`.',
       // "attempts 1, 2, 7" and "attempts 8"; "isolation".
       'Any other post Slack does not take is tried again later, each time a little later, up to 8 tries in all.',
+      // The log row of `pass failed`: "a pass that throws" and "one question's failure".
+      "A `--send-reminders` pass failed, or one question's part of it (the line then names `run_id` too); the next pass tries again.",
       // The table row; the built CLI cell; "a failed bind …" (the 60-second timer).
       "Every 60 seconds, posts the due Slack reminder or escalation of each waiting question whose `realm agent` has stopped, in the question's own thread. See below. Added after version 0.49.0.",
     ])
