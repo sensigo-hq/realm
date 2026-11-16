@@ -167,11 +167,15 @@ function printValidationOutcome(
   // piece 2a: the `when` conditions' lines after them, by the same counting rule.
   const inputMap = notChecked.filter((n) => n.surface === 'input_map');
   const when = notChecked.filter((n) => n.surface === 'when');
+  // Fix 1, piece 3a-ii-a: the template references' lines after them, by the same counting rule.
+  const template = notChecked.filter((n) => n.surface === 'template');
   for (const line of [
     renderNotCheckedLine(inputMap),
     renderCheckFailedLine(inputMap),
     renderWhenNotCheckedLine(when),
     renderWhenCheckFailedLine(when),
+    renderTemplateNotCheckedLine(template),
+    renderTemplateCheckFailedLine(template),
   ]) {
     if (line !== undefined) console.log(line);
   }
@@ -223,6 +227,30 @@ function renderWhenCheckFailedLine(notChecked: readonly NotCheckedPath[]): strin
   return (
     `Not checked: ${conditions.length} when condition(s), because Realm's own check failed on ` +
     `them: ${conditions.map((n) => `${n.step}: ${n.path}`).join(', ')}`
+  );
+}
+
+/**
+ * Fix 1, piece 3a-ii-a — the template references (`gate.message`, `display`) on data the workflow
+ * declares no shape for, or on a context entry only a file adds.
+ */
+function renderTemplateNotCheckedLine(notChecked: readonly NotCheckedPath[]): string | undefined {
+  const refs = notChecked.filter((n) => n.why !== 'check_failed');
+  if (refs.length === 0) return undefined;
+  return (
+    `Not checked: ${refs.length} template reference(s) on data the workflow declares no shape ` +
+    `for, or a context entry only a file adds: ` +
+    refs.map((n) => `${n.step}.${n.key}: ${n.path}`).join(', ')
+  );
+}
+
+/** Fix 1, piece 3a-ii-a — the template references Realm's own check failed on (#123's exception). */
+function renderTemplateCheckFailedLine(notChecked: readonly NotCheckedPath[]): string | undefined {
+  const refs = notChecked.filter((n) => n.why === 'check_failed');
+  if (refs.length === 0) return undefined;
+  return (
+    `Not checked: ${refs.length} template reference(s), because Realm's own check failed on ` +
+    `them: ${refs.map((n) => `${n.step}.${n.key}: ${n.path}`).join(', ')}`
   );
 }
 

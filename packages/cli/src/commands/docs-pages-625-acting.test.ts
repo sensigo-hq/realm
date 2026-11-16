@@ -1652,7 +1652,11 @@ describe(
         const d = await project(
           'c207-still-owes',
           [
-            autoStep('a', [], ['trust: human_confirmed', 'gate:', '  message: "{{ nope.x }}"']),
+            autoStep(
+              'a',
+              [],
+              ['trust: human_confirmed', 'gate:', '  message: "{{ run.params.nope }}"'],
+            ),
             autoStep('b', []),
             autoStep('c', []),
           ].join('\n'),
@@ -1663,7 +1667,7 @@ describe(
         // (a) red when several still owed read as a promise that all run; (b) prints the lines.
         expect(from(a.out, '→ a')).toEqual([
           '→ a',
-          "Stopped: 'a': gate.message has unresolvable references: nope.x",
+          "Stopped: 'a': gate.message has unresolvable references: run.params.nope",
           `Stopped: the engine still owes 'b', 'c' — to run them ${UNTIL}: realm run advance ${id}`,
           `Run ${id}: phase 'running'`,
         ]);
