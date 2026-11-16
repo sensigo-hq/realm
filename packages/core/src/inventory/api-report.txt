@@ -12,6 +12,7 @@
 ## @sensigo/realm
 
 ABANDON_KILL_ADVISORY · value · internal
+ACCOUNT_ABSENT_CAUSES · value · internal
 ACTOR_ABSENT_CAUSES · value · public
   const ACTOR_ABSENT_CAUSES: readonly [
       "holder_not_recorded",
@@ -24,6 +25,7 @@ ACTOR_ABSENT_CAUSES · value · public
       "settled_by_expiry"
   ];
 
+ADMITTED_BY_ABSENT_CAUSES · value · internal
 ADVANCE_OWED · value · internal
 AGENT_ACTIONS · value · internal
 AGENT_PRE_CLAIM_REFUSALS · value · internal
@@ -40,6 +42,7 @@ AbandonWay · type · public
       run_id: string;
   };
 
+AccountAbsentCause · type · internal
 ActorAbsent · type · public
   interface ActorAbsent {
       by: null;
@@ -53,6 +56,7 @@ Admission · type · internal
 AdmittedBy · type · public
   type AdmittedBy = 'owner' | 'answerers' | 'project_answerers' | 'no_named_answerer' | 'owner_not_checked_on_route';
 
+AdmittedByAbsentCause · type · internal
 AdvanceCaller · type · public
   type AdvanceCaller = (typeof ENTRY_CALLERS.advanceRun)[number];
 
@@ -1908,6 +1912,8 @@ Outcome · type · public
           kind: 'answer';
           name?: string;
           name_absent?: 'name_unreadable';
+          account?: string;
+          account_absent?: 'account_unreadable';
           basis: 'stated';
       } | {
           kind: 'timeout';
@@ -3786,6 +3792,7 @@ advanceRun · value · public
 agentActionOf · value · internal
 agentRenderedList · value · internal
 alsoSetClause · value · internal
+answerAccountOf · value · internal
 answerArrivalOf · value · internal
 answerToolNamedIn · value · internal
 answerViaOf · value · internal

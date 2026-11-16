@@ -75,6 +75,9 @@ export type PersonNotice =
       run_goes_on: boolean;
       /** The author's message for the choice — only when the run goes on. */
       resolution_message?: string;
+      /** #603 A3b: how the record settled the question (`outcomeOf` on the judged snapshot), for the
+       *  receipt's "by" part; absent when the reply carried no judged snapshot. */
+      outcome?: Outcome;
     }
   | {
       kind: 'answer_late';
@@ -151,6 +154,8 @@ export type PersonNoticeEvent =
       choice: string;
       /** Whether the answer ended the run (the reply's `ended_by`). */
       ended: boolean;
+      /** #603 A3b: the settled outcome, read from the judged snapshot (`outcomeOf`). */
+      outcome?: Outcome;
     }
   | {
       kind: 'answer_late';
@@ -273,6 +278,7 @@ export function composePersonNotice(event: PersonNoticeEvent): PersonNotice {
         choice: event.choice,
         run_goes_on: !event.ended,
         ...(message !== undefined ? { resolution_message: message } : {}),
+        ...(event.outcome !== undefined ? { outcome: event.outcome } : {}),
       };
     }
     case 'answer_late':

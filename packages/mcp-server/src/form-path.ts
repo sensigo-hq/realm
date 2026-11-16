@@ -434,6 +434,14 @@ export function routePhraseOf(route: string): string {
 }
 
 /**
+ * #603 A3b: the label of an account a channel reported, by the answer's route — the people's and the
+ * assistant's words alike: the channel's statement, never "verified".
+ */
+export function accountLabelOf(route: string | undefined): string {
+  return route === 'slack' ? 'as Slack reports it' : 'as its channel reports it';
+}
+
+/**
  * #729 PR-6a (B1): the words the assistant's doors (the MCP tool, the MCP form, the library's
  * sentence) name a door with — `through <routePhraseOf>`, exactly as W wrote them for the agent.
  */
@@ -443,7 +451,28 @@ export const ASSISTANT_DOOR_WORDS: OutcomeDoorWords = {
   cli: `through ${routePhraseOf('cli')}`,
   slack: `through ${routePhraseOf('slack')}`,
   other_route: (route) => `through ${routePhraseOf(route)}`,
+  account: accountLabelOf,
 };
+
+/**
+ * #603 A3b: the ONE "by" part of an answer's sentence — `renderOutcome`'s and the Slack receipt's: the
+ * stated name first, quoted, with "(as stated)", then the account the channel reported with its label
+ * for the answer's route (`via`); a name or an account that cannot be shown is the one unshowable
+ * phrase, with no label. `''` when the answer names neither.
+ */
+export function answerByPart(
+  by: Extract<Outcome['by'], { kind: 'answer' }>,
+  via: Outcome['via'],
+  words: OutcomeDoorWords,
+): string {
+  const parts: string[] = [];
+  if (by.name !== undefined) parts.push(`${quoteStatedName(by.name)} (as stated)`);
+  else if (by.name_absent === 'name_unreadable') parts.push(UNSHOWABLE_NAME);
+  if (by.account !== undefined) {
+    parts.push(`${by.account} (${words.account(typeof via === 'string' ? via : undefined)})`);
+  } else if (by.account_absent === 'account_unreadable') parts.push(UNSHOWABLE_NAME);
+  return parts.length > 0 ? `, by ${parts.join(', ')}` : '';
+}
 
 /** A stored instant in `instantText`'s form; `undefined` when it is absent or does not parse. */
 function instantOf(stamp: string | undefined): string | undefined {
@@ -459,8 +488,11 @@ function instantOf(stamp: string | undefined): string | undefined {
 
 /** The door an answer came through, in `words` — a route this version's doors declare, or another. */
 function doorPhrase(via: string, words: OutcomeDoorWords): string {
-  return Object.prototype.hasOwnProperty.call(words, via) && via !== 'other_route'
-    ? words[via as keyof Omit<OutcomeDoorWords, 'other_route'>]
+  // #603 A3b: `account` is a label maker, not a route's words — a route named so is another route.
+  return Object.prototype.hasOwnProperty.call(words, via) &&
+    via !== 'other_route' &&
+    via !== 'account'
+    ? words[via as keyof Omit<OutcomeDoorWords, 'other_route' | 'account'>]
     : words.other_route(via);
 }
 
@@ -491,12 +523,7 @@ export function renderOutcome(outcome: Outcome, words: OutcomeDoorWords, closed?
     return `${lead} ${q} was closed because step '${by.step}' aborted the run.`;
   }
   const choice = outcome.choice ?? '';
-  const name =
-    by.name !== undefined
-      ? `, by ${quoteStatedName(by.name)} (as stated)`
-      : by.name_absent === 'name_unreadable'
-        ? `, by ${UNSHOWABLE_NAME}`
-        : '';
+  const name = answerByPart(by, outcome.via, words);
   const time = instantOf(outcome.at);
   const at = time !== undefined ? `, at ${time}` : '';
   const via = outcome.via;

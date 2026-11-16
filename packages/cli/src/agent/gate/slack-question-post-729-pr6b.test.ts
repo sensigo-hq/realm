@@ -301,14 +301,17 @@ describe('#729 PR-6b — the Slack question post', () => {
     onEvent!({ event_id: 'E1', thread_ts: POST_TS, user: 'U1', text: 'approve', ts: '1.1' });
     await run;
     const at = await answerTime(runId);
-    // (a) red when the edit is skipped because a Slack answer told the thread, or names a `by`;
-    //     (b) prints every Slack call and every printed line.
+    // (a) red when the edit is skipped because a Slack answer told the thread, or names a `by`
+    //     other than the account Slack reported (#603 A3b: the reply's user, U1, in both); (b)
+    //     prints every Slack call and every printed line.
     expect(
       { thread: threadPosts(), edits: bodies('chat.update').map((b) => b.text) },
       shown(),
     ).toEqual({
-      thread: ['✅ Gate resolved: `approve` — run continuing.'],
-      edits: [`This question is closed: it was answered — approve, in a Slack thread, at ${at}.`],
+      thread: ['✅ Gate resolved: `approve`, by U1 (as Slack reports it) — run continuing.'],
+      edits: [
+        `This question is closed: it was answered — approve, by U1 (as Slack reports it), in a Slack thread, at ${at}.`,
+      ],
     });
   });
 
@@ -665,7 +668,10 @@ describe('#729 PR-6b — the Slack question post', () => {
         '  ℹ  This question is already in Slack, posted by a realm agent that has stopped; listening on that thread.',
       ],
       during: { ts: OLD_TS, pid: process.pid },
-      thread: [[OLD_TS, '✅ Gate resolved: `approve` — run continuing.']],
+      // #603 A3b: the receipt names the account Slack reported (the reply's user, U1).
+      thread: [
+        [OLD_TS, '✅ Gate resolved: `approve`, by U1 (as Slack reports it) — run continuing.'],
+      ],
       replyTaken: true,
       answered: 1,
       edited: [OLD_TS],
