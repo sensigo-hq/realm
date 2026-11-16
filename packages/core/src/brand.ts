@@ -19,7 +19,10 @@
 // stack, an environment variable or the file system.
 import { VERSION } from './version.js';
 
-/** What one copy of one package says about itself, on the prototype of each class it defines. */
+/**
+ * What one copy of one package says about itself, on the prototype of each class it defines.
+ * @public
+ */
 export interface RealmBrand {
   /** The defining package's name. */
   readonly package: string;

@@ -763,7 +763,10 @@ export function isStablePlaceholder(event: PlaceholderEvent): boolean {
   );
 }
 
-/** Caching 3-B (C1): where a rendered text stops repeating between runs, in UTF-16 code units. */
+/**
+ * Caching 3-B (C1): where a rendered text stops repeating between runs, in UTF-16 code units.
+ * @public
+ */
 export interface StableBoundary {
   chars: number;
   unit: 'utf16';

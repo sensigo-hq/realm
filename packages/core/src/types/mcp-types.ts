@@ -2,6 +2,7 @@
 // (EvidenceSnapshot, ExecuteChainOptions, WorkflowDefinition). Defining them in cli would
 // create a circular import: core → cli → core.
 
+/** @public */
 export interface ToolCallRecord {
   server_id: string; // "github" — MCP server ID from mcp_servers[].id
   tool: string; // bare tool name: "get_pull_request" (NOT namespaced)
@@ -11,6 +12,7 @@ export interface ToolCallRecord {
   error?: string; // present iff the call failed, in either class — Class A: the sanitized thrown message; Class B: the extracted text of the isError result (issue #345)
 }
 
+/** @public */
 export interface McpServerConfig {
   id: string;
   transport: 'stdio'; // 'http' added when HTTP transport lands

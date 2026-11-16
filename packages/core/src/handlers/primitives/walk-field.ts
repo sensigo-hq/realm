@@ -6,6 +6,7 @@
  * @param fieldName  The property name to search for.
  * @returns          An array of every object (not array) that has fieldName as
  *                   a direct own property.
+ * @public
  */
 export function walkField(data: unknown, fieldName: string): Record<string, unknown>[] {
   const results: Record<string, unknown>[] = [];

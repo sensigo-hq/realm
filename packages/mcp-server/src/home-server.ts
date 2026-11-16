@@ -9,7 +9,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { openMcpHome } from './home.js';
 import { createRealmMcpServer, type RealmMcpServerOptions } from './server.js';
 
-/** What `createRealmMcpServerOnHome` takes: the home, and every option of the server but its stores. */
+/**
+ * What `createRealmMcpServerOnHome` takes: the home, and every option of the server but its stores.
+ * @public
+ */
 export type HomeServerOptions = { home?: string } & Omit<
   RealmMcpServerOptions,
   'runStore' | 'workflowStore' | 'traceBufferStore' | 'failedAttemptStore'
@@ -25,6 +28,7 @@ export type HomeServerOptions = { home?: string } & Omit<
  * - Every refusal of the open is the store's own typed error, as a rejected promise.
  * - A refusal while building the server is also a rejected promise, and it leaves the home open:
  *   the handle is shared, so this function cannot know it is the only holder.
+ * @public
  */
 export async function createRealmMcpServerOnHome(
   options: HomeServerOptions = {},

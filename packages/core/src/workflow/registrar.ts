@@ -31,10 +31,14 @@ import {
   type UnreadableFileFacts,
 } from '../store/run-file.js';
 
-/** issue #558 PR-T — what a registry read can fail as, before any bytes are parsed. */
+/**
+ * issue #558 PR-T — what a registry read can fail as, before any bytes are parsed.
+ * @public
+ */
 export type ProbeFailureClass =
   'missing' | 'unreadable' | 'not_a_file' | 'empty' | 'registry_broken';
 
+/** @public */
 export type ProbeResult =
   | { ok: true; bytes: number }
   | { ok: false; class: ProbeFailureClass; errno?: string; path: string };
@@ -490,6 +494,7 @@ export const STUCK_DEFINITION_PARSE_CAP_BYTES = 4 * 1024 * 1024;
  * `not_a_file`: a directory where the file belongs; `empty`; `registry_broken`: the registry directory
  * itself) and what the read finds (`parse`: not JSON, or JSON that fails the checker; `newer`: a later
  * version of Realm registered it; `legacy`: an older one did).
+ * @public
  */
 export type FileUnreadableClass = ProbeFailureClass | 'parse' | 'newer' | 'legacy';
 
@@ -498,10 +503,14 @@ export type FileUnreadableClass = ProbeFailureClass | 'parse' | 'newer' | 'legac
  * three: `legacy` (an older version of Realm registered it), `newer` (a later one did) and `parse`: a
  * copy that is not JSON or fails the checker, or a damaged pointer row (no copy under the pointer, or
  * one that is not JSON text), whose entry has no `repair` because its reason names the remedy.
+ * @public
  */
 export type IdUnreadableClass = 'legacy' | 'newer' | 'parse';
 
-/** #616 PR-2c c5a: a registered copy a registry of files could not read, named by its file. */
+/**
+ * #616 PR-2c c5a: a registered copy a registry of files could not read, named by its file.
+ * @public
+ */
 export interface UnreadableFileEntry {
   /** The registry file (its basename), or the registry directory for `registry_broken`. */
   file: string;
@@ -522,7 +531,9 @@ export interface UnreadableFileEntry {
 
 /** #616 PR-2c c5a: a registered copy a registry with no files (the SQLite registry) could not read,
  *  named by its workflow's id. Never carries `file` or `errno`: no file holds it, and no class on this
- *  arm is an OS error. */
+ *  arm is an OS error.
+ * @public
+ */
 export interface UnreadableIdEntry {
   /** The registered workflow's id. */
   workflow_id: string;
@@ -538,10 +549,15 @@ export interface UnreadableIdEntry {
 }
 
 /** #616 PR-2c c5a: a registered copy a listing could not read. Each entry carries exactly one of
- *  `file` (the file arm) and `workflow_id` (the id arm); all of one registrar's entries are of one arm. */
+ *  `file` (the file arm) and `workflow_id` (the id arm); all of one registrar's entries are of one arm.
+ * @public
+ */
 export type UnreadableRegistryEntry = UnreadableFileEntry | UnreadableIdEntry;
 
-/** #616 PR-2c c5a: what a registrar's diagnostic listing returns. */
+/**
+ * #616 PR-2c c5a: what a registrar's diagnostic listing returns.
+ * @public
+ */
 export interface RegistryListing {
   /** Every registered workflow it could read. */
   workflows: WorkflowDefinition[];
@@ -551,6 +567,7 @@ export interface RegistryListing {
   mismatched: Array<{ file: string; id: string }>;
 }
 
+/** @public */
 export interface WorkflowRegistrar {
   /** Persist a WorkflowDefinition under its id, overwriting any previous registration. */
   register(definition: WorkflowDefinition): Promise<void>;
@@ -576,13 +593,17 @@ export interface WorkflowRegistrar {
   getCapped?(workflowId: string, capBytes: number): Promise<CappedRead>;
 }
 
-/** #616 PR-2c c5b: what `WorkflowRegistrar.getCapped` resolves to. */
+/**
+ * #616 PR-2c c5b: what `WorkflowRegistrar.getCapped` resolves to.
+ * @public
+ */
 export type CappedRead = { definition: WorkflowDefinition } | { over: { bytes: number } };
 
 /**
  * #616 PR-2c c5b: a registrar with every optional member (c5a's `listWithDiagnostics` and
  * `getCapped`), as Realm's own registries — the JSON registry and the SQLite registry — are. Realm's
  * homes carry this type, so a command that needs a member never meets a registrar without it.
+ * @public
  */
 export type RealmWorkflowRegistrar = WorkflowRegistrar &
   Required<Pick<WorkflowRegistrar, 'listWithDiagnostics' | 'getCapped'>>;
@@ -623,6 +644,7 @@ export function unreadableById(
 
 /**
  * Stores WorkflowDefinition objects as JSON files at ~/.realm/workflows/{id}.json.
+ * @public
  */
 export class JsonWorkflowStore implements RealmWorkflowRegistrar {
   private readonly dir: string;
@@ -1058,6 +1080,7 @@ export function definitionAbsenceOf(
  * @param opts  `retryVerb` — the verb this call site's remedy should recommend retrying with
  *              (e.g. `'re-attach'`, `'respond again'`, `'resume again'`, `'replay again'`,
  *              `'drain again'`, or the MCP-neutral `'retry'`).
+ * @public
  */
 export async function getWorkflowForRun(
   store: Pick<WorkflowRegistrar, 'get'>,

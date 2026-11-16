@@ -7,6 +7,7 @@ import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
 /**
  * A single trace entry submitted by the agent. Submitted as-is; the engine
  * canonicalizes and assigns seq before persisting.
+ * @public
  */
 export interface AgentTraceEntry {
   event: string;
@@ -17,6 +18,7 @@ export interface AgentTraceEntry {
 /**
  * A single stored trace entry after canonicalization.
  * seq is engine-assigned: 1-based, monotonically increasing in stored order.
+ * @public
  */
 export interface TraceEntry {
   seq: number;
@@ -25,7 +27,10 @@ export interface TraceEntry {
   data?: Record<string, string | number | boolean | null>;
 }
 
-/** Discard and truncation accounting produced by the trace normalizer. */
+/**
+ * Discard and truncation accounting produced by the trace normalizer.
+ * @public
+ */
 export interface TraceNormalizationSummary {
   submitted_entries: number;
   stored_entries: number;
@@ -95,6 +100,7 @@ export interface TraceNormalizationSummary {
  * `sent: false` / `unsupported_context_tools` at the OUTPUT level while simultaneously carrying
  * genuine per-tool `strict_sent: true` entries under `tool_args`. When reading a single field,
  * check which dimension it belongs to before concluding "strict was off".
+ * @public
  */
 export interface StructuredOutputMeta {
   /** Always `true` — this object's mere presence already implies it; kept explicit so a reader
@@ -275,7 +281,10 @@ export interface StructuredOutputMeta {
   };
 }
 
-/** Diagnostic metadata captured during step execution. Written once; read by inspect. */
+/**
+ * Diagnostic metadata captured during step execution. Written once; read by inspect.
+ * @public
+ */
 export interface StepDiagnostics {
   /**
    * Rough token count estimate: Math.ceil(JSON.stringify(input).length / 4). A CHARACTER-based
@@ -345,6 +354,7 @@ export interface StepDiagnostics {
  * reported; a provider that reports one counter and withholds the other yields
  * `'partially_observed'`, because there is no true four-word answer for that data and forcing one
  * would be the very coercion `CACHE_BASES` forbids one level up.
+ * @public
  */
 export const CACHE_STATES = [
   'engaged',
@@ -353,6 +363,7 @@ export const CACHE_STATES = [
   'partially_observed',
   'unobservable',
 ] as const;
+/** @public */
 export type CacheState = (typeof CACHE_STATES)[number];
 
 /**
@@ -363,8 +374,10 @@ export type CacheState = (typeof CACHE_STATES)[number];
  * so a `'derived'` member would be a declared member with no producer, and a type consumer would
  * reasonably believe realm derives these numbers today. `'derived'` arrives in the PR that derives
  * something (a vocabulary ships its producers with it — the same rule every const in this PR obeys).
+ * @public
  */
 export const CACHE_BASES = ['provider_reported', 'unobservable'] as const;
+/** @public */
 export type CacheBasis = (typeof CACHE_BASES)[number];
 
 /**
@@ -385,16 +398,20 @@ export type PromptCacheSetting = (typeof PROMPT_CACHE_SETTINGS)[number];
  * the OpenAI and o1 adapters; with `cache_key_sent`, realm also sent a cache key — caching 3-B).
  * #896: the OpenAI adapter on GPT-5.6 and later at OpenAI's own address records `lifetime` (30
  * minutes) or `off` for a single-shot request, and `off` for a tool step's requests under `off`.
+ * @public
  */
 export const CACHE_REQUESTS = ['off', 'lifetime', 'provider_rules'] as const;
+/** @public */
 export type CacheRequest = (typeof CACHE_REQUESTS)[number];
 
 /**
  * Issue #600 PR 2 — where a request's cache setting came from (`UsageRecord.cache_requested_source`):
  * `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default). Produced by
  * the CLI's `resolvePromptCache` and written by the Anthropic adapter it is handed to.
+ * @public
  */
 export const CACHE_REQUEST_SOURCES = ['stated', 'runner_default'] as const;
+/** @public */
 export type CacheRequestSource = (typeof CACHE_REQUEST_SOURCES)[number];
 
 /**
@@ -420,6 +437,7 @@ export const CACHE_REQUESTERS = ['realm agent', 'realm listen'] as const;
  *   the drive goes on;
  * - `tool_step` — a step that calls tools, on Anthropic: its own turns reuse the entry, so the short
  *   lifetime is asked for whatever its gaps.
+ * @public
  */
 export const CACHE_AUTO_BASES = [
   'no_measurement',
@@ -427,6 +445,7 @@ export const CACHE_AUTO_BASES = [
   'step_gaps_unreadable',
   'tool_step',
 ] as const;
+/** @public */
 export type CacheAutoBasis = (typeof CACHE_AUTO_BASES)[number];
 
 /**
@@ -441,6 +460,7 @@ export type CacheAutoBasis = (typeof CACHE_AUTO_BASES)[number];
  * - `rate_missing` — the row has no read rate, or no write rate for either lifetime
  *   (`chooseAutoLifetime`, row 4; `missing` names them); #896 unit B: for a provider with one
  *   lifetime, no read rate or no `cache_write` (`chooseAutoOneLifetime`).
+ * @public
  */
 export const CACHE_AUTO_PRICE_CAUSES = [
   'no_file',
@@ -450,6 +470,7 @@ export const CACHE_AUTO_PRICE_CAUSES = [
   'input_zero',
   'rate_missing',
 ] as const;
+/** @public */
 export type CacheAutoPriceCause = (typeof CACHE_AUTO_PRICE_CAUSES)[number];
 
 /**
@@ -457,6 +478,7 @@ export type CacheAutoPriceCause = (typeof CACHE_AUTO_PRICE_CAUSES)[number];
  * (the price file's own order). #896 unit B: `cache_write`, the one write rate of a provider with one
  * lifetime (OpenAI). Anthropic's `missing` names only `cache_read`, `cache_write_5m` and
  * `cache_write_1h`; OpenAI's only `cache_read` and `cache_write`.
+ * @public
  */
 export const CACHE_AUTO_RATES = [
   'cache_read',
@@ -464,12 +486,14 @@ export const CACHE_AUTO_RATES = [
   'cache_write_5m',
   'cache_write_1h',
 ] as const;
+/** @public */
 export type CacheAutoRate = (typeof CACHE_AUTO_RATES)[number];
 
 /**
  * Issue #898 — where `auto`'s choice took its prices: from the runner's price file (`economics`,
  * with the one lifetime it could not cost excluded), or from none (the owner's fallback, by its
  * cause). Closed-set words only: no model id, no path.
+ * @public
  */
 export type CacheAutoPrices =
   | { from: 'economics'; excluded?: ['short'] | ['long']; missing?: [CacheAutoRate] }
@@ -479,6 +503,7 @@ export type CacheAutoPrices =
  * Issue #600 (the lifetime unit), #898 — the record's `cache_auto`: the basis of the choice, the
  * gaps it read, and (#898) where its prices came from — absent when no price was needed (no kept
  * gap). Normalised where it enters the record (`normalizeCacheAuto`).
+ * @public
  */
 export interface CacheAuto {
   basis: CacheAutoBasis;
@@ -491,8 +516,10 @@ export interface CacheAuto {
  * provider SDK's own default address (`default`) or another one (`custom`: `--base-url`,
  * `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`). Produced by each adapter from its SDK client's
  * `baseURL`; the address itself is never stored.
+ * @public
  */
 export const REQUEST_ENDPOINTS = ['default', 'custom'] as const;
+/** @public */
 export type RequestEndpoint = (typeof REQUEST_ENDPOINTS)[number];
 
 /**
@@ -524,8 +551,10 @@ export type RequestFactAbsentCause = (typeof REQUEST_FACT_ABSENT_CAUSES)[number]
  * Caching 3-B (A6, C5): the cache field names Realm itself adds to a request — Anthropic's
  * `cache_control` markers and OpenAI's `prompt_cache_key` — the closed set a recorded refusal names.
  * Normalised at the write: any other name drops the fact.
+ * @public
  */
 export const CACHE_CONTROL_FIELDS = ['cache_control', 'prompt_cache_key'] as const;
+/** @public */
 export type CacheControlField = (typeof CACHE_CONTROL_FIELDS)[number];
 
 /**
@@ -533,8 +562,10 @@ export type CacheControlField = (typeof CACHE_CONTROL_FIELDS)[number];
  * and the prompt's head block (Anthropic's markers, and #896 OpenAI's marks on GPT-5.6 and later),
  * or OpenAI's `key`. Caching 3-M (A-0): or the `conversation` so far — the marker Anthropic's tool
  * main turns put on a copy of the last message (#899).
+ * @public
  */
 export const CACHE_MARKED_PARTS = ['system', 'prompt', 'key', 'conversation'] as const;
+/** @public */
 export type CacheMarkedPart = (typeof CACHE_MARKED_PARTS)[number];
 
 /**
@@ -542,6 +573,7 @@ export type CacheMarkedPart = (typeof CACHE_MARKED_PARTS)[number];
  * `system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request,
  * even when it went out whole; else the prompt as that request sent it) and `format` where it had
  * them; `cache_marked` says which parts carried a marker.
+ * @public
  */
 export interface PrefixParts {
   tools?: string;
@@ -553,6 +585,7 @@ export interface PrefixParts {
 /**
  * Caching 3-M (piece B3a): Anthropic's reasons a request's cache read fell short, and `unknown` for a
  * reason Realm does not know (recorded so, never verbatim).
+ * @public
  */
 export const CACHE_MISS_TYPES = [
   'messages_changed',
@@ -563,17 +596,23 @@ export const CACHE_MISS_TYPES = [
   'unavailable',
   'unknown',
 ] as const;
+/** @public */
 export type CacheMissType = (typeof CACHE_MISS_TYPES)[number];
 
 /**
  * Caching 3-M (piece B3a): what Anthropic said in words, for a request that named an earlier answer:
  * `no_divergence` (it found none), `pending` (it has not worked it out yet), `not_returned` (the
  * answer carried nothing Realm can read).
+ * @public
  */
 export const CACHE_DIAGNOSTICS_WORDS = ['no_divergence', 'pending', 'not_returned'] as const;
+/** @public */
 export type CacheDiagnosticsWord = (typeof CACHE_DIAGNOSTICS_WORDS)[number];
 
-/** Caching 3-M (piece B3a): Anthropic's reason for a miss, with its approximate token count if given. */
+/**
+ * Caching 3-M (piece B3a): Anthropic's reason for a miss, with its approximate token count if given.
+ * @public
+ */
 export interface CacheMissReason {
   type: CacheMissType;
   cache_missed_input_tokens?: number;
@@ -583,6 +622,7 @@ export interface CacheMissReason {
  * Caching 3-M (piece B3a): a request's question to Anthropic about a cache miss, in one of three
  * shapes: it did not ask because Anthropic refused the question in this drive; it asked with no
  * earlier message (a call's first request); or it named an earlier answer, with what came back.
+ * @public
  */
 export type CacheDiagnostics =
   | { asked: false; cause: 'rejected' }
@@ -594,8 +634,10 @@ export type CacheDiagnostics =
  * `run`, the run's own record — the first request of the same step's last call there, from an
  * earlier drive (piece A-1b); `earlier_run`, another run's record — the same step's first request
  * there (piece C2 writes it). Normalised at the write: any other word drops the reference.
+ * @public
  */
 export const CACHE_REFERENCE_SOURCES = ['run', 'earlier_run'] as const;
+/** @public */
 export type CacheReferenceSource = (typeof CACHE_REFERENCE_SOURCES)[number];
 
 /**
@@ -611,6 +653,7 @@ export type CacheReferenceSource = (typeof CACHE_REFERENCE_SOURCES)[number];
  * `prefix_parts.prompt` on both providers). Never a `reference` of its own, never a `request_index`
  * (an index is not identity, #715 (R)), never a `request_in_call` (the copy is always a call's first
  * request).
+ * @public
  */
 export type CacheReference = { from: CacheReferenceSource } & Pick<UsageRecord, 'request_start'> &
   Partial<
@@ -640,6 +683,7 @@ export type CacheReference = { from: CacheReferenceSource } & Pick<UsageRecord, 
  * retry without the cache fields worked. `proven` is `cache_fields` when the request that worked
  * dropped only the cache fields, `none` when it also dropped strict (#311's ladder ran on the retry's
  * 400). What the provider said stays in the verbatim error facts (`api_param`, `api_code`, #313).
+ * @public
  */
 export interface CacheControlsRejected {
   status: 400;
@@ -648,6 +692,7 @@ export interface CacheControlsRejected {
   fields: readonly CacheControlField[];
 }
 
+/** @public */
 export interface UsageRecord {
   /**
    * 0-based, in wire order — across a step's schema-repair calls too. A step is 1 to 21+ wire
@@ -817,7 +862,10 @@ export interface UsageRecord {
   reference?: CacheReference;
 }
 
-/** Issue #600 — the per-step roll-up plus the per-request detail. */
+/**
+ * Issue #600 — the per-step roll-up plus the per-request detail.
+ * @public
+ */
 export interface StepCacheDetail {
   state: CacheState;
   basis: CacheBasis;
@@ -829,12 +877,18 @@ export interface StepCacheDetail {
  * entry records them (`supplied_by`). PR-0's producer is the agent's answer to an agent step; a door
  * through which an operator supplies an engine step's input adds `operator` with it (the membership
  * rule — no member is reserved).
+ * @public
  */
 export const SUPPLIER_ROLES = ['agent'] as const;
+/** @public */
 export type SupplierRole = (typeof SUPPLIER_ROLES)[number];
 
-/** Why an entry names no supplier (#729 PR-0, §5 E1 (ii)). */
+/**
+ * Why an entry names no supplier (#729 PR-0, §5 E1 (ii)).
+ * @public
+ */
 export const SUPPLIER_ABSENT_CAUSES = ['engine_input', 'not_recorded'] as const;
+/** @public */
 export type SupplierAbsentCause = (typeof SUPPLIER_ABSENT_CAUSES)[number];
 
 /**
@@ -847,10 +901,13 @@ export type SupplierAbsentCause = (typeof SUPPLIER_ABSENT_CAUSES)[number];
  *  - `none`: nothing to copy, so the step recorded `{}` — the engine ran a step that depends on more
  *    than one step, or whose single dependency has no successful entry (a trigger rule let it run
  *    after that step failed or was skipped).
+ * @public
  */
 export const OUTPUT_SOURCES = ['driven_step', 'dependency', 'run_params', 'none'] as const;
+/** @public */
 export type OutputSource = (typeof OUTPUT_SOURCES)[number];
 
+/** @public */
 export interface EvidenceSnapshot {
   step_id: string;
   started_at: string;
@@ -1037,6 +1094,7 @@ export interface EvidenceSnapshot {
   exhausted_by?: 'attempts' | 'total_timeout';
 }
 
+/** @public */
 export interface PendingGate {
   gate_id: string;
   step_name: string;
@@ -1098,11 +1156,15 @@ export interface PendingGate {
 /**
  * Derived phase of a workflow run. Always computed from the four step sets and run state;
  * never set directly by callers outside the engine.
+ * @public
  */
 export type RunPhase =
   'running' | 'gate_waiting' | 'completed' | 'failed' | 'abandoned' | 'aborted';
 
-/** Snapshot of a single workflow context entry taken at run start. */
+/**
+ * Snapshot of a single workflow context entry taken at run start.
+ * @public
+ */
 export interface WorkflowContextSnapshot {
   /** Absolute path the content was read from. */
   source_path: string;
@@ -1118,6 +1180,7 @@ export interface WorkflowContextSnapshot {
 
 /**
  * Per-claim liveness record (issue #101). Written atomically when a step is claimed.
+ * @public
  */
 export interface ClaimRecord {
   /**
@@ -1181,6 +1244,7 @@ export interface ClaimRecord {
  * `findCapabilityBlockedSteps`. Clearing it on recovery is hygiene, not correctness. Additive-optional (the
  * `claims` / `extension_identity` precedent): legacy records lack it; JSON-file-store-only until external
  * stores round-trip unknown optional RunRecord fields through update().
+ * @public
  */
 export interface CapabilityBlock {
   requirement: { kind: 'handler' | 'adapter'; name: string };
@@ -1194,6 +1258,7 @@ export interface CapabilityBlock {
  * Reason a step landed in `skipped_steps` (issue #111), keyed by step name in
  * {@link RunRecord.skip_details}. Additive-optional, definition-free surfacing metadata —
  * `skipped_steps` stays the authoritative set; this only explains *why*.
+ * @public
  */
 export type SkipDetail =
   | {
@@ -1258,6 +1323,7 @@ export type SkipDetail =
  * behaviour mints a NEW arm. That rule is what keeps every stored `sealed_by.arm` decodable
  * forever, and what makes a future #378 resolution land as a mapping/arm ADDITION rather than as
  * a rewrite of stored records.
+ * @public
  */
 export const SEAL_ARMS = [
   'complete',
@@ -1280,12 +1346,14 @@ export const SEAL_ARMS = [
  * whether the run was good or bad: `arm -> RunPhase` and `arm -> outcome` are engine-owned total
  * functions over this value (`eligibility.ts`) — changing either changes a JUDGEMENT; it never
  * moves a stored record.
+ * @public
  */
 export type SealArm = (typeof SEAL_ARMS)[number];
 
 /**
  * Issue #367: who sealed this run — the recorded FACT `deriveRunPhase` prefers over every marker
  * and over the terminal-reason prose.
+ * @public
  */
 export interface SealedBy {
   arm: SealArm;
@@ -1360,6 +1428,7 @@ export interface SealedBy {
  * Before this record existed, every one of these failures wrote NOTHING to the store. The console
  * said what happened, the process exited, and the run read healthy on every operator surface until
  * `never_claimed_idle` noticed it 24 hours later.
+ * @public
  */
 export interface DriveFailureRecord {
   /** ISO-8601 timestamp of the failure. */
@@ -1452,6 +1521,7 @@ export interface DriveFailureRecord {
  * `entries` holds at most 5, MOST-RECENT-LAST. `total` and `first_failed_at` live OUTSIDE the ring
  * deliberately — a run that failed forty times must not read as though it failed five, and the
  * moment trouble started is the one fact a ring cannot preserve.
+ * @public
  */
 export interface DriveFailuresField {
   first_failed_at: string;
@@ -1459,6 +1529,7 @@ export interface DriveFailuresField {
   entries: DriveFailureRecord[];
 }
 
+/** @public */
 export interface RunRecord {
   id: string;
   workflow_id: string;
@@ -1710,7 +1781,10 @@ export interface RunRecord {
 export const ANSWER_ROUTES = ['mcp_form', 'mcp', 'cli', 'slack'] as const;
 export type AnswerRoute = (typeof ANSWER_ROUTES)[number];
 
-/** #627 W: a recorded answer's route as its door declared it, and what showed a form. */
+/**
+ * #627 W: a recorded answer's route as its door declared it, and what showed a form.
+ * @public
+ */
 export interface AnswerFacts {
   route: string;
   /** Present only on an answer from a form: the renderer that showed the question. */
@@ -1720,7 +1794,10 @@ export interface AnswerFacts {
   channel_evidence?: ChannelEvidence;
 }
 
-/** #603 A3a: the account a channel's door says sent an answer, as the channel reports it. */
+/**
+ * #603 A3a: the account a channel's door says sent an answer, as the channel reports it.
+ * @public
+ */
 export interface ChannelEvidence {
   /** The workspace the account belongs to; absent when the channel did not say. */
   team?: string;
@@ -1729,11 +1806,17 @@ export interface ChannelEvidence {
   thread_ts?: string;
 }
 
-/** #603 A3a: how an answer's sender was let through, or why it was not compared. */
+/**
+ * #603 A3a: how an answer's sender was let through, or why it was not compared.
+ * @public
+ */
 export type AdmittedBy =
   'owner' | 'answerers' | 'project_answerers' | 'no_named_answerer' | 'owner_not_checked_on_route';
 
-/** #627 W: what an answer's entry holds about its route — the facts, or a library caller's absence. */
+/**
+ * #627 W: what an answer's entry holds about its route — the facts, or a library caller's absence.
+ * @public
+ */
 export type AnswerOnRecord = AnswerFacts | { absent: 'route_not_declared' };
 
 /** #627 W: why an answer's entry names no route — one vocabulary for the record and `outcome.via`. */
@@ -1744,18 +1827,23 @@ export const ANSWER_ROUTE_ABSENCES = [
 ] as const;
 export type AnswerRouteAbsence = (typeof ANSWER_ROUTE_ABSENCES)[number];
 
-/** #627 W (§5.8's table): why a door names no principal. */
+/**
+ * #627 W (§5.8's table): why a door names no principal.
+ * @public
+ */
 export const PRINCIPAL_ABSENCES = [
   'door_authentication_disabled',
   'principal_not_passed',
   'door_authenticates_no_principal',
   'not_a_server_door',
 ] as const;
+/** @public */
 export type PrincipalAbsence = (typeof PRINCIPAL_ABSENCES)[number];
 
 /**
  * #627 W (F29): what a door's transport authenticated — an API key by its id (realm-cloud), the one
  * shared token of `realm serve` (no id: it names no one), or the door's typed absence. Never a secret.
+ * @public
  */
 export type Principal =
   { kind: 'api_key'; id: string } | { kind: 'shared_token' } | { absent: PrincipalAbsence };

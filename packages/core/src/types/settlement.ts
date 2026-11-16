@@ -18,7 +18,9 @@ import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
 
 /** The three outcomes a `settle_step` delta's caller can report for the step being settled —
  *  mirrors the THREE seal call sites (:2560 complete, :2220 fail, :1784 handler-abort) this
- *  increment's transform is bound to by line (design record §3). */
+ *  increment's transform is bound to by line (design record §3).
+ * @public
+ */
 export type SettleStepOutcome = 'complete' | 'fail' | 'abort';
 
 /**
@@ -34,6 +36,7 @@ export type SettleStepOutcome = 'complete' | 'fail' | 'abort';
  * variant). `applySettlement` throws a plain contract-violation `Error` (never a `WorkflowError` —
  * this is a caller-programming-error path, not a runtime predicate outcome) if `outcome==='abort'`
  * and `abort` is missing; every real caller always supplies both together.
+ * @public
  */
 export interface SettleStepDelta {
   kind: 'settle_step';
@@ -60,7 +63,9 @@ export interface SettleStepDelta {
 /** Result a `mark_finalizer` delta reports for one finalizer's handler outcome — mirrors
  *  `finalizer_ledger[name].status`'s two live-outcome values (`pending`/`voided` are never a
  *  mark-delta's OWN result; they are prior/other-path states the predicate reads, never writes
- *  via this delta). */
+ *  via this delta).
+ * @public
+ */
 export type MarkFinalizerResult = 'completed' | 'failed';
 
 /**
@@ -68,6 +73,7 @@ export type MarkFinalizerResult = 'completed' | 'failed';
  * drain loop's mint-before-execute step. `leaseToken` is CALLER-MINTED (uuid; design record §3's
  * lens-1 F3a note: unlike every other fence in the system, this one is acquirer-minted by
  * necessity — there is no prior claim record to read a token off of for a finalizer).
+ * @public
  */
 export interface LeaseFinalizerDelta {
   kind: 'lease_finalizer';
@@ -83,6 +89,7 @@ export interface LeaseFinalizerDelta {
  * `evidence` is the ONE evidence snapshot for this finalizer's execution (mirrors
  * the one-entry-per-finalizer-per-drain-pass cardinality the deleted `buildFinalizedSeal` had) — singular,
  * not an array, unlike `SettleStepDelta.evidence`.
+ * @public
  */
 export interface MarkFinalizerDelta {
   kind: 'mark_finalizer';
@@ -97,6 +104,7 @@ export interface MarkFinalizerDelta {
  * caller builds everything a {@link PendingGate} holds (gate_id, choices, preview, the frozen
  * enforce/notify fields) except `opened_at` and `expires_at`, which the transform mints from the
  * write's one reading `at` — so no gate is ever born expired.
+ * @public
  */
 export type OpeningGate = Omit<PendingGate, 'opened_at' | 'expires_at'>;
 
@@ -109,6 +117,7 @@ export type OpeningGate = Omit<PendingGate, 'opened_at' | 'expires_at'>;
  * carried verbatim. This is the OPENING kind only: a restore (none exists) carries the full
  * `PendingGate` with its frozen instants in its own delta kind. `claimToken` is compared the same
  * absent≡absent way `SettleStepDelta.claimToken` is.
+ * @public
  */
 export interface OpenGateDelta {
   kind: 'open_gate';
@@ -125,6 +134,7 @@ export interface OpenGateDelta {
  * `settleGateArms`). Fenced by `gateId` ONLY — zero claim arms (§3's own note: "fence = gateId
  * ONLY (L20)"), since a gate's authority is bearer-gateId-credentialed (D-5: RECORDED, not
  * enforced — `respondedBy` below is an evidence passthrough, read by no arm).
+ * @public
  */
 export interface SettleGateDelta {
   kind: 'settle_gate';
@@ -165,6 +175,7 @@ export interface SettleGateDelta {
  * `outcome === 'abort'` — a violation of either throws a plain contract-violation `Error` in the
  * transform (the `settlement.ts:228-234` precedent), never a `WorkflowError` (a caller-programming
  * error, not a predicate outcome).
+ * @public
  */
 export interface SettleGuardDelta {
   kind: 'settle_guard';
@@ -203,6 +214,7 @@ export interface SettleGuardDelta {
  * is decided INSIDE `applyExpireGate` itself by reading the frozen `PendingGate` fields — the
  * `applyAbortEdge` cancel-gate precedent (settlement.ts) for a transform building its own
  * evidence via `captureEvidence` rather than a caller-supplied array.
+ * @public
  */
 export interface ExpireGateDelta {
   kind: 'expire_gate';
@@ -214,6 +226,7 @@ export interface ExpireGateDelta {
  * `releaseStepArms`) — the shared shape behind BOTH the capability-block release
  * (execution-loop.ts:2453-2529) and the compensating un-claim (execution-loop.ts:1607-1635).
  * NEVER terminal, writes NO `settled` entry — the step returns to eligible.
+ * @public
  */
 export interface ReleaseStepDelta {
   kind: 'release_step';
@@ -239,6 +252,7 @@ export interface ReleaseStepDelta {
  * - `release_claims` clears `claims` AND `in_progress_steps` in the same write (D6-66).
  * - `identity_entry` is appended to `extension_identity` verbatim — its `captured_at` is outside
  *   class, minted before any store, and never folded into the reading (D6-67).
+ * @public
  */
 export interface SealRunDelta {
   kind: 'seal_run';
@@ -261,6 +275,7 @@ export interface SealRunDelta {
  * unrecognized kind's fields under a generic/default case is actively dangerous: `SettleGateDelta`
  * has no `step` field at all, so a default-arm implementation reading `delta.step` would silently
  * mis-write (write `undefined` as a step name) rather than crash where the bug is introduced.
+ * @public
  */
 export type SettlementDelta =
   | SettleStepDelta
@@ -278,6 +293,7 @@ export type SettlementDelta =
  * (design record §7, the full table MINUS `drain_pending`) — `drain_pending` is the PR-B purge
  * guard's own THROWN `STATE_RUN_BUSY` builder reason, never a `settleStep` return value, so it is
  * deliberately excluded from this type (a `settleStep` implementation must never construct it).
+ * @public
  */
 export type SettlementRefusalReason =
   // ok-shaped NOOPs (⊂ this type — see SettlementNoopReason below)
@@ -351,6 +367,7 @@ export type SettlementNoopReason =
  *
  * `run` on `applied: false` is FRESH STATE — the very state the predicate refused/no-opped
  * against — with NO write performed (version unchanged).
+ * @public
  */
 export type SettlementResult =
   | {

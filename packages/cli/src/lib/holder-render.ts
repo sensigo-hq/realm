@@ -42,6 +42,7 @@ import type {
   RunRecord,
   Snapshot,
 } from '@sensigo/realm';
+import { accountLabelOf } from '@sensigo/realm-mcp';
 import { PLAIN, RUN_PHASE_WORDS, writerSetFor, type RenderCtx } from '../output/writer.js';
 import { cliCommandOf, respondLines } from '../commands/ways-renderer.js';
 
@@ -406,10 +407,28 @@ export function namedAnswerer(by: AnswerView['answered_by']): NamedAnswerer | un
  * `(not stated)`. An answer the gate's expiry wrote has no answerer ({@link namedAnswerer}): each
  * caller words that case itself.
  */
-export function answererPhrase(by: NamedAnswerer, statedLabel: string): string {
-  if (by.by !== null) return `${quoteStatedName(by.by)} (${statedLabel})`;
-  if (by.absent_cause === 'name_unreadable') return UNSHOWABLE_NAME;
-  return '(not stated)';
+export function answererPhrase(by: NamedAnswerer, statedLabel: string, account?: string): string {
+  const named =
+    by.by !== null
+      ? `${quoteStatedName(by.by)} (${statedLabel})`
+      : by.absent_cause === 'name_unreadable'
+        ? UNSHOWABLE_NAME
+        : undefined;
+  // #603 A3b: the stated name first, then the account the channel reported (`accountPhrase`).
+  if (named !== undefined && account !== undefined) return `${named}, ${account}`;
+  return named ?? account ?? '(not stated)';
+}
+
+/**
+ * #603 A3b: the account part of an answerer phrase — the account the channel reported, with the
+ * people's label for the entry's route (`via`, `answerViaOf`'s reading); the one unshowable phrase,
+ * with no label, for one that cannot be shown; `undefined` when none is recorded.
+ */
+export function accountPhrase(answer: AnswerView, via: AnswerArrival['via']): string | undefined {
+  if (answer.account !== undefined) {
+    return `${answer.account.user} (${PEOPLE_DOOR_WORDS.account(typeof via === 'string' ? via : undefined)})`;
+  }
+  return answer.account_absent === 'account_unreadable' ? UNSHOWABLE_NAME : undefined;
 }
 
 /**
@@ -423,6 +442,7 @@ export const PEOPLE_DOOR_WORDS: OutcomeDoorWords = {
   mcp_form: "through a form in an assistant's app",
   slack: 'in a Slack thread',
   other_route: (route) => `through route ${quoteStatedName(route)}`,
+  account: accountLabelOf,
 };
 
 /**
@@ -531,7 +551,7 @@ export function renderAnswerLine(
   const givenMs = answer.at !== undefined ? parseStamp(answer.at) : undefined;
   return [
     `Answer: ${choice}`,
-    `answered by ${answererPhrase(by, 'as stated')}`,
+    `answered by ${answererPhrase(by, 'as stated', accountPhrase(answer, arrival.via))}`,
     arrivalPhrase(arrival, ctx),
     ...(givenMs !== undefined ? [`given at ${instantText(givenMs)}`] : []),
     ...(principal !== undefined ? [principal] : []),

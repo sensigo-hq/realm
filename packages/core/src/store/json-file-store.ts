@@ -115,7 +115,10 @@ interface KeyPointer {
   updated_at: string;
 }
 
-/** Summary returned by {@link JsonFileStore.reconcileKeys}. */
+/**
+ * Summary returned by {@link JsonFileStore.reconcileKeys}.
+ * @public
+ */
 export interface ReconcileSummary {
   /** Number of distinct (workflow_id, idempotency_key) groups encountered. */
   groups: number;
@@ -146,6 +149,7 @@ export interface ReconcileSummary {
  * `reason` is the fault sentence and `repair` the way out (`realm run list` prints both); `facts`
  * are the damaged file's facts (no content), which a decision over every run names when it fails
  * closed.
+ * @public
  */
 export interface UnreadableRunFileEntry {
   file: string;
@@ -159,7 +163,9 @@ export interface UnreadableRunFileEntry {
 
 /** issue #719 (B3): what {@link JsonFileStore.listWithDiagnostics} returns — #715 (b) (D-28): the
  *  same {@link Listing} `list` returns (`snapshots`, `read_at`, `consistent_snapshot`), beside the
- *  diagnostics. */
+ *  diagnostics.
+ * @public
+ */
 export interface RunListing extends Listing {
   /** Every run file that could not be read as a run, sorted by file name — copies of a readable
    *  run excepted. */
@@ -183,6 +189,7 @@ export interface RunListing extends Listing {
  *
  * #616 PR-2c c4-i: the class no longer declares `RunStore`, and no run-store contract runs on it; PR-3
  * deletes it.
+ * @public
  */
 export class JsonFileStore implements PerRunArtifactStore {
   private readonly runsDir: string;

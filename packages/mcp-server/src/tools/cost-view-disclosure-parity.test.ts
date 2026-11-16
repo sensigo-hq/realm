@@ -504,6 +504,12 @@ const gateStepAnswer = {
   evidence_hash: 'g2',
   responded_by: 'alice',
   claim_proof: { proof: 'absent' as const },
+  // #603 A3b: a Slack answer — the account Slack reported, and how it was let through.
+  answer: {
+    route: 'slack',
+    channel_evidence: { team: 'T1', user: 'U0ALICE', ts: '1.2', thread_ts: '1.1' },
+  },
+  admitted_by: 'no_named_answerer' as const,
 };
 // An answer written before the proof existed, naming nobody.
 const oldGateExecution = {
@@ -913,6 +919,9 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
               // #729 PR-6a (B8): when the answer was given.
               at: expect.any(String),
               claim_proof: { proof: 'absent' },
+              // #603 A3b: the account Slack reported, and how it was let through.
+              account: { user: 'U0ALICE', team: 'T1' },
+              admitted_by: 'no_named_answerer',
             },
           ]),
       },
@@ -1097,6 +1106,23 @@ describe('#625 PR-H — context 3b, get_run_state.step_claims and the answer', (
         surface: 'rendered',
         // Data: the WORD (`proof_not_recorded`), not a phrase — the CLI words it.
         probe: () => expect(oldAnswer.claim_proof_absent).toBe('proof_not_recorded'),
+      },
+      // #603 A3b (authorized by MA 2 at build): the account Slack reported, as data — never verified.
+      account: {
+        surface: 'rendered',
+        probe: () => expect(answer.account).toEqual({ user: 'U0ALICE', team: 'T1' }),
+      },
+      account_absent: {
+        surface: 'rendered',
+        probe: () => expect(oldAnswer.account_absent).toBe('account_not_recorded'),
+      },
+      admitted_by: {
+        surface: 'rendered',
+        probe: () => expect(answer.admitted_by).toBe('no_named_answerer'),
+      },
+      admitted_by_absent: {
+        surface: 'rendered',
+        probe: () => expect(oldAnswer.admitted_by_absent).toBe('admission_not_recorded'),
       },
     } satisfies Record<keyof AnswerView, DisclosureRoute>;
 

@@ -13,6 +13,7 @@
  * @param accepted  The accepted candidates from partitionBySubstring.
  * @param rejected  The rejected candidates from partitionBySubstring.
  * @returns         { accepted_count, rejected_count, candidates_found }
+ * @public
  */
 export function countResults(
   accepted: Record<string, unknown>[],

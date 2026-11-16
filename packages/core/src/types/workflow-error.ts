@@ -5,6 +5,7 @@ import type { WayOn } from '../engine/ways.js';
 import type { ErrorObject } from 'ajv';
 import { brandClass, REALM_BRAND } from '../brand.js';
 
+/** @public */
 export type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
 
 /**
@@ -12,6 +13,7 @@ export type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'EN
  * wait, then try again (issue #729 PR-0, D4 P-2: renamed from `wait_for_human`, every vocabulary read
  * uses "human" for a person). `await`: the run waits on someone else — a person's answer or another
  * program's step (D3 A-2); its replies carry `poll_after_ms` and, when the record states one, `until`.
+ * @public
  */
 export type AgentAction =
   | 'report_to_user'
@@ -33,6 +35,7 @@ export const AGENT_ACTIONS = [
   'await',
 ] as const satisfies readonly AgentAction[];
 
+/** @public */
 export type ErrorCode =
   // NETWORK
   | 'NETWORK_TIMEOUT'
@@ -266,6 +269,7 @@ export type ErrorCode =
  * that failed closed (`scope: 'files'`, {@link UnreadableRunFilesFacts}). The aggregate shares both of
  * its codes with the single-file error, so the facts carry the discriminant — never a shape told
  * apart by which keys are present.
+ * @public
  */
 export type StoredFileErrorFacts =
   ({ scope: 'file' } & UnreadableFileFacts) | ({ scope: 'files' } & UnreadableRunFilesFacts);
@@ -276,6 +280,7 @@ export type StoredFileErrorFacts =
  * `VALIDATION_PROBLEMS_SHOWN`, never re-sorted or de-duplicated), the total before the cap
  * (`error_count`, counted once at the validator and carried — never recounted by a renderer), and,
  * for an agent step's counted rejection, the countdown (`rejections`, `threshold`).
+ * @public
  */
 export interface ValidationErrorFacts {
   errors: readonly ErrorObject[];
@@ -289,6 +294,7 @@ export interface ValidationErrorFacts {
  * entering with the unit that types it. Every other code keeps its untyped `details` until its owning
  * unit types it (#759 typed the two validation codes; `VALIDATION_EXHAUSTED` and
  * `VALIDATION_TRACE_SCHEMA` stay untyped until their owners type them).
+ * @public
  */
 export interface ErrorFactsByCode {
   RESOURCE_FORMAT_INVALID: StoredFileErrorFacts;
@@ -304,6 +310,7 @@ export interface ErrorFactsByCode {
  * #603 A3a: an answer refused because its sender is not one the question lets answer — the names
  * that may (as written: the question's `owner` and `answerers`, or the project's list), and the
  * account the channel reported for the sender.
+ * @public
  */
 export interface AnswererMismatchFacts {
   allowed: readonly string[];
@@ -316,6 +323,7 @@ export interface AnswererMismatchFacts {
  * format it states, and the latest this version reads. Its own `scope`: the copy is not damaged, so
  * the damaged-file readers (`unreadableFactsOf`, keyed on `scope: 'file'`) must never take it, and no
  * damaged-file class (`legacy` is an OLDER format) is true of it.
+ * @public
  */
 export interface NewerDefinitionFacts {
   scope: 'newer_definition';
@@ -331,9 +339,13 @@ export type ErrorFactsOf<C extends ErrorCode> = C extends keyof ErrorFactsByCode
   ? ErrorFactsByCode[C]
   : never;
 
-/** Any typed error facts. */
+/**
+ * Any typed error facts.
+ * @public
+ */
 export type ErrorFacts = ErrorFactsByCode[keyof ErrorFactsByCode];
 
+/** @public */
 export interface WorkflowErrorOptions {
   code: ErrorCode;
   category: ErrorCategory;
@@ -378,6 +390,7 @@ export interface WorkflowErrorOptions {
   errors?: readonly string[];
 }
 
+/** @public */
 export class WorkflowError extends Error {
   readonly code: ErrorCode;
   readonly category: ErrorCategory;

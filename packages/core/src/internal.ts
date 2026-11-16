@@ -92,6 +92,9 @@ export {
   GATE_PROOFS,
   GATE_PROOF_CAUSES,
   CLAIM_PROOF_ABSENT_CAUSES,
+  // #603 A3b: why an answer's view names no account, or no admission.
+  ACCOUNT_ABSENT_CAUSES,
+  ADMITTED_BY_ABSENT_CAUSES,
   NAME_MAX_LENGTH,
   NAME_CAP_MARKER,
   NAME_REFUSAL_REASONS,
@@ -122,6 +125,8 @@ export type {
   GateProofCause,
   GateClaimVerdict,
   ClaimProofAbsentCause,
+  AccountAbsentCause,
+  AdmittedByAbsentCause,
   ProgramIdentityFacts,
 } from './engine/holder.js';
 /**
@@ -322,6 +327,8 @@ export type {
 // #627 W (§5.8): how a gate answer arrived — the one reading, and the form's evidence.
 export {
   answerViaOf,
+  // #603 A3b: the one reader of the account a channel reported for an answer.
+  answerAccountOf,
   answerArrivalOf,
   principalOf,
   shownViewEvidence,
@@ -1226,3 +1233,24 @@ export {
   seedSaid,
 } from './deprecations/deprecations.js';
 export type { DeprecationEntry } from './deprecations/deprecations.js';
+
+// CP-1 PR 1: the types public declarations reference that were not exported (a user could not name
+// them), and the two the public set brings in: each is tagged `@public` at its declaration.
+export { KIND } from './utils/redaction.js';
+export type { MemberKind } from './utils/redaction.js';
+export { STORED_FILE_CLASSES } from './store/run-file.js';
+export type { Base } from './engine/ways.js';
+export type { ClassifiableRun } from './engine/eligibility.js';
+export type { ClassifyRunHealthOptions } from './engine/run-health.js';
+export type { DeclaredNames } from './workflow/name-check.js';
+export type {
+  ExpireGateDelta,
+  OpenGateDelta,
+  ReleaseStepDelta,
+  SettleGateDelta,
+  SettleGuardDelta,
+} from './types/settlement.js';
+export type { RateLimiter } from './adapters/rate-limiter.js';
+export type { RunRecordFieldProblem } from './types/run-record-shape.js';
+export type { StepMeta } from './engine/execution-loop.js';
+export type { StepScopedKind } from './store/fence-predicate.js';

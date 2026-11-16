@@ -165,7 +165,10 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
     // (a) red when the notifier posts the authored resolution message over a run the answer's guard
     //     aborted, or posts the ending's operator lines to the thread; (b) prints every thread reply
     //     posted and the console's lines.
-    expect(posts).toEqual(['✅ Gate resolved: `reject`. The run has ended.']);
+    // #603 A3b: the receipt names the account Slack reported (the reply's user, U1).
+    expect(posts).toEqual([
+      '✅ Gate resolved: `reject`, by U1 (as Slack reports it). The run has ended.',
+    ]);
     expect(consoleLines()).toEqual(
       expect.arrayContaining(["Guard step 'check' aborted the run.", `Reason: ${NOT_APPROVED}`]),
     );
@@ -181,7 +184,10 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
 
     // (a) red when the authored "the run continues" is posted for a run the answer completed, or
     //     the ending's lines leave the console; (b) prints every thread reply posted.
-    expect(posts).toEqual(['✅ Gate resolved: `approve`. The run has ended.']);
+    // #603 A3b: the receipt names the account Slack reported (the reply's user, U1).
+    expect(posts).toEqual([
+      '✅ Gate resolved: `approve`, by U1 (as Slack reports it). The run has ended.',
+    ]);
     expect(consoleLines()).toEqual(
       expect.arrayContaining(["Guard step 'check' passed and completed the run."]),
     );
@@ -198,7 +204,10 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
 
     // The control. (a) red when a guard that merely passed changes the Slack post (the authored
     //     resolution message under the recorded line); (b) prints every thread reply posted.
-    expect(posts).toEqual([`✅ Gate resolved: \`approve\`\n${AUTHORED.approve}`]);
+    // #603 A3b: the receipt names the account Slack reported (the reply's user, U1).
+    expect(posts).toEqual([
+      `✅ Gate resolved: \`approve\`, by U1 (as Slack reports it)\n${AUTHORED.approve}`,
+    ]);
     // (a) red when the guard was not settled by the answer's write; (b) prints the completed
     //     steps.
     expect((await store.get(runId)).record.completed_steps).toEqual(['confirm', 'check']);

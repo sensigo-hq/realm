@@ -6,6 +6,7 @@
  * The engine calls `acquire()` before each adapter invocation when a service
  * has a `rate_limit` configuration. It calls `pause()` when the service responds
  * with HTTP 429 to hold off concurrent retries for the indicated window.
+ * @public
  */
 export interface RateLimiter {
   /**

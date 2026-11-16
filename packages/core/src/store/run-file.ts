@@ -25,6 +25,7 @@ import { quotedCommand } from '../utils/shell-word.js';
  *  - `mismatched`: a run record whose `id` is not the file's name (`held_id`, `held_file`);
  *  - `legacy`: written by an earlier Realm (`state` without `completed_steps`);
  *  - `unreadable`: the file (or the runs folder) cannot be read (`errno`).
+ * @public
  */
 export const STORED_FILE_CLASSES = [
   'empty',
@@ -34,6 +35,7 @@ export const STORED_FILE_CLASSES = [
   'legacy',
   'unreadable',
 ] as const;
+/** @public */
 export type StoredFileClass = (typeof STORED_FILE_CLASSES)[number];
 
 /**
@@ -53,13 +55,20 @@ export const TRACE_FILE_SUFFIX = '.jsonl';
 export const RUN_ID_LENGTH = 36;
 
 /** issue #719 (F4): the kinds of side file a run keeps beside its file, in its runs folder —
- *  exported by name as one const and its type (#729 PR-0, PR0-CONTRACT Amendment 7d). */
+ *  exported by name as one const and its type (#729 PR-0, PR0-CONTRACT Amendment 7d).
+ * @public
+ */
 export const SIDE_FILE_KINDS = ['attempts', 'trace_buffer', 'sealed_trace'] as const;
-/** One of {@link SIDE_FILE_KINDS}. */
+/**
+ * One of {@link SIDE_FILE_KINDS}.
+ * @public
+ */
 export type SideFileKind = (typeof SIDE_FILE_KINDS)[number];
 
 /** What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2; #819
- *  U2 `no_steps`, U3 `not_legacy_shape`). */
+ *  U2 `no_steps`, U3 `not_legacy_shape`).
+ * @public
+ */
 export type WorkflowCopyFault =
   'schema_version_not_number' | 'no_id' | 'no_steps' | 'not_legacy_shape';
 
@@ -77,6 +86,7 @@ const COPY_FAULT_WORDS: Record<WorkflowCopyFault, string> = {
  * (`{ scope: 'file', …facts }`), on run files, on the runs folder and on the registrar's `empty` and
  * `parse` failures; read them through {@link unreadableFactsOf}. {@link renderUnreadableStoredFile}
  * builds every message from them alone.
+ * @public
  */
 export interface UnreadableFileFacts {
   resource: 'run_file' | 'workflow_copy' | 'run_folder';
@@ -112,7 +122,9 @@ export interface UnreadableFileFacts {
 }
 
 /** The facts a damaged-file error carries, or `undefined` for any other error — the ONE reader
- *  (#729 PR-0: it keys on the facts' `scope`, Amendment 7e). */
+ *  (#729 PR-0: it keys on the facts' `scope`, Amendment 7e).
+ * @public
+ */
 export function unreadableFactsOf(err: unknown): UnreadableFileFacts | undefined {
   if (!(err instanceof WorkflowError)) return undefined;
   const stored = storedFileFactsOf(err);
@@ -122,7 +134,9 @@ export function unreadableFactsOf(err: unknown): UnreadableFileFacts | undefined
 }
 
 /** What {@link unreadableRunFilesError} carries: the command that did not run, the runs folder, and
- *  every run file it could not read. */
+ *  every run file it could not read.
+ * @public
+ */
 export interface UnreadableRunFilesFacts {
   command: string;
   folder: string;
@@ -130,7 +144,9 @@ export interface UnreadableRunFilesFacts {
 }
 
 /** The facts of a decision that failed closed over damaged run files, or `undefined` for any other
- *  error — the ONE reader of {@link unreadableRunFilesError}'s facts (#729 PR-0: keyed on `scope`). */
+ *  error — the ONE reader of {@link unreadableRunFilesError}'s facts (#729 PR-0: keyed on `scope`).
+ * @public
+ */
 export function unreadableRunFilesOf(err: unknown): UnreadableRunFilesFacts | undefined {
   if (!(err instanceof WorkflowError)) return undefined;
   const stored = storedFileFactsOf(err);
@@ -141,7 +157,9 @@ export function unreadableRunFilesOf(err: unknown): UnreadableRunFilesFacts | un
 
 /** An id a file holds, as text may show it (issue #719, C6): one made of letters, digits, `.`,
  *  `_` and `-`, at most 64 characters, as it is; any other as `another run id (not shown)` — a
- *  file's content can hold anything, a newline or a terminal escape included. */
+ *  file's content can hold anything, a newline or a terminal escape included.
+ * @public
+ */
 export function displayId(id: string): string {
   return /^[A-Za-z0-9._-]{1,64}$/.test(id) ? id : 'another run id (not shown)';
 }
@@ -166,6 +184,7 @@ const NAMED_FIELDS = 3;
  * What is wrong with the file, as a clause after its subject (issue #719, R8): no parser text and
  * no position, ever. A registered copy keeps its shipped nouns ("not a workflow object", "empty
  * (0 bytes) — not a workflow").
+ * @public
  */
 export function describeStoredFileFault(facts: UnreadableFileFacts): string {
   const workflow = facts.resource === 'workflow_copy';
@@ -342,6 +361,7 @@ function keyedCreateSentence(
  * says the same words. A run file or the runs folder: its fault sentence, the keyed-create
  * sentence when the facts carry `refused`, and the way out. A registered workflow copy: the
  * registrar's subject and the fault clause (its repair act is the registrar's own, `repairActFor`).
+ * @public
  */
 export function renderUnreadableStoredFile(facts: UnreadableFileFacts): string {
   if (facts.resource === 'workflow_copy') {
@@ -416,6 +436,7 @@ export function runsFolderUnreadableError(folder: string, err: unknown): Workflo
  * `ENGINE_STORE_FAILED`. `command` is the exact command the operator ran, flags included, as its
  * caller passes it. Its facts are typed (`{ scope: 'files', …}` — {@link UnreadableRunFilesFacts});
  * read them through {@link unreadableRunFilesOf}.
+ * @public
  */
 export function unreadableRunFilesError(
   command: string,
@@ -462,6 +483,7 @@ export type RunFileReading =
  * workflow by a string `workflow_id`; true otherwise — a file whose content cannot be read
  * (`unreadable`, `empty`, not JSON), an object with no string `workflow_id`, or one naming this
  * workflow.
+ * @public
  */
 export function damagedFileConcerns(
   reading: { facts: UnreadableFileFacts; object?: Record<string, unknown> },
@@ -479,6 +501,7 @@ export function damagedFileConcerns(
  * holding another run (`mismatched`) whose held run's file reads as that run. Such a file is not a
  * damaged run: every listing puts it with the copies (`RunListing.copies`), and no decision over
  * the runs, no keyed create and no scoped read counts or refuses over it.
+ * @public
  */
 export function isCopyOfReadableRun(facts: UnreadableFileFacts): boolean {
   return facts.class === 'mismatched' && facts.held_file === 'reads_as_run';

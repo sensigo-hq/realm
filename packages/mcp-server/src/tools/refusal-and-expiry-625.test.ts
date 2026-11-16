@@ -54,9 +54,15 @@ function answerEntry(runId: string, gateId: string, step: string, choices: strin
     instruction: {
       tool: 'submit_human_response',
       params: { run_id: runId, gate_id: gateId },
-      call_with: { run_id: runId, gate_id: gateId, choice: `<${choices.join('|')}>` },
+      call_with: {
+        run_id: runId,
+        gate_id: gateId,
+        choice: `<${choices.join('|')}>`,
+        // #603 A3b (G5): the slot for the person's own name.
+        responded_by: "<the person's name, as they gave it; leave out if none>",
+      },
     },
-    human_readable: `Human review required for step '${step}'. Ask the user to choose one of: ${choices.join(', ')}, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message. The conversation that opened the question passes back the claim_token it was given then, when it was given one.`,
+    human_readable: `Human review required for step '${step}'. Ask the user to choose one of: ${choices.join(', ')}, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message. The conversation that opened the question passes back the claim_token it was given then, when it was given one. Pass the person's own name as responded_by when they gave one; never a guess.`,
     orientation: `Run is paused at gate '${gateId}'.`,
   };
 }

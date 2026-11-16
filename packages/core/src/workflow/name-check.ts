@@ -22,7 +22,10 @@ import {
 } from './diagnostics.js';
 import type { SourcePosition } from './source-positions.js';
 
-/** The handler and adapter names the project's realm.yaml declares, built or not. */
+/**
+ * The handler and adapter names the project's realm.yaml declares, built or not.
+ * @public
+ */
 export interface DeclaredNames {
   readonly handlers?: readonly string[];
   readonly adapters?: readonly string[];

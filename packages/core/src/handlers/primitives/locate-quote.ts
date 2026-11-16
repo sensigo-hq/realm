@@ -21,6 +21,7 @@
  *
  * A quote that ends a sentence where the source's sentence goes on is marked `cut_short` (L2). Every
  * offset is a UTF-16 code-unit offset into the ORIGINAL source.
+ * @public
  */
 
 export const QUOTE_STATES = [
@@ -32,14 +33,19 @@ export const QUOTE_STATES = [
   'unquoted',
 ] as const;
 
+/** @public */
 export type QuoteState = (typeof QUOTE_STATES)[number];
 
-/** A span of the original source: `source.slice(start, end)`. */
+/**
+ * A span of the original source: `source.slice(start, end)`.
+ * @public
+ */
 export interface QuoteSpan {
   readonly start: number;
   readonly end: number;
 }
 
+/** @public */
 export interface QuoteCheck {
   readonly state: QuoteState;
   /** Where each part was found: one span for `exact` / `reformatted`, one per part when stitched,
@@ -1248,6 +1254,7 @@ function exactGoesOn(source: string, at: number): boolean {
  * Locates `quote` in `source` (the ladder above). `minPartChars` (default 20, at least 4) is the
  * floor every stitched part must reach, in canonical characters. An empty source, an empty quote, or
  * a quote with no letter or digit is `not_found` with no parts.
+ * @public
  */
 export function locateQuote(
   quote: string,

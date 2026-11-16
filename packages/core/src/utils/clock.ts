@@ -19,6 +19,7 @@
  * `opened_at` and the store's reading the reminders started from). It never drives the
  * default ceiling (`gate_unanswered` is a fact derived at read, with no writer and no timer) and never
  * replaces a poll or any other duration timer: those stay on real timers.
+ * @public
  */
 export interface Clock {
   /** The current instant. Returns a FRESH Date on every call: mutating a returned Date changes nothing else. */
@@ -32,6 +33,7 @@ export interface Clock {
  * (`write`, `read`, `event`) and what it does not (`outside`, `duration`). The clock census test
  * classes every read in the source by them, and the docs table of what the clock governs is generated
  * from them (`docs/reference/core-library.md`).
+ * @public
  */
 export const CLOCK_READ_CLASSES = {
   write:
@@ -68,12 +70,16 @@ let processSink: ((err: unknown) => void) | undefined;
  * #715 (b) (03 §A.1, D-22): sets the process's waiter-error sink — the channel the shared
  * {@link systemClock} (and a test location's clock) passes a failing waiter's error to. A host calls
  * it once, at its start. The sink must not throw; a throw from it is swallowed.
+ * @public
  */
 export function setClockErrorSink(sink: (err: unknown) => void): void {
   processSink = sink;
 }
 
-/** #715 (b) (03 §A.1): the process's waiter-error sink, or `undefined` when no host set one. For tests. */
+/**
+ * #715 (b) (03 §A.1): the process's waiter-error sink, or `undefined` when no host set one. For tests.
+ * @public
+ */
 export function clockErrorSink(): ((err: unknown) => void) | undefined {
   return processSink;
 }
@@ -155,6 +161,7 @@ function systemClockReportingTo(report: (err: unknown) => void): Clock {
  * unhandled rejection. The sink must not throw; if it does, that throw is swallowed. Core never
  * writes to `console` here: the sink is the only channel. For a host or a test that wants its own
  * sink; the shared {@link systemClock} uses the process's ({@link setClockErrorSink}).
+ * @public
  */
 export function createSystemClock(options: { onWaiterError: (err: unknown) => void }): Clock {
   return systemClockReportingTo((err: unknown): void => {
@@ -172,6 +179,7 @@ export function createSystemClock(options: { onWaiterError: (err: unknown) => vo
  * {@link createSystemClock}'s does (D6-7), and a waiter's failure goes to the process's sink, read
  * when the waiter fails ({@link setClockErrorSink}); with no sink set it is re-thrown from a
  * microtask — loud, never swallowed (03 §A.1, D-22).
+ * @public
  */
 export const systemClock: Clock = systemClockReportingTo(reportWaiterError);
 

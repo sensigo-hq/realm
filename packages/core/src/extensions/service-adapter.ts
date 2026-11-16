@@ -1,5 +1,6 @@
 // Service adapter — handles communication with a specific external API.
 
+/** @public */
 export interface ServiceResponse {
   status: number;
   data: unknown;
@@ -19,6 +20,7 @@ export interface ServiceResponse {
  * - `delete` — remove an existing resource. Optional: only implement when the adapter
  *              supports deletion. The engine throws `ADAPTER_OP_UNSUPPORTED` if a workflow
  *              step requests `service_method: delete` but the adapter omits this method.
+ * @public
  */
 export interface ServiceAdapter {
   readonly id: string;

@@ -57,6 +57,7 @@ export function armToPhase(arm: SealArm): RunPhase {
  * `arm -> outcome class`. Total, exhaustive, no default. NOT read by `deriveEffectiveTriggers`
  * (which keeps its own `mintOutcome` — the two may diverge by design); this exists for readers
  * that need the class from a STORED record.
+ * @public
  */
 export function armToOutcome(arm: SealArm): 'complete' | 'fail' | 'abort' | 'abandon' {
   switch (arm) {
@@ -100,8 +101,11 @@ const COMPLETED_PROSE = 'Workflow completed.';
 const SPAWN_FAILED_PROSE = 'spawn_failed';
 const EXTENSIONS_LOAD_FAILED_PROSE = 'extensions_load_failed';
 
-/** The record shape both legacy classifiers read. */
-type ClassifiableRun = Pick<
+/**
+ * The record shape both legacy classifiers read.
+ * @public
+ */
+export type ClassifiableRun = Pick<
   RunRecord,
   'terminal_state' | 'failed_steps' | 'terminal_reason' | 'aborted_at' | 'abandoned_at'
 >;
@@ -150,6 +154,7 @@ function classifyByAbortedMarker(run: ClassifiableRun): SealArm | undefined {
  * `terminal_reason` alone, because the only external store has no marker columns. That leaves just
  * the two genuinely prose-less arms — `guard_abort` (reason-less by construction) and
  * `abandon_requested` (free-text reason) — marker-dependent.
+ * @public
  */
 export function classifyLegacySeal(run: ClassifiableRun): SealArm | undefined {
   if (run.terminal_state !== true) return undefined;
@@ -285,6 +290,7 @@ export function sealRunLevel(run: RunRecord, arm: SealArm, reason: string, now: 
  * record (a genuinely non-terminal run with a live open gate, or a terminal run that legitimately
  * never had a gate) derives IDENTICALLY either way; only the one previously-mis-derived class
  * changes, and it changes to the CORRECT phase.
+ * @public
  */
 export function deriveRunPhase(
   run: Pick<
@@ -876,6 +882,7 @@ export function isStepSettledOrInFlight(run: RunRecord, stepId: string): boolean
  *   - not already completed, in-progress, failed, or skipped
  *   - trigger_rule is satisfied
  *   - when-condition (if present) is truthy
+ * @public
  */
 export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord): string[] {
   // A terminal run has no eligible steps — never re-drive a completed/failed/aborted/abandoned run

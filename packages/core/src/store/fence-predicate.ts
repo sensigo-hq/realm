@@ -49,6 +49,7 @@ import { assertReleaseLine } from '../release-line.js';
  *   store's own `STATE_RUN_NOT_FOUND` (see `FENCE_REQUIRES_RUN`).
  * - `step_not_in_progress` — the settle-time seal fence (`sealFenced`): the method's step has left
  *   `in_progress_steps`. The run must EXIST (same as `run_at_version`).
+ * @public
  */
 export type FencePredicate =
   | { kind: 'step_open_for_trace'; run_version: number }
@@ -56,11 +57,14 @@ export type FencePredicate =
   | { kind: 'run_at_version'; version: number }
   | { kind: 'step_not_in_progress' };
 
+/** @public */
 export type FencePredicateKind = FencePredicate['kind'];
 
 /** Whether a member conditions one step — evaluated against the fenced method's own `stepId`.
  *  Keyed by every kind, so a new member cannot be added without deciding it; the two types below
- *  and `isStepScopedFence` are derived from it. */
+ *  and `isStepScopedFence` are derived from it.
+ * @public
+ */
 export const FENCE_TARGETS_STEP = {
   step_open_for_trace: true,
   run_absent_or_terminal: false,
@@ -68,17 +72,22 @@ export const FENCE_TARGETS_STEP = {
   step_not_in_progress: true,
 } as const satisfies Record<FencePredicateKind, boolean>;
 
-type StepScopedKind = {
+/** @public */
+export type StepScopedKind = {
   [K in FencePredicateKind]: (typeof FENCE_TARGETS_STEP)[K] extends true ? K : never;
 }[FencePredicateKind];
 
 /** The members that condition one step — evaluated against the fenced method's own `stepId`.
- *  Only the per-step methods (`appendFenced`, `deleteFenced`, `sealFenced`) accept them. */
+ *  Only the per-step methods (`appendFenced`, `deleteFenced`, `sealFenced`) accept them.
+ * @public
+ */
 export type StepScopedFencePredicate = Extract<FencePredicate, { kind: StepScopedKind }>;
 
 /** The members that condition only the run — the only ones the run-wide `deleteAllForRunFenced`
  *  accepts. The per-step methods accept them too: a run-scoped member conditions the run the step
- *  belongs to. */
+ *  belongs to.
+ * @public
+ */
 export type RunScopedFencePredicate = Exclude<FencePredicate, StepScopedFencePredicate>;
 
 /** Whether `fence` conditions one step (`FENCE_TARGETS_STEP`). */
@@ -112,7 +121,9 @@ export const FENCE_REQUIRES_RUN: Readonly<Record<FencePredicateKind, boolean>> =
 };
 
 /** The read a fence is evaluated against: the lock-free `RunStore.get` the former guards used
- *  (#132's atomic-rename-safe read). */
+ *  (#132's atomic-rename-safe read).
+ * @public
+ */
 export type FenceRunReader = Pick<RunStore, 'get'>;
 
 /** The four step-membership states, checked in a fixed priority order (issue #207 PR-2). */

@@ -11,7 +11,7 @@ import type {
   PrincipalAbsence,
 } from '../types/run-record.js';
 import { PRINCIPAL_ABSENCES } from '../types/run-record.js';
-import { readDrivenBy, type ActorAbsent, type Attributed } from './holder.js';
+import { readDrivenBy, readStoredName, type ActorAbsent, type Attributed } from './holder.js';
 
 /** The renderer id of the MCP door's form (§5.2): what showed the question when its answer came by form. */
 export const MCP_FORM_RENDERER = 'realm-mcp-form/1';
@@ -48,6 +48,29 @@ export function answerViaOf(
   return typeof route === 'string' && route.length > 0
     ? route
     : { absent: 'recorded_without_route' };
+}
+
+/**
+ * #603 A3b: the ONE reader of the account a channel reported for an answer (`answer.channel_evidence`,
+ * the channel's statement — never verified by Realm). `user` and `team` are read by the stored-name
+ * rule (`readStoredName`): a `user` that is not a showable string reads `account_unreadable`, a `team`
+ * that is not one is left out. `account_not_recorded` when the entry carries none. Total. The account
+ * is printed only through this reader. An expiry's entry is the caller's to name.
+ */
+export function answerAccountOf(
+  entry: Pick<EvidenceSnapshot, 'answer'>,
+): { user: string; team?: string } | { absent: 'account_not_recorded' | 'account_unreadable' } {
+  const answer: unknown = entry.answer;
+  const evidence: unknown =
+    typeof answer === 'object' && answer !== null
+      ? (answer as { channel_evidence?: unknown }).channel_evidence
+      : undefined;
+  if (evidence === undefined) return { absent: 'account_not_recorded' };
+  if (typeof evidence !== 'object' || evidence === null) return { absent: 'account_unreadable' };
+  const user = readStoredName((evidence as { user?: unknown }).user);
+  if (user === undefined) return { absent: 'account_unreadable' };
+  const team = readStoredName((evidence as { team?: unknown }).team);
+  return { user, ...(team !== undefined ? { team } : {}) };
 }
 
 /**

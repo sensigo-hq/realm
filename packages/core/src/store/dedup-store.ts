@@ -3,6 +3,7 @@
 // store in another package (SQLite) implements it; the CLI's file and in-memory stores implement it.
 // Every method returns a promise: a store that reads a database answers later, never in the call.
 
+/** @public */
 export interface DedupStore {
   /**
    * Resolves true if the key has been seen within its TTL window. `ttlMs` is required by the file

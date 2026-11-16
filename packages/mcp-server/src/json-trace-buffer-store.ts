@@ -102,14 +102,18 @@ function parseSealedFilename(
 /** A `proper-lockfile` retry policy: either a bare retry count (its own simple default backoff)
  *  or an explicit `retry`-module-compatible options object. `randomize` (issue #191 ride-along —
  *  `json-file-store.ts`'s own `LOCK_RETRIES` doc has the full jitter rationale) is optional so
- *  every existing caller/conformance-suite override that predates it stays valid unchanged. */
-type LockRetries =
+ *  every existing caller/conformance-suite override that predates it stays valid unchanged.
+ * @public
+ */
+export type LockRetries =
   number | { retries: number; minTimeout?: number; maxTimeout?: number; randomize?: boolean };
 
 /** Lock-acquisition profile shared by every `lockWal` call in this file (issue #207).
  *  Constructor-injectable so a conformance suite can inflate the retry budget (e.g. to make a
  *  deliberately slow/parked fence read's lock contention observable instead of exhausting the retry
- *  budget too quickly and masking the scenario under test). */
+ *  budget too quickly and masking the scenario under test).
+ * @public
+ */
 export interface TraceBufferLockProfile {
   retries: LockRetries;
   stale: number;
@@ -189,6 +193,7 @@ function lockBusyError(walPath: string): WorkflowError {
  * artifact (`sealed-trace-<runId>-<base64url(stepId)>.<seq>.jsonl`) via the SAME `lockWal`
  * chokepoint every other operation uses — see `sealFenced`'s own doc for the no-clobber move
  * mechanics.
+ * @public
  */
 export class JsonTraceBufferStore
   implements TraceBufferStore, PerRunArtifactStore, OrphanSweepableStore

@@ -136,13 +136,13 @@ send
 Realm replies in the thread that the choice is recorded, with the line you set in `resolution_messages` below it:
 
 ```text
-✅ Gate resolved: `send`
+✅ Gate resolved: `send`, by U0ALICE (as Slack reports it)
 Recorded: send.
 ```
 
-When the answer ends the run, the reply says ``✅ Gate resolved: `send`. The run has ended.`` instead, and the run's ending is printed where `realm agent` runs.
+`U0ALICE` is the member ID of the account that replied, as Slack reports it; Realm does not verify it. The question post's closing line names it the same way. When the answer ends the run, the reply says ``✅ Gate resolved: `send`, by U0ALICE (as Slack reports it). The run has ended.`` instead, and the run's ending is printed where `realm agent` runs.
 
-While `realm agent` is still listening to the thread, a reply that is not recorded gets one post saying so, and why. It stops listening a few seconds after the question closes; a reply after that gets no answer. When another answer was recorded first, it names that answer: its choice, the name as stated (left out when it names nobody), where it came from and when, in UTC to the second. For example, after someone answered from a terminal:
+While `realm agent` is still listening to the thread, a reply that is not recorded gets one post saying so, and why. It stops listening when the question closes: as soon as it has posted its confirmation when the answer came in this thread, and within a few seconds when the question was closed some other way, such as an answer from a terminal. A reply after that gets no answer; the thread already says how the question closed. When another answer was recorded first, it names that answer: its choice, the name as stated and the account Slack reported (each left out when the record has none), where it came from and when, in UTC to the second. For example, after someone answered from a terminal:
 
 ```text
 Not recorded: your choice 'discard'. The question on step 'review' was already answered — send, by "alice" (as stated), from a terminal, at 2026-11-12T10:02:14Z.
@@ -171,7 +171,7 @@ Three rules about replies:
 
 ## What is recorded
 
-The run record keeps the choice and the account that replied, as Slack reports it. When a question names no one, the project's `answerers` ([`notifiers.slack_gate.config.answerers`](../reference/deployment-manifest.md)) can answer it, or without them anyone who can post in the channel, so post such gates to a channel whose members you trust to decide.
+The run record keeps the choice and the account that replied, as Slack reports it. When a question names no one, the project's `answerers` ([`notifiers.slack_gate.config.answerers`](../reference/deployment-manifest.md)) can answer it, or without them anyone who can post in the channel, so post such gates to a channel whose members you trust to decide. `realm run inspect` and the thread's receipt name that account, as Slack reports it.
 
 ## Reminders
 

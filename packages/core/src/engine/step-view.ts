@@ -18,6 +18,7 @@ import {
   type CacheAuto,
   type CacheMarkedPart,
   type CacheMissType,
+  type AdmittedBy,
   type RequestFactAbsentCause,
   type RunRecord,
 } from '../types/run-record.js';
@@ -47,11 +48,14 @@ import {
   readGateClaimVerdict,
   readStatedAnswerer,
   readStoredName,
+  type AccountAbsentCause,
   type ActorAbsent,
+  type AdmittedByAbsentCause,
   type Attributed,
   type ClaimProofAbsentCause,
   type GateClaimVerdict,
 } from './holder.js';
+import { answerAccountOf } from './answer-facts.js';
 
 /**
  * One figure and the scope it was summed over. Never a guess, never a default — `value` is the sum
@@ -346,7 +350,26 @@ export interface AnswerView {
   at?: string;
   claim_proof?: GateClaimVerdict;
   claim_proof_absent?: ClaimProofAbsentCause;
+  /**
+   * #603 A3b: the account the answer's channel reported for it (`answer.channel_evidence`, read by
+   * `answerAccountOf`) — the channel's statement, never verified; `team` is never printed. When there
+   * is none, `account_absent` says why.
+   */
+  account?: { user: string; team?: string };
+  account_absent?: AccountAbsentCause;
+  /** #603 A3a/A3b: how the answer's sender was let through, as recorded; else why there is none. */
+  admitted_by?: AdmittedBy;
+  admitted_by_absent?: AdmittedByAbsentCause;
 }
+
+/** #603 A3b: the five `admitted_by` values a record can hold (compile-forced complete). */
+const ADMITTED_BY_VALUES: Readonly<Record<AdmittedBy, true>> = {
+  owner: true,
+  answerers: true,
+  project_answerers: true,
+  no_named_answerer: true,
+  owner_not_checked_on_route: true,
+};
 
 export interface StepView {
   attempts: AttemptView[];
@@ -867,6 +890,23 @@ function composeAnswerView(entry: Record<string, unknown>): AnswerView {
   } else {
     answer.claim_proof_absent = 'proof_not_recorded';
   }
+  // #603 A3b: the account the channel reported, and how the sender was let through — or why not.
+  if (settledByExpiry) {
+    answer.account_absent = 'settled_by_expiry';
+    answer.admitted_by_absent = 'settled_by_expiry';
+    return answer;
+  }
+  const account = answerAccountOf(entry as Parameters<typeof answerAccountOf>[0]);
+  if ('absent' in account) answer.account_absent = account.absent;
+  else answer.account = account;
+  const admitted = entry['admitted_by'];
+  if (admitted === undefined) answer.admitted_by_absent = 'admission_not_recorded';
+  else if (
+    typeof admitted === 'string' &&
+    Object.prototype.hasOwnProperty.call(ADMITTED_BY_VALUES, admitted)
+  ) {
+    answer.admitted_by = admitted as AdmittedBy;
+  } else answer.admitted_by_absent = 'admission_unreadable';
   return answer;
 }
 

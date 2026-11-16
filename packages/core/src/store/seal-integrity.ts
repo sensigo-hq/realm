@@ -22,6 +22,7 @@ import { armToPhase, classifyForCoherence } from '../engine/eligibility.js';
  * Call from every store write tail that persists `next` over `stored`. Throws on violation;
  * returns on every honest write — including the entire pre-#367 legacy population within a
  * single-version fleet (the mixed-fleet caveat is a named residual, not a solved case).
+ * @public
  */
 export function assertSealIntegrity(stored: RunRecord, next: RunRecord): void {
   // Clause 1 — STATE_SEAL_UNSTAMPED (forward, TRANSITION-scoped): a fresh seal must name its arm.

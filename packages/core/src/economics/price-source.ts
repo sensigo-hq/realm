@@ -26,6 +26,7 @@ import { withoutDateSuffix } from './cache-economics.js';
  *   returned a malformed result (core's wrap);
  * - `rate_missing`: `priceFromEconomics` — the runner's file has the model but not a rate a counter
  *   above 0 needs.
+ * @public
  */
 export const NOT_PRICED_CAUSES = [
   'no_price_source',
@@ -38,12 +39,14 @@ export const NOT_PRICED_CAUSES = [
   'price_list_error',
   'rate_missing',
 ] as const;
+/** @public */
 export type NotPricedCause = (typeof NOT_PRICED_CAUSES)[number];
 
 /**
  * One request's counters as a source prices them: the prompt is the WHOLE input (reads and writes
  * inside it); a cache counter the request did not report is 0; the 5-minute and 1-hour write
  * counters are present only when the request recorded the split, and then add up to the write.
+ * @public
  */
 export interface PriceUsage {
   prompt_tokens: number;
@@ -54,6 +57,7 @@ export interface PriceUsage {
   cache_write_1h_tokens?: number;
 }
 
+/** @public */
 export interface PriceInput {
   /** The model the response named. */
   model: string;
@@ -65,7 +69,10 @@ export interface PriceInput {
   usage: PriceUsage;
 }
 
-/** What priced a request: every figure names its source and its date basis. */
+/**
+ * What priced a request: every figure names its source and its date basis.
+ * @public
+ */
 export interface PricedBy {
   source_class: 'economics' | 'price_list';
   /** The economics file's path, or the price list's package name. */
@@ -86,11 +93,15 @@ export interface PricedBy {
   source_note?: string;
 }
 
+/** @public */
 export type PriceResult =
   | { priced: { total: number; uncached_counterfactual: number }; priced_by: PricedBy }
   | { not_priced: NotPricedCause; detail?: string };
 
-/** The port: a host's prices. Synchronous. */
+/**
+ * The port: a host's prices. Synchronous.
+ * @public
+ */
 export interface PriceSource {
   price(input: PriceInput): PriceResult;
 }

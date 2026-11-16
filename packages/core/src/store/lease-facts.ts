@@ -35,12 +35,16 @@ import {
  * source (a store type-checked against one and used against the other). What makes the rule hold at
  * run time is the reader: it reads only objects that carry the release mark of a copy of this release
  * ({@link LeaseFactsClass}).
+ * @public
  */
 export type LeaseFacts = { readonly [leaseId: string]: LeaseFact } & {
   readonly '#LeaseFacts': never;
 };
 
-/** What {@link leaseFactOf} answers for a claim that names no lease. */
+/**
+ * What {@link leaseFactOf} answers for a claim that names no lease.
+ * @public
+ */
 export type Unleased = { readonly absent: 'unleased' };
 
 const BASIS = 'kernel_lock';
@@ -143,8 +147,10 @@ async function probeOnce(port: LeasePort, id: string): Promise<LeaseFact> {
  * - A probe that rejects or throws, or answers something that is not a `LeaseFact`, gives
  *   `unknown('io_error')` for that id. The returned promise never rejects.
  * - No in-progress claim names a lease ⇒ {@link NO_LEASE_FACTS}, with no probe.
+ * @public
  */
 export async function leaseFactsOf(
+  /** @beta */
   port: LeasePort | null | undefined,
   record: RunRecord,
 ): Promise<LeaseFacts> {
@@ -189,6 +195,7 @@ function leasedIdsOf(record: RunRecord): string[] {
  *   `unknown('not_checked')`.
  *
  * `not_held` comes only from a probe.
+ * @public
  */
 export function leaseFactOf(
   snapshot: Pick<Snapshot, 'lease_facts'>,

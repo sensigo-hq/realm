@@ -7,7 +7,10 @@
 // (CW-5's `realm agent` will hold one per drive).
 import type { RunRecord } from '../types/run-record.js';
 
-/** Why a store could not make a lease: a closed list, from the error the operating system or SQLite gave. */
+/**
+ * Why a store could not make a lease: a closed list, from the error the operating system or SQLite gave.
+ * @beta
+ */
 export const LEASE_UNAVAILABLE_REASONS = [
   'permission',
   'no_space',
@@ -15,11 +18,13 @@ export const LEASE_UNAVAILABLE_REASONS = [
   'io_error',
 ] as const;
 
+/** @beta */
 export type LeaseUnavailableReason = (typeof LEASE_UNAVAILABLE_REASONS)[number];
 
 /**
  * Why a probe could not say whether a lease is held: a closed list. `not_checked` is for a caller that
  * did not probe at all (from CW-1b); the store's probe answers the other four.
+ * @public
  */
 export const LEASE_PROBE_REASONS = [
   'not_checked',
@@ -29,9 +34,13 @@ export const LEASE_PROBE_REASONS = [
   'io_error',
 ] as const;
 
+/** @public */
 export type LeaseProbeReason = (typeof LEASE_PROBE_REASONS)[number];
 
-/** What a probe found. `unknown` always carries its reason; the other three never do. */
+/**
+ * What a probe found. `unknown` always carries its reason; the other three never do.
+ * @public
+ */
 export type LeaseFact =
   | { readonly state: 'held' | 'not_held' | 'absent'; readonly basis: 'kernel_lock' }
   | { readonly state: 'unknown'; readonly basis: 'kernel_lock'; readonly reason: LeaseProbeReason };
@@ -39,7 +48,10 @@ export type LeaseFact =
 /** A lease's state as a probe reports it. */
 export type LeaseState = LeaseFact['state'];
 
-/** A lease this program holds. */
+/**
+ * A lease this program holds.
+ * @beta
+ */
 export interface LeaseHold {
   /** The lease's id: what a claim records, and what `probe` takes. */
   readonly id: string;
@@ -53,12 +65,16 @@ export interface LeaseHold {
   close(newestRecord?: RunRecord): void;
 }
 
-/** What `hold()` answers: the lease, or why there is none. */
+/**
+ * What `hold()` answers: the lease, or why there is none.
+ * @beta
+ */
 export type LeaseHoldResult =
   { readonly held: LeaseHold } | { readonly unavailable: LeaseUnavailableReason };
 
 /**
  * A store's claim leases. Both functions answer and never reject; the port stamps no time.
+ * @beta
  */
 export interface LeasePort {
   /** Makes a lease that this program holds until it calls `close()` or ends. */
