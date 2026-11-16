@@ -349,12 +349,21 @@ describe('#603 A3a — who may answer a question in its Slack thread', () => {
     await waiting;
     const after = (await store.get(runId)).record;
     // (1) red when the check runs before the due-expiry check (Bob is refused, the run stays
-    //     waiting); (2) prints the private replies and the run's ending.
+    //     waiting), or when the expiry's entry is stamped with `admitted_by`; (2) prints the
+    //     private replies, the run's ending and the gate's entries.
     expect({
       privately: privately(),
       ended: after.terminal_state,
       expired: Object.values(after.skip_details ?? {}).some((d) => d.kind === 'gate_expired'),
-    }).toEqual({ privately: [], ended: true, expired: true });
+      entries: after.evidence
+        .filter((e) => e.kind === 'gate_response')
+        .map((e) => ({ resolution: e.resolution, admitted_by: e.admitted_by })),
+    }).toEqual({
+      privately: [],
+      ended: true,
+      expired: true,
+      entries: [{ resolution: 'expired_abort', admitted_by: undefined }],
+    });
   });
 
   it.each([

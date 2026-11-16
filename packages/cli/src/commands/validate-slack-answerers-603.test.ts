@@ -32,7 +32,7 @@ const workflow = (gate: string[]): string =>
 
 const READS_REPLIES = ['bot_token: xoxb-1', 'channel_id: C1', 'app_token: xapp-1'];
 const W6 =
-  "⚠ Gate on step 'confirm': no one it names (@ana) is a Slack member ID, so no reply in its Slack thread counts; answer it with `realm run respond`. Name the person by member ID (U…), list member IDs in `answerers`, or remove `owner` so that the project's `answerers`, or without them anyone in the thread, can answer.";
+  "⚠ Gate on step 'confirm': no one it names (@ana) is a Slack member ID, so no reply in its Slack thread counts; answer it with `realm run respond`. Name the person by member ID (U…), list member IDs in `answerers`, or remove `owner` and `answerers` so that the project's `answerers`, or without them anyone in the thread, can answer.";
 const W6B =
   "⚠ Gate on step 'confirm': '@ana' is not a Slack member ID, so only U1 can answer it in Slack.";
 

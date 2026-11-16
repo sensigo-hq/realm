@@ -34,13 +34,21 @@ describe('#603 A3a — who may answer in Slack: the words', () => {
     // `answerers` section (checks 6, 7); MCP, a form, the terminal not compared: check 8.
     claim(
       GATES,
-      'In Slack, when a question names who may answer, only those accounts can: its `owner` and its `answerers`, compared with the member ID Slack reports for the reply (for a question that names no one, see `answerers`). Answers through MCP, a form or the terminal are not compared with `owner`.',
+      'In Slack, when a question names who may answer, only those accounts can: its `owner` and its `answerers`, compared with the member ID Slack reports for the reply (for a question that names no one, see `answerers`).',
     );
+    // A non-id owner matches no reply, so with no member-ID `answerers` only outside Slack: check 5
+    // (U9 refused privately, `realm run respond` answers it); other routes not compared: check 8.
+    claim(
+      GATES,
+      'An `owner` that is not a member ID, such as `@ana`, matches no reply, so unless an `answerers` entry is a member ID the question can then be answered only outside Slack. Answers through MCP, a form or the terminal are not compared with `owner`.',
+    );
+    // The stored question's `answerers`, frozen from the gate: core's "the question freezes them".
+    claim(GATES, '"answerers": ["U024BE7LH"],');
     // Also may answer: check 3; the project's list: check 6; otherwise anyone: check 7; a name that
     // is not a member ID matches no reply: check 5; a malformed list refused: core check 13.
     claim(
       GATES,
-      "A list of Slack member IDs (`U…`, or the mention `<@U…>`) who may also answer the question in Slack. When a question names no `owner` and no `answerers`, the project's `notifiers.slack_gate.config.answerers` answer it when set, and otherwise anyone in the thread can. A name that is not a member ID matches no reply. Added after version 0.49.0.",
+      "A list of Slack member IDs (`U…` or `W…`, or the mention `<@U…>`) who may also answer the question in Slack. When a question names no `owner` and no `answerers`, the project's `notifiers.slack_gate.config.answerers` answer it when set, and otherwise anyone in the thread can. A name that is not a member ID matches no reply. Added after version 0.49.0.",
     );
     claim(GATES, 'This page lists the three `trust` values and the ten `gate` keys,');
   });
@@ -83,7 +91,18 @@ describe('#603 A3a — who may answer in Slack: the words', () => {
     // The account recorded: check 1; no one named: checks 6 and 7.
     claim(
       SLACK,
-      "The run record keeps the choice and the account that replied, as Slack reports it. When a question names no one, the project's `answerers` can answer it, or without them anyone who can post in the channel, so post such gates to a channel whose members you trust to decide.",
+      "The run record keeps the choice and the account that replied, as Slack reports it. When a question names no one, the project's `answerers` ([`notifiers.slack_gate.config.answerers`](../reference/deployment-manifest.md)) can answer it, or without them anyone who can post in the channel, so post such gates to a channel whose members you trust to decide.",
+    );
+    // A reply from someone the question does not name counts for nothing: checks 1, 3, 4, 9.
+    claim(
+      SLACK,
+      'Check that the reply is in the thread, that it is exactly one of the choices, that it comes from an account the question names (when it names any), and that',
+    );
+    // Copy member ID: Slack's own help (slack.com/help/articles/360003827751); a member ID is the
+    // form a reply matches: checks 1 and 14.
+    claim(
+      SLACK,
+      "To find a person's member ID, open their full profile in Slack, choose **More**, then **Copy member ID**.",
     );
   });
 
@@ -102,7 +121,7 @@ describe('#603 A3a — who may answer in Slack: the words', () => {
     // The account and how it was let through: check 1; the refusal, nothing written, the private
     // note: check 1; `answerers`: check 3; the project's list: check 6; the law: realm-testing.
     claimChangelog(
-      "- **Who may answer in Slack is checked, and recorded.** A Slack answer records the account Slack reports for the reply and how it was let through. When a question names who may answer, a reply from anyone else is refused with `STATE_ANSWERER_MISMATCH`: nothing is written, and the sender gets a private note saying who can answer. A gate's new `answerers` names more member IDs; the project's `notifiers.slack_gate.config.answerers` answers questions that name no one. `@sensigo/realm-testing`'s settlement laws gain one: a refused answer leaves the record unchanged. (#603)",
+      "- **Who may answer in Slack is checked, and recorded.** Every answer now records how it was let through (`admitted_by`), and a Slack answer also the account Slack reports for the reply. When a question names who may answer, a reply from anyone else is refused with `STATE_ANSWERER_MISMATCH`: nothing is written, and the sender gets a private note saying who can answer. A gate's new `answerers` names more member IDs; the project's `notifiers.slack_gate.config.answerers` answers questions that name no one. `@sensigo/realm-testing`'s settlement laws gain one: a refused answer leaves the record unchanged. (#603)",
     );
     // The closed post: check 5; respond answers it: check 5; validate names the gates, --strict
     // fails: check 12.
@@ -135,6 +154,17 @@ describe('#603 A3a — who may answer in Slack: the words', () => {
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
       'With a Slack notifier in `realm.yaml` that reads replies, a gate names someone who is not a Slack member ID, so no reply from them counts in its Slack thread. Added after version 0.49.0.',
+    );
+    // The entry refused, named as written: validate-slack-answerers-603 check 13.
+    claim(
+      'docs/reference/deployment-manifest.md',
+      "| Has an `answerers` entry that is not a member ID | `notifiers.slack_gate: 'answerers' entry '@ana' is not a Slack member ID (U… or W…, or its mention), so it would match no reply.` |",
+    );
+    // A registered gate with a non-id owner closed in Slack: check 5 (a stored question has the
+    // same shape).
+    claim(
+      'docs/guides/upgrade.md',
+      'The second is the version after 0.49.0: in Slack, a registered gate whose `owner` is not a Slack member ID can no longer be answered in its thread',
     );
     // A question that names no one: check 6; an entry that is not a member ID refused: check 13.
     claim(

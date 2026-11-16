@@ -41,7 +41,7 @@ export function slackAnswererWarnings(
     if (names.length > 0 && ids.length === 0) {
       warnings.push(
         warn(
-          `Gate on step '${step}': no one it names (${names.join(', ')}) is a Slack member ID, so no reply in its Slack thread counts; answer it with \`realm run respond\`. Name the person by member ID (U…), list member IDs in \`answerers\`, or remove \`owner\` so that the project's \`answerers\`, or without them anyone in the thread, can answer.`,
+          `Gate on step '${step}': no one it names (${names.join(', ')}) is a Slack member ID, so no reply in its Slack thread counts; answer it with \`realm run respond\`. Name the person by member ID (U…), list member IDs in \`answerers\`, or remove \`owner\` and \`answerers\` so that the project's \`answerers\`, or without them anyone in the thread, can answer.`,
         ),
       );
       continue;

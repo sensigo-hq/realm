@@ -181,8 +181,18 @@ describe('#603 A3a — check 13: the keys refused where they cannot work', () =>
   });
 
   it('a gate listing member IDs loads, and the question freezes them', async () => {
-    // (1) red when a valid list is refused; (2) prints the loader's error.
-    expect(() => loadWorkflowFromString(gateWith('[U1, U2]'))).not.toThrow();
+    const def = loadWorkflowFromString(gateWith('[U1, U2]'));
+    const store = new InMemoryStore();
+    const { record } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    await executeStep(store, def, {
+      runId: record.id,
+      command: 'confirm',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    // (1) red when a valid list is refused, or the question does not freeze it when it opens;
+    // (2) prints the stored question's `answerers`.
+    expect((await store.get(record.id)).record.pending_gate?.answerers).toEqual(['U1', 'U2']);
   });
 
   const manifest = (config: Record<string, unknown>) => ({

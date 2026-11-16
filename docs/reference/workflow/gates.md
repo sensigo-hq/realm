@@ -99,11 +99,11 @@ The message is rendered once, when the gate opens, and stored as it is shown. A 
 
 ### `owner`
 
-A name for the person expected to answer. It is stored with the gate, returned to assistants by `get_run_state`, and printed in the Slack message. In Slack, when a question names who may answer, only those accounts can: its `owner` and its `answerers`, compared with the member ID Slack reports for the reply (for a question that names no one, see `answerers`). Answers through MCP, a form or the terminal are not compared with `owner`.
+A name for the person expected to answer. It is stored with the gate, returned to assistants by `get_run_state`, and printed in the Slack message. In Slack, when a question names who may answer, only those accounts can: its `owner` and its `answerers`, compared with the member ID Slack reports for the reply (for a question that names no one, see `answerers`). An `owner` that is not a member ID, such as `@ana`, matches no reply, so unless an `answerers` entry is a member ID the question can then be answered only outside Slack. Answers through MCP, a form or the terminal are not compared with `owner`.
 
 ### `answerers`
 
-A list of Slack member IDs (`U…`, or the mention `<@U…>`) who may also answer the question in Slack. When a question names no `owner` and no `answerers`, the project's `notifiers.slack_gate.config.answerers` answer it when set, and otherwise anyone in the thread can. A name that is not a member ID matches no reply. Added after version 0.49.0.
+A list of Slack member IDs (`U…` or `W…`, or the mention `<@U…>`) who may also answer the question in Slack. When a question names no `owner` and no `answerers`, the project's `notifiers.slack_gate.config.answerers` answer it when set, and otherwise anyone in the thread can. A name that is not a member ID matches no reply. Added after version 0.49.0.
 
 ### `resolution_messages`
 
@@ -168,6 +168,7 @@ When the step reaches its gate, the settings are copied into the run. `get_run_s
   "choices": ["ship", "hold"],
   "opened_at": "2026-10-01T22:18:14.448Z",
   "owner": "@ana",
+  "answerers": ["U024BE7LH"],
   "resolved_message": "Ship order 4417?",
   "resolution_messages": { "ship": "Shipping now.", "hold": "Held for review." },
   "expires_at": "2026-10-01T23:18:14.448Z",
