@@ -1038,6 +1038,25 @@ describe('#597 D3b — the start-up lines', { timeout: 30_000 }, () => {
     });
   });
 
+  it('the defaults: no `reminder_interval_ms` and no `escalation_threshold_ms` ⇒ the reminder at 10 minutes and the nudge at 30, as `realm agent`', async () => {
+    // (a) red when the sender's defaults differ from the agent's; (b) prints the posts per minute.
+    const r = await rig();
+    await question(r);
+    const runner = reminderSenderOf(
+      [{ definition: def(WF), slackGate: { bot_token: 'xoxb-d3b-fake', channel_id: CHANNEL } }],
+      { runStore: r.store, home: r.h.path, logger: r.logger },
+    )!;
+    const posted: Record<string, number> = {};
+    for (const m of [9, 10, 29, 30]) {
+      await r.clock.set(at(m * MIN));
+      const before = slack.posts.length;
+      await runner.wake();
+      posted[`${m}m`] = slack.posts.length - before;
+    }
+    await runner.stop();
+    expect(posted).toEqual({ '9m': 0, '10m': 1, '29m': 0, '30m': 1 });
+  });
+
   it("one question's failure: ONE error line naming its run, and the pass goes on to the next question", async () => {
     // (a) red when one question's throw ends the pass or is not logged with its run; (b) prints the
     //     posts and the error lines.
