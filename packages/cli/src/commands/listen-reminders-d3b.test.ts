@@ -296,6 +296,44 @@ describe('#597 D3b — the post file and the due item', { timeout: 30_000 }, () 
     });
   });
 
+  it('the age: a reminder sent at most 60 s late reads its own time (10m), one sent later the real one (11m)', async () => {
+    // (a) red when the sender composes without the agent's 60-second grace, or always at the item's
+    //     instant; (b) prints the two texts' first sentences.
+    const ages: string[] = [];
+    for (const late of [60_000, 61_000]) {
+      const r = await rig();
+      await question(r);
+      await r.clock.set(at(10 * MIN + late));
+      const before = slack.posts.length;
+      await passOf(r, { extra: { escalationThresholdMs: 999 * MIN } })();
+      ages.push(...slack.posts.slice(before).map((p) => p.text.split('.')[0]!));
+    }
+    expect(ages).toEqual([
+      '⏰ gate `review` has been open for 10m (since 2033-01-01T00:00:00Z)',
+      '⏰ gate `review` has been open for 11m (since 2033-01-01T00:00:00Z)',
+    ]);
+  });
+
+  it('the console: a refused post, a timeout and a rate limit print nothing there (the lines go through the logger)', async () => {
+    // (a) red when the sender's Slack calls print the agent's console lines; (b) prints those lines.
+    const printed: unknown[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((...a) => void printed.push(a));
+    vi.spyOn(console, 'log').mockImplementation((...a) => void printed.push(a));
+    // Slack's 429 with `Retry-After: 0` (within the call's deadline): retried once, then refused.
+    const limited = (): Promise<Response> =>
+      Promise.resolve(
+        slackResponse({ status: 429, headers: { 'Retry-After': '0' }, json: { ok: false } }),
+      );
+    for (const answer of [refused('thread_locked'), hangs(), limited]) {
+      const r = await rig();
+      await question(r);
+      await r.clock.set(at(25 * MIN));
+      slack.post = answer;
+      await passOf(r)();
+    }
+    expect({ printed, posts: slack.posts.length }).toEqual({ printed: [], posts: 4 });
+  });
+
   it('a `failed` row posts nothing and prints no line', async () => {
     // (a) red when a failed row is posted again or logged; (b) prints the posts and lines.
     const r = await rig();
@@ -505,16 +543,23 @@ describe('#597 D3b — a Slack-wide problem pauses the workflow', { timeout: 30_
     await r.clock.set(new Date(t0 + 95 * MIN));
     await pass();
     const linesAfterReentry = [...r.logger.lines.warn, ...r.logger.lines.info];
+    // The wait kept: 30 minutes from the re-entry, so no probe a minute before it.
+    const authsAtReentry = slack.auths;
+    await r.clock.set(new Date(t0 + 124 * MIN));
+    await pass();
+    const earlyProbes = slack.auths - authsAtReentry;
     slack.post = ok;
     await r.clock.set(new Date(t0 + 125 * MIN));
     await pass();
     expect({
       probes,
       linesAfterReentry,
+      earlyProbes,
       info: r.logger.lines.info,
       warn: r.logger.lines.warn.length,
     }).toEqual({
       probes: [1, 3, 7, 15, 31, 61],
+      earlyProbes: 0,
       linesAfterReentry: [
         `listen: reminders: Slack did not take a reminder for workflow ${WF} (invalid_auth): reminders for it wait; checking again in about 1 min; a changed token needs a restart of realm listen`,
       ],
