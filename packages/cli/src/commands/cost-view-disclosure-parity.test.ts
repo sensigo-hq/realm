@@ -34,7 +34,9 @@
 // `basis`/`state` (a drive failure's usage carries no classification — `composeDriveFailureCosts`
 // never sets either) and, on THIS context only, `CostFigure.only_request_index` (the failure line
 // always sums: it reports spend, so one request's figure is shown as a floor of the sum, never as
-// that request's size).
+// that request's size). #603 A3b: the answer view (context 1b) waives `admitted_by` and
+// `admitted_by_absent` on this surface: they are shown in the view and the export only, never on a
+// human line.
 import { beforeAll, describe, it, expect } from 'vitest';
 import { UNSHOWABLE_NAME } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';

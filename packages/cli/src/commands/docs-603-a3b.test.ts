@@ -28,18 +28,19 @@ const PASS = "Pass the person's own name as responded_by when they gave one; nev
 
 describe('#603 A3b — the screens name the Slack account that answered: the words', () => {
   it('run-state-and-health.md: the `answers` row’s two new members, and the instruction’s slot', () => {
-    // `account` and its absences: core's "check 1 (core)", "check 4 (core)", "check 8"; the CLI's
+    // `account` and its absences: core's "check 1 (core)", "check 4 (core)", the real expiry's
+    // `settled_by_expiry` (core step-view.test.ts "C2", mcp-server holder-625 "C2"); the CLI's
     // "check 6" (`account_not_recorded`).
     claim(
       STATE,
       '`account` is the account the answer\'s channel reported for it, `{ "user": …, "team": … }` (`team` when the channel gave one): for a Slack answer, the member ID that replied, as Slack reports it; Realm does not verify it. When there is none, `account_absent` says why: `account_not_recorded` (the answer carries no account), `account_unreadable` (one that cannot be shown) or `settled_by_expiry`.',
     );
     // `admitted_by` and its absences: core's "check 1 (core)" (`no_named_answerer`), "check 7"
-    // (`admission_unreadable`, `admission_not_recorded`), "check 8"; the five values are A3a's
+    // (`admission_unreadable`, `admission_not_recorded`), the real expiry's "C2" cells; the five values are A3a's
     // (slack-answerers-603.test.ts checks 1–7).
     claim(
       STATE,
-      "`admitted_by` is how the answer's sender was let through: `owner` (the account Slack reported is on the owner's list; Realm does not verify who chose), `answerers` (it is on the question's `answerers` list), `project_answerers` (it is on the project's list), `no_named_answerer` (the question named no one, so anyone counted) or `owner_not_checked_on_route` (the question names someone, and the answer came with no account to compare). When there is none, `admitted_by_absent` says why: `admission_not_recorded` (the answer's entry carries none), `admission_unreadable` (a value that is not one of these five) or `settled_by_expiry`.",
+      "`admitted_by` is how the answer's sender was let through: `owner` (the account Slack reported is the question's `owner`; Realm does not verify who chose), `answerers` (it is on the question's `answerers` list), `project_answerers` (it is on the project's list), `no_named_answerer` (the question named no one, so anyone counted) or `owner_not_checked_on_route` (the question names someone, and the answer came with no account to compare). When there is none, `admitted_by_absent` says why: `admission_not_recorded` (the answer's entry carries none), `admission_unreadable` (a value that is not one of these five) or `settled_by_expiry`.",
     );
     // The slot and the sentence: the MCP tool's "check 9"; the example is compared with a real
     // reply by docs-pages-625-run-state.test.ts.
@@ -51,7 +52,7 @@ describe('#603 A3b — the screens name the Slack account that answered: the wor
     // The MCP tool's "check 2 (MCP)" (the account), "check 4 (MCP)" (`account_unreadable`).
     claim(
       TOOLS,
-      '`account` is the account the winning answer\'s channel reported — for a Slack answer, the member ID that replied, as Slack reports it; Realm does not verify it —, and one that cannot be shown gives `"account_absent": "account_unreadable"` instead (both added after version 0.49.0).',
+      '`account` is the account the winning answer\'s channel reported — for a Slack answer, the member ID that replied, as Slack reports it; Realm does not verify it; one that cannot be shown gives `"account_absent": "account_unreadable"` instead (both added after version 0.49.0). `basis` describes `name` only; the account carries its own label.',
     );
     // "check 2 (MCP)", "one rule: a stated name first, then the account", "check 5 (MCP)".
     claim(
@@ -63,6 +64,10 @@ describe('#603 A3b — the screens name the Slack account that answered: the wor
       'its choice, the name as stated and then the account its channel reported, `U0ALICE (as Slack reports it)` (each left out when the record has none; the account was added after version 0.49.0), how it arrived',
     );
     // "check 9": the slot offered, a value wrapped whole in `<` `>` records no name.
+    claim(
+      TOOLS,
+      '`responded_by` is optional: leave it out when the person gave no name, and a value wrapped whole in `<` `>` records no name.',
+    );
     claim(TOOLS, PLACEHOLDER);
     claim(TOOLS, PASS);
     claim(
@@ -83,6 +88,14 @@ describe('#603 A3b — the screens name the Slack account that answered: the wor
     claim(
       ACTING,
       'The `by` part names the stated name, then the account the answer\'s channel reported: `, by "<name>" (as stated), U0ALICE (as Slack reports it)`, or `(as its channel reports it)` for another route (the account was added after version 0.49.0). It is left out when the recorded answer names nobody and holds no account.',
+    );
+    // The CLI's "check 2" (the beaten sentence names the account) and the MCP tool's "without an
+    // account the sentence is today's" (no `by` part with neither).
+    claim(ACTING, 'The `by` part is left out when that answer names nobody and holds no account.');
+    // The CLI's "checks 1 and 3" (`realm run inspect`'s answer line) and "check 6" (`(not stated)`).
+    claim(
+      ACTING,
+      '(`answered by "<name>"`, the name `--by` gave; `answered by U0ALICE (as Slack reports it)`, the account Slack reported for a Slack answer; or `answered by (not stated)`)',
     );
   });
 
@@ -110,7 +123,7 @@ describe('#603 A3b — the screens name the Slack account that answered: the wor
     const text = read('CHANGELOG.md');
     const section = text.slice(text.indexOf('## [Unreleased]'), text.indexOf('\n## [0.49.0]'));
     const entry =
-      "- **The screens name the Slack account that answered, as Slack reports it.** `realm run inspect`'s answer line, which said '(not stated)', and the outcome sentences and the thread's receipt, which named no one, now name the account Slack reported for the reply. The MCP answer instruction offers `responded_by` for the person's own name. (#603)";
+      "- **The screens name the Slack account that answered, as Slack reports it.** `realm run inspect`'s answer line, which said '(not stated)', and the outcome sentences and the thread's receipt, which named no one, now name the account Slack reported for the reply. The MCP answer instruction offers `responded_by` for the person's own name; a value wrapped whole in `<` `>`, as the placeholder is, records no name. (#603)";
     expect(flat(section), `the CHANGELOG no longer says: ${entry}`).toContain(flat(entry));
   });
 });

@@ -1,8 +1,9 @@
 // who-answered-603b.test.ts — #603 A3b: the account a channel reported for an answer, read once
 // (`answerAccountOf`), in the answer view and in the outcome. Acceptance checks 1 (core's part: the
-// view reads `channel_evidence`), 4 (an account that cannot be shown: the view and the outcome),
-// 7 (an `admitted_by` that is not one of the five) and 8 (the entry the gate's expiry wrote). The
-// lines a person reads are pinned beside each door (the CLI and the MCP server).
+// view reads `channel_evidence`), 4 (an account that cannot be shown: the view and the outcome) and
+// 7 (an `admitted_by` that is not one of the five). Check 8 (the entry the gate's expiry wrote) is the
+// real expiry's: step-view.test.ts "C2" and mcp-server's holder-625 "C2". The lines a person reads are
+// pinned beside each door (the CLI and the MCP server).
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { describe, expect, it } from 'vitest';
@@ -149,29 +150,6 @@ describe('#603 A3b — the account a channel reported, in the answer view and th
     }).toEqual({
       boss: [undefined, 'admission_unreadable'],
       none: [undefined, 'admission_not_recorded'],
-    });
-  });
-
-  it('check 8: the entry the gate’s expiry wrote — both pairs `settled_by_expiry`, whatever it carries', async () => {
-    // An expiry's entry carries `resolution`; this one also carries an account and an admission,
-    // which no expiry writes, so the cell shows the expiry decides.
-    const run = withEntry(await answered(), (e) => {
-      e['resolution'] = 'expired_default';
-      e['responded_by'] = 'timeout';
-    });
-    const { answer } = read(run);
-    // (1) red when an expiry's entry is read as not recorded, or its account is shown; (2) prints
-    //     the pairs.
-    expect({
-      account: answer?.account,
-      account_absent: answer?.account_absent,
-      admitted_by: answer?.admitted_by,
-      admitted_by_absent: answer?.admitted_by_absent,
-    }).toEqual({
-      account: undefined,
-      account_absent: 'settled_by_expiry',
-      admitted_by: undefined,
-      admitted_by_absent: 'settled_by_expiry',
     });
   });
 

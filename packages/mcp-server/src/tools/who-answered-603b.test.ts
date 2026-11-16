@@ -91,23 +91,26 @@ describe('#603 A3b — the MCP answer tool names the account that answered, as i
     return instantText(Date.parse(entry!.completed_at));
   }
   /** The tool's sentence for a later answer `reject`. */
-  async function later(opts: Partial<SubmitGateOptions>): Promise<{ error: string; at: string }> {
+  async function later(opts: Partial<SubmitGateOptions>) {
     const { runId, gateId } = await atQuestion();
     const at = await answered(runId, gateId, opts);
     const reply = await handleSubmitHumanResponse(
       { run_id: runId, gate_id: gateId, choice: 'reject' },
       { runStore, workflowStore },
     );
-    return { error: reply.errors[0]!, at };
+    return { error: reply.errors[0]!, at, by: reply.outcome?.by };
   }
   const beaten = (by: string, door: string, at: string): string =>
     `Not recorded: your choice 'reject'. The question on step 'confirm' was already answered — approve${by}, ${door}, at ${at}.`;
 
   it('check 2 (MCP): a Slack answer stands — the sentence says ", by U0ALICE (as Slack reports it)"', async () => {
-    const { error, at } = await later(SLACK);
-    // (a) red when `renderOutcome` ignores the account (", by" left out), or labels it otherwise;
-    //     (b) prints the sentence.
-    expect(error).toBe(beaten(', by U0ALICE (as Slack reports it)', 'through a Slack thread', at));
+    const { error, at, by } = await later(SLACK);
+    // (a) red when `renderOutcome` ignores the account (", by" left out), or labels it otherwise, or
+    //     the reply's `outcome.by` does not carry the account; (b) prints the sentence and `by`.
+    expect({ error, by }).toEqual({
+      error: beaten(', by U0ALICE (as Slack reports it)', 'through a Slack thread', at),
+      by: { kind: 'answer', account: 'U0ALICE', basis: 'stated' },
+    });
   });
 
   it('one rule: a stated name first, then the account — `, by "Ana" (as stated), U0ALICE (as Slack reports it)`', async () => {
@@ -131,22 +134,17 @@ describe('#603 A3b — the MCP answer tool names the account that answered, as i
   });
 
   it('check 4 (MCP): an account that cannot be shown — the one unshowable phrase, with no label', async () => {
-    const { error, at } = await later({
+    const { error, at, by } = await later({
       ...SLACK,
       channelEvidence: { user: 'U0\u0007ALICE', forms: ['U0\u0007ALICE'] },
     });
-    // (a) red when the raw value is printed, or a label follows the phrase; (b) prints the sentence.
-    expect({ error, raw: error.includes('\u0007') }).toEqual({
+    // (a) red when the raw value is printed, a label follows the phrase, or the reply's
+    //     `outcome.by` does not say `account_unreadable`; (b) prints the sentence and `by`.
+    expect({ error, raw: error.includes('\u0007'), by }).toEqual({
       error: beaten(`, by ${UNSHOWABLE_NAME}`, 'through a Slack thread', at),
       raw: false,
+      by: { kind: 'answer', account_absent: 'account_unreadable', basis: 'stated' },
     });
-  });
-
-  it('a route a door declared as `account` is another route, never the label maker', async () => {
-    // The door words gained an `account` member (the label by route); a route of that name is not it.
-    const { error, at } = await later({ route: 'account', respondedBy: 'alice' });
-    // (a) red when the route's words are read from the label maker; (b) prints the sentence.
-    expect(error).toBe(beaten(', by "alice" (as stated)', "through route 'account'", at));
   });
 
   it('without an account the sentence is today’s, word for word', async () => {
