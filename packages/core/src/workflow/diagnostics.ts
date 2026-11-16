@@ -14,6 +14,7 @@
 import type { SourcePosition } from './source-positions.js';
 import { capText } from '../utils/redaction.js';
 
+/** @public */
 export type WarningCode =
   | 'UNKNOWN_WORKFLOW_KEY'
   | 'UNKNOWN_STEP_KEY'
@@ -91,6 +92,7 @@ export type WarningCode =
  * different renderer), not for `renderLoaderWarning` to recompose from — that would risk a second,
  * drifting copy of the same prose. Codes that name nothing narrower than their scope carry just
  * `code`/`severity`/`message`.
+ * @public
  */
 export interface LoaderWarning {
   code: WarningCode;

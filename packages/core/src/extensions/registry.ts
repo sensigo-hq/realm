@@ -8,6 +8,7 @@ import type { RateLimiter } from '../adapters/rate-limiter.js';
 import { TokenBucketRateLimiter } from '../adapters/token-bucket.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
 
+/** @public */
 export class ExtensionRegistry {
   private adapters = new Map<string, ServiceAdapter>();
   private processors = new Map<string, Processor>();

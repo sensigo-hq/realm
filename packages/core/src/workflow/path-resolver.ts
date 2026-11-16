@@ -129,7 +129,10 @@ export type AbsentCause =
   /** A position in a list, which may be shorter. */
   | { readonly rule: 'list_position'; readonly position: string };
 
-/** Why a path was not checked. */
+/**
+ * Why a path was not checked.
+ * @public
+ */
 export type NotCheckedWhy = 'producer_declares_no_shape' | 'no_params_schema';
 
 /** The resolver's one answer for one path. */

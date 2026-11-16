@@ -23,11 +23,16 @@ import { isLeaseFact, type Unleased } from '../store/lease-facts.js';
  * How a program's name is known. `stated` — a host passed an explicit name; `ambient` — the
  * operator set `REALM_OPERATOR`; `derived` — the OS user and host name. `verified` (#603) and
  * `capability` (#597) are added by the units that produce them.
+ * @public
  */
 export const BY_SOURCE_CLASSES = ['stated', 'ambient', 'derived'] as const;
+/** @public */
 export type BySourceClass = (typeof BY_SOURCE_CLASSES)[number];
 
-/** A program's name, how that name is known, and the host's channel. Not a person; not a process. */
+/**
+ * A program's name, how that name is known, and the host's channel. Not a person; not a process.
+ * @public
+ */
 export interface Attributed {
   by: string;
   by_source: BySourceClass;
@@ -38,6 +43,7 @@ export interface Attributed {
 /**
  * Why a name is absent. All derived AT READ, never stored. #558 PR-V adds its own members to this
  * const; no second absence type exists.
+ * @public
  */
 export const ACTOR_ABSENT_CAUSES = [
   'holder_not_recorded',
@@ -51,8 +57,10 @@ export const ACTOR_ABSENT_CAUSES = [
   // An answer the gate's expiry wrote: no answer was recorded in time (produced by the step view).
   'settled_by_expiry',
 ] as const;
+/** @public */
 export type ActorAbsentCause = (typeof ACTOR_ABSENT_CAUSES)[number];
 
+/** @public */
 export interface ActorAbsent {
   by: null;
   absent_cause: ActorAbsentCause;
@@ -81,7 +89,10 @@ export const GATE_PROOF_CAUSES = [
 ] as const;
 export type GateProofCause = (typeof GATE_PROOF_CAUSES)[number];
 
-/** A verdict with a cause that does not belong to it does not compile. */
+/**
+ * A verdict with a cause that does not belong to it does not compile.
+ * @public
+ */
 export type GateClaimVerdict =
   | { proof: 'matched' | 'absent' | 'mismatch' }
   | { proof: 'unverifiable'; cause: 'no_claim' | 'claim_has_no_token' | 'store_keeps_no_claims' }

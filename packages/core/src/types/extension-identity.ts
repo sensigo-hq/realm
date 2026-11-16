@@ -7,7 +7,10 @@
 // time, attached to the ExtensionRegistry, and appended to the run by the execution loop's
 // lazy append-on-change site. Never a gate; advisory evidence only.
 
-/** One loaded extension module's identity. */
+/**
+ * One loaded extension module's identity.
+ * @public
+ */
 export interface ExtensionIdentityModule {
   /** The authored path (workflow.yaml `extensions:` entry or the --extensions-module value). */
   declared: string;
@@ -19,7 +22,10 @@ export interface ExtensionIdentityModule {
   format: 'esm' | 'cjs' | 'ts-jiti';
 }
 
-/** Versioned deterministic directory-tree fingerprint over the module roots. */
+/**
+ * Versioned deterministic directory-tree fingerprint over the module roots.
+ * @public
+ */
 export interface ExtensionIdentityTree {
   /** Deduped, sorted parent directories of the resolved entry modules. */
   roots: string[];
@@ -35,7 +41,10 @@ export interface ExtensionIdentityTree {
   truncated: boolean;
 }
 
-/** Labeled advisory signals — each independently fail-soft; never part of the comparison. */
+/**
+ * Labeled advisory signals — each independently fail-soft; never part of the comparison.
+ * @public
+ */
 export interface ExtensionIdentitySignals {
   /** `version` from the trust root's package.json, when readable. */
   package_version?: string;
@@ -47,6 +56,7 @@ export interface ExtensionIdentitySignals {
  * One point-in-time identity of the extension code executing a run. Appended to
  * `RunRecord.extension_identity` on change (history, newest last). The shape is
  * load-bearing evidence — never collapsible to a boolean.
+ * @public
  */
 export interface ExtensionIdentityEntry {
   /** ISO timestamp of module-LOAD-time capture (what was in memory), not of the append. */

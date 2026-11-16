@@ -2,7 +2,10 @@
 // reads them from. The interface and its record live in the core so a store in another package
 // (SQLite) implements them; the CLI's file store implements them.
 
-/** One step of a replay: whether its preconditions held in the run, and with the overrides. */
+/**
+ * One step of a replay: whether its preconditions held in the run, and with the overrides.
+ * @public
+ */
 export interface ReplayStepResult {
   step_id: string;
   /** All preconditions passed in the original run? */
@@ -14,7 +17,10 @@ export interface ReplayStepResult {
   has_preconditions: boolean;
 }
 
-/** A persisted replay snapshot: the result of replayRun() + the metadata that produced it. */
+/**
+ * A persisted replay snapshot: the result of replayRun() + the metadata that produced it.
+ * @public
+ */
 export interface ReplayRecord {
   /** Unique ID, always starts with "rpl_". */
   id: string;
@@ -30,6 +36,7 @@ export interface ReplayRecord {
   created_at: string;
 }
 
+/** @public */
 export interface ReplayStore {
   /** Persist a replay record. Returns the stored record with its assigned ID. */
   save(record: Omit<ReplayRecord, 'id' | 'created_at'>): Promise<ReplayRecord>;

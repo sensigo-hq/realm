@@ -151,6 +151,7 @@ export function sleepWouldExceedCap(elapsedMs: number, waitMs: number, capMs: nu
  * for the DEFAULT-cap population for the same reason as before (enforcement now tracks the
  * declared schedule there too); it is now ALSO honestly retired for the explicit-cap population,
  * which this correction is what actually makes true.
+ * @public
  */
 export function computeClaimDeadline(
   definition: WorkflowDefinition,
@@ -199,6 +200,7 @@ export function omitClaim(
  *
  * #729 CW-1b: a claim that names a lease is judged by its lease's fact instead (design record C5
  * §4.4): `held` ⇒ `healthy`; `not_held` ⇒ `claim_stale`; `absent` or `unknown` ⇒ `claim_unknown_age`.
+ * @public
  */
 export type ClaimState = 'healthy' | 'claim_stale' | 'claim_unknown_age';
 

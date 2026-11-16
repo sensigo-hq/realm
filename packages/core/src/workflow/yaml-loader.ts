@@ -942,6 +942,7 @@ function loadWorkflowFromFileCore(
  * printing warnings for free. Structured warnings are reachable only via
  * `loadWorkflowFromFileWithDiagnostics`.
  * @throws WorkflowError on read failure or structural validation errors.
+ * @public
  */
 export function loadWorkflowFromFile(
   filePath: string,
@@ -958,6 +959,7 @@ export function loadWorkflowFromFile(
  * themselves (validate/register/watch/`--strict`) instead of the default console.warn behavior.
  * `notChecked` (fix 1, unit 1) lists the `input_map` paths into data the workflow declares no
  * shape for, which `validate` reports.
+ * @public
  */
 export function loadWorkflowFromFileWithDiagnostics(
   filePath: string,
@@ -977,6 +979,7 @@ export function loadWorkflowFromFileWithDiagnostics(
  * A declared `extensions` key is a hard load error — extensions require file-based loading
  * (no directory context exists to resolve relative extension module paths against).
  * @throws WorkflowError on parse failure or structural validation errors.
+ * @public
  */
 export function loadWorkflowFromString(
   content: string,
@@ -992,6 +995,7 @@ export function loadWorkflowFromString(
 /**
  * Same as `loadWorkflowFromString`, but prints nothing and returns every collected LoaderWarning
  * alongside the definition (issue #169), and the `input_map` paths not checked (fix 1, unit 1).
+ * @public
  */
 export function loadWorkflowFromStringWithDiagnostics(
   content: string,

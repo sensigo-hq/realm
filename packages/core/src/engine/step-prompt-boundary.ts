@@ -14,6 +14,7 @@ import { renderTemplateWithBoundary, type StableBoundary } from './render-templa
  * a run fills is unresolved here, so it is unstable and the boundary falls at the first of them. With
  * no `prompt`, `undefined`. Async: it reads the context files; the caller gives the instant the
  * snapshots record as `loaded_at`, which no template can read and the render discards.
+ * @public
  */
 export async function renderStepPromptWithBoundary(
   definition: WorkflowDefinition,

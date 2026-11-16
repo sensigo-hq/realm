@@ -1,0 +1,147 @@
+# The API report of @sensigo/realm-mcp: every exported name of its entries, its kind and its release tag, and
+# for a name tagged `@public` or `@beta` its declaration as the built d.ts declares it (comments
+# removed, `private` members dropped, and a `uses` line for a type from another package, with the
+# major this package depends on). api-report.test.ts (packages/core/src/inventory) regenerates it
+# from the build and fails when it differs.
+#
+# A change here is made on purpose: rebuild with `npm run build -w @sensigo/realm -w @sensigo/realm-mcp`,
+# regenerate with `npx vitest run src/inventory -u` (from packages/core), commit it in the same change,
+# and name each tagged name added, removed or changed under `## [Unreleased]` in CHANGELOG.md, in
+# backticks. A `@beta` declaration may change in a minor release; an untagged one is internal.
+
+## @sensigo/realm-mcp
+
+ASSISTANT_DOOR_WORDS · value · internal
+BinDoorFlags · type · internal
+BinName · type · internal
+DEV_MODE_ANSWER_WARNING · value · internal
+FORM_ASKS_AFTER_FIRST · value · internal
+FORM_SETTLE_POLL_MS · value · internal
+FORM_WAIT_ENV · value · internal
+FORM_WAIT_FLOOR_SECONDS · value · internal
+FORM_WAIT_SECONDS_DEFAULT · value · internal
+FORM_WAIT_SECONDS_MAX · value · internal
+FORM_WAIT_SECONDS_MIN · value · internal
+FailedAttemptStoreLike · type · public
+  type FailedAttemptStoreLike = Pick<JsonFileFailedAttemptStore, 'append' | 'read' | 'deleteAllForRun'>;
+
+FormWaitInput · type · internal
+FormWaitSetting · type · internal
+GATE_ANSWERS_ENV · value · internal
+GateAnswersInput · type · internal
+GateAnswersSetting · type · internal
+JsonTraceBufferStore · both · public
+  class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactStore, OrphanSweepableStore {
+      readonly traceCapabilities: ReadonlySet<TraceCapability>;
+      constructor(runsDir: string, runReader: FenceRunReader, lockProfile?: Partial<TraceBufferLockProfile>);
+      append(runId: string, stepId: string, entries: AgentTraceEntry[], options?: AppendOptions): Promise<AppendResult>;
+      appendFenced(runId: string, stepId: string, entries: AgentTraceEntry[], fence: FencePredicate, options?: AppendOptions): Promise<AppendResult>;
+      read(runId: string, stepId: string): Promise<BufferedEntry[]>;
+      delete(runId: string, stepId: string): Promise<void>;
+      deleteFenced(runId: string, stepId: string, fence: FencePredicate): Promise<number>;
+      sealFenced(runId: string, stepId: string, fence: FencePredicate): Promise<SealResult>;
+      listSealedForRun(runId: string): Promise<SealedArtifact[]>;
+      statAllForRun(runId: string, dirEntries?: readonly string[]): Promise<{
+          bytes: number;
+      }>;
+      deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<ArtifactDeletionReport>;
+      deleteAllForRunFenced(runId: string, fence: RunScopedFencePredicate, dirEntries?: readonly string[]): Promise<ArtifactDeletionReport>;
+      readAllForRun(runId: string): Promise<Record<string, unknown[]>>;
+      listOrphans(liveRunIds: ReadonlySet<string>): Promise<OrphanArtifact[]>;
+  }
+
+LockRetries · type · public
+  type LockRetries = number | {
+      retries: number;
+      minTimeout?: number;
+      maxTimeout?: number;
+      randomize?: boolean;
+  };
+
+OFFERED_DEPRECATION_ID · value · internal
+OperatorRoute · type · public
+  interface OperatorRoute {
+      render: (way: WayOn, basis: Basis | undefined) => string | null;
+      source: Source;
+  }
+
+ProtocolStep · type · internal
+RealmMcpServerOptions · type · public
+  interface RealmMcpServerOptions {
+      registry?: ExtensionRegistry;
+      registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
+      priceSourceProvider?: (definition: WorkflowDefinition) => Promise<PriceSource>;
+      workflowStore: WorkflowRegistrar;
+      runStore: RunStore;
+      traceBufferStore: TraceBufferStore;
+      failedAttemptStore: FailedAttemptStoreLike;
+      driver?: Attributed;
+      operatorRoute?: OperatorRoute;
+      disclosureProvider?: (definition: WorkflowDefinition | undefined, run?: RunRecord) => Promise<DisclosureSet>;
+      disclosure?: {
+          notSecret?: string[];
+      };
+      gateAnswers?: 'asked' | 'permitted' | 'withheld' | 'offered';
+      gateAnswersFlag?: string;
+      formWaitSeconds?: number;
+      formWaitSecondsFlag?: string;
+      statelessHttp?: boolean;
+      onSessionWithoutForms?: () => void;
+      deprecationNotifications?: boolean;
+      principal?: Principal;
+      monotonicNow?: () => number;
+  }
+
+TraceBufferLockProfile · type · public
+  interface TraceBufferLockProfile {
+      retries: LockRetries;
+      stale: number;
+      realpath: boolean;
+  }
+
+VERSION · value · internal
+WorkflowProtocol · type · internal
+alsoSetClause · value · internal
+checkValueLine · value · internal
+createDefaultRegistry · value · public
+  function createDefaultRegistry(): ExtensionRegistry;
+
+createRealmMcpServer · value · public
+  function createRealmMcpServer(options: RealmMcpServerOptions): McpServer;
+  uses McpServer (@modelcontextprotocol/sdk 1)
+
+effectiveGateAnswers · value · internal
+formWaitBinRefusal · value · internal
+formWaitInertRefusal · value · internal
+formWaitNoFormsRefusal · value · internal
+gateAnswersBinRefusal · value · internal
+gateAnswersConnectLine · value · internal
+gateAnswersStartLine · value · internal
+generateProtocol · value · internal
+judgeFormWait · value · internal
+judgeGateAnswers · value · internal
+loadPriceSource · value · public
+  function loadPriceSource(opts?: {
+      economicsPath?: string;
+      importList?: () => Promise<unknown>;
+  }): Promise<PriceSource>;
+
+offeredGivenToProgram · value · internal
+readBinDoorSettings · value · internal
+readCacheEconomics · value · internal
+renderOutcome · value · internal
+routePhraseOf · value · internal
+
+## @sensigo/realm-mcp/home
+
+HomeServerOptions · type · public
+  type HomeServerOptions = {
+      home?: string;
+  } & Omit<RealmMcpServerOptions, 'runStore' | 'workflowStore' | 'traceBufferStore' | 'failedAttemptStore'>;
+
+createRealmMcpServerOnHome · value · public
+  function createRealmMcpServerOnHome(options?: HomeServerOptions): Promise<{
+      server: McpServer;
+      close(): void;
+  }>;
+  uses McpServer (@modelcontextprotocol/sdk 1)

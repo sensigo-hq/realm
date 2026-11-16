@@ -4,7 +4,10 @@ import type { RunRecord } from '../types/run-record.js';
 import type { CreateRunOptions } from './store-interface.js';
 import { WorkflowError } from '../types/workflow-error.js';
 
-/** The action a store should take for a matched run. */
+/**
+ * The action a store should take for a matched run.
+ * @public
+ */
 export type IdempotencyDecision = 'reuse' | 'supersede';
 
 /**
@@ -21,6 +24,7 @@ export type IdempotencyDecision = 'reuse' | 'supersede';
  * computed against that label — e.g. a record persisted `completed` that DERIVES `failed` yields
  * `reuse` under `rerun_if_failed`, silently reusing a failed run. `idempotency-policy.test.ts`'s
  * witness fails any in-tree call site that does not derive.
+ * @public
  */
 export function decideIdempotencyPolicy(
   matched: Pick<RunRecord, 'id' | 'workflow_id' | 'run_phase' | 'terminal_state'>,

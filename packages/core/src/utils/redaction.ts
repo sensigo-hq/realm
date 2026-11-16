@@ -231,18 +231,35 @@ export function inboundMarkerWarning(markers: readonly string[]): string {
  *  text, so it is reported in `unmaskable` (I8), never dropped silently. */
 export const DISCLOSURE_FLOORS = { environment: 8, declared: 4 } as const;
 
-/** Who reads a surface (RECORD 01 #12; 05 "audiences"). */
+/**
+ * Who reads a surface (RECORD 01 #12; 05 "audiences").
+ * @public
+ */
 export type DisclosureAudience = 'agent' | 'broadcast' | 'log' | 'private' | 'file';
 /** `declared` hides declared members only (question text, private terminals); `all` adds the
- *  environment members and the patterns. */
+ *  environment members and the patterns.
+ * @public
+ */
 export type DisclosureTier = 'declared' | 'all';
-/** Whether the declared values are known. */
+/**
+ * Whether the declared values are known.
+ * @public
+ */
 export type DeclaredState = 'resolved' | 'partial' | 'unknown';
-/** Why they are not (or `resolved` with zero members because there is no manifest). */
+/**
+ * Why they are not (or `resolved` with zero members because there is no manifest).
+ * @public
+ */
 export type DeclaredCause = 'no_manifest' | 'load_failed' | 'embedder_none' | 'manifest_changed';
-/** Whether the environment was swept. */
+/**
+ * Whether the environment was swept.
+ * @public
+ */
 export type EnvironmentState = 'swept' | 'not_swept';
-/** Why not (D1 §3.7): the host set the members itself and passed no environment. */
+/**
+ * Why not (D1 §3.7): the host set the members itself and passed no environment.
+ * @public
+ */
 export type EnvironmentCause = 'host_set';
 
 /** One value to hide, with where it came from (a name, never shown on a shared surface). */
@@ -251,11 +268,18 @@ export interface DisclosureEntry {
   source: `env:${string}` | `declared:${string}`;
 }
 
-/** Kind codes: the higher wins where marks overlap (RECORD 01 #3). */
-const KIND = { pattern: 1, environment: 2, declared: 3 } as const;
-type MemberKind = typeof KIND.environment | typeof KIND.declared;
+/**
+ * Kind codes: the higher wins where marks overlap (RECORD 01 #3).
+ * @public
+ */
+export const KIND = { pattern: 1, environment: 2, declared: 3 } as const;
+/** @public */
+export type MemberKind = typeof KIND.environment | typeof KIND.declared;
 
-/** A compiled set: opaque to callers; built once per (entries, options). */
+/**
+ * A compiled set: opaque to callers; built once per (entries, options).
+ * @public
+ */
 export interface DisclosureSet {
   readonly audience: DisclosureAudience;
   readonly declared: DeclaredState;
@@ -564,6 +588,7 @@ export function notSecretIntersection(lists: readonly (readonly string[] | undef
  * surface builds its set here: the environment's members through {@link environmentEntries} (or
  * none, with `environment: 'not_swept'` and cause `host_set`, when the caller passes no
  * environment), the declared values by name, then {@link compileDisclosure}.
+ * @public
  */
 export function buildDisclosureSet(input: {
   env: Readonly<Record<string, string | undefined>> | undefined;
@@ -661,14 +686,20 @@ function isPath(value: string): boolean {
 
 // ── disclose ──────────────────────────────────────────────────────────────────────────────────
 
-/** What `disclose` found, by kind (counts of hidden runs). */
+/**
+ * What `disclose` found, by kind (counts of hidden runs).
+ * @public
+ */
 export interface HiddenCounts {
   declared: number;
   environment: number;
   pattern: number;
 }
 
-/** `disclose`'s result. `members` (sources) is filled on a private audience only. */
+/**
+ * `disclose`'s result. `members` (sources) is filled on a private audience only.
+ * @public
+ */
 export interface Disclosed {
   text: string;
   hidden: HiddenCounts;
@@ -730,6 +761,7 @@ const PEM_DASHES = '-----';
  *   scheme word and the credential after it are both hidden.
  *
  * `hidden` counts the runs by the highest kind inside each; `unchecked` is 0 (PR-M1 fills it).
+ * @public
  */
 export function disclose(text: string, set: DisclosureSet, tier: DisclosureTier): Disclosed {
   const { marks, memberAt } = markText(text, set, tier);
@@ -778,7 +810,10 @@ function emitRuns(
   return { out, hidden };
 }
 
-/** Caching 3-B (C2, A4): a text disclosed in two pieces, cut where a provider's cache head ends. */
+/**
+ * Caching 3-B (C2, A4): a text disclosed in two pieces, cut where a provider's cache head ends.
+ * @public
+ */
 export interface DisclosedSplit {
   /** The disclosed `text.slice(0, cutSent)`. */
   head: string;
@@ -801,6 +836,7 @@ export interface DisclosedSplit {
  * ever holds part of a hidden value, and `head + tail` is exactly `disclose`'s text (the law cell
  * proves it at every cut). Callers (pinned by a source cell): `discloseForAgentSplit` (the CLI), the
  * MCP door's `stable_prefix`, and {@link discloseSplitSize}. Never a print path or the writer.
+ * @public
  */
 export function discloseSplit(
   text: string,
@@ -832,6 +868,7 @@ export function discloseSplit(
  * of their text — numbers only, so a caller that must never hold a disclosed head (PR 5's describer:
  * `validate`, `register`, `watch`) imports this, never `discloseSplit`. `headAsciiChars` counts the
  * head's UTF-16 code units below 0x80, so the describer's token interval is the one its text gives.
+ * @public
  */
 export function discloseSplitSize(
   text: string,
@@ -845,7 +882,10 @@ export function discloseSplitSize(
   return { headChars: head.length, tailChars: tail.length, headAsciiChars };
 }
 
-/** {@link discloseSplitSize}'s return: numbers only (a source cell pins that no field is a string). */
+/**
+ * {@link discloseSplitSize}'s return: numbers only (a source cell pins that no field is a string).
+ * @public
+ */
 export interface DisclosedSplitSize {
   headChars: number;
   tailChars: number;

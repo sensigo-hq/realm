@@ -39,6 +39,7 @@ import type { SourcePosition } from './source-positions.js';
 /**
  * An `input_map` path or a `when` condition that reads data the workflow declares no shape for
  * (`validate --json`'s `not_checked`).
+ * @public
  */
 export interface NotCheckedPath {
   /** Where the path is read: an `input_map` leaf, or a `when` condition (piece 2a). */

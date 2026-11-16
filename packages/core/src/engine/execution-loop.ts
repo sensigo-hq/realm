@@ -165,7 +165,9 @@ import {
 } from './error-resolution.js';
 
 /** The host's dispatcher for a step. issue #719 (C4): it may return the step's output as a plain
- *  value, as well as through a promise. */
+ *  value, as well as through a promise.
+ * @public
+ */
 export type StepDispatcher = (
   stepName: string,
   input: Record<string, unknown>,
@@ -186,6 +188,7 @@ export type StepDispatcher = (
  *
  * The three are INDEPENDENT: any one alone must still cause `stepMeta` to be passed. Named (not
  * inlined twice) so `ExecuteStepOptions` and `ExecuteChainOptions` cannot drift apart.
+ * @public
  */
 export interface StepMeta {
   toolCalls?: ToolCallRecord[];
@@ -193,6 +196,7 @@ export interface StepMeta {
   usage?: UsageRecord[];
 }
 
+/** @public */
 export interface ExecuteStepOptions {
   runId: string;
   command: string;
@@ -278,6 +282,7 @@ export interface ExecuteStepOptions {
   disclosure?: DisclosureSet;
 }
 
+/** @public */
 export interface SubmitGateOptions {
   runId: string;
   gateId: string;
@@ -370,6 +375,7 @@ export interface SubmitGateOptions {
   projectAnswerers?: string[];
 }
 
+/** @public */
 export interface ExecuteChainOptions {
   runId: string;
   command: string;
@@ -411,6 +417,7 @@ export interface ExecuteChainOptions {
    * saved and the call is refused `STATE_CLAIM_LOST` (`claim_removed`). The steps the chain runs after
    * it take their own claims. For a step that is not an agent step it changes nothing. `executeStep`
    * does not take it.
+   * @beta
    */
   heldClaim?: { hold: LeaseHold };
 }
@@ -1852,6 +1859,7 @@ export type { AdvanceCaller, AnswerCaller, ChainCaller, EngineStepCaller, StepCa
  * that carried it out (`advanceRun`, `executeStep`, `executeChain`, `submitHumanResponse`, or the
  * name the host passed: an MCP tool, a CLI command), or `timer`, the waiting process's own timer
  * (`realm agent`, `realm workflow run`), which writes a line of its own.
+ * @public
  */
 export type EnactedVia =
   AdvanceCaller | StepCaller | EngineStepCaller | ChainCaller | AnswerCaller | 'timer';
@@ -2306,6 +2314,7 @@ export function deriveCacheDetail(input: UsageRecord[]): StepCacheDetail {
   return { state: 'partially_observed', basis: 'provider_reported', requests };
 }
 
+/** @public */
 export async function executeStep(
   store: RunStore,
   definition: WorkflowDefinition,
@@ -5685,6 +5694,7 @@ async function composeExpiryReply(
 /**
  * #715 (b) (Amendment 4): `submitHumanResponseBody`, with the reply carrying, privately, the snapshot it was
  * judged on (`judgedSnapshotOf`). Its contract is the body's, documented below.
+ * @public
  */
 export async function submitHumanResponse(
   store: RunStore,
@@ -6429,6 +6439,7 @@ const DRAIN_MARK_BUSY_RETRIES = 3;
  * each of those three reasons refuses the mark WITHOUT mutating the ledger entry's `'pending'`
  * status, so continuing would re-select the SAME entry next iteration (an infinite loop); halting
  * is the only forward-progress-safe response until an operator or a later terminal edge resolves it.
+ * @public
  */
 export async function drainFinalizers(
   store: RunStore,
@@ -6700,7 +6711,10 @@ export function bareStepOutput(
   return { source: 'none', output: {} };
 }
 
-/** The options of {@link executeEngineStep} (issue #625 PR-2a). */
+/**
+ * The options of {@link executeEngineStep} (issue #625 PR-2a).
+ * @public
+ */
 export interface ExecuteEngineStepOptions {
   runId: string;
   /** The `auto` step the engine runs. */
@@ -6735,6 +6749,7 @@ export interface ExecuteEngineStepOptions {
  * the step and its kind, and the run record is unchanged. A host that names such a step has a
  * wiring defect, the same on every call, so it throws like the admission rule's host tier. A step
  * the definition does not have is left to `executeStep`'s own refusal.
+ * @public
  */
 export async function executeEngineStep(
   store: RunStore,
@@ -7579,7 +7594,10 @@ function nothingRanHint(
   return { context_hint: `Run '${run.id}': nothing ran.`, ...next };
 }
 
-/** The options of {@link advanceRun} (issue #625 PR-2a). No dispatcher: the engine runs only its own steps. */
+/**
+ * The options of {@link advanceRun} (issue #625 PR-2a). No dispatcher: the engine runs only its own steps.
+ * @public
+ */
 export interface AdvanceRunOptions {
   runId: string;
   /** Extension registry for adapters, handlers and cleanup steps; default: the built-in one. */
@@ -7643,6 +7661,7 @@ export interface AdvanceRunOptions {
 /**
  * #715 (b) (Amendment 4): `advanceRunBody`, with the reply carrying, privately, the snapshot it was
  * judged on (`judgedSnapshotOf`). Its contract is the body's, documented below.
+ * @public
  */
 export async function advanceRun(
   store: RunStore,
@@ -7800,6 +7819,7 @@ async function advanceRunBody(
 /**
  * #715 (b) (Amendment 4): `executeChainBody`, with the reply carrying, privately, the snapshot it was
  * judged on (`judgedSnapshotOf`). Its contract is the body's, documented below.
+ * @public
  */
 export async function executeChain(
   store: RunStore,

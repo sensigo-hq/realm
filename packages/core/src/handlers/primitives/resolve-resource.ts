@@ -9,6 +9,7 @@
  * @param stepId     The step whose output to read (e.g. "fetch_document").
  * @param fieldName  The field within that step's output (e.g. "text").
  * @returns          The field value, or undefined if the step or field is absent.
+ * @public
  */
 export function resolveResource(
   resources: Record<string, unknown> | undefined,

@@ -1,0 +1,4395 @@
+# The API report of @sensigo/realm: every exported name of its entries, its kind and its release tag, and
+# for a name tagged `@public` or `@beta` its declaration as the built d.ts declares it (comments
+# removed, `private` members dropped, and a `uses` line for a type from another package, with the
+# major this package depends on). api-report.test.ts (packages/core/src/inventory) regenerates it
+# from the build and fails when it differs.
+#
+# A change here is made on purpose: rebuild with `npm run build -w @sensigo/realm -w @sensigo/realm-mcp`,
+# regenerate with `npx vitest run src/inventory -u` (from packages/core), commit it in the same change,
+# and name each tagged name added, removed or changed under `## [Unreleased]` in CHANGELOG.md, in
+# backticks. A `@beta` declaration may change in a minor release; an untagged one is internal.
+
+## @sensigo/realm
+
+ABANDON_KILL_ADVISORY · value · internal
+ACTOR_ABSENT_CAUSES · value · public
+  const ACTOR_ABSENT_CAUSES: readonly [
+      "holder_not_recorded",
+      "pre_lease_claim",
+      "no_claim",
+      "store_keeps_no_claims",
+      "driver_not_recorded",
+      "name_unreadable",
+      "not_stated",
+      "settled_by_expiry"
+  ];
+
+ADVANCE_OWED · value · internal
+AGENT_ACTIONS · value · internal
+AGENT_PRE_CLAIM_REFUSALS · value · internal
+ANSWER_ROUTES · value · internal
+ANSWER_ROUTE_ABSENCES · value · internal
+ANSWER_TOOL_NAMES · value · internal
+ARGS · value · internal
+AUTHOR_RULES_LABEL · value · internal
+AUTHOR_TEXT_LABEL · value · internal
+AUTO_GAPS_KEPT · value · internal
+AUTO_LIFETIME_MARGIN · value · internal
+AbandonWay · type · public
+  type AbandonWay = Base<'abandon'> & {
+      run_id: string;
+  };
+
+ActorAbsent · type · public
+  interface ActorAbsent {
+      by: null;
+      absent_cause: ActorAbsentCause;
+  }
+
+ActorAbsentCause · type · public
+  type ActorAbsentCause = (typeof ACTOR_ABSENT_CAUSES)[number];
+
+Admission · type · internal
+AdmittedBy · type · public
+  type AdmittedBy = 'owner' | 'answerers' | 'project_answerers' | 'no_named_answerer' | 'owner_not_checked_on_route';
+
+AdvanceCaller · type · public
+  type AdvanceCaller = (typeof ENTRY_CALLERS.advanceRun)[number];
+
+AdvanceRunOptions · type · public
+  interface AdvanceRunOptions {
+      runId: string;
+      registry?: ExtensionRegistry;
+      traceBufferStore?: TraceBufferStore;
+      driver?: Attributed;
+      onStep?: (step: string) => void;
+      onTaken?: (step: string, run: RunRecord, snapshot?: Snapshot) => void;
+      onNotRecorded?: (step: string, kind: NotRecordedKind, run: RunRecord, snapshot?: Snapshot) => void;
+      onGuard?: (guard: string) => void;
+      caller?: AdvanceCaller;
+      command?: string;
+      onExpiry?: (line: string) => void;
+      disclosure?: DisclosureSet;
+  }
+
+AdvanceWay · type · public
+  type AdvanceWay = Base<'advance'> & {
+      run_id: string;
+      owed: readonly ({
+          step: string;
+      } | {
+          expiry: DueExpiry;
+      })[];
+  };
+
+AgentAction · type · public
+  type AgentAction = 'report_to_user' | 'provide_input' | 'resolve_precondition' | 'stop' | 'wait_for_service' | 'wait_and_proceed' | 'await';
+
+AgentPreClaimRefusal · type · internal
+AgentSubmissionValidation · type · internal
+AgentTraceEntry · type · public
+  interface AgentTraceEntry {
+      event: string;
+      timestamp?: string | undefined;
+      data?: Record<string, string | number | boolean | null> | undefined;
+  }
+
+AirtableAdapter · both · internal
+AirtableAdapterConfig · type · internal
+AnswerArrival · type · internal
+AnswerCaller · type · public
+  type AnswerCaller = (typeof ENTRY_CALLERS.submitHumanResponse)[number];
+
+AnswerFacts · type · public
+  interface AnswerFacts {
+      route: string;
+      shown?: {
+          renderer: string;
+      };
+      channel_evidence?: ChannelEvidence;
+  }
+
+AnswerOnRecord · type · public
+  type AnswerOnRecord = AnswerFacts | {
+      absent: 'route_not_declared';
+  };
+
+AnswerRoute · type · internal
+AnswerRouteAbsence · type · internal
+AnswerToolName · type · internal
+AnswerView · type · internal
+AnswererMismatchFacts · type · public
+  interface AnswererMismatchFacts {
+      allowed: readonly string[];
+      sender: string;
+  }
+
+AnswererQuestion · type · internal
+AnswererVerdict · type · internal
+AnswersRow · type · public
+  type AnswersRow = 'permitted' | 'asked_forms' | 'withheld';
+
+AppendOptions · type · public
+  interface AppendOptions {
+      writerNonce?: string;
+  }
+
+AppendResult · type · public
+  interface AppendResult {
+      buffer_count: number;
+      buffer_bytes: number;
+      limit_count: number;
+      limit_bytes: number;
+      final_limit_entries: number;
+      final_limit_bytes: number;
+      file_count?: number;
+      file_limit_count?: number;
+      file_bytes?: number;
+      file_limit_bytes?: number;
+  }
+
+ApplyResumeResult · type · internal
+ApplyResumeVoidedFinalizer · type · internal
+ArgSpec · type · internal
+ArtifactDeleteFailure · type · internal
+ArtifactDeletionReport · type · public
+  interface ArtifactDeletionReport {
+      bytes_deleted: number;
+  }
+
+AttemptView · type · internal
+Attributed · type · public
+  interface Attributed {
+      by: string;
+      by_source: BySourceClass;
+      channel: string;
+  }
+
+AuthGithub · type · public
+  interface AuthGithub {
+      mode: 'github';
+      secret_from: string;
+  }
+
+AuthHmac · type · public
+  interface AuthHmac {
+      mode: 'hmac';
+      secret_from: string;
+      header: string;
+      algorithm?: 'sha1' | 'sha256' | 'sha512';
+      encoding?: 'hex' | 'base64';
+      timestamp_header?: string;
+      max_age_seconds?: number;
+  }
+
+AuthNone · type · public
+  interface AuthNone {
+      mode: 'none';
+  }
+
+AuthSharedSecret · type · public
+  interface AuthSharedSecret {
+      mode: 'shared_secret';
+      header: string;
+      secret_from: string;
+  }
+
+AuthStripe · type · public
+  interface AuthStripe {
+      mode: 'stripe';
+      secret_from: string;
+      max_age_seconds?: number;
+  }
+
+AutoPriceInput · type · internal
+BUFFER_BACKSTOP_BYTES · value · internal
+BUFFER_BACKSTOP_COUNT · value · internal
+BUFFER_LIMIT_BYTES · value · internal
+BUFFER_LIMIT_COUNT · value · internal
+BUILT_IN_REQUIREMENTS · value · internal
+BY_SOURCE_CLASSES · value · public
+  const BY_SOURCE_CLASSES: readonly [
+      "stated",
+      "ambient",
+      "derived"
+  ];
+
+Base · type · public
+  interface Base<V extends WayVerb> {
+      readonly verb: V;
+      readonly conditions: readonly Cond[];
+  }
+
+Basis · type · public
+  interface Basis extends Stamp {
+      enactor: EnactorBasis;
+      store: {
+          persists_claims: boolean;
+      };
+      definition: DefinitionBasis;
+  }
+
+BlockedReason · type · public
+  interface BlockedReason {
+      eligible_steps: string[];
+  }
+
+BufferFullDetails · type · internal
+BufferedEntry · type · public
+  interface BufferedEntry extends AgentTraceEntry {
+      _internalTs: number;
+      _nonce?: string;
+  }
+
+BufferedEntryPartition · type · internal
+BuildFailedAttemptInput · type · internal
+BySourceClass · type · public
+  type BySourceClass = (typeof BY_SOURCE_CLASSES)[number];
+
+CACHE_AUTO_BASES · value · public
+  const CACHE_AUTO_BASES: readonly [
+      "no_measurement",
+      "step_gaps",
+      "step_gaps_unreadable",
+      "tool_step"
+  ];
+
+CACHE_AUTO_PRICE_CAUSES · value · public
+  const CACHE_AUTO_PRICE_CAUSES: readonly [
+      "no_file",
+      "economics_unreachable",
+      "economics_unreadable",
+      "model_unknown",
+      "input_zero",
+      "rate_missing"
+  ];
+
+CACHE_AUTO_RATES · value · public
+  const CACHE_AUTO_RATES: readonly [
+      "cache_read",
+      "cache_write",
+      "cache_write_5m",
+      "cache_write_1h"
+  ];
+
+CACHE_BASES · value · public
+  const CACHE_BASES: readonly [
+      "provider_reported",
+      "unobservable"
+  ];
+
+CACHE_CONTROL_FIELDS · value · public
+  const CACHE_CONTROL_FIELDS: readonly [
+      "cache_control",
+      "prompt_cache_key"
+  ];
+
+CACHE_DIAGNOSTICS_WORDS · value · public
+  const CACHE_DIAGNOSTICS_WORDS: readonly [
+      "no_divergence",
+      "pending",
+      "not_returned"
+  ];
+
+CACHE_ECONOMICS_JSON_SCHEMA · value · internal
+CACHE_GAP_MAX_S · value · internal
+CACHE_LIFETIME_SOURCES · value · internal
+CACHE_MARKED_PARTS · value · public
+  const CACHE_MARKED_PARTS: readonly [
+      "system",
+      "prompt",
+      "key",
+      "conversation"
+  ];
+
+CACHE_MISS_CAUSES · value · internal
+CACHE_MISS_TYPES · value · public
+  const CACHE_MISS_TYPES: readonly [
+      "messages_changed",
+      "model_changed",
+      "system_changed",
+      "tools_changed",
+      "previous_message_not_found",
+      "unavailable",
+      "unknown"
+  ];
+
+CACHE_REFERENCE_SOURCES · value · public
+  const CACHE_REFERENCE_SOURCES: readonly [
+      "run",
+      "earlier_run"
+  ];
+
+CACHE_REQUESTERS · value · internal
+CACHE_REQUESTS · value · public
+  const CACHE_REQUESTS: readonly [
+      "off",
+      "lifetime",
+      "provider_rules"
+  ];
+
+CACHE_REQUEST_SOURCES · value · public
+  const CACHE_REQUEST_SOURCES: readonly [
+      "stated",
+      "runner_default"
+  ];
+
+CACHE_STATES · value · public
+  const CACHE_STATES: readonly [
+      "engaged",
+      "never_engaged",
+      "write_only",
+      "partially_observed",
+      "unobservable"
+  ];
+
+CAPABILITY_BASES · value · public
+  const CAPABILITY_BASES: readonly [
+      "registry",
+      "marker"
+  ];
+
+CLAIM_PROOF_ABSENT_CAUSES · value · internal
+CLOCK_READ_CLASSES · value · public
+  const CLOCK_READ_CLASSES: {
+      readonly write: "An instant a write records on the run (`updated_at`, a claim's deadline, an opened question's `opened_at`): the store's reading, taken once inside the write.";
+      readonly read: "The instant every statement about a record a read returns is judged at (`as_of`): the store's reading, taken before the load.";
+      readonly event: "An instant the engine records with what happened (a step's start and end, a drive failure, a guard's evidence): the store's clock, read where it happens.";
+      readonly outside: "An instant compared with no instant the store's clock gave (a log line, a signature window, `Retry-After`, a price day, a request's start compared with another's): the host's clock, each read named in the census with its reason.";
+      readonly duration: "A duration (elapsed time, a budget, a timeout): the monotonic clock, never compared with an instant.";
+  };
+
+CLOCK_SKEW_EPSILON_MS · value · internal
+CODE_TAGS · value · internal
+COND_TAGS · value · public
+  const COND_TAGS: readonly [
+      "client"
+  ];
+
+CONSUMED_HOME · value · internal
+COST_UNRECORDED_CAUSES · value · internal
+CURRENT_WORKFLOW_SCHEMA_VERSION · value · internal
+CUT_SENTENCE · value · internal
+CYCLE_SHAPE · value · internal
+CacheAuto · type · public
+  interface CacheAuto {
+      basis: CacheAutoBasis;
+      gaps_s?: number[];
+      prices?: CacheAutoPrices;
+  }
+
+CacheAutoBasis · type · public
+  type CacheAutoBasis = (typeof CACHE_AUTO_BASES)[number];
+
+CacheAutoPriceCause · type · public
+  type CacheAutoPriceCause = (typeof CACHE_AUTO_PRICE_CAUSES)[number];
+
+CacheAutoPrices · type · public
+  type CacheAutoPrices = {
+      from: 'economics';
+      excluded?: [
+          'short'
+      ] | [
+          'long'
+      ];
+      missing?: [
+          CacheAutoRate
+      ];
+  } | {
+      from: 'none';
+      cause: CacheAutoPriceCause;
+      missing?: CacheAutoRate[];
+  };
+
+CacheAutoRate · type · public
+  type CacheAutoRate = (typeof CACHE_AUTO_RATES)[number];
+
+CacheBasis · type · public
+  type CacheBasis = (typeof CACHE_BASES)[number];
+
+CacheBlock · type · internal
+CacheBlockSegment · type · internal
+CacheChoice · type · internal
+CacheControlField · type · public
+  type CacheControlField = (typeof CACHE_CONTROL_FIELDS)[number];
+
+CacheControlsRejected · type · public
+  interface CacheControlsRejected {
+      status: 400;
+      dropped: 'cache_fields'[];
+      proven: 'cache_fields' | 'none';
+      fields: readonly CacheControlField[];
+  }
+
+CacheDiagnostics · type · public
+  type CacheDiagnostics = {
+      asked: false;
+      cause: 'rejected';
+  } | {
+      asked: true;
+      reference_id: null;
+  } | {
+      asked: true;
+      reference_id: string;
+      result: CacheDiagnosticsWord | CacheMissReason;
+  };
+
+CacheDiagnosticsWord · type · public
+  type CacheDiagnosticsWord = (typeof CACHE_DIAGNOSTICS_WORDS)[number];
+
+CacheEconomics · type · internal
+CacheEconomicsModel · type · internal
+CacheEconomicsPrice · type · internal
+CacheEconomicsRates · type · internal
+CacheEconomicsTier · type · internal
+CacheLayoutBlock · type · internal
+CacheLifetimeSource · type · internal
+CacheLifetimes · type · internal
+CacheMarkedPart · type · public
+  type CacheMarkedPart = (typeof CACHE_MARKED_PARTS)[number];
+
+CacheMissCause · type · internal
+CacheMissReason · type · public
+  interface CacheMissReason {
+      type: CacheMissType;
+      cache_missed_input_tokens?: number;
+  }
+
+CacheMissRule · type · internal
+CacheMissType · type · public
+  type CacheMissType = (typeof CACHE_MISS_TYPES)[number];
+
+CacheNotJudgedCause · type · internal
+CachePredecessorPlace · type · internal
+CacheReference · type · public
+  type CacheReference = {
+      from: CacheReferenceSource;
+  } & Pick<UsageRecord, 'request_start'> & Partial<Pick<UsageRecord, 'request_id' | 'provider' | 'model' | 'endpoint' | 'cache_requested' | 'cache_read_input_tokens' | 'cache_creation_input_tokens' | 'cache_write_tokens' | 'cache_creation' | 'cache_lifetime_s' | 'cache_ttl_sent' | 'cache_auto' | 'prefix_chars' | 'prefix_parts' | 'cache_marked' | 'request_strict_sent'>> & {
+      agent_profile_changed?: true;
+  };
+
+CacheReferenceSource · type · public
+  type CacheReferenceSource = (typeof CACHE_REFERENCE_SOURCES)[number];
+
+CacheRequest · type · public
+  type CacheRequest = (typeof CACHE_REQUESTS)[number];
+
+CacheRequestSource · type · public
+  type CacheRequestSource = (typeof CACHE_REQUEST_SOURCES)[number];
+
+CacheRequestedEntry · type · internal
+CacheShare · type · internal
+CacheSizeBlock · type · internal
+CacheState · type · public
+  type CacheState = (typeof CACHE_STATES)[number];
+
+CacheTier · type · internal
+CacheTiers · type · internal
+CacheVerdict · type · internal
+CacheabilityOptions · type · internal
+CacheabilityStep · type · internal
+CacheabilityStepInput · type · internal
+CapabilityBasis · type · public
+  type CapabilityBasis = (typeof CAPABILITY_BASES)[number];
+
+CapabilityBlock · type · public
+  interface CapabilityBlock {
+      requirement: {
+          kind: 'handler' | 'adapter';
+          name: string;
+      };
+      code: string;
+      at: string;
+  }
+
+CapabilityBlockInfo · type · internal
+CappedRead · type · public
+  type CappedRead = {
+      definition: WorkflowDefinition;
+  } | {
+      over: {
+          bytes: number;
+      };
+  };
+
+CaptureEvidenceParams · type · internal
+ChainCaller · type · public
+  type ChainCaller = (typeof ENTRY_CALLERS.executeChain)[number];
+
+ChannelEvidence · type · public
+  interface ChannelEvidence {
+      team?: string;
+      user: string;
+      ts?: string;
+      thread_ts?: string;
+  }
+
+ChosenClass · type · internal
+ClaimHolderAbsentCause · type · internal
+ClaimProofAbsentCause · type · internal
+ClaimRecord · type · public
+  interface ClaimRecord {
+      deadline: string | null;
+      token?: string;
+      holder?: Attributed;
+      since?: string;
+      lease?: {
+          id: string;
+      };
+  }
+
+ClaimState · type · public
+  type ClaimState = 'healthy' | 'claim_stale' | 'claim_unknown_age';
+
+ClaimStepForDriveOptions · type · beta
+  interface ClaimStepForDriveOptions {
+      definition: WorkflowDefinition;
+      registry: ExtensionRegistry;
+      driver?: Attributed;
+  }
+
+ClassTable · type · internal
+ClassifiableRun · type · public
+  type ClassifiableRun = Pick<RunRecord, 'terminal_state' | 'failed_steps' | 'terminal_reason' | 'aborted_at' | 'abandoned_at'>;
+
+ClassifyRunHealthOptions · type · public
+  interface ClassifyRunHealthOptions {
+      idleThresholdMs?: number;
+      definition?: WorkflowDefinition;
+      definitionError?: {
+          code: string;
+          message: string;
+          class?: string;
+      };
+      registry?: ExtensionRegistry;
+  }
+
+Clock · type · public
+  interface Clock {
+      now(): Date;
+      at(when: Date, fn: () => void | Promise<void>): () => void;
+  }
+
+ClockReadClass · type · internal
+CodeTag · type · internal
+ComposedWays · type · internal
+Cond · type · public
+  type Cond = {
+      code: 'enactor_has';
+      kind: 'handler' | 'adapter';
+      name: string;
+      basis: 'marker' | 'unjudged' | 'load_failed';
+  } | {
+      code: 'client_prompt';
+      tag: CondTag;
+  };
+
+CondTag · type · public
+  type CondTag = (typeof COND_TAGS)[number];
+
+ConditionReading · type · internal
+ConsumedHome · type · internal
+ContextWrapperFormat · type · public
+  type ContextWrapperFormat = 'xml' | 'brackets' | 'none';
+
+CostCacheFieldsRefused · type · internal
+CostCacheHead · type · internal
+CostCacheRequested · type · internal
+CostEndpoints · type · internal
+CostFigure · type · internal
+CostMiss · type · internal
+CostModels · type · internal
+CostUnrecordedCause · type · internal
+CostView · type · internal
+CreateResult · type · public
+  type CreateResult = Snapshot & {
+      created: boolean;
+  };
+
+CreateRunOptions · type · public
+  interface CreateRunOptions {
+      workflowId: string;
+      workflowVersion: number;
+      params: Record<string, unknown>;
+      idempotencyKey?: string;
+      parentRunId?: string;
+      onTerminalMatch?: 'reuse' | 'reject' | 'rerun_if_failed' | 'rerun';
+      onLiveMatch?: 'use_existing' | 'fail';
+      extensionIdentity?: ExtensionIdentityEntry[];
+  }
+
+DEFAULT_CHARS_PER_TOKEN_HIGH · value · internal
+DEFAULT_CHARS_PER_TOKEN_LOW · value · internal
+DEFAULT_EXECUTION_TIMEOUT_SECONDS · value · internal
+DEFAULT_GATE_CHOICES · value · internal
+DEFAULT_IDLE_THRESHOLD_MS · value · internal
+DEFAULT_MIN_PART_CHARS · value · internal
+DEFAULT_POLICY · value · internal
+DEFAULT_STEP_TIMEOUT_SECONDS · value · internal
+DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD · value · internal
+DEFINITION_ABSENCES · value · public
+  const DEFINITION_ABSENCES: readonly [
+      "agent_copy_gone",
+      "not_registered",
+      "unreadable",
+      "format_invalid",
+      "legacy",
+      "not_read",
+      "newer"
+  ];
+
+DEPLOYMENT_MANIFEST_JSON_SCHEMA · value · internal
+DEPRECATIONS · value · internal
+DISCLOSURE_FLOORS · value · internal
+DISCLOSURE_MAX_DEPTH · value · internal
+DOOR_SERVES · value · internal
+DRAIN_LEASE_MAX · value · internal
+DamagedCopyFault · type · internal
+DeclaredCause · type · public
+  type DeclaredCause = 'no_manifest' | 'load_failed' | 'embedder_none' | 'manifest_changed';
+
+DeclaredNames · type · public
+  interface DeclaredNames {
+      readonly handlers?: readonly string[];
+      readonly adapters?: readonly string[];
+  }
+
+DeclaredStanding · type · internal
+DeclaredState · type · public
+  type DeclaredState = 'resolved' | 'partial' | 'unknown';
+
+DedupConfig · type · public
+  interface DedupConfig {
+      id_from: string;
+      ttl_minutes?: number;
+      on_missing_id?: 'skip' | 'reject';
+  }
+
+DedupStore · type · public
+  interface DedupStore {
+      check(key: string, ttlMs?: number): Promise<boolean>;
+      record(key: string, ttlMs: number): Promise<void>;
+      cleanup(maxAgeMs: number): Promise<void>;
+  }
+
+DefinitionAbsence · type · public
+  type DefinitionAbsence = (typeof DEFINITION_ABSENCES)[number];
+
+DefinitionBasis · type · public
+  type DefinitionBasis = {
+      workflow_id: string;
+  } | {
+      absent: DefinitionAbsence;
+  };
+
+DeploymentManifest · type · internal
+DeprecationEntry · type · internal
+Disclosed · type · public
+  interface Disclosed {
+      text: string;
+      hidden: HiddenCounts;
+      unchecked: number;
+      members?: string[];
+  }
+
+DisclosedSplit · type · public
+  interface DisclosedSplit {
+      head: string;
+      tail: string;
+      cutSent: number;
+      hiddenHead: HiddenCounts;
+      hiddenTail: HiddenCounts;
+      unchecked: number;
+  }
+
+DisclosedSplitSize · type · public
+  interface DisclosedSplitSize {
+      headChars: number;
+      tailChars: number;
+      headAsciiChars: number;
+  }
+
+DisclosureAudience · type · public
+  type DisclosureAudience = 'agent' | 'broadcast' | 'log' | 'private' | 'file';
+
+DisclosureClass · type · internal
+DisclosureEntry · type · internal
+DisclosureReceipt · type · internal
+DisclosureSet · type · public
+  interface DisclosureSet {
+      readonly audience: DisclosureAudience;
+      readonly declared: DeclaredState;
+      readonly declaredCause?: DeclaredCause;
+      readonly environment: EnvironmentState;
+      readonly environmentCause?: EnvironmentCause;
+      readonly forms: readonly {
+          readonly form: string;
+          readonly kind: MemberKind;
+          readonly member: number;
+      }[];
+      readonly maxFormLength: number;
+      readonly sources: readonly string[];
+      readonly unmaskable: number;
+  }
+
+DisclosureTally · type · internal
+DisclosureTier · type · public
+  type DisclosureTier = 'declared' | 'all';
+
+DoorAnswers · type · internal
+DoorFormFacts · type · internal
+DoorPolicy · type · internal
+DriveClaim · type · beta
+  type DriveClaim = {
+      readonly kind: 'claimed';
+      readonly hold: LeaseHold;
+      readonly since: string;
+  } | {
+      readonly kind: 'held_by';
+      readonly holder?: Attributed;
+      readonly since?: string;
+      readonly lease?: LeaseFact;
+  } | {
+      readonly kind: 'not_eligible';
+  } | {
+      readonly kind: 'refused';
+      readonly code: Exclude<UnavailableCode, 'held_elsewhere' | 'not_eligible'>;
+  } | {
+      readonly kind: 'lease_unavailable';
+      readonly reason: LeaseUnavailableReason;
+  } | {
+      readonly kind: 'unleased_store';
+  };
+
+DriveFailureCost · type · internal
+DriveFailureRecord · type · public
+  interface DriveFailureRecord {
+      at: string;
+      step: string;
+      provider: string;
+      error_class: 'connection_timeout' | 'connection_error' | 'api_status' | 'sdk_missing' | 'validation_rejected' | 'aborted_by_budget' | 'other';
+      message: string;
+      evidence_count?: number;
+      gate_id?: string;
+      attempts_sdk?: number;
+      elapsed_ms: number;
+      declared_per_attempt_ms?: number;
+      derived_ceiling_ms?: number;
+      last_observed_status?: number;
+      retry_after_observed_ms?: number;
+      usage?: UsageRecord[];
+  }
+
+DriveFailuresField · type · public
+  interface DriveFailuresField {
+      first_failed_at: string;
+      total: number;
+      entries: DriveFailureRecord[];
+  }
+
+DriveRelease · type · beta
+  type DriveRelease = {
+      readonly kind: 'released';
+      readonly snapshot: Snapshot;
+  } | {
+      readonly kind: 'not_released';
+      readonly reason: SettlementRefusalReason;
+      readonly snapshot: Snapshot;
+  } | {
+      readonly kind: 'not_ours';
+      readonly snapshot: Snapshot;
+  };
+
+DueExpiry · type · public
+  interface DueExpiry {
+      gate_id: string;
+      step: string;
+      on_expiry: 'settle_default' | 'abort';
+  }
+
+ENTRY_CALLERS · value · public
+  const ENTRY_CALLERS: {
+      readonly advanceRun: readonly [
+          "advanceRun",
+          "advance_run",
+          "advance",
+          "start_run",
+          "agent"
+      ];
+      readonly executeStep: readonly [
+          "executeStep",
+          "agent"
+      ];
+      readonly executeEngineStep: readonly [
+          "executeEngineStep",
+          "agent"
+      ];
+      readonly executeChain: readonly [
+          "executeChain",
+          "execute_step",
+          "agent",
+          "run"
+      ];
+      readonly submitHumanResponse: readonly [
+          "submitHumanResponse",
+          "submit_human_response",
+          "respond",
+          "run",
+          "agent"
+      ];
+  };
+
+EVIDENCE_TABLE · value · internal
+EXTENSION_KEY_PREFIX · value · internal
+EnactedVia · type · public
+  type EnactedVia = AdvanceCaller | StepCaller | EngineStepCaller | ChainCaller | AnswerCaller | 'timer';
+
+EnactorBasis · type · public
+  type EnactorBasis = {
+      kind: 'this_program';
+  } | {
+      kind: 'observer';
+  } | {
+      kind: 'load_failed';
+      error_code: LoadErrorCode;
+  };
+
+EngineReply · type · public
+  interface EngineReply {
+      command: string;
+      run_id: string;
+      run_version: number;
+      status: RunStatus;
+      data: Record<string, unknown>;
+      evidence: EvidenceSnapshot[];
+      warnings: string[];
+      diagnostics?: LoaderWarning[];
+      errors: string[];
+      error_code?: ErrorCode;
+      error_details?: Record<string, unknown>;
+      error?: ReplyError;
+      intrinsic_action?: AgentAction;
+      reply_kind: ReplyKind;
+      retry_after?: number;
+      context_hint: string;
+      run_phase?: RunPhase;
+      ways: WayOn[];
+      unavailable: Unavailable[];
+      basis?: Basis;
+      outcome?: Outcome;
+      races?: RaceEntry[];
+      expiry?: ExpiryReceipt;
+      refusal?: Unavailable;
+      names_next?: true;
+      blocked_reason?: BlockedReason;
+      gate?: GateInfo;
+      chained_auto_steps?: Array<{
+          step: string;
+          run_phase: string;
+          branched_via?: string;
+      }>;
+      adopted_own?: number;
+      adopted_anonymous?: number;
+      preserved_foreign?: number;
+      settled_by_default?: boolean;
+      defaulted_steps?: string[];
+      guards?: Array<{
+          step: string;
+          outcome: 'pass' | 'abort' | 'resolution_error';
+      }>;
+      ended_by?: {
+          arm: SealArm;
+          step: string;
+          reason?: string;
+      };
+      stopped_step?: string;
+      answer_recorded?: false;
+      gate_claim?: {
+          proof: GateClaimVerdict['proof'];
+          cause?: 'no_claim' | 'claim_has_no_token' | 'store_keeps_no_claims' | 'answered' | 'expired';
+          opened_by: Attributed | ActorAbsent;
+      };
+  }
+
+EngineRunnable · type · public
+  interface EngineRunnable {
+      step: string;
+      runnable_here: boolean | 'unknown';
+      refused_by?: PreClaimRefusal;
+      refusal?: string;
+      basis?: CapabilityBasis;
+      requirement?: {
+          kind: 'handler' | 'adapter';
+          name: string;
+      };
+      precondition?: PreconditionFacts;
+  }
+
+EngineStepCaller · type · public
+  type EngineStepCaller = (typeof ENTRY_CALLERS.executeEngineStep)[number];
+
+EnvironmentCause · type · public
+  type EnvironmentCause = 'host_set';
+
+EnvironmentState · type · public
+  type EnvironmentState = 'swept' | 'not_swept';
+
+ErrorCategory · type · public
+  type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
+
+ErrorCode · type · public
+  type ErrorCode = 'NETWORK_TIMEOUT' | 'NETWORK_UNREACHABLE' | 'NETWORK_DNS_FAILED' | 'NETWORK_CONNECTION_RESET' | 'SERVICE_HTTP_4XX' | 'SERVICE_HTTP_5XX' | 'SERVICE_RATE_LIMITED' | 'SERVICE_AUTH_FAILED' | 'SERVICE_NOT_FOUND' | 'SERVICE_RESPONSE_INVALID' | 'SERVICE_UNEXPECTED_REDIRECT' | 'STATE_BLOCKED' | 'STATE_PRECONDITION_FAILED' | 'STATE_RUN_NOT_FOUND' | 'STATE_WORKFLOW_NOT_FOUND' | 'STATE_WORKFLOW_UNREADABLE' | 'STATE_RUN_TERMINAL' | 'STATE_SNAPSHOT_MISMATCH' | 'STATE_RUN_LOCKED' | 'STATE_RUN_BUSY' | 'STATE_TRANSITION_DENIED' | 'STATE_LEGACY_FORMAT' | 'STATE_NEWER_FORMAT' | 'STATE_STEP_ALREADY_CLAIMED' | 'STATE_STEP_NOT_ELIGIBLE' | 'STATE_STEP_ALREADY_SETTLED' | 'STATE_CLAIM_LOST' | 'STATE_ANSWERER_MISMATCH' | 'STATE_RUN_DIVERGED' | 'STATE_RUN_ALREADY_ACTIVE' | 'STATE_IDEMPOTENCY_KEY_USED' | 'STATE_TEST_CLOCK_FOREIGN' | 'STATE_HOME_UNUSABLE' | 'STATE_STORE_DRIVER_UNAVAILABLE' | 'STATE_STORE_FILESYSTEM_REFUSED' | 'STATE_STORE_SETTINGS_REFUSED' | 'STATE_STORE_VERSION_OLDER' | 'STATE_STORE_VERSION_NEWER' | 'STATE_STORE_SCHEMA_TAMPERED' | 'STATE_STORE_FULL' | 'STATE_STORE_READONLY' | 'STATE_STORE_WRITES_FENCED' | 'STATE_STORE_LIMIT_EXCEEDED' | 'STATE_STORE_BACKUP_REFUSED' | 'STATE_STORE_BACKUP_UNVERIFIED' | 'STATE_STORE_MIGRATE_REFUSED' | 'STATE_STORE_MIGRATE_FAILED' | 'STATE_STORE_CHECK_REFUSED' | 'STATE_HOME_HOLDS_LEGACY_STORE' | 'STATE_RUN_PURGED' | 'STATE_RUN_TIMESTAMP_INVALID' | 'STATE_WRITE_ONCE_REWRITTEN' | 'STATE_EVIDENCE_REWRITTEN' | 'STATE_RUN_IDENTITY' | 'RUN_ABORTING' | 'VALIDATION_INPUT_SCHEMA' | 'VALIDATION_OUTPUT_SCHEMA' | 'VALIDATION_TRACE_SCHEMA' | 'VALIDATION_EXHAUSTED' | 'VALIDATION_WORKFLOW_SCHEMA' | 'VALIDATION_HASH_MISMATCH' | 'VALIDATION_QUOTE_NOT_FOUND' | 'VALIDATION_FIELD_UNKNOWN' | 'VALIDATION_FIELD_EXCLUDED' | 'VALIDATION_EMPTY_VALUE' | 'VALIDATION_BATCH_TOO_LARGE' | 'VALIDATION_BATCH_ITEMS' | 'VALIDATION_TRUST_VALUE' | 'VALIDATION_ACTOR_INVALID' | 'VALIDATION_CALLER_INVALID' | 'VALIDATION_OPTION_INVALID' | 'VALIDATION_CURSOR' | 'STEP_HANDLER_ERROR' | 'ENGINE_INTERNAL' | 'ENGINE_STORE_FAILED' | 'ENGINE_ARTIFACT_DELETE_FAILED' | 'ENGINE_ADAPTER_FAILED' | 'ENGINE_ADAPTER_NOT_REGISTERED' | 'ENGINE_PROCESSOR_FAILED' | 'ENGINE_HANDLER_FAILED' | 'ENGINE_HANDLER_NOT_REGISTERED' | 'ENGINE_STEP_FAILED' | 'ENGINE_GATE_OPEN_FAILED' | 'ENGINE_RELEASE_LINE_MISMATCH' | 'ENGINE_RELEASE_LINE_UNDECLARED' | 'GATE_MESSAGE_UNRESOLVABLE' | 'FILTER_UNKNOWN' | 'ADAPTER_OP_UNSUPPORTED' | 'ADAPTER_VALIDATION_FAILED' | 'ADAPTER_REQUEST_FAILED' | 'STEP_TIMEOUT' | 'STEP_ABORTED' | 'STEP_RETRY_EXHAUSTED' | 'STATE_STEP_PENDING' | 'STATE_SEAL_UNSTAMPED' | 'STATE_SEAL_ORPHANED' | 'STATE_SEAL_ERASED' | 'STATE_SEAL_UNKNOWN_ARM' | 'STATE_SEAL_INCOHERENT' | 'STATE_SEAL_REWRITTEN' | 'STEP_NOT_FOUND' | 'GUARD_RESOLUTION_ERROR' | 'INPUT_MAP_DEPTH_EXCEEDED' | 'INPUT_MAP_UNKNOWN_DIRECTIVE' | 'RESOURCE_FETCH_FAILED' | 'RESOURCE_TOO_LARGE' | 'RESOURCE_FORMAT_INVALID' | 'RESOURCE_NOT_ACCESSIBLE' | 'BUFFER_FULL' | 'TRACE_CAPABILITY_INCONSISTENT' | 'MCP_CONNECTION_FAILED' | 'MCP_TOOL_NOT_FOUND' | 'MCP_TOOL_NAME_COLLISION';
+
+ErrorFacts · type · public
+  type ErrorFacts = ErrorFactsByCode[keyof ErrorFactsByCode];
+
+ErrorFactsByCode · type · public
+  interface ErrorFactsByCode {
+      RESOURCE_FORMAT_INVALID: StoredFileErrorFacts;
+      ENGINE_STORE_FAILED: StoredFileErrorFacts;
+      STATE_LEGACY_FORMAT: Extract<StoredFileErrorFacts, {
+          scope: 'file';
+      }>;
+      VALIDATION_INPUT_SCHEMA: ValidationErrorFacts;
+      VALIDATION_OUTPUT_SCHEMA: ValidationErrorFacts;
+      STATE_NEWER_FORMAT: NewerDefinitionFacts;
+      STATE_ANSWERER_MISMATCH: AnswererMismatchFacts;
+  }
+
+ErrorFactsOf · type · internal
+EvidenceSnapshot · type · public
+  interface EvidenceSnapshot {
+      step_id: string;
+      started_at: string;
+      completed_at: string;
+      duration_ms: number;
+      input_summary: Record<string, unknown>;
+      output_summary: Record<string, unknown>;
+      status: 'success' | 'error' | 'skipped' | 'abandoned';
+      error?: string;
+      evidence_hash: string;
+      attempt?: number;
+      kind?: 'execution' | 'gate_response';
+      gate_message?: string;
+      responded_by?: string;
+      driven_by?: Attributed;
+      answer?: AnswerOnRecord;
+      client_prompt_requested?: true;
+      principal?: Principal;
+      output_source?: OutputSource;
+      supplied_by?: SupplierRole;
+      claim_proof?: GateClaimVerdict;
+      admitted_by?: AdmittedBy;
+      resolution?: 'expired_default' | 'expired_abort';
+      diagnostics?: StepDiagnostics;
+      agent_profile?: string;
+      agent_profile_hash?: string;
+      tool_calls?: ToolCallRecord[];
+      resolved_params?: Record<string, unknown>;
+      warn?: string;
+      debug_output?: unknown;
+      trace?: TraceEntry[];
+      trace_digest?: string;
+      trace_summary?: TraceNormalizationSummary;
+      effective_timeout_seconds?: number;
+      clipped_to_ms?: number;
+      exhausted_by?: 'attempts' | 'total_timeout';
+  }
+
+ExecuteChainOptions · type · public (beta: heldClaim)
+  interface ExecuteChainOptions {
+      runId: string;
+      command: string;
+      input: Record<string, unknown>;
+      dispatcher?: StepDispatcher;
+      registry?: ExtensionRegistry;
+      stepMeta?: StepMeta;
+      trace?: AgentTraceEntry[];
+      traceBufferStore?: TraceBufferStore;
+      writerNonce?: string;
+      driver?: Attributed;
+      caller?: ChainCaller;
+      party?: Party;
+      disclosure?: DisclosureSet;
+      heldClaim?: {
+          hold: LeaseHold;
+      };
+  }
+
+ExecuteEngineStepOptions · type · public
+  interface ExecuteEngineStepOptions {
+      runId: string;
+      step: string;
+      run: RunRecord;
+      registry?: ExtensionRegistry;
+      traceBufferStore?: TraceBufferStore;
+      driver?: Attributed;
+      caller?: EngineStepCaller;
+      disclosure?: DisclosureSet;
+  }
+
+ExecuteStepOptions · type · public
+  interface ExecuteStepOptions {
+      runId: string;
+      command: string;
+      input: Record<string, unknown>;
+      dispatcher?: StepDispatcher;
+      registry?: ExtensionRegistry;
+      stepMeta?: StepMeta;
+      trace?: AgentTraceEntry[];
+      traceBufferStore?: TraceBufferStore;
+      writerNonce?: string;
+      driver?: Attributed;
+      outputSource?: OutputSource;
+      caller?: StepCaller;
+      party?: Party;
+      disclosure?: DisclosureSet;
+  }
+
+ExecutionMode · type · public
+  type ExecutionMode = 'auto' | 'agent' | 'guard' | 'finalizer';
+
+ExpireGateDelta · type · public
+  interface ExpireGateDelta {
+      kind: 'expire_gate';
+      gateId: string;
+  }
+
+ExpiryReceipt · type · public
+  interface ExpiryReceipt {
+      gate_id: string;
+      step: string;
+      on_expiry: 'settle_default' | 'abort';
+      choice?: string;
+      enacted_via: EnactedVia;
+      expired_at: string;
+      overdue: {
+          ms: number;
+      } | {
+          absent: 'unparseable_stamp';
+      };
+  }
+
+ExtensionFactory · type · internal
+ExtensionFactoryContext · type · internal
+ExtensionIdentityEntry · type · public
+  interface ExtensionIdentityEntry {
+      captured_at: string;
+      pid?: number;
+      modules: ExtensionIdentityModule[];
+      tree: ExtensionIdentityTree;
+      signals?: ExtensionIdentitySignals;
+      coverage: 'dir_tree_v1';
+      manifest?: {
+          path: string;
+          content_hash: string;
+          secrets_block_hash?: string;
+      };
+      secret_names?: string[];
+      override_active?: true;
+      error?: string;
+      origin?: 'start';
+  }
+
+ExtensionIdentityModule · type · public
+  interface ExtensionIdentityModule {
+      declared: string;
+      resolved: string;
+      entry_hash: string;
+      format: 'esm' | 'cjs' | 'ts-jiti';
+  }
+
+ExtensionIdentitySignals · type · public
+  interface ExtensionIdentitySignals {
+      package_version?: string;
+      git_head?: string;
+  }
+
+ExtensionIdentityTree · type · public
+  interface ExtensionIdentityTree {
+      roots: string[];
+      rules: string;
+      file_count: number;
+      total_bytes: number;
+      tree_hash: string;
+      truncated: boolean;
+  }
+
+ExtensionManifest · type · internal
+ExtensionModuleRef · type · internal
+ExtensionRegistry · both · public
+  class ExtensionRegistry {
+      register(type: 'adapter', name: string, impl: ServiceAdapter): void;
+      register(type: 'processor', name: string, impl: Processor): void;
+      register(type: 'handler', name: string, impl: StepHandler): void;
+      setIdentity(entry: ExtensionIdentityEntry): void;
+      get identity(): ExtensionIdentityEntry | undefined;
+      has(type: 'adapter' | 'processor' | 'handler', name: string): boolean;
+      names(type: 'adapter' | 'processor' | 'handler'): string[];
+      getAdapter(name: string): ServiceAdapter | undefined;
+      getProcessor(name: string): Processor | undefined;
+      getHandler(name: string): StepHandler | undefined;
+      getOrCreateRateLimiter(serviceName: string, config: RateLimitConfig): RateLimiter;
+  }
+
+FAILED_ATTEMPT_SIDECAR_MAX_BYTES · value · internal
+FENCE_PREDICATE_KINDS · value · internal
+FENCE_REQUIRES_RUN · value · internal
+FENCE_TARGETS_STEP · value · public
+  const FENCE_TARGETS_STEP: {
+      readonly step_open_for_trace: true;
+      readonly run_absent_or_terminal: false;
+      readonly run_at_version: false;
+      readonly step_not_in_progress: true;
+  };
+
+FINALIZER_PROHIBITED_STEP_KEYS · value · internal
+FINAL_LIMIT_BYTES · value · internal
+FINAL_LIMIT_ENTRIES · value · internal
+FIXED_TERMINAL_REASONS · value · internal
+FORM_WAIT_ENV · value · internal
+FORM_WAIT_SECONDS_DEFAULT · value · internal
+FORM_WAIT_SECONDS_MAX · value · internal
+FORM_WAIT_SECONDS_MIN · value · internal
+FactProducer · type · internal
+FactProducers · type · internal
+FactsByCode · type · public
+  interface FactsByCode {
+      run_ended: {
+          phase: RunPhase;
+      };
+      question_settled: {
+          gate_id: string;
+      };
+      question_due: {
+          gate_id: string;
+          step: string;
+          expires_at: string;
+          on_expiry: 'settle_default' | 'abort';
+      };
+      question_past_deadline: {
+          gate_id: string;
+          step: string;
+          expires_at: string;
+      };
+      gate_not_open: {
+          gate_id: string;
+          open_gate?: {
+              gate_id: string;
+              step: string;
+          };
+      };
+      not_a_step: {
+          step: string;
+          workflow_id: string;
+      };
+      step_settled: {
+          step: string;
+          outcome: 'completed' | 'failed' | 'skipped';
+      };
+      question_open: {
+          step: string;
+          gate_id: string;
+          question_step: string;
+          choices: readonly string[];
+      };
+      gated_step: {
+          step: string;
+          gate_id: string;
+          choices: readonly string[];
+      };
+      held_elsewhere: {
+          step: string;
+          deadline: string | {
+              absent: 'unknown_age';
+          };
+          lease?: LeaseFact;
+      };
+      upstream_cannot_run: {
+          step: string;
+          upstream: readonly string[];
+      };
+      deps_unsettled: {
+          step: string;
+          deps: readonly string[];
+      };
+      not_eligible: {
+          step: string;
+      } | {
+          reason: 'nothing_owed';
+      };
+      claim_removed: {
+          step: string;
+      };
+      refused_before_claim: {
+          step: string;
+          check: RefusedCheck;
+          refusal: string;
+          param?: string;
+          precondition?: PreconditionFacts;
+      };
+      capability_missing: {
+          step: string;
+          requirement: {
+              kind: 'handler' | 'adapter';
+              name: string;
+          };
+          basis: 'registry' | 'marker';
+      };
+      step_engine_decided: {
+          step: string;
+          execution: 'guard' | 'finalizer' | 'auto';
+      };
+      enactor_load_failed: {
+          error_code: LoadErrorCode;
+      };
+      definition_absent: {
+          workflow_id: string;
+          cause: DefinitionAbsence;
+          path?: string;
+          format?: {
+              schema_version: number;
+              reads_up_to: number;
+          };
+      };
+      argument_out_of_contract: {
+          arg: string;
+      };
+      door_cannot_enact: {
+          door: string;
+          reason?: 'engine_step';
+      };
+      no_form_here: {
+          gate_id: string;
+      };
+      form_open: {
+          gate_id: string;
+      };
+      asks_exhausted: {
+          gate_id: string;
+          sent: number;
+      };
+      door_withholds_answers: {
+          party: 'agent';
+      };
+  }
+
+FactsOf · type · public
+  type FactsOf<C extends UnavailableCode> = FactsByCode[C];
+
+FailedAttemptReadResult · type · public
+  interface FailedAttemptReadResult {
+      records: FailedAttemptRecord[];
+      capped: boolean;
+  }
+
+FailedAttemptRecord · type · public
+  interface FailedAttemptRecord {
+      run_id: string;
+      workflow_id: string;
+      step_id: string;
+      ts: string;
+      error_code: string;
+      validation_error_summary: ValidationErrorSummaryEntry[];
+      submitted_key_count: number;
+      submitted_keys: string[];
+      submitted_bytes: number;
+      trace_entry_count: number;
+      error_count?: number;
+      truncated?: true;
+  }
+
+FailedAttemptStore · type · public
+  interface FailedAttemptStore extends PerRunArtifactStore {
+      append(runId: string, line: string): Promise<void>;
+      read(runId: string): Promise<FailedAttemptReadResult>;
+  }
+
+FencePredicate · type · public
+  type FencePredicate = {
+      kind: 'step_open_for_trace';
+      run_version: number;
+  } | {
+      kind: 'run_absent_or_terminal';
+  } | {
+      kind: 'run_at_version';
+      version: number;
+  } | {
+      kind: 'step_not_in_progress';
+  };
+
+FencePredicateKind · type · public
+  type FencePredicateKind = FencePredicate['kind'];
+
+FenceRunReader · type · public
+  type FenceRunReader = Pick<RunStore, 'get'>;
+
+FieldWords · type · internal
+FileSystemAdapter · both · internal
+FileUnreadableClass · type · public
+  type FileUnreadableClass = ProbeFailureClass | 'parse' | 'newer' | 'legacy';
+
+FilterCondition · type · public
+  type FilterCondition = {
+      header: string;
+      value: string | string[];
+  } | {
+      path: string;
+      value: string | string[];
+  };
+
+FinalizerTrigger · type · public
+  type FinalizerTrigger = 'complete' | 'fail' | 'abort' | 'always' | 'completed_with_failed_steps';
+
+ForWay · type · internal
+FormWaitInput · type · internal
+FormWaitSetting · type · internal
+FsIoError · both · internal
+GATE_ANSWERS_ENV · value · internal
+GATE_ANSWERS_VALUES · value · public
+  const GATE_ANSWERS_VALUES: readonly [
+      "asked",
+      "permitted",
+      "withheld"
+  ];
+
+GATE_INFO_TABLE · value · internal
+GATE_PROOFS · value · internal
+GATE_PROOF_CAUSES · value · internal
+GATE_TRUST_LEVELS · value · internal
+GUARD_PROHIBITED_STEP_KEYS · value · internal
+GateAnswers · type · public
+  type GateAnswers = (typeof GATE_ANSWERS_VALUES)[number];
+
+GateAnswersInput · type · internal
+GateAnswersSetting · type · internal
+GateClaimVerdict · type · public
+  type GateClaimVerdict = {
+      proof: 'matched' | 'absent' | 'mismatch';
+  } | {
+      proof: 'unverifiable';
+      cause: 'no_claim' | 'claim_has_no_token' | 'store_keeps_no_claims';
+  } | {
+      proof: 'spent';
+      cause: 'answered' | 'expired';
+  };
+
+GateConfig · type · public
+  interface GateConfig {
+      choices?: string[];
+      owner?: string;
+      answerers?: string[];
+      message?: string;
+      resolution_messages?: Record<string, string>;
+      timeout_seconds?: number;
+      on_expiry?: 'settle_default' | 'abort';
+      default_choice?: string;
+      reminder_seconds?: number;
+      reminder_max?: number;
+  }
+
+GateDueState · type · internal
+GateInfo · type · public
+  interface GateInfo {
+      gate_id: string;
+      step_name: string;
+      preview: Record<string, unknown>;
+      choices: string[];
+      display?: string;
+      agent_hint?: string;
+      response_spec?: {
+          choices: string[];
+      };
+      expires_at?: string;
+      first_reminder_due_at?: string;
+  }
+
+GateProof · type · internal
+GateProofCause · type · internal
+GenericHttpAdapter · both · internal
+GitHubAdapter · both · internal
+GitHubAdapterConfig · type · internal
+GorgiasAdapter · both · internal
+GorgiasAdapterConfig · type · internal
+GuardEnding · type · internal
+HaltStop · type · public
+  interface HaltStop {
+      kind: HaltStopKind;
+  }
+
+HaltStopKind · type · public
+  type HaltStopKind = Extract<StopKind, 'capability_missing' | 'failed' | 'refused'>;
+
+HiddenCounts · type · public
+  interface HiddenCounts {
+      declared: number;
+      environment: number;
+      pattern: number;
+  }
+
+HttpAdapterConfig · type · internal
+INSTANT_CLASSES · value · internal
+IdUnreadableClass · type · public
+  type IdUnreadableClass = 'legacy' | 'newer' | 'parse';
+
+IdempotencyDecision · type · public
+  type IdempotencyDecision = 'reuse' | 'supersede';
+
+InMemoryTraceBufferStore · both · public
+  class InMemoryTraceBufferStore implements TraceBufferStore {
+      readonly traceCapabilities: ReadonlySet<TraceCapability>;
+      constructor(runReader: FenceRunReader);
+      append(runId: string, stepId: string, entries: AgentTraceEntry[], options?: AppendOptions): Promise<AppendResult>;
+      appendFenced(runId: string, stepId: string, entries: AgentTraceEntry[], fence: FencePredicate, options?: AppendOptions): Promise<AppendResult>;
+      read(runId: string, stepId: string): Promise<BufferedEntry[]>;
+      delete(runId: string, stepId: string): Promise<void>;
+      deleteFenced(runId: string, stepId: string, fence: FencePredicate): Promise<number>;
+      statAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<{
+          bytes: number;
+      }>;
+      deleteAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<ArtifactDeletionReport>;
+      deleteAllForRunFenced(runId: string, fence: RunScopedFencePredicate, _dirEntries?: readonly string[]): Promise<ArtifactDeletionReport>;
+      sealFenced(runId: string, stepId: string, fence: FencePredicate): Promise<SealResult>;
+      listSealedForRun(runId: string): Promise<SealedArtifact[]>;
+      readAllForRun(runId: string): Promise<Record<string, unknown[]>>;
+  }
+
+InProgressClaimInfo · type · internal
+InputMapNode · type · public
+  type InputMapNode = string | LiteralNode | {
+      [key: string]: InputMapNode;
+  };
+
+InputMapStep · type · internal
+InspectWay · type · public
+  type InspectWay = Base<'inspect'> & {
+      run_id: string;
+  };
+
+InstantClass · type · internal
+InstantReading · type · internal
+JsonFileFailedAttemptStore · both · public
+  class JsonFileFailedAttemptStore implements FailedAttemptStore, OrphanSweepableStore {
+      constructor(runsDir: string);
+      append(runId: string, line: string): Promise<void>;
+      read(runId: string): Promise<FailedAttemptReadResult>;
+      deleteAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<ArtifactDeletionReport>;
+      statAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<{
+          bytes: number;
+      }>;
+      listOrphans(liveRunIds: ReadonlySet<string>): Promise<OrphanArtifact[]>;
+  }
+
+JsonFileStore · both · public
+  class JsonFileStore implements PerRunArtifactStore {
+      readonly persistsClaims = true;
+      readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField>;
+      readonly clock: Clock;
+      constructor(runsDir?: string);
+      get runsDirPath(): string;
+      create(options: CreateRunOptions): Promise<CreateResult>;
+      get(runId: string): Promise<Snapshot>;
+      update(record: RunRecord): Promise<Snapshot>;
+      claimStep(runId: string, stepName: string, definition: WorkflowDefinition, claimant?: Attributed): Promise<Snapshot>;
+      settleStep(runId: string, delta: SettlementDelta, definition?: WorkflowDefinition): Promise<StoreSettlement>;
+      stampSeal(runId: string, sealedBy: SealedBy, expectedVersion: number): Promise<StampSealResult>;
+      save(record: RunRecord): Promise<void>;
+      reconcileKeys(workflowId?: string, dryRun?: boolean, options?: {
+          command?: string;
+      }): Promise<ReconcileSummary>;
+      list(workflowId?: string): Promise<Listing>;
+      listWithDiagnostics(workflowId?: string): Promise<RunListing>;
+      listRunIds(): Promise<ReadonlySet<string>>;
+      statAllForRun(runId: string, _dirEntries?: readonly string[]): Promise<{
+          bytes: number;
+      }>;
+      deleteAllForRun(runId: string, _dirEntries?: readonly string[], options?: {
+          expectVersion?: number;
+      }): Promise<ArtifactDeletionReport>;
+  }
+
+JsonSchema · type · public
+  interface JsonSchema {
+      type?: string;
+      required?: string[];
+      properties?: Record<string, JsonSchema>;
+      items?: JsonSchema;
+      minimum?: number;
+      maximum?: number;
+      pattern?: string;
+      [key: string]: unknown;
+  }
+
+JsonWorkflowStore · both · public
+  class JsonWorkflowStore implements RealmWorkflowRegistrar {
+      constructor(baseDir?: string);
+      register(definition: WorkflowDefinition): Promise<void>;
+      probe(workflowId: string): ProbeResult;
+      getCapped(workflowId: string, capBytes: number): Promise<CappedRead>;
+      get(workflowId: string): Promise<WorkflowDefinition>;
+      getSync(workflowId: string): WorkflowDefinition;
+      list(): Promise<WorkflowDefinition[]>;
+      listWithDiagnostics(): Promise<{
+          workflows: WorkflowDefinition[];
+          unreadable: UnreadableFileEntry[];
+          mismatched: Array<{
+              file: string;
+              id: string;
+          }>;
+      }>;
+  }
+
+KIND · value · public
+  const KIND: {
+      readonly pattern: 1;
+      readonly environment: 2;
+      readonly declared: 3;
+  };
+
+KNOWN_GATE_KEYS · value · internal
+KNOWN_RETRY_KEYS · value · internal
+KNOWN_STEP_KEYS · value · internal
+KNOWN_WORKFLOW_KEYS · value · internal
+KeyAnswer · type · public
+  type KeyAnswer = {
+      state: 'held';
+      run_id: string;
+  } | {
+      state: 'purged';
+      runs: Array<{
+          run_id: string;
+          purged_at: string;
+      }>;
+      since: string;
+  } | {
+      state: 'unseen';
+      since: string;
+  };
+
+KeyHolderFields · type · internal
+KeysOfUnion · type · internal
+LEASE_PROBE_REASONS · value · public
+  const LEASE_PROBE_REASONS: readonly [
+      "not_checked",
+      "cannot_open",
+      "not_a_lease",
+      "permission",
+      "io_error"
+  ];
+
+LEASE_UNAVAILABLE_REASONS · value · beta
+  const LEASE_UNAVAILABLE_REASONS: readonly [
+      "permission",
+      "no_space",
+      "too_many_files",
+      "io_error"
+  ];
+
+LIBRARY_WORDS · value · public
+  const LIBRARY_WORDS: WayRenderer<string, LibraryHost>;
+
+LIVE_CLAIM_MARKER · value · internal
+LeaseFact · type · public
+  type LeaseFact = {
+      readonly state: 'held' | 'not_held' | 'absent';
+      readonly basis: 'kernel_lock';
+  } | {
+      readonly state: 'unknown';
+      readonly basis: 'kernel_lock';
+      readonly reason: LeaseProbeReason;
+  };
+
+LeaseFacts · type · public
+  type LeaseFacts = {
+      readonly [leaseId: string]: LeaseFact;
+  } & {
+      readonly '#LeaseFacts': never;
+  };
+
+LeaseFactsClass · value · internal
+LeaseFinalizerDelta · type · public
+  interface LeaseFinalizerDelta {
+      kind: 'lease_finalizer';
+      finalizer: string;
+      leaseToken: string;
+      leaseSeconds: number;
+  }
+
+LeaseHold · type · beta
+  interface LeaseHold {
+      readonly id: string;
+      close(newestRecord?: RunRecord): void;
+  }
+
+LeaseHoldResult · type · beta
+  type LeaseHoldResult = {
+      readonly held: LeaseHold;
+  } | {
+      readonly unavailable: LeaseUnavailableReason;
+  };
+
+LeasePort · type · beta
+  interface LeasePort {
+      hold(): Promise<LeaseHoldResult>;
+      probe(id: string): Promise<LeaseFact>;
+  }
+
+LeaseProbeReason · type · public
+  type LeaseProbeReason = (typeof LEASE_PROBE_REASONS)[number];
+
+LeaseState · type · internal
+LeaseUnavailableReason · type · beta
+  type LeaseUnavailableReason = (typeof LEASE_UNAVAILABLE_REASONS)[number];
+
+LibraryHost · type · public
+  type LibraryHost = Readonly<Record<string, never>>;
+
+Listing · type · public
+  interface Listing {
+      snapshots: Snapshot[];
+      read_at: Date;
+      consistent_snapshot: boolean;
+  }
+
+LiteralNode · type · public
+  type LiteralNode = {
+      $literal: unknown;
+  };
+
+LoadBearingRunRecordField · type · public
+  type LoadBearingRunRecordField = 'capability_blocks' | 'workflow_context_snapshots' | 'extension_identity' | 'validation_rejections' | 'defaulted_steps' | 'settled' | 'finalizer_ledger' | 'sealed_by';
+
+LoadErrorCode · type · public
+  type LoadErrorCode = ErrorCode | 'uncoded';
+
+LoaderWarning · type · public
+  interface LoaderWarning {
+      code: WarningCode;
+      severity: 'warn' | 'error';
+      message: string;
+      scope: 'workflow' | 'step';
+      id?: string;
+      step?: string;
+      key?: string;
+      did_you_mean?: string;
+      line?: number;
+      column?: number;
+      endLine?: number;
+      endColumn?: number;
+      release_line?: {
+          project: {
+              version: string;
+              path: string;
+              installed_by: string;
+          };
+          engine: {
+              version: string;
+              path: string;
+          };
+      };
+  }
+
+MCP_FORM_RENDERER · value · internal
+MINT_WITNESS_PATTERN · value · internal
+MIN_PART_CHARS_LEAST · value · internal
+ManifestEntry · type · internal
+ManifestSecretsConfig · type · internal
+MapClass · type · internal
+MarkFinalizerDelta · type · public
+  interface MarkFinalizerDelta {
+      kind: 'mark_finalizer';
+      finalizer: string;
+      leaseToken: string;
+      result: MarkFinalizerResult;
+      evidence: EvidenceSnapshot;
+  }
+
+MarkFinalizerResult · type · public
+  type MarkFinalizerResult = 'completed' | 'failed';
+
+McpServerConfig · type · public
+  interface McpServerConfig {
+      id: string;
+      transport: 'stdio';
+      command?: string;
+      args?: string[];
+      env?: Record<string, string>;
+  }
+
+MemberKind · type · public
+  type MemberKind = typeof KIND.environment | typeof KIND.declared;
+
+MockAdapter · both · internal
+Money · type · internal
+MoneySource · type · internal
+MoneySourceTotal · type · internal
+NAMES_SHOWN · value · internal
+NAME_CAP_MARKER · value · internal
+NAME_MAX_LENGTH · value · internal
+NAME_REFUSAL_REASONS · value · internal
+NOT_CHECKED_MARKER · value · internal
+NOT_PRICED_CAUSES · value · public
+  const NOT_PRICED_CAUSES: readonly [
+      "no_price_source",
+      "economics_unreadable",
+      "economics_unreachable",
+      "model_not_recorded",
+      "model_unknown",
+      "usage_incomplete",
+      "date_unreadable",
+      "price_list_error",
+      "rate_missing"
+  ];
+
+NOT_SECRET_ENV · value · internal
+NO_LEASE_FACTS · value · internal
+NO_REMEDY_CAUSES · value · internal
+Narrowed · type · internal
+NestedClass · type · internal
+NewerDefinitionFacts · type · public
+  interface NewerDefinitionFacts {
+      scope: 'newer_definition';
+      path?: string;
+      schema_version: number;
+      reads_up_to: number;
+  }
+
+NoRemedy · type · public
+  type NoRemedy = {
+      cause: 'operator_command_untyped';
+      command: 'resume' | 'drain' | 'purge' | 'start';
+  } | {
+      cause: 'requires_other_program';
+      requirement: {
+          kind: 'handler' | 'adapter';
+          name: string;
+      };
+  } | {
+      cause: 'another_program_holds_it';
+  } | {
+      cause: 'already_settled';
+  } | {
+      cause: 'engine_runs_it_when_owed';
+  };
+
+NotCheckedPath · type · public
+  interface NotCheckedPath {
+      surface: 'input_map' | 'when';
+      step: string;
+      key: string;
+      path: string;
+      why: NotCheckedWhy | 'check_failed';
+  }
+
+NotCheckedWhy · type · public
+  type NotCheckedWhy = 'producer_declares_no_shape' | 'no_params_schema';
+
+NotPricedCause · type · public
+  type NotPricedCause = (typeof NOT_PRICED_CAUSES)[number];
+
+NotRecordedKind · type · public
+  type NotRecordedKind = Extract<RaceStopKind, 'held_elsewhere' | 'step_settled' | 'run_ended' | 'claim_removed'>;
+
+NotionAdapter · both · internal
+NotionAdapterConfig · type · internal
+OUTBOUND_LEASE_MAX · value · internal
+OUTBOUND_VIEW_TABLE · value · internal
+OUTPUT_SOURCES · value · public
+  const OUTPUT_SOURCES: readonly [
+      "driven_step",
+      "dependency",
+      "run_params",
+      "none"
+  ];
+
+OUTPUT_SOURCE_ABSENT_CAUSES · value · public
+  const OUTPUT_SOURCE_ABSENT_CAUSES: readonly [
+      "not_an_output_entry",
+      "definition_unavailable",
+      "not_a_bare_step",
+      "predates_output_source"
+  ];
+
+OpenGateDelta · type · public
+  interface OpenGateDelta {
+      kind: 'open_gate';
+      step: string;
+      claimToken?: string;
+      pendingGate: OpeningGate;
+      timeoutSeconds?: number;
+      evidence: EvidenceSnapshot[];
+  }
+
+OpenQuestion · type · public
+  interface OpenQuestion {
+      step: string;
+      gate_id: string;
+      choices: string[];
+  }
+
+OpeningGate · type · public
+  type OpeningGate = Omit<PendingGate, 'opened_at' | 'expires_at'>;
+
+OrphanArtifact · type · public
+  interface OrphanArtifact {
+      path: string;
+      runId: string;
+      mtimeMs: number;
+  }
+
+OrphanSweepableStore · type · public
+  interface OrphanSweepableStore {
+      listOrphans(liveRunIds: ReadonlySet<string>): Promise<OrphanArtifact[]>;
+  }
+
+OutboundEntry · type · beta
+  interface OutboundEntry {
+      readonly entry_key: string;
+      readonly type: 'reminder' | 'escalation';
+      readonly occurrence?: number;
+      readonly of_max?: number;
+      readonly status: 'pending' | 'sent' | 'failed';
+      readonly lease_token: string;
+      readonly lease_deadline: string;
+      readonly attempts: number;
+      readonly last_at?: string;
+      readonly last_outcome?: string;
+      readonly sent_at?: string;
+      readonly created_at: string;
+  }
+
+OutboundEntryView · type · beta
+  type OutboundEntryView = Omit<OutboundEntry, 'lease_token'>;
+
+OutboundLeaseRequest · type · beta
+  interface OutboundLeaseRequest {
+      readonly what: {
+          readonly type: 'reminder';
+          readonly gateId: string;
+          readonly occurrence: number;
+      } | {
+          readonly type: 'escalation';
+          readonly gateId: string;
+      };
+      readonly leaseToken: string;
+      readonly leaseSeconds: number;
+  }
+
+OutboundLedger · type · beta
+  interface OutboundLedger extends PerRunArtifactStore {
+      lease(runId: string, request: OutboundLeaseRequest): Promise<OutboundResult>;
+      mark(runId: string, request: OutboundMarkRequest): Promise<OutboundResult>;
+      read(runId: string): Promise<OutboundEntryView[]>;
+  }
+
+OutboundMarkRequest · type · beta
+  interface OutboundMarkRequest {
+      readonly what: OutboundLeaseRequest['what'];
+      readonly leaseToken: string;
+      readonly result: 'sent' | 'failed';
+      readonly outcome: 'ok' | `refused:${string}`;
+  }
+
+OutboundResult · type · beta
+  type OutboundResult = {
+      readonly applied: true;
+      readonly entry: OutboundEntryView;
+  } | {
+      readonly applied: false;
+      readonly reason: 'gate_not_open' | 'not_eligible' | 'outbound_done' | 'superseded' | 'already_leased' | 'lease_held' | 'lease_lost' | 'already_marked';
+      readonly entry?: OutboundEntryView;
+  };
+
+Outcome · type · public
+  interface Outcome {
+      choice?: string;
+      attempted_choice?: string;
+      by: {
+          kind: 'answer';
+          name?: string;
+          name_absent?: 'name_unreadable';
+          basis: 'stated';
+      } | {
+          kind: 'timeout';
+      } | {
+          kind: 'engine';
+          cause: 'gate_cancelled_by_abort';
+          step: string;
+          name?: string;
+          basis?: 'stated';
+      };
+      at?: string;
+      step: string;
+      expiry?: string;
+      attempted: boolean;
+      via?: string | {
+          absent: 'settled_by_expiry' | 'recorded_without_route' | 'route_not_declared';
+      };
+  }
+
+OutcomeDoorWords · type · internal
+OutputSource · type · public
+  type OutputSource = (typeof OUTPUT_SOURCES)[number];
+
+OutputSourceAbsentCause · type · public
+  type OutputSourceAbsentCause = (typeof OUTPUT_SOURCE_ABSENT_CAUSES)[number];
+
+PARTIES · value · public
+  const PARTIES: readonly [
+      "operator",
+      "agent",
+      "asked_person"
+  ];
+
+PENDING_GATE_TABLE · value · internal
+PREVENTS_CONDITIONS · value · internal
+PRE_CLAIM_REFUSALS · value · public
+  const PRE_CLAIM_REFUSALS: readonly [
+      "trust",
+      "precondition",
+      "input_schema",
+      "capability"
+  ];
+
+PRINCIPAL_ABSENCES · value · public
+  const PRINCIPAL_ABSENCES: readonly [
+      "door_authentication_disabled",
+      "principal_not_passed",
+      "door_authenticates_no_principal",
+      "not_a_server_door"
+  ];
+
+PROBE_FAILURE_CLASSES · value · internal
+PROGRAM_FITS · value · internal
+PROGRESS_VERBS · value · internal
+PROMPT_CACHE_SETTINGS · value · internal
+ParcelPanelAdapter · both · internal
+ParcelPanelAdapterConfig · type · internal
+ParcelPanelOrderBody · type · internal
+ParcelPanelShipment · type · internal
+Party · type · public
+  type Party = (typeof PARTIES)[number];
+
+PendingGate · type · public
+  interface PendingGate {
+      gate_id: string;
+      step_name: string;
+      preview: Record<string, unknown>;
+      choices: string[];
+      opened_at: string;
+      owner?: string;
+      answerers?: string[];
+      resolved_message?: string;
+      resolution_messages?: Record<string, string>;
+      expires_at?: string;
+      on_expiry?: 'settle_default' | 'abort';
+      default_choice?: string;
+      reminder_seconds?: number;
+      reminder_max?: number;
+  }
+
+PendingView · type · public
+  interface PendingView {
+      agent_steps: string[];
+      agent_refused: EngineRunnable[];
+      pending_guards: string[];
+      engine_runnable: EngineRunnable[];
+      cannot_run: EngineRunnable[];
+      expiry_due?: DueExpiry;
+      owed: ({
+          step: string;
+      } | {
+          expiry: DueExpiry;
+      })[];
+      open_question?: OpenQuestion;
+      waiting_on_answer?: string[];
+  }
+
+PerRunArtifactStore · type · public
+  interface PerRunArtifactStore {
+      deleteAllForRun(runId: string, dirEntries?: readonly string[], options?: {
+          expectVersion?: number;
+      }): Promise<ArtifactDeletionReport>;
+      statAllForRun(runId: string, dirEntries?: readonly string[]): Promise<{
+          bytes: number;
+      }>;
+  }
+
+PersonNotice · type · internal
+PersonNoticeEvent · type · internal
+PreClaimRefusal · type · public
+  type PreClaimRefusal = (typeof PRE_CLAIM_REFUSALS)[number];
+
+PreClaimRefused · type · internal
+PreconditionFacts · type · public
+  interface PreconditionFacts {
+      expression: string;
+      value: string;
+  }
+
+PreconditionResult · type · internal
+PrefixParts · type · public
+  interface PrefixParts {
+      tools?: string;
+      system: string;
+      prompt?: string;
+      format?: string;
+  }
+
+PresentWay · type · public
+  type PresentWay = Base<'present'> & {
+      run_id: string;
+      gate_id: string;
+  };
+
+PriceInput · type · public
+  interface PriceInput {
+      model: string;
+      at: string;
+      provider?: string;
+      endpoint?: RequestEndpoint;
+      usage: PriceUsage;
+  }
+
+PriceResult · type · public
+  type PriceResult = {
+      priced: {
+          total: number;
+          uncached_counterfactual: number;
+      };
+      priced_by: PricedBy;
+  } | {
+      not_priced: NotPricedCause;
+      detail?: string;
+  };
+
+PriceSource · type · public
+  interface PriceSource {
+      price(input: PriceInput): PriceResult;
+  }
+
+PriceUsage · type · public
+  interface PriceUsage {
+      prompt_tokens: number;
+      output_tokens: number;
+      cache_read_tokens: number;
+      cache_write_tokens: number;
+      cache_write_5m_tokens?: number;
+      cache_write_1h_tokens?: number;
+  }
+
+PricedBy · type · public
+  interface PricedBy {
+      source_class: 'economics' | 'price_list';
+      source_ref: string;
+      version?: string;
+      matched_model: string;
+      matched_provider?: string;
+      equals_ids?: string[];
+      date_basis: 'dated' | 'current';
+      endpoint_note?: string;
+      source_note?: string;
+  }
+
+Principal · type · public
+  type Principal = {
+      kind: 'api_key';
+      id: string;
+  } | {
+      kind: 'shared_token';
+  } | {
+      absent: PrincipalAbsence;
+  };
+
+PrincipalAbsence · type · public
+  type PrincipalAbsence = (typeof PRINCIPAL_ABSENCES)[number];
+
+ProbeFailureClass · type · public
+  type ProbeFailureClass = 'missing' | 'unreadable' | 'not_a_file' | 'empty' | 'registry_broken';
+
+ProbeResult · type · public
+  type ProbeResult = {
+      ok: true;
+      bytes: number;
+  } | {
+      ok: false;
+      class: ProbeFailureClass;
+      errno?: string;
+      path: string;
+  };
+
+Processor · type · public
+  interface Processor {
+      readonly id: string;
+      process(content: ProcessorInput, config: Record<string, unknown>): Promise<ProcessorOutput>;
+  }
+
+ProcessorInput · type · public
+  interface ProcessorInput {
+      text: string;
+      metadata: Record<string, unknown>;
+  }
+
+ProcessorOutput · type · public
+  interface ProcessorOutput {
+      text: string;
+      metadata: Record<string, unknown>;
+  }
+
+ProgramFit · type · internal
+ProgramIdentityFacts · type · internal
+ProgressVerb · type · internal
+PromptCacheSetting · type · internal
+ProtocolConfig · type · public
+  interface ProtocolConfig {
+      quick_start?: string;
+      rules?: string[];
+  }
+
+PurgedItem · type · public
+  interface PurgedItem {
+      kind: 'purged';
+      run_id: string;
+      workflow_id: string | null;
+      purged_at: string;
+      sealed_by_arm: string | null;
+      run_phase: RunPhase;
+      phase_version: string;
+  }
+
+QUOTE_STATES · value · public
+  const QUOTE_STATES: readonly [
+      "exact",
+      "reformatted",
+      "stitched",
+      "stitched_out_of_order",
+      "not_found",
+      "unquoted"
+  ];
+
+QuestionView · type · internal
+QuoteCheck · type · public
+  interface QuoteCheck {
+      readonly state: QuoteState;
+      readonly parts: readonly QuoteSpan[];
+      readonly occurrences: number;
+      readonly nearest?: QuoteSpan;
+      readonly cut_short?: true;
+      readonly cut_short_at?: readonly number[];
+  }
+
+QuoteSpan · type · public
+  interface QuoteSpan {
+      readonly start: number;
+      readonly end: number;
+  }
+
+QuoteState · type · public
+  type QuoteState = (typeof QUOTE_STATES)[number];
+
+REALM_BRAND · value · internal
+REALM_CREDENTIAL_VARIABLES · value · internal
+REALM_SETTING_VARIABLES · value · internal
+REALM_STORE_APPLICATION_ID · value · internal
+REALM_STORE_PAGE_SIZE · value · internal
+REALM_STORE_SCHEMA · value · internal
+REALM_STORE_SCHEMA_VERSION · value · internal
+REALM_STORE_VERSIONS · value · internal
+RECLAIM_FLOOR_SECONDS · value · internal
+RECLAIM_MARGIN_SECONDS · value · internal
+RECLAIM_REFUSES_GATE_STEP · value · internal
+REDACTED_EMAIL_MARKER · value · internal
+REDACTED_MARKER · value · internal
+RELEASE_LINE_KEY · value · internal
+REMINDER_BASIS_CLAUSE · value · internal
+REPLY_KINDS · value · public
+  const REPLY_KINDS: readonly [
+      "ok",
+      "confirm_required",
+      "refusal",
+      "blocked",
+      "error"
+  ];
+
+REQUEST_ENDPOINTS · value · public
+  const REQUEST_ENDPOINTS: readonly [
+      "default",
+      "custom"
+  ];
+
+REQUEST_FACT_ABSENT_CAUSES · value · internal
+RESERVED_EXTENSION_PREFIX · value · internal
+RESUMABLE_PHASES · value · internal
+RESUMABLE_STATES · value · internal
+RUNTIME_ONLY_WORKFLOW_KEYS · value · internal
+RUN_HEALTH_KINDS · value · internal
+RUN_HEALTH_STUCK_EXCLUDED · value · internal
+RUN_ID_LENGTH · value · internal
+RUN_RECORD_TABLE · value · internal
+RaceEntry · type · public
+  interface RaceEntry {
+      step: string;
+      kind: RaceStopKind;
+      ran_here: boolean;
+  }
+
+RaceStop · type · public
+  interface RaceStop {
+      kind: RaceStopKind;
+      ran_here: boolean;
+  }
+
+RaceStopKind · type · public
+  type RaceStopKind = Exclude<StopKind, HaltStopKind>;
+
+RateLimitConfig · type · public
+  interface RateLimitConfig {
+      requests_per_second?: number;
+      burst?: number;
+      fallback_retry_seconds?: number;
+      min_retry_seconds?: number;
+      max_retry_seconds?: number;
+  }
+
+RateLimiter · type · public
+  interface RateLimiter {
+      acquire(signal?: AbortSignal): Promise<void>;
+      pause(seconds: number): void;
+  }
+
+RawValidationError · type · internal
+RealmBrand · type · public
+  interface RealmBrand {
+      readonly package: string;
+      readonly generation: string;
+      readonly version: string;
+      readonly url: string | null;
+  }
+
+RealmClass · type · internal
+RealmWorkflowRegistrar · type · public
+  type RealmWorkflowRegistrar = WorkflowRegistrar & Required<Pick<WorkflowRegistrar, 'listWithDiagnostics' | 'getCapped'>>;
+
+ReclaimOutcome · type · public
+  type ReclaimOutcome = 'reclaimed' | 'already_settled' | 'taken_over' | 'no_active_claim';
+
+ReclaimResult · type · public
+  interface ReclaimResult {
+      run: RunRecord;
+      step: string;
+      outcome: ReclaimOutcome;
+      detail?: 'previously_reclaimed' | 'capability_blocked';
+      priorState: ClaimState;
+      priorDeadline: string | null;
+      gateAdvisory?: string;
+  }
+
+ReclaimStepOptions · type · public
+  interface ReclaimStepOptions {
+      traceBufferStore?: TraceBufferStore;
+  }
+
+ReclaimVersionChanged · both · internal
+ReconcileSummary · type · public
+  interface ReconcileSummary {
+      groups: number;
+      keysWritten: number;
+      keysUnchanged: number;
+      dryRun: boolean;
+      duplicateGroups: Array<{
+          workflow_id: string;
+          key: string;
+          canonical_run_id: string;
+          other_run_ids: string[];
+      }>;
+      multipleLiveGroups: Array<{
+          workflow_id: string;
+          key: string;
+          canonical_run_id: string;
+          extra_live_run_ids: string[];
+      }>;
+  }
+
+RefusedCheck · type · public
+  type RefusedCheck = 'trust' | 'precondition' | 'input_schema';
+
+RegisterWay · type · public
+  type RegisterWay = Base<'register'> & {
+      workflow_id: string;
+      run_id?: string;
+      path?: string;
+      copy?: 'unusable';
+  };
+
+RegisteredCopyVerdict · type · internal
+RegistryListing · type · public
+  interface RegistryListing {
+      workflows: WorkflowDefinition[];
+      unreadable: UnreadableRegistryEntry[];
+      mismatched: Array<{
+          file: string;
+          id: string;
+      }>;
+  }
+
+ReleaseDriveClaimOptions · type · beta
+  interface ReleaseDriveClaimOptions {
+      definition: WorkflowDefinition;
+      hold: LeaseHold;
+      evidence?: EvidenceSnapshot[];
+  }
+
+ReleaseLineFacts · type · internal
+ReleaseStepDelta · type · public
+  interface ReleaseStepDelta {
+      kind: 'release_step';
+      step: string;
+      claimToken?: string;
+      capabilityBlock?: {
+          requirement: {
+              kind: 'handler' | 'adapter';
+              name: string;
+          };
+          code: string;
+      };
+      evidence?: EvidenceSnapshot[];
+  }
+
+ReminderItem · type · internal
+ReminderOccurrence · type · internal
+ReminderSchedule · type · internal
+ReminderSettings · type · internal
+RenderedList · type · internal
+ReplayRecord · type · public
+  interface ReplayRecord {
+      id: string;
+      origin_run_id: string;
+      workflow_id: string;
+      overrides: string[];
+      results: ReplayStepResult[];
+      created_at: string;
+  }
+
+ReplayStepResult · type · public
+  interface ReplayStepResult {
+      step_id: string;
+      preconditions_original: boolean;
+      preconditions_replay: boolean;
+      changed: boolean;
+      has_preconditions: boolean;
+  }
+
+ReplayStore · type · public
+  interface ReplayStore {
+      save(record: Omit<ReplayRecord, 'id' | 'created_at'>): Promise<ReplayRecord>;
+      get(replayId: string): Promise<ReplayRecord>;
+  }
+
+ReplyError · type · public
+  interface ReplyError {
+      remedy: WayOn[];
+      about?: string;
+      facts?: ErrorFacts;
+  }
+
+ReplyKind · type · public
+  type ReplyKind = (typeof REPLY_KINDS)[number];
+
+RequestEndpoint · type · public
+  type RequestEndpoint = (typeof REQUEST_ENDPOINTS)[number];
+
+RequestFactAbsentCause · type · internal
+Requirement · type · internal
+RespondWay · type · public
+  type RespondWay = Base<'respond'> & {
+      run_id: string;
+      gate_id: string;
+      step: string;
+      choice: Slot<string>;
+      expires_at?: string;
+      on_expiry?: 'settle_default' | 'abort';
+      holds: readonly string[];
+      presented: 'with_gate' | 'alone';
+      has_message?: true;
+      owner?: string;
+      proof?: {
+          claim_token: string;
+      };
+  };
+
+RetryConfig · type · public
+  interface RetryConfig {
+      max_attempts: number;
+      backoff?: 'linear' | 'exponential' | 'fixed';
+      base_delay_ms?: number;
+      max_delay_ms?: number;
+      on_timeout?: boolean;
+      total_timeout_seconds?: number;
+  }
+
+RouteId · type · internal
+RunCost · type · internal
+RunHealthFinding · type · public
+  interface RunHealthFinding {
+      kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'definition_unresolvable' | 'record_stamped_ahead';
+      step?: string;
+      reason: string;
+      since?: string;
+      idle_ms?: number;
+      evidence?: Record<string, unknown>;
+  }
+
+RunListing · type · public
+  interface RunListing extends Listing {
+      unreadable: UnreadableRunFileEntry[];
+      copies: UnreadableRunFileEntry[];
+  }
+
+RunPhase · type · public
+  type RunPhase = 'running' | 'gate_waiting' | 'completed' | 'failed' | 'abandoned' | 'aborted';
+
+RunRecord · type · public
+  interface RunRecord {
+      id: string;
+      workflow_id: string;
+      workflow_version: number;
+      parent_run_id?: string;
+      idempotency_key?: string;
+      rerun_of?: string;
+      completed_steps: string[];
+      in_progress_steps: string[];
+      failed_steps: string[];
+      skipped_steps: string[];
+      skip_details?: Record<string, SkipDetail>;
+      claims?: Record<string, ClaimRecord>;
+      capability_blocks?: Record<string, CapabilityBlock>;
+      run_phase: RunPhase;
+      version: number;
+      params: Record<string, unknown>;
+      evidence: EvidenceSnapshot[];
+      workflow_context_snapshots?: Record<string, WorkflowContextSnapshot>;
+      extension_identity?: ExtensionIdentityEntry[];
+      agent_pid?: number;
+      agent_started_at?: string;
+      drive_failures?: DriveFailuresField;
+      created_at: string;
+      updated_at: string;
+      terminal_state: boolean;
+      terminal_reason?: string;
+      sealed_by?: SealedBy;
+      pending_gate?: PendingGate;
+      aborted_at?: {
+          step_id: string;
+          conditions?: Array<{
+              condition: string;
+              resolved_value: unknown;
+              passed: boolean;
+          }>;
+          abort_message?: string;
+      };
+      abandoned_at?: string;
+      validation_rejections?: Record<string, number>;
+      defaulted_steps?: string[];
+      settled?: Record<string, {
+          token: string | null;
+          outcome: 'complete' | 'fail' | 'skip' | 'gate';
+          choice?: string;
+          resolved_by?: 'timeout';
+      }>;
+      finalizer_ledger?: Record<string, {
+          status: 'pending' | 'completed' | 'failed' | 'voided';
+          rank: number;
+          lease_deadline?: string;
+          lease_token?: string;
+      }>;
+  }
+
+RunRecordFieldProblem · type · public
+  interface RunRecordFieldProblem {
+      field: string;
+      problem: 'missing' | 'wrong_type';
+  }
+
+RunRow · type · public
+  interface RunRow {
+      id: string;
+      workflow_id: string;
+      run_phase: RunPhase;
+      terminal_state: boolean;
+      sealed_by_arm: string | null;
+      created_at: string;
+      updated_at: string;
+      idempotency_key: string | null;
+      rerun_of: string | null;
+      run_version: number;
+      pending_gate: string | null;
+      completed_steps: string[];
+      in_progress_steps: string[];
+      failed_steps: string[];
+  }
+
+RunScopedFencePredicate · type · public
+  type RunScopedFencePredicate = Exclude<FencePredicate, StepScopedFencePredicate>;
+
+RunStatus · type · public
+  type RunStatus = 'ok' | 'error' | 'blocked' | 'confirm_required';
+
+RunStepWay · type · public
+  type RunStepWay = Base<'run_step'> & {
+      run_id: string;
+      step: string;
+      brief: StepBrief;
+  };
+
+RunStore · type · public (beta: claimStep.hold, leases, outbound)
+  interface RunStore {
+      readonly clock: Clock;
+      persistsClaims: boolean;
+      readonly purgesRuns: boolean;
+      readonly leases?: LeasePort | null;
+      readonly outbound?: OutboundLedger | null;
+      readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
+      create(options: CreateRunOptions): Promise<CreateResult>;
+      get(runId: string): Promise<Snapshot>;
+      update(record: RunRecord): Promise<Snapshot>;
+      scan(filter: ScanFilter, options: ScanOptions & {
+          projection: 'row';
+      }): AsyncGenerator<ScanPage<'row'>, void, undefined>;
+      scan(filter: ScanFilter, options: ScanOptions & {
+          projection?: 'record';
+      }): AsyncGenerator<ScanPage<'record'>, void, undefined>;
+      scan(filter: ScanFilter, options: ScanOptions): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
+      resolveKey(workflowId: string, key: string): Promise<KeyAnswer>;
+      tombstonesSince(): Promise<string>;
+      claimStep(runId: string, stepName: string, definition: WorkflowDefinition, claimant?: Attributed, hold?: LeaseHold): Promise<Snapshot>;
+      settleStep(runId: string, delta: SealRunDelta): Promise<StoreSettlement>;
+      settleStep(runId: string, delta: Exclude<SettlementDelta, SealRunDelta>, definition: WorkflowDefinition): Promise<StoreSettlement>;
+      stampSeal?(runId: string, sealedBy: SealedBy, expectedVersion: number): Promise<StampSealResult>;
+  }
+
+SAME_LINE_WINDOW_MS · value · internal
+SCAN_MAX_PAGE_SIZE · value · internal
+SCHEMA_KEY_CONSEQUENCE · value · internal
+SCHEMA_TYPED_STEP_KEYS · value · internal
+SCHEMA_TYPED_WORKFLOW_KEYS · value · internal
+SEALED_ARTIFACTS_LIMIT_PER_STEP · value · internal
+SEALED_TRACE_FILE_PREFIX · value · internal
+SEAL_ARMS · value · public
+  const SEAL_ARMS: readonly [
+      "complete",
+      "gate_resolution_complete",
+      "guard_pass_complete",
+      "gate_expiry_default",
+      "step_failure",
+      "guard_resolution_error",
+      "spawn_failure",
+      "extensions_load_failure",
+      "handler_abort",
+      "guard_abort",
+      "gate_expiry_abort",
+      "abandon_requested",
+      "cleanup_sweep"
+  ];
+
+SEPARATION_BASES · value · internal
+SEPARATION_CONDITIONS · value · internal
+SEPARATION_MODES · value · internal
+SERVICE_TRUST_LEVELS · value · internal
+SIDE_FILE_KINDS · value · public
+  const SIDE_FILE_KINDS: readonly [
+      "attempts",
+      "trace_buffer",
+      "sealed_trace"
+  ];
+
+STEP_DIAGNOSTICS_TABLE · value · internal
+STEP_KEY_REGISTRY · value · internal
+STOP_KINDS · value · public
+  const STOP_KINDS: readonly [
+      "held_elsewhere",
+      "step_settled",
+      "run_ended",
+      "claim_removed",
+      "question_open",
+      "not_eligible",
+      "capability_missing",
+      "failed",
+      "refused"
+  ];
+
+STORED_FILE_CLASSES · value · public
+  const STORED_FILE_CLASSES: readonly [
+      "empty",
+      "parse",
+      "not_a_run",
+      "mismatched",
+      "legacy",
+      "unreadable"
+  ];
+
+STRICT_SUPPORTED_KEYWORDS · value · internal
+STUCK_DEFINITION_PARSE_CAP_BYTES · value · internal
+SUPPLIER_ABSENT_CAUSES · value · public
+  const SUPPLIER_ABSENT_CAUSES: readonly [
+      "engine_input",
+      "not_recorded"
+  ];
+
+SUPPLIER_ROLES · value · public
+  const SUPPLIER_ROLES: readonly [
+      "agent"
+  ];
+
+SURFACE_NAME · value · internal
+SWITCH_CACHES · value · internal
+SWITCH_OUTCOMES · value · internal
+SWITCH_PATHS · value · internal
+SWITCH_WHOSE · value · internal
+ScanFilter · type · public
+  interface ScanFilter {
+      workflow?: string;
+      phase?: RunPhase;
+      terminal?: boolean;
+      key?: string;
+      created_since?: string;
+      updated_since?: string;
+      include_purged?: boolean;
+  }
+
+ScanItem · type · public
+  type ScanItem<P extends 'record' | 'row'> = {
+      kind: 'run';
+      run: P extends 'record' ? Snapshot : RunRow;
+  } | PurgedItem;
+
+ScanOptions · type · public
+  interface ScanOptions {
+      pageSize: number;
+      projection?: 'record' | 'row';
+      after?: string;
+  }
+
+ScanPage · type · public
+  interface ScanPage<P extends 'record' | 'row'> {
+      items: ScanItem<P>[];
+      read_at: Date;
+      consistent_snapshot: true;
+      derived_at_read: number;
+      next_after?: string;
+  }
+
+SchemaFailure · type · internal
+SealArm · type · public
+  type SealArm = (typeof SEAL_ARMS)[number];
+
+SealResult · type · public
+  type SealResult = {
+      sealed: true;
+  } | {
+      sealed: false;
+      reason: 'absent' | 'capped';
+  };
+
+SealRunDelta · type · public
+  interface SealRunDelta {
+      kind: 'seal_run';
+      arm: SealArm;
+      reason: string;
+      expected_version: number;
+      release_claims: boolean;
+      identity_entry?: ExtensionIdentityEntry;
+  }
+
+SealedArtifact · type · public
+  interface SealedArtifact {
+      step_id: string;
+      seq: number;
+      lines: SealedWalLine[];
+  }
+
+SealedBy · type · public
+  interface SealedBy {
+      arm: SealArm;
+      step?: string;
+      classified?: true;
+      adjudicated?: {
+          by: string;
+          at: string;
+          previous_arm: SealArm | null;
+          reason?: string;
+      };
+  }
+
+SealedWalLine · type · public
+  interface SealedWalLine {
+      ts: number;
+      entries: AgentTraceEntry[];
+      nonce?: string;
+  }
+
+SecretRefSite · type · internal
+SecretScanResult · type · internal
+SeparationBasis · type · internal
+SeparationCondition · type · internal
+SeparationEvidence · type · internal
+SeparationGap · type · internal
+SeparationMode · type · internal
+ServiceAdapter · type · public
+  interface ServiceAdapter {
+      readonly id: string;
+      readonly defaultRetryAfterSeconds?: number;
+      readonly config_schema?: Record<string, unknown>;
+      fetch(operation: string, params: Record<string, unknown>, config: Record<string, unknown>, signal?: AbortSignal): Promise<ServiceResponse>;
+      create(operation: string, params: Record<string, unknown>, config: Record<string, unknown>, signal?: AbortSignal): Promise<ServiceResponse>;
+      update(operation: string, params: Record<string, unknown>, config: Record<string, unknown>, signal?: AbortSignal): Promise<ServiceResponse>;
+      delete?(operation: string, params: Record<string, unknown>, config: Record<string, unknown>, signal?: AbortSignal): Promise<ServiceResponse>;
+  }
+
+ServiceDefinition · type · public
+  interface ServiceDefinition {
+      adapter: string;
+      trust: ServiceTrust;
+      rate_limit?: RateLimitConfig;
+  }
+
+ServiceResponse · type · public
+  interface ServiceResponse {
+      status: number;
+      data: unknown;
+  }
+
+ServiceTrust · type · public
+  type ServiceTrust = 'engine_delivered' | 'engine_managed' | 'agent_provided';
+
+SettleGateDelta · type · public
+  interface SettleGateDelta {
+      kind: 'settle_gate';
+      gateId: string;
+      choice: string;
+      respondedBy?: string;
+      claimToken?: string;
+      sender?: {
+          user: string;
+          forms: readonly string[];
+      };
+      projectAnswerers?: readonly string[];
+      evidence: EvidenceSnapshot[];
+  }
+
+SettleGuardDelta · type · public
+  interface SettleGuardDelta {
+      kind: 'settle_guard';
+      step: string;
+      outcome: 'pass' | 'resolution_error' | 'abort';
+      evidence: EvidenceSnapshot;
+      resolutionError?: {
+          condition: string;
+          unresolvable_path: string;
+          cause?: string;
+      };
+      abort?: {
+          conditions: Array<{
+              condition: string;
+              resolved_value: unknown;
+              passed: boolean;
+          }>;
+          abort_message?: string;
+      };
+      evaluatedAtVersion?: number;
+  }
+
+SettleStepDelta · type · public
+  interface SettleStepDelta {
+      kind: 'settle_step';
+      step: string;
+      outcome: SettleStepOutcome;
+      claimToken?: string;
+      evidence: EvidenceSnapshot[];
+      failureMessage?: string;
+      abort?: {
+          stepId: string;
+          abortMessage: string;
+      };
+  }
+
+SettleStepOutcome · type · public
+  type SettleStepOutcome = 'complete' | 'fail' | 'abort';
+
+SettlementDelta · type · public
+  type SettlementDelta = SettleStepDelta | LeaseFinalizerDelta | MarkFinalizerDelta | OpenGateDelta | SettleGateDelta | SettleGuardDelta | ReleaseStepDelta | ExpireGateDelta | SealRunDelta;
+
+SettlementNoopReason · type · internal
+SettlementRefusalReason · type · public
+  type SettlementRefusalReason = 'already_settled' | 'already_leased' | 'already_marked' | 'already_released' | 'already_open' | 'already_settled_by_other' | 'settled_outcome_divergence' | 'run_terminal' | 'claim_lost' | 'gate_mismatch' | 'run_not_terminal' | 'ledger_not_pending' | 'lease_held' | 'lease_lost' | 'rank_blocked' | 'not_eligible' | 'gate_choice_conflict' | 'choice_not_eligible' | 'gate_open_wait' | 'answerer_mismatch' | 'not_expired' | 'no_disposition' | 'moved' | 'already_terminal';
+
+SettlementResult · type · public
+  type SettlementResult = {
+      applied: true;
+      run: import('./run-record.js').RunRecord;
+      transitioned: boolean;
+      pendingFinalizers: readonly string[];
+      guards?: ReadonlyArray<{
+          step: string;
+          outcome: 'pass' | 'abort' | 'resolution_error';
+      }>;
+      gateClaim?: GateClaimVerdict & {
+          claim?: {
+              holder?: Attributed;
+              since?: string;
+          };
+      };
+      lateAnswer?: {
+          gateId: string;
+          choice: string;
+          gateClaim: GateClaimVerdict & {
+              claim?: {
+                  holder?: Attributed;
+                  since?: string;
+              };
+          };
+          expiresAt: string;
+      };
+  } | {
+      applied: false;
+      reason: SettlementRefusalReason;
+      run: import('./run-record.js').RunRecord;
+      gate?: PendingGate;
+      winningChoice?: string;
+      choices?: string[];
+      allowed?: string[];
+      sender?: string;
+      persisted?: string;
+      gateClaim?: GateClaimVerdict & {
+          claim?: {
+              holder?: Attributed;
+              since?: string;
+          };
+      };
+      expected?: number;
+      stored?: number;
+  };
+
+ShopifyAdapter · both · internal
+ShopifyAdapterConfig · type · internal
+ShownGate · type · internal
+SideFileKind · type · public
+  type SideFileKind = (typeof SIDE_FILE_KINDS)[number];
+
+SkipDetail · type · public
+  type SkipDetail = {
+      kind: 'when_false';
+      expression: string;
+      leaves: Array<{
+          leaf: string;
+          lhs_present: boolean;
+          resolved_value?: unknown;
+          passed: boolean;
+      }>;
+  } | {
+      kind: 'trigger_rule_unsatisfiable';
+      rule: TriggerRule;
+      blocking_deps: Array<{
+          dep: string;
+          state: 'completed' | 'failed' | 'skipped';
+      }>;
+  } | {
+      kind: 'handler_abort';
+  } | {
+      kind: 'guard_abort';
+  } | {
+      kind: 'gate_cancelled_by_abort';
+      gate_id?: string;
+  } | {
+      kind: 'gate_expired';
+      gate_id: string;
+  };
+
+SlackAdapter · both · internal
+SlackAdapterConfig · type · internal
+SlackGateNotifierConfig · type · internal
+Slot · type · public
+  type Slot<T> = {
+      readonly one_of: readonly T[];
+  };
+
+Snapshot · type · public
+  interface Snapshot {
+      readonly record: RunRecord;
+      readonly at: Date;
+      readonly lease_facts?: LeaseFacts;
+  }
+
+Source · type · public
+  type Source = {
+      kind: 'flag' | 'env' | 'option' | 'config' | 'default' | 'negotiated';
+      ref: string;
+  };
+
+StableBoundary · type · public
+  interface StableBoundary {
+      chars: number;
+      unit: 'utf16';
+  }
+
+Stamp · type · public
+  interface Stamp {
+      as_of: string;
+      run_version: number;
+      as_of_basis?: 'test_clock';
+  }
+
+StampSealResult · type · public
+  type StampSealResult = {
+      stamped: true;
+      run: RunRecord;
+  } | {
+      stamped: false;
+      reason: 'already_stamped' | 'not_terminal';
+      run: RunRecord;
+  };
+
+StepBrief · type · public
+  interface StepBrief {
+      execution: 'agent' | 'auto';
+      description: string;
+      prompt?: string;
+      input_schema?: Record<string, unknown>;
+      handler?: string;
+      stable_prefix?: StableBoundary;
+  }
+
+StepCacheDetail · type · public
+  interface StepCacheDetail {
+      state: CacheState;
+      basis: CacheBasis;
+      requests: UsageRecord[];
+  }
+
+StepCaller · type · public
+  type StepCaller = (typeof ENTRY_CALLERS.executeStep)[number];
+
+StepContext · type · public
+  interface StepContext {
+      run_id: string;
+      run_params: Record<string, unknown>;
+      config: Record<string, unknown>;
+      resources?: Record<string, unknown>;
+  }
+
+StepDefinition · type · public
+  interface StepDefinition {
+      description: string;
+      execution: ExecutionMode;
+      depends_on?: string[];
+      trigger_rule?: TriggerRule;
+      when?: string | string[];
+      abort_unless?: string | string[];
+      abort_message?: string;
+      on_outcome?: FinalizerTrigger | FinalizerTrigger[];
+      idempotent?: boolean;
+      uses_service?: string;
+      service_method?: 'fetch' | 'create' | 'update' | 'delete';
+      operation?: string;
+      input_map?: Record<string, InputMapNode>;
+      handler?: string;
+      config?: Record<string, unknown>;
+      input_schema?: JsonSchema;
+      output_schema?: JsonSchema;
+      trace_schema?: JsonSchema;
+      trace_validation_mode?: 'warn' | 'enforce';
+      preconditions?: string[];
+      trust?: TrustLevel;
+      llm_timeout_seconds?: number;
+      timeout_seconds?: number;
+      retry?: RetryConfig;
+      validation_exhaustion?: {
+          threshold?: number;
+          mode?: 'fail' | 'default';
+          default_output?: unknown;
+      };
+      instructions?: string;
+      prompt?: string;
+      display?: string;
+      use_template?: string;
+      gate?: GateConfig;
+      agent_profile?: string;
+      tools?: string[];
+      max_tool_calls?: number;
+      max_fan_out?: number;
+      tool_timeout?: number;
+      structured_output?: 'strict';
+  }
+
+StepDiagnostics · type · public
+  interface StepDiagnostics {
+      input_token_estimate: number;
+      precondition_trace: Array<{
+          expression: string;
+          passed: boolean;
+          resolved_value: unknown;
+      }>;
+      guard_conditions?: Array<{
+          condition: string;
+          resolved_value: unknown;
+          passed: boolean;
+      }>;
+      validation_rejections?: number;
+      settled_by_default?: boolean;
+      structured_output?: StructuredOutputMeta;
+      cache?: StepCacheDetail;
+  }
+
+StepDispatcher · type · public
+  type StepDispatcher = (stepName: string, input: Record<string, unknown>, run: RunRecord, signal?: AbortSignal) => Promise<Record<string, unknown>> | Record<string, unknown>;
+
+StepEligibilityState · type · internal
+StepHandler · type · public
+  interface StepHandler {
+      readonly id: string;
+      readonly uses_resources?: readonly string[];
+      execute(inputs: StepHandlerInputs, context: StepContext, signal?: AbortSignal): Promise<StepHandlerResult>;
+  }
+
+StepHandlerInputs · type · public
+  interface StepHandlerInputs {
+      params: Record<string, unknown>;
+  }
+
+StepHandlerResult · type · public
+  interface StepHandlerResult {
+      data?: Record<string, unknown>;
+      state_update?: Record<string, unknown>;
+      abort?: {
+          message: string;
+      };
+      warn?: {
+          message: string;
+      };
+  }
+
+StepKeyCell · type · internal
+StepKeyVia · type · internal
+StepKeyWitness · type · internal
+StepMembershipState · type · internal
+StepMeta · type · public
+  interface StepMeta {
+      toolCalls?: ToolCallRecord[];
+      structuredOutput?: StructuredOutputMeta;
+      usage?: UsageRecord[];
+  }
+
+StepScopedFencePredicate · type · public
+  type StepScopedFencePredicate = Extract<FencePredicate, {
+      kind: StepScopedKind;
+  }>;
+
+StepScopedKind · type · public
+  type StepScopedKind = {
+      [K in FencePredicateKind]: (typeof FENCE_TARGETS_STEP)[K] extends true ? K : never;
+  }[FencePredicateKind];
+
+StepView · type · internal
+StopClassification · type · public
+  type StopClassification = RaceStop | HaltStop;
+
+StopKind · type · public
+  type StopKind = (typeof STOP_KINDS)[number];
+
+StopRecord · type · public
+  interface StopRecord {
+      terminal_state?: boolean;
+      pending_gate?: unknown;
+      in_progress_steps: readonly string[];
+      completed_steps: readonly string[];
+      failed_steps: readonly string[];
+  }
+
+StopReply · type · public
+  interface StopReply {
+      status: 'ok' | 'error' | 'blocked' | 'confirm_required';
+      error_code?: string;
+      stopped_step?: string;
+      error?: {
+          about?: string;
+      };
+  }
+
+StoreSchemaVersion · type · internal
+StoreSchemaVersions · type · internal
+StoreSettlement · type · public
+  type StoreSettlement = SettlementResult & {
+      at: Date;
+      lease_facts?: LeaseFacts;
+  };
+
+StoredFileClass · type · public
+  type StoredFileClass = (typeof STORED_FILE_CLASSES)[number];
+
+StoredFileErrorFacts · type · public
+  type StoredFileErrorFacts = ({
+      scope: 'file';
+  } & UnreadableFileFacts) | ({
+      scope: 'files';
+  } & UnreadableRunFilesFacts);
+
+StructuredOutputCaveat · type · internal
+StructuredOutputMeta · type · public
+  interface StructuredOutputMeta {
+      requested: true;
+      sent?: boolean;
+      caveats?: string[];
+      downgrade_reason?: 'gate_ineligible' | 'api_rejected_schema' | 'grammar_unavailable' | 'service_unavailable' | 'provider_unsupported' | 'unsupported_context_tools' | 'external_agent' | 'compat_endpoint';
+      api_message?: string;
+      api_param?: string | null;
+      api_code?: string | null;
+      provider?: 'anthropic' | 'openai' | 'openai-reasoning' | `module:${string}`;
+      submission_channel?: 'tool' | 'text';
+      tool_args?: {
+          tools: Array<{
+              name: string;
+              strict_requested: true;
+              strict_sent: boolean;
+              reasons?: string[];
+              caveats?: string[];
+          }>;
+          dropped_mid_attempt?: {
+              reason: string;
+              api_message?: string;
+              api_param?: string | null;
+              api_code?: string | null;
+              strict_turns_before_drop: number;
+          };
+      };
+  }
+
+StructuredOutputReason · type · internal
+StructuredOutputVerdict · type · internal
+SubmitGateOptions · type · public
+  interface SubmitGateOptions {
+      runId: string;
+      gateId: string;
+      choice: string;
+      registry?: ExtensionRegistry;
+      respondedBy?: string;
+      claimToken?: string;
+      driver?: Attributed;
+      caller?: AnswerCaller;
+      route?: string;
+      shown?: {
+          renderer: string;
+      };
+      principal?: Principal;
+      clientPromptRequested?: boolean;
+      disclosure?: DisclosureSet;
+      channelEvidence?: {
+          user: string;
+          forms?: string[];
+          team?: string;
+          ts?: string;
+          thread_ts?: string;
+      };
+      projectAnswerers?: string[];
+  }
+
+SupplierAbsentCause · type · public
+  type SupplierAbsentCause = (typeof SUPPLIER_ABSENT_CAUSES)[number];
+
+SupplierRole · type · public
+  type SupplierRole = (typeof SUPPLIER_ROLES)[number];
+
+SwitchCache · type · internal
+SwitchClause · type · internal
+SwitchOutcome · type · internal
+SwitchPath · type · internal
+SwitchPathReading · type · internal
+SwitchWhose · type · internal
+TERMINAL_PHASES · value · internal
+TERMINAL_REASON_ROW · value · internal
+TERMINAL_STATES · value · internal
+TEST_CLOCK_FILE_NAME · value · internal
+TRACE_BUFFER_FILE_PREFIX · value · internal
+TRACE_FILE_SUFFIX · value · internal
+TRACE_POLICY · value · internal
+TRACE_POLICY_HASH · value · internal
+TRACE_POLICY_VERSION · value · internal
+TRACKED_RESIDUALS · value · internal
+TRUST_LEVELS · value · internal
+TemplateDefinition · type · public
+  interface TemplateDefinition {
+      params?: Record<string, TemplateParam>;
+      steps: Record<string, StepDefinition>;
+  }
+
+TemplateParam · type · public
+  interface TemplateParam {
+      required?: boolean;
+      default?: string;
+  }
+
+ToolCallRecord · type · public
+  interface ToolCallRecord {
+      server_id: string;
+      tool: string;
+      args: Record<string, unknown>;
+      result: string | null;
+      duration_ms: number;
+      error?: string;
+  }
+
+TraceBufferStore · type · public
+  interface TraceBufferStore {
+      readonly traceCapabilities?: ReadonlySet<TraceCapability>;
+      append(runId: string, stepId: string, entries: AgentTraceEntry[], options?: AppendOptions): Promise<AppendResult>;
+      read(runId: string, stepId: string): Promise<BufferedEntry[]>;
+      delete(runId: string, stepId: string): Promise<void>;
+      deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<ArtifactDeletionReport>;
+      statAllForRun(runId: string, dirEntries?: readonly string[]): Promise<{
+          bytes: number;
+      }>;
+      readAllForRun(runId: string): Promise<Record<string, unknown[]>>;
+      appendFenced?(runId: string, stepId: string, entries: AgentTraceEntry[], fence: FencePredicate, options?: AppendOptions): Promise<AppendResult>;
+      deleteFenced?(runId: string, stepId: string, fence: FencePredicate): Promise<number>;
+      deleteAllForRunFenced?(runId: string, fence: RunScopedFencePredicate, dirEntries?: readonly string[]): Promise<ArtifactDeletionReport>;
+      sealFenced?(runId: string, stepId: string, fence: FencePredicate): Promise<SealResult>;
+      listSealedForRun?(runId: string): Promise<SealedArtifact[]>;
+  }
+
+TraceCapability · type · public
+  type TraceCapability = 'seal' | 'writer_nonce_carriage';
+
+TraceEntry · type · public
+  interface TraceEntry {
+      seq: number;
+      event: string;
+      timestamp?: string;
+      data?: Record<string, string | number | boolean | null>;
+  }
+
+TraceNormalizationSummary · type · public
+  interface TraceNormalizationSummary {
+      submitted_entries: number;
+      stored_entries: number;
+      discarded_entries: number;
+      discarded_reserved_event_entries: number;
+      discarded_overflow_entries: number;
+      truncated: boolean;
+      truncation_reason?: 'count_limit' | 'byte_limit';
+      schema_applied?: boolean;
+      validation_mode?: 'warn' | 'enforce';
+      validation_errors?: number;
+      buffered_lines_adopted?: number;
+      attributed_lines_adopted?: number;
+      foreign_lines_preserved?: number;
+  }
+
+TracePolicyDescriptor · type · internal
+TracePolicyVersion · type · internal
+TriggerDefinition · type · public
+  type TriggerDefinition = WebhookTrigger;
+
+TriggerFilter · type · public
+  interface TriggerFilter {
+      all: FilterCondition[];
+  }
+
+TriggerRule · type · public
+  type TriggerRule = 'all_success' | 'all_failed' | 'all_done' | 'one_failed' | 'one_success' | 'none_failed';
+
+TrustLevel · type · public
+  type TrustLevel = 'auto' | 'human_confirmed' | 'human_reviewed';
+
+TrustRefusalSurface · type · internal
+TrustVerdict · type · internal
+UNAVAILABLE_CODES · value · public
+  const UNAVAILABLE_CODES: {
+      readonly run_ended: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "respond",
+              "run_step",
+              "advance",
+              "abandon",
+              "present"
+          ];
+      };
+      readonly question_settled: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "respond",
+              "present"
+          ];
+      };
+      readonly question_due: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "respond",
+              "run_step",
+              "advance",
+              "present"
+          ];
+      };
+      readonly question_past_deadline: {
+          readonly tag: "write";
+          readonly verbs: readonly [
+              "respond"
+          ];
+      };
+      readonly gate_not_open: {
+          readonly tag: "input";
+          readonly verbs: readonly [
+              "respond",
+              "present"
+          ];
+      };
+      readonly not_a_step: {
+          readonly tag: "input";
+          readonly verbs: readonly [
+              "run_step"
+          ];
+      };
+      readonly step_settled: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step"
+          ];
+      };
+      readonly question_open: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step",
+              "advance",
+              "abandon"
+          ];
+      };
+      readonly gated_step: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step"
+          ];
+      };
+      readonly held_elsewhere: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step",
+              "advance"
+          ];
+      };
+      readonly upstream_cannot_run: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step"
+          ];
+      };
+      readonly deps_unsettled: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step"
+          ];
+      };
+      readonly not_eligible: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step",
+              "advance"
+          ];
+      };
+      readonly claim_removed: {
+          readonly tag: "write";
+          readonly verbs: readonly [
+              "run_step"
+          ];
+      };
+      readonly refused_before_claim: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step",
+              "advance"
+          ];
+      };
+      readonly capability_missing: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step",
+              "advance"
+          ];
+      };
+      readonly step_engine_decided: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step"
+          ];
+      };
+      readonly enactor_load_failed: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "run_step",
+              "advance"
+          ];
+      };
+      readonly definition_absent: {
+          readonly tag: "snapshot";
+          readonly verbs: readonly [
+              "respond",
+              "run_step",
+              "advance",
+              "abandon",
+              "present"
+          ];
+      };
+      readonly argument_out_of_contract: {
+          readonly tag: "input";
+          readonly verbs: readonly [
+              "respond",
+              "run_step",
+              "advance",
+              "inspect",
+              "abandon",
+              "present"
+          ];
+      };
+      readonly door_cannot_enact: {
+          readonly tag: "door";
+          readonly verbs: readonly [
+              "respond",
+              "run_step",
+              "advance",
+              "inspect",
+              "abandon",
+              "register",
+              "present"
+          ];
+      };
+      readonly no_form_here: {
+          readonly tag: "door";
+          readonly verbs: readonly [
+              "present"
+          ];
+      };
+      readonly form_open: {
+          readonly tag: "door";
+          readonly verbs: readonly [
+              "present"
+          ];
+      };
+      readonly asks_exhausted: {
+          readonly tag: "door";
+          readonly verbs: readonly [
+              "present"
+          ];
+      };
+      readonly door_withholds_answers: {
+          readonly tag: "door";
+          readonly verbs: readonly [
+              "respond"
+          ];
+      };
+  };
+
+UNSHOWABLE_NAME · value · internal
+USAGE_RECORD_TABLE · value · internal
+Unavailable · type · public
+  type Unavailable = {
+      [C in UnavailableCode]: {
+          verb: WayVerb;
+          step?: string;
+          code: C;
+          facts: FactsOf<C>;
+          clears_at?: string;
+          remedy: readonly WayOn[];
+          no_remedy?: NoRemedy;
+      };
+  }[UnavailableCode];
+
+UnavailableCode · type · public
+  type UnavailableCode = keyof typeof UNAVAILABLE_CODES;
+
+Unleased · type · public
+  type Unleased = {
+      readonly absent: 'unleased';
+  };
+
+UnreadableFileEntry · type · public
+  interface UnreadableFileEntry {
+      file: string;
+      workflow_id?: never;
+      class: FileUnreadableClass;
+      errno?: string;
+      reason: string;
+      repair?: string;
+  }
+
+UnreadableFileFacts · type · public
+  interface UnreadableFileFacts {
+      resource: 'run_file' | 'workflow_copy' | 'run_folder';
+      class: StoredFileClass;
+      path: string;
+      errno?: string;
+      shape?: string;
+      fault?: WorkflowCopyFault;
+      held_id?: string;
+      held_file?: 'reads_as_run' | 'absent' | 'unreadable';
+      side_files?: SideFileKind[];
+      fields?: RunRecordFieldProblem[];
+      refused?: 'every_new_key' | 'this_key';
+  }
+
+UnreadableIdEntry · type · public
+  interface UnreadableIdEntry {
+      workflow_id: string;
+      file?: never;
+      errno?: never;
+      class: IdUnreadableClass;
+      reason: string;
+      repair?: string;
+  }
+
+UnreadableRegistryEntry · type · public
+  type UnreadableRegistryEntry = UnreadableFileEntry | UnreadableIdEntry;
+
+UnreadableRunFileEntry · type · public
+  interface UnreadableRunFileEntry {
+      file: string;
+      path: string;
+      class: StoredFileClass;
+      errno?: string;
+      reason: string;
+      repair: string;
+      facts: UnreadableFileFacts;
+  }
+
+UnreadableRunFilesFacts · type · public
+  interface UnreadableRunFilesFacts {
+      command: string;
+      folder: string;
+      files: UnreadableFileFacts[];
+  }
+
+Unrecognised · type · internal
+UsageRecord · type · public
+  interface UsageRecord {
+      request_index: number;
+      request_start: string;
+      prompt_tokens?: number;
+      uncached_input_tokens?: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_write_tokens?: number;
+      output_tokens?: number;
+      cache_creation?: {
+          ephemeral_5m_input_tokens?: number;
+          ephemeral_1h_input_tokens?: number;
+      };
+      model?: string;
+      cache_requested?: CacheRequest;
+      cache_lifetime_s?: number;
+      cache_ttl_sent?: boolean;
+      cache_requested_source?: CacheRequestSource;
+      cache_requested_by?: string;
+      cache_auto?: CacheAuto;
+      provider?: string;
+      endpoint?: RequestEndpoint;
+      cache_split_offered?: boolean;
+      request_id?: string;
+      response_id?: string;
+      cache_diagnostics?: CacheDiagnostics;
+      request_in_call?: number;
+      prefix_sha256?: string;
+      prefix_chars?: number;
+      prefix_parts?: PrefixParts;
+      cache_marked?: CacheMarkedPart[];
+      request_strict_sent?: boolean;
+      cache_controls_rejected?: CacheControlsRejected;
+      cache_key_sent?: true;
+      reference?: CacheReference;
+  }
+
+VALIDATION_PROBLEMS_SHOWN · value · internal
+VERSION · value · internal
+VIEW_BUDGET · value · internal
+ValidationErrorFacts · type · public
+  interface ValidationErrorFacts {
+      errors: readonly ErrorObject[];
+      error_count: number;
+      rejections?: number;
+      threshold?: number;
+  }
+  uses ErrorObject (ajv 8)
+
+ValidationErrorSummaryEntry · type · public
+  interface ValidationErrorSummaryEntry {
+      instancePath: string;
+      schemaPath: string;
+      keyword: string;
+      message: string;
+      additional_property?: string;
+      missing_property?: string;
+  }
+
+ValidationProblem · type · internal
+ValidationProblems · type · internal
+WAITING_PHASES · value · internal
+WAITING_STATES · value · internal
+WAY_PARTIES · value · internal
+WAY_VERBS · value · public
+  const WAY_VERBS: readonly [
+      "respond",
+      "run_step",
+      "advance",
+      "inspect",
+      "abandon",
+      "register",
+      "present"
+  ];
+
+WITHHELD_WORDS · value · internal
+WRITE_ONCE_RUN_FIELDS · value · internal
+WalkOptions · type · internal
+WarningCode · type · public
+  type WarningCode = 'UNKNOWN_WORKFLOW_KEY' | 'UNKNOWN_STEP_KEY' | 'UNKNOWN_CREATE_WORKFLOW_KEY' | 'IDEMPOTENT_INERT_IN_FINALIZER' | 'DUAL_SCHEMA_DECLARED' | 'RETRY_NO_TIMEOUT' | 'EXTENSION_SENTINEL' | 'UNKNOWN_RETRY_KEY' | 'ON_TIMEOUT_SINGLE_ATTEMPT' | 'TOTAL_TIMEOUT_BELOW_ATTEMPT' | 'TOTAL_TIMEOUT_NON_AUTO' | 'RETRY_INERT_NON_AUTO' | 'UNKNOWN_VALIDATION_EXHAUSTION_KEY' | 'DEAD_VALIDATION_EXHAUSTION_CONFIG' | 'UNKNOWN_GATE_KEY' | 'DEAD_GATE_CONFIG' | 'SCHEMA_STRICT_ADVISORY' | 'REALM_RELEASE_LINE_MISMATCH' | 'AUTHOR_TEXT_NAMES_ANSWER_TOOL' | 'INPUT_MAP_PATH_UNRESOLVABLE' | 'INPUT_MAP_PATH_UNCERTAIN' | 'WHEN_PATH_UNRESOLVABLE' | 'WHEN_CHOICE_NOT_OFFERED' | 'WHEN_PATH_UNCERTAIN' | 'PARAMS_MAP_UNKNOWN_PARAM' | 'PARAMS_MAP_REQUIRED_UNMAPPED' | 'PARAMS_MAP_UNDECLARED_PARAM' | 'HANDLER_NOT_PROVIDED' | 'ADAPTER_NOT_PROVIDED' | 'TEMPLATE_FILTER_UNKNOWN' | 'TEMPLATE_FILTER_ARGUMENT' | 'TEMPLATED_FIELD_NOT_TEXT' | 'GATE_ANSWERER_NOT_SLACK_ID';
+
+WayInput · type · internal
+WayOf · type · public
+  type WayOf<V extends WayVerb> = Extract<WayOn, {
+      verb: V;
+  }>;
+
+WayOn · type · public
+  type WayOn = RespondWay | RunStepWay | AdvanceWay | InspectWay | AbandonWay | RegisterWay | PresentWay;
+
+WayRenderer · type · public
+  type WayRenderer<Out, Host> = {
+      readonly [V in WayVerb]: (way: WayOf<V>, basis: Basis | undefined, host: Host) => Out | null;
+  };
+
+WayVerb · type · public
+  type WayVerb = (typeof WAY_VERBS)[number];
+
+WaysContext · type · internal
+WebhookAuth · type · public
+  type WebhookAuth = AuthSharedSecret | AuthGithub | AuthStripe | AuthHmac | AuthNone;
+
+WebhookTrigger · type · public
+  interface WebhookTrigger {
+      type: 'webhook';
+      path?: string;
+      auth: WebhookAuth;
+      filter?: TriggerFilter;
+      dedup?: DedupConfig | false;
+      params_map?: Record<string, string>;
+      result_map?: Record<string, string>;
+  }
+
+WithheldCause · type · internal
+WorkflowContextEntry · type · public
+  interface WorkflowContextEntry {
+      source: {
+          path: string;
+      };
+      description?: string;
+  }
+
+WorkflowContextSnapshot · type · public
+  interface WorkflowContextSnapshot {
+      source_path: string;
+      content: string;
+      content_hash: string;
+      loaded_at: string;
+      error?: string;
+  }
+
+WorkflowCopyFault · type · public
+  type WorkflowCopyFault = 'schema_version_not_number' | 'no_id' | 'no_steps' | 'not_legacy_shape';
+
+WorkflowCopyParseFault · type · internal
+WorkflowDefinition · type · public
+  interface WorkflowDefinition {
+      id: string;
+      name: string;
+      description?: string;
+      version: number;
+      params_schema?: JsonSchema;
+      protocol?: ProtocolConfig;
+      services?: Record<string, ServiceDefinition>;
+      mcp_servers?: McpServerConfig[];
+      templates?: Record<string, TemplateDefinition>;
+      steps: Record<string, StepDefinition>;
+      profiles_dir?: string;
+      extensions?: string | string[];
+      source_dir?: string;
+      trust_root?: string;
+      resolved_profiles?: Record<string, {
+          content: string;
+          content_hash: string;
+      }>;
+      schema_version?: number;
+      workflow_context?: Record<string, WorkflowContextEntry>;
+      context_wrapper?: ContextWrapperFormat;
+      origin?: 'human' | 'agent';
+      model?: string;
+      agent?: string;
+      trigger?: TriggerDefinition;
+  }
+
+WorkflowError · both · public
+  class WorkflowError extends Error {
+      readonly code: ErrorCode;
+      readonly category: ErrorCategory;
+      readonly agentAction: AgentAction;
+      readonly retryable: boolean;
+      readonly details: Record<string, unknown>;
+      readonly facts?: ErrorFacts;
+      readonly about?: string;
+      readonly remedy?: readonly WayOn[];
+      readonly stepId?: string;
+      readonly attempt: number;
+      readonly retry_after?: number;
+      warnings?: readonly LoaderWarning[];
+      errors?: readonly string[];
+      constructor(message: string, options: WorkflowErrorOptions);
+  }
+
+WorkflowErrorOptions · type · public
+  interface WorkflowErrorOptions {
+      code: ErrorCode;
+      category: ErrorCategory;
+      agentAction: AgentAction;
+      retryable: boolean;
+      details?: Record<string, unknown>;
+      facts?: ErrorFacts;
+      about?: string;
+      remedy?: readonly WayOn[];
+      stepId?: string;
+      attempt?: number;
+      retry_after?: number;
+      warnings?: readonly LoaderWarning[];
+      errors?: readonly string[];
+  }
+
+WorkflowRegistrar · type · public
+  interface WorkflowRegistrar {
+      register(definition: WorkflowDefinition): Promise<void>;
+      get(workflowId: string): Promise<WorkflowDefinition>;
+      list(): Promise<WorkflowDefinition[]>;
+      listWithDiagnostics?(): Promise<RegistryListing>;
+      getCapped?(workflowId: string, capBytes: number): Promise<CappedRead>;
+  }
+
+WriteOnceRunField · type · internal
+abandonRun · value · public
+  function abandonRun(store: RunStore, runId: string, reason?: string): Promise<RunRecord>;
+
+admitWay · value · internal
+adoptsLine · value · internal
+advanceRun · value · public
+  function advanceRun(store: RunStore, definition: WorkflowDefinition, options: AdvanceRunOptions): Promise<EngineReply>;
+
+agentActionOf · value · internal
+agentRenderedList · value · internal
+alsoSetClause · value · internal
+answerArrivalOf · value · internal
+answerToolNamedIn · value · internal
+answerViaOf · value · internal
+answerableQuestion · value · internal
+answersRowOf · value · internal
+applyResume · value · internal
+applySettlement · value · public
+  function applySettlement(fresh: RunRecord, delta: SettlementDelta, definition: WorkflowDefinition | undefined, options: {
+      at: Date;
+      cascadeGuards?: boolean;
+      storeKeepsClaims?: boolean;
+  }): SettlementResult;
+
+armMarker · value · internal
+armToOutcome · value · public
+  function armToOutcome(arm: SealArm): 'complete' | 'fail' | 'abort' | 'abandon';
+
+armToPhase · value · internal
+artifactDeleteFailedError · value · internal
+assertFencePredicate · value · internal
+assertRegistryLine · value · internal
+assertReleaseLine · value · internal
+assertSealIntegrity · value · public
+  function assertSealIntegrity(stored: RunRecord, next: RunRecord): void;
+
+assertSealMarkersAgree · value · internal
+assertSealOutcomeCoherent · value · internal
+assessStructuredOutputEligibility · value · internal
+asyncSchemaValidity · value · internal
+atomicWriteFile · value · internal
+authorTextNote · value · internal
+bareStepOutput · value · internal
+basisOf · value · internal
+boundRequestFacts · value · internal
+boundStated · value · internal
+boundStatedName · value · internal
+boundWhole · value · internal
+brandClass · value · internal
+bufferFullError · value · internal
+buildDisclosureSet · value · public
+  function buildDisclosureSet(input: {
+      env: Readonly<Record<string, string | undefined>> | undefined;
+      declared: Readonly<Record<string, string>>;
+      declaredState: DeclaredState;
+      declaredCause?: DeclaredCause;
+      audience: DisclosureAudience;
+      notSecret?: readonly string[];
+      cwd?: string;
+  }): {
+      set: DisclosureSet;
+      unmaskable: string[];
+  };
+
+buildEvidenceByStep · value · internal
+buildFailedAttemptRecord · value · internal
+buildPreExecutionErrorEnvelope · value · internal
+buildSettlementNamespace · value · internal
+buildTrustRefusal · value · internal
+cacheVerdict · value · internal
+callableSteps · value · internal
+callsHostDispatcher · value · public
+  function callsHostDispatcher(step: StepDefinition | undefined): boolean;
+
+cannotGoOnFrom · value · internal
+cannotGoOnHere · value · internal
+cannotGoOnUntilCorrected · value · internal
+cannotRunParts · value · internal
+cannotRunSummary · value · internal
+canonicalJson · value · internal
+capText · value · internal
+capabilityRefusalWords · value · internal
+capabilityWarning · value · internal
+captureEvidence · value · internal
+checkBufferBudget · value · internal
+checkFenceWithReader · value · internal
+checkOutboundRequest · value · internal
+checkPreClaim · value · internal
+checkPreconditions · value · internal
+chooseAutoLifetime · value · internal
+chooseAutoOneLifetime · value · internal
+chooseCacheLifetime · value · internal
+claimStepForDrive · value · beta
+  function claimStepForDrive(store: RunStore, runId: string, stepName: string, options: ClaimStepForDriveOptions): Promise<DriveClaim>;
+
+classifyClaim · value · internal
+classifyForCoherence · value · internal
+classifyInProgressClaims · value · internal
+classifyLegacySeal · value · public
+  function classifyLegacySeal(run: ClassifiableRun): SealArm | undefined;
+
+classifyRegisteredCopy · value · internal
+classifyRunHealth · value · public
+  function classifyRunHealth(snapshot: Snapshot, opts?: ClassifyRunHealthOptions): RunHealthFinding[];
+
+classifyStepTrust · value · internal
+classifyStop · value · public
+  function classifyStop(reply: StopReply, step: string | undefined, record: StopRecord): StopClassification | undefined;
+
+clockBasis · value · internal
+clockErrorSink · value · public
+  function clockErrorSink(): ((err: unknown) => void) | undefined;
+
+collectManifestSecretRefs · value · internal
+compareCanonical · value · internal
+compareStrings · value · public
+  function compareStrings(a: string, b: string, mode: 'exact' | 'prefix' | 'regex'): boolean;
+
+compileDisclosure · value · internal
+compileSchema · value · internal
+composeCostView · value · internal
+composeDriveFailureCosts · value · internal
+composeGateClaimSentence · value · internal
+composeNextActionsStatusWord · value · internal
+composePersonNotice · value · internal
+composeProgramIdentity · value · internal
+composeQuestionView · value · internal
+composeRunCost · value · internal
+composeSchemaFailure · value · internal
+composeStepViews · value · internal
+composeWaysAt · value · internal
+composeWaysOn · value · internal
+computeClaimDeadline · value · public
+  function computeClaimDeadline(definition: WorkflowDefinition, stepName: string, now: Date): string | null;
+
+computeGateDueState · value · internal
+consumedKindsFor · value · internal
+consumesInputMap · value · internal
+controlEscape · value · internal
+countResults · value · public
+  function countResults(accepted: Record<string, unknown>[], rejected: Record<string, unknown>[]): {
+      accepted_count: number;
+      rejected_count: number;
+      candidates_found: number;
+  };
+
+countWitnessMatches · value · internal
+createDefaultRegistry · value · public
+  function createDefaultRegistry(): ExtensionRegistry;
+
+createRealmBrand · value · internal
+createSystemClock · value · public
+  function createSystemClock(options: {
+      onWaiterError: (err: unknown) => void;
+  }): Clock;
+
+damagedFileConcerns · value · public
+  function damagedFileConcerns(reading: {
+      facts: UnreadableFileFacts;
+      object?: Record<string, unknown>;
+  }, workflowId: string): boolean;
+
+decideIdempotencyPolicy · value · public
+  function decideIdempotencyPolicy(matched: Pick<RunRecord, 'id' | 'workflow_id' | 'run_phase' | 'terminal_state'>, options: Pick<CreateRunOptions, 'onTerminalMatch' | 'onLiveMatch'>): IdempotencyDecision;
+
+declareReleaseLine · value · public
+  function declareReleaseLine(target: object | (abstract new (...args: never[]) => object)): void;
+
+definitionAbsenceOf · value · internal
+deleteIfExists · value · internal
+deprecationLine · value · internal
+deriveCacheDetail · value · internal
+deriveDefaultedSteps · value · internal
+deriveRunPhase · value · public
+  function deriveRunPhase(run: Pick<RunRecord, 'pending_gate' | 'terminal_state' | 'failed_steps' | 'terminal_reason' | 'aborted_at' | 'abandoned_at' | 'sealed_by'>): RunPhase;
+
+describeAnswerEnding · value · internal
+describeCacheability · value · internal
+describeClaimHolder · value · internal
+describeEndedBy · value · internal
+describeForeignProvider · value · internal
+describeGuardEndingLines · value · internal
+describeGuardLines · value · internal
+describePending · value · public
+  function describePending(definition: WorkflowDefinition, snapshot: Snapshot, registry: ExtensionRegistry | undefined): PendingView;
+
+describeRunDriver · value · internal
+describeSchemaFailure · value · internal
+describeStoredFileFault · value · public
+  function describeStoredFileFault(facts: UnreadableFileFacts): string;
+
+describeThrown · value · internal
+describeUnrecognised · value · internal
+describeUnrecognisedForContract · value · internal
+describeValidationProblems · value · internal
+disclose · value · public
+  function disclose(text: string, set: DisclosureSet, tier: DisclosureTier): Disclosed;
+
+discloseByTable · value · internal
+discloseGate · value · internal
+discloseLeaf · value · public
+  function discloseLeaf(text: string, set: DisclosureSet, tier: DisclosureTier): string;
+
+discloseRecord · value · internal
+discloseReply · value · internal
+discloseSplit · value · public
+  function discloseSplit(text: string, cut: number, set: DisclosureSet, tier: DisclosureTier): DisclosedSplit;
+
+discloseSplitSize · value · public
+  function discloseSplitSize(text: string, cut: number, set: DisclosureSet, tier: DisclosureTier): DisclosedSplitSize;
+
+discloseValue · value · internal
+disclosureReceipt · value · internal
+displayId · value · public
+  function displayId(id: string): string;
+
+displayPaths · value · internal
+doorWithholdsAnswers · value · internal
+drainFinalizers · value · public
+  function drainFinalizers(store: RunStore, definition: WorkflowDefinition, registry: ExtensionRegistry | undefined, runId: string, driver?: Attributed): Promise<{
+      run: RunRecord;
+      at: Date;
+      snapshot: Snapshot;
+      warnings: string[];
+      leftPending: string[];
+      attempted: string[];
+  }>;
+
+dueExpiry · value · internal
+dueExpiryWords · value · internal
+dueReminderWork · value · internal
+durationWords · value · internal
+emptyDisclosureSet · value · internal
+endedRunWayOutOf · value · internal
+endedRunWaysSentence · value · internal
+endsWithCommand · value · internal
+endsWithCutSentence · value · internal
+engineReleaseLine · value · internal
+engineStepInput · value · internal
+environmentEntries · value · internal
+errnoCode · value · internal
+escapedBoundedValue · value · internal
+evaluateAllPreconditions · value · internal
+evaluateFence · value · internal
+evaluatePrecondition · value · internal
+executeChain · value · public
+  function executeChain(store: RunStore, definition: WorkflowDefinition, options: ExecuteChainOptions): Promise<EngineReply>;
+
+executeEngineStep · value · public
+  function executeEngineStep(store: RunStore, definition: WorkflowDefinition, options: ExecuteEngineStepOptions): Promise<EngineReply>;
+
+executeStep · value · public
+  function executeStep(store: RunStore, definition: WorkflowDefinition, options: ExecuteStepOptions): Promise<EngineReply>;
+
+expiryCarriedOutLine · value · internal
+expiryReceiptLine · value · internal
+expiryReceiptOf · value · internal
+extensionIdentityDiffers · value · internal
+fenceReaderMissingError · value · internal
+fileClock · value · internal
+finalizerOutcomeLines · value · internal
+findCapabilityBlockedSteps · value · internal
+findEligibleSteps · value · public
+  function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord): string[];
+
+findSecretRefSites · value · internal
+findTrustRoot · value · internal
+findUnknownKeys · value · internal
+flattenWalBatches · value · internal
+floorAtHolder · value · public
+  function floorAtHolder(reading: Date, holderCreatedAt?: string): Date;
+
+floorAtRecord · value · public
+  function floorAtRecord(r: Date, record: {
+      updated_at: string;
+  }): Date;
+
+foldReading · value · internal
+formWaitInert · value · internal
+formatDuration · value · internal
+formatInstantWords · value · internal
+gateChoicesOf · value · internal
+gateRepairOf · value · internal
+generateSchemaSkeleton · value · internal
+getWorkflowForRun · value · public
+  function getWorkflowForRun(store: Pick<WorkflowRegistrar, 'get'>, run: RunRecord, opts: {
+      retryVerb: string;
+      verb: string;
+      terminalOk?: boolean;
+  }): Promise<WorkflowDefinition>;
+
+guardEndingOf · value · internal
+guardEndingOfRun · value · internal
+guardPassedLine · value · internal
+hashParams · value · internal
+heldLeaseWords · value · internal
+identityRefusalLine · value · internal
+inboundMarkerWarning · value · internal
+instantText · value · internal
+interpolateConfigTree · value · internal
+interpolateSecretString · value · internal
+isAnswerEntry · value · internal
+isAsyncSchemaRefusal · value · internal
+isBareAutoStep · value · internal
+isBuiltInRequirement · value · internal
+isCopyOfReadableRun · value · public
+  function isCopyOfReadableRun(facts: UnreadableFileFacts): boolean;
+
+isCredentialName · value · internal
+isExtensionKey · value · internal
+isFenceRunReader · value · internal
+isFinalReminder · value · internal
+isGateTrust · value · internal
+isIdleForCleanup · value · internal
+isPastDeadline · value · internal
+isRaceStop · value · internal
+isRetryableArtifactErrno · value · internal
+isRunRecordShape · value · public
+  function isRunRecordShape(value: unknown): value is RunRecord;
+
+isSizeBlock · value · internal
+isStepScopedFence · value · internal
+isStepSettledOrInFlight · value · internal
+isStrictModeRefusal · value · internal
+isTerminalPhase · value · internal
+isTerminalState · value · internal
+isTestLocationClock · value · internal
+isWorkflowComplete · value · internal
+judgeAnswerer · value · internal
+judgeFormWait · value · internal
+judgeGateAnswers · value · internal
+judgeGateProof · value · internal
+judgeProgramFit · value · internal
+judgedSnapshotOf · value · public
+  function judgedSnapshotOf(reply: object): Snapshot | undefined;
+
+keptCacheGaps · value · internal
+knownSchemaKeywords · value · internal
+lastExecutionIdentity · value · internal
+lateAnswerOutcome · value · internal
+leaseFactOf · value · public
+  function leaseFactOf(snapshot: Pick<Snapshot, 'lease_facts'>, claim: ClaimRecord | undefined): LeaseFact | Unleased;
+
+leaseFactsOf · value · public (beta: port)
+  function leaseFactsOf(port: LeasePort | null | undefined, record: RunRecord): Promise<LeaseFacts>;
+
+leaseOutbound · value · internal
+legacyCopyError · value · internal
+libraryCannotRunWords · value · internal
+linkNoClobberThenUnlink · value · internal
+listWords · value · internal
+listWorkflowsDiagnosed · value · internal
+loadSnapshot · value · internal
+loadWorkflowFromFile · value · public
+  function loadWorkflowFromFile(filePath: string, registry?: ExtensionRegistry): WorkflowDefinition;
+
+loadWorkflowFromFileWithDiagnostics · value · public
+  function loadWorkflowFromFileWithDiagnostics(filePath: string, registry?: ExtensionRegistry, declared?: DeclaredNames): {
+      definition: WorkflowDefinition;
+      warnings: LoaderWarning[];
+      notChecked: NotCheckedPath[];
+  };
+
+loadWorkflowFromString · value · public
+  function loadWorkflowFromString(content: string, registry?: ExtensionRegistry): WorkflowDefinition;
+
+loadWorkflowFromStringWithDiagnostics · value · public
+  function loadWorkflowFromStringWithDiagnostics(content: string, registry?: ExtensionRegistry, declared?: DeclaredNames): {
+      definition: WorkflowDefinition;
+      warnings: LoaderWarning[];
+      notChecked: NotCheckedPath[];
+  };
+
+locateQuote · value · public
+  function locateQuote(quote: string, source: string, options?: {
+      minPartChars?: number;
+  }): QuoteCheck;
+
+manifestSecretsBlockHash · value · internal
+markOutbound · value · internal
+markSaid · value · internal
+markTestClock · value · internal
+markersIn · value · internal
+matchModel · value · internal
+minCacheableTokensFor · value · internal
+mintQuestionView · value · internal
+moreOf · value · internal
+mostPermissive · value · internal
+narrowForDoor · value · internal
+newRunCanChangeInput · value · internal
+newerCopyError · value · internal
+newerDefinitionFactsOf · value · internal
+noLongerTerminalReason · value · internal
+normalizeCacheAuto · value · internal
+normalizeEntryForBuffer · value · internal
+normalizeResponseId · value · internal
+normalizeSource · value · internal
+notKeptMarker · value · internal
+notSecretIntersection · value · internal
+notSecretNames · value · internal
+offeredResumeWay · value · internal
+omitClaim · value · internal
+oneOf · value · internal
+openQuestionOf · value · internal
+openQuestionWords · value · internal
+operatorEndingSentence · value · internal
+outcomeOf · value · internal
+outputSourceOf · value · public
+  function outputSourceOf(entry: Pick<EvidenceSnapshot, 'step_id' | 'kind' | 'output_summary' | 'output_source'>, definition: Pick<WorkflowDefinition, 'steps'> | undefined): {
+      source: OutputSource;
+  } | {
+      absent_cause: OutputSourceAbsentCause;
+  };
+
+overdueOf · value · internal
+owedList · value · internal
+owedNames · value · internal
+owedWords · value · internal
+parseCacheEconomics · value · internal
+parseDeploymentManifest · value · internal
+parseFailureError · value · internal
+parseStamp · value · internal
+partitionBufferedEntries · value · internal
+partitionBySubstring · value · public
+  function partitionBySubstring(candidates: Record<string, unknown>[], quoteField: string, sourceText: string): {
+      accepted: Record<string, unknown>[];
+      rejected: Record<string, unknown>[];
+  };
+
+pendingCleanupLine · value · internal
+pendingCleanupSentence · value · internal
+pendingCleanupWay · value · internal
+pendingGateQuestion · value · internal
+persistsField · value · internal
+pickCanonical · value · internal
+preconditionHint · value · internal
+preconditionRefusal · value · internal
+presentDoorVerdict · value · internal
+presentWayOfGate · value · internal
+priceFromEconomics · value · internal
+priceRequest · value · internal
+principalOf · value · internal
+probeClassOf · value · internal
+probeClassToError · value · internal
+prohibitedKeysFor · value · internal
+propagateSkips · value · internal
+quoteStatedName · value · internal
+quotedCommand · value · internal
+quotedNames · value · internal
+raceClausesOf · value · internal
+readAttributed · value · internal
+readDrivenBy · value · internal
+readGateClaimVerdict · value · internal
+readIfExists · value · internal
+readInstant · value · internal
+readRunForFence · value · internal
+readStatedAnswerer · value · internal
+readStoredName · value · internal
+readSupplier · value · public
+  function readSupplier(entry: Pick<EvidenceSnapshot, 'supplied_by' | 'step_id' | 'kind'>, definition: Pick<WorkflowDefinition, 'steps'> | undefined): {
+      role: SupplierRole;
+  } | {
+      absent: SupplierAbsentCause;
+  };
+
+readTestClockFile · value · internal
+realmHomePath · value · internal
+reclaimStep · value · public
+  function reclaimStep(store: RunStore, runId: string, stepName: string, options?: ReclaimStepOptions): Promise<ReclaimResult>;
+
+recordStampedAheadOf · value · internal
+recordStampedAheadSentence · value · internal
+refusedInputField · value · internal
+releaseDriveClaim · value · beta
+  function releaseDriveClaim(store: RunStore, runId: string, stepName: string, options: ReleaseDriveClaimOptions): Promise<DriveRelease>;
+
+releaseLineAdvisoryMessage · value · internal
+releaseLineError · value · internal
+releaseLineOf · value · public
+  function releaseLineOf(value: unknown): RealmBrand | undefined;
+
+reminderAnchorOf · value · internal
+reminderEligibility · value · internal
+reminderScheduleOf · value · internal
+reminderScheduleWords · value · internal
+renderAuthoredValue · value · internal
+renderDefinitionAbsent · value · internal
+renderDisplay · value · internal
+renderIneligibleMessage · value · internal
+renderLoaderWarning · value · internal
+renderMore · value · internal
+renderProblemsLines · value · internal
+renderProblemsSentence · value · internal
+renderStepPromptWithBoundary · value · public
+  function renderStepPromptWithBoundary(definition: WorkflowDefinition, stepName: string, loadedAt: Date): Promise<{
+      text: string;
+      stable: StableBoundary;
+  } | undefined>;
+
+renderTrustValue · value · internal
+renderUnreadableStoredFile · value · public
+  function renderUnreadableStoredFile(facts: UnreadableFileFacts): string;
+
+repairActFor · value · internal
+requirementForStep · value · internal
+resolveAgentProfiles · value · internal
+resolveCapMs · value · internal
+resolvePreExecutionAgentAction · value · internal
+resolveResource · value · public
+  function resolveResource(resources: Record<string, unknown> | undefined, stepId: string, fieldName: string): unknown;
+
+resolveRootClock · value · internal
+resolveSeverity · value · internal
+respondWayOfGate · value · internal
+resumeWay · value · internal
+runNotFoundError · value · internal
+runPhaseDerivationFingerprint · value · internal
+runReadError · value · internal
+saidIds · value · internal
+scanSecretString · value · internal
+sealRunLevel · value · internal
+seedSaid · value · internal
+selectEconomicsRates · value · internal
+selectFinalizers · value · internal
+sentenceEnd · value · internal
+separationGaps · value · internal
+separationModeOf · value · internal
+separationPrevents · value · internal
+serializeFailedAttemptLine · value · internal
+setClockErrorSink · value · public
+  function setClockErrorSink(sink: (err: unknown) => void): void;
+
+shapeOf · value · internal
+shellWord · value · internal
+shouldEnforceTimeout · value · internal
+shownViewEvidence · value · internal
+stampOf · value · internal
+startIdentityEntry · value · internal
+statIfExists · value · internal
+stepBrief · value · internal
+stepCacheGaps · value · internal
+stepNotEligibleError · value · internal
+stepStateOf · value · internal
+stepsThatCannotRun · value · internal
+stopAbout · value · internal
+storeDeclaresNonceCarriage · value · internal
+storeDeclaresSeal · value · internal
+storedCopyFaultError · value · internal
+storedFileFactsOf · value · internal
+stringHasSecretRefs · value · internal
+stripSpanMarks · value · internal
+submitHumanResponse · value · public
+  function submitHumanResponse(store: RunStore, definition: WorkflowDefinition, options: SubmitGateOptions): Promise<EngineReply>;
+
+switchClausesOf · value · internal
+switchPathsCondition · value · internal
+systemClock · value · public
+  const systemClock: Clock;
+
+takeRawReading · value · public
+  function takeRawReading(clock: Clock): Date;
+
+takeReading · value · public
+  function takeReading(clock: Clock, record?: {
+      updated_at: string;
+  }, delta?: SettlementDelta): Date;
+
+terminalAnswerRefusalMessage · value · internal
+testClockFilePath · value · internal
+testClockNoticeLine · value · internal
+tierFor · value · internal
+toArtifactDeleteFailedError · value · internal
+unbrandedClause · value · internal
+unmaskableWarning · value · internal
+unmetCapabilities · value · internal
+unreadableById · value · internal
+unreadableFactsOf · value · public
+  function unreadableFactsOf(err: unknown): UnreadableFileFacts | undefined;
+
+unreadableRunFileError · value · internal
+unreadableRunFilesError · value · public
+  function unreadableRunFilesError(command: string, runsFolder: string, files: readonly UnreadableFileFacts[]): WorkflowError;
+
+unreadableRunFilesOf · value · public
+  function unreadableRunFilesOf(err: unknown): UnreadableRunFilesFacts | undefined;
+
+validateAgentSubmission · value · internal
+validateDeploymentManifest · value · internal
+validateDeprecations · value · internal
+validateDriver · value · internal
+validateInputSchema · value · internal
+validateOutputSchema · value · internal
+validateRunParams · value · internal
+validateTraceCapabilities · value · internal
+validationListOf · value · internal
+valueMeasuredWithheld · value · internal
+versionConflictError · value · internal
+viewDigest · value · internal
+waitingOnAnswer · value · internal
+walkField · value · public
+  function walkField(data: unknown, fieldName: string): Record<string, unknown>[];
+
+waysStoreOf · value · internal
+weakestDeclared · value · internal
+whitelistValidationRow · value · internal
+withDeclaredStanding · value · internal
+withEndedRunWays · value · internal
+withFullStop · value · internal
+withPendingCleanup · value · internal
+withResumeOffer · value · internal
+withTestClockNotice · value · internal
+withheldCauseOf · value · internal
+withheldQuestion · value · internal
+workflowNotFoundError · value · internal
+worstCaseScheduleSeconds · value · internal
+writeTestClockFile · value · internal
+writtenSnapshot · value · public
+  function writtenSnapshot(record: RunRecord, at: Date, facts?: LeaseFacts): Snapshot;

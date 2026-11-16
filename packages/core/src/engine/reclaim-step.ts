@@ -21,6 +21,7 @@ import { isPastDeadline } from './instants.js';
 import type { Snapshot } from './snapshot.js';
 import { leaseFactOf } from '../store/lease-facts.js';
 
+/** @public */
 export type ReclaimOutcome =
   /** The claim was moved out of `in_progress_steps` this call → the step is eligible again. */
   | 'reclaimed'
@@ -38,6 +39,7 @@ export type ReclaimOutcome =
    */
   | 'no_active_claim';
 
+/** @public */
 export interface ReclaimResult {
   run: RunRecord;
   step: string;
@@ -122,6 +124,7 @@ function classifyNoActiveClaim(
   return { outcome: 'no_active_claim' };
 }
 
+/** @public */
 export interface ReclaimStepOptions {
   /**
    * Trace-buffer WAL store. The stale `(runId, stepName)` buffer is cleared best-effort so a
@@ -367,6 +370,7 @@ function warnFencedSealOutcome(runId: string, stepName: string, result: FencedSe
  * Reclaims a single in-progress claim on a run. Guards (in order): store capability → terminal
  * run → the open-gate step → membership. Returns idempotent success when the step is already
  * settled. On a CAS mismatch it RE-EVALUATES the predicate (never a blind abandon-style re-remove).
+ * @public
  */
 export async function reclaimStep(
   store: RunStore,
