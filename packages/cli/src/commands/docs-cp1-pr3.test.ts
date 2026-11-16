@@ -26,7 +26,8 @@ describe('CP-1 PR 3 — the words of the internal entry', () => {
         found: flat(page).includes(flat(paragraph)),
         beforeTable: page.indexOf(paragraph) < page.indexOf('| Package '),
         afterLine:
-          page.indexOf(paragraph) > page.indexOf('The package exports more than 200 values.'),
+          page.indexOf(paragraph) >
+          page.indexOf('The package exports many more names than this page covers.'),
       },
       'core-library.md no longer carries the internal-entry paragraph after the "more than 200 values" line and before the package table',
     ).toEqual({ found: true, beforeTable: true, afterLine: true });
