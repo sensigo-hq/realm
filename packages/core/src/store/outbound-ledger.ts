@@ -11,6 +11,7 @@ import type { PendingGate } from '../types/run-record.js';
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
 import { isPastDeadline } from '../engine/instants.js';
 import { reminderEligibility } from '../engine/gate-timing.js';
+import { keyOf } from './outbound-entry-key.js';
 
 /** The longest lease a sender may take, in seconds: a longer `leaseSeconds` is cut to this. */
 export const OUTBOUND_LEASE_MAX = 300;
@@ -147,13 +148,6 @@ export function checkOutboundRequest(
       OUTCOME_CODE.test(outcome.slice('refused:'.length)));
   if (!fits)
     malformed('a mark is `sent` with `ok`, or `failed` with `refused:<code>` (a–z, 0–9, _; 1–64)');
-}
-
-/** The row's key, from the request's typed parts. */
-function keyOf(what: OutboundLeaseRequest['what']): string {
-  return what.type === 'reminder'
-    ? `gate:${what.gateId}:reminder:${what.occurrence}`
-    : `gate:${what.gateId}:escalation`;
 }
 
 function viewOf(row: OutboundEntry): OutboundEntryView {

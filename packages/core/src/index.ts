@@ -513,6 +513,9 @@ export {
   reminderEligibility,
 } from './engine/gate-timing.js';
 export type { ReminderSchedule, ReminderOccurrence } from './engine/gate-timing.js';
+// #597 D3a: one place for "which reminder is due": the question post's anchor and the whole grid.
+export { dueReminderWork, reminderAnchorOf, SAME_LINE_WINDOW_MS } from './engine/reminder-due.js';
+export type { ReminderItem, ReminderSettings } from './engine/reminder-due.js';
 // issue #729 PR-0 (D4 P-8, A-15): the one parser of stored instants and the one due test of a
 // stored deadline; ε, the one clock-skew constant.
 export {
