@@ -151,7 +151,7 @@ and with a filter that does not exist:
 FILTER_UNKNOWN: gate.message uses unknown filter 'shout'
 ```
 
-In both cases the run stays open, with the step not done. `realm workflow validate`, `register` and `watch` refuse a filter Realm does not have, an argument no value accepts, and a templated field that is not text; in an approval question and in `display`, a path that can never be found is refused, and so is a path in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its text; the paths in a prompt and in step instructions are not checked yet. This was added after version 0.49.0.
+In both cases the run stays open, with the step not done. `realm workflow validate`, `register` and `watch` refuse a filter Realm does not have, an argument no value accepts, and a templated field that is not text; in an approval question and in `display`, a path that can never be found is refused, and so is a path in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value; the paths in a prompt and in step instructions are not checked yet. This was added after version 0.49.0.
 
 In `display`, a path is a field of the step's own output, without a root: `{{ note }}`. Filters work as in other templates: `{{ note | upper }}`, and `default` fills a missing value. A filter that cannot apply to a value that is there leaves the placeholder as written; where values show as their shapes, a value that is not a list or a map shows its shape. In `display`, a list or a map is written as JSON on one line. This was added after version 0.49.0. With this template:
 
@@ -173,7 +173,7 @@ Note: Pack with care. / upper: PACK WITH CARE. / other step:
 
 ### Filters
 
-A filter takes the value on its left and gives a new value. Filters are applied from left to right. An argument follows the filter's name after a colon. Several arguments are separated by commas. An argument that contains a space or a comma goes in quotes.
+A filter takes the value on its left and gives a new value. Filters are applied from left to right. An argument follows the filter's name after a colon. Several arguments are separated by commas. An argument that contains a space or a comma goes in quotes. Written without quotes, a number (`0`, `-3`, `1.5`, `2e3`; `007` stays text), `true` or `false` given to `default` keeps its type, so `| default: 0 | round: 2` gives `0.00`; in quotes it is text.
 
 If a filter is given a kind of value it does not work on, the whole expression is left as written. `default` is not reached in that case: it replaces a value that is missing, not a filter that could not be applied. A value that Realm hides whole is shown as `[REDACTED]` instead: it is hidden before any filter runs, and no filter changes it.
 
