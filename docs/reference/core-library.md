@@ -6,6 +6,8 @@
 
 The package exports many more names than this page covers. The ones Realm promises are tagged `@public` in the source and listed, each with its declaration, in `packages/core/src/inventory/api-report.txt`; a change to one is named in the changelog. The rest are the parts the `realm` command is built from; they may change in a minor release, and at 1.0 they move to an internal entry.
 
+`@sensigo/realm/internal` exports everything the main entry exports, from the same files. Until 1.0 every name is importable from either entry; a name Realm promises (the [compatibility page](compatibility.md) says which) is promised on both, and the rest may change in a minor release. From 1.0 on, the names Realm does not promise live only on the internal entry, which also changes only in a minor release. `@sensigo/realm-mcp/internal` is the same for the MCP package.
+
 | Package                       | Holds                                                            |
 | ----------------------------- | ---------------------------------------------------------------- |
 | `@sensigo/realm`              | The engine, the loader, the file stores, the built-in adapters.  |
