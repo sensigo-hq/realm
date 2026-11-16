@@ -69,6 +69,7 @@ realm listen --model — option, takes a value
 realm listen --port — option, takes a value, default 3000
 realm listen --prompt-cache — option, takes a value
 realm listen --provider — option, takes a value
+realm listen --send-reminders — option, no value
 realm listen --shutdown-drain — option, takes a value, default 0
 realm listen --shutdown-grace — option, takes a value, default 30
 realm listen --sweep-expired-gates — option, takes a value

@@ -139,7 +139,7 @@ Invalid workflow: Step 'approve': 'gate.default_choice' ("cancel") is not one of
 
 ### `reminder_seconds`
 
-The time between reminders while the gate is open. Reminders are sent by the process that is waiting at the gate with a Slack connection. They never answer the gate.
+The time between reminders while the gate is open. Reminders are sent by the process that is waiting at the gate with a Slack connection, or, once that process has stopped, by `realm listen --send-reminders` (added after version 0.49.0). They never answer the gate.
 
 ### `reminder_max`
 

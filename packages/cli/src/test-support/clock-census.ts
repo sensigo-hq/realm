@@ -113,6 +113,17 @@ export const CENSUS: Record<string, Entry> = {
     'outside',
     "the export bundle's own stamp (a parameter default kept: an outside instant)",
   ],
+  'cli/src/commands/listen-reminders.ts#makeReminderPass#performance.now()': [
+    1,
+    'duration',
+    MONOTONIC,
+  ],
+  'cli/src/commands/listen-reminders.ts#spent#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/commands/listen-reminders.ts#remindOne#clock.now()': [
+    4,
+    'read',
+    "#597 D3b: the reminder sender's readings of the store's clock for one question: the reading the due item is judged at (against opened_at, the post's ts and the ledger's lease deadlines), the reading a failed probe's next probe counts from, the reading the reminder is composed at (its true age), and the reading the outcome's pause or next probe counts from",
+  ],
   'cli/src/commands/listen.ts#handle#clock.now()': [
     1,
     'event',

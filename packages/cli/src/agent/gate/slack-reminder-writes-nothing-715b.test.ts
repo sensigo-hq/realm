@@ -1,6 +1,6 @@
 // slack-reminder-writes-nothing-715b.test.ts — issue #715 (b) 02 §D.3 (D6-21) with Amendment 9: the
 // basis clause the `inspect`/`list` reminder views print — "reminders are sent only while a process
-// attends this question" (#597 D1b dropped "no send is recorded": the outbound ledger, beside the run,
+// attends this question" (#597 D3b: "a realm agent …, or realm listen --send-reminders is running"; #597 D1b dropped "no send is recorded": the outbound ledger, beside the run,
 // now records what was sent) — and the rule that a reminder writes nothing to the run are TRUE by
 // execution: the process attending the question (`realm agent`'s Slack gate handler) posts its
 // reminders and writes NOTHING to the run record for them. Real timers: an authored reminder every

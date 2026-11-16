@@ -96,7 +96,13 @@ function slackSet(): DisclosureSet {
 export type SlackVerdict =
   | { readonly ok: true; readonly ts?: string }
   | { readonly ok: false; readonly cause: 'timeout' }
-  | { readonly ok: false; readonly cause: 'refused'; readonly reason: string }
+  | {
+      readonly ok: false;
+      readonly cause: 'refused';
+      readonly reason: string;
+      /** #597 D3b: the HTTP status of a non-2xx answer (the Web API refuses with 200 and `ok: false`). */
+      readonly status?: number;
+    }
   | { readonly ok: false; readonly cause: 'error'; readonly error: unknown };
 
 /** The operator's line for a post Slack did not take, naming the cause — `undefined` for a thrown
@@ -144,6 +150,7 @@ async function slackCall(
           ok: false,
           cause: 'refused',
           reason: text !== '' ? text : `HTTP ${response.status}`,
+          status: response.status,
         },
       };
     }
@@ -174,12 +181,13 @@ async function slackCall(
  * The ONE send to Slack: a JSON body, with no span mark in it, under the call deadline, judged by
  * {@link SlackVerdict}. A rate limit whose `Retry-After` is within the deadline is retried ONCE, as
  * a second call with its own deadline; any other rate limit is a refusal (`ratelimited`). Never
- * throws.
+ * throws. #597 D3b: `quiet` prints nothing (`realm listen`'s sender logs through its own logger).
  */
 async function sendToSlack(
   url: string,
   body: Record<string, unknown>,
   botToken?: string,
+  quiet = false,
 ): Promise<SlackVerdict> {
   const first = await slackCall(url, body, botToken);
   if ('verdict' in first) return first.verdict;
@@ -187,7 +195,7 @@ async function sendToSlack(
   if (wait === undefined || wait * 1000 > SLACK_CALL_DEADLINE_MS) {
     return { ok: false, cause: 'refused', reason: 'ratelimited' };
   }
-  console.warn(`  ⚠  Slack asked to wait ${wait} s before the post; retrying once`);
+  if (!quiet) console.warn(`  ⚠  Slack asked to wait ${wait} s before the post; retrying once`);
   await new Promise<void>((resolve) => setTimeout(resolve, wait * 1000));
   const second = await slackCall(url, body, botToken);
   return 'verdict' in second
@@ -536,6 +544,8 @@ export async function postSlackReply(
   channelId: string,
   threadTs: string,
   text: string,
+  // #597 D3b: `realm listen`'s sender says what Slack answered through its own logger.
+  quiet = false,
 ): Promise<SlackVerdict> {
   // A thread reply is walked with every tier: it can carry an answer's words and a run's ending.
   const verdict = await sendToSlack(
@@ -546,8 +556,9 @@ export async function postSlackReply(
       text: disclose(stripMarks(text), slackSet(), 'all').text,
     },
     botToken,
+    quiet,
   );
-  if (verdict.ok) return verdict;
+  if (verdict.ok || quiet) return verdict;
   const line = slackFailureLine(verdict);
   console.warn(line !== undefined ? `  ⚠  ${line}` : `Slack reply failed: ${errorText(verdict)}`);
   return verdict;
@@ -634,8 +645,22 @@ export function expiryOperatorLine(gate: PendingGate): string | undefined {
 /**
  * #964: a reminder or escalation that fires at most this late is composed at its scheduled instant,
  * as when on time; a later one (the machine slept) is composed at the reading, so its age is true.
+ * #597 D3b: `realm listen`'s sender composes by the same rule.
  */
-const REMINDER_GRACE_MS = 60_000;
+export const REMINDER_GRACE_MS = 60_000;
+
+/** #597 D3b: the one reminder of a question with no authored schedule, by default, after its post. */
+export const DEFAULT_REMINDER_INTERVAL_MS = 600_000;
+/** #597 D3b: the nudge (the escalation), by default, after the question's post. */
+export const DEFAULT_ESCALATION_THRESHOLD_MS = 1_800_000;
+
+/**
+ * #597 D3b: Slack's `auth.test` with a workflow's token: whether Slack takes the token at all. It
+ * leases nothing and posts nothing; it cannot see a bot removed from a channel or a missing scope.
+ */
+export function slackAuthTest(botToken: string): Promise<SlackVerdict> {
+  return sendToSlack('https://slack.com/api/auth.test', {}, botToken, true);
+}
 
 /** #597 D1b: what the reminders need of the run store's outbound ledger (`store.outbound`, D1a). */
 export interface ReminderLedger {
@@ -1721,8 +1746,8 @@ export function createSlackGateHandler(
         ...(config.signingSecret !== undefined ? { slackSigningSecret: config.signingSecret } : {}),
         slackEventsPort: config.eventsPort ?? 3100,
         ...(config.appToken !== undefined ? { slackAppToken: config.appToken } : {}),
-        gateReminderIntervalMs: config.reminderIntervalMs ?? 600_000,
-        gateEscalationThresholdMs: config.escalationThresholdMs ?? 1_800_000,
+        gateReminderIntervalMs: config.reminderIntervalMs ?? DEFAULT_REMINDER_INTERVAL_MS,
+        gateEscalationThresholdMs: config.escalationThresholdMs ?? DEFAULT_ESCALATION_THRESHOLD_MS,
         pollIntervalMs: config.pollIntervalMs ?? 3000,
         ...(config.registry !== undefined ? { registry: config.registry } : {}),
         ...(config.driver !== undefined ? { driver: config.driver } : {}),

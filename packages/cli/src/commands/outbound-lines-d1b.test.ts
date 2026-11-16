@@ -340,7 +340,7 @@ describe('#597 D1b — inspect and list say what the outbound ledger recorded', 
       open: open.slice(open.indexOf('next reminder')),
       resolved: /reminders:|escalation:/.test(resolved),
     }).toEqual({
-      open: 'next reminder: 2 of 3 scheduled in 5m (2030-01-01T00:20:00Z) (reminders are sent only while a process attends this question)  reminders: 1 sent (of at most 3), last 5m ago (2030-01-01T00:10:00Z)  escalation: sent 3m ago (2030-01-01T00:12:00Z)',
+      open: 'next reminder: 2 of 3 scheduled in 5m (2030-01-01T00:20:00Z) (reminders are sent only while a realm agent attends this question, or realm listen --send-reminders is running)  reminders: 1 sent (of at most 3), last 5m ago (2030-01-01T00:10:00Z)  escalation: sent 3m ago (2030-01-01T00:12:00Z)',
       resolved: false,
     });
   });

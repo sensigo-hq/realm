@@ -70,7 +70,7 @@ describe('#960 U2 — realm-listen.md', () => {
     // Executed by listen H10, H6, H8 and H9 (see ROW and DRAIN); the count is the table's 17 rows
     // (R1.2 added `--max-wait` and `--max-waiting`).
     claim(LISTEN, ROW);
-    claim(LISTEN, 'This page lists its argument and 17 flags (13 in version 0.49.0),');
+    claim(LISTEN, 'This page lists its argument and 18 flags (13 in version 0.49.0),');
     claim(
       LISTEN,
       `### \`--shutdown-drain\` ${DRAIN('realm listen', 'under _How it stops_')} This flag was added after version 0.49.0.`,
