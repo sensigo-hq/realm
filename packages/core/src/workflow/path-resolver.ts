@@ -40,13 +40,23 @@ import { closestKey } from './diagnostics.js';
 export interface PathRoot {
   /** The segments before the data: `['run', 'params']`, `['context', 'resources']`. */
   readonly prefix: readonly string[];
-  /** What follows the prefix: the run's params, or a step's output (the next segment names it). */
-  readonly data: 'params' | 'step';
+  /**
+   * What follows the prefix: the run's params, a step's output (the next segment names it), a
+   * `workflow_context` entry's name (fix 1, piece 3a-ii-a), or the names of the reading step's own
+   * output (`display`).
+   */
+  readonly data: 'params' | 'step' | 'context_entry' | 'self';
 }
 
 /** The roots a surface's paths may start with, in the order they are matched. */
 export interface PathSurface {
   readonly roots: readonly PathRoot[];
+  /**
+   * Fix 1, piece 3a-ii-a: the reading step's own output is there when the path is read (an
+   * approval question is rendered once the step's work is done, so the step's own answer counts),
+   * but not its `$settlement` entry or its gate's `choice`.
+   */
+  readonly readsOwnOutput?: boolean;
 }
 
 /** `input_map`'s surface: the root `resolveInputMap` builds (`{ run: { params }, context: { resources } }`). */
@@ -70,13 +80,36 @@ export const WHEN_SURFACE: PathSurface = {
 };
 
 /**
- * The workflow as the resolver reads it: the steps after templates are expanded, and the
- * workflow's `params_schema`. Raw on purpose — the loader calls it before the definition is typed,
- * and a malformed value is read as "declares nothing", never thrown on.
+ * Fix 1, piece 3a-ii-a: an approval question's surface (`gate.message`): the root the gate mint
+ * renders over (`{ context: { resources }, run: { params } }`, the step's own output added) and the
+ * workflow's context entries.
+ */
+export const GATE_MESSAGE_SURFACE: PathSurface = {
+  roots: [
+    { prefix: ['run', 'params'], data: 'params' },
+    { prefix: ['context', 'resources'], data: 'step' },
+    { prefix: ['workflow', 'context'], data: 'context_entry' },
+  ],
+  readsOwnOutput: true,
+};
+
+/** Fix 1, piece 3a-ii-a: `display`'s surface: the names of the step's own output, bare. */
+export const DISPLAY_SURFACE: PathSurface = {
+  roots: [{ prefix: [], data: 'self' }],
+};
+
+/** The first words `display` reads as another root unless the step's own answer declares them. */
+const FOREIGN_ROOTS: readonly string[] = ['context', 'run', 'workflow'];
+
+/**
+ * The workflow as the resolver reads it: the steps after templates are expanded, the workflow's
+ * `params_schema`, and its `workflow_context` entries. Raw on purpose — the loader calls it before
+ * the definition is typed, and a malformed value is read as "declares nothing", never thrown on.
  */
 export interface PathWorkflow {
   readonly steps: Readonly<Record<string, unknown>>;
   readonly params_schema?: unknown;
+  readonly workflow_context?: unknown;
 }
 
 /** Why a path can never be found. */
@@ -104,14 +137,23 @@ export type NeverCause =
       readonly didYouMean?: string;
     }
   /** A parameter a closed `params_schema` does not declare. */
-  | { readonly rule: 'no_param'; readonly param: string; readonly didYouMean?: string };
+  | { readonly rule: 'no_param'; readonly param: string; readonly didYouMean?: string }
+  /** Piece 3a-ii-a: the reading step's own `$settlement` entry, read where the step is not settled. */
+  | { readonly rule: 'own_settlement'; readonly step: string }
+  /** Piece 3a-ii-a: the reading step's own gate's `choice`, read before the gate is answered. */
+  | { readonly rule: 'own_choice'; readonly step: string }
+  /** Piece 3a-ii-a: a `workflow.context.<name>` the workflow does not declare (`''`: no name). */
+  | { readonly rule: 'no_context_entry'; readonly name: string; readonly didYouMean?: string };
 
 /** Why a path may find nothing when the step runs. */
 export type AbsentCause =
-  /** A field an open level does not declare, or one a bare step's inherited shape lacks. */
-  | { readonly rule: 'undeclared_field'; readonly step: string }
-  /** A parameter an open `params_schema` does not declare. */
-  | { readonly rule: 'undeclared_param' }
+  /**
+   * A field an open level does not declare, or one a bare step's inherited shape lacks. Piece 3a-ii-a:
+   * with the closest name that level declares, when one is close.
+   */
+  | { readonly rule: 'undeclared_field'; readonly step: string; readonly didYouMean?: string }
+  /** A parameter an open `params_schema` does not declare (and the closest it does, piece 3a-ii-a). */
+  | { readonly rule: 'undeclared_param'; readonly didYouMean?: string }
   /** The step read is not in the reader's `depends_on` ancestry, and does not run after it. */
   | { readonly rule: 'not_a_dependency'; readonly step: string }
   /** The step read is the reader itself, or runs after it. */
@@ -129,8 +171,11 @@ export type AbsentCause =
   /** A position in a list, which may be shorter. */
   | { readonly rule: 'list_position'; readonly position: string };
 
-/** Why a path was not checked. */
-export type NotCheckedWhy = 'producer_declares_no_shape' | 'no_params_schema';
+/**
+ * Why a path was not checked. Piece 3a-ii-a: `added_from_file` is `workflow.context.schema`, an entry
+ * the file loader adds from a `schema.json` beside the file when the workflow declares none.
+ */
+export type NotCheckedWhy = 'producer_declares_no_shape' | 'no_params_schema' | 'added_from_file';
 
 /** The resolver's one answer for one path. */
 export type PathJudgement =
@@ -189,7 +234,7 @@ export function resolveReference(
   workflow: PathWorkflow | PathIndex,
 ): PathJudgement {
   const index = workflow instanceof PathIndex ? workflow : new PathIndex(workflow);
-  const ctx = new Context(index, reader);
+  const ctx = new Context(index, reader, surface);
   const trimmed = path.trim();
 
   // Row 3: braces. `input_map` (and `when`) take a path; the braces make it one no value has.
@@ -222,8 +267,11 @@ export function resolveReference(
     return never(fix !== undefined ? { rule: 'bad_root', fix } : { rule: 'bad_root' });
   }
 
-  // A path that stops inside a root (`run`, `context.resources`) reads the whole object there.
-  if (segments.length <= root.prefix.length) return FOUND;
+  // A path that stops inside a root (`run`, `context.resources`) reads the whole object there; one
+  // that stops inside `workflow.context` names no entry, so it never renders (piece 3a-ii-a).
+  if (segments.length <= root.prefix.length) {
+    return root.data === 'context_entry' ? never({ rule: 'no_context_entry', name: '' }) : FOUND;
+  }
   return ctx.dispatch(root, segments.slice(root.prefix.length));
 }
 
@@ -240,6 +288,9 @@ function stepFix(
   if (stepRoot === undefined || segments.length === 0) return undefined;
   let rest: readonly string[] | undefined;
   if (ctx.isStep(segments[0]!)) {
+    rest = segments;
+  } else if (segments[0] === SETTLEMENT && segments.length >= 2 && ctx.isStep(segments[1]!)) {
+    // Piece 3a-ii-a: `$settlement.<s>.<f>`, the `when` spelling, under the step root.
     rest = segments;
   } else if (
     segments[0] === 'steps' &&
@@ -284,7 +335,7 @@ type Walk =
       readonly index: number;
       readonly didYouMean?: string;
     }
-  | { readonly kind: 'open_miss'; readonly field: string };
+  | { readonly kind: 'open_miss'; readonly field: string; readonly didYouMean?: string };
 
 /** The judgement of the field part of a path, before the step cause is added. */
 type FieldJudgement =
@@ -311,6 +362,8 @@ export class PathIndex {
   /** Every step name, in the file's order (the did-you-mean candidates). */
   readonly names: readonly string[];
   readonly paramsSchema: unknown;
+  /** The `workflow_context` entries the workflow declares (piece 3a-ii-a). */
+  readonly contextNames: readonly string[];
   private readonly steps: Readonly<Record<string, unknown>>;
   private readonly position = new Map<string, number>();
   private readonly depsOf: readonly (readonly number[])[];
@@ -324,6 +377,9 @@ export class PathIndex {
   constructor(workflow: PathWorkflow) {
     this.steps = isObj(workflow.steps) ? workflow.steps : {};
     this.paramsSchema = workflow.params_schema;
+    this.contextNames = isObj(workflow.workflow_context)
+      ? Object.keys(workflow.workflow_context)
+      : [];
     this.names = Object.keys(this.steps);
     this.names.forEach((name, i) => this.position.set(name, i));
     this.words = Math.ceil(this.names.length / 32);
@@ -353,6 +409,22 @@ export class PathIndex {
   /** What step `name` records, one level deep: a bare step's points at the step it inherits from. */
   shapeOf(name: string): Shape {
     return this.shapes[this.at(name)]!;
+  }
+
+  /**
+   * Piece 3a-ii-a: whether step `name`'s own declared answer has a top-level property `field` (an
+   * agent step's schemas; a bare or handler step declares none).
+   */
+  declaresTop(name: string, field: string): boolean {
+    const shape = this.shapeOf(name);
+    return (
+      shape.kind === 'schemas' &&
+      shape.schemas.some(
+        (schema) =>
+          isObj(schema['properties']) &&
+          Object.prototype.hasOwnProperty.call(schema['properties'], field),
+      )
+    );
   }
 
   /** Whether step `name` opens a gate (its trust classifies as `gates`), so its answer carries `choice`. */
@@ -512,15 +584,63 @@ class Context {
   constructor(
     private readonly index: PathIndex,
     private readonly reader: string,
+    private readonly surface: PathSurface,
   ) {}
 
   isStep(name: string): boolean {
     return this.index.isStep(name);
   }
 
-  /** Judges what follows a root: params, or a step's output. */
+  /** Judges what follows a root: params, a step's output, a context entry, or the reader's own output. */
   dispatch(root: PathRoot, rest: readonly string[]): PathJudgement {
-    return root.data === 'params' ? this.judgeParams(rest) : this.judgeStepPath(rest);
+    switch (root.data) {
+      case 'params':
+        return this.judgeParams(rest);
+      case 'step':
+        return this.judgeStepPath(rest);
+      case 'context_entry':
+        return this.judgeContextEntry(rest);
+      case 'self':
+        return this.judgeSelf(rest);
+    }
+  }
+
+  /**
+   * Piece 3a-ii-a: `workflow.context.<name>`. The name is the text after `workflow.context.`, less a
+   * final `.raw` — the renderer's own rule (`resolveWorkflowContextRef`), restated; names may hold
+   * dots. `schema`, when not declared, is the entry the file loader adds from a `schema.json`.
+   */
+  private judgeContextEntry(rest: readonly string[]): PathJudgement {
+    const name = (rest[rest.length - 1] === 'raw' ? rest.slice(0, -1) : rest).join('.');
+    if (name !== '' && this.index.contextNames.includes(name)) return FOUND;
+    if (name === 'schema') return { verdict: 'not_checked', why: 'added_from_file' };
+    const didYouMean = name !== '' ? closestKey(name, this.index.contextNames) : undefined;
+    return never({
+      rule: 'no_context_entry',
+      name,
+      ...(didYouMean !== undefined ? { didYouMean } : {}),
+    });
+  }
+
+  /**
+   * Piece 3a-ii-a: `display`'s bare names, read in the reader's own output. A first word `context`,
+   * `run` or `workflow` the answer does not declare is another root, which `display` never reads.
+   * The gate's `choice` is not in the output `display` reads, so it is judged as any other field.
+   */
+  private judgeSelf(rest: readonly string[]): PathJudgement {
+    const first = rest[0]!;
+    if (FOREIGN_ROOTS.includes(first) && !this.index.declaresTop(this.reader, first)) {
+      const fix =
+        first === 'context' && rest[1] === 'resources' && rest[2] === this.reader && rest.length > 3
+          ? rest.slice(3).join('.')
+          : undefined;
+      return never({ rule: 'bad_root', ...(fix !== undefined ? { fix } : {}) });
+    }
+    const field = this.judgeShape(this.reader, rest, true);
+    if (field.kind === 'never') return never(field.cause);
+    if (field.kind === 'not_checked') return { verdict: 'not_checked', why: field.why };
+    if (field.kind === 'absent') return { verdict: 'may_be_absent', cause: field.cause };
+    return FOUND;
   }
 
   judgeParams(rest: readonly string[]): PathJudgement {
@@ -550,7 +670,15 @@ class Context {
         },
       };
     }
-    if (walk.kind === 'open_miss') return { kind: 'absent', cause: { rule: 'undeclared_param' } };
+    if (walk.kind === 'open_miss') {
+      return {
+        kind: 'absent',
+        cause: {
+          rule: 'undeclared_param',
+          ...(walk.didYouMean !== undefined ? { didYouMean: walk.didYouMean } : {}),
+        },
+      };
+    }
     return walk.cause !== undefined ? { kind: 'absent', cause: walk.cause } : { kind: 'found' };
   }
 
@@ -564,6 +692,10 @@ class Context {
       if (rest.length === 1) return FOUND;
       const t = rest[1]!;
       if (!this.isStep(t)) return this.noStep(t);
+      // The reading step's own entry: there only once it is settled, after its gate is answered.
+      if (t === this.reader && this.surface.readsOwnOutput === true) {
+        return never({ rule: 'own_settlement', step: t });
+      }
       const fields = rest.slice(2);
       if (fields.length > 0 && !SETTLEMENT_FIELDS.includes(fields[0]!)) {
         const didYouMean = closestKey(fields[0]!, SETTLEMENT_FIELDS);
@@ -580,10 +712,16 @@ class Context {
 
     if (!this.isStep(s)) return this.noStep(s);
     const fields = rest.slice(1);
+    // Piece 3a-ii-a: on a surface read once the step's work is done, the step's own output is there
+    // (no step cause), but its gate's `choice` is not, unless its own answer declares one.
+    const own = s === this.reader && this.surface.readsOwnOutput === true;
+    if (own && fields[0] === 'choice' && !this.index.declaresTop(s, 'choice')) {
+      return never({ rule: 'own_choice', step: s });
+    }
     const field: FieldJudgement =
-      fields.length === 0 ? { kind: 'found' } : this.judgeShape(s, fields);
+      fields.length === 0 ? { kind: 'found' } : this.judgeShape(s, fields, own);
     if (field.kind === 'never') return never(field.cause);
-    const stepCause = this.index.stepCause(this.reader, s, false);
+    const stepCause = own ? undefined : this.index.stepCause(this.reader, s, false);
     if (field.kind === 'not_checked') {
       return {
         verdict: 'not_checked',
@@ -610,7 +748,7 @@ class Context {
    * single dependencies by a loop, to the step that declares it; a chain that comes back to a step
    * already walked (a cycle, refused at load) declares nothing.
    */
-  private judgeShape(s: string, fields: readonly string[]): FieldJudgement {
+  private judgeShape(s: string, fields: readonly string[], ownRead = false): FieldJudgement {
     const walked = new Set<string>([s]);
     let shape = this.index.shapeOf(s);
     let bare = false;
@@ -619,7 +757,8 @@ class Context {
       // A gated step's evidence carries `choice` once its gate is answered (AA-AUU1-03). Only on the
       // step read: a bare step copies its dependency's own entry, not the gate's answer (piece 2a,
       // AA-AU2A-24), so `choice` is never found through a bare step's chain.
-      if (!bare && shape.choice && fields[0] === 'choice') return { kind: 'found' };
+      // Piece 3a-ii-a: not for the reading step's own output, which its gate's answer is not yet in.
+      if (!ownRead && !bare && shape.choice && fields[0] === 'choice') return { kind: 'found' };
       if (shape.kind === 'none') {
         inner = { kind: 'not_checked', why: 'producer_declares_no_shape' };
         break;
@@ -639,7 +778,16 @@ class Context {
         const params = this.judgeParamFields(fields);
         inner =
           params.kind === 'absent' && params.cause.rule === 'undeclared_param'
-            ? { kind: 'absent', cause: { rule: 'undeclared_field', step: s } }
+            ? {
+                kind: 'absent',
+                cause: {
+                  rule: 'undeclared_field',
+                  step: s,
+                  ...(params.cause.didYouMean !== undefined
+                    ? { didYouMean: params.cause.didYouMean }
+                    : {}),
+                },
+              }
             : params;
         break;
       }
@@ -655,7 +803,23 @@ class Context {
       inner.kind === 'never' ||
       (inner.kind === 'absent' && inner.cause.rule === 'undeclared_field')
     ) {
-      return { kind: 'absent', cause: { rule: 'undeclared_field', step: s } };
+      // Piece 3a-ii-a: the closest name the producer declares, when the miss gave one.
+      const near =
+        inner.kind === 'never'
+          ? 'didYouMean' in inner.cause
+            ? inner.cause.didYouMean
+            : undefined
+          : 'didYouMean' in inner.cause
+            ? inner.cause.didYouMean
+            : undefined;
+      return {
+        kind: 'absent',
+        cause: {
+          rule: 'undeclared_field',
+          step: s,
+          ...(near !== undefined ? { didYouMean: near } : {}),
+        },
+      };
     }
     return inner;
   }
@@ -693,7 +857,18 @@ function judgeAnswer(
     (w): w is Extract<Walk, { kind: 'declared' }> => w.kind === 'declared',
   );
   if (declared.length === 0) {
-    return { kind: 'absent', cause: { rule: 'undeclared_field', step: s } };
+    const near = walks.find(
+      (w): w is Extract<Walk, { kind: 'open_miss' }> =>
+        w.kind === 'open_miss' && w.didYouMean !== undefined,
+    );
+    return {
+      kind: 'absent',
+      cause: {
+        rule: 'undeclared_field',
+        step: s,
+        ...(near?.didYouMean !== undefined ? { didYouMean: near.didYouMean } : {}),
+      },
+    };
   }
   // The answer fits every schema: one that declares the field as always there settles it.
   if (declared.some((w) => w.cause === undefined)) return { kind: 'found' };
@@ -751,7 +926,10 @@ function walkSchema(root: Obj, fields: readonly string[], topCanBeList: boolean)
         ...(didYouMean !== undefined ? { didYouMean } : {}),
       };
     }
-    return { kind: 'open_miss', field };
+    // Piece 3a-ii-a: an open level's miss, with the closest name the level declares.
+    const nearest =
+      properties !== undefined ? closestKey(field, Object.keys(properties)) : undefined;
+    return { kind: 'open_miss', field, ...(nearest !== undefined ? { didYouMean: nearest } : {}) };
   }
   return cause !== undefined ? { kind: 'declared', cause } : { kind: 'declared' };
 }

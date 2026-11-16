@@ -289,7 +289,7 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     // (1) red when a new sentence is missing or an old one stays; (2) prints the four checks.
     expect({
       refuse: page.includes(
-        '`realm workflow validate`, `register` and `watch` refuse a filter Realm does not have, an argument no value accepts, and a templated field that is not text; the paths in a template are not checked yet. This was added after version 0.49.0.',
+        '`realm workflow validate`, `register` and `watch` refuse a filter Realm does not have, an argument no value accepts, and a templated field that is not text; in an approval question and in `display`, a path that can never be found is refused, and so is a path in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its text; the paths in a prompt and in step instructions are not checked yet. This was added after version 0.49.0.',
       ),
       instructions: page.includes(
         '`instructions` are read for expressions only on a step with a gate, when the gate opens; on other steps they, and `description` always, are passed on as written.',
@@ -301,7 +301,7 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     }).toEqual({ refuse: true, instructions: true, oldRefuse: false, oldInstructions: false });
   });
 
-  it('loader-diagnostics.md: 33 codes, ten of them errors, the errors list and the three rows', () => {
+  it('loader-diagnostics.md: 36 codes, twelve of them errors, the errors list and the three rows', () => {
     const page = readFileSync(join(ROOT, 'docs/reference/workflow/loader-diagnostics.md'), 'utf8');
     const rows = page
       .split('\n')
@@ -315,10 +315,10 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     const at = rows.findIndex((r) => r[0] === '`ADAPTER_NOT_PROVIDED`');
     // (1) red when a count, the list or a row is missing or changed; (2) prints them.
     expect({
-      lists: flat(page).includes('lists all 33 warning codes'),
-      count: flat(page).includes('The loader has 33 warning codes. Ten of them count as errors'),
+      lists: flat(page).includes('lists all 36 warning codes'),
+      count: flat(page).includes('The loader has 36 warning codes. Twelve of them count as errors'),
       list: flat(page).includes(
-        'or leaves a required one unfilled; and a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text. The others are advice',
+        'or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; and a path in an approval question',
       ),
       rows: rows.length,
       errors: rows.filter((r) => r[1] === 'Error').length,
@@ -327,9 +327,10 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
       lists: true,
       count: true,
       list: true,
-      // #603 A3a: GATE_ANSWERER_NOT_SLACK_ID, a warning, after the three rows.
-      rows: 33,
-      errors: 10,
+      // #603 A3a: GATE_ANSWERER_NOT_SLACK_ID, a warning, after the three rows; piece 3a-ii-a's three
+      // template path rows (two errors) between them.
+      rows: 36,
+      errors: 12,
       three: [
         [
           '`TEMPLATE_FILTER_UNKNOWN`',

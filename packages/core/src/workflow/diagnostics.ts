@@ -78,7 +78,13 @@ export type WarningCode =
   | 'TEMPLATED_FIELD_NOT_TEXT'
   // #603 A3a: with a Slack notifier that reads replies, a gate naming someone who is not a Slack
   // member ID — no reply from them can count (the CLI mints it at the admission). Advice.
-  | 'GATE_ANSWERER_NOT_SLACK_ID';
+  | 'GATE_ANSWERER_NOT_SLACK_ID'
+  // fix 1, piece 3a-ii-a: a path in an approval question or `display` that can never be found, one
+  // in an approval question that may be missing and `| default` does not fill (#648 C1), and one in
+  // `display` that may be missing (`template-paths.ts`).
+  | 'TEMPLATE_PATH_UNRESOLVABLE'
+  | 'TEMPLATE_PATH_NO_DEFAULT'
+  | 'TEMPLATE_PATH_UNCERTAIN';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -188,6 +194,10 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   TEMPLATED_FIELD_NOT_TEXT: 'error',
   // #603 A3a — a warning; `--strict` fails on it as on any warning.
   GATE_ANSWERER_NOT_SLACK_ID: 'warn',
+  // fix 1, piece 3a-ii-a — the two errors refused by validate, register and watch; printed elsewhere.
+  TEMPLATE_PATH_UNRESOLVABLE: 'error',
+  TEMPLATE_PATH_NO_DEFAULT: 'error',
+  TEMPLATE_PATH_UNCERTAIN: 'warn',
 };
 
 /**
