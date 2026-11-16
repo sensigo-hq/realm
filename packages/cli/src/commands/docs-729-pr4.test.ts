@@ -566,7 +566,8 @@ describe('CHANGELOG.md — this unit’s entries (#871’s form: the section tha
     ]) {
       claimChangelog(sentence);
     }
-    const index = readFileSync(join(ROOT, 'packages/core/src/index.ts'), 'utf8');
+    // CP-1 PR 3: core's export lines live in `internal.ts`; `index.ts` re-exports it whole.
+    const index = readFileSync(join(ROOT, 'packages/core/src/internal.ts'), 'utf8');
     const { resolved_message: _none, ...noMessage } = gate();
     const long = await opened('{{ run.params.x }}', 'q'.repeat(1000), setOf({}));
     // (a) red when an entry's behaviour is gone: the cut, the export, the composer's (f), the
