@@ -4,7 +4,7 @@
 # major this package depends on). api-report.test.ts (packages/core/src/inventory) regenerates it
 # from the build and fails when it differs.
 #
-# A change here is made on purpose: rebuild with `npm run build -w @sensigo/realm -w @sensigo/realm-mcp`,
+# A change here is made on purpose: rebuild with `npm run build` (from the repository root),
 # regenerate with `npx vitest run src/inventory -u` (from packages/core), commit it in the same change,
 # and name each tagged name added, removed or changed under `## [Unreleased]` in CHANGELOG.md, in
 # backticks. A `@beta` declaration may change in a minor release; an untagged one is internal.

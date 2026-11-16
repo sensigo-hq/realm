@@ -20,7 +20,7 @@
 // release's rows) is named in backticks under `## [Unreleased]`; (c) the report equals the file; (d) a
 // tagged row carries text and an internal row does not; (e) the words the docs say about it.
 //
-// TO REGENERATE (a change made on purpose): `npm run build -w @sensigo/realm -w @sensigo/realm-mcp`,
+// TO REGENERATE (a change made on purpose): `npm run build` (from the repository root),
 // then from packages/core `npx vitest run src/inventory -u`, commit both reports, and name each
 // changed tagged name under `## [Unreleased]` in CHANGELOG.md, in backticks.
 //
@@ -393,7 +393,7 @@ const HEADER = (pkg: string): string[] => [
   '# major this package depends on). api-report.test.ts (packages/core/src/inventory) regenerates it',
   '# from the build and fails when it differs.',
   '#',
-  '# A change here is made on purpose: rebuild with `npm run build -w @sensigo/realm -w @sensigo/realm-mcp`,',
+  '# A change here is made on purpose: rebuild with `npm run build` (from the repository root),',
   '# regenerate with `npx vitest run src/inventory -u` (from packages/core), commit it in the same change,',
   '# and name each tagged name added, removed or changed under `## [Unreleased]` in CHANGELOG.md, in',
   '# backticks. A `@beta` declaration may change in a minor release; an untagged one is internal.',
@@ -472,7 +472,7 @@ const flat = (t: string): string => t.replace(/\s+/g, ' ');
 const WORDS: ReadonlyArray<readonly [string, string]> = [
   [
     'docs/reference/compatibility.md',
-    "and the library's exported names not tagged `@public` or `@beta` — on the main entry or any subpath (`@sensigo/realm-mcp`'s `./dist/tools/*.js` included) — listed with each tagged declaration in the API reports (`packages/core/src/inventory/api-report.txt`, `packages/mcp-server/src/inventory/api-report.txt`); a `@beta` declaration may change in a minor release, named in the changelog, until it settles.",
+    "and the library's exported names not tagged `@public` or `@beta`, on the main entry or any subpath (`@sensigo/realm-mcp`'s `./dist/tools/*.js` included); the API reports (`packages/core/src/inventory/api-report.txt`, `packages/mcp-server/src/inventory/api-report.txt`) list every name of the main entries and `./home`, each tagged declaration with its text; a `@beta` declaration may change in a minor release, named in the changelog, until it settles.",
   ],
   [
     'docs/reference/compatibility.md',
@@ -484,7 +484,7 @@ const WORDS: ReadonlyArray<readonly [string, string]> = [
   ],
   [
     'docs/reference/core-library.md',
-    'Without one, every `get_run_state` request reports `no_price_source`.',
+    'Left out, every figure comes from the installed price list and notes that no economics file is configured.',
   ],
   [
     'CHANGELOG.md',
@@ -557,7 +557,7 @@ describe.skipIf(OTHER_DIST !== undefined)('CP-1 — the API reports', () => {
           for (const l of a.filter((l) => !c.includes(l))) out.push(`    - ${l}`);
           for (const l of c.filter((l) => !a.includes(l))) out.push(`    + ${l}`);
         }
-        message = `${pkg.report} differs from the build:\n${out.join('\n')}\nRegenerate it: npm run build -w @sensigo/realm -w @sensigo/realm-mcp, then (from packages/core) npx vitest run src/inventory -u; and name each tagged name added, removed or changed under ## [Unreleased] in CHANGELOG.md, in backticks.`;
+        message = `${pkg.report} differs from the build:\n${out.join('\n')}\nRegenerate it: npm run build (from the repository root), then (from packages/core) npx vitest run src/inventory -u; and name each tagged name added, removed or changed under ## [Unreleased] in CHANGELOG.md, in backticks.`;
       }
       await expect(live, message).toMatchFileSnapshot(pkg.report);
     });
@@ -645,7 +645,10 @@ describe.skipIf(OTHER_DIST !== undefined)('CP-1 — the API reports', () => {
         .sort();
       // (a) red when a tagged declaration was added, changed, retagged or removed and the changelog's
       //     [Unreleased] section does not name it in backticks; (b) prints each such name with its change.
-      expect({ missingFromTheChangelog: missing }).toEqual({ missingFromTheChangelog: [] });
+      expect(
+        { missingFromTheChangelog: missing },
+        'name each under ## [Unreleased] in CHANGELOG.md, in backticks (+ added, ~ changed, - gone)',
+      ).toEqual({ missingFromTheChangelog: [] });
     });
 
     it(`${short}: scripts/freeze-api-report.mjs writes the rows and hashes this test reads`, async () => {
