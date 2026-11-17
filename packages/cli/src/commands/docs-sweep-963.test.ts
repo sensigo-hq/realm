@@ -40,7 +40,11 @@ describe('U3b (#963) — realm-listen.md and the CHANGELOG', () => {
 
   it('the CHANGELOG line under Fixed', () => {
     const all = read('CHANGELOG.md');
-    const unreleased = all.slice(all.indexOf('## [Unreleased]'), all.indexOf('\n## [0.49.0]'));
+    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+    const top = all.includes('## [Unreleased]')
+      ? all.indexOf('## [Unreleased]')
+      : all.indexOf('\n## [') + 1;
+    const unreleased = all.slice(top, all.indexOf('\n## [0.49.0]'));
     const fixed = unreleased.slice(unreleased.indexOf('### Fixed'));
     // C1 (only the runs waiting at a gate), C2 (one more pass, not several), C4a (carried out when
     // its time arrives).

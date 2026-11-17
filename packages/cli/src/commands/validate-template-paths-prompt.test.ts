@@ -224,8 +224,11 @@ describe('fix 1, piece 3a-ii-b — the words the changelog, the docs transcripts
 
   it('CHANGELOG.md: the BREAKING line under Changed, and Upgrading item 14', () => {
     const log = read('CHANGELOG.md');
-    const start = log.indexOf('## [Unreleased]');
-    const unreleased = log.slice(start, log.indexOf('\n## [', start + 1));
+    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+    const top = log.includes('## [Unreleased]')
+      ? log.indexOf('## [Unreleased]')
+      : log.indexOf('\n## [') + 1;
+    const unreleased = log.slice(top, log.indexOf('\n## [', top + 1));
     const section = (name: string): string => {
       const i = unreleased.indexOf(`### ${name}`);
       return unreleased.slice(i, unreleased.indexOf('\n### ', i + 1));

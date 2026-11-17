@@ -496,10 +496,11 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     );
     // The two items sit in [Unreleased]'s Upgrading section, as its items 2 and 3.
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const unreleased = changelog.slice(
-      changelog.indexOf('## [Unreleased]'),
-      changelog.indexOf('\n## [', changelog.indexOf('## [Unreleased]') + 1),
-    );
+    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+    const top = changelog.includes('## [Unreleased]')
+      ? changelog.indexOf('## [Unreleased]')
+      : changelog.indexOf('\n## [') + 1;
+    const unreleased = changelog.slice(top, changelog.indexOf('\n## [', top + 1));
     const upgrading = unreleased.slice(
       unreleased.indexOf('### Upgrading'),
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),

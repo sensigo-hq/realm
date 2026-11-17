@@ -18,8 +18,11 @@ function claim(page: string, sentence: string): void {
 /** The CHANGELOG's `[Unreleased]` section. */
 function unreleased(): string {
   const text = read('CHANGELOG.md');
-  const start = text.indexOf('## [Unreleased]');
-  return text.slice(start, text.indexOf('\n## [', start + 1));
+  // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+  const top = text.includes('## [Unreleased]')
+    ? text.indexOf('## [Unreleased]')
+    : text.indexOf('\n## [') + 1;
+  return text.slice(top, text.indexOf('\n## [', top + 1));
 }
 function claimChangelog(sentence: string): void {
   expect(flat(unreleased()), `the CHANGELOG no longer says: ${sentence}`).toContain(flat(sentence));

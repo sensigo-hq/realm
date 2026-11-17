@@ -20,8 +20,11 @@ function claim(page: string, sentence: string): void {
 /** The section that holds this unit's entries: `[Unreleased]` until a release renames it. */
 function claimChangelog(sentence: string): void {
   const text = read('CHANGELOG.md');
-  const start = text.indexOf('## [Unreleased]');
-  const section = text.slice(start, text.indexOf('\n## [0.49.0]'));
+  // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+  const top = text.includes('## [Unreleased]')
+    ? text.indexOf('## [Unreleased]')
+    : text.indexOf('\n## [') + 1;
+  const section = text.slice(top, text.indexOf('\n## [0.49.0]'));
   expect(flat(section), `the CHANGELOG no longer says: ${sentence}`).toContain(flat(sentence));
 }
 

@@ -380,10 +380,11 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
       '**5. `register` and `watch` refuse a `when` condition that cannot work as written, because of what it reads or compares.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and fix the condition the refusal names. A stored copy keeps running as it was until you register it again.',
     );
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const unreleased = changelog.slice(
-      changelog.indexOf('## [Unreleased]'),
-      changelog.indexOf('\n## [', changelog.indexOf('## [Unreleased]') + 1),
-    );
+    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+    const top = changelog.includes('## [Unreleased]')
+      ? changelog.indexOf('## [Unreleased]')
+      : changelog.indexOf('\n## [') + 1;
+    const unreleased = changelog.slice(top, changelog.indexOf('\n## [', top + 1));
     const upgrading = unreleased.slice(
       unreleased.indexOf('### Upgrading'),
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),

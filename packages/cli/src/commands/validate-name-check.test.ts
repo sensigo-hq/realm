@@ -551,8 +551,11 @@ describe('the words — fix 1, piece 4', () => {
 
   it('check 9: the CHANGELOG line under [Unreleased] → Changed', () => {
     const log = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const start = log.indexOf('## [Unreleased]');
-    const unreleased = log.slice(start, log.indexOf('\n## [', start + 1));
+    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+    const top = log.includes('## [Unreleased]')
+      ? log.indexOf('## [Unreleased]')
+      : log.indexOf('\n## [') + 1;
+    const unreleased = log.slice(top, log.indexOf('\n## [', top + 1));
     const changed = unreleased.slice(
       unreleased.indexOf('### Changed'),
       unreleased.indexOf('### Fixed'),

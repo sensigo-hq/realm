@@ -353,8 +353,11 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
 
   it("CHANGELOG.md: the BREAKING line under Changed, and Upgrading item 8 (#603 A3a's is 11)", () => {
     const log = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const start = log.indexOf('## [Unreleased]');
-    const unreleased = log.slice(start, log.indexOf('\n## [', start + 1));
+    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+    const top = log.includes('## [Unreleased]')
+      ? log.indexOf('## [Unreleased]')
+      : log.indexOf('\n## [') + 1;
+    const unreleased = log.slice(top, log.indexOf('\n## [', top + 1));
     const section = (name: string): string =>
       unreleased.slice(
         unreleased.indexOf(`### ${name}`),

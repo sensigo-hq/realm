@@ -36,8 +36,11 @@ describe('CP-1 PR 3 — the words of the internal entry', () => {
   it('CHANGELOG.md: the Added line under [Unreleased]', () => {
     // The same two cells.
     const text = read('CHANGELOG.md');
-    const start = text.indexOf('## [Unreleased]');
-    const unreleased = text.slice(start, text.indexOf('\n## [', start + 1));
+    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+    const top = text.includes('## [Unreleased]')
+      ? text.indexOf('## [Unreleased]')
+      : text.indexOf('\n## [') + 1;
+    const unreleased = text.slice(top, text.indexOf('\n## [', top + 1));
     const added = unreleased.slice(
       unreleased.indexOf('### Added'),
       unreleased.indexOf('\n### ', unreleased.indexOf('### Added') + 1),

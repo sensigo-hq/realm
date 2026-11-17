@@ -1465,11 +1465,11 @@ describe('#597 D3b — the words', { timeout: 30_000 }, () => {
       '`realm listen --send-reminders` reads `bot_token`, `channel_id`, `reminder_interval_ms` and `escalation_threshold_ms` (added after version 0.49.0).',
     );
     const changelog = read('CHANGELOG.md');
-    expect(
-      flat(
-        changelog.slice(changelog.indexOf('## [Unreleased]'), changelog.indexOf('\n## [0.49.0]')),
-      ),
-    ).toContain(
+    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+    const top = changelog.includes('## [Unreleased]')
+      ? changelog.indexOf('## [Unreleased]')
+      : changelog.indexOf('\n## [') + 1;
+    expect(flat(changelog.slice(top, changelog.indexOf('\n## [0.49.0]')))).toContain(
       flat(
         "- **`realm listen --send-reminders`** (issue #597): every 60 seconds, `realm listen` posts the due Slack reminder or escalation of each waiting question whose `realm agent` has stopped, into the question's own thread, through the store's outbound ledger, so it and an agent that comes back do not both post a reminder once it is recorded. A post Slack does not take because of a Slack-wide problem pauses that workflow's reminders, and `realm listen` checks Slack again after 1, 2, 4 … up to 30 minutes.",
       ),

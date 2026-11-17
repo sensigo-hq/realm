@@ -116,10 +116,11 @@ const flat = (t: string): string => t.replace(/\s+/g, ' ');
 /** The `[Unreleased]` section's `### <heading>` part of CHANGELOG.md. */
 function unreleased(heading: string): string {
   const all = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-  const section = all.slice(
-    all.indexOf('## [Unreleased]'),
-    all.indexOf('\n## [', all.indexOf('## [Unreleased]') + 1),
-  );
+  // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+  const top = all.includes('## [Unreleased]')
+    ? all.indexOf('## [Unreleased]')
+    : all.indexOf('\n## [') + 1;
+  const section = all.slice(top, all.indexOf('\n## [', top + 1));
   const start = section.indexOf(`### ${heading}`);
   const end = section.indexOf('\n### ', start + 1);
   return section.slice(start, end === -1 ? undefined : end);

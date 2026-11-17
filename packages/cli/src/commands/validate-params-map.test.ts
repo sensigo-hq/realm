@@ -451,10 +451,11 @@ describe('fix 1, piece 2b — the words the docs and the changelog carry (check 
       "**6. `register` and `watch` refuse a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.** Run `realm workflow validate` on each file with a `trigger:` block, or `realm workflow validate --registered <id>` on each stored one, and fix what the refusal names. Such a trigger's requests that passed its filter were refused: all of them for a required parameter left unfilled, and those carrying a misnamed parameter's value. A stored copy keeps running as it was until you register it again.",
     );
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const unreleased = changelog.slice(
-      changelog.indexOf('## [Unreleased]'),
-      changelog.indexOf('\n## [', changelog.indexOf('## [Unreleased]') + 1),
-    );
+    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
+    const top = changelog.includes('## [Unreleased]')
+      ? changelog.indexOf('## [Unreleased]')
+      : changelog.indexOf('\n## [') + 1;
+    const unreleased = changelog.slice(top, changelog.indexOf('\n## [', top + 1));
     const upgrading = unreleased.slice(
       unreleased.indexOf('### Upgrading'),
       unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
