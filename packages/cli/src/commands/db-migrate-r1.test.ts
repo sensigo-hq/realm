@@ -268,7 +268,7 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
     expect(list.stdout.split('\n').filter((l) => / completed /.test(l)).length).toBe(2);
     claim(
       GUIDE,
-      "On the home 0.49.0's release recorded, holding two finished runs and six evidence entries:",
+      'On a sample home that 0.49.0 wrote, holding two finished runs and six evidence entries:',
     );
     claim(PAGE, '`Recorded this migrate in <backups folder>/migrations.jsonl.`');
   });

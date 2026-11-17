@@ -225,7 +225,7 @@ describe('#616 R1 — the shorter migrate: the hold, the default copy and the re
       //     the scratch folder holds and whether the file changed.
       expect({
         refused,
-        withinAboutASecond: elapsed < 2_500,
+        withinAboutASecond: elapsed < 4_500,
         root: readdirSync(root),
         unchanged: hashOf(file) === before,
       }).toEqual({

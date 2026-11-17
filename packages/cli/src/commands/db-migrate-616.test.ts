@@ -443,7 +443,7 @@ describe('#616 PR-2c c7 — the page says what realm db migrate does', () => {
     // E (store): the backup's refusal and an unverified copy end the verb before any step.
     claim(
       PAGE,
-      "It makes the copy and prints `realm db backup`'s line. When the copy cannot be made, or fails SQLite's quick check, the command stops there: nothing is migrated.",
+      "Unless `--no-backup` is given, it makes the copy and prints `realm db backup`'s line. When the copy cannot be made, or fails SQLite's quick check, the command stops there: nothing is migrated.",
     );
     // D (store): the record untouched, and the count.
     claim(PAGE, 'It changes no run record.');

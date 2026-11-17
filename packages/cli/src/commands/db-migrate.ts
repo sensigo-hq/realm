@@ -51,7 +51,7 @@ export function lineOf(file: string, event: MigrateProgress): string {
 
 export const dbMigrateCommand = new Command('migrate')
   .description(
-    "Upgrade the store file to this Realm's schema version, after a backup; stop every Realm process first",
+    "Upgrade the store file to this Realm's schema version, after a backup (with no flag, into the backups folder beside the home); stop every Realm process first",
   )
   .option(
     '--backup <path>',
