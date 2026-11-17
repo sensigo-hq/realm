@@ -826,8 +826,9 @@ function appendRecord(folder: string, record: MigrateRecord): MigrateProgress {
 /** Another process has the store file open: a schema step is not run under it (R1). */
 export function storeInUse(source: string): WorkflowError {
   return new WorkflowError(
-    `Another process has ${source} open (a Realm agent, server, MCP server or command, or another ` +
-      'program such as a SQLite browser). Stop it and run this again. Nothing was changed.',
+    `Another process has ${source} open: a Realm agent, server or command, an MCP server that an ` +
+      'assistant or editor keeps running, or another program such as a SQLite browser. Stop it and ' +
+      'run this again. Nothing was changed.',
     {
       code: 'STATE_STORE_IN_USE',
       category: 'STATE',

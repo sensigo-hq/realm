@@ -148,14 +148,15 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
         `Backed up ${shown(file)} (schema version 2, ${readFileSync(kept).length} bytes) to ` +
         `${shown(kept)}; the copy passes SQLite's quick check.\n` +
         `Restored ${shown(file)} from ${backup} (schema version 2).\n` +
-        'The file it replaced had 1 run(s) the backup lacks and 0 that differ; the backup has 0 it ' +
-        'lacked (they are back). The replaced file is the copy above. Only runs are counted.\n',
+        'Left out of the restored file: 1 run(s) that only the replaced file had, and the replaced ' +
+        "file's version of 0 run(s) that both files hold. Brought back: 0 run(s) that only the " +
+        'backup had. All of the replaced file is in the copy above. Only runs are counted.\n',
       stderr: '',
     });
     claim(PAGE, '`Restored <home>/realm.db from <backup> (schema version <m>).`', 'cell 1');
     claim(
       PAGE,
-      '`The file it replaced had <a> run(s) the backup lacks and <b> that differ; the backup has <c> it lacked (they are back). The replaced file is the copy above. Only runs are counted.`',
+      "`Left out of the restored file: <a> run(s) that only the replaced file had, and the replaced file's version of <b> run(s) that both files hold. Brought back: <c> run(s) that only the backup had. All of the replaced file is in the copy above. Only runs are counted.`",
       `cell 1; the counts' values: ${STORE_CELLS}, the first cell`,
     );
     claim(PAGE, "It prints `realm db backup`'s line for the kept file, then:", 'cell 1');
@@ -365,9 +366,9 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
       code: 1,
       stdout: '',
       stderr:
-        `Error: Another process has ${shown(file)} open (a Realm agent, server, MCP server or ` +
-        'command, or another program such as a SQLite browser). Stop it and run this again. ' +
-        'Nothing was changed.\n',
+        `Error: Another process has ${shown(file)} open: a Realm agent, server or command, an MCP ` +
+        'server that an assistant or editor keeps running, or another program such as a SQLite ' +
+        'browser. Stop it and run this again. Nothing was changed.\n',
     });
   });
 
@@ -496,7 +497,7 @@ describe('#616 R1b — the page, the files page and the codes page say what real
     ],
     [
       'the in-use refusal',
-      'another process has the store file open, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open (a Realm agent, server, MCP server or command, or another program such as a SQLite browser). Stop it and run this again. Nothing was changed.`',
+      'another process has the store file open, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open: a Realm agent, server or command, an MCP server that an assistant or editor keeps running, or another program such as a SQLite browser. Stop it and run this again. Nothing was changed.`',
       'cell 7',
     ],
     [
