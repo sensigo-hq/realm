@@ -885,16 +885,16 @@ describe('U1b — exits, signals and the drain', () => {
     started.child.kill('SIGINT');
     await new Promise((r) => setTimeout(r, 300));
     const survivedFirst = alive(worker);
-    started.child.kill('SIGINT');
-    const deadIn = await waitDead(worker, 2000);
-    const ran = await started.done;
-    // This host's own kill latency, measured in the same cell: a throwaway child sent SIGKILL
-    // directly, observed dead by the same poll. A fixed 100 ms was the flake (the third of U1b's
-    // load-timing cells, after n2 and s): on a shared CI runner the SIGKILL came, with the right
-    // signal and the first SIGINT survived, but past 100 ms. The bound is 100 ms or ten times the
-    // measured latency, whichever is larger; the figures are printed with the verdict. The broken
-    // case (no second-signal branch) still fails: the worker lives until the 10 s bound, far past
-    // either figure, and `waitDead` gives up at 2 s.
+    // This host's own kill latency, measured in the same cell BEFORE the second signal: a throwaway
+    // child sent SIGKILL directly, observed dead by the same poll. A fixed 100 ms was the flake (the
+    // third of U1b's load-timing cells, after n2 and s): on a shared CI runner the SIGKILL came, with
+    // the right signal and the first SIGINT survived, but past 100 ms. The bound is 100 ms or ten
+    // times the measured latency, whichever is larger; the figures are printed with the verdict.
+    // The wait for the worker runs to that bound, at most 5 s (2026-11-17: a fixed 2 s wait made the
+    // bound inert — under two concurrent heavy suites the probe saturated its 2 s cap, the bound read
+    // 20 s, and the worker's own kill past 2 s was reported as `undefined`). The broken case (no
+    // second-signal branch) still fails: the worker lives until the 10 s graceful bound, past the
+    // 5 s the wait allows.
     const probe = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
       stdio: 'ignore',
     });
@@ -902,6 +902,9 @@ describe('U1b — exits, signals and the drain', () => {
     probe.kill('SIGKILL');
     const killLatency = (await waitDead(probe.pid!, 2000)) ?? 2000;
     const bound = Math.max(100, 10 * killLatency);
+    started.child.kill('SIGINT');
+    const deadIn = await waitDead(worker, Math.min(Math.max(2000, bound), 5000));
+    const ran = await started.done;
     // (a) red without the second-signal branch (the worker lives until the 10 s bound); (b) prints
     //     whether the first SIGINT left it alive, how long the second took against the bound and
     //     the host's latency it came from, the relay's end.
