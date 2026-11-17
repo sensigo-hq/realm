@@ -107,7 +107,7 @@ async function door(
     await runStore.update({
       ...record,
       in_progress_steps: [...new Set([...record.in_progress_steps, ...Object.keys(claims)])],
-      claims: written as typeof record.claims,
+      claims: written as NonNullable<typeof record.claims>,
     });
   };
   return { call, runStore, clock, start, hold };

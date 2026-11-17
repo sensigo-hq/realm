@@ -1729,6 +1729,14 @@ describe('CP-1 word lists — withLibraryWords: a program words the verbs it wan
     abandon: { verb: 'abandon', conditions: [], run_id: 'r1' },
     register: { verb: 'register', conditions: [], workflow_id: 'wf', path: 'wf.yaml' },
     present: { verb: 'present', conditions: [], run_id: 'r1', gate_id: 'g1' },
+    // #922: the verb the word list gained (a type keyed by the list gains the member with it).
+    reclaim: {
+      verb: 'reclaim',
+      conditions: [],
+      run_id: 'r1',
+      step: 'draft',
+      claimed_at: '2026-11-17T00:00:00.000Z',
+    },
   };
   type AnyEntry = (way: WayOn, basis: undefined, host: object) => string | null;
   /** Each verb's words from `renderer`, or `(no function)` where it has none for the verb. */
