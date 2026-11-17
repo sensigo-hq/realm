@@ -187,6 +187,12 @@ export function postOnce(options: PostOnceOptions): Promise<PostOutcome> {
       else if (err.code === REFUSED_CODE) finish({ kind: 'failed', word: 'refused_address' });
       else finish({ kind: 'failed', word: 'connection' });
     });
+    // Correction 1: every way a request ends settles the try. A request can close with neither a
+    // response nor an error (Node destroys the socket on a `101 Switching Protocols`), so the
+    // deadline's abort would have nothing left to error.
+    req.on('close', () =>
+      finish({ kind: 'failed', word: deadline.signal.aborted ? 'timeout' : 'connection' }),
+    );
     req.end(bytes);
   });
 }

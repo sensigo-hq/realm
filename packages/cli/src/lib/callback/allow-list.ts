@@ -14,7 +14,11 @@ export interface CallbackEntry {
   readonly http: boolean;
 }
 
-/** The closed words an entry is refused with (a later unit prints "entry X refused: <word>"). */
+/**
+ * The closed words an entry is refused with (a later unit prints "entry X refused: <word>"). `empty`
+ * = nothing to read as a host (a zero-length entry, or a zero-length host part); an all-spaces entry
+ * is `host`.
+ */
 export const ENTRY_REFUSAL_WORDS = [
   'path',
   'userinfo',

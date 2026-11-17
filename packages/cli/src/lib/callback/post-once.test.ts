@@ -321,12 +321,11 @@ describe('R1.3 C1 — TLS, redirects, the reply, time', () => {
   });
 
   it('the reply is not read: a never-ending body gives the status at once and the server sees the socket close; no accept-encoding is sent', async () => {
-    let writes = 0;
     const server = await serve(plain, (_q, res) => {
       res.writeHead(200, { 'content-type': 'text/plain' });
       const chunk = Buffer.alloc(64 * 1024, 120);
       const pump = (): void => {
-        while (!res.destroyed && res.write(chunk)) writes += 1;
+        while (!res.destroyed && res.write(chunk));
         if (!res.destroyed) res.once('drain', pump);
       };
       pump();
@@ -339,8 +338,8 @@ describe('R1.3 C1 — TLS, redirects, the reply, time', () => {
     });
     const tookMs = performance.now() - started;
     await new Promise((r) => setTimeout(r, 50));
-    // (a) red when the body is read (the try would not end before its deadline) or encoding is
-    //     requested; (b) prints the outcome, the time, and what the server saw.
+    // (a) red when the body is read (the connection is kept, so the server never sees it close:
+    //     `closed`) or encoding is requested; (b) prints the outcome, the time, and what the server saw.
     expect({
       out,
       fast: tookMs < 2000,
@@ -352,7 +351,6 @@ describe('R1.3 C1 — TLS, redirects, the reply, time', () => {
       closed: 1,
       acceptEncoding: undefined,
     });
-    expect(writes).toBeGreaterThanOrEqual(0);
   });
 
   it('time: a server that never answers the headers, or the TLS handshake, is `timeout` at a 50 ms deadline', async () => {
@@ -384,6 +382,43 @@ describe('R1.3 C1 — TLS, redirects, the reply, time', () => {
       headers: { kind: 'failed', word: 'timeout' },
       handshake: { kind: 'failed', word: 'timeout' },
     });
+  });
+
+  it('`101 Switching Protocols`: the request closes with no response and no error, and the try still settles, `connection`', async () => {
+    // Node destroys the socket on a 101 and emits only `close` on the request.
+    const sockets: net.Socket[] = [];
+    const upgrader = net.createServer((socket) => {
+      sockets.push(socket);
+      socket.once('data', () =>
+        socket.write(
+          'HTTP/1.1 101 Switching Protocols\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n',
+        ),
+      );
+    });
+    await new Promise<void>((ok) => upgrader.listen(0, '127.0.0.1', () => ok()));
+    onTestFinished(
+      () =>
+        new Promise<void>((ok) => {
+          for (const socket of sockets) socket.destroy();
+          upgrader.close(() => ok());
+        }),
+    );
+    const port = (upgrader.address() as AddressInfo).port;
+    const deadlineMs = 500;
+    const margin = new Promise<'still pending'>((ok) =>
+      setTimeout(() => ok('still pending'), deadlineMs + 1000),
+    );
+    const out = await Promise.race([
+      post({
+        url: `http://127.0.0.1:${port}/`,
+        lists: lists([], [`http://127.0.0.1:${port}`]),
+        deadlineMs,
+      }),
+      margin,
+    ]);
+    // (a) red when a request that closes without a response leaves the try pending (it never
+    //     settles: the margin wins); (b) prints the outcome.
+    expect(out).toEqual({ kind: 'failed', word: 'connection' });
   });
 
   it('time: `deadlineMs` 0, NaN, Infinity and 2,147,483,648 throw a TypeError before any I/O', () => {
