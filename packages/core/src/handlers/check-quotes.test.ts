@@ -518,7 +518,8 @@ describe('check_quotes on the engine — the step records, the author’s guard 
       all_found: false,
       warned: true,
       inReply: true,
-      line: "Guard step 'stop_if_missing' aborted the run.",
+      // #625 A1a: the chain ran `quote_check` after the called step, so the line opens with it.
+      line: "Step 'extract' completed. Guard step 'stop_if_missing' aborted the run.",
     });
   });
 
