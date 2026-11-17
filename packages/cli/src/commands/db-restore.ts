@@ -57,8 +57,9 @@ export function reportLines(report: RestoreReport): string[] {
     lines.push(
       onlyReplaced === 0 && changed === 0 && onlyRestored === 0
         ? 'The file it replaced and the backup hold the same runs.'
-        : `The file it replaced had ${onlyReplaced} run(s) the backup lacks and ${changed} that ` +
-            `differ; the backup has ${onlyRestored} it lacked (they are back). The replaced file is ` +
+        : `Left out of the restored file: ${onlyReplaced} run(s) that only the replaced file had, ` +
+            `and the replaced file's version of ${changed} run(s) that both files hold. Brought ` +
+            `back: ${onlyRestored} run(s) that only the backup had. All of the replaced file is in ` +
             'the copy above. Only runs are counted.',
     );
   }

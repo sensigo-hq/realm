@@ -36,7 +36,10 @@ export function lineOf(file: string, event: MigrateProgress): string {
       const { from, to, statements, evidenceChecked } = event.report;
       return (
         `Migrated ${file} from schema version ${from} to ${to}: ${statements} statement(s) ran, the ` +
-        `schema matches version ${to}'s, ${evidenceChecked} evidence entries match their stored hashes.`
+        `schema matches version ${to}'s, ` +
+        (evidenceChecked === 1
+          ? '1 evidence entry matches its stored hash.'
+          : `${evidenceChecked} evidence entries match their stored hashes.`)
       );
     }
     case 'current':

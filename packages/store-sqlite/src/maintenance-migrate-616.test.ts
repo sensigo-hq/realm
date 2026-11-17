@@ -421,8 +421,9 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
         failed: {
           code: 'STATE_STORE_IN_USE',
           message:
-            `Another process has ${file} open (a Realm agent, server, MCP server or command, or ` +
-            'another program such as a SQLite browser). Stop it and run this again. Nothing was changed.',
+            `Another process has ${file} open: a Realm agent, server or command, an MCP server that ` +
+            'an assistant or editor keeps running, or another program such as a SQLite browser. ' +
+            'Stop it and run this again. Nothing was changed.',
           details: { path: file },
         },
         file: 1,
