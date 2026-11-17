@@ -409,5 +409,9 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
       version,
       allowed: true,
     });
+    claim(
+      PAGE,
+      'A second `realm db migrate` started meanwhile fails the same way at its open. If two are started at the same instant, both may be refused; nothing is changed, so run it again.',
+    );
   });
 });
