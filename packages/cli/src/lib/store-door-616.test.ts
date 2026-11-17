@@ -395,6 +395,8 @@ const OPENERS: ReadonlyArray<{ opener: string; allowed: readonly string[] }> = [
       'commands/db-migrate.ts',
       'commands/db-check.ts',
       'commands/db-restore.ts',
+      // #616 R3: `realm rollback`, a top-level command on the same maintenance entry.
+      'commands/rollback.ts',
     ],
   },
 ];

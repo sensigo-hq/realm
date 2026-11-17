@@ -92,6 +92,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readFileSync,
   realpathSync,
   renameSync,
   statSync,
@@ -169,6 +170,16 @@ export interface MaintenanceHome {
    * it rejects.
    */
   migrate(options: MigrateOptions): Promise<MigrateReport>;
+  /**
+   * #616 R3, `realm rollback`: undoes the last migrate recorded for this home in `migrations.jsonl`.
+   * The last valid line for this home decides; the file's schema version must be that line's
+   * `to_format`, and the line a forward migrate. Then `migrate({ to: from_format })` runs, given the
+   * line. Refused with `STATE_STORE_MIGRATE_REFUSED` (the record cannot be read; no valid line; the
+   * file at another version; the last line a step back), and every refusal of the step back.
+   */
+  rollback(options?: {
+    readonly progress?: (event: MigrateProgress) => void;
+  }): Promise<MigrateReport>;
   /** Closes the handle's connection. A second `close()` does nothing. */
   close(): void;
 }
@@ -193,7 +204,7 @@ export interface MaintenanceCheckHome {
 }
 
 /** The verb a maintenance entry is opened for: its two pre-check refusals carry its code and words. */
-export type MaintenanceVerb = 'backup' | 'migrate' | 'check' | 'restore';
+export type MaintenanceVerb = 'backup' | 'migrate' | 'check' | 'restore' | 'rollback';
 
 /** One line `realm db migrate` prints, as `migrate` reaches it. */
 export type MigrateProgress =
@@ -214,6 +225,14 @@ export type MigrateProgress =
       readonly kind: 'stepBack';
       readonly report: SchemaStepBackReport;
       readonly loses: string | undefined;
+    }
+  /** R3: `realm rollback` undoes the migrate recorded at `at`, from `from` to `to`, by `migratedBy`. */
+  | {
+      readonly kind: 'rollingBack';
+      readonly at: string;
+      readonly from: number;
+      readonly to: number;
+      readonly migratedBy: string;
     }
   /** R2: `to` is the file's version: there is no step to undo. */
   | { readonly kind: 'nothingToUndo'; readonly schemaVersion: number }
@@ -241,7 +260,16 @@ export interface MigrateOptions {
    * can be undone, or nothing is changed.
    */
   readonly to?: number;
+  /**
+   * #616 R3, internal: the record line `realm rollback` undoes, given with `to` (its `from_format`).
+   * Under the hold the file must still be at its `to_format`; a step that cannot be undone names its
+   * backup; a backups folder that cannot be made names `realm db migrate --to`.
+   */
+  readonly undoing?: RollbackLine;
 }
+
+/** #616 R3: what the step back takes from the record line it undoes. */
+export type RollbackLine = Pick<MigrateRecord, 'at' | 'from_format' | 'to_format' | 'backup'>;
 
 /** What `migrate` did. */
 export interface MigrateReport {
@@ -367,6 +395,18 @@ function sourceRefused(
           )
         : checkRefused(
             `${source} holds no store yet: there is nothing to check.`,
+            source,
+            `${source} holds no store yet`,
+          );
+    case 'rollback':
+      return missing
+        ? migrateRefused(
+            `There is no store file at ${source} to roll back.`,
+            source,
+            `there is no store file at ${source} to roll back`,
+          )
+        : migrateRefused(
+            `${source} holds no store yet: there is nothing to roll back.`,
             source,
             `${source} holds no store yet`,
           );
@@ -786,11 +826,18 @@ export function makeFolder(folder: string): string | undefined {
   return undefined;
 }
 
-/** The default backup's folder cannot be made or written: `realm db migrate` changes nothing. */
-function backupsFolderRefused(folder: string, reason: string): WorkflowError {
+/**
+ * The default backup's folder cannot be made or written: `realm db migrate` changes nothing. R3: for
+ * `realm rollback`, which has no flags, the advice names `realm db migrate --to <rollbackTo>`.
+ */
+function backupsFolderRefused(folder: string, reason: string, rollbackTo?: number): WorkflowError {
+  const advice =
+    rollbackTo === undefined
+      ? 'Use --backup <path> to name another place, or --no-backup.'
+      : `Use realm db migrate --to ${rollbackTo} with --backup <path> to name another place, or ` +
+        '--no-backup.';
   return migrateRefused(
-    `Cannot make the backups folder ${folder}: ${clause(reason)}. Nothing was changed. Use ` +
-      '--backup <path> to name another place, or --no-backup.',
+    `Cannot make the backups folder ${folder}: ${clause(reason)}. Nothing was changed. ${advice}`,
     folder,
     reason,
   );
@@ -841,10 +888,10 @@ export function storeInUse(source: string): WorkflowError {
 
 /** The default copy's path for a migrate from `from` to `to` (R1, and R2's step back): the backups
  *  folder made first, or `realm db migrate` refused with nothing changed. */
-function defaultCopyPath(home: string, from: number, to: number): string {
+function defaultCopyPath(home: string, from: number, to: number, rollbackTo?: number): string {
   const folder = backupsFolderOf(home);
   const unmade = makeFolder(folder);
-  if (unmade !== undefined) throw backupsFolderRefused(folder, unmade);
+  if (unmade !== undefined) throw backupsFolderRefused(folder, unmade, rollbackTo);
   return join(folder, backupName(from, to, systemClock.now()));
 }
 
@@ -906,20 +953,125 @@ function stepsBackOnly(at: number, source: string): WorkflowError {
   );
 }
 
-/** R2: a step on the way down cannot be undone: the whole plan is refused, nothing changed. */
+/**
+ * R2: a step on the way down cannot be undone: the whole plan is refused, nothing changed. R3: for
+ * `realm rollback` (`undoing` given), the way back named is the backup that migrate made, or none.
+ */
 function cannotUndoRefused(
   from: number,
   words: string | undefined,
   home: string,
   source: string,
+  undoing?: RollbackLine,
 ): WorkflowError {
+  const folder = backupsFolderOf(home);
+  const way =
+    undoing === undefined
+      ? 'To go back anyway, restore a backup made before the upgrade: realm db restore <backup> ' +
+        `(the backups realm db migrate makes are in ${folder}/).`
+      : undoing.backup === null
+        ? 'That migrate made no backup: restore one of your own with realm db restore <backup> ' +
+          `(the backups realm db migrate makes are in ${folder}/).`
+        : `To go back anyway, restore the backup that migrate made: realm db restore ${undoing.backup}.`;
   return migrateRefused(
     `The step from schema version ${from} to ${from - 1} cannot be undone: ` +
-      `${words ?? `schema version ${from} has no step back`}. Nothing was changed. To go back ` +
-      'anyway, restore a backup made before the upgrade: realm db restore <backup> (the backups ' +
-      `realm db migrate makes are in ${backupsFolderOf(home)}/).`,
+      `${words ?? `schema version ${from} has no step back`}. Nothing was changed. ${way}`,
     source,
     `the step from schema version ${from} to ${from - 1} cannot be undone`,
+  );
+}
+
+/** R3: the advice every record refusal of `realm rollback` ends with, before "Nothing was changed". */
+const ROLLBACK_WAYS =
+  'Use realm db migrate --to <n> to choose the version yourself, or realm db restore <backup>';
+
+/**
+ * R3: one line of `migrations.jsonl`, when it is VALID: JSON with the six fields of the right types,
+ * both formats schema versions this Realm knows, and different. Any other line is ignored.
+ */
+function validRecord(text: string, versions: StoreSchemaVersions): MigrateRecord | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const r = value as Record<string, unknown>;
+  const known = (n: unknown): n is number => Number.isInteger(n) && versions.has(n as number);
+  const valid =
+    typeof r['at'] === 'string' &&
+    typeof r['home'] === 'string' &&
+    known(r['from_format']) &&
+    known(r['to_format']) &&
+    r['from_format'] !== r['to_format'] &&
+    (typeof r['backup'] === 'string' || r['backup'] === null) &&
+    typeof r['migrated_by'] === 'string';
+  return valid ? (r as unknown as MigrateRecord) : undefined;
+}
+
+/**
+ * R3: the line `realm rollback` undoes: the last valid line of `migrations.jsonl` whose `home` is this
+ * home's real path (two homes in one folder share the file). A file that cannot be read is refused
+ * with the system's reason; no file (ENOENT), or no such line, is refused as no record.
+ */
+function lastRecordOf(home: string, source: string, versions: StoreSchemaVersions): MigrateRecord {
+  const path = join(backupsFolderOf(home), MIGRATIONS_FILE);
+  let text = '';
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      const reason = causeText(err);
+      throw migrateRefused(
+        `Cannot read ${path}: ${clause(reason)}. Nothing was changed. ${ROLLBACK_WAYS} to put a ` +
+          'backup back.',
+        path,
+        reason,
+      );
+    }
+  }
+  const real = realPathOf(home);
+  let last: MigrateRecord | undefined;
+  for (const line of text.split('\n')) {
+    const record = validRecord(line, versions);
+    if (record?.home === real) last = record;
+  }
+  if (last === undefined) {
+    throw migrateRefused(
+      `No record of a migrate of ${home} was found in ${path}, so Realm does not know which version ` +
+        `to go back to. ${ROLLBACK_WAYS} to put a backup back. Nothing was changed.`,
+      source,
+      `no record of a migrate of ${home}`,
+    );
+  }
+  return last;
+}
+
+/** R3: the file is not at the last record's `to_format` (before the hold, or under it). */
+function recordMismatch(
+  home: string,
+  source: string,
+  line: RollbackLine,
+  at: number,
+): WorkflowError {
+  return migrateRefused(
+    `The last record for ${home} (${line.at}) took the store file from schema version ` +
+      `${line.from_format} to ${line.to_format}, but it is at schema version ${at} now. Realm does ` +
+      `not know what to roll back. ${ROLLBACK_WAYS}. Nothing was changed.`,
+    source,
+    `the store file is at schema version ${at}, not ${line.to_format}`,
+  );
+}
+
+/** R3: the last record for the home is a step back, and the file is at its `to_format`. */
+function lastIsStepBack(home: string, source: string, line: RollbackLine): WorkflowError {
+  return migrateRefused(
+    `The last record for ${home} is a step back to schema version ${line.to_format} (${line.at}). ` +
+      'There is nothing to roll back: to go back further, use realm db migrate --to <n>. Nothing ' +
+      'was changed.',
+    source,
+    `the last record for ${home} is a step back`,
   );
 }
 
@@ -1032,7 +1184,7 @@ export function openRealmHomeForMaintenance(options: {
 }): Promise<MaintenanceRestoreHome>;
 export function openRealmHomeForMaintenance(options?: {
   readonly home?: string;
-  readonly verb?: 'backup' | 'migrate';
+  readonly verb?: 'backup' | 'migrate' | 'rollback';
 }): Promise<MaintenanceHome>;
 export function openRealmHomeForMaintenance(options: {
   readonly home?: string;
@@ -1054,7 +1206,7 @@ export function openMaintenance(
   seams: MaintenanceSeams,
 ): Promise<MaintenanceRestoreHome>;
 export function openMaintenance(
-  options: { readonly home?: string; readonly verb?: 'backup' | 'migrate' },
+  options: { readonly home?: string; readonly verb?: 'backup' | 'migrate' | 'rollback' },
   seams: MaintenanceSeams,
 ): Promise<MaintenanceHome>;
 export function openMaintenance(
@@ -1113,10 +1265,12 @@ export async function openStore(
   // #616 R2: `migrate` given `to`, the step back: the plan judged before any change, the hold, the plan
   // judged again on the version read under it, the copy, then each step back in its own transaction,
   // the record and the install line. No evidence re-check and no re-stamp.
+  // R3: `undoing`, the record line `realm rollback` undoes: the file must be at its `to_format`.
   const stepBack = async (
     to: number,
     backup: string | false | undefined,
     progress: (event: MigrateProgress) => void,
+    undoing?: RollbackLine,
   ): Promise<MigrateReport> => {
     if (!Number.isInteger(to) || !versions.has(to)) {
       throw stepBackTargetRefused(String(to), source, versions);
@@ -1125,13 +1279,16 @@ export async function openStore(
     // True when there is a step to undo; the refusals when one cannot be taken. Every step from the
     // file's version down to `to` must be one that can be undone, so a refusal never leaves it half-way.
     const plan = (at: number): boolean => {
+      if (undoing !== undefined && at !== undoing.to_format) {
+        throw recordMismatch(home, source, undoing, at);
+      }
       if (at > realm) throw versionNewerError(at, realm);
       if (at === to) return false;
       if (at < to) throw stepsBackOnly(at, source);
       for (let from = at; from > to; from--) {
         const version = versions.get(from);
         if (version?.downgrade === undefined) {
-          throw cannotUndoRefused(from, version?.cannotUndo, home, source);
+          throw cannotUndoRefused(from, version?.cannotUndo, home, source, undoing);
         }
       }
       return true;
@@ -1150,7 +1307,7 @@ export async function openStore(
       if (!plan(at)) return nothing(at);
       const copyPath =
         backup === undefined
-          ? defaultCopyPath(home, at, to)
+          ? defaultCopyPath(home, at, to, undoing === undefined ? undefined : to)
           : backup === false
             ? undefined
             : resolve(backup);
@@ -1296,7 +1453,9 @@ export async function openStore(
     async migrate(options: MigrateOptions): Promise<MigrateReport> {
       if (closed) throw new Error(`The maintenance handle on ${source} is closed.`);
       const progress = options.progress ?? ((): void => undefined);
-      if (options.to !== undefined) return stepBack(options.to, options.backup, progress);
+      if (options.to !== undefined) {
+        return stepBack(options.to, options.backup, progress, options.undoing);
+      }
       const target = db.schemaVersion;
       // 1. Is a schema step pending? The open read the file; the hold is taken only then (R1).
       let at = await fileVersion(db);
@@ -1379,6 +1538,27 @@ export async function openStore(
         // which lets go of the file too: the error that ended the verb is the one reported.
         await hold?.release().catch(() => undefined);
       }
+    },
+    async rollback(
+      options: { readonly progress?: (event: MigrateProgress) => void } = {},
+    ): Promise<MigrateReport> {
+      if (closed) throw new Error(`The maintenance handle on ${source} is closed.`);
+      const progress = options.progress ?? ((): void => undefined);
+      // R3: the record decides; the file's VERSION is compared, not its history (a file restored
+      // from a backup at the line's `to_format` rolls back). The version check comes first, so a
+      // stale step-back line never decides for a file it does not describe.
+      const line = lastRecordOf(home, source, versions);
+      const at = await fileVersion(db);
+      if (at !== line.to_format) throw recordMismatch(home, source, line, at);
+      if (line.from_format > line.to_format) throw lastIsStepBack(home, source, line);
+      progress({
+        kind: 'rollingBack',
+        at: line.at,
+        from: line.from_format,
+        to: line.to_format,
+        migratedBy: line.migrated_by,
+      });
+      return handle.migrate({ to: line.from_format, undoing: line, progress });
     },
     close(): void {
       if (closed) return;
