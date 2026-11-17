@@ -313,8 +313,9 @@ function escapedSpellingHides(shown: string, tier: DisclosureTier, ctx: WalkCont
 }
 
 /**
- * Caching 3-B (F-B1): the walk's leaf transform for one string at `tier` — {@link discloseText} then
- * the F7 escaped-spelling check, exactly as the walk applies them to a `value` leaf. It IS the walk's
+ * The disclosure walk's leaf transform for one string at `tier`: `discloseText`, then the
+ * escaped-spelling check, exactly as the walk applies them to a `value` leaf.
+ * It IS the walk's
  * leaf (`walkValue` calls the same two functions on a string; a cell checks equality over the disclosure-law corpus),
  * exported so the MCP door can tell when the walk would transform a prompt beyond `disclose` — on
  * such a prompt the door publishes no `stable_prefix`.

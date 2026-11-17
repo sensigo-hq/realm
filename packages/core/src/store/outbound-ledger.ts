@@ -17,9 +17,10 @@ import { keyOf } from './outbound-entry-key.js';
 export const OUTBOUND_LEASE_MAX = 300;
 
 /**
- * One row of a run's ledger, AS A STORE KEEPS IT — for store implementers only: it carries the lease
- * token, the holder's proof, so it is never rendered and never returned by the port (every entry the
- * port returns is an {@link OutboundEntryView}). An unset field is omitted, never `null`.
+ * One row of a run's outbound ledger as a store keeps it, for store implementers only. It carries
+ * the lease token, the holder's proof, so it is never rendered and never returned by the port:
+ * every entry the port returns is an `OutboundEntryView`.
+ * An unset field is omitted, never `null`.
  * @beta
  */
 export interface OutboundEntry {

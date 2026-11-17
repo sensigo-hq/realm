@@ -30,8 +30,9 @@ function isBrand(value: unknown): value is RealmBrand {
 }
 
 /**
- * The release line an object carries: realm's own classes through PR-B's mark, a host's class or
- * object through {@link declareReleaseLine}. `undefined` when it carries none. One property read,
+ * The release line an object carries: Realm's own classes through their release mark, a host's
+ * class or object through `declareReleaseLine`.
+ * `undefined` when it carries none. One property read,
  * inside a `try`; total.
  * @public
  */

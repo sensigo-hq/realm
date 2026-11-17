@@ -85,7 +85,9 @@ describe('caching 3-M A-0 — the type comments in run-record.ts', () => {
     // The same cells as the record page's rows above.
     for (const sentence of [
       "Caching 3-M (A-0): or the `conversation` so far — the marker Anthropic's tool main turns put on a copy of the last message (#899).",
-      'Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent (64 lowercase hex): `system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request, even when it went out whole; else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker.',
+      // `PrefixParts`' own comment, reworded by the reference's index rule (CP-1): its first sentence
+      // says what the type is, and the prompt part's meaning follows it, as before.
+      'A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and `format` where it had them (`UsageRecord.prefix_parts`). `prompt` is the first characters Realm cut as the head on a split request, even when it went out whole; else the prompt as that request sent it. `cache_marked` says which parts carried a marker.',
       'Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent: `system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request, even when it went out whole; else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker.',
       "Caching 3-B (A6): what carried a cache marker or the key on this request. Absent when nothing did: under `--prompt-cache off`, after the endpoint refused the cache fields, on Anthropic's tool-loop final request, and on an OpenAI request that carried neither a mark nor the key.",
       'Caching 3-B (A6, C5): whether this request carried strict structured output or strict tool arguments',

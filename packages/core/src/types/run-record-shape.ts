@@ -96,8 +96,8 @@ export function runRecordProblemClause(p: RunRecordFieldProblem): string {
 }
 
 /**
- * issue #719 (R2): whether `value` is a run record — an object carrying each of the 14 required
- * fields with its type. The one predicate admission and the JSON store's reader share.
+ * Whether `value` is a run record: an object carrying each of the 14 required fields with its type.
+ * The one predicate admission and the JSON store's reader share.
  * @public
  */
 export function isRunRecordShape(value: unknown): value is RunRecord {

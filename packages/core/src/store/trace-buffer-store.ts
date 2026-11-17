@@ -17,8 +17,9 @@ import { assertReleaseLine } from '../release-line.js';
 import { normalizeEntryForBuffer } from '../engine/trace-normalizer.js';
 
 /**
- * The store-layer capability ladder (issue #197 PR-1, design record `plans/issue-197-design.md`
- * §3). Implication runs **upward-requires-downward ONLY**: `writer_nonce_carriage` requires
+ * The optional rungs a trace buffer store can declare, `seal` and `writer_nonce_carriage`
+ * (`TraceBufferStore.traceCapabilities`).
+ * Implication runs **upward-requires-downward ONLY**: `writer_nonce_carriage` requires
  * `seal`; `seal` requires the fenced trio (issue #207). **The fenced trio ALONE stays fully
  * legal** — a store declaring neither rung is still a fully conforming implementation (the
  * shipped realm-cloud Postgres state; non-seal trio stores keep the #207 destructive-drain
@@ -30,8 +31,8 @@ import { normalizeEntryForBuffer } from '../engine/trace-normalizer.js';
  */
 export type TraceCapability = 'seal' | 'writer_nonce_carriage';
 
-/** Outcome of `sealFenced` (issue #197 PR-1, the `seal` rung — see `TraceBufferStore.sealFenced`
- *  for the full contract).
+/**
+ * The outcome of `sealFenced`; `TraceBufferStore.sealFenced` holds the full contract.
  * @public
  */
 export type SealResult =
@@ -46,7 +47,8 @@ export type SealResult =
     };
 
 /**
- * One line of a WAL, as read back — live or sealed (issue #197 PR-1). Defined in CORE, not
+ * One line of a WAL as read back, live or sealed.
+ * Defined in CORE, not
  * mcp-server (where the fs store's own file-local `WalLine` type lives), because
  * `listSealedForRun`'s return type must be usable without any core-adjacent caller importing an
  * mcp-server-local type. The fs store's `WalLine` gains the identical optional `nonce` field and
@@ -61,8 +63,9 @@ export interface SealedWalLine {
   nonce?: string;
 }
 
-/** One sealed artifact for a single (runId, stepId) key — issue #197 PR-1, part of the `seal`
- *  rung. A key may accumulate several sealed artifacts (repeated reclaim/settle-time seals),
+/**
+ * One sealed artifact for a single run and step.
+ * A key may accumulate several sealed artifacts (repeated reclaim/settle-time seals),
  *  distinguished by ascending `seq`.
  * @public
  */
@@ -131,8 +134,8 @@ export interface AppendResult {
 }
 
 /**
- * Optional trailing options bag for `append`/`appendFenced` (issue #197 PR-1, the
- * `writer_nonce_carriage` rung). Declaration-only: adding this parameter is NOT a separate
+ * The optional last argument of `append` and `appendFenced`: the writer's nonce.
+ * Declaration-only: adding this parameter is NOT a separate
  * method-presence check in `storeDeclaresNonceCarriage` (there is no way to detect "did this
  * store implementation read the options bag" other than declared capability + behavior) — a
  * non-declaring implementation is contractually required to IGNORE it, never throw or otherwise
@@ -347,9 +350,11 @@ export interface TraceBufferStore {
   listSealedForRun?(runId: string): Promise<SealedArtifact[]>;
 }
 
-/** An AgentTraceEntry extended with engine-assigned ordering timestamp (milliseconds), and
- *  (issue #197 PR-1) the writer nonce that carried it, if any — re-attached from the line the
- *  entry was originally appended in. NEVER fabricated for a genuinely bare line.
+/**
+ * An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce
+ * that carried it, if any. The nonce is re-attached from the line the entry was originally appended
+ * in.
+ * NEVER fabricated for a genuinely bare line.
  * @public
  */
 export interface BufferedEntry extends AgentTraceEntry {
