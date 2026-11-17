@@ -17,6 +17,7 @@ All notable changes to this project are documented here.
 ### Changed
 
 - **Each held step carries a `reclaim` way for a person, with its conditions.** In the library, `WAY_VERBS` gains `reclaim`, and `WayOn` the new `ReclaimWay`; `Cond` gains the conditions `claim_deadline_ahead`, `override_claim_unknown_age` and `rerun_not_idempotent`; `UNAVAILABLE_CODES` and `FactsByCode` gain the codes `not_held`, `store_keeps_no_claims`, `fence_required` and `claim_changed`, and `held_elsewhere`'s facts gain the claim's stamp (`claimed_at`) and, for a deadline that cannot be read, `{ absent: 'unparseable_stamp' }`. `WayRenderer` and `LIBRARY_WORDS` gain `reclaim` with the list: a program that writes the full `WayRenderer` itself adds a `reclaim` function, and one built with `withLibraryWords` renders it in Realm's words.
+- **A reply that ran a chain after your step says your step was recorded.** `execute_step`, `start_run` and `executeChain` keep `status`, `errors`, `error_code`, `agent_action` and `stopped_step` as before, and add `own_act` (`EngineReply`, beta): the called step, or the run's creation, was recorded, and the reply's text opens with it. `realm agent` prints the agent step's own ✓ and the chained steps' `→ [auto]` lines, and `realm workflow run` the agent step's own ✓, after its chain. `executeChain` takes `advanceRun`'s step callbacks (`ExecuteChainOptions`). (#625)
 
 ## [0.50.0] — 2026-11-17
 

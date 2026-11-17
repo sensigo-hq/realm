@@ -37,6 +37,7 @@ import {
   inboundMarkerWarning,
   persistsField,
   startIdentityEntry,
+  type EvidenceSnapshot,
 } from '@sensigo/realm';
 import { renderOutcome } from '@sensigo/realm-mcp';
 import {
@@ -1337,6 +1338,17 @@ export const runCommand = new Command('run')
                   writerCtx(),
                 ))
               : undefined;
+          // The `✓` line of a step this call finished, with its entry's hash and duration. #729 PR-3
+          // correction 4 (I-9b): the hash of an output the law hid anything inside is shown as its
+          // type and size.
+          const doneLine = (ev: EvidenceSnapshot | undefined): string => {
+            const hash =
+              ev !== undefined
+                ? digestSpan(ev.evidence_hash.slice(0, 8), ev.output_summary)
+                : 'n/a';
+            const dur = ev !== undefined ? `${ev.duration_ms}ms` : 'n/a';
+            return `  ✓ → ${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)} | hash: ${hash}... | ${dur}\n`;
+          };
           if (
             result.status === 'ok' &&
             // #729 PR-0 (D-8 row 2): an `ok` reply's own action word is `stop` only on a run that
@@ -1368,20 +1380,15 @@ export const runCommand = new Command('run')
             }
           } else if (result.status === 'ok') {
             holdSnapshot(judged);
-            const ev = result.evidence[0];
-            // #729 PR-3 correction 4 (I-9b): the hash of an output the law hid anything inside is
-            // shown as its type and size.
-            const hash =
-              ev !== undefined
-                ? digestSpan(ev.evidence_hash.slice(0, 8), ev.output_summary)
-                : 'n/a';
-            const dur = ev !== undefined ? `${ev.duration_ms}ms` : 'n/a';
+            // #625 A1a: after a chain, the step's own entry (`own_act`), never the last step's.
             console.log(
-              `  ✓ → ${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)} | hash: ${hash}... | ${dur}\n`,
+              doneLine(result.own_act !== undefined ? result.own_act.evidence : result.evidence[0]),
             );
           } else if (result.status === 'confirm_required' && result.gate !== undefined) {
             // Gate opened as part of this step — it will be handled at loop top.
             holdSnapshot(judged);
+            // #625 A1a: a question the chain reached after this step: this step is done (`own_act`).
+            if (result.own_act !== undefined) console.log(doneLine(result.own_act.evidence));
             console.log(`  Gate opened for '${result.gate.step_name}'.\n`);
           } else if (
             stop?.kind === 'capability_missing' &&

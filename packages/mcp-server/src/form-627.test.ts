@@ -411,7 +411,8 @@ describe('#627 W — the form path (cell 21)', () => {
       }).toEqual({
         recorded: 0,
         open: true,
-        hint: `${ended} The question on step 'q' is still waiting. To show it again, call present_question (3 left in this session).`,
+        // #625 A1a: start_run's reply opens with the run's creation (its own act), then W-f2.
+        hint: `Run '${runId}' created for workflow '${String(s.workflowId)}'. ${ended} The question on step 'q' is still waiting. To show it again, call present_question (3 left in this session).`,
         entry: `The form for step 'q' of run ${runId} ended without an answer 1 time. If the user wants to answer, call present_question (3 left in this session). An answer given in this chat is not recorded. Check again no sooner than poll_after_ms.`,
       });
     },
@@ -1614,7 +1615,10 @@ describe('#627 W correction 2 — the form path', () => {
       ownAddressesCaller: String((own as { context_hint?: unknown }).context_hint).includes(
         'your choice',
       ),
-      notRecorded: hintOf(started).startsWith('Not recorded:'),
+      // #625 A1a: after start_run's own act (the run's creation), the reply opens "Not recorded:".
+      notRecorded: hintOf(started).startsWith(
+        `Run '${runId}' created for workflow '${String(s.workflowId)}'. Not recorded:`,
+      ),
       // #729 PR-6a: the engine's refusal words, never passed on (the composer's "your choice" is
       // its own sentence, check 10).
       ownRefusal: JSON.stringify(started).includes('was already resolved'),
