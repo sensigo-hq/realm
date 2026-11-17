@@ -16,6 +16,7 @@ import {
   capabilityWarning,
   createDefaultRegistry,
   deriveRunPhase,
+  openWithOwnAct,
   type EngineReply,
   type RunStore,
   type TraceBufferStore,
@@ -421,6 +422,10 @@ export async function handleStartRun(
     } else if (ranSomething) {
       // decision C10: the phase is derived from the record advanceRun leaves.
       const finalRun = judged?.record;
+      // #625 A1a: a step this call ran failed or stopped it after the run was created — the run's
+      // creation was recorded, and the reply says so first, in the creation reply's own sentence.
+      const creation = handBackHint({ run, current: createdSnap, definition, deduped: false });
+      const ownAct = result.status !== 'ok';
       // decisions C205, C211 (the architect's addendum): a run this call ended — its own step
       // failed, or cleanup steps were left pending — says the ways back in.
       const ranReply: EngineReply = {
@@ -428,6 +433,12 @@ export async function handleStartRun(
         run_id: run.id,
         data: {},
         evidence: [],
+        ...(ownAct
+          ? {
+              own_act: { command: 'start_run', recorded: true as const },
+              context_hint: openWithOwnAct(result.context_hint, creation),
+            }
+          : {}),
         ...(finalRun !== undefined ? { run_phase: deriveRunPhase(finalRun) } : {}),
         warnings: [...result.warnings, ...warnings],
         // issue #558 PR-C (walk): a superseding run says so in the response that created it — the
@@ -443,6 +454,7 @@ export async function handleStartRun(
         ranReply,
         formDepsOf(stores, runStore, definition, registry, disclosure),
         call,
+        creation,
       );
       // Correction 1 (B7): the ended run's ways back in are read from the record as it stands after
       // the form's wait — a run that ended during the form gets them (a deliberate wait: its own

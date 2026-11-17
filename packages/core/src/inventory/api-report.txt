@@ -858,7 +858,7 @@ EnactorBasis · type · public
       error_code: LoadErrorCode;
   };
 
-EngineReply · type · public
+EngineReply · type · public (beta: own_act)
   interface EngineReply {
       command: string;
       run_id: string;
@@ -907,6 +907,11 @@ EngineReply · type · public
           reason?: string;
       };
       stopped_step?: string;
+      own_act?: {
+          command: string;
+          recorded: true;
+          evidence?: EvidenceSnapshot;
+      };
       answer_recorded?: false;
       gate_claim?: {
           proof: GateClaimVerdict['proof'];
@@ -1018,6 +1023,10 @@ ExecuteChainOptions · type · public (beta: heldClaim)
       heldClaim?: {
           hold: LeaseHold;
       };
+      onStep?: AdvanceRunOptions['onStep'];
+      onTaken?: AdvanceRunOptions['onTaken'];
+      onNotRecorded?: AdvanceRunOptions['onNotRecorded'];
+      onGuard?: AdvanceRunOptions['onGuard'];
   }
 
 ExecuteEngineStepOptions · type · public
@@ -4190,6 +4199,7 @@ omitClaim · value · internal
 oneOf · value · internal
 openQuestionOf · value · internal
 openQuestionWords · value · internal
+openWithOwnAct · value · internal
 operatorEndingSentence · value · internal
 outcomeOf · value · internal
 outputSourceOf · value · public
@@ -4326,6 +4336,7 @@ startIdentityEntry · value · internal
 statIfExists · value · internal
 stepBrief · value · internal
 stepCacheGaps · value · internal
+stepCompletedWords · value · internal
 stepNotEligibleError · value · internal
 stepStateOf · value · internal
 stepsThatCannotRun · value · internal
