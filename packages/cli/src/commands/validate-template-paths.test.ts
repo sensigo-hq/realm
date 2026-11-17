@@ -257,7 +257,7 @@ describe('fix 1, piece 3a-ii-a — the words the docs and the changelog carry (c
     // (1) red when the new ending is missing or the old one stays; (2) prints both checks.
     expect({
       now: page.includes(
-        "a templated field that is not text; in an approval question and in `display`, a path that can never be found is refused, and so is a path in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value; in a prompt and in step instructions, a placeholder that starts with `context`, `run` or `workflow`, or names one of the workflow's steps, is checked too: refused when its path can never be found, a warning when it may be missing; any other placeholder there is left alone, as text for the model. This was added after version 0.49.0.",
+        "a templated field that is not text; in an approval question and in `display`, a path that can never be found is refused, and so is a path in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value; in a prompt and in step instructions, a placeholder that starts with `context`, `run` or `workflow`, or names one of the workflow's steps the way `when` or another tool writes it (`review.risk`, `steps.review.output.risk`, `$settlement.review.failed`), is checked too: refused when its path can never be found, a warning when it may be missing; any other placeholder there is left alone, as text for the model. This was added after version 0.49.0.",
       ),
       old: page.includes('the paths in a template are not checked yet'),
     }).toEqual({ now: true, old: false });
@@ -299,7 +299,7 @@ describe('fix 1, piece 3a-ii-a — the words the docs and the changelog carry (c
         [
           '`TEMPLATE_PATH_UNRESOLVABLE`',
           'Error',
-          "A path in an approval question, a step's `display`, a prompt or step instructions can never be found. In a prompt or step instructions, only a placeholder that starts with `context`, `run` or `workflow`, or names one of the workflow's steps, is checked. Added after version 0.49.0.",
+          "A path in an approval question, a step's `display`, a prompt or step instructions can never be found. In a prompt or step instructions, only a placeholder that starts with `context`, `run` or `workflow`, or names one of the workflow's steps the way `when` or another tool writes it (`review.risk`, `steps.review.output.risk`, `$settlement.review.failed`), is checked. Added after version 0.49.0.",
         ],
         [
           '`TEMPLATE_PATH_NO_DEFAULT`',
@@ -309,7 +309,7 @@ describe('fix 1, piece 3a-ii-a — the words the docs and the changelog carry (c
         [
           '`TEMPLATE_PATH_UNCERTAIN`',
           'Warning',
-          "A path in a step's `display`, a prompt or step instructions may be missing. In a prompt or step instructions, only a placeholder that starts with `context`, `run` or `workflow`, or names one of the workflow's steps, is checked. Added after version 0.49.0.",
+          "A path in a step's `display`, a prompt or step instructions may be missing. In a prompt or step instructions, only a placeholder that starts with `context`, `run` or `workflow`, or names one of the workflow's steps the way `when` or another tool writes it (`review.risk`, `steps.review.output.risk`, `$settlement.review.failed`), is checked. Added after version 0.49.0.",
         ],
       ],
       notChecked: true,
