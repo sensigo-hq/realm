@@ -2,7 +2,7 @@
 
 <!-- description: Upgrade Realm without surprises: read what changed, upgrade every Realm package together, and check your workflows and runs against the new version. -->
 
-This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.48.0 to 0.49.0 on Node 22, except three blocks in step 2, kept as they were: the block that shows two versions in one project and the `ENGINE_HANDLER_FAILED` line, from an earlier upgrade from 0.43.0 to 0.45.0, and the two lines the 0.46.0 `realm` command printed for a project still on 0.43.0. The block in [A store version change](#a-store-version-change) is from a real migrate, by the version after 0.49.0, of a home that the published 0.49.0 wrote.
+This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.49.0 to 0.50.0 on Node 22, except three blocks in step 2, kept as they were: the block that shows two versions in one project and the `ENGINE_HANDLER_FAILED` line, from an earlier upgrade from 0.43.0 to 0.45.0, and the two lines the 0.46.0 `realm` command printed for a project still on 0.43.0. The blocks in [A store version change](#a-store-version-change) and [Going back without losing runs](#going-back-without-losing-runs) are from the published 0.50.0, run on a home that the published 0.49.0 wrote.
 
 ## What an upgrade can change
 
@@ -69,7 +69,7 @@ Do this, in this order:
 3. **Migrate**: `realm db migrate`. It copies the store first, into the backups folder beside the home (`~/.realm-backups/`), then runs the step in one transaction, re-checks every evidence entry's hash and moves the file to version 2, and records the migrate in `~/.realm-backups/migrations.jsonl`; when the copy or the step fails, it stops and leaves the file at version 1, as it was; when only the record cannot be written, the file is migrated and a warning on standard error says so. `--backup <path>` puts the copy at a path you name instead, outside the home; `--no-backup` makes none. On a sample home that 0.49.0 wrote, holding two finished runs and six evidence entries:
 
    ```text
-   Backed up [REDACTED]/.realm/realm.db (schema version 1, 638976 bytes) to [REDACTED]/.realm-backups/realm-v1-to-v2-20261117T020531Z.db; the copy passes SQLite's quick check.
+   Backed up [REDACTED]/.realm/realm.db (schema version 1, 638976 bytes) to [REDACTED]/.realm-backups/realm-v1-to-v2-20261117T193757Z.db; the copy passes SQLite's quick check.
    Migrated [REDACTED]/.realm/realm.db from schema version 1 to 2: 1 statement(s) ran, the schema matches version 2's, 6 evidence entries match their stored hashes.
    Recorded this migrate in [REDACTED]/.realm-backups/migrations.jsonl.
    Re-stamped the phase index of 0 run(s) with the current derivation.
@@ -92,7 +92,7 @@ To use an older Realm again and keep every run this one stored, step the store f
 2. **Step back**, with this Realm still installed: `realm db migrate --to 1` takes a file at version 2 back to version 1, the version 0.49.0 writes. It makes a backup first, as a forward migrate does, keeps every run, records the step back in `~/.realm-backups/migrations.jsonl`, and prints the command that installs a Realm that writes version 1. On the sample home above, after its migrate:
 
    ```text
-   Backed up [REDACTED]/.realm/realm.db (schema version 2, 655360 bytes) to [REDACTED]/.realm-backups/realm-v2-to-v1-20261117T103918Z.db; the copy passes SQLite's quick check.
+   Backed up [REDACTED]/.realm/realm.db (schema version 2, 655360 bytes) to [REDACTED]/.realm-backups/realm-v2-to-v1-20261117T193806Z.db; the copy passes SQLite's quick check.
    Stepped [REDACTED]/.realm/realm.db back from schema version 2 to 1: 1 statement(s) ran, the schema matches version 1's. The outbound table was dropped; it held no record of a reminder or escalation sent.
    Recorded this migrate in [REDACTED]/.realm-backups/migrations.jsonl.
    Every command of this Realm that uses the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, now refuses the file, because it is at schema version 1 and this Realm writes version 2. To use it, install a Realm that writes schema version 1: npm install -g "@sensigo/realm-cli@0.49" (in a project that lists Realm packages, give every one of them the same exact version within 0.49; see "Upgrade every package together" in the upgrade guide).
@@ -135,10 +135,10 @@ For the command installed for the whole machine:
 npm install -g @sensigo/realm-cli@latest
 ```
 
-In a project that lists Realm packages in its `package.json`, give every one of them the same exact version, the version of the `realm` command you just installed (0.49.0 in this example):
+In a project that lists Realm packages in its `package.json`, give every one of them the same exact version, the version of the `realm` command you just installed (0.50.0 in this example):
 
 ```bash
-npm install --save-exact @sensigo/realm@0.49.0 @sensigo/realm-cli@0.49.0
+npm install --save-exact @sensigo/realm@0.50.0 @sensigo/realm-cli@0.50.0
 ```
 
 Then check that only one version is installed:
@@ -150,15 +150,15 @@ npm ls @sensigo/realm
 It prints one version, with the other entries marked `deduped`. That version must be the one `realm --version` prints: a `realm` command installed for the whole machine does not appear in `npm ls`.
 
 ```text
-├─┬ @sensigo/realm-cli@0.49.0
-│ ├─┬ @sensigo/realm-mcp@0.49.0
-│ │ └── @sensigo/realm@0.49.0 deduped
-│ ├─┬ @sensigo/realm-store-sqlite@0.49.0
-│ │ └── @sensigo/realm@0.49.0 deduped
-│ ├─┬ @sensigo/realm-testing@0.49.0
-│ │ └── @sensigo/realm@0.49.0 deduped
-│ └── @sensigo/realm@0.49.0 deduped
-└── @sensigo/realm@0.49.0
+├─┬ @sensigo/realm-cli@0.50.0
+│ ├─┬ @sensigo/realm-mcp@0.50.0
+│ │ └── @sensigo/realm@0.50.0 deduped
+│ ├─┬ @sensigo/realm-store-sqlite@0.50.0
+│ │ └── @sensigo/realm@0.50.0 deduped
+│ ├─┬ @sensigo/realm-testing@0.50.0
+│ │ └── @sensigo/realm@0.50.0 deduped
+│ └── @sensigo/realm@0.50.0 deduped
+└── @sensigo/realm@0.50.0
 ```
 
 If you see two versions here, your code and the project's `@sensigo/realm-cli` are using two different versions of Realm:
@@ -218,7 +218,7 @@ realm workflow validate --registered digest
 For a workflow the new version accepts, it prints:
 
 ```text
-Auditing the registered copy of 'digest' (schema_version 1) with realm 0.49.0's loader.
+Auditing the registered copy of 'digest' (schema_version 1) with realm 0.50.0's loader.
 Registered copies stay grandfathered at runtime against LOADER changes — the checks run today's loader on the copy, as registering the unchanged workflow again would; the cache lines size the copy as stored. A NEW engine-side dispatch check (issue #508, realm 0.42.0) is NOT grandfathered: it applies immediately, whatever schema_version is on file.
 Valid: digest v1 (1 step)
 cache: summarise — anthropic 570 chars ≈ 334–758 tokens, with Anthropic's tool text · openai 313 chars ≈ 63–125 tokens (estimates: 2.5–5 chars/token, with margin)
