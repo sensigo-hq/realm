@@ -89,10 +89,8 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`IdempotencyDecision`](#idempotencydecision) | type | The action a store should take for a matched run. |
 | [`IdUnreadableClass`](#idunreadableclass) | type | The classes a registry with no files (the SQLite registry) gives a registered copy it cannot read: `legacy`, `newer` and `parse`. |
 | [`KeyAnswer`](#keyanswer) | type | Who holds an idempotency key, read in one snapshot: the run that holds it, the deleted runs that carried it, or no run. |
-| [`LeaseFact`](#leasefact) | type | What a probe found. |
 | [`LeaseFacts`](#leasefacts) | type | The facts about the leases of a run's in-progress claims, by lease id. |
 | [`LeaseHoldResult`](#leaseholdresult) | type | What `hold()` answers: the lease, or why there is none. |
-| [`LeaseProbeReason`](#leaseprobereason) | type | Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state). |
 | [`LeaseUnavailableReason`](#leaseunavailablereason) | type | Why a store could not make a claim lease, from the error the operating system or SQLite gave (`LeaseHoldResult`'s `unavailable`). |
 | [`LoadBearingRunRecordField`](#loadbearingrunrecordfield) | type | The `RunRecord` fields the engine relies on enough that a store must declare which of them it round-trips (`RunStore.persistedRunRecordFields`). |
 | [`MarkFinalizerResult`](#markfinalizerresult) | type | The result a `mark_finalizer` delta reports for one finalizer's handler: `completed` or `failed`. |
@@ -118,7 +116,6 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`UnreadableRegistryEntry`](#unreadableregistryentry) | type | A registered copy a listing could not read (`RegistryListing.unreadable`). |
 | [`CLOCK_READ_CLASSES`](#clock_read_classes) | const | The five classes of a clock read: what a run store's clock governs (`write`, `read`, `event`) and what it does not (`outside`, `duration`). |
 | [`FENCE_TARGETS_STEP`](#fence_targets_step) | const | Whether a member conditions one step — evaluated against the fenced method's own `stepId`. |
-| [`LEASE_PROBE_REASONS`](#lease_probe_reasons) | const | Why a probe could not say whether a lease is held: a closed list. |
 | [`LEASE_UNAVAILABLE_REASONS`](#lease_unavailable_reasons) | const | Why a store could not make a lease: a closed list, from the error the operating system or SQLite gave. |
 | [`systemClock`](#systemclock) | const | The shared system clock a store uses when nothing else is said (a `JsonFileStore` on an ordinary directory, an `InMemoryStore` built without a clock). |
 
@@ -1722,23 +1719,6 @@ type KeyAnswer = {
 };
 ```
 
-### LeaseFact
-
-type · public
-
-What a probe found. `unknown` always carries its reason; the other three never do.
-
-```ts
-type LeaseFact = {
-    readonly state: 'held' | 'not_held' | 'absent';
-    readonly basis: 'kernel_lock';
-} | {
-    readonly state: 'unknown';
-    readonly basis: 'kernel_lock';
-    readonly reason: LeaseProbeReason;
-};
-```
-
 ### LeaseFacts
 
 type · public
@@ -1773,16 +1753,6 @@ type LeaseHoldResult = {
 } | {
     readonly unavailable: LeaseUnavailableReason;
 };
-```
-
-### LeaseProbeReason
-
-type · public
-
-Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
-
-```ts
-type LeaseProbeReason = (typeof LEASE_PROBE_REASONS)[number];
 ```
 
 ### LeaseUnavailableReason
@@ -2239,23 +2209,6 @@ const FENCE_TARGETS_STEP: {
 };
 ```
 
-### LEASE_PROBE_REASONS
-
-const · public
-
-Why a probe could not say whether a lease is held: a closed list. `not_checked` is for a caller that
-did not probe at all (from CW-1b); the store's probe answers the other four.
-
-```ts
-const LEASE_PROBE_REASONS: readonly [
-    "not_checked",
-    "cannot_open",
-    "not_a_lease",
-    "permission",
-    "io_error"
-];
-```
-
 ### LEASE_UNAVAILABLE_REASONS
 
 const · beta: may change in a minor release until it settles
@@ -2345,6 +2298,8 @@ Names this job reaches whose entry is on another page.
 - [`damagedFileConcerns`](run-and-drive-a-run.md#damagedfileconcerns): Whether a damaged run file can concern a workflow: the one scope test of the keyed fallback scan and of every workflow-scoped read.
 - [`declareReleaseLine`](write-a-handler.md#declarereleaseline): Declares that a host's store class (or plain-object store) belongs to this copy of realm.
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
+- [`DEFINITION_ABSENCES`](write-a-handler.md#definition_absences): How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
+- [`DefinitionAbsence`](write-a-handler.md#definitionabsence): Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read.
 - [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the `run_phase` from the run record's fields.
 - [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`).
 - [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`).
@@ -2359,6 +2314,8 @@ Names this job reaches whose entry is on another page.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.
 - [`ExtensionIdentitySignals`](write-a-handler.md#extensionidentitysignals): Labeled advisory signals — each independently fail-soft; never part of the comparison.
 - [`ExtensionIdentityTree`](write-a-handler.md#extensionidentitytree): Versioned deterministic directory-tree fingerprint over the module roots.
+- [`FactsByCode`](write-a-handler.md#factsbycode): The typed facts of each unavailable code (`FactsOf`).
+- [`FactsOf`](write-a-handler.md#factsof): The typed facts an `Unavailable` entry carries for its code (`Unavailable.facts`).
 - [`FilterCondition`](define-and-load-a-workflow.md#filtercondition): One condition of a webhook trigger's filter: a header or a dot-path into the payload, and the value it must equal or the values one of which it must equal; a request that fails a condition is ignored.
 - [`FinalizerTrigger`](define-and-load-a-workflow.md#finalizertrigger): Terminal outcome(s) a finalizer step matches.
 - [`findEligibleSteps`](run-and-drive-a-run.md#findeligiblesteps): Returns the names of all steps currently eligible for execution.
@@ -2369,13 +2326,19 @@ Names this job reaches whose entry is on another page.
 - [`isCopyOfReadableRun`](run-and-drive-a-run.md#iscopyofreadablerun): Whether a damaged run file is a copy of a run whose own file reads: a file holding another run (`mismatched`) whose held run's file reads as that run.
 - [`JsonFileStore`](run-and-drive-a-run.md#jsonfilestore): The run store that keeps each run as a JSON file, `<runId>.json`, in its runs folder.
 - [`JsonSchema`](define-and-load-a-workflow.md#jsonschema): The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`).
+- [`LEASE_PROBE_REASONS`](write-a-handler.md#lease_probe_reasons): Why a probe could not say whether a lease is held: a closed list.
+- [`LeaseFact`](write-a-handler.md#leasefact): What a probe found.
+- [`LeaseProbeReason`](write-a-handler.md#leaseprobereason): Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
 - [`LiteralNode`](define-and-load-a-workflow.md#literalnode): A node in an input_map tree.
+- [`LoadErrorCode`](write-a-handler.md#loaderrorcode): The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`.
 - [`LoaderWarning`](write-a-handler.md#loaderwarning): A single structured diagnostic.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
 - [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads.
+- [`NoRemedy`](write-a-handler.md#noremedy): Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`).
 - [`OUTPUT_SOURCES`](read-a-runs-record.md#output_sources): Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`OutputSource`](read-a-runs-record.md#outputsource): One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`PendingGate`](read-a-runs-record.md#pendinggate): The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and choices shown to the person, when it opened, and its owner and time limit when set.
+- [`PreconditionFacts`](write-a-handler.md#preconditionfacts): A failed precondition: its expression and the value read, escaped and bounded (`PreClaimRefused.precondition`).
 - [`PrefixParts`](read-a-runs-record.md#prefixparts): A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and `format` where it had them (`UsageRecord.prefix_parts`).
 - [`PresentWay`](write-a-handler.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
 - [`Principal`](read-a-runs-record.md#principal): What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`).
@@ -2384,12 +2347,13 @@ Names this job reaches whose entry is on another page.
 - [`ProtocolConfig`](define-and-load-a-workflow.md#protocolconfig): A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`ReclaimWay`](write-a-handler.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
+- [`RefusedCheck`](write-a-handler.md#refusedcheck): The checks other than capability that refuse a step before its claim (`checkPreClaim`).
 - [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
 - [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`).
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).
 - [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question.
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).
-- [`RunPhase`](read-a-runs-record.md#runphase): Derived phase of a workflow run.
+- [`RunPhase`](write-a-handler.md#runphase): Derived phase of a workflow run.
 - [`RunRecord`](read-a-runs-record.md#runrecord): A run as its store keeps it: its workflow and version, its phase, its params, its evidence entries, the question it waits on and how it ended; a store's `get` returns it inside a `Snapshot`.
 - [`RunRecordFieldProblem`](write-a-handler.md#runrecordfieldproblem): One field a value lacks, or holds with the wrong type.
 - [`RunStepWay`](write-a-handler.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
@@ -2422,6 +2386,9 @@ Names this job reaches whose entry is on another page.
 - [`TriggerFilter`](define-and-load-a-workflow.md#triggerfilter): Post-normalisation form (loader converts shorthand → { all: [...] }).
 - [`TriggerRule`](define-and-load-a-workflow.md#triggerrule): Controls when a step becomes eligible based on its dependencies' outcomes.
 - [`TrustLevel`](define-and-load-a-workflow.md#trustlevel): The words a step's `trust` takes: `auto`, or `human_confirmed` and `human_reviewed`, which open a gate a person answers (`StepDefinition.trust`).
+- [`Unavailable`](write-a-handler.md#unavailable): A way that cannot be taken now, with its code, its facts and the remedies that lead on.
+- [`UNAVAILABLE_CODES`](write-a-handler.md#unavailable_codes): The codes that say why a way is unavailable, each with how it is judged and the verbs it applies to.
+- [`UnavailableCode`](write-a-handler.md#unavailablecode): The codes that say why a way cannot be taken now, one per reason (`Unavailable.code`).
 - [`UnreadableFileFacts`](run-and-drive-a-run.md#unreadablefilefacts): The facts of one damaged stored file: names, classes and type words, never its content.
 - [`UnreadableRunFilesFacts`](write-a-handler.md#unreadablerunfilesfacts): What `unreadableRunFilesError` carries: the command that did not run, the runs folder, and every run file it could not read.
 - [`UsageRecord`](read-a-runs-record.md#usagerecord): One request a step sent to a model provider, as the record keeps it: its index and start, its token counts and its cache facts (`StepCacheDetail.requests`, `DriveFailureRecord.usage`).

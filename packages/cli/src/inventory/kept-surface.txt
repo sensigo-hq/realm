@@ -154,6 +154,7 @@ realm run purge --workflow — option, takes a value
 realm run reclaim — command
 realm run reclaim <run-id> — argument 1, optional
 realm run reclaim --all — option, no value
+realm run reclaim --claimed-at — option, takes a value
 realm run reclaim --force — option, no value
 realm run reclaim --help — option, short -h, no value
 realm run reclaim --older-than — option, takes a value

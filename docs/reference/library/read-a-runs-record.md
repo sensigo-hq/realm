@@ -62,7 +62,6 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`Principal`](#principal) | type | What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`). |
 | [`PrincipalAbsence`](#principalabsence) | type | One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer (`Principal`'s `absent`). |
 | [`RequestEndpoint`](#requestendpoint) | type | One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`). |
-| [`RunPhase`](#runphase) | type | Derived phase of a workflow run. |
 | [`SealArm`](#sealarm) | type | Which code path sealed a run, named as a fact about the code, never a verdict on the run (`SealedBy.arm`). |
 | [`SkipDetail`](#skipdetail) | type | Why a step was skipped, keyed by step name (`RunRecord.skip_details`). |
 | [`SupplierAbsentCause`](#supplierabsentcause) | type | One of the words in `SUPPLIER_ABSENT_CAUSES`: why an evidence entry names no supplier (`readSupplier`'s `absent`). |
@@ -1080,17 +1079,6 @@ address or a custom one (`UsageRecord.endpoint`).
 type RequestEndpoint = (typeof REQUEST_ENDPOINTS)[number];
 ```
 
-### RunPhase
-
-type · public
-
-Derived phase of a workflow run. Always computed from the four step sets and run state;
-never set directly by callers outside the engine.
-
-```ts
-type RunPhase = 'running' | 'gate_waiting' | 'completed' | 'failed' | 'abandoned' | 'aborted';
-```
-
 ### SealArm
 
 type · public
@@ -1588,6 +1576,7 @@ Names this job reaches whose entry is on another page.
 - [`ProtocolConfig`](define-and-load-a-workflow.md#protocolconfig): A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).
+- [`RunPhase`](write-a-handler.md#runphase): Derived phase of a workflow run.
 - [`ServiceDefinition`](define-and-load-a-workflow.md#servicedefinition): A service a workflow declares under `services`: the adapter that calls it, its trust, and its rate limit (`WorkflowDefinition.services`).
 - [`ServiceTrust`](define-and-load-a-workflow.md#servicetrust): The words a workflow's `services: <name>: trust:` takes (`ServiceDefinition.trust`).
 - [`StepDefinition`](define-and-load-a-workflow.md#stepdefinition): One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does, how it runs, the steps it waits for, and its input and settings.

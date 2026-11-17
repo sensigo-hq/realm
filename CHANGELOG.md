@@ -10,9 +10,16 @@ All notable changes to this project are documented here.
 
 **1. On MCP, `agent_action` is `report_to_user` and `until` is never a past held deadline when every blocker is a step past its deadline.**
 
+**2. `realm run reclaim` asks for `--claimed-at <stamp>` when the claim carries a stamp and its deadline is ahead or unknown, and prints the command to run; on a claim past its deadline the old form still works. `not_a_step` and `claim_changed` exit 1.**
+
+### Added
+
+- **`realm run reclaim --claimed-at`** `<stamp>`: with `--step`, the time the step's claim was taken. The step is freed only while that is still its claim, and a reclaim refused for want of it prints the command to run.
+
 ### Changed
 
 - **Each held step carries a `reclaim` way for a person, with its conditions.** In the library, `WAY_VERBS` gains `reclaim`, and `WayOn` the new `ReclaimWay`; `Cond` gains the conditions `claim_deadline_ahead`, `override_claim_unknown_age` and `rerun_not_idempotent`; `UNAVAILABLE_CODES` and `FactsByCode` gain the codes `not_held`, `store_keeps_no_claims`, `fence_required` and `claim_changed`, and `held_elsewhere`'s facts gain the claim's stamp (`claimed_at`) and, for a deadline that cannot be read, `{ absent: 'unparseable_stamp' }`. `WayRenderer` and `LIBRARY_WORDS` gain `reclaim` with the list: a program that writes the full `WayRenderer` itself adds a `reclaim` function, and one built with `withLibraryWords` renders it in Realm's words.
+- **`reclaimStep` takes optional `definition`, `force` and `claimed_at` (beta), and judges a reclaim as the reply offered it.** With `force: true` it frees a step only as its `reclaim` way was offered: a stamped claim whose deadline is ahead or unknown needs its `claimed_at`, a stamp that is not the claim's is refused and nothing is removed, and the reclaim record names the `conditions_discharged`. Every refusal but a step not held is thrown as a `WorkflowError` carrying `refusal` (beta, also on `WorkflowErrorOptions`); `ReclaimResult` gains `conditionsDischarged` (beta), and `ReclaimStepOptions` the three members. A call without them behaves as before.
 
 ## [0.50.0] — 2026-11-17
 

@@ -27,7 +27,6 @@ Where the docs teach it: [Core library: serve MCP from your own program](../core
 | [`AnswersRow`](#answersrow) | type | The row a door's gate-answers setting puts it on: `permitted`, `asked` with a client that shows forms, or `withheld` (`answersRowOf`). |
 | [`DeclaredCause`](#declaredcause) | type | Why they are not (or `resolved` with zero members because there is no manifest). |
 | [`DeclaredState`](#declaredstate) | type | Whether the declared values are known. |
-| [`DefinitionAbsence`](#definitionabsence) | type | Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read. |
 | [`DefinitionBasis`](#definitionbasis) | type | The definition the ways were judged against: the run's workflow by id, or why it is absent. |
 | [`DisclosureAudience`](#disclosureaudience) | type | Who reads a surface (`DisclosureSet.audience`). |
 | [`EnactorBasis`](#enactorbasis) | type | The program that judges the ways: this program with its registry, an observer that passed none, or a program whose project code failed to load. |
@@ -36,13 +35,11 @@ Where the docs teach it: [Core library: serve MCP from your own program](../core
 | [`FailedAttemptStoreLike`](#failedattemptstorelike) | type | The shape of the failed-attempt store the MCP server takes, so an object that is not a `JsonFileFailedAttemptStore` can satisfy it (`RealmMcpServerOptions.failedAttemptStore`). |
 | [`GateAnswers`](#gateanswers) | type | How the MCP door handles a gate's answer: `asked` (the default, a person answers), `permitted` (the agent may answer too) or `withheld` (no way to answer). |
 | [`HomeServerOptions`](#homeserveroptions) | type | What `createRealmMcpServerOnHome` takes: the home, and every option of the server but its stores. |
-| [`LoadErrorCode`](#loaderrorcode) | type | The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`. |
 | [`LockRetries`](#lockretries) | type | A `proper-lockfile` retry policy: either a bare retry count (its own simple default backoff) or an explicit `retry`-module-compatible options object. |
 | [`MemberKind`](#memberkind) | type | Where a value a disclosure set hides came from: the environment, or the values declared to it; the declared kind wins where two overlap (`DisclosureSet.forms`). |
 | [`NotPricedCause`](#notpricedcause) | type | Why a request has no price, one member per producer (`PriceResult`'s `not_priced`). |
 | [`PriceResult`](#priceresult) | type | A price source's answer: the price, with what the same request would cost with no caching and what priced it, or why it has no price. |
 | [`Source`](#source) | type | Where a door setting came from: a flag, the environment, an option, the configuration, the default, or negotiated with the client (`DoorAnswers.source`). |
-| [`DEFINITION_ABSENCES`](#definition_absences) | const | How a `definition_absent` code arose: one per arm of `getWorkflowForRun`. |
 | [`GATE_ANSWERS_VALUES`](#gate_answers_values) | const | How the MCP door handles gate answers (`DoorAnswers.value`). |
 | [`KIND`](#kind) | const | The kind codes of a disclosure set's marks: where marks overlap, the higher code wins. |
 | [`NOT_PRICED_CAUSES`](#not_priced_causes) | const | Why a request has no price. |
@@ -389,17 +386,6 @@ Whether the declared values are known.
 type DeclaredState = 'resolved' | 'partial' | 'unknown';
 ```
 
-### DefinitionAbsence
-
-type · public
-
-Why a run's workflow definition could not be had: never registered, an agent's copy gone,
-unreadable, not a valid workflow, an older or a later format, or not read.
-
-```ts
-type DefinitionAbsence = (typeof DEFINITION_ABSENCES)[number];
-```
-
 ### DefinitionBasis
 
 type · public
@@ -508,18 +494,6 @@ type HomeServerOptions = {
 } & Omit<RealmMcpServerOptions, 'runStore' | 'workflowStore' | 'traceBufferStore' | 'failedAttemptStore'>;
 ```
 
-### LoadErrorCode
-
-type · public
-
-The code a failed load of a program's project code carries: the error's catalogue code, or
-`uncoded`. The loader throws plain errors too, and no catalogue code is minted for them (a reader
-is never sent to the catalogue for a code that is not there).
-
-```ts
-type LoadErrorCode = ErrorCode | 'uncoded';
-```
-
 ### LockRetries
 
 type · public · from `@sensigo/realm-mcp`
@@ -596,24 +570,6 @@ type Source = {
 ```
 
 ## Constants
-
-### DEFINITION_ABSENCES
-
-const · public
-
-How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
-
-```ts
-const DEFINITION_ABSENCES: readonly [
-    "agent_copy_gone",
-    "not_registered",
-    "unreadable",
-    "format_invalid",
-    "legacy",
-    "not_read",
-    "newer"
-];
-```
 
 ### GATE_ANSWERS_VALUES
 
@@ -752,6 +708,8 @@ Names this job reaches whose entry is on another page.
 - [`CreateResult`](implement-a-store.md#createresult): What a run store's `create` returns: the record with the reading the create used, and whether it was written.
 - [`CreateRunOptions`](implement-a-store.md#createrunoptions): What a run store is given to create a run: the workflow and its version, the params, and an idempotency key with the rule for a key already used (`RunStore.create`).
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
+- [`DEFINITION_ABSENCES`](write-a-handler.md#definition_absences): How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
+- [`DefinitionAbsence`](write-a-handler.md#definitionabsence): Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read.
 - [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`).
 - [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`).
 - [`DueExpiry`](write-a-handler.md#dueexpiry): An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`).
@@ -783,18 +741,19 @@ Names this job reaches whose entry is on another page.
 - [`JsonSchema`](define-and-load-a-workflow.md#jsonschema): The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`).
 - [`JsonWorkflowStore`](implement-a-store.md#jsonworkflowstore): Stores WorkflowDefinition objects as JSON files at ~/.realm/workflows/{id}.json.
 - [`KeyAnswer`](implement-a-store.md#keyanswer): Who holds an idempotency key, read in one snapshot: the run that holds it, the deleted runs that carried it, or no run.
-- [`LEASE_PROBE_REASONS`](implement-a-store.md#lease_probe_reasons): Why a probe could not say whether a lease is held: a closed list.
+- [`LEASE_PROBE_REASONS`](write-a-handler.md#lease_probe_reasons): Why a probe could not say whether a lease is held: a closed list.
 - [`LEASE_UNAVAILABLE_REASONS`](implement-a-store.md#lease_unavailable_reasons): Why a store could not make a lease: a closed list, from the error the operating system or SQLite gave.
-- [`LeaseFact`](implement-a-store.md#leasefact): What a probe found.
+- [`LeaseFact`](write-a-handler.md#leasefact): What a probe found.
 - [`LeaseFacts`](implement-a-store.md#leasefacts): The facts about the leases of a run's in-progress claims, by lease id.
 - [`LeaseFinalizerDelta`](implement-a-store.md#leasefinalizerdelta): Acquire, or re-acquire with the same token, the lease on one pending finalizer ledger entry: the drain loop's mint-before-execute step.
 - [`LeaseHold`](implement-a-store.md#leasehold): A lease this program holds.
 - [`LeaseHoldResult`](implement-a-store.md#leaseholdresult): What `hold()` answers: the lease, or why there is none.
 - [`LeasePort`](implement-a-store.md#leaseport): A store's claim leases.
-- [`LeaseProbeReason`](implement-a-store.md#leaseprobereason): Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
+- [`LeaseProbeReason`](write-a-handler.md#leaseprobereason): Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
 - [`LeaseUnavailableReason`](implement-a-store.md#leaseunavailablereason): Why a store could not make a claim lease, from the error the operating system or SQLite gave (`LeaseHoldResult`'s `unavailable`).
 - [`LiteralNode`](define-and-load-a-workflow.md#literalnode): A node in an input_map tree.
 - [`LoadBearingRunRecordField`](implement-a-store.md#loadbearingrunrecordfield): The `RunRecord` fields the engine relies on enough that a store must declare which of them it round-trips (`RunStore.persistedRunRecordFields`).
+- [`LoadErrorCode`](write-a-handler.md#loaderrorcode): The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`.
 - [`MarkFinalizerDelta`](implement-a-store.md#markfinalizerdelta): Record a finalizer handler's outcome against the lease that authorized running it.
 - [`MarkFinalizerResult`](implement-a-store.md#markfinalizerresult): The result a `mark_finalizer` delta reports for one finalizer's handler: `completed` or `failed`.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
@@ -835,7 +794,7 @@ Names this job reaches whose entry is on another page.
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).
 - [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question.
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).
-- [`RunPhase`](read-a-runs-record.md#runphase): Derived phase of a workflow run.
+- [`RunPhase`](write-a-handler.md#runphase): Derived phase of a workflow run.
 - [`RunRecord`](read-a-runs-record.md#runrecord): A run as its store keeps it: its workflow and version, its phase, its params, its evidence entries, the question it waits on and how it ended; a store's `get` returns it inside a `Snapshot`.
 - [`RunRow`](implement-a-store.md#runrow): One run as a scan's `'row'` projection gives it: the record's own fields, with four derived or renamed.
 - [`RunScopedFencePredicate`](implement-a-store.md#runscopedfencepredicate): The members that condition only the run — the only ones the run-wide `deleteAllForRunFenced` accepts.

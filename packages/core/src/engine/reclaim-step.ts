@@ -13,7 +13,17 @@ import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import { storeDeclaresSeal } from '../store/trace-buffer-store.js';
 import { ReclaimVersionChanged, type FencePredicate } from '../store/fence-predicate.js';
 import { WorkflowError } from '../types/workflow-error.js';
-import { respondWayOfGate } from './ways.js';
+import {
+  composeWaysOn,
+  judgeReclaim,
+  progressWays,
+  reclaimRefusalWords,
+  respondWayOfGate,
+  type Cond,
+  type ReclaimWay,
+  type Unavailable,
+} from './ways.js';
+import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { admitEntry } from '../admission.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { classifyClaim, omitClaim, type ClaimState } from './claim-liveness.js';
@@ -71,6 +81,12 @@ export interface ReclaimResult {
    * points the operator at `realm run drain --expired`, the guaranteed-reachable enactment lever.
    */
   gateAdvisory?: string;
+  /**
+   * #922: on a judged call (`force: true`) that reclaimed, the conditions `force` discharged, in the
+   * way's order (the reclaim record's `conditions_discharged`).
+   * @beta
+   */
+  conditionsDischarged?: readonly Cond[];
 }
 
 /**
@@ -144,13 +160,40 @@ export interface ReclaimStepOptions {
    * meaningful in-process and for any future file-backed WAL.
    */
   traceBufferStore?: TraceBufferStore;
+  /**
+   * #922: the run's workflow definition, read from the source the reclaim offer was composed from.
+   * Read only by a judged call; without it, whether a rerun is safe is not known
+   * (`rerun_not_idempotent { basis: 'definition_absent' }`).
+   * @beta
+   */
+  definition?: WorkflowDefinition;
+  /**
+   * #922: the judged call. JUDGE.reclaim runs on the record read, and on the re-read after a write
+   * race; it admits the step's offered reclaim way with every condition discharged, and refuses
+   * anything else with a `WorkflowError` carrying `refusal`. Required with `definition` or
+   * `claimed_at`. Without it a call behaves as before #922.
+   * @beta
+   */
+  force?: true;
+  /**
+   * #922: the fence — the claim's stamp as the offered way carried it. A claim with another stamp,
+   * or none, is refused `claim_changed` and nothing is removed. Required for a stamped claim whose
+   * deadline is ahead or of unknown age (`fence_required`).
+   * @beta
+   */
+  claimed_at?: string;
 }
 
 /** Pure mutation: remove the claim from in_progress + claims and append a reclaim audit entry.
  *  The step is NOT added to completed/failed/skipped (it returns to eligible); terminal marks,
  *  aborted_at, and pending_gate are untouched. #729 CW-1b part 2: `snap` is the store's snapshot
  *  the decision read, its lease facts included (the prior state judges the claim's lease). */
-function applyReclaim(snap: Snapshot, stepName: string): RunRecord {
+function applyReclaim(
+  snap: Snapshot,
+  stepName: string,
+  // #922: a judged call's discharged conditions; absent, the audit entry is as before #922.
+  discharged?: readonly Cond[],
+): RunRecord {
   const { record: run, at: now } = snap;
   const priorClaim = run.claims?.[stepName];
   const auditEvidence = captureEvidence({
@@ -164,6 +207,7 @@ function applyReclaim(snap: Snapshot, stepName: string): RunRecord {
       prior_state: classifyClaim(priorClaim, now, leaseFactOf(snap, priorClaim)),
       prior_deadline: priorClaim?.deadline ?? null,
       reclaimed_at: now.toISOString(),
+      ...(discharged !== undefined ? { conditions_discharged: [...discharged] } : {}),
     },
   });
   return {
@@ -394,6 +438,10 @@ export async function reclaimStep(
     storeKind: 'run store',
     parts: { runId, stepName, options },
   });
+  // #922: a call passing `force: true` is judged (its own order: the store's claims after the load).
+  if (options?.force === true) {
+    return reclaimJudged(store, runId, stepName, options);
+  }
   // Guard — store capability: a store that drops `claims` cannot detect or recover a wedge.
   if (!store.persistsClaims) {
     throw new WorkflowError(
@@ -586,4 +634,167 @@ export async function reclaimStep(
       ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
     };
   }
+}
+
+/**
+ * #922 (D3 §5, D4 decision 2): a judged reclaim. JUDGE.reclaim runs on the record read; refused, it
+ * throws its refusal (`not_held` is returned as before). Admitted, the claim is removed and the
+ * audit entry names the conditions discharged. On a write race the judge runs again on the re-read:
+ * a stamp passed that is no longer the claim's is `claim_changed`, nothing removed; the same stamp
+ * re-applies once; a call that passed no stamp, met by a stamped claim it was not shown, is
+ * `taken_over`.
+ */
+async function reclaimJudged(
+  store: RunStore,
+  runId: string,
+  stepName: string,
+  options: ReclaimStepOptions,
+): Promise<ReclaimResult> {
+  const judge = (snap: Snapshot): { ok: true; way: ReclaimWay } | Unavailable =>
+    judgeReclaim(
+      snap,
+      options.definition,
+      store.persistsClaims === true,
+      stepName,
+      options.claimed_at,
+      () =>
+        options.definition === undefined
+          ? []
+          : progressWays(
+              composeWaysOn(snap, {
+                definition: { ok: options.definition },
+                enactor: { kind: 'observer' },
+                store: { persistsClaims: store.persistsClaims === true },
+              }).ways,
+            ),
+    );
+  const read = await store.get(runId);
+  const priorClaim = read.record.claims?.[stepName];
+  const prior = {
+    priorState: classifyClaim(priorClaim, read.at, leaseFactOf(read, priorClaim)),
+    priorDeadline: priorClaim?.deadline ?? null,
+  };
+  const first = judge(read);
+  if (!('ok' in first)) return refuseReclaim(read, stepName, first, prior);
+  try {
+    return await writeReclaim(store, read, stepName, options, first.way.conditions, prior);
+  } catch (err) {
+    if (!(err instanceof WorkflowError) || err.code !== 'STATE_SNAPSHOT_MISMATCH') throw err;
+    const reread = await store.get(runId);
+    const again = judge(reread);
+    if (!('ok' in again)) {
+      if (options.claimed_at === undefined && again.code === 'fence_required') {
+        const gateAdvisory = buildGateExpiryAdvisory(reread);
+        return {
+          run: reread.record,
+          step: stepName,
+          outcome: 'taken_over',
+          ...prior,
+          ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
+        };
+      }
+      return refuseReclaim(reread, stepName, again, prior);
+    }
+    // once: a second mismatch propagates (reclaim loses, as before)
+    return writeReclaim(store, reread, stepName, options, again.way.conditions, prior);
+  }
+}
+
+/** #922: the write of an admitted reclaim — the trace buffer's seal or clear, then the update. */
+async function writeReclaim(
+  store: RunStore,
+  snap: Snapshot,
+  stepName: string,
+  options: ReclaimStepOptions,
+  discharged: readonly Cond[],
+  prior: Pick<ReclaimResult, 'priorState' | 'priorDeadline'>,
+): Promise<ReclaimResult> {
+  const runId = snap.record.id;
+  const traceBufferStore = options.traceBufferStore;
+  const fenced =
+    traceBufferStore !== undefined && typeof traceBufferStore.deleteFenced === 'function';
+  if (fenced && storeDeclaresSeal(traceBufferStore!)) {
+    const result = await sealStaleWalFenced(
+      traceBufferStore!,
+      runId,
+      stepName,
+      snap.record.version,
+    );
+    warnFencedSealOutcome(runId, stepName, result);
+  } else if (fenced) {
+    const result = await clearStaleWalFenced(
+      traceBufferStore!,
+      runId,
+      stepName,
+      snap.record.version,
+    );
+    warnFencedClearOutcome(runId, stepName, result);
+  }
+  const written = await store.update(applyReclaim(snap, stepName, discharged));
+  if (!fenced) {
+    await clearStaleWal(traceBufferStore, runId, stepName);
+  }
+  const gateAdvisory = buildGateExpiryAdvisory(written);
+  return {
+    run: written.record,
+    step: stepName,
+    outcome: 'reclaimed',
+    ...prior,
+    ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
+    conditionsDischarged: discharged,
+  };
+}
+
+/**
+ * #922 (D4 "From P1's audit"): a judged refusal. `not_held` is returned as before (`already_settled`
+ * / `no_active_claim`); every other is thrown as the guards throw, with `remedy` its act and
+ * `refusal` the judged entry. `run_ended` and `gated_step` keep their guards' codes and words.
+ */
+function refuseReclaim(
+  snap: Snapshot,
+  stepName: string,
+  refusal: Unavailable,
+  prior: Pick<ReclaimResult, 'priorState' | 'priorDeadline'>,
+): ReclaimResult {
+  const run = snap.record;
+  const runId = run.id;
+  if (refusal.code === 'not_held') {
+    const { outcome, detail } = classifyNoActiveClaim(run, stepName);
+    const gateAdvisory = buildGateExpiryAdvisory(snap);
+    return {
+      run,
+      step: stepName,
+      outcome,
+      ...(detail !== undefined ? { detail } : {}),
+      ...prior,
+      ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
+    };
+  }
+  const carried = {
+    category: 'STATE' as const,
+    agentAction: 'report_to_user' as const,
+    retryable: false,
+    ...(refusal.remedy.length > 0 ? { remedy: refusal.remedy } : {}),
+    refusal,
+  };
+  if (refusal.code === 'run_ended') {
+    throw new WorkflowError(
+      `Run '${runId}' is terminal (${run.run_phase}); a terminal run has no reclaimable claim.`,
+      {
+        ...carried,
+        code: 'STATE_RUN_TERMINAL',
+        details: { runId, stepName, run_phase: run.run_phase },
+      },
+    );
+  }
+  const words =
+    refusal.code === 'gated_step'
+      ? `Step '${stepName}' is the open gate on run '${runId}'; its claim is held by the open ` +
+        `question, which is answered, not reclaimed.`
+      : reclaimRefusalWords(refusal)!;
+  throw new WorkflowError(words, {
+    ...carried,
+    code: 'STATE_TRANSITION_DENIED',
+    details: { runId, stepName },
+  });
 }

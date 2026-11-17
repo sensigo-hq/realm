@@ -27,8 +27,10 @@ Where the docs teach it: [Handlers](../handlers.md), [Project extensions](../pro
 | [`ExtensionIdentityModule`](#extensionidentitymodule) | interface | One loaded extension module's identity. |
 | [`ExtensionIdentitySignals`](#extensionidentitysignals) | interface | Labeled advisory signals — each independently fail-soft; never part of the comparison. |
 | [`ExtensionIdentityTree`](#extensionidentitytree) | interface | Versioned deterministic directory-tree fingerprint over the module roots. |
+| [`FactsByCode`](#factsbycode) | interface | The typed facts of each unavailable code (`FactsOf`). |
 | [`LoaderWarning`](#loaderwarning) | interface | A single structured diagnostic. |
 | [`NewerDefinitionFacts`](#newerdefinitionfacts) | interface | The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads. |
+| [`PreconditionFacts`](#preconditionfacts) | interface | A failed precondition: its expression and the value read, escaped and bounded (`PreClaimRefused.precondition`). |
 | [`Processor`](#processor) | interface | A program's step that changes content, registered under its `id` and run in order by `runPipeline`. |
 | [`ProcessorInput`](#processorinput) | interface | The text and metadata a processor is given (`Processor.process`). |
 | [`ProcessorOutput`](#processoroutput) | interface | The text and metadata a processor returns; the next processor in the pipeline is given it. |
@@ -53,27 +55,40 @@ Where the docs teach it: [Handlers](../handlers.md), [Project extensions](../pro
 | [`AgentAction`](#agentaction) | type | What an agent does next, decided by the engine (`WorkflowError.agentAction`). |
 | [`Cond`](#cond) | type | A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`). |
 | [`CondTag`](#condtag) | type | Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member). |
+| [`DefinitionAbsence`](#definitionabsence) | type | Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read. |
 | [`ErrorCategory`](#errorcategory) | type | The broad kind of failure a `WorkflowError` reports: network, an outside service, the run's state, invalid input, the engine itself, or a resource (`WorkflowError.category`). |
 | [`ErrorFacts`](#errorfacts) | type | Any typed error facts. |
+| [`FactsOf`](#factsof) | type | The typed facts an `Unavailable` entry carries for its code (`Unavailable.facts`). |
 | [`InspectWay`](#inspectway) | type | Read the run's record. |
+| [`LeaseFact`](#leasefact) | type | What a probe found. |
+| [`LeaseProbeReason`](#leaseprobereason) | type | Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state). |
+| [`LoadErrorCode`](#loaderrorcode) | type | The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`. |
+| [`NoRemedy`](#noremedy) | type | Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`). |
 | [`PresentWay`](#presentway) | type | Show the open question again, as a form in the agent's own call: the MCP door's `present_question`. |
 | [`QuoteState`](#quotestate) | type | How a quote was found in its source: whole, reformatted, stitched from parts in order or out of order, or not found; `unquoted` is for a value given with no quote. |
 | [`ReclaimWay`](#reclaimway) | type | Free a held step so it can run again: a person's act, never an agent's. |
+| [`RefusedCheck`](#refusedcheck) | type | The checks other than capability that refuse a step before its claim (`checkPreClaim`). |
 | [`RegisterWay`](#registerway) | type | Register the run's workflow again. |
 | [`RespondWay`](#respondway) | type | Answer the run's open question. |
+| [`RunPhase`](#runphase) | type | Derived phase of a workflow run. |
 | [`RunStepWay`](#runstepway) | type | Run one step: an agent step's answer, or an engine step's input given by the operator. |
 | [`SideFileKind`](#sidefilekind) | type | One of `SIDE_FILE_KINDS`. |
 | [`Slot`](#slot) | type | A value the caller picks from a closed set, printed by each door's own rule (`RespondWay.choice`). |
 | [`StoredFileClass`](#storedfileclass) | type | What is wrong with a damaged stored file: empty, not JSON, not a run, filed under another id, from an earlier Realm, or unreadable (`UnreadableFileFacts.class`). |
 | [`StoredFileErrorFacts`](#storedfileerrorfacts) | type | The typed facts of a damaged stored file's error: one file (`scope: 'file'`) or a decision over every run that failed closed (`scope: 'files'`). |
+| [`Unavailable`](#unavailable) | type | A way that cannot be taken now, with its code, its facts and the remedies that lead on. |
+| [`UnavailableCode`](#unavailablecode) | type | The codes that say why a way cannot be taken now, one per reason (`Unavailable.code`). |
 | [`WarningCode`](#warningcode) | type | Every warning code the workflow loader can give (`LoaderWarning.code`). |
 | [`WayOn`](#wayon) | type | One act a party can take on a run, told apart by its `verb`. |
 | [`WayVerb`](#wayverb) | type | The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`). |
 | [`WorkflowCopyFault`](#workflowcopyfault) | type | What a registered copy that is a JSON object lacks to be a workflow: a numeric `schema_version`, an `id`, `steps`, or the legacy shape. |
 | [`COND_TAGS`](#cond_tags) | const | Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt. |
+| [`DEFINITION_ABSENCES`](#definition_absences) | const | How a `definition_absent` code arose: one per arm of `getWorkflowForRun`. |
+| [`LEASE_PROBE_REASONS`](#lease_probe_reasons) | const | Why a probe could not say whether a lease is held: a closed list. |
 | [`QUOTE_STATES`](#quote_states) | const | How a quote was found in its source, rung by rung: `exact`, `reformatted`, `stitched`, `stitched_out_of_order` or `not_found`, and the handler's `unquoted`. |
 | [`SIDE_FILE_KINDS`](#side_file_kinds) | const | The kinds of side file a run keeps beside its file in its runs folder: failed attempts, a trace buffer, and sealed traces. |
 | [`STORED_FILE_CLASSES`](#stored_file_classes) | const | The kinds of fault a damaged stored JSON file can have (`UnreadableFileFacts.class`). |
+| [`UNAVAILABLE_CODES`](#unavailable_codes) | const | The codes that say why a way is unavailable, each with how it is judged and the verbs it applies to. |
 | [`WAY_VERBS`](#way_verbs) | const | Every verb a way can name, as a closed list (`WayVerb`). |
 
 ## Functions
@@ -230,7 +245,7 @@ function walkField(data: unknown, fieldName: string): Record<string, unknown>[];
 
 ### WorkflowError
 
-class · public
+class · public (beta: refusal): those members may change in a minor release until they settle
 
 The error Realm throws and records, carrying a code, a category and what the agent does next. A
 handler throws one with `retryable: true` to have its step tried again when the step has a
@@ -246,6 +261,7 @@ class WorkflowError extends Error {
     readonly facts?: ErrorFacts;
     readonly about?: string;
     readonly remedy?: readonly WayOn[];
+    readonly refusal?: Unavailable;
     readonly stepId?: string;
     readonly attempt: number;
     readonly retry_after?: number;
@@ -397,6 +413,156 @@ interface ExtensionIdentityTree {
 }
 ```
 
+### FactsByCode
+
+interface · public
+
+The typed facts of each unavailable code (`FactsOf`).
+
+```ts
+interface FactsByCode {
+    run_ended: {
+        phase: RunPhase;
+    };
+    question_settled: {
+        gate_id: string;
+    };
+    question_due: {
+        gate_id: string;
+        step: string;
+        expires_at: string;
+        on_expiry: 'settle_default' | 'abort';
+    };
+    question_past_deadline: {
+        gate_id: string;
+        step: string;
+        expires_at: string;
+    };
+    gate_not_open: {
+        gate_id: string;
+        open_gate?: {
+            gate_id: string;
+            step: string;
+        };
+    };
+    not_a_step: {
+        step: string;
+        workflow_id: string;
+    };
+    step_settled: {
+        step: string;
+        outcome: 'completed' | 'failed' | 'skipped';
+    };
+    question_open: {
+        step: string;
+        gate_id: string;
+        question_step: string;
+        choices: readonly string[];
+    };
+    gated_step: {
+        step: string;
+        gate_id: string;
+        choices: readonly string[];
+    };
+    held_elsewhere: {
+        step: string;
+        deadline: string | {
+            absent: 'unknown_age';
+        } | {
+            absent: 'unparseable_stamp';
+        };
+        claimed_at: string | {
+            absent: 'no_claim_record';
+        } | {
+            absent: 'not_stamped';
+        };
+        lease?: LeaseFact;
+    };
+    upstream_cannot_run: {
+        step: string;
+        upstream: readonly string[];
+    };
+    deps_unsettled: {
+        step: string;
+        deps: readonly string[];
+    };
+    not_eligible: {
+        step: string;
+    } | {
+        reason: 'nothing_owed';
+    };
+    claim_removed: {
+        step: string;
+    };
+    refused_before_claim: {
+        step: string;
+        check: RefusedCheck;
+        refusal: string;
+        param?: string;
+        precondition?: PreconditionFacts;
+    };
+    capability_missing: {
+        step: string;
+        requirement: {
+            kind: 'handler' | 'adapter';
+            name: string;
+        };
+        basis: 'registry' | 'marker';
+    };
+    step_engine_decided: {
+        step: string;
+        execution: 'guard' | 'finalizer' | 'auto';
+    };
+    enactor_load_failed: {
+        error_code: LoadErrorCode;
+    };
+    definition_absent: {
+        workflow_id: string;
+        cause: DefinitionAbsence;
+        path?: string;
+        format?: {
+            schema_version: number;
+            reads_up_to: number;
+        };
+    };
+    argument_out_of_contract: {
+        arg: string;
+    };
+    not_held: {
+        step: string;
+    };
+    store_keeps_no_claims: {
+        step: string;
+    };
+    fence_required: {
+        step: string;
+        current_claimed_at: string;
+    };
+    claim_changed: {
+        step: string;
+        offered_claimed_at: string;
+        current_claimed_at: FactsOf<'held_elsewhere'>['claimed_at'];
+    };
+    door_cannot_enact: {
+        door: string;
+        reason?: 'engine_step';
+    };
+    no_form_here: {
+        gate_id: string;
+    };
+    form_open: {
+        gate_id: string;
+    };
+    asks_exhausted: {
+        gate_id: string;
+        sent: number;
+    };
+    door_withholds_answers: {
+        party: 'agent';
+    };
+}
+```
+
 ### LoaderWarning
 
 interface · public
@@ -456,6 +622,20 @@ interface NewerDefinitionFacts {
     path?: string;
     schema_version: number;
     reads_up_to: number;
+}
+```
+
+### PreconditionFacts
+
+interface · public
+
+A failed precondition: its expression and the value read, escaped and bounded
+(`PreClaimRefused.precondition`).
+
+```ts
+interface PreconditionFacts {
+    expression: string;
+    value: string;
 }
 ```
 
@@ -753,7 +933,7 @@ uses ErrorObject (ajv 8)
 
 ### WorkflowErrorOptions
 
-interface · public
+interface · public (beta: refusal): those members may change in a minor release until they settle
 
 What a `WorkflowError` is built with: its code and category, what the agent does next, whether it
 may be tried again, and the optional facts, step and ways on.
@@ -768,6 +948,7 @@ interface WorkflowErrorOptions {
     facts?: ErrorFacts;
     about?: string;
     remedy?: readonly WayOn[];
+    refusal?: Unavailable;
     stepId?: string;
     attempt?: number;
     retry_after?: number;
@@ -870,6 +1051,17 @@ Who discharges a condition outside Realm; `client` is the MCP client's own appro
 type CondTag = (typeof COND_TAGS)[number];
 ```
 
+### DefinitionAbsence
+
+type · public
+
+Why a run's workflow definition could not be had: never registered, an agent's copy gone,
+unreadable, not a valid workflow, an older or a later format, or not read.
+
+```ts
+type DefinitionAbsence = (typeof DEFINITION_ABSENCES)[number];
+```
+
 ### ErrorCategory
 
 type · public
@@ -891,6 +1083,16 @@ Any typed error facts.
 type ErrorFacts = ErrorFactsByCode[keyof ErrorFactsByCode];
 ```
 
+### FactsOf
+
+type · public
+
+The typed facts an `Unavailable` entry carries for its code (`Unavailable.facts`).
+
+```ts
+type FactsOf<C extends UnavailableCode> = FactsByCode[C];
+```
+
 ### InspectWay
 
 type · public
@@ -900,6 +1102,71 @@ Read the run's record.
 ```ts
 type InspectWay = Base<'inspect'> & {
     run_id: string;
+};
+```
+
+### LeaseFact
+
+type · public
+
+What a probe found. `unknown` always carries its reason; the other three never do.
+
+```ts
+type LeaseFact = {
+    readonly state: 'held' | 'not_held' | 'absent';
+    readonly basis: 'kernel_lock';
+} | {
+    readonly state: 'unknown';
+    readonly basis: 'kernel_lock';
+    readonly reason: LeaseProbeReason;
+};
+```
+
+### LeaseProbeReason
+
+type · public
+
+Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
+
+```ts
+type LeaseProbeReason = (typeof LEASE_PROBE_REASONS)[number];
+```
+
+### LoadErrorCode
+
+type · public
+
+The code a failed load of a program's project code carries: the error's catalogue code, or
+`uncoded`. The loader throws plain errors too, and no catalogue code is minted for them (a reader
+is never sent to the catalogue for a code that is not there).
+
+```ts
+type LoadErrorCode = ErrorCode | 'uncoded';
+```
+
+### NoRemedy
+
+type · public
+
+Why an `Unavailable` entry offers no way on, with the cause's own facts
+(`Unavailable.no_remedy`).
+
+```ts
+type NoRemedy = {
+    cause: 'operator_command_untyped';
+    command: 'resume' | 'drain' | 'purge' | 'start';
+} | {
+    cause: 'requires_other_program';
+    requirement: {
+        kind: 'handler' | 'adapter';
+        name: string;
+    };
+} | {
+    cause: 'another_program_holds_it';
+} | {
+    cause: 'already_settled';
+} | {
+    cause: 'engine_runs_it_when_owed';
 };
 ```
 
@@ -944,6 +1211,16 @@ type ReclaimWay = Base<'reclaim'> & {
     step: string;
     claimed_at?: string;
 };
+```
+
+### RefusedCheck
+
+type · public
+
+The checks other than capability that refuse a step before its claim (`checkPreClaim`).
+
+```ts
+type RefusedCheck = 'trust' | 'precondition' | 'input_schema';
 ```
 
 ### RegisterWay
@@ -993,6 +1270,17 @@ type RespondWay = Base<'respond'> & {
         claim_token: string;
     };
 };
+```
+
+### RunPhase
+
+type · public
+
+Derived phase of a workflow run. Always computed from the four step sets and run state;
+never set directly by callers outside the engine.
+
+```ts
+type RunPhase = 'running' | 'gate_waiting' | 'completed' | 'failed' | 'abandoned' | 'aborted';
 ```
 
 ### RunStepWay
@@ -1061,6 +1349,36 @@ type StoredFileErrorFacts = ({
 } & UnreadableRunFilesFacts);
 ```
 
+### Unavailable
+
+type · public
+
+A way that cannot be taken now, with its code, its facts and the remedies that lead on.
+
+```ts
+type Unavailable = {
+    [C in UnavailableCode]: {
+        verb: WayVerb;
+        step?: string;
+        code: C;
+        facts: FactsOf<C>;
+        clears_at?: string;
+        remedy: readonly WayOn[];
+        no_remedy?: NoRemedy;
+    };
+}[UnavailableCode];
+```
+
+### UnavailableCode
+
+type · public
+
+The codes that say why a way cannot be taken now, one per reason (`Unavailable.code`).
+
+```ts
+type UnavailableCode = keyof typeof UNAVAILABLE_CODES;
+```
+
 ### WarningCode
 
 type · public
@@ -1118,6 +1436,41 @@ OFFER_EQUALS_ADMISSION compares offer and admission over conditions Realm judges
 ```ts
 const COND_TAGS: readonly [
     "client"
+];
+```
+
+### DEFINITION_ABSENCES
+
+const · public
+
+How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
+
+```ts
+const DEFINITION_ABSENCES: readonly [
+    "agent_copy_gone",
+    "not_registered",
+    "unreadable",
+    "format_invalid",
+    "legacy",
+    "not_read",
+    "newer"
+];
+```
+
+### LEASE_PROBE_REASONS
+
+const · public
+
+Why a probe could not say whether a lease is held: a closed list. `not_checked` is for a caller that
+did not probe at all (from CW-1b); the store's probe answers the other four.
+
+```ts
+const LEASE_PROBE_REASONS: readonly [
+    "not_checked",
+    "cannot_open",
+    "not_a_lease",
+    "permission",
+    "io_error"
 ];
 ```
 
@@ -1199,6 +1552,229 @@ const STORED_FILE_CLASSES: readonly [
     "legacy",
     "unreadable"
 ];
+```
+
+### UNAVAILABLE_CODES
+
+const · public
+
+The codes that say why a way is unavailable, each with how it is judged and the verbs it applies
+to.
+One S7 law per code (rule 19): its cell in `ways.test.ts`. No member is reserved (Amendment 8).
+
+```ts
+const UNAVAILABLE_CODES: {
+    readonly run_ended: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "respond",
+            "run_step",
+            "advance",
+            "abandon",
+            "present",
+            "reclaim"
+        ];
+    };
+    readonly question_settled: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "respond",
+            "present"
+        ];
+    };
+    readonly question_due: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "respond",
+            "run_step",
+            "advance",
+            "present"
+        ];
+    };
+    readonly question_past_deadline: {
+        readonly tag: "write";
+        readonly verbs: readonly [
+            "respond"
+        ];
+    };
+    readonly gate_not_open: {
+        readonly tag: "input";
+        readonly verbs: readonly [
+            "respond",
+            "present"
+        ];
+    };
+    readonly not_a_step: {
+        readonly tag: "input";
+        readonly verbs: readonly [
+            "run_step",
+            "reclaim"
+        ];
+    };
+    readonly step_settled: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step"
+        ];
+    };
+    readonly question_open: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance",
+            "abandon"
+        ];
+    };
+    readonly gated_step: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "reclaim"
+        ];
+    };
+    readonly held_elsewhere: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance"
+        ];
+    };
+    readonly upstream_cannot_run: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step"
+        ];
+    };
+    readonly deps_unsettled: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step"
+        ];
+    };
+    readonly not_eligible: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance"
+        ];
+    };
+    readonly claim_removed: {
+        readonly tag: "write";
+        readonly verbs: readonly [
+            "run_step"
+        ];
+    };
+    readonly refused_before_claim: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance"
+        ];
+    };
+    readonly capability_missing: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance"
+        ];
+    };
+    readonly step_engine_decided: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step"
+        ];
+    };
+    readonly enactor_load_failed: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance"
+        ];
+    };
+    readonly definition_absent: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "respond",
+            "run_step",
+            "advance",
+            "abandon",
+            "present"
+        ];
+    };
+    readonly argument_out_of_contract: {
+        readonly tag: "input";
+        readonly verbs: readonly [
+            "respond",
+            "run_step",
+            "advance",
+            "inspect",
+            "abandon",
+            "present",
+            "reclaim"
+        ];
+    };
+    readonly not_held: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly store_keeps_no_claims: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly fence_required: {
+        readonly tag: "input";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly claim_changed: {
+        readonly tag: "write";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly door_cannot_enact: {
+        readonly tag: "door";
+        readonly verbs: readonly [
+            "respond",
+            "run_step",
+            "advance",
+            "inspect",
+            "abandon",
+            "register",
+            "present",
+            "reclaim"
+        ];
+    };
+    readonly no_form_here: {
+        readonly tag: "door";
+        readonly verbs: readonly [
+            "present"
+        ];
+    };
+    readonly form_open: {
+        readonly tag: "door";
+        readonly verbs: readonly [
+            "present"
+        ];
+    };
+    readonly asks_exhausted: {
+        readonly tag: "door";
+        readonly verbs: readonly [
+            "present"
+        ];
+    };
+    readonly door_withholds_answers: {
+        readonly tag: "door";
+        readonly verbs: readonly [
+            "respond"
+        ];
+    };
+};
 ```
 
 ### WAY_VERBS
