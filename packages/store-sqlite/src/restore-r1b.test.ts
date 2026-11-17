@@ -479,6 +479,8 @@ describe(
       mkdirSync(dir);
       const fifo = join(root, 'fifo.db');
       spawnSync('mkfifo', [fifo]);
+      // An empty file is refused only after the store-file tests: the store's own -wal is often 0
+      // bytes, and it must get the words of a side file of the store, not those of an empty file.
       const empty = join(root, 'empty.db');
       writeFileSync(empty, '');
       const hard = join(root, 'hard.db');
