@@ -227,6 +227,11 @@ export type MaintenanceSeams = OpenSeams & {
   readonly syncFile?: (path: string) => void;
   /** Flushes a folder's names to the disk; by default opened read-only, `fsyncSync`-ed, closed. */
   readonly syncFolder?: (path: string) => void;
+  /**
+   * #616 R1: runs when `migrate` has read a pending step's version and before it takes the hold: the
+   * window in which another writer can move the file (the cell that holds the version's re-read).
+   */
+  readonly beforeHold?: () => Promise<void>;
 };
 
 /** A refusal to back up, with the path it is about and the reason. */
@@ -986,6 +991,7 @@ export async function openMaintenance(
       let at = await fileVersion(db);
       let hold: StoreHold | undefined;
       if (at < target) {
+        await seams.beforeHold?.();
         hold = await holdStoreFile(db, source);
         // Read again under the hold: another migrate may have finished meanwhile.
         at = await fileVersion(db);

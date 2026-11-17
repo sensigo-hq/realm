@@ -430,26 +430,28 @@ describe('#616 R1 — the shorter migrate: the hold, the default copy and the re
     });
   });
 
-  it('the version is read again under the hold: a file another writer moved to version 2 after this handle read version 1 gets no copy, no record and no step', async () => {
+  it('the version is read again under the hold: a file another writer moves to version 2 after migrate read version 1, before its hold, gets no copy, no record and no step', async () => {
     const { root, home } = nestedHome();
     await versionOneStore(home);
-    const late = await maintain(home);
-    // A writer that takes no hold (an older Realm's migrate, a SQLite tool) moves the file to 2 after
-    // this handle's open read 1: a Realm migrate could not, since this handle has the file open.
-    const other = await openForeignConnection(home);
-    try {
-      migrateSchema(other, 2, REALM_STORE_VERSIONS);
-    } finally {
-      other.close();
-    }
+    // The window between migrate's first read and its hold (the seam): another writer moves the file
+    // to 2, as a migrate that took the hold and finished there would, and lets go of it.
+    const late = await maintain(home, {
+      beforeHold: async () => {
+        const other = await openForeignConnection(home);
+        try {
+          migrateSchema(other, 2, REALM_STORE_VERSIONS);
+        } finally {
+          other.close();
+        }
+      },
+    });
     const r = recorder();
     const outcome = await refusal(late.migrate({ progress: r.progress }));
     late.close();
-    // (1) red when the version is not read again under the hold (the step is run a second time and
-    //     refused, or a copy and a record are made for a file that did not move); (2) prints the
-    //     outcome, the events and the scratch folder.
-    expect({ opened: late.schemaVersion, outcome, seen: r.seen, root: readdirSync(root) }).toEqual({
-      opened: 1,
+    // (1) red when the version is not read again under the hold (a copy and a record are made, and
+    //     the step is run on a file already at 2); (2) prints the outcome, the events and the scratch
+    //     folder.
+    expect({ outcome, seen: r.seen, root: readdirSync(root) }).toEqual({
       outcome: 'resolved',
       seen: ['already at 2', 'restamped 0'],
       root: ['.realm'],

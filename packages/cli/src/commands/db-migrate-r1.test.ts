@@ -371,7 +371,7 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
     });
   });
 
-  it('two migrates racing in two processes: the file is migrated once and recorded once; the other is refused, fails at its open, or finds nothing to do', async () => {
+  it('two migrates racing in two processes: never both step; one migrates and records once while the other is refused, fails at its open or finds nothing to do, or both are refused and nothing changed', async () => {
     recordedHome();
     const [a, b] = await Promise.all([
       realmAsync(['db', 'migrate', '--no-backup']),
@@ -388,17 +388,26 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
               ? 'busy at its open'
               : `other: ${r.code} ${r.stdout} ${r.stderr}`;
     const outcomes = [outcome(a), outcome(b)].sort();
-    // (1) red when both run the step (two step lines, two records), or the loser fails some other
-    //     way; (2) prints both outcomes, the record count and the file's version.
-    expect({
-      migrated: outcomes.filter((o) => o === 'migrated').length,
-      other: ['busy at its open', 'nothing to do', 'refused in use'].includes(
-        outcomes.find((o) => o !== 'migrated') ?? 'none',
-      )
-        ? 'allowed'
-        : outcomes,
+    const version = versionOf(file);
+    // Each process has the file open from its own open, so two truly simultaneous holds can each wait
+    // out the other and both refuse (2 or 3 of 20 races in the probe, plans/r1-616/probe-race): the
+    // file is then unchanged and either can be run again. The safety is that both never step.
+    const allowed =
+      (outcomes.filter((o) => o === 'migrated').length === 1 &&
+        ['busy at its open', 'nothing to do', 'refused in use'].includes(
+          outcomes.find((o) => o !== 'migrated') ?? 'none',
+        ) &&
+        version === 2 &&
+        records().length === 1) ||
+      (outcomes.every((o) => o === 'refused in use') && version === 1 && records().length === 0);
+    // (1) red when both run the step (two step lines, two records), a loser fails some other way, or
+    //     the file and its record disagree with the outcomes; (2) prints both outcomes, the record
+    //     count and the file's version.
+    expect({ outcomes, records: records().length, version, allowed }).toEqual({
+      outcomes,
       records: records().length,
-      version: versionOf(file),
-    }).toEqual({ migrated: 1, other: 'allowed', records: 1, version: 2 });
+      version,
+      allowed: true,
+    });
   });
 });
