@@ -170,6 +170,7 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
       const { record: record } = await runStore.get(h.runId);
       lines['hand-back'] = commandOf(
         renderDetachMap(record, new Date(), 'ask', {
+          persistsClaims: false,
           pending: describePending(h.def, writtenSnapshot(record, new Date()), undefined),
           workflow: h.def,
         })

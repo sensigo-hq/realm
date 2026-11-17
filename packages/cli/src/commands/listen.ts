@@ -171,6 +171,8 @@ export interface ListenDeps {
     | 'resolveKey'
     // #597 D3b: the ledger `--send-reminders` leases and marks through.
     | 'outbound'
+    // #922: whether the store keeps claims (a held step's reclaim way is offered only then).
+    | 'persistsClaims'
   >;
   dedupStoreFor: (workflowId: string) => DedupStore;
   // issue #744: settles once Node has said whether the agent started (`'spawn'`) or not
@@ -1215,6 +1217,7 @@ async function enactSweptGate(
           : cannotGoOnLines(
               composeWaysAt(outcome.run, outcome.at, {
                 definition,
+                persistsClaims: deps.runStore.persistsClaims === true,
                 lease_facts: written.lease_facts,
               }),
               outcome.run.id,
@@ -1233,6 +1236,7 @@ async function enactSweptGate(
               cannot_go_on: cannotGoOnLines(
                 composeWaysAt(outcome.run, outcome.at, {
                   definition,
+                  persistsClaims: deps.runStore.persistsClaims === true,
                   lease_facts: written.lease_facts,
                 }),
                 outcome.run.id,

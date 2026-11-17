@@ -63,6 +63,14 @@ function rewriteLinks(body, relFile) {
 
 const DESCRIPTION = /^<!-- description: (.+) -->$/;
 
+// The library reference pages (docs/reference/library/, generated from the API reports) have one `###`
+// entry per exported name, up to about 111, and each opens with an index table linking every name. On
+// them, the "On this page" panel lists the `##` sections only: Starlight's `tableOfContents`
+// frontmatter (its schema in @astrojs/starlight 0.42: `{ minHeadingLevel, maxHeadingLevel }`).
+const LIBRARY = 'reference/library/';
+const tocOf = (rel) =>
+  rel.split(sep).join('/').startsWith(LIBRARY) ? 'tableOfContents:\n  maxHeadingLevel: 2\n' : '';
+
 // Reads one page: its title, its description and the rest of its text. Returns problems instead of
 // throwing, so one build run can name every page at fault.
 function readPage(raw) {
@@ -123,7 +131,7 @@ for (const { rel, title, description, body } of pages) {
   // characters (a hand-written quote-only replace broke on a title with a backslash).
   await writeFile(
     dest,
-    `---\ntitle: ${JSON.stringify(title)}\ndescription: ${JSON.stringify(description)}\n---\n\n${rewriteLinks(body, rel)}`,
+    `---\ntitle: ${JSON.stringify(title)}\ndescription: ${JSON.stringify(description)}\n${tocOf(rel)}---\n\n${rewriteLinks(body, rel)}`,
   );
 }
 

@@ -871,7 +871,11 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
               verb: 'run_step',
               step: 'z',
               code: 'held_elsewhere',
-              facts: { step: 'z', deadline: { absent: 'unknown_age' } },
+              facts: {
+                step: 'z',
+                deadline: { absent: 'unknown_age' },
+                claimed_at: { absent: 'not_stamped' },
+              },
               remedy: [],
             },
           ],

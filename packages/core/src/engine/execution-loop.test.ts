@@ -1556,9 +1556,10 @@ describe('executeStep', () => {
         workflowVersion: 1,
         params: {},
       });
-      const way = composeWaysAt(run, new Date(), { definition: def }).ways.find(
-        (w) => w.verb === 'run_step',
-      )!;
+      const way = composeWaysAt(run, new Date(), {
+        persistsClaims: false,
+        definition: def,
+      }).ways.find((w) => w.verb === 'run_step')!;
       expect(way.verb === 'run_step' ? way.step : undefined).toBe('review-code');
       // The run id is random: the check reads the way without it, so a '60' in a uuid cannot fail it.
       const { run_id: _id, ...rest } = way;
@@ -1586,7 +1587,10 @@ describe('executeStep', () => {
         workflowVersion: 1,
         params: {},
       });
-      const composed = composeWaysAt(run, new Date(), { definition: agentStepDef });
+      const composed = composeWaysAt(run, new Date(), {
+        persistsClaims: false,
+        definition: agentStepDef,
+      });
       const way = composed.ways.find((w) => w.verb === 'run_step')!;
       expect(way.verb === 'run_step' ? way.brief : undefined).toEqual({
         execution: 'agent',

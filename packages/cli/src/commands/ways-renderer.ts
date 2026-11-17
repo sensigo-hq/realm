@@ -105,7 +105,18 @@ export const CLI_COMMANDS: WayRenderer<string, CliHost> = {
     ),
   // #627 W: no realm command shows a question as a chat app's form (see above).
   present: () => null,
+  // #922: the claim's stamp when it carries one (the fence), the step flag from the one helper.
+  reclaim: (way, _basis, host) =>
+    (host.ctx ?? PLAIN).cmd(
+      `realm run reclaim ${way.run_id} ${reclaimStepFlag(way.step)}${way.claimed_at !== undefined ? ` --claimed-at ${shellWord(way.claimed_at)}` : ''} --force`,
+    ),
 };
+
+/** #922: the ONE step flag of a reclaim command — `--step=<name>` for a name that starts with `-`
+ *  (else the flag would read it as another flag), `--step <name>` otherwise. */
+export function reclaimStepFlag(step: string): string {
+  return step.startsWith('-') ? `--step=${shellWord(step)}` : `--step ${shellWord(step)}`;
+}
 
 /** One way's command on this door, or `null` when no command takes it. */
 export function cliCommandOf(
