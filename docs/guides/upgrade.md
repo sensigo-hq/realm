@@ -84,6 +84,25 @@ If the migrate stops with an error, the file is still at version 1 with nothing 
 
 A home the new version creates, or that `realm run import` fills, is created at version 2 and needs no migrate. An older Realm refuses a version-2 file with the line quoted in step 1, exits with code 1 and changes nothing. To go back, run `realm db restore <backup>` with this Realm first, then reinstall the older Realm: writes made after the backup are not in the restored file, but are in the copy the command keeps of the file it replaced. See [`realm db restore`](../reference/cli/realm-db.md#restore).
 
+## Going back without losing runs
+
+To use an older Realm again and keep every run this one stored, step the store file back before you install the older Realm:
+
+1. **Stop every Realm process that uses the home**, as for an upgrade.
+2. **Step back**, with this Realm still installed: `realm db migrate --to 1` takes a file at version 2 back to version 1, the version 0.49.0 writes. It makes a backup first, as a forward migrate does, keeps every run, records the step back in `~/.realm-backups/migrations.jsonl`, and prints the command that installs a Realm that writes version 1. On the sample home above, after its migrate:
+
+   ```text
+   Backed up [REDACTED]/.realm/realm.db (schema version 2, 655360 bytes) to [REDACTED]/.realm-backups/realm-v2-to-v1-20261117T103918Z.db; the copy passes SQLite's quick check.
+   Stepped [REDACTED]/.realm/realm.db back from schema version 2 to 1: 1 statement(s) ran, the schema matches version 1's. The outbound table was dropped; it held no record of a reminder or escalation sent.
+   Recorded this migrate in [REDACTED]/.realm-backups/migrations.jsonl.
+   Every command of this Realm that uses the store now refuses the file, because it is at schema version 1 and this Realm writes version 2. To use it, install a Realm that writes schema version 1: npm install -g "@sensigo/realm-cli@0.49" (in a project that lists Realm packages, give every one of them the same version, one in 0.49: the guide says all Realm packages must be the same exact version).
+   ```
+
+3. **Install that Realm**, and give every Realm package in a project the same exact version (section 2 below).
+4. **Start the processes again.**
+
+Version 2's step back drops the `outbound` table, the record of the Slack reminders and escalations `realm agent` sent; its line says how many were recorded as sent. Without that record, an agent that restarts may send a reminder or an escalation again, as 0.49.0's agents could. When a step cannot be undone, `realm db migrate --to` refuses and changes nothing; restore a backup made before the upgrade instead, with `realm db restore <backup>`. See [`realm db migrate`](../reference/cli/realm-db.md#migrate).
+
 ## The agent no longer answers gates by default
 
 From the version after 0.49.0, the agent no longer answers gates by default in an app without forms, through `realm serve`, or through a program that builds its server per HTTP request or passes `statelessHttp`. If an agent answered gates for you there, start the server with `--gate-answers permitted` (`REALM_MCP_GATE_ANSWERS=permitted` for `realm-mcp`; `gateAnswers: 'permitted'` in a program that embeds Realm). The tool the agent then gets no longer asks the app to have you approve each call, as the old default's tool did. Code that reads `offered` from `GATE_ANSWERS_VALUES`, `GateAnswers`, `AnswersRow` or the `realm/gate_answers` capability reads `permitted` now. See [Gate answers over MCP](../reference/mcp/gate-answers.md).
