@@ -1206,11 +1206,22 @@ describe('#616 R1b — the damaged-file rule', { timeout: 120_000 }, () => {
     other.exec('PRAGMA journal_mode = WAL');
     other.exec('CREATE TABLE notes (text TEXT)');
     other.close();
-    // A plain SQLite writer that commits one row and is killed: the row is only in the log.
-    spawnSync(process.execPath, [
-      '-e',
-      `const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(${JSON.stringify(file)}); d.exec("PRAGMA journal_mode = WAL; INSERT INTO notes VALUES ('the killed writer')"); process.kill(process.pid, 'SIGKILL');`,
-    ]);
+    // A writer that commits one row and is killed: the row is only in the log. It opens the file
+    // through the store's test entry (the one loader of the built-in SQLite stays the only code that
+    // names it: one-loader-616.test.ts).
+    spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        "import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';" +
+          'const db = await openForeignConnection(process.argv[1]);' +
+          'db.exec("PRAGMA journal_mode = WAL; INSERT INTO notes VALUES (\'the killed writer\')");' +
+          "process.kill(process.pid, 'SIGKILL');",
+        home,
+      ],
+      { cwd: PACKAGE_ROOT },
+    );
     const logged = statSync(`${file}-wal`).size;
     const outcome = await restore(home, backup);
     const replaced = outcome.report?.replaced;
