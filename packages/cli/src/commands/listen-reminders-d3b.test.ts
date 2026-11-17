@@ -17,6 +17,7 @@ import { createServer, type Server } from 'node:net';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { changelogAbove } from '../test-support/changelog.js';
 
 // A Slack call that does not answer times out at once (the real deadline is 30 s).
 vi.mock('../agent/gate/slack-call.js', async (orig) => ({
@@ -1464,12 +1465,7 @@ describe('#597 D3b — the words', { timeout: 30_000 }, () => {
       'docs/reference/deployment-manifest.md',
       '`realm listen --send-reminders` reads `bot_token`, `channel_id`, `reminder_interval_ms` and `escalation_threshold_ms` (added after version 0.49.0).',
     );
-    const changelog = read('CHANGELOG.md');
-    expect(
-      flat(
-        changelog.slice(changelog.indexOf('## [Unreleased]'), changelog.indexOf('\n## [0.49.0]')),
-      ),
-    ).toContain(
+    expect(flat(changelogAbove(read('CHANGELOG.md'), '0.49.0'))).toContain(
       flat(
         "- **`realm listen --send-reminders`** (issue #597): every 60 seconds, `realm listen` posts the due Slack reminder or escalation of each waiting question whose `realm agent` has stopped, into the question's own thread, through the store's outbound ledger, so it and an agent that comes back do not both post a reminder once it is recorded. A post Slack does not take because of a Slack-wide problem pauses that workflow's reminders, and `realm listen` checks Slack again after 1, 2, 4 … up to 30 minutes.",
       ),

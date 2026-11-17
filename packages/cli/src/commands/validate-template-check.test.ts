@@ -15,6 +15,11 @@ import { registerCommand } from './register.js';
 import { runCommand } from './run.js';
 import { buildCacheabilityReport, renderCacheabilityLines } from '../lib/cacheability.js';
 import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
+import {
+  changelogAbove,
+  changelogPart,
+  changelogSectionsAbove,
+} from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -353,17 +358,17 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
 
   it("CHANGELOG.md: the BREAKING line under Changed, and Upgrading item 8 (#603 A3a's is 11)", () => {
     const log = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const start = log.indexOf('## [Unreleased]');
-    const unreleased = log.slice(start, log.indexOf('\n## [', start + 1));
-    const section = (name: string): string =>
-      unreleased.slice(
-        unreleased.indexOf(`### ${name}`),
-        unreleased.indexOf('\n### ', unreleased.indexOf(`### ${name}`) + 1),
-      );
+    const section = (name: string): string => changelogAbove(log, '0.49.0', name);
+    // Each section above [0.49.0] (`[Unreleased]` while a cycle is open, then 0.50.0's) numbers
+    // its own Upgrading list.
+    const lists = changelogSectionsAbove(log, '0.49.0')
+      .map((s) =>
+        [...changelogPart(s, 'Upgrading').matchAll(/^\*\*(\d+)\./gm)].map((m) => Number(m[1])),
+      )
+      .filter((numbers) => numbers.length > 0);
     // (1) red when either is missing or moved, an item is lost from the middle, two items share a
-    // number, or the list stops before item 8; (2) prints the checks and the numbers found beside
-    // the run 1..N expected. A later item moves no pin here: it pins its own text in its own file.
-    const numbers = [...section('Upgrading').matchAll(/^\*\*(\d+)\./gm)].map((m) => Number(m[1]));
+    // number, or no list reaches item 8; (2) prints the checks and the lists found. A later item
+    // moves no pin here: it pins its own text in its own file.
     expect({
       changed: section('Changed').includes(
         '- **BREAKING: `realm workflow validate`, `register` and `watch` refuse a template filter Realm does not have, a filter argument no value accepts, and a templated field that is not text**, with the line and, when one is close, a did-you-mean. Such a template failed or misrendered when the step ran; `validate` crashed on an agent step whose prompt was not text, or whose filter argument made its render throw. Running a workflow is not refused.',
@@ -371,11 +376,9 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
       upgrading: section('Upgrading').includes(
         '**8. `register` and `watch` refuse a template filter Realm does not have, an argument no value accepts, or a templated field that is not text.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and fix what the refusal names. A stored copy keeps running as it was until you register it again.',
       ),
-      numbers,
-    }).toEqual({
-      changed: true,
-      upgrading: true,
-      numbers: Array.from({ length: Math.max(numbers.length, 8) }, (_, i) => i + 1),
-    });
+      lists,
+      runs: lists.every((numbers) => numbers.every((n, i) => n === i + 1)),
+      reaches8: lists.some((numbers) => numbers.length >= 8),
+    }).toEqual({ changed: true, upgrading: true, lists, runs: true, reaches8: true });
   });
 });

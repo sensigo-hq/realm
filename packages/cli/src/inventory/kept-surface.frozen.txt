@@ -1,10 +1,11 @@
-# frozen at main 2c0c29bf (before 0.50.0)
+# frozen at v0.50.0
 # The kept surface of realm's CLI and of `realm listen` / `realm serve`: the commands, flags, exit
 # codes and reply codes the compatibility page promises to keep. kept-surface.test.ts, beside this
 # file, regenerates it from the code and fails when it differs.
 #
 # A change here is made on purpose: regenerate it with `npx vitest run src/inventory -u` (from
-# packages/cli), commit it in the same change, and name each changed key under `## [Unreleased]` in
+# packages/cli) and run it once more without `-u` (the two censuses read the committed file as it
+# was), commit it in the same change, and name each changed key under `## [Unreleased]` in
 # CHANGELOG.md, in backticks. A row's key is its text before " — "; for example
 # `realm run migrate --detailed-exitcode`, `exit code 2`, `realm listen 403`. Rows marked `hidden`
 # and the `exit site` / `reply site` rows are listed to be seen, not promised: a change to them
@@ -43,12 +44,17 @@ realm db backup --help — option, short -h, no value
 realm db check — command
 realm db check --help — option, short -h, no value
 realm db check --json — option, no value
+realm db check --project — option, takes a value
 realm db help — command, Commander's help
 realm db help <command> — argument 1, optional
 realm db migrate — command
 realm db migrate --backup — option, takes a value
 realm db migrate --help — option, short -h, no value
 realm db migrate --no-backup — option, no value, negates
+realm db migrate --to — option, takes a value
+realm db restore — command
+realm db restore <backup> — argument 1, required
+realm db restore --help — option, short -h, no value
 realm help — command, Commander's help
 realm help <command> — argument 1, optional
 realm listen — command
@@ -68,6 +74,7 @@ realm listen --model — option, takes a value
 realm listen --port — option, takes a value, default 3000
 realm listen --prompt-cache — option, takes a value
 realm listen --provider — option, takes a value
+realm listen --send-reminders — option, no value
 realm listen --shutdown-drain — option, takes a value, default 0
 realm listen --shutdown-grace — option, takes a value, default 30
 realm listen --sweep-expired-gates — option, takes a value
