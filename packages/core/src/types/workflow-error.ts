@@ -13,7 +13,8 @@ import { brandClass, REALM_BRAND } from '../brand.js';
 export type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
 
 /**
- * What an agent does next (engine-owned, R3). `wait_for_service`: an outside service is unavailable —
+ * What an agent does next, decided by the engine (`WorkflowError.agentAction`).
+ * `wait_for_service`: an outside service is unavailable —
  * wait, then try again (issue #729 PR-0, D4 P-2: renamed from `wait_for_human`, every vocabulary read
  * uses "human" for a person). `await`: the run waits on someone else — a person's answer or another
  * program's step (D3 A-2); its replies carry `poll_after_ms` and, when the record states one, `until`.
@@ -272,9 +273,9 @@ export type ErrorCode =
   | 'MCP_TOOL_NAME_COLLISION';
 
 /**
- * The typed facts of a damaged stored file's error (issue #729 PR-0, PR0-CONTRACT Amendments 7, 7b,
- * 7e): one file (`scope: 'file'`, #719's {@link UnreadableFileFacts}) or a decision over every run
- * that failed closed (`scope: 'files'`, {@link UnreadableRunFilesFacts}). The aggregate shares both of
+ * The typed facts of a damaged stored file's error: one file (`scope: 'file'`) or a decision over
+ * every run that failed closed (`scope: 'files'`).
+ * The aggregate shares both of
  * its codes with the single-file error, so the facts carry the discriminant — never a shape told
  * apart by which keys are present.
  * @public
@@ -283,11 +284,11 @@ export type StoredFileErrorFacts =
   ({ scope: 'file' } & UnreadableFileFacts) | ({ scope: 'files' } & UnreadableRunFilesFacts);
 
 /**
- * issue #759 (PR0-CONTRACT Amendment 11 — its first owner of the validation codes): the typed facts
- * of a refused answer — the validator's rows (`errors`, Ajv's own order, capped at
- * `VALIDATION_PROBLEMS_SHOWN`, never re-sorted or de-duplicated), the total before the cap
- * (`error_count`, counted once at the validator and carried — never recounted by a renderer), and,
- * for an agent step's counted rejection, the countdown (`rejections`, `threshold`).
+ * The typed facts of a refused answer: the validator's rows, their total before the cap, and, for
+ * an agent step's counted rejection, the countdown. `errors` are in Ajv's own order, capped at
+ * `VALIDATION_PROBLEMS_SHOWN`, never re-sorted or de-duplicated; `error_count` is counted once at
+ * the validator and carried, never recounted by a renderer; `rejections` and `threshold` are the
+ * countdown.
  * @public
  */
 export interface ValidationErrorFacts {
@@ -298,8 +299,9 @@ export interface ValidationErrorFacts {
 }
 
 /**
- * The error codes whose facts are typed (PR0-CONTRACT Amendments 7, 11): ONE facts type per code,
- * entering with the unit that types it. Every other code keeps its untyped `details` until its owning
+ * The error codes whose facts are typed: one facts type per code, entering with the unit that types
+ * it.
+ * Every other code keeps its untyped `details` until its owning
  * unit types it (#759 typed the two validation codes; `VALIDATION_EXHAUSTED` and
  * `VALIDATION_TRACE_SCHEMA` stay untyped until their owners type them).
  * @public
@@ -315,9 +317,9 @@ export interface ErrorFactsByCode {
 }
 
 /**
- * #603 A3a: an answer refused because its sender is not one the question lets answer — the names
- * that may (as written: the question's `owner` and `answerers`, or the project's list), and the
- * account the channel reported for the sender.
+ * The facts of an answer refused because its sender may not answer the question: the names that
+ * may, and the account the channel reported. The names are as written: the question's `owner` and
+ * `answerers`, or the project's list.
  * @public
  */
 export interface AnswererMismatchFacts {
@@ -326,9 +328,9 @@ export interface AnswererMismatchFacts {
 }
 
 /**
- * #627 W (W-r2; MA 3's decision 2026-10-16, Amendment 11's rule — a code's facts enter with its
- * owner): a registered workflow's copy written by a LATER Realm — the copy's path, the definition
- * format it states, and the latest this version reads. Its own `scope`: the copy is not damaged, so
+ * The facts of a registered workflow copy written by a later Realm: the copy's path, the definition
+ * format it states, and the latest this version reads.
+ * Its own `scope`: the copy is not damaged, so
  * the damaged-file readers (`unreadableFactsOf`, keyed on `scope: 'file'`) must never take it, and no
  * damaged-file class (`legacy` is an OLDER format) is true of it.
  * @public
@@ -403,7 +405,7 @@ export interface WorkflowErrorOptions {
 }
 
 /**
- * The error Realm throws and records, carrying a code, a category and what the agent does next; a
+ * The error Realm throws and records, carrying a code, a category and what the agent does next. A
  * handler throws one with `retryable: true` to have its step tried again when the step has a
  * `retry` block.
  * @public

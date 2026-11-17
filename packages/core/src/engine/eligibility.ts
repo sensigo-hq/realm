@@ -139,8 +139,8 @@ function classifyByAbortedMarker(run: ClassifiableRun): SealArm | undefined {
 }
 
 /**
- * Classify a LEGACY terminal record (one written before `sealed_by` existed) into the arm it would
- * have carried. Returns `undefined` when the record cannot be placed — callers must then refuse to
+ * Classify a terminal record written before `sealed_by` existed into the arm it would have carried.
+ * Returns `undefined` when the record cannot be placed — callers must then refuse to
  * fabricate (`deriveRunPhase` falls back to the pre-#367 ladder; the future migrate vehicle buckets
  * it `unclassifiable` and exits 1).
  *
@@ -270,7 +270,7 @@ export function sealRunLevel(run: RunRecord, arm: SealArm, reason: string, now: 
 }
 
 /**
- * Derives the run_phase from the run record fields. Called after every store write to keep
+ * Derives the `run_phase` from the run record's fields. Called after every store write to keep
  * run_phase consistent — this function's return value is ALWAYS what gets persisted (issue #279,
  * increment 2, PR-C — the PHASE_IS_GENERATED law): callers must never persist a raw/stale
  * `run_phase` value, and every reader that needs the true phase should prefer this derivation over

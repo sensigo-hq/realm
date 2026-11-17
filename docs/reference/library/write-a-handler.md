@@ -18,17 +18,17 @@ Where the docs teach it: [Handlers](../handlers.md), [Project extensions](../pro
 | [`partitionBySubstring`](#partitionbysubstring) | function | Partitions a list of candidate objects into accepted and rejected groups. |
 | [`resolveResource`](#resolveresource) | function | Reads a named field from a prior step's output stored in context.resources. |
 | [`walkField`](#walkfield) | function | Recursively walks any value and collects all objects that contain a property named fieldName. |
-| [`WorkflowError`](#workflowerror) | class | The error Realm throws and records, carrying a code, a category and what the agent does next; a handler throws one with `retryable: true` to have its step tried again when the step has a `retry` block. |
-| [`AnswererMismatchFacts`](#answerermismatchfacts) | interface | #603 A3a: an answer refused because its sender is not one the question lets answer — the names that may (as written: the question's `owner` and `answerers`, or the project's list), and the account the channel reported for the sender. |
+| [`WorkflowError`](#workflowerror) | class | The error Realm throws and records, carrying a code, a category and what the agent does next. |
+| [`AnswererMismatchFacts`](#answerermismatchfacts) | interface | The facts of an answer refused because its sender may not answer the question: the names that may, and the account the channel reported. |
 | [`Base`](#base) | interface | What every way carries: its verb and the conditions it is offered with; each way type adds its own fields to it. |
-| [`DueExpiry`](#dueexpiry) | interface | An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95). |
-| [`ErrorFactsByCode`](#errorfactsbycode) | interface | The error codes whose facts are typed (PR0-CONTRACT Amendments 7, 11): ONE facts type per code, entering with the unit that types it. |
+| [`DueExpiry`](#dueexpiry) | interface | An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`). |
+| [`ErrorFactsByCode`](#errorfactsbycode) | interface | The error codes whose facts are typed: one facts type per code, entering with the unit that types it. |
 | [`ExtensionIdentityEntry`](#extensionidentityentry) | interface | One point-in-time identity of the extension code executing a run. |
 | [`ExtensionIdentityModule`](#extensionidentitymodule) | interface | One loaded extension module's identity. |
 | [`ExtensionIdentitySignals`](#extensionidentitysignals) | interface | Labeled advisory signals — each independently fail-soft; never part of the comparison. |
 | [`ExtensionIdentityTree`](#extensionidentitytree) | interface | Versioned deterministic directory-tree fingerprint over the module roots. |
 | [`LoaderWarning`](#loaderwarning) | interface | A single structured diagnostic. |
-| [`NewerDefinitionFacts`](#newerdefinitionfacts) | interface | #627 W (W-r2; MA 3's decision 2026-10-16, Amendment 11's rule — a code's facts enter with its owner): a registered workflow's copy written by a LATER Realm — the copy's path, the definition format it states, and the latest this version reads. |
+| [`NewerDefinitionFacts`](#newerdefinitionfacts) | interface | The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads. |
 | [`Processor`](#processor) | interface | A program's step that changes content, registered under its `id` and run in order by `runPipeline`. |
 | [`ProcessorInput`](#processorinput) | interface | The text and metadata a processor is given (`Processor.process`). |
 | [`ProcessorOutput`](#processoroutput) | interface | The text and metadata a processor returns; the next processor in the pipeline is given it. |
@@ -39,41 +39,41 @@ Where the docs teach it: [Handlers](../handlers.md), [Project extensions](../pro
 | [`RunRecordFieldProblem`](#runrecordfieldproblem) | interface | One field a value lacks, or holds with the wrong type. |
 | [`ServiceAdapter`](#serviceadapter) | interface | Service adapter — handles communication with a specific external API. |
 | [`ServiceResponse`](#serviceresponse) | interface | What a service adapter's call returns: the HTTP status and the data (`ServiceAdapter`'s methods). |
-| [`StableBoundary`](#stableboundary) | interface | Caching 3-B (C1): where a rendered text stops repeating between runs, in UTF-16 code units. |
-| [`StepBrief`](#stepbrief) | interface | What a `run_step` way says about its step (D1 spine 3, 4): the step's kind, its description, the prompt the agent reads (template-resolved), the input schema an agent step's answer must fit, and — a fact kept as data until #516 decides its meaning — the step's handler. |
+| [`StableBoundary`](#stableboundary) | interface | Where a rendered text stops repeating between runs, in UTF-16 code units. |
+| [`StepBrief`](#stepbrief) | interface | What a `run_step` way says about its step: its kind, its description, the prompt the agent reads, the input schema an agent's answer must fit, and its handler. |
 | [`StepContext`](#stepcontext) | interface | What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs in `resources`, keyed by step id (`StepHandler.execute`'s second argument). |
 | [`StepHandler`](#stephandler) | interface | A program's code for an `auto` step named by `handler:`: registered under its `id`, and called with the step's input and the run's context. |
 | [`StepHandlerInputs`](#stephandlerinputs) | interface | What a handler is given as input: the step's params, after its `input_map` when it has one (`StepHandler.execute`'s first argument). |
 | [`StepHandlerResult`](#stephandlerresult) | interface | What a handler returns: the step's output, and optionally a state update, a clean abort or a warning (`StepHandler.execute`'s result). |
 | [`UnreadableRunFilesFacts`](#unreadablerunfilesfacts) | interface | What `unreadableRunFilesError` carries: the command that did not run, the runs folder, and every run file it could not read. |
-| [`ValidationErrorFacts`](#validationerrorfacts) | interface | issue #759 (PR0-CONTRACT Amendment 11 — its first owner of the validation codes): the typed facts of a refused answer — the validator's rows (`errors`, Ajv's own order, capped at `VALIDATION_PROBLEMS_SHOWN`, never re-sorted or de-duplicated), the total before the cap (`error_count`, counted once at the validator and carried — never recounted by a renderer), and, for an agent step's counted rejection, the countdown (`rejections`, `threshold`). |
+| [`ValidationErrorFacts`](#validationerrorfacts) | interface | The typed facts of a refused answer: the validator's rows, their total before the cap, and, for an agent step's counted rejection, the countdown. |
 | [`WorkflowErrorOptions`](#workflowerroroptions) | interface | What a `WorkflowError` is built with: its code and category, what the agent does next, whether it may be tried again, and the optional facts, step and ways on. |
 | [`AbandonWay`](#abandonway) | type | End the run. |
-| [`AdvanceWay`](#advanceway) | type | Have the engine carry out what it owes (#625 PR-2a's act): a due expiry first, then steps. |
-| [`AgentAction`](#agentaction) | type | What an agent does next (engine-owned, R3). |
-| [`Cond`](#cond) | type | A condition a way is offered with (PR0-CONTRACT §1, D2 D-4): offered with condition c, it is admitted only when c is met (D3 A-4). |
+| [`AdvanceWay`](#advanceway) | type | Have the engine carry out what it owes: a due expiry first, then steps. |
+| [`AgentAction`](#agentaction) | type | What an agent does next, decided by the engine (`WorkflowError.agentAction`). |
+| [`Cond`](#cond) | type | A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`). |
 | [`CondTag`](#condtag) | type | Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member). |
 | [`ErrorCategory`](#errorcategory) | type | The broad kind of failure a `WorkflowError` reports: network, an outside service, the run's state, invalid input, the engine itself, or a resource (`WorkflowError.category`). |
 | [`ErrorFacts`](#errorfacts) | type | Any typed error facts. |
 | [`InspectWay`](#inspectway) | type | Read the run's record. |
-| [`PresentWay`](#presentway) | type | #627 W (Amendment 2): show the open question again, as a form in the agent's own call — the MCP door's `present_question`. |
+| [`PresentWay`](#presentway) | type | Show the open question again, as a form in the agent's own call: the MCP door's `present_question`. |
 | [`QuoteState`](#quotestate) | type | How a quote was found in its source: whole, reformatted, stitched from parts in order or out of order, or not found; `unquoted` is for a value given with no quote. |
-| [`RegisterWay`](#registerway) | type | Register the run's workflow again (D3 A-10): no JUDGE — on MCP an elsewhere entry. |
-| [`RespondWay`](#respondway) | type | Answer the run's open question (PR0-CONTRACT §1). |
-| [`RunStepWay`](#runstepway) | type | Run one step: an agent step's answer, or (the operator's lever, T-17) an engine step's input. |
+| [`RegisterWay`](#registerway) | type | Register the run's workflow again. |
+| [`RespondWay`](#respondway) | type | Answer the run's open question. |
+| [`RunStepWay`](#runstepway) | type | Run one step: an agent step's answer, or an engine step's input given by the operator. |
 | [`SideFileKind`](#sidefilekind) | type | One of `SIDE_FILE_KINDS`. |
-| [`Slot`](#slot) | type | A value the caller picks from a closed set (D1 spine 1): printed by each door's own rule (T-7). |
+| [`Slot`](#slot) | type | A value the caller picks from a closed set, printed by each door's own rule (`RespondWay.choice`). |
 | [`StoredFileClass`](#storedfileclass) | type | What is wrong with a damaged stored file: empty, not JSON, not a run, filed under another id, from an earlier Realm, or unreadable (`UnreadableFileFacts.class`). |
-| [`StoredFileErrorFacts`](#storedfileerrorfacts) | type | The typed facts of a damaged stored file's error (issue #729 PR-0, PR0-CONTRACT Amendments 7, 7b, 7e): one file (`scope: 'file'`, #719's `UnreadableFileFacts`) or a decision over every run that failed closed (`scope: 'files'`, `UnreadableRunFilesFacts`). |
+| [`StoredFileErrorFacts`](#storedfileerrorfacts) | type | The typed facts of a damaged stored file's error: one file (`scope: 'file'`) or a decision over every run that failed closed (`scope: 'files'`). |
 | [`WarningCode`](#warningcode) | type | Every warning code the workflow loader can give (`LoaderWarning.code`). |
-| [`WayOn`](#wayon) | type | One way on, discriminated on `verb` (PR0-CONTRACT §1). |
+| [`WayOn`](#wayon) | type | One act a party can take on a run, told apart by its `verb`. |
 | [`WayVerb`](#wayverb) | type | The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`). |
-| [`WorkflowCopyFault`](#workflowcopyfault) | type | What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2; #819 U2 `no_steps`, U3 `not_legacy_shape`). |
-| [`COND_TAGS`](#cond_tags) | const | #627 W: who discharges a condition outside Realm (`client`: the MCP client's own approval prompt). |
-| [`QUOTE_STATES`](#quote_states) | const | locateQuote — whether, and how, a quote appears in a source text (issue #760; design D2, D3, D6; correction 1: the locating rule A1–A9, the stitching rule S, the leftovers L1–L4). |
-| [`SIDE_FILE_KINDS`](#side_file_kinds) | const | issue #719 (F4): the kinds of side file a run keeps beside its file, in its runs folder — exported by name as one const and its type (#729 PR-0, PR0-CONTRACT Amendment 7d). |
-| [`STORED_FILE_CLASSES`](#stored_file_classes) | const | What a damaged stored JSON file is (issue #719, R7) — the shipped vocabulary of the registrar's listing, plus the run-only classes: - `empty`: zero bytes, or whitespace only; - `parse`: not JSON, or JSON that is not an object (`shape` says what it is); - `not_a_run`: an object that is not a run record (`fields` names what is missing or mistyped); - `mismatched`: a run record whose `id` is not the file's name (`held_id`, `held_file`); - `legacy`: written by an earlier Realm (`state` without `completed_steps`); - `unreadable`: the file (or the runs folder) cannot be read (`errno`). |
-| [`WAY_VERBS`](#way_verbs) | const | PR-0's verbs (option B) and #627 W's `present` (Amendment 2): PR-1 adds resume/drain/purge, PR-2 reclaim/validate/export, PR-7 start. |
+| [`WorkflowCopyFault`](#workflowcopyfault) | type | What a registered copy that is a JSON object lacks to be a workflow: a numeric `schema_version`, an `id`, `steps`, or the legacy shape. |
+| [`COND_TAGS`](#cond_tags) | const | Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt. |
+| [`QUOTE_STATES`](#quote_states) | const | How a quote was found in its source, rung by rung: `exact`, `reformatted`, `stitched`, `stitched_out_of_order` or `not_found`, and the handler's `unquoted`. |
+| [`SIDE_FILE_KINDS`](#side_file_kinds) | const | The kinds of side file a run keeps beside its file in its runs folder: failed attempts, a trace buffer, and sealed traces. |
+| [`STORED_FILE_CLASSES`](#stored_file_classes) | const | The kinds of fault a damaged stored JSON file can have (`UnreadableFileFacts.class`). |
+| [`WAY_VERBS`](#way_verbs) | const | Every verb a way can name, as a closed list (`WayVerb`). |
 
 ## Functions
 
@@ -231,7 +231,7 @@ function walkField(data: unknown, fieldName: string): Record<string, unknown>[];
 
 class · public
 
-The error Realm throws and records, carrying a code, a category and what the agent does next; a
+The error Realm throws and records, carrying a code, a category and what the agent does next. A
 handler throws one with `retryable: true` to have its step tried again when the step has a
 `retry` block.
 
@@ -260,9 +260,9 @@ class WorkflowError extends Error {
 
 interface · public
 
-#603 A3a: an answer refused because its sender is not one the question lets answer — the names
-that may (as written: the question's `owner` and `answerers`, or the project's list), and the
-account the channel reported for the sender.
+The facts of an answer refused because its sender may not answer the question: the names that
+may, and the account the channel reported. The names are as written: the question's `owner` and
+`answerers`, or the project's list.
 
 ```ts
 interface AnswererMismatchFacts {
@@ -289,7 +289,7 @@ interface Base<V extends WayVerb> {
 
 interface · public
 
-An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95).
+An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`).
 
 ```ts
 interface DueExpiry {
@@ -303,8 +303,9 @@ interface DueExpiry {
 
 interface · public
 
-The error codes whose facts are typed (PR0-CONTRACT Amendments 7, 11): ONE facts type per code,
-entering with the unit that types it. Every other code keeps its untyped `details` until its owning
+The error codes whose facts are typed: one facts type per code, entering with the unit that types
+it.
+Every other code keeps its untyped `details` until its owning
 unit types it (#759 typed the two validation codes; `VALIDATION_EXHAUSTED` and
 `VALIDATION_TRACE_SCHEMA` stay untyped until their owners type them).
 
@@ -442,9 +443,9 @@ interface LoaderWarning {
 
 interface · public
 
-#627 W (W-r2; MA 3's decision 2026-10-16, Amendment 11's rule — a code's facts enter with its
-owner): a registered workflow's copy written by a LATER Realm — the copy's path, the definition
-format it states, and the latest this version reads. Its own `scope`: the copy is not damaged, so
+The facts of a registered workflow copy written by a later Realm: the copy's path, the definition
+format it states, and the latest this version reads.
+Its own `scope`: the copy is not damaged, so
 the damaged-file readers (`unreadableFactsOf`, keyed on `scope: 'file'`) must never take it, and no
 damaged-file class (`legacy` is an OLDER format) is true of it.
 
@@ -622,7 +623,7 @@ interface ServiceResponse {
 
 interface · public
 
-Caching 3-B (C1): where a rendered text stops repeating between runs, in UTF-16 code units.
+Where a rendered text stops repeating between runs, in UTF-16 code units.
 
 ```ts
 interface StableBoundary {
@@ -635,9 +636,9 @@ interface StableBoundary {
 
 interface · public
 
-What a `run_step` way says about its step (D1 spine 3, 4): the step's kind, its description, the
-prompt the agent reads (template-resolved), the input schema an agent step's answer must fit, and —
-a fact kept as data until #516 decides its meaning — the step's handler.
+What a `run_step` way says about its step: its kind, its description, the prompt the agent reads,
+the input schema an agent's answer must fit, and its handler. The prompt is template-resolved;
+the handler is a fact kept as data until #516 decides its meaning.
 
 ```ts
 interface StepBrief {
@@ -733,11 +734,11 @@ interface UnreadableRunFilesFacts {
 
 interface · public
 
-issue #759 (PR0-CONTRACT Amendment 11 — its first owner of the validation codes): the typed facts
-of a refused answer — the validator's rows (`errors`, Ajv's own order, capped at
-`VALIDATION_PROBLEMS_SHOWN`, never re-sorted or de-duplicated), the total before the cap
-(`error_count`, counted once at the validator and carried — never recounted by a renderer), and,
-for an agent step's counted rejection, the countdown (`rejections`, `threshold`).
+The typed facts of a refused answer: the validator's rows, their total before the cap, and, for
+an agent step's counted rejection, the countdown. `errors` are in Ajv's own order, capped at
+`VALIDATION_PROBLEMS_SHOWN`, never re-sorted or de-duplicated; `error_count` is counted once at
+the validator and carried, never recounted by a renderer; `rejections` and `threshold` are the
+countdown.
 
 ```ts
 interface ValidationErrorFacts {
@@ -792,7 +793,7 @@ type AbandonWay = Base<'abandon'> & {
 
 type · public
 
-Have the engine carry out what it owes (#625 PR-2a's act): a due expiry first, then steps.
+Have the engine carry out what it owes: a due expiry first, then steps.
 
 ```ts
 type AdvanceWay = Base<'advance'> & {
@@ -809,7 +810,8 @@ type AdvanceWay = Base<'advance'> & {
 
 type · public
 
-What an agent does next (engine-owned, R3). `wait_for_service`: an outside service is unavailable —
+What an agent does next, decided by the engine (`WorkflowError.agentAction`).
+`wait_for_service`: an outside service is unavailable —
 wait, then try again (issue #729 PR-0, D4 P-2: renamed from `wait_for_human`, every vocabulary read
 uses "human" for a person). `await`: the run waits on someone else — a person's answer or another
 program's step (D3 A-2); its replies carry `poll_after_ms` and, when the record states one, `until`.
@@ -822,8 +824,9 @@ type AgentAction = 'report_to_user' | 'provide_input' | 'resolve_precondition' |
 
 type · public
 
-A condition a way is offered with (PR0-CONTRACT §1, D2 D-4): offered with condition c, it is
-admitted only when c is met (D3 A-4). PR-0's one member: `enactor_has` — the step needs a handler or
+A condition a way is offered with: a way offered with a condition is admitted only when the
+condition is met (`Base.conditions`).
+PR-0's one member: `enactor_has` — the step needs a handler or
 an adapter, and whether this program has it is judged from its `basis`: `marker` (the run's own
 `capability_blocks` record: the program that last attempted the step lacked it), `unjudged` (an
 observer passed no registry — C33: a read surface never executes project code), `load_failed` (this
@@ -894,8 +897,9 @@ type InspectWay = Base<'inspect'> & {
 
 type · public
 
-#627 W (Amendment 2): show the open question again, as a form in the agent's own call — the MCP
-door's `present_question`. The agent cannot answer through it: the person's accept records the
+Show the open question again, as a form in the agent's own call: the MCP door's
+`present_question`.
+The agent cannot answer through it: the person's accept records the
 answer. No `step`: a renderer reads the step from the reply it already holds.
 
 ```ts
@@ -920,7 +924,9 @@ type QuoteState = (typeof QUOTE_STATES)[number];
 
 type · public
 
-Register the run's workflow again (D3 A-10): no JUDGE — on MCP an elsewhere entry. `path` only
+Register the run's workflow again. No judge admits it; on MCP it is the operator's, done outside
+the conversation (the door renders no instruction).
+`path` only
 when the registry knows the file (T-21: the unreadable, invalid, legacy and newer copies carry
 it): the registered COPY that cannot be used — never a file to register (correction 2, 3.2: each
 door words it as a copy to repair).
@@ -943,7 +949,7 @@ type RegisterWay = Base<'register'> & {
 
 type · public
 
-Answer the run's open question (PR0-CONTRACT §1).
+Answer the run's open question.
 
 ```ts
 type RespondWay = Base<'respond'> & {
@@ -967,7 +973,7 @@ type RespondWay = Base<'respond'> & {
 
 type · public
 
-Run one step: an agent step's answer, or (the operator's lever, T-17) an engine step's input.
+Run one step: an agent step's answer, or an engine step's input given by the operator.
 
 ```ts
 type RunStepWay = Base<'run_step'> & {
@@ -991,7 +997,8 @@ type SideFileKind = (typeof SIDE_FILE_KINDS)[number];
 
 type · public
 
-A value the caller picks from a closed set (D1 spine 1): printed by each door's own rule (T-7).
+A value the caller picks from a closed set, printed by each door's own rule
+(`RespondWay.choice`).
 
 ```ts
 type Slot<T> = {
@@ -1014,9 +1021,9 @@ type StoredFileClass = (typeof STORED_FILE_CLASSES)[number];
 
 type · public
 
-The typed facts of a damaged stored file's error (issue #729 PR-0, PR0-CONTRACT Amendments 7, 7b,
-7e): one file (`scope: 'file'`, #719's `UnreadableFileFacts`) or a decision over every run
-that failed closed (`scope: 'files'`, `UnreadableRunFilesFacts`). The aggregate shares both of
+The typed facts of a damaged stored file's error: one file (`scope: 'file'`) or a decision over
+every run that failed closed (`scope: 'files'`).
+The aggregate shares both of
 its codes with the single-file error, so the facts carry the discriminant — never a shape told
 apart by which keys are present.
 
@@ -1042,7 +1049,7 @@ type WarningCode = 'UNKNOWN_WORKFLOW_KEY' | 'UNKNOWN_STEP_KEY' | 'UNKNOWN_CREATE
 
 type · public
 
-One way on, discriminated on `verb` (PR0-CONTRACT §1).
+One act a party can take on a run, told apart by its `verb`.
 
 ```ts
 type WayOn = RespondWay | RunStepWay | AdvanceWay | InspectWay | AbandonWay | RegisterWay | PresentWay;
@@ -1064,8 +1071,8 @@ type WayVerb = (typeof WAY_VERBS)[number];
 
 type · public
 
-What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2; #819
-U2 `no_steps`, U3 `not_legacy_shape`).
+What a registered copy that is a JSON object lacks to be a workflow: a numeric `schema_version`,
+an `id`, `steps`, or the legacy shape.
 
 ```ts
 type WorkflowCopyFault = 'schema_version_not_number' | 'no_id' | 'no_steps' | 'not_legacy_shape';
@@ -1077,8 +1084,8 @@ type WorkflowCopyFault = 'schema_version_not_number' | 'no_id' | 'no_steps' | 'n
 
 const · public
 
-#627 W: who discharges a condition outside Realm (`client`: the MCP client's own approval
-prompt). Beside `Cond`, never on `CODE_TAGS`, which tags UNAVAILABLE codes.
+Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
+Beside `Cond`, never on `CODE_TAGS`, which tags UNAVAILABLE codes.
 OFFER_EQUALS_ADMISSION compares offer and admission over conditions Realm judges, so it leaves a
 `client`-tagged condition out of the compared set.
 
@@ -1091,6 +1098,9 @@ const COND_TAGS: readonly [
 ### QUOTE_STATES
 
 const · public
+
+How a quote was found in its source, rung by rung: `exact`, `reformatted`, `stitched`,
+`stitched_out_of_order` or `not_found`, and the handler's `unquoted`.
 
 locateQuote — whether, and how, a quote appears in a source text (issue #760; design D2, D3, D6;
 correction 1: the locating rule A1–A9, the stitching rule S, the leftovers L1–L4).
@@ -1130,8 +1140,8 @@ const QUOTE_STATES: readonly [
 
 const · public
 
-issue #719 (F4): the kinds of side file a run keeps beside its file, in its runs folder —
-exported by name as one const and its type (#729 PR-0, PR0-CONTRACT Amendment 7d).
+The kinds of side file a run keeps beside its file in its runs folder: failed attempts, a trace
+buffer, and sealed traces.
 
 ```ts
 const SIDE_FILE_KINDS: readonly [
@@ -1145,8 +1155,8 @@ const SIDE_FILE_KINDS: readonly [
 
 const · public
 
-What a damaged stored JSON file is (issue #719, R7) — the shipped vocabulary of the registrar's
-listing, plus the run-only classes:
+The kinds of fault a damaged stored JSON file can have (`UnreadableFileFacts.class`). They are the
+registrar's listing's words, plus the run-only classes:
  - `empty`: zero bytes, or whitespace only;
  - `parse`: not JSON, or JSON that is not an object (`shape` says what it is);
  - `not_a_run`: an object that is not a run record (`fields` names what is missing or mistyped);
@@ -1169,6 +1179,8 @@ const STORED_FILE_CLASSES: readonly [
 
 const · public
 
+Every verb a way can name, as a closed list (`WayVerb`).
+
 PR-0's verbs (option B) and #627 W's `present` (Amendment 2): PR-1 adds resume/drain/purge, PR-2
 reclaim/validate/export, PR-7 start.
 
@@ -1190,4 +1202,4 @@ Names this job reaches whose entry is on another page.
 
 - [`ErrorCode`](define-and-load-a-workflow.md#errorcode): Every code a `WorkflowError` can carry, grouped by its category; a reply's error and the error catalogue name it (`WorkflowError.code`).
 - [`ExtensionRegistry`](run-and-drive-a-run.md#extensionregistry): The handlers, service adapters and processors a program registers by name; the engine looks a step's handler or adapter up in it.
-- [`UnreadableFileFacts`](run-and-drive-a-run.md#unreadablefilefacts): The facts of one damaged stored file (issue #719, R7; #729 PR-0 Amendments 7, 7e): names, classes and type words — never its content.
+- [`UnreadableFileFacts`](run-and-drive-a-run.md#unreadablefilefacts): The facts of one damaged stored file: names, classes and type words, never its content.

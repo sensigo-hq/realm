@@ -6,8 +6,9 @@ import type { EvidenceSnapshot, OutputSource } from '../types/run-record.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 
 /**
- * Why an evidence entry carries no `output_source`, the first that holds, in this order (whether a
- * step is bare needs its definition, so the definition's absence is asked before bareness):
+ * Why an evidence entry carries no `output_source` (`outputSourceOf`'s `absent_cause`). The first
+ * that holds, in this order (whether a step is bare needs its definition, so the definition's absence
+ * is asked before bareness):
  *  - `not_an_output_entry`: the entry records no step output — a `gate_response` entry (the answer,
  *    or the expiry that settled the question) or the reclaim audit entry (`output_summary.reclaimed`);
  *  - `definition_unavailable`: the workflow given has no step by the entry's name (or none was given),
@@ -42,9 +43,10 @@ export function isBareAutoStep(step: StepDefinition | undefined): boolean {
 }
 
 /**
- * issue #719 (R1): whether Realm calls the HOST's dispatcher for this step — the step exists, it is
- * not a guard or a finalizer (the engine settles those itself), and it is not an `auto` step with a
- * handler or a service (those run the handler or the adapter). So: every `agent` step, every bare
+ * Whether Realm calls the host's dispatcher for a step: yes unless the step is missing, a guard, a
+ * finalizer, or an `auto` step with a handler or a service. The engine settles guards and
+ * finalizers itself, and an `auto` step with a handler or a service runs that handler or adapter.
+ * So: every `agent` step, every bare
  * `auto` step, and a step whose `execution` is missing or unknown. The one predicate admission's
  * `required_parts` row and `makeCall`'s dispatcher branch both serve. A step that is not an object
  * (`null`, a string, … — a definition the host built wrong) is not one: no error escapes here.
@@ -60,9 +62,9 @@ export function callsHostDispatcher(step: StepDefinition | undefined): boolean {
 }
 
 /**
- * Where an evidence entry's output came from (F4): `{ source }` when the entry carries
- * `output_source`; otherwise `{ absent_cause }`, the first {@link OUTPUT_SOURCE_ABSENT_CAUSES} member
- * that holds. `definition` is the run's workflow, when the reader has it. `realm run inspect` renders
+ * Where an evidence entry's output came from: `{ source }` when the entry carries `output_source`,
+ * else `{ absent_cause }`, the first `OUTPUT_SOURCE_ABSENT_CAUSES` member that holds.
+ * `definition` is the run's workflow, when the reader has it. `realm run inspect` renders
  * it; a reader of an export, which writes the record as stored, derives the absence with it too.
  * @public
  */

@@ -9,9 +9,11 @@ import { loadWorkflowContext } from './workflow-context-loader.js';
 import { renderTemplateWithBoundary, type StableBoundary } from './render-template.js';
 
 /**
- * A step's `prompt`, rendered against the workflow's static context (its `workflow_context` files,
- * read now) with no run parameters and no evidence, and its {@link StableBoundary}: every placeholder
- * a run fills is unresolved here, so it is unstable and the boundary falls at the first of them. With
+ * A step's `prompt` rendered against the workflow's static context, with no run parameters and no
+ * evidence, and its `StableBoundary`. The static context is its `workflow_context` files, read now.
+ * Every placeholder a run fills is unresolved here, so it is unstable and the boundary falls at the
+ * first of them.
+ * With
  * no `prompt`, `undefined`. Async: it reads the context files; the caller gives the instant the
  * snapshots record as `loaded_at`, which no template can read and the render discards.
  * @public

@@ -1,8 +1,8 @@
 import { WorkflowError } from '../types/workflow-error.js';
 
 /**
- * The words the engine's entries name themselves by (decisions C124, C133, C151) — each entry's own
- * closed list. The word is the call the expiry line names (`this <caller> call first carried out …
+ * The words the engine's entries name themselves by, one closed list per entry.
+ * The word is the call the expiry line names (`this <caller> call first carried out …
  * (enacted_via: <caller>).`) when that call carries out an expired question's declared
  * `on_expiry`, and, for `advanceRun`, the reply's `command` unless `command` is given. The first
  * word of each list is the default: the library function itself, a program's own call. The others
@@ -33,23 +33,25 @@ export const ADVANCE_CALLERS = ENTRY_CALLERS.advanceRun;
  */
 export type AdvanceCaller = (typeof ENTRY_CALLERS.advanceRun)[number];
 /**
- * `executeStep`'s callers (decision C151).
+ * The names a call to `executeStep` can give for where it came from (`ExecuteStepOptions.caller`).
  * @public
  */
 export type StepCaller = (typeof ENTRY_CALLERS.executeStep)[number];
 /**
- * `executeEngineStep`'s callers (decisions C151, C155): its own word and `realm agent`'s — it admits
- * its own call, so a refusal names `executeEngineStep`.
+ * The names a call to `executeEngineStep` can give: its own word and `realm agent`'s. It admits its
+ * own call, so a refusal names `executeEngineStep`.
  * @public
  */
 export type EngineStepCaller = (typeof ENTRY_CALLERS.executeEngineStep)[number];
 /**
- * `executeChain`'s callers (decision C151).
+ * The names a call to `executeChain` can give for where it came from
+ * (`ExecuteChainOptions.caller`).
  * @public
  */
 export type ChainCaller = (typeof ENTRY_CALLERS.executeChain)[number];
 /**
- * `submitHumanResponse`'s callers (decision C151).
+ * The names a call to `submitHumanResponse` can give for where it came from
+ * (`SubmitGateOptions.caller`).
  * @public
  */
 export type AnswerCaller = (typeof ENTRY_CALLERS.submitHumanResponse)[number];

@@ -533,9 +533,10 @@ const _retryKeysExtraCheck: _RetryKeysExtra extends never
   : ['KNOWN_RETRY_KEYS has a key RetryConfig does not declare', _RetryKeysExtra] = true;
 
 /**
- * Gate configuration — choices available to the human reviewer, plus (issue #291) the authored
- * enforce clock (`timeout_seconds`/`on_expiry`/`default_choice`) and the authored notify clock
- * (`reminder_seconds`/`reminder_max`). See `docs/reference/yaml-schema.md`'s `structured_output`-
+ * A gate's settings: its choices, who may answer, its messages, its timeout and what happens when
+ * it expires, and its reminders. The timeout is `timeout_seconds`, `on_expiry` and
+ * `default_choice`; the reminders are `reminder_seconds` and `reminder_max`.
+ * See `docs/reference/yaml-schema.md`'s `structured_output`-
  * adjacent `## Gate timeout` section for the full authoring/enactment/disclosure contract; the
  * loader (`yaml-loader.ts`) is the normative validator for every field below.
  * @public
@@ -1186,7 +1187,8 @@ export interface WorkflowContextEntry {
 }
 
 /**
- * Wrapper format applied to {{ workflow.context.NAME }} template references.
+ * The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template
+ * (`WorkflowDefinition.context_wrapper`).
  * @public
  */
 export type ContextWrapperFormat = 'xml' | 'brackets' | 'none';

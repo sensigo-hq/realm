@@ -187,10 +187,11 @@ function logDedup(fields: Record<string, unknown>): void {
 }
 
 /**
- * Structural (not nominal) shape of `JsonFileFailedAttemptStore`'s public surface, derived via `Pick`
- * so a duck-typed cloud-backed object can satisfy it too — the concrete `JsonFileFailedAttemptStore`
- * class has a private `runsDir` field, so a plain object literal implementing these methods could
- * never be assignable to the class type itself (issue #188, PR-1: the co-location injection seam).
+ * The shape of the failed-attempt store the MCP server takes, so an object that is not a
+ * `JsonFileFailedAttemptStore` can satisfy it (`RealmMcpServerOptions.failedAttemptStore`). It is
+ * `JsonFileFailedAttemptStore`'s public surface, derived by `Pick`: that class has a private
+ * `runsDir` field, so a plain object implementing its methods could never be assigned to the class
+ * type itself.
  * Used anywhere a `JsonFileFailedAttemptStore`-like store is threaded through as an injectable
  * option. #616 PR-2a (ii-b): no longer `listOrphans` — nothing the library or its tools run calls
  * it, and a store without it (SQLite's) can be handed.

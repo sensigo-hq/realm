@@ -108,7 +108,8 @@ function parseSealedFilename(
 export type LockRetries =
   number | { retries: number; minTimeout?: number; maxTimeout?: number; randomize?: boolean };
 
-/** Lock-acquisition profile shared by every `lockWal` call in this file (issue #207).
+/**
+ * The lock-acquisition profile every `lockWal` call of the file trace buffer store uses.
  *  Constructor-injectable so a conformance suite can inflate the retry budget (e.g. to make a
  *  deliberately slow/parked fence read's lock contention observable instead of exhausting the retry
  *  budget too quickly and masking the scenario under test).

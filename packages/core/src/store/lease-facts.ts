@@ -184,7 +184,7 @@ function leasedIdsOf(record: RunRecord): string[] {
 }
 
 /**
- * The ONE reader of a claim's lease fact, on the snapshot the claim was read from:
+ * The one reader of a claim's lease fact, on the snapshot the claim was read from. It answers:
  *
  * - a claim that names no lease (no claim, or no `lease`) ⇒ `{ absent: 'unleased' }`;
  * - a claim whose stored `lease` is malformed (`null`, not an object, no string `id`) ⇒

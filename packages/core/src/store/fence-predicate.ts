@@ -22,7 +22,8 @@ import { brandClass, REALM_BRAND } from '../brand.js';
 import { assertReleaseLine } from '../release-line.js';
 
 /**
- * The four facts a fenced trace-buffer operation can be conditioned on (issue #616 PR-0). Derived
+ * The four facts a fenced trace-buffer operation can be conditioned on.
+ * Derived
  * from every fenced call site on `60a21eb` — one member per former guard; the fifth, `gc`'s
  * `run_absent`, left with that command (#616 PR-2c).
  *
@@ -127,8 +128,9 @@ export const FENCE_REQUIRES_RUN: Readonly<Record<FencePredicateKind, boolean>> =
   step_not_in_progress: true,
 };
 
-/** The read a fence is evaluated against: the lock-free `RunStore.get` the former guards used
- *  (#132's atomic-rename-safe read).
+/**
+ * The read a fence is evaluated against: the lock-free `RunStore.get`. It is the read the former
+ * guards used, safe against an atomic rename.
  * @public
  */
 export type FenceRunReader = Pick<RunStore, 'get'>;

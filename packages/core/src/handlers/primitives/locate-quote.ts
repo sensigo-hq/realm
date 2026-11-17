@@ -1,4 +1,7 @@
 /**
+ * How a quote was found in its source, rung by rung: `exact`, `reformatted`, `stitched`,
+ * `stitched_out_of_order` or `not_found`, and the handler's `unquoted`.
+ *
  * locateQuote — whether, and how, a quote appears in a source text (issue #760; design D2, D3, D6;
  * correction 1: the locating rule A1–A9, the stitching rule S, the leftovers L1–L4).
  *
