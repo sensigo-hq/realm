@@ -242,7 +242,7 @@ export function versionNewerError(
   );
 }
 
-function busyError(budgetMs: number): WorkflowError {
+export function busyError(budgetMs: number): WorkflowError {
   return new WorkflowError(
     `The store was busy for ${budgetMs / 1000} s: another writer held it. Nothing was written. ` +
       'Try again.',

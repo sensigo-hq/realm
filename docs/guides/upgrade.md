@@ -10,7 +10,7 @@ Realm's version starts with 0, and a release such as 0.44.0 may change behaviour
 
 - **Workflows you registered keep working as they were, with two exceptions.** A new version often checks workflow files more strictly. Those checks apply when a workflow is loaded from its file. A copy that is already registered is not checked again until you register it again. The first is the version after 0.48.0: it does not carry registered copies over, so after the move you register each workflow from its file (the first section, step 4), and the new version's checks apply then. The second is the version after 0.49.0: in Slack, a registered gate whose `owner` is not a Slack member ID can no longer be answered in its thread (see [In Slack, only the people a question names can answer](#in-slack-only-the-people-a-question-names-can-answer)).
 - **Runs carry over, with one exception.** Runs started on the old version can be listed, inspected and continued on the new one. The exception is the version after 0.48.0, which keeps runs in one SQLite file instead of JSON files: its first command on an old home refuses to run until you move the old folders out and import the runs. Do [the first section](#move-your-runs-into-the-sqlite-store) before anything else.
-- **A home of 0.49.0 needs one command, from the version after 0.49.0.** Its store file moves to format version 2, and every command that opens the store, except `realm db check`, `realm db backup` and `realm db migrate`, refuses the home with one line until you run `realm db migrate` with Realm stopped. See [A store version change](#a-store-version-change).
+- **A home of 0.49.0 needs one command, from the version after 0.49.0.** Its store file moves to format version 2, and every command that opens the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, refuses the home with one line until you run `realm db migrate` with Realm stopped. See [A store version change](#a-store-version-change).
 - **All Realm packages must be the same version.** There are five: `@sensigo/realm`, `@sensigo/realm-cli`, `@sensigo/realm-mcp`, `@sensigo/realm-testing` and, from the version after 0.48.0, `@sensigo/realm-store-sqlite`, which `@sensigo/realm-cli` and `@sensigo/realm-mcp` install for you.
 
 ## Move your runs into the SQLite store
@@ -56,7 +56,7 @@ Do this, in this order:
 
 ## A store version change
 
-From the version after 0.49.0, the store file `realm.db` is at format version 2, which adds `outbound`, a per-run table where `realm agent` records the Slack reminders and escalation it sends. A home that 0.49.0 used is at version 1. Every command that opens the store, except `realm db check`, `realm db backup` and `realm db migrate`, refuses it with one line, creates nothing and exits with code 1:
+From the version after 0.49.0, the store file `realm.db` is at format version 2, which adds `outbound`, a per-run table where `realm agent` records the Slack reminders and escalation it sends. A home that 0.49.0 used is at version 1. Every command that opens the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, refuses it with one line, creates nothing and exits with code 1:
 
 ```text
 Error: This store's file is at schema version 1; this Realm writes version 2. Run `realm db migrate` with Realm stopped to upgrade it.
@@ -82,7 +82,7 @@ Do this, in this order:
 
 If the migrate stops with an error, the file is still at version 1 with nothing of the step in it, and the backup it made first is where its first line says. Run the command again once the cause is fixed: each copy in the backups folder is named by the second it was made. With `--backup <path>`, the command never replaces a file, so give a new path when you run it again. The error names the cause: an evidence entry that no longer matches its stored hash means a stored run was changed outside Realm, and the step cannot run until that is fixed (restore the file from an earlier backup of your own), then run the command again.
 
-A home the new version creates, or that `realm run import` fills, is created at version 2 and needs no migrate. An older Realm refuses a version-2 file with the line quoted in step 1, exits with code 1 and changes nothing. To go back, restore the backup in place of `realm.db`, delete `realm.db-wal` and `realm.db-shm` in the home and reinstall the older Realm; writes made after the backup are lost.
+A home the new version creates, or that `realm run import` fills, is created at version 2 and needs no migrate. An older Realm refuses a version-2 file with the line quoted in step 1, exits with code 1 and changes nothing. To go back, run `realm db restore <backup>` with this Realm first, then reinstall the older Realm: writes made after the backup are not in the restored file, but are in the copy the command keeps of the file it replaced. See [`realm db restore`](../reference/cli/realm-db.md#restore).
 
 ## The agent no longer answers gates by default
 
