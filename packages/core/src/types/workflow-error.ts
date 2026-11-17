@@ -128,6 +128,15 @@ export type ErrorCode =
   // an empty one), and a schema step of it that failed (the file at the version read after it).
   | 'STATE_STORE_MIGRATE_REFUSED'
   | 'STATE_STORE_MIGRATE_FAILED'
+  // #616 R1: `realm db migrate` with a schema step pending, while another process has the store file
+  // open: nothing is changed (the maintenance code's hold, `holdStoreFile`); and `realm db restore`
+  // (R1b), refused the same way.
+  | 'STATE_STORE_IN_USE'
+  // #616 R1b: `realm db restore` refused: the backup is not a file, is the store file or a side file
+  // of it, is not a Realm store, is damaged or newer; a -wal or -shm beside a store file it cannot
+  // read; the store file appeared while it ran; a failure of the restore (its words say whether the
+  // store file was replaced).
+  | 'STATE_STORE_RESTORE_REFUSED'
   // #616 PR-2c c8a1: a store check refused before anything was opened (no store file; an empty one).
   | 'STATE_STORE_CHECK_REFUSED'
   | 'STATE_HOME_HOLDS_LEGACY_STORE'

@@ -1,11 +1,15 @@
-# frozen at v0.49.0 (computed at PR 1)
+# frozen at v0.50.0
 # The tagged rows of an API report as of that release: name · kind · tag · the first 10 hex
 # characters of the sha256 of the row's block. Written by scripts/freeze-api-report.mjs; the
 # changelog cell of packages/core/src/inventory/api-report.test.ts compares the live report with it.
 
 ## @sensigo/realm-mcp
+FailedAttemptStoreLike · type · public · cab5ac887c
 JsonTraceBufferStore · both · public · ae43cdfe39
-RealmMcpServerOptions · type · public · 32f62b80c8
+LockRetries · type · public · db281cb1a4
+OperatorRoute · type · public · eefdb3ccc5
+RealmMcpServerOptions · type · public · 276285410b
+TraceBufferLockProfile · type · public · 1be9e393c9
 createDefaultRegistry · value · public · 116b819a82
 createRealmMcpServer · value · public · 72e1efec9d
 loadPriceSource · value · public · 395abdf2b7

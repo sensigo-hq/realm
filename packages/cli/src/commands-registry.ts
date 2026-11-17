@@ -33,6 +33,7 @@ import { listenCommand } from './commands/listen.js';
 import { dbBackupCommand } from './commands/db-backup.js';
 import { dbMigrateCommand } from './commands/db-migrate.js';
 import { dbCheckCommand } from './commands/db-check.js';
+import { dbRestoreCommand } from './commands/db-restore.js';
 import { setClockErrorSink } from '@sensigo/realm';
 import { Command } from 'commander';
 import { VERSION } from './version.js';
@@ -77,7 +78,7 @@ export const runCommands = [
 ];
 
 /** Commands that maintain the store file (realm db <cmd>; #616 PR-2c). */
-export const dbCommands = [dbBackupCommand, dbMigrateCommand, dbCheckCommand];
+export const dbCommands = [dbBackupCommand, dbMigrateCommand, dbCheckCommand, dbRestoreCommand];
 
 /** Top-level commands not nested under a subgroup. */
 export const topLevelCommands = [

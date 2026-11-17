@@ -100,7 +100,7 @@ const CELLS = {
   embedded:
     'mcp-server README: the embedded server program serves 10 tools over stdio under the default',
   provider: 'cli README: the custom provider module drives realm agent',
-  db: 'realm-db: realm db backup, then realm db migrate --backup, on a home with a store, each make their copy; then realm db check finds nothing',
+  db: 'realm-db: realm db backup makes its copy, then realm db migrate on that home (at this Realm’s version: no step, so no copy and no backups folder, #616 R1); then realm db check finds nothing; then realm db restore puts the copy back (#616 R1b)',
 } as const;
 type Cell = keyof typeof CELLS;
 
@@ -167,8 +167,9 @@ const TABLE: ReadonlyArray<readonly [Page, string, string, string, Cell]> = [
   ['docs/guides/step-handlers.md', 'realm workflow validate ./', 'bash', 'run', 'handlers'],
   ['docs/guides/step-handlers.md', 'realm workflow register ./', 'bash', 'run; then start_run over stdio', 'handlers'],
   ['docs/reference/cli/realm-db.md', 'realm db backup ./realm-backup.db', 'bash', 'run on a home with a store', 'db'],
-  ['docs/reference/cli/realm-db.md', 'realm db migrate --backup ./realm-before-upgrade.db', 'bash', 'run on the same home, after the backup', 'db'],
+  ['docs/reference/cli/realm-db.md', 'realm db migrate', 'bash', 'run on the same home, after the backup', 'db'],
   ['docs/reference/cli/realm-db.md', 'realm db check', 'bash', 'run on the same home, after the backup and the migrate', 'db'],
+  ['docs/reference/cli/realm-db.md', 'realm db restore ./realm-backup.db', 'bash', 'run on the same home, after the check: puts the first line\'s copy back', 'db'],
   ['packages/cli/README.md', 'npm install -g @sensigo/realm-cli', '-', 'EXCLUDED: the npm registry; the package is checked', 'installs'],
   ['packages/cli/README.md', 'OPENAI_API_KEY=<your-key> realm agent \\', 'bash', 'EXCLUDED: a model provider and its key; the flags are checked', 'provider'],
   ['packages/cli/README.md', '// my-ollama-provider.mjs', 'javascript', 'program: written under the name its first line gives; Ollama is a stub', 'provider'],
@@ -1078,6 +1079,11 @@ describe(
       // #616 PR-2c c8a2: the page's third line, on the same home.
       const checkLine = fence('docs/reference/cli/realm-db.md', 'realm db check').trim();
       const c = sh(checkLine);
+      // #616 R1: no step pending, so the default copy is not made and its folder not created.
+      const migrateMadeNothing = !existsSync(join(home, '.realm-backups'));
+      // #616 R1b: the page's fourth line puts the first line's copy back on the same home.
+      const restoreLine = fence('docs/reference/cli/realm-db.md', 'realm db restore').trim();
+      const rs = sh(restoreLine);
       // (a) red when a command is not on the CLI, refuses its path, or makes no file there (the
       //     second example naming the first's file meets "a file already exists there"), or the check
       //     reports anything on that home; (b) prints each line, its exit code and its first line on
@@ -1090,10 +1096,13 @@ describe(
         migrateLine,
         migrateCode: m.code,
         migrateErr: m.err.split('\n')[0],
-        migrateMade: existsSync(join(project, 'realm-before-upgrade.db')),
+        migrateMadeNothing,
         checkLine,
         checkCode: c.code,
         checkErr: c.err.split('\n')[0],
+        restoreLine,
+        restoreCode: rs.code,
+        restoreErr: rs.err.split('\n')[0],
       }).toEqual({
         line,
         code: 0,
@@ -1102,10 +1111,13 @@ describe(
         migrateLine,
         migrateCode: 0,
         migrateErr: '',
-        migrateMade: true,
+        migrateMadeNothing: true,
         checkLine,
         checkCode: 0,
         checkErr: '',
+        restoreLine,
+        restoreCode: 0,
+        restoreErr: '',
       });
     });
 

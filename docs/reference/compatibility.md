@@ -28,7 +28,7 @@ When a release retires a flag, a key, a command or a reply field, Realm says so 
 
 ## The record so far
 
-Sixty releases, 0.1.0 (2026-06-01) to 0.49.0 (2026-11-11); eleven of them patch releases, none of which changed any of the above. What a correct workflow file does or may contain changed fifteen times, in six releases; eleven of the fifteen refused a file that was already wrong, each with a message saying what to write instead; one key was removed (0.14.0, `services.auth.token_from`; a file that still has it is refused with a message that says so). The library's exported names and the MCP replies' fields changed more often; the units below are what makes them easy to keep from here. These numbers are refreshed at each release.
+Sixty-one releases, 0.1.0 (2026-06-01) to 0.50.0 (2026-11-17); eleven of them patch releases, none of which changed any of the above. What a correct workflow file does or may contain changed fifteen times, in six releases; eleven of the fifteen refused a file that was already wrong, each with a message saying what to write instead; one key was removed (0.14.0, `services.auth.token_from`; a file that still has it is refused with a message that says so). The library's exported names and the MCP replies' fields changed more often; the units below are what makes them easy to keep from here. These numbers are refreshed at each release.
 
 ## The road to 1.0
 
