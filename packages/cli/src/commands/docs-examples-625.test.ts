@@ -1057,7 +1057,7 @@ describe(
           0,
           [
             'Valid: price v1 (2 steps)',
-            'Extensions: ./registry.mjs (adapters: 0, handlers: 1, processors: 0)',
+            'Not checked: 1 template reference(s) on data the workflow declares no shape for, or a context entry only a file adds: confirm.prompt: context.resources.total.total',
           ],
         ],
         register: 0,

@@ -99,6 +99,7 @@ It prints:
 
 ```text
 Valid: price v1 (2 steps)
+Not checked: 1 template reference(s) on data the workflow declares no shape for, or a context entry only a file adds: confirm.prompt: context.resources.total.total
 Extensions: ./registry.mjs (adapters: 0, handlers: 1, processors: 0)
 ℹ 1 step ready for structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
 cache: confirm — anthropic 587 chars ≈ 338–765 tokens, with Anthropic's tool text · openai 310 chars ≈ 62–124 tokens (estimates: 2.5–5 chars/token, with margin)

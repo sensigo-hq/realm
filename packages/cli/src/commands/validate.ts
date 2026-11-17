@@ -230,17 +230,26 @@ function renderWhenCheckFailedLine(notChecked: readonly NotCheckedPath[]): strin
   );
 }
 
+/** Piece 3a-ii-b: the most template references the human line names; `--json` lists every one. */
+const TEMPLATE_REFS_SHOWN = 10;
+
 /**
- * Fix 1, piece 3a-ii-a — the template references (`gate.message`, `display`) on data the workflow
- * declares no shape for, or on a context entry only a file adds.
+ * Fix 1, piece 3a-ii-a — the template references (`gate.message`, `display`; piece 3a-ii-b:
+ * `prompt`, `instructions`) on data the workflow declares no shape for, or on a context entry only
+ * a file adds. Prompts multiply these, so the line names the first ten, then how many more.
  */
 function renderTemplateNotCheckedLine(notChecked: readonly NotCheckedPath[]): string | undefined {
   const refs = notChecked.filter((n) => n.why !== 'check_failed');
   if (refs.length === 0) return undefined;
+  const more = refs.length - TEMPLATE_REFS_SHOWN;
   return (
     `Not checked: ${refs.length} template reference(s) on data the workflow declares no shape ` +
     `for, or a context entry only a file adds: ` +
-    refs.map((n) => `${n.step}.${n.key}: ${n.path}`).join(', ')
+    refs
+      .slice(0, TEMPLATE_REFS_SHOWN)
+      .map((n) => `${n.step}.${n.key}: ${n.path}`)
+      .join(', ') +
+    (more > 0 ? `, and ${more} more; --json lists every one` : '')
   );
 }
 
