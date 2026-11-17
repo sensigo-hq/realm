@@ -14,6 +14,7 @@ import { validateCommand } from './validate.js';
 import { registerCommand } from './register.js';
 import { watchWorkflow } from './watch.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { changelogAbove } from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -550,15 +551,10 @@ describe('the words — fix 1, piece 4', () => {
   });
 
   it('check 9: the CHANGELOG line under [Unreleased] → Changed', () => {
-    const log = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
-    const top = log.includes('## [Unreleased]')
-      ? log.indexOf('## [Unreleased]')
-      : log.indexOf('\n## [') + 1;
-    const unreleased = log.slice(top, log.indexOf('\n## [', top + 1));
-    const changed = unreleased.slice(
-      unreleased.indexOf('### Changed'),
-      unreleased.indexOf('### Fixed'),
+    const changed = changelogAbove(
+      readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8'),
+      '0.49.0',
+      'Changed',
     );
     // (1) red when the line is missing or moved out of Changed; (2) prints the check.
     expect(

@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { changelogAbove } from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const flat = (t: string): string => t.replace(/\s+/g, ' ');
@@ -120,12 +121,7 @@ describe('#603 A3b — the screens name the Slack account that answered: the wor
 
   it('the CHANGELOG’s Changed entry', () => {
     // The CLI's "checks 1 and 3", "check 2"; the MCP tool's "check 9".
-    const text = read('CHANGELOG.md');
-    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
-    const top = text.includes('## [Unreleased]')
-      ? text.indexOf('## [Unreleased]')
-      : text.indexOf('\n## [') + 1;
-    const section = text.slice(top, text.indexOf('\n## [0.49.0]'));
+    const section = changelogAbove(read('CHANGELOG.md'), '0.49.0');
     const entry =
       "- **The screens name the Slack account that answered, as Slack reports it.** `realm run inspect`'s answer line, which said '(not stated)', and the outcome sentences and the thread's receipt, which named no one, now name the account Slack reported for the reply. The MCP answer instruction offers `responded_by` for the person's own name; a value wrapped whole in `<` `>`, as the placeholder is, records no name. (#603)";
     expect(flat(section), `the CHANGELOG no longer says: ${entry}`).toContain(flat(entry));

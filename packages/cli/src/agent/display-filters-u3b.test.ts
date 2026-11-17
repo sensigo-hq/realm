@@ -13,6 +13,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { changelogAbove } from '../test-support/changelog.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -490,11 +491,7 @@ describe('fix 1, piece 3b — the words (check 7)', () => {
     // check 4 and "where values show as their shapes" (Slack's shapes); core's display-filters-u3b
     // (the states).
     const text = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
-    const top = text.includes('## [Unreleased]')
-      ? text.indexOf('## [Unreleased]')
-      : text.indexOf('\n## [') + 1;
-    const unreleased = text.slice(top, text.indexOf('\n## [0.49.0]'));
+    const unreleased = changelogAbove(text, '0.49.0');
     expect(flat(unreleased), 'the CHANGELOG no longer says the Fixed line').toContain(
       flat(
         "- **A `display` template's filters now work** (for example `{{ key_changes | bullets }}` in example 08): in `realm agent`'s result line and gate print, `realm workflow run`'s gate print, and the Slack post, where a value shows as its shape. Before, a placeholder with a filter was shown as nothing (an empty line where it stood alone). `default` fills a missing value; otherwise a path that finds nothing is still shown as nothing, and a filter that cannot apply to a value that is there leaves the placeholder as written (or, where values show as their shapes, the shape of a value that is not a list or a map). `display` values are masked before any filter runs.",

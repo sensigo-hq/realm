@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { changelogAbove } from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const flat = (t: string): string => t.replace(/\s+/g, ' ');
@@ -35,16 +36,7 @@ describe('CP-1 PR 3 — the words of the internal entry', () => {
 
   it('CHANGELOG.md: the Added line under [Unreleased]', () => {
     // The same two cells.
-    const text = read('CHANGELOG.md');
-    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
-    const top = text.includes('## [Unreleased]')
-      ? text.indexOf('## [Unreleased]')
-      : text.indexOf('\n## [') + 1;
-    const unreleased = text.slice(top, text.indexOf('\n## [', top + 1));
-    const added = unreleased.slice(
-      unreleased.indexOf('### Added'),
-      unreleased.indexOf('\n### ', unreleased.indexOf('### Added') + 1),
-    );
+    const added = changelogAbove(read('CHANGELOG.md'), '0.49.0', 'Added');
     const line =
       "- `@sensigo/realm/internal` and `@sensigo/realm-mcp/internal`: each exports everything its main entry exports, from the same files, so a class is one object whichever entry imports it. Nothing moves: the main entries are unchanged before 1.0 (the compatibility page's road to 1.0 says what moves then).";
     // (1) red when the line is reworded or not under `### Added`; (2) prints the line.

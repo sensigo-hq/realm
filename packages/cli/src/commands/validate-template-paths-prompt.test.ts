@@ -13,6 +13,7 @@ import { validateCommand } from './validate.js';
 import { registerCommand } from './register.js';
 import { runCommand } from './run.js';
 import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
+import { changelogAbove } from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -224,15 +225,7 @@ describe('fix 1, piece 3a-ii-b — the words the changelog, the docs transcripts
 
   it('CHANGELOG.md: the BREAKING line under Changed, and Upgrading item 14', () => {
     const log = read('CHANGELOG.md');
-    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
-    const top = log.includes('## [Unreleased]')
-      ? log.indexOf('## [Unreleased]')
-      : log.indexOf('\n## [') + 1;
-    const unreleased = log.slice(top, log.indexOf('\n## [', top + 1));
-    const section = (name: string): string => {
-      const i = unreleased.indexOf(`### ${name}`);
-      return unreleased.slice(i, unreleased.indexOf('\n### ', i + 1));
-    };
+    const section = (name: string): string => changelogAbove(log, '0.49.0', name);
     // (1) red when either is missing, moved or misnumbered; (2) prints the checks.
     expect({
       changed: section('Changed').includes(

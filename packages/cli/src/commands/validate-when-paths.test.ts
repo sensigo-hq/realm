@@ -16,6 +16,7 @@ import { runCommand } from './run.js';
 import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
 // The built core's resolver, the very module `@sensigo/realm` loads: check 10 plants a throw in it.
 import { PathIndex } from '../../../core/dist/workflow/path-resolver.js';
+import { changelogPart, changelogSectionsAbove } from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -380,19 +381,20 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
       '**5. `register` and `watch` refuse a `when` condition that cannot work as written, because of what it reads or compares.** Run `realm workflow validate` on each file, or `realm workflow validate --registered <id>` on each stored workflow, and fix the condition the refusal names. A stored copy keeps running as it was until you register it again.',
     );
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
-    const top = changelog.includes('## [Unreleased]')
-      ? changelog.indexOf('## [Unreleased]')
-      : changelog.indexOf('\n## [') + 1;
-    const unreleased = changelog.slice(top, changelog.indexOf('\n## [', top + 1));
-    const upgrading = unreleased.slice(
-      unreleased.indexOf('### Upgrading'),
-      unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
-    );
-    // (1) red when an item is lost from the middle, two items share a number, or the list stops
-    // before this file's own item 5; (2) prints the numbers found beside the run 1..N expected.
-    // Each item's own text is pinned by the file that added it, so a new item moves no pin here.
-    const numbers = [...upgrading.matchAll(/^\*\*(\d+)\. /gm)].map((m) => Number(m[1]));
-    expect(numbers).toEqual(Array.from({ length: Math.max(numbers.length, 5) }, (_, i) => i + 1));
+    // Each section above [0.49.0] (`[Unreleased]` while a cycle is open, then 0.50.0's) numbers
+    // its own Upgrading list.
+    const lists = changelogSectionsAbove(changelog, '0.49.0')
+      .map((s) =>
+        [...changelogPart(s, 'Upgrading').matchAll(/^\*\*(\d+)\. /gm)].map((m) => Number(m[1])),
+      )
+      .filter((numbers) => numbers.length > 0);
+    // (1) red when an item is lost from the middle, two items share a number, or no list reaches
+    // this file's own item 5; (2) prints the lists found. Each item's own text is pinned by the
+    // file that added it, so a new item moves no pin here.
+    expect({
+      lists,
+      runs: lists.every((numbers) => numbers.every((n, i) => n === i + 1)),
+      reaches5: lists.some((numbers) => numbers.length >= 5),
+    }).toEqual({ lists, runs: true, reaches5: true });
   });
 });

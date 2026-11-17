@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { changelogAbove } from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const flat = (t: string): string => t.replace(/\s+/g, ' ');
@@ -17,14 +18,9 @@ const read = (page: string): string => readFileSync(join(ROOT, page), 'utf8');
 function claim(page: string, sentence: string): void {
   expect(flat(read(page)), `${page} no longer says: ${sentence}`).toContain(flat(sentence));
 }
-/** The section that holds this unit's entries: `[Unreleased]` until a release renames it. */
+/** The sections that hold this unit's entries: `[Unreleased]` while open, then 0.50.0's. */
 function claimChangelog(sentence: string): void {
-  const text = read('CHANGELOG.md');
-  // #871's form: `[Unreleased]` until a release renames it, then the first section (the release's).
-  const top = text.includes('## [Unreleased]')
-    ? text.indexOf('## [Unreleased]')
-    : text.indexOf('\n## [') + 1;
-  const section = text.slice(top, text.indexOf('\n## [0.49.0]'));
+  const section = changelogAbove(read('CHANGELOG.md'), '0.49.0');
   expect(flat(section), `the CHANGELOG no longer says: ${sentence}`).toContain(flat(sentence));
 }
 
