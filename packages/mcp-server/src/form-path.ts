@@ -12,6 +12,8 @@
 // nothing, and says how the form ended (1.4).
 import {
   composeWaysOn,
+  openWithOwnAct,
+  stepCompletedWords,
   waysStoreOf,
   deriveRunPhase,
   dueExpiry,
@@ -585,18 +587,35 @@ function cameBackSentence(
  * run-ended arm); still open → W-f2, `not_written`. A form that came back: the run ended (the run's
  * own ended reply), the question due (its `advance` way), settled or cancelled meanwhile (W-f3,
  * "Meanwhile,"), or still open (W-f2, by how it ended). `before` is the reply that preceded the wait:
- * its command and its warnings stay.
+ * its command and its warnings stay. #625 A1a: when `before` carried `own_act` (the caller's own act
+ * was recorded before the chain reached the question), every arm carries it, the two arms that keep
+ * `before.status` keep its `stopped_step`, and each hint opens with `opening` — by default the act's
+ * step words; `start_run` passes its creation sentence.
  */
 export async function replyAfterForm(
   before: EngineReply,
   result: Exclude<FormResult, { kind: 'not_sent' }>,
   deps: FormDeps,
+  opening?: string,
 ): Promise<EngineReply> {
+  const ownAct = before.own_act;
+  const words = opening ?? (ownAct !== undefined ? stepCompletedWords(ownAct.command) : '');
+  const carried = (reply: EngineReply, keepsStatus = false): EngineReply =>
+    ownAct === undefined
+      ? reply
+      : {
+          ...reply,
+          own_act: ownAct,
+          ...(keepsStatus && before.stopped_step !== undefined
+            ? { stopped_step: before.stopped_step }
+            : {}),
+          context_hint: openWithOwnAct(reply.context_hint, words),
+        };
   // Correction 1 (B6): the reply that preceded the wait keeps its warnings (a pre-flight warning).
   const warnings =
     result.kind === 'answered' ? [...before.warnings, ...result.reply.warnings] : before.warnings;
   if (result.kind === 'answered' && formAnswerRecorded(result.reply)) {
-    return { ...result.reply, command: before.command, warnings };
+    return carried({ ...result.reply, command: before.command, warnings });
   }
   // #715 (b) (D6-17, Amendment 4): an answer the engine refused carries the snapshot it judged the
   // refusal on — this reply is composed on it, never on a second load; a form that came back with no
@@ -636,7 +655,7 @@ export async function replyAfterForm(
       // What settled the question instead — read before the run-ended arm, so a run the other answer
       // ended still says "Not recorded: …"; its run_phase says it ended.
       const outcome = outcomeOf(record, result.step, result.expires_at, true, result.choice);
-      return {
+      return carried({
         ...base,
         ...(record.terminal_state ? { intrinsic_action: 'stop' as const } : {}),
         context_hint:
@@ -644,58 +663,65 @@ export async function replyAfterForm(
             ? renderOutcome(outcome, ASSISTANT_DOOR_WORDS)
             : `Not recorded: the question on step '${result.step}' was closed.`,
         names_next: true,
-      };
+      });
     }
-    return {
-      ...base,
-      status: before.status,
-      reply_kind: before.reply_kind,
-      ...(before.gate !== undefined && before.gate.gate_id === gate.gate_id
-        ? { gate: before.gate }
-        : {}),
-      context_hint: cameBackSentence(
-        {
-          step: result.step,
-          gate_id: result.gate_id,
-          cause: 'not_written',
-          ...(result.until !== undefined ? { until: result.until } : {}),
-        },
-        deps.door,
-      ),
-    };
+    return carried(
+      {
+        ...base,
+        status: before.status,
+        reply_kind: before.reply_kind,
+        ...(before.gate !== undefined && before.gate.gate_id === gate.gate_id
+          ? { gate: before.gate }
+          : {}),
+        context_hint: cameBackSentence(
+          {
+            step: result.step,
+            gate_id: result.gate_id,
+            cause: 'not_written',
+            ...(result.until !== undefined ? { until: result.until } : {}),
+          },
+          deps.door,
+        ),
+      },
+      true,
+    );
   }
   if (record.terminal_state) {
-    return {
+    return carried({
       ...base,
       intrinsic_action: 'stop',
       context_hint: `Run '${record.id}' ended while the form was open (phase '${deriveRunPhase(record)}').`,
       names_next: true,
-    };
+    });
   }
   if (gate === undefined || gate.gate_id !== result.gate_id) {
     const outcome = outcomeOf(record, result.step, result.expires_at, false);
-    return {
+    return carried({
       ...base,
       context_hint:
         outcome !== undefined
           ? renderOutcome(outcome, ASSISTANT_DOOR_WORDS)
           : `Meanwhile, the question on step '${result.step}' was closed.`,
       names_next: true,
-    };
+    });
   }
   if (ways.unavailable.some((u) => u.verb === 'respond' && u.code === 'question_due')) {
-    return { ...base, context_hint: before.context_hint, names_next: true };
+    // `before`'s hint, which already opens with the act's words.
+    return carried({ ...base, context_hint: before.context_hint, names_next: true });
   }
-  return {
-    ...base,
-    status: before.status,
-    reply_kind: before.reply_kind,
-    ...(before.gate !== undefined && before.gate.gate_id === gate.gate_id
-      ? { gate: before.gate }
-      : {}),
-    // W-f2 alone: the await entry ("came back") says the rest; no next sentence repeats it.
-    context_hint: cameBackSentence(result, deps.door),
-  };
+  return carried(
+    {
+      ...base,
+      status: before.status,
+      reply_kind: before.reply_kind,
+      ...(before.gate !== undefined && before.gate.gate_id === gate.gate_id
+        ? { gate: before.gate }
+        : {}),
+      // W-f2 alone: the await entry ("came back") says the rest; no next sentence repeats it.
+      context_hint: cameBackSentence(result, deps.door),
+    },
+    true,
+  );
 }
 
 /**
@@ -708,6 +734,8 @@ export async function withQuestionForm(
   reply: EngineReply,
   deps: FormDeps | undefined,
   call: FormCall | undefined,
+  // #625 A1a: `own_act`'s opening when it is not the called step's words (`start_run`'s).
+  opening?: string,
 ): Promise<EngineReply> {
   if (deps === undefined || call === undefined) return reply;
   const answers = deps.door.answers();
@@ -717,5 +745,5 @@ export async function withQuestionForm(
   if (deps.door.formFacts(respond.gate_id).sent > 0) return reply;
   const result = await sendQuestionForm(deps, reply.run_id, respond.gate_id, call, true);
   if (result.kind === 'not_sent') return reply;
-  return replyAfterForm(reply, result, deps);
+  return replyAfterForm(reply, result, deps, opening);
 }

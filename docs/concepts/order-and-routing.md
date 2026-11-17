@@ -149,7 +149,7 @@ Skips travel down the graph. `pay` could never run, so the steps that depended o
 The agent answered `{"risk":"low","amount":500}`. The guard passed and `pay` failed.
 
 ```text
-Step 'pay' failed. Recovery steps are available in next_actions.
+Step 'assess' completed. Step 'pay' failed. Recovery steps are available in next_actions.
 ```
 
 `send_receipt` was skipped at once. `open_ticket` and `flag_large` were now allowed. After they ran, the run finished:
