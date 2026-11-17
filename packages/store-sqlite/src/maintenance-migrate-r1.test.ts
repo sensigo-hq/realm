@@ -201,8 +201,9 @@ function stop(child: ChildProcess): Promise<void> {
 }
 
 const IN_USE = (file: string): string =>
-  `Another process has ${file} open (a Realm agent, server, MCP server or command, or another ` +
-  'program such as a SQLite browser). Stop it and run this again. Nothing was changed.';
+  `Another process has ${file} open: a Realm agent, server or command, an MCP server that an ` +
+  'assistant or editor keeps running, or another program such as a SQLite browser. Stop it and ' +
+  'run this again. Nothing was changed.';
 
 describe('#616 R1 — the shorter migrate: the hold, the default copy and the record', () => {
   it(

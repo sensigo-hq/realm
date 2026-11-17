@@ -202,8 +202,9 @@ const STEP = (evidence: number): string =>
   `version 2's, ${evidence} evidence entries match their stored hashes.`;
 const RESTAMPED = 'Re-stamped the phase index of 0 run(s) with the current derivation.';
 const IN_USE = (): string =>
-  `Another process has ${shown(file)} open (a Realm agent, server, MCP server or command, or ` +
-  'another program such as a SQLite browser). Stop it and run this again. Nothing was changed.';
+  `Another process has ${shown(file)} open: a Realm agent, server or command, an MCP server that ` +
+  'an assistant or editor keeps running, or another program such as a SQLite browser. Stop it ' +
+  'and run this again. Nothing was changed.';
 
 // Each cell starts the built CLI (a cold start each time), so the describe carries its own budget.
 describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout: 120_000 }, () => {
@@ -289,7 +290,7 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
     });
     claim(
       PAGE,
-      '`Another process has <home>/realm.db open (a Realm agent, server, MCP server or command, or another program such as a SQLite browser). Stop it and run this again. Nothing was changed.`',
+      '`Another process has <home>/realm.db open: a Realm agent, server or command, an MCP server that an assistant or editor keeps running, or another program such as a SQLite browser. Stop it and run this again. Nothing was changed.`',
     );
   });
 

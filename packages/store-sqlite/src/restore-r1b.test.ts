@@ -327,8 +327,9 @@ function pause(ms: number): void {
 }
 
 const IN_USE = (file: string): string =>
-  `Another process has ${file} open (a Realm agent, server, MCP server or command, or another ` +
-  'program such as a SQLite browser). Stop it and run this again. Nothing was changed.';
+  `Another process has ${file} open: a Realm agent, server or command, an MCP server that an ` +
+  'assistant or editor keeps running, or another program such as a SQLite browser. Stop it and ' +
+  'run this again. Nothing was changed.';
 
 describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () => {
   it('runs created, changed and removed since the backup: the restored file holds the backup, the kept file the newer runs, the counts are the real difference, and no side file is left', async () => {
