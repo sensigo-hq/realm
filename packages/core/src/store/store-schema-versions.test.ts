@@ -81,4 +81,35 @@ describe('#597 D1c-1 — the store schema versions', () => {
     });
     expect(REALM_STORE_SCHEMA_VERSION).toBeGreaterThanOrEqual(2);
   });
+
+  it('#616 R2: every version above 1 says how it is undone, and every version which Realm releases write it', () => {
+    // The law on the step-back data, so a unit that adds a version cannot forget it: above 1, exactly
+    // one of `downgrade` and `cannotUndo`, and `loses` only with `downgrade`; every version a
+    // `writtenBy`, closed below the newest (`0.49`, `>=0.50.0 <0.52.0`) and open at the newest
+    // (`>=0.50.0`), judged by pattern: `semver` is only a root dev dependency.
+    const keys = [...REALM_STORE_VERSIONS.keys()].sort((a, b) => a - b);
+    const newest = keys[keys.length - 1];
+    const closed = /^\d+\.\d+(\.[x\d]+)?$|^>=\S+ <\S+$/;
+    const open = /^>=\S+$/;
+    const breaks = keys.flatMap((version) => {
+      const v = REALM_STORE_VERSIONS.get(version)!;
+      const found: string[] = [];
+      const undone = (v.downgrade === undefined ? 0 : 1) + (v.cannotUndo === undefined ? 0 : 1);
+      if (version > 1 && undone !== 1)
+        found.push(`${version}: ${undone} of downgrade and cannotUndo`);
+      if (v.loses !== undefined && v.downgrade === undefined)
+        found.push(`${version}: loses without downgrade`);
+      if (v.writtenBy === undefined) found.push(`${version}: no writtenBy`);
+      else if (!(version === newest ? open : closed).test(v.writtenBy)) {
+        found.push(
+          `${version}: writtenBy ${v.writtenBy} is not ${version === newest ? 'open' : 'closed'}`,
+        );
+      }
+      return found;
+    });
+    // (a) red when a version above 1 has neither (or both) of `downgrade` and `cannotUndo`, `loses`
+    //     without `downgrade`, no `writtenBy`, an open range below the newest or a closed one at it;
+    //     (b) prints each version that breaks the law and how.
+    expect(breaks).toEqual([]);
+  });
 });

@@ -9,6 +9,8 @@
 export { openRealmHome, type OpenRealmHomeOptions, type RealmHome } from './open-realm-home.js';
 export {
   openRealmHomeForMaintenance,
+  // #616 R2: `realm db migrate --to`'s value, read before the store is opened.
+  stepBackTarget,
   type BackupReport,
   type MaintenanceCheckHome,
   type MaintenanceHome,

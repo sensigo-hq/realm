@@ -55,7 +55,7 @@ These refusals have the code [`STATE_STORE_BACKUP_REFUSED`](../error-codes.md). 
 
 ## `migrate`
 
-`realm db migrate`, `realm db migrate --backup <path>` or `realm db migrate --no-backup`
+`realm db migrate`, `realm db migrate --backup <path>` or `realm db migrate --no-backup`; `realm db migrate --to <n>` to step back (below)
 
 Upgrades the store file to the schema version this Realm writes. Stop every Realm process that uses the home first: the command refuses to run a schema step while any other process has the store file open.
 
@@ -102,6 +102,42 @@ When the record cannot be written, the command prints `Could not record this mig
 - the copy cannot be made, or fails the quick check: `realm db backup`'s refusals, above.
 - a step fails, [`STATE_STORE_MIGRATE_FAILED`](../error-codes.md): `The step from schema version <v> to <v+1> failed: <the reason>. <home>/realm.db is at schema version <v>; nothing of the step is in it. Run the command again once the cause is fixed.` When the file is found at a higher version after the failure, the step is in it: `The step from schema version <v> to <v+1> failed: <the reason>. <home>/realm.db is at schema version <n>: the step is in it. Run the command again to continue from there.` Either line ends, when a copy was made, with ` The backup made before the step is at <path>.`
 - another writer holds the store for longer than its wait during the re-stamp: the re-stamp line with the number of runs re-stamped so far, then `The store was busy for <s> s: another writer held it. Nothing was written. Try again.`
+
+### Stepping back: `--to <n>`
+
+`realm db migrate --to <n>` steps the store file back to schema version `<n>`, one version at a time, and keeps every run. It steps back only: to go forward, run `realm db migrate` without `--to`. Run it with the Realm that wrote the file, before you install the older Realm. Stop every Realm process that uses the home first. `--backup <path>` and `--no-backup` work as above.
+
+It works in this order:
+
+1. `<n>` must be a whole number that is a schema version this Realm knows; otherwise it refuses before it opens the store.
+2. When the file is already at `<n>`, it prints `<home>/realm.db is already at schema version <n>; no step to undo.`, exits 0 and changes nothing; a `--backup <path>` given with it is ignored. When the file is below `<n>`, it refuses.
+3. Every step from the file's version down to `<n>` must be one that can be undone. When one cannot, it refuses before any change.
+4. It makes sure that no other process has the store file open, as a forward migrate does, then reads the file's version again and judges the plan again.
+5. It makes the copy as a forward migrate does: with no flag, in the backups folder, named from the schema versions before and after, such as `realm-v2-to-v1-20261117T103918Z.db`.
+6. It runs each step back in its own transaction: the version's own statements, then a check that the file's schema is exactly the version below's, then the file's version moved. It prints one line per step. It re-checks no evidence and re-stamps no phase: a step back changes neither.
+7. It stops at the first step that fails. The file is then at the last version it completed.
+8. It records the step back in `migrations.jsonl`, as a forward migrate does: its `from_format` is above its `to_format`.
+9. It prints how to install a Realm that writes the version it reached.
+
+Each step prints:
+
+`Stepped <home>/realm.db back from schema version <v> to <v-1>: <s> statement(s) ran, the schema matches version <v-1>'s. <what the step dropped>`
+
+Version 2's step back drops the `outbound` table, where `realm agent` and `realm listen --send-reminders` record the Slack reminders and escalations they send: `The outbound table was dropped: the record of <k> reminder(s) and escalation(s) sent is no longer in the file.`, where `<k>` counts those recorded as sent, or, when it held none, `The outbound table was dropped; it held no record of a reminder or escalation sent.` Every run is kept.
+
+After the last step:
+
+``Every command of this Realm that uses the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, now refuses the file, because it is at schema version <n> and this Realm writes version <r>. To use it, install a Realm that writes schema version <n>: npm install -g "@sensigo/realm-cli@<range>" (in a project that lists Realm packages, give every one of them the same exact version within <range>; see "Upgrade every package together" in the upgrade guide).``
+
+`<range>` is `0.49` for schema version 1.
+
+**Exit code:** 0 when every step ran, or none was needed. 1 when the command refuses or a step fails, with one `Error:` line on standard error. Besides the refusals above (the store file cannot be opened, another process has it open, the backups folder or the copy):
+
+- `<n>` is not a schema version this Realm knows, [`STATE_STORE_MIGRATE_REFUSED`](../error-codes.md): `Cannot step back to <value>: give a whole number that is a schema version this Realm knows (<lowest> to <highest>).` Nothing is opened.
+- the file is below `<n>`: `The store file is at schema version <v>; --to steps back only. Run realm db migrate, without --to, to go forward.`
+- a step down to `<n>` cannot be undone: `The step from schema version <v> to <v-1> cannot be undone: <why>. Nothing was changed. To go back anyway, restore a backup made before the upgrade: realm db restore <backup> (the backups realm db migrate makes are in <backups folder>/).`
+- a file written by a newer Realm: the store's own message. Run `--to` with the Realm that wrote the file.
+- a step back fails, [`STATE_STORE_MIGRATE_FAILED`](../error-codes.md): `The step back from schema version <v> to <v-1> failed: <the reason>. <home>/realm.db is at schema version <v>; nothing of the step is in it. Run the command again once the cause is fixed.` When a copy was made, ` The backup made before the step is at <path>.` comes before `Run the command again`.
 
 ## `check`
 
@@ -191,7 +227,7 @@ and then either `The file it replaced and the backup hold the same runs.` or `Th
 
 The counts cover runs only. Not counted: the Slack reminders and escalations already sent, which are not restored and are sent again; `realm listen`'s duplicate-webhook marks; saved replays; refused answers. A run purged after the backup was made comes back, and the record of its purge is gone.
 
-When the backup is at an older schema version than this Realm writes, a last line says what comes next: ``This backup is at schema version <m> and this Realm writes version <r>. To use it with this Realm, run `realm db migrate`; to use it with an older Realm, install that Realm now.`` To go back to an older Realm, restore first with this Realm, then install the older one.
+When the backup is at an older schema version than this Realm writes, a last line says what comes next: ``This backup is at schema version <m> and this Realm writes version <r>. To use it with this Realm, run `realm db migrate`; to use it with an older Realm, install that Realm now.`` To go back to an older Realm, restore first with this Realm, then install the older one. A file that is already migrated can instead be stepped back without losing a run: `realm db migrate --to 1` (see [Going back without losing runs](../guides/upgrade.md#going-back-without-losing-runs)).
 
 Into a home with no store file, or an empty one, on a new machine for one, it prepares the home as the first command on a new home does, places the copy and keeps nothing:
 
