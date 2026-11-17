@@ -3,7 +3,7 @@
 // injected `resolve`, except the default-resolver cell, whose `localhost` comes from the hosts file.
 //
 // Each assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as net from 'node:net';
@@ -270,9 +270,9 @@ describe('R1.3 C1 — TLS, redirects, the reply, time', () => {
     };
     const seams = { resolve: resolver(() => at('127.0.0.1')).resolve };
     const noCa = await post({ ...base, seams });
-    process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
+    vi.stubEnv('NODE_TLS_REJECT_UNAUTHORIZED', '0');
     const envOff = await post({ ...base, seams });
-    delete process.env['NODE_TLS_REJECT_UNAUTHORIZED'];
+    vi.unstubAllEnvs();
     const withCa = await post({ ...base, seams: { ...seams, tls: { ca: EXAMPLE_TEST.cert } } });
     // (a) red when `rejectUnauthorized` is not forced on; (b) prints the three outcomes.
     expect({ noCa, envOff, withCa, reached: server.seen.count }).toEqual({

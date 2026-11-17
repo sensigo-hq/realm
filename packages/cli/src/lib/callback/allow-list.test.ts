@@ -148,7 +148,7 @@ describe('R1.3 C1 — a URL against the lists', () => {
       emptyHost: 'https:///x',
       portZero: 'https://n8n.lan:0/',
       portHigh: 'https://n8n.lan:65536/',
-      throws: 'https://exa mple.lan/'.replace(' ', '%20'),
+      throws: 'https://exa%20mple.lan/',
       tooLong: long,
     };
     // (a) red when a raw form passes to the parser, or a word is wrong; (b) prints each word.
