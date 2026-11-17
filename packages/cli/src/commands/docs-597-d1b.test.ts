@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { changelogAbove } from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const flat = (t: string): string => t.replace(/\s+/g, ' ');
@@ -15,13 +16,13 @@ const read = (page: string): string => readFileSync(join(ROOT, page), 'utf8');
 function claim(page: string, sentence: string): void {
   expect(flat(read(page)), `${page} no longer says: ${sentence}`).toContain(flat(sentence));
 }
-/** The CHANGELOG's `[Unreleased]` section (until a release renames it, then the first one). */
+/**
+ * The CHANGELOG's sections above `[0.49.0]`: D1b's lines shipped in 0.50.0, so they are read in every
+ * section above the release before, `[Unreleased]` included once the next cycle opens it (the
+ * release pass's helper; reading `[Unreleased]` alone went red when #616 R3 opened it).
+ */
 function unreleased(): string {
-  const text = read('CHANGELOG.md');
-  const start = text.includes('## [Unreleased]')
-    ? text.indexOf('## [Unreleased]')
-    : text.indexOf('\n## [') + 1;
-  return text.slice(start, text.indexOf('\n## [', start + 1));
+  return changelogAbove(read('CHANGELOG.md'), '0.49.0');
 }
 function claimChangelog(sentence: string): void {
   expect(flat(unreleased()), `the CHANGELOG no longer says: ${sentence}`).toContain(flat(sentence));
