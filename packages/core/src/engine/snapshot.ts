@@ -82,8 +82,8 @@ export function listedSnapshotOf(snapshot: Snapshot): ListedSnapshot {
  * (`structuredClone`) and shares nothing with the listed record. It is safe because:
  * - the ways engine only reads the record it judges, and never writes it;
  * - no judge reads a model call's text, so the texts a listing left out change no judgement;
- * - a store refuses a write that drops a stored `model_text`: the in-memory store's own refusal, and
- *   SQLite's `STATE_EVIDENCE_REWRITTEN` for a changed evidence entry.
+ * - a store refuses a write that drops a stored evidence entry's `model_text`: the in-memory store's
+ *   own refusal, and SQLite's `STATE_EVIDENCE_REWRITTEN` for a changed evidence entry.
  * Not exported from core's index.
  * @internal
  */
