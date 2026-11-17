@@ -44,7 +44,11 @@ export function reportLines(report: RestoreReport): string[] {
   const lines: string[] = [];
   const { replaced } = report;
   if (replaced.kind === 'nothing') {
-    lines.push(`${restored} The home had no store file, so nothing was replaced.`);
+    lines.push(
+      replaced.empty
+        ? `${restored} The store file was empty, so nothing was replaced.`
+        : `${restored} The home had no store file, so nothing was replaced.`,
+    );
   } else {
     lines.push(restored);
   }

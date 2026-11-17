@@ -18,6 +18,7 @@ import {
   copyFileSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -310,6 +311,15 @@ const WAITER =
   "const { record } = await h.runStore.create({ workflowId: 'triage', workflowVersion: 1, params: {}, extensionIdentity: [] });" +
   'h.close();' +
   "writeSync(1, JSON.stringify({ ...seen, wrote: record.id }) + '\\n');";
+
+/** Waits for a child's `ready` line, at most 30 s; a child that dies first fails with its error output. */
+async function childReady(out: () => string, err: () => string): Promise<void> {
+  const until = Date.now() + 30_000;
+  while (!out().includes('ready')) {
+    if (Date.now() > until) throw new Error(`the child never said ready: ${err()}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
 
 /** Blocks this process (not the child) for `ms`: a seam is synchronous, and the hold is held in it. */
 function pause(ms: number): void {
@@ -789,11 +799,16 @@ describe(
       child.stdout.setEncoding('utf8').on('data', (d: string) => (out += d));
       child.stderr.setEncoding('utf8').on('data', (d: string) => (err += d));
       const done = new Promise((r) => child.once('exit', r));
-      while (!out.includes('ready')) await new Promise((r) => setTimeout(r, 20));
+      await childReady(
+        () => out,
+        () => err,
+      );
       const outcome = await restore(home, backup, {
         // The hold is held here: the child connects to the OLD file and waits on it; then the rename.
         rename: (from, to) => {
           writeFileSync(go, '');
+          // A fixed wait: no event says "the child has connected". On a very slow machine the child
+          // may connect only after the rename, and this cell then passes without the opener's check.
           pause(800);
           renameSync(from, to);
         },
@@ -944,7 +959,7 @@ describe('#616 R1b — a home with no store file, or an empty one', { timeout: 1
       runs: runsOf(file),
       mode: (statSync(file).mode & 0o777).toString(8),
     }).toEqual({
-      replaced: { kind: 'nothing' },
+      replaced: { kind: 'nothing', empty: false },
       home: ['dedup', 'realm.db', 'replays', 'runs', 'workflows'],
       folder: [],
       runs: runsOf(backup),
@@ -952,7 +967,7 @@ describe('#616 R1b — a home with no store file, or an empty one', { timeout: 1
     });
   });
 
-  it('a home with no store file but a -wal or -shm where it would be: refused, nothing made', async () => {
+  it('a home with no store file but a -wal or -shm where it would be: refused, and nothing made (no fence, no file)', async () => {
     const { root, home, file } = nestedHome();
     const source = join(root, 'src', '.realm');
     await makeStore(source, 1);
@@ -960,12 +975,15 @@ describe('#616 R1b — a home with no store file, or an empty one', { timeout: 1
     await backupTo(source, backup);
     mkdirSync(home, { recursive: true });
     writeFileSync(`${file}-wal`, 'frames of a store file that was moved');
+    const before = names(home);
     const outcome = await restore(home, backup);
-    // (1) red when the copy is placed beside a log that is not its own (the next open would apply it);
-    //     (2) prints the refusal and the home.
+    // (1) red when the copy is placed beside a log that is not its own (the next open would apply it),
+    //     or when the home's preparation runs before the refusal (its fences then appear); (2) prints
+    //     the refusal and the home's whole listing before and after.
     expect({
       refused: outcome.refused,
-      store: existsSync(file),
+      before,
+      after: names(home),
       wal: readFileSync(`${file}-wal`, 'utf8'),
     }).toEqual({
       refused: {
@@ -975,7 +993,8 @@ describe('#616 R1b — a home with no store file, or an empty one', { timeout: 1
           'they may hold the writes of a store file that was moved or deleted. Move them aside by ' +
           'hand, then run this again. Nothing was changed.',
       },
-      store: false,
+      before: ['realm.db-wal'],
+      after: ['realm.db-wal'],
       wal: 'frames of a store file that was moved',
     });
   });
@@ -1039,7 +1058,7 @@ describe('#616 R1b — a home with no store file, or an empty one', { timeout: 1
       folder: names(folder),
     }).toEqual({
       held: { code: 'STATE_STORE_IN_USE', message: IN_USE(file) },
-      free: { kind: 'nothing' },
+      free: { kind: 'nothing', empty: true },
       runs: runsOf(backup),
       folder: [],
     });
@@ -1063,6 +1082,8 @@ describe('#616 R1b — the damaged-file rule', { timeout: 120_000 }, () => {
       kind: replaced?.kind,
       sameBytes: hashOf(asFound) === original.hash,
       newInode: statSync(asFound).ino !== original.ino,
+      // The store's open made an empty -wal of its own; it is not the file's and is not copied (A4).
+      wal: replaced?.kind === 'damaged' ? replaced.wal : 'none',
       events: outcome.events.map((e) => e.kind),
       runs: runsOf(file),
       name:
@@ -1071,6 +1092,7 @@ describe('#616 R1b — the damaged-file rule', { timeout: 120_000 }, () => {
       kind: 'damaged',
       sameBytes: true,
       newInode: true,
+      wal: undefined,
       events: ['as_found'],
       runs: runsOf(backup),
       name: true,
@@ -1214,7 +1236,7 @@ describe('#616 R1b — the damaged-file rule', { timeout: 120_000 }, () => {
     });
   });
 
-  it('the damaged path`s crash window: a killed writer`s -wal and -shm beside a file with a damaged page; the as-found pair is the whole original, also when the rename fails', async () => {
+  it('the damaged path`s crash window: a killed writer`s -wal and -shm beside a file with a damaged page; the as-found pair is the whole original (a kill at the rename seam)', async () => {
     const { root, home, file, folder } = nestedHome();
     await makeStore(home, 1);
     const backup = join(root, 'b.db');
@@ -1264,11 +1286,15 @@ describe('#616 R1b — the damaged-file rule', { timeout: 120_000 }, () => {
     child.stdout.setEncoding('utf8').on('data', (d: string) => (out += d));
     child.stderr.setEncoding('utf8').on('data', (d: string) => (err += d));
     const done = new Promise((r) => child.once('exit', r));
-    while (!out.includes('ready')) await new Promise((r) => setTimeout(r, 20));
+    await childReady(
+      () => out,
+      () => err,
+    );
     const outcome = await restore(home, backup, {
       // The raw hold is held here: the child connects to the EMPTY file and waits; then the rename.
       rename: (from, to) => {
         writeFileSync(go, '');
+        // A fixed wait: no event says "the child has connected" (see the cell above).
         pause(800);
         renameSync(from, to);
       },
@@ -1358,6 +1384,294 @@ describe('#616 R1b — the damaged-file rule', { timeout: 120_000 }, () => {
       },
       unchanged: true,
       folder: [],
+    });
+  });
+
+  it('the damaged route, the rename fails: the words name the as-found pair, the pair is the original byte for byte and holds its rows', async () => {
+    const { root, home, file } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    const written = killedWriter(home);
+    damagePage13(file);
+    const original = { main: hashOf(file), wal: hashOf(`${file}-wal`) };
+    const outcome = await restore(home, backup, {
+      rename: () => {
+        throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO', errno: -5 });
+      },
+    });
+    const found = outcome.events.find((e) => e.kind === 'as_found');
+    const asFound = found?.kind === 'as_found' ? found.asFound : 'none';
+    const look = join(root, 'look');
+    mkdirSync(look);
+    copyFileSync(asFound, join(look, 'realm.db'));
+    copyFileSync(`${asFound}-wal`, join(look, 'realm.db-wal'));
+    const db = openDatabase(join(look, 'realm.db'));
+    const has = db.prepare('SELECT count(*) AS n FROM runs WHERE id = ?').get(written)?.['n'];
+    db.close();
+    // (1) red when the failure's words do not name the as-found pair (by then the only whole
+    //     original: the side files may be unlinked); (2) prints the refusal, the pair and its rows.
+    expect({
+      refused: outcome.refused,
+      pair: { main: hashOf(asFound), wal: hashOf(`${asFound}-wal`) },
+      has,
+    }).toEqual({
+      refused: {
+        code: 'STATE_STORE_RESTORE_REFUSED',
+        message:
+          `Cannot restore from ${backup}: i/o error. ${file} was not replaced. A copy of it is at ` +
+          `${asFound}, and its -wal at ${asFound}-wal.`,
+      },
+      pair: original,
+      has: 1,
+    });
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'the damaged route, the backups folder cannot be written: the damaged file untouched, nothing replaced, no copy left',
+    async () => {
+      const { root, home, file, folder } = nestedHome();
+      await makeStore(home, 1);
+      const backup = join(root, 'b.db');
+      await backupTo(home, backup);
+      rmSync(file);
+      writeFileSync(file, 'not a database '.repeat(500), { mode: 0o600 });
+      const before = hashOf(file);
+      mkdirSync(folder, { mode: 0o500 });
+      const outcome = await restore(home, backup);
+      chmodSync(folder, 0o700);
+      // (1) red when a damaged file is replaced without its as-found copy; (2) prints it.
+      expect({
+        code: outcome.refused?.code,
+        unchanged: hashOf(file) === before,
+        folder: names(folder),
+        left: names(home).filter((n) => n.startsWith('.realm-restore-')),
+      }).toEqual({ code: 'STATE_STORE_RESTORE_REFUSED', unchanged: true, folder: [], left: [] });
+    },
+  );
+
+  it('the damaged route, the as-found copy fails midway: what was copied is removed, the words say so, the file untouched', async () => {
+    const { root, home, file, folder } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    rmSync(file);
+    writeFileSync(file, 'not a database '.repeat(500), { mode: 0o600 });
+    const before = hashOf(file);
+    const outcome = await restore(home, backup, {
+      // The flush of the as-found copy fails (a full disk); every other flush is skipped.
+      syncFile: (path) => {
+        if (path.includes('-as-found')) {
+          throw Object.assign(new Error('ENOSPC: no space left on device'), {
+            code: 'ENOSPC',
+            errno: -28,
+          });
+        }
+      },
+    });
+    // (1) red when a partial as-found copy is left (named as if it were the original) or the words do
+    //     not say it was removed; (2) prints the refusal and what is left.
+    expect({
+      refused: outcome.refused,
+      unchanged: hashOf(file) === before,
+      asFound: names(folder).filter((n) => n.includes('-as-found')),
+    }).toEqual({
+      refused: {
+        code: 'STATE_STORE_RESTORE_REFUSED',
+        message:
+          `Cannot restore from ${backup}: the copy of it as it was could not be made: no space left ` +
+          `on device; what was copied was removed. ${file} was not replaced.`,
+      },
+      unchanged: true,
+      asFound: [],
+    });
+  });
+
+  it('two restores over one damaged file in the same second: the second names the as-found copy that is already there, and leaves it', async () => {
+    const { root, home, file, folder } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    rmSync(file);
+    writeFileSync(file, 'not a database '.repeat(500), { mode: 0o600 });
+    // The names this restore can take: this second's and the next three, each made already.
+    mkdirSync(folder, { mode: 0o700 });
+    const now = Date.now();
+    const taken = [0, 1, 2, 3].map((k) =>
+      join(folder, `realm-before-restore-${backupStamp(new Date(now + k * 1000))}-as-found.db`),
+    );
+    for (const path of taken) writeFileSync(path, 'the first restore');
+    const outcome = await restore(home, backup);
+    const named = /the as-found copy (\S+) already exists/.exec(
+      outcome.refused?.message ?? '',
+    )?.[1];
+    // (1) red when the collision is reported in the system's bare words, or the file there is removed
+    //     or touched; (2) prints the refusal and the files.
+    expect({
+      refused: outcome.refused,
+      named: named !== undefined && taken.includes(named),
+      there: taken.map((p) => readFileSync(p, 'utf8')),
+    }).toEqual({
+      refused: {
+        code: 'STATE_STORE_RESTORE_REFUSED',
+        message:
+          `Cannot restore from ${backup}: the as-found copy ${named} already exists (another ` +
+          `restore ran in the same second). ${file} was not replaced.`,
+      },
+      named: true,
+      there: taken.map(() => 'the first restore'),
+    });
+  });
+
+  it('a symbolic link, a folder or a FIFO at realm.db: the store`s own refusal, nothing changed, nothing copied', async () => {
+    const { root, home, file, folder } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    rmSync(file);
+    const target = join(root, 'garbage.db');
+    writeFileSync(target, 'not a database '.repeat(500));
+    const garbage = hashOf(target);
+    const kinds: Array<[string, () => void]> = [
+      ['a symbolic link', () => symlinkSync(target, file)],
+      ['a folder', () => mkdirSync(file)],
+      ['a FIFO', () => spawnSync('mkfifo', [file])],
+    ];
+    for (const [kind, make] of kinds) {
+      rmSync(file, { recursive: true, force: true });
+      make();
+      const outcome = await restore(home, backup);
+      // (1) red when the guard is gone (the link is followed, copied and replaced; a FIFO blocks the
+      //     copy); (2) prints the case and its outcome.
+      expect({
+        kind,
+        code: outcome.refused?.code,
+        link: lstatSync(file).isSymbolicLink() || kind !== 'a symbolic link',
+        target: hashOf(target) === garbage,
+        folder: names(folder),
+      }).toEqual({
+        kind,
+        code: 'STATE_STORE_SETTINGS_REFUSED',
+        link: true,
+        target: true,
+        folder: [],
+      });
+    }
+  });
+
+  it('an empty store file that a command sets up while the restore waits for its lock: refused, the runs written meanwhile intact', async () => {
+    const { root, home, file } = nestedHome();
+    const source = join(root, 'src', '.realm');
+    await makeStore(source, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(source, backup);
+    mkdirSync(home, { recursive: true });
+    writeFileSync(file, '', { mode: 0o600 });
+    let written: string[] = [];
+    const outcome = await restore(home, backup, {
+      // Between the classification and the raw lock: a short-lived Realm command sets the file up.
+      beforeHold: async () => {
+        written = await makeStore(home, 2);
+      },
+    });
+    // (1) red without the re-check under the lock (the runs written meanwhile are replaced, nothing
+    //     kept); (2) prints the refusal and the runs.
+    expect({ refused: outcome.refused, runs: Object.keys(runsOf(file)).sort() }).toEqual({
+      refused: {
+        code: 'STATE_STORE_RESTORE_REFUSED',
+        message: 'realm.db appeared while the restore ran; nothing was replaced.',
+      },
+      runs: [...written].sort(),
+    });
+  });
+
+  it('F5: a store whose only damage is an index page: the table reads, the kept copy fails, and the damaged route restores (a regression pin)', async () => {
+    const { root, home, file } = nestedHome();
+    await makeStore(home, 3);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    const db = openDatabase(file);
+    const rootpage = Number(
+      db.prepare("SELECT rootpage FROM sqlite_master WHERE name = 'runs_by_terminal'").get()?.[
+        'rootpage'
+      ],
+    );
+    db.close();
+    const fd = openSync(file, 'r+');
+    writeSync(fd, Buffer.from([0x00]), 0, 1, (rootpage - 1) * 16384);
+    writeSync(fd, Buffer.from([0xff, 0xff]), 0, 2, (rootpage - 1) * 16384 + 3);
+    closeSync(fd);
+    const read = openDatabase(file);
+    const table = Number(read.prepare('SELECT count(*) AS n FROM runs NOT INDEXED').get()?.['n']);
+    read.close();
+    const outcome = await restore(home, backup);
+    // (1) red when such a file ends "was not replaced" (a damaged index met first by the counts)
+    //     instead of the damaged route; (2) prints it.
+    expect({ table, kind: outcome.report?.replaced.kind, runs: runsOf(file) }).toEqual({
+      table: 3,
+      kind: 'damaged',
+      runs: runsOf(backup),
+    });
+  });
+
+  it('a kept copy that fails SQLite`s quick check: it stays under the kept name, unverified, and the file is copied as found under its own names', async () => {
+    const { root, home, file, folder } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    const original = hashOf(file);
+    let calls = 0;
+    const outcome = await restore(home, backup, {
+      // The backup's own check first (passes), then the kept copy's (fails).
+      quickCheck: (db) => {
+        calls += 1;
+        if (calls === 1) {
+          return db
+            .prepare('PRAGMA quick_check')
+            .all()
+            .map((r) => String(Object.values(r)[0]));
+        }
+        return ['row 1 missing from index runs_by_terminal'];
+      },
+    });
+    const files = names(folder).map((n) => n.replace(/\d{8}T\d{6}Z/, '<t>'));
+    const found = outcome.events.find((e) => e.kind === 'as_found');
+    // (1) red when the unverified copy takes the damaged route's names, or the damaged route is not
+    //     taken; (2) prints the backups folder and the outcome.
+    expect({
+      kind: outcome.report?.replaced.kind,
+      files,
+      asFound: found?.kind === 'as_found' ? hashOf(found.asFound) === original : 'none',
+    }).toEqual({
+      kind: 'damaged',
+      files: ['realm-before-restore-<t>-as-found.db', 'realm-before-restore-<t>.db'],
+      asFound: true,
+    });
+  });
+
+  it('A1: a home that never had its fence files, a refusal after the store`s open: the four fence files appear, the store file is as it was', async () => {
+    const { root, home, file } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    for (const fence of ['dedup', 'replays', 'runs', 'workflows'])
+      rmSync(join(home, fence), { force: true });
+    const before = { names: names(home), file: hashOf(file) };
+    const holder = await startChild(HOLDER, home);
+    const outcome = await restore(home, backup);
+    holder.kill('SIGKILL');
+    // (1) red when the page's sentence stops being true (no fence made, or the store file changed);
+    //     (2) prints the refusal and the home.
+    expect({
+      code: outcome.refused?.code,
+      before: before.names,
+      after: names(home).filter((n) => !n.startsWith('realm.db')),
+      file: hashOf(file) === before.file,
+    }).toEqual({
+      code: 'STATE_STORE_IN_USE',
+      before: ['realm.db'],
+      after: ['dedup', 'replays', 'runs', 'workflows'],
+      file: true,
     });
   });
 

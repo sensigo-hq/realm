@@ -102,8 +102,8 @@ export interface RunDifference {
 
 /** What was in place of the backup before the restore. */
 export type RestoreReplaced =
-  /** No store file, or an empty one (R1c): nothing kept. */
-  | { readonly kind: 'nothing' }
+  /** No store file, or (`empty`) an empty one (R1c): nothing kept. */
+  | { readonly kind: 'nothing'; readonly empty: boolean }
   /** A store: kept by `backup`'s machinery, its runs counted against the backup's. */
   | { readonly kind: 'store'; readonly kept: BackupReport; readonly difference: RunDifference }
   /** A file the store could not read (R1c): copied as it was to `asFound` (and its `-wal` to `wal`). */
@@ -197,17 +197,20 @@ function backupRefused(backup: string, reason: string): WorkflowError {
   );
 }
 
-/** A failure before the rename: the store file is as it was; the kept copy is named if made. */
+/**
+ * A failure before the rename: the store file is not replaced; the copy made of it is named, if one
+ * was (`copy`: the kept file, or the as-found pair, then the only whole original).
+ */
 function notReplaced(
   r: Restore,
   source: string,
   err: unknown,
-  kept: string | undefined,
+  copy: string | undefined,
 ): WorkflowError {
   const reason = causeText(err);
-  const copy = kept === undefined ? '' : ` A copy of it is at ${kept}.`;
+  const at = copy === undefined ? '' : ` A copy of it is at ${copy}.`;
   return restoreRefused(
-    `Cannot restore from ${r.backup}: ${clause(reason)}. ${source} was not replaced.${copy}`,
+    `Cannot restore from ${r.backup}: ${clause(reason)}. ${source} was not replaced.${at}`,
     source,
     reason,
   );
@@ -408,7 +411,7 @@ async function swap(
   r: Restore,
   source: string,
   temporary: string,
-  kept: string | undefined,
+  copy: string | undefined,
   db: RealmDb | undefined,
 ): Promise<void> {
   try {
@@ -418,7 +421,7 @@ async function swap(
     if (r.seams.rename === undefined) renameSync(temporary, source);
     else r.seams.rename(temporary, source);
   } catch (err) {
-    throw notReplaced(r, source, err, kept);
+    throw notReplaced(r, source, err, copy);
   }
   flushHome(r, source);
 }
@@ -512,8 +515,8 @@ async function replaceStore(
         ) {
           throw keptCopyRefused(err);
         }
-        const replaced = setAside(r, source, true);
-        await swap(r, source, temporary, undefined, undefined);
+        const replaced = setAside(r, source);
+        await swap(r, source, temporary, asFoundWords(replaced), undefined);
         return replaced;
       }
       r.progress({ kind: 'kept', report: kept });
@@ -545,31 +548,60 @@ function backupsFolder(r: Restore, source: string): string {
 
 /**
  * D's set-aside: the store file and its `-wal` byte-copied into the backups folder under the
- * `-as-found` names, owner-only and flushed, before anything of the original is unlinked. `withWal`
- * false: the file had no `-wal` before the raw connection made one of its own; it is not copied.
+ * `-as-found` names, owner-only and flushed, before anything of the original is unlinked. A `-wal`
+ * is copied only when it holds bytes: an empty one is this command's own open's, not the file's.
  */
-function setAside(r: Restore, source: string, withWal: boolean): RestoreReplaced {
+function setAside(r: Restore, source: string): RestoreReplaced {
   const folder = backupsFolder(r, source);
   const asFound = join(folder, `realm-before-restore-${backupStamp(r.at)}-as-found.db`);
-  let wal: string | undefined = withWal ? `${asFound}-wal` : undefined;
+  let wal: string | undefined =
+    (lookAt(`${source}-wal`)?.size ?? 0) > 0 ? `${asFound}-wal` : undefined;
+  const made: string[] = [];
   try {
     copyFileSync(source, asFound, constants.COPYFILE_EXCL);
+    made.push(asFound);
     try {
       if (wal !== undefined) copyFileSync(`${source}-wal`, wal, constants.COPYFILE_EXCL);
+      if (wal !== undefined) made.push(wal);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       wal = undefined;
     }
-    for (const copied of wal === undefined ? [asFound] : [asFound, wal]) {
+    for (const copied of made) {
       chmodSync(copied, 0o600);
       (r.seams.syncFile ?? syncFileOnDisk)(copied);
     }
     (r.seams.syncFolder ?? syncFolderOnDisk)(folder);
   } catch (err) {
-    throw notReplaced(r, source, err, undefined);
+    // Only this call's own copies are removed (COPYFILE_EXCL: never a file that was there).
+    for (const copied of made) removeCopy(copied);
+    const taken = (err as NodeJS.ErrnoException).code === 'EEXIST';
+    const cause = new Error(
+      taken
+        ? `the as-found copy ${made.length === 0 ? asFound : wal} already exists (another restore ran in the same second)`
+        : `the copy of it as it was could not be made: ${clause(causeText(err))}; what was copied was removed`,
+    );
+    throw notReplaced(r, source, cause, undefined);
   }
   r.progress({ kind: 'as_found', asFound, wal });
   return { kind: 'damaged', asFound, wal };
+}
+
+/** A store file appeared (or an empty one was set up) while the restore ran: nothing replaced. */
+function appeared(source: string): WorkflowError {
+  return restoreRefused(
+    `${DATABASE_FILE} appeared while the restore ran; nothing was replaced.`,
+    source,
+    'the store file appeared',
+  );
+}
+
+/** The as-found pair, as a failure's words name it: the file, and its `-wal` when there is one. */
+function asFoundWords(replaced: RestoreReplaced): string | undefined {
+  if (replaced.kind !== 'damaged') return undefined;
+  return replaced.wal === undefined
+    ? replaced.asFound
+    : `${replaced.asFound}, and its -wal at ${replaced.wal}`;
 }
 
 /**
@@ -615,7 +647,7 @@ async function placeInEmptyHome(
   empty: boolean,
 ): Promise<RestoreReplaced> {
   gate(r.home, r.seams);
-  prepareHome(r.home, 'no-file');
+  // Looked at before the home's preparation makes its folder or fences: a refusal changes nothing.
   const sides = hasSideFiles(source);
   if (sides && empty) throw sideFilesRefused(source);
   if (sides) {
@@ -627,16 +659,21 @@ async function placeInEmptyHome(
       'side files beside a missing store file',
     );
   }
+  prepareHome(r.home, 'no-file');
   const temporary = placeTemporary(r);
   try {
     if (empty) {
       const raw = await rawHold(r, source, sides);
       try {
+        // Classified before the hold: a command may have set the file up and written meanwhile. (The
+        // size cannot tell: SQLite's own exclusive lock writes an empty first page into a 0-byte file.)
+        const objects = Number(copyPragma(raw, 'SELECT count(*) FROM sqlite_master'));
+        if (objects !== 0 || hasSideFiles(source)) throw appeared(source);
         await swap(r, source, temporary, undefined, undefined);
       } finally {
         raw.close();
       }
-      return { kind: 'nothing' };
+      return { kind: 'nothing', empty: true };
     }
     try {
       if (r.seams.link === undefined) linkSync(temporary, source);
@@ -644,15 +681,11 @@ async function placeInEmptyHome(
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST')
         throw notReplaced(r, source, err, undefined);
-      throw restoreRefused(
-        `${DATABASE_FILE} appeared while the restore ran; nothing was replaced.`,
-        source,
-        'the store file appeared',
-      );
+      throw appeared(source);
     }
     removeCopy(temporary);
     flushHome(r, source);
-    return { kind: 'nothing' };
+    return { kind: 'nothing', empty: false };
   } finally {
     removeCopy(temporary);
   }
@@ -668,16 +701,14 @@ async function replaceUnreadable(
   // A link or a folder at the name keeps the store's refusal; a FIFO would block a byte copy.
   if (entry === undefined || !entry.isFile()) throw refusal;
   assertLocalFilesystem(r.home, r.seams.probe ?? SYSTEM_PROBE);
-  // Looked at BEFORE the raw open: SQLite's open of a truncated file makes a `-wal` of its own, and
-  // the raw hold's open of a WAL file does too.
+  // Looked at BEFORE the raw open: SQLite's open of a truncated file makes a `-wal` of its own.
   const sides = hasSideFiles(source);
-  const hadWal = lookAt(`${source}-wal`) !== undefined;
   const temporary = placeTemporary(r);
   try {
     const raw = await rawHold(r, source, sides);
     try {
-      const replaced = setAside(r, source, hadWal);
-      await swap(r, source, temporary, undefined, undefined);
+      const replaced = setAside(r, source);
+      await swap(r, source, temporary, asFoundWords(replaced), undefined);
       return replaced;
     } finally {
       raw.close();

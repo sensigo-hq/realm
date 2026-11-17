@@ -201,20 +201,31 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
     );
   });
 
-  it('(4) a home with no store file: the home made, the copy placed, nothing kept', async () => {
+  it('(4) a home with no store file, then one with an empty store file: the copy placed, nothing kept, each in its own words', async () => {
     const source = join(root, 'src', '.realm');
     await makeStore(source, 1);
     const backup = join(base, 'b.db');
     await backupTo(source, backup);
     const r = realm(['db', 'restore', backup]);
-    // (1) red when a home with no store is refused, or something is kept; (2) prints the run.
-    expect({ r, kept: existsSync(folder) }).toEqual({
+    const kept = existsSync(folder);
+    rmSync(home, { recursive: true, force: true });
+    mkdirSync(home, { recursive: true });
+    writeFileSync(file, '', { mode: 0o600 });
+    const empty = realm(['db', 'restore', backup]);
+    // (1) red when a home with no store, or an empty store file, is refused, something is kept, or
+    //     the empty file is said to be missing; (2) prints both runs.
+    expect({ r, kept, empty }).toEqual({
       r: {
         code: 0,
         stdout: `Restored ${shown(file)} from ${backup} (schema version 2). The home had no store file, so nothing was replaced.\n`,
         stderr: '',
       },
       kept: false,
+      empty: {
+        code: 0,
+        stdout: `Restored ${shown(file)} from ${backup} (schema version 2). The store file was empty, so nothing was replaced.\n`,
+        stderr: '',
+      },
     });
     claim(
       PAGE,
@@ -390,7 +401,7 @@ describe('#616 R1b — the page, the files page and the codes page say what real
     ],
     [
       'step 3',
-      'It makes sure that no other process has the store file open, and keeps it so until it is done. When one has it open, even an idle one, the command refuses and changes nothing.',
+      'It makes sure that no other process has the store file open, and keeps it so until it is done. When a Realm process has it open, even an idle one, the command refuses and changes nothing. (A program that only holds an empty store file open takes no lock, and is not seen.)',
       `cell 7; ${STORE_CELLS}: the idle process cell`,
     ],
     [
@@ -402,6 +413,21 @@ describe('#616 R1b — the page, the files page and the codes page say what real
       'an empty backup',
       'an empty file: `Cannot restore from <backup>: it is empty: it holds no store. Nothing was changed.`',
       `${STORE_CELLS}: the backup argument cell`,
+    ],
+    [
+      'an empty store file',
+      'or, over an empty store file: `Restored <home>/realm.db from <backup> (schema version <m>). The store file was empty, so nothing was replaced.`',
+      'cell 4',
+    ],
+    [
+      'an unverified kept copy',
+      "When the kept copy was made but fails SQLite's quick check, it stays under the kept name, unverified, and the file is then also copied as found, under its own names.",
+      `${STORE_CELLS}: the cell of a kept copy that fails SQLite's quick check`,
+    ],
+    [
+      'the fence files and "Nothing was changed"',
+      '"Nothing was changed" is about the store file: a refusal that comes after the store\'s open, in a home that does not have them yet, may leave Realm\'s four small read-only fence files in the home (`runs`, `dedup`, `replays` and `workflows`), as any open of the store does.',
+      `${STORE_CELLS}: the A1 cell (a fence-less home, a holder: the four files appear, the store file as it was)`,
     ],
     [
       'restoring a copy',
@@ -495,12 +521,12 @@ describe('#616 R1b — the page, the files page and the codes page say what real
   it('the files page and the codes page', () => {
     claim(
       ENV_PAGE,
-      "| `.realm-restore-<pid>-<random>.db` | The checked copy of a backup that `realm db restore` renames over `realm.db`, owner-only (mode 0600). One left behind by a restore that was killed is a full copy of the backup, which can be deleted when no restore is running. A restore that was killed may also leave a folder `realm-restore-<random>` in the system's temporary folder, owner-only, holding a full copy of the backup: delete it. | `realm db restore` |",
+      "| `.realm-restore-<pid>-<random>.db` | The checked copy of a backup that `realm db restore` puts in place of `realm.db`, owner-only (mode 0600). One left behind by a restore that was killed is a full copy of the backup, which can be deleted when no restore is running. A restore that was killed may also leave a folder `realm-restore-<random>` in the system's temporary folder, owner-only, holding a full copy of the backup: delete it. | `realm db restore` |",
       `${STORE_CELLS}: the crash window cell`,
     );
     claim(
       ENV_PAGE,
-      '| `~/.realm-backups/realm-before-restore-<UTC time>.db` | The store file that `realm db restore` replaced, copied and checked by `realm db backup` before the restore. A store file it could not read is copied as it was, as `realm-before-restore-<UTC time>-as-found.db` and its write-ahead log as `realm-before-restore-<UTC time>-as-found.db-wal`. Realm never deletes them. |',
+      '| `~/.realm-backups/realm-before-restore-<UTC time>.db` | The store file that `realm db restore` replaced, copied and checked by `realm db backup` before the restore (a copy that fails the check stays under this name, unverified, and the file is then also copied as found). A store file it could not read is copied as it was, as `realm-before-restore-<UTC time>-as-found.db` and its write-ahead log as `realm-before-restore-<UTC time>-as-found.db-wal`. Realm never deletes them. |',
       `cell 1; ${STORE_CELLS}: the first cell`,
     );
     claim(
