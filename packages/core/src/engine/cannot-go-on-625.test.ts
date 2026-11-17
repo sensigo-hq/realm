@@ -44,6 +44,7 @@ const missing: StepDefinition = {
 /** The ways of `run` under `d`, judged with an empty registry (this program) or none (an observer). */
 const ways = (run: RunRecord, d: WorkflowDefinition, registry?: ExtensionRegistry): ComposedWays =>
   composeWaysAt(run, new Date(), {
+    persistsClaims: false,
     definition: d,
     ...(registry !== undefined ? { registry } : {}),
   });

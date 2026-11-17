@@ -64,8 +64,9 @@ function record(over: Partial<RunRecord> = {}): RunRecord {
 function ways(
   over: Partial<PendingView> = {},
   steps: Record<string, { execution?: string }> = {},
-): { pending: PendingView; workflow: WorkflowDefinition } {
+): { pending: PendingView; workflow: WorkflowDefinition; persistsClaims: boolean } {
   return {
+    persistsClaims: false,
     pending: {
       // #729 PR-0 (D-L): the view names what the engine owes (`owed`); its act left with the
       // composers.
@@ -300,6 +301,7 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
       undefined,
     );
     const map = renderDetachMap(rec, new Date(), 'confirm', {
+      persistsClaims: false,
       pending,
       workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
     }).split('\n');
@@ -333,6 +335,7 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
     );
     const advanceOf = (pending: PendingView) =>
       renderDetachMap(record(), new Date(), 'approve', {
+        persistsClaims: false,
         pending,
         workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
       }).split('\n')[1];

@@ -1545,7 +1545,7 @@ describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
     const f = findings.find((x) => x.kind === 'cannot_go_on');
     const refused = f?.evidence?.['refused'] as Array<Record<string, unknown>> | undefined;
     // The facts the ways carry for the refused step — the finding's evidence must be them, whole.
-    const facts = composeWaysAt(w2Stuck, NOW, { definition: W2 })
+    const facts = composeWaysAt(w2Stuck, NOW, { persistsClaims: false, definition: W2 })
       .unavailable.filter((u) => u.verb === 'run_step' && u.code === 'refused_before_claim')
       .map((u) => u.facts);
     // (a) red when the predicate is not called (no finding), or the finding names another step,

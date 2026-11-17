@@ -1702,6 +1702,19 @@ export function reclaimWayOf(
   };
 }
 
+/** #729 CW-2b: the agent step this call holds under its lease, while its claim names that lease. */
+function heldHereOf(
+  run: RunRecord,
+  definition: WorkflowDefinition | undefined,
+  ctx: WaysContext,
+): string | undefined {
+  return ctx.held_claim !== undefined &&
+    definition?.steps[ctx.held_claim.step]?.execution === 'agent' &&
+    isHeldUnder(run, ctx.held_claim.step, ctx.held_claim.lease_id)
+    ? ctx.held_claim.step
+    : undefined;
+}
+
 /** #922: one held step's entry — its remedy its reclaim way, or (a store that keeps no claims) none. */
 function heldEntry(
   snap: Snapshot,
@@ -1978,12 +1991,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
   // this call holds under its lease (`held_claim`) is offered to it, an open question on another step
   // notwithstanding, and is neither held elsewhere nor waiting on the answer.
   const enactorFailed = ctx.enactor.kind === 'load_failed';
-  const heldHere =
-    ctx.held_claim !== undefined &&
-    definition.steps[ctx.held_claim.step]?.execution === 'agent' &&
-    isHeldUnder(run, ctx.held_claim.step, ctx.held_claim.lease_id)
-      ? ctx.held_claim.step
-      : undefined;
+  const heldHere = heldHereOf(run, definition, ctx);
   for (const step of [...pending.agent_steps, ...(heldHere !== undefined ? [heldHere] : [])]) {
     if (enactorFailed) continue;
     ways.push({
@@ -2642,13 +2650,20 @@ export function admitWay(
   if (contract !== undefined) return withSameWay(contract, verb, input, composeWaysOn(snap, ctx));
   if (verb === 'inspect' || verb === 'register') return { ok: true };
   if (verb === 'reclaim') {
+    const definition = 'ok' in ctx.definition ? ctx.definition.ok : undefined;
+    const step = String(input['step']);
+    const progress = (): WayOn[] => progressWays(composeWaysOn(snap, ctx).ways);
+    if (step === heldHereOf(snap.record, definition, ctx)) {
+      // CW-2b: this call's own claim is not held elsewhere — not offered, so not admitted (R26)
+      return { verb: 'reclaim', step, code: 'not_held', facts: { step }, remedy: progress() };
+    }
     const judged = judgeReclaim(
       snap,
-      'ok' in ctx.definition ? ctx.definition.ok : undefined,
+      definition,
       ctx.store.persistsClaims === true,
-      String(input['step']),
+      step,
       typeof input['claimed_at'] === 'string' ? input['claimed_at'] : undefined,
-      () => progressWays(composeWaysOn(snap, ctx).ways),
+      progress,
     );
     return 'ok' in judged ? { ok: true } : judged;
   }

@@ -34,6 +34,8 @@ All notable changes to this project are documented here.
 
 **13. A bare number or true/false given to `| default` keeps its type, in stored workflows too.** If a template follows one with a filter that takes only text, quote the fallback (`default: '0' | upper`). `realm workflow validate` (`--registered <id>` for a stored one) names such a chain in an approval question or `display` when the workflow declares the path's shape; look for one yourself in prompts, step instructions and paths it lists as not checked.
 
+**14. On MCP, `agent_action` is `report_to_user` and `until` is never a past held deadline when every blocker is a step past its deadline.**
+
 ### Added
 
 - **`--shutdown-grace <seconds>` on `realm serve` and `realm listen`**: how long requests being answered get to finish after Ctrl+C or `SIGTERM`; 30 by default; 0 to 2147483.
@@ -85,6 +87,7 @@ All notable changes to this project are documented here.
 
 - **Slack reminders count from the question's post** (issue #597): the reminder of a gate with no `reminder_seconds` and every escalation are counted from when the question was posted in Slack, not from when `realm agent` attached, so a restarted agent keeps their times; a restarted agent that uses the stopped agent's question post sends at most one catch-up, the latest reminder or escalation that came due, for any gate (never the reminder that says the time ran out). A reminder or escalation from an agent that does not read replies in the thread says `Realm is not reading replies in this thread right now` and gives the terminal command. The reminders of a gate's own `reminder_seconds` keep their times.
 - In the library, `WarningCode` gains the codes of the checks above: `INPUT_MAP_PATH_UNCERTAIN`, `INPUT_MAP_PATH_UNRESOLVABLE`, `WHEN_PATH_UNCERTAIN`, `WHEN_PATH_UNRESOLVABLE`, `WHEN_CHOICE_NOT_OFFERED`, `PARAMS_MAP_UNKNOWN_PARAM`, `PARAMS_MAP_UNDECLARED_PARAM`, `PARAMS_MAP_REQUIRED_UNMAPPED`, `HANDLER_NOT_PROVIDED`, `ADAPTER_NOT_PROVIDED`, `TEMPLATE_FILTER_UNKNOWN`, `TEMPLATE_FILTER_ARGUMENT`, `TEMPLATED_FIELD_NOT_TEXT`, `GATE_ANSWERER_NOT_SLACK_ID`, `TEMPLATE_PATH_UNRESOLVABLE`, `TEMPLATE_PATH_NO_DEFAULT` and `TEMPLATE_PATH_UNCERTAIN`.
+- **Each held step carries a `reclaim` way for a person, with its conditions.** In the library, `WAY_VERBS` gains `reclaim`, and `WayOn` the new `ReclaimWay`; `Cond` gains the conditions `claim_deadline_ahead`, `override_claim_unknown_age` and `rerun_not_idempotent`; `UNAVAILABLE_CODES` and `FactsByCode` gain the codes `not_held`, `store_keeps_no_claims`, `fence_required` and `claim_changed`, and `held_elsewhere`'s facts gain the claim's stamp (`claimed_at`) and, for a deadline that cannot be read, `{ absent: 'unparseable_stamp' }`. `WayRenderer` and `LIBRARY_WORDS` gain `reclaim` with the list.
 
 ### Fixed
 

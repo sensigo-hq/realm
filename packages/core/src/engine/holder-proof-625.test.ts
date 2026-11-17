@@ -357,7 +357,12 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
     const opened = await open(store, def);
     const { record: run } = await store.get(opened.runId);
     // #729 PR-0: the ways composed from the record (buildNextActions' successor) carry no proof.
-    expect(occurrences(composeWaysAt(run, new Date(), { definition: def }), opened.token)).toBe(0);
+    expect(
+      occurrences(
+        composeWaysAt(run, new Date(), { persistsClaims: false, definition: def }),
+        opened.token,
+      ),
+    ).toBe(0);
     expect(occurrences(classifyRunHealth(writtenSnapshot(run, new Date())), opened.token)).toBe(0);
     // The settlement result of the answer itself: its `gateClaim` copies holder and since — never
     // the token (the transform's own output, observed through the store).

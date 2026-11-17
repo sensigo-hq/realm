@@ -62,6 +62,7 @@ const missing: StepDefinition = {
 
 const ways = (run: RunRecord, d: WorkflowDefinition, registry?: ExtensionRegistry): ComposedWays =>
   composeWaysAt(run, new Date(), {
+    persistsClaims: false,
     definition: d,
     ...(registry !== undefined ? { registry } : {}),
   });

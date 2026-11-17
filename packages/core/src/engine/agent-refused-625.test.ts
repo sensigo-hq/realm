@@ -57,7 +57,7 @@ async function freshRun(store: InMemoryStore, d: WorkflowDefinition) {
 
 /** The ways composed from the record (buildNextActions' successor). */
 const waysOf = (d: WorkflowDefinition, run: RunRecord): ComposedWays =>
-  composeWaysAt(run, new Date(), { definition: d });
+  composeWaysAt(run, new Date(), { persistsClaims: false, definition: d });
 
 /** The refused-before-claim entries of a composition: step, check, refusal, remedies' verbs. */
 const refusedOf = (composed: Pick<ComposedWays, 'unavailable'>): unknown[] =>
