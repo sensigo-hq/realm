@@ -362,6 +362,18 @@ export interface EngineReply {
    */
   stopped_step?: string;
   /**
+   * The caller's own act was recorded, though the reply then speaks of what followed it. Present on
+   * an `executeChain` reply whose named step returned `ok` when the reply is another's: a step the
+   * engine ran after it (completed, failed, blocked, or that opened a question), a guard the step's
+   * own write made end the run, a step another program took meanwhile, or the chain's own error;
+   * and on MCP `start_run` when the run was created and a step it ran then failed or stopped it.
+   * `command` is the called step, or `start_run`; `evidence` is the called step's own recorded
+   * entry, for library callers (the MCP door leaves it out). `status`, `errors`, `error_code`,
+   * `stopped_step`, `data` and `evidence` keep their meaning: they are about what followed.
+   * @beta
+   */
+  own_act?: { command: string; recorded: true; evidence?: EvidenceSnapshot };
+  /**
    * Issue #625. `false` on a reply to an answer the gate's expiry beat: the gate was settled by
    * its timeout (or the run was aborted by it) before this answer could be recorded, so the
    * choice in this call was NOT recorded — including when it matches the choice the expiry
