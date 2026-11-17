@@ -93,7 +93,7 @@ steps:
       Severity: {{ context.resources.analyze_cause.severity }}
       Impacted services: {{ context.resources.analyze_cause.impacted_services }}
       Confidence: {{ context.resources.analyze_cause.confidence }}
-      Runbook: {{ context.resources.analyze_cause.runbook }}
+      Runbook: {{ context.resources.analyze_cause.runbook | default: 'none given' }}
 
       Raw alert data:
       {{ context.resources.read_alert.content }}

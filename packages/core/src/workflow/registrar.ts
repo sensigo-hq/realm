@@ -32,7 +32,7 @@ import {
 } from '../store/run-file.js';
 
 /**
- * issue #558 PR-T — what a registry read can fail as, before any bytes are parsed.
+ * What a registry read can fail as, before any bytes are parsed (`ProbeResult`).
  * @public
  */
 export type ProbeFailureClass =
@@ -492,27 +492,28 @@ export function repairActFor(err: WorkflowError): RepairAct | undefined {
 export const STUCK_DEFINITION_PARSE_CAP_BYTES = 4 * 1024 * 1024;
 
 /**
- * #616 PR-2c c5a: the classes a registry of files (the JSON registry) gives a registered copy it
- * cannot read — the FILE arm's eight: what the probe finds before any byte is read (`missing`: the
- * file went between the directory read and the probe; `unreadable`: an OS error reading it;
- * `not_a_file`: a directory where the file belongs; `empty`; `registry_broken`: the registry directory
- * itself) and what the read finds (`parse`: not JSON, or JSON that fails the checker; `newer`: a later
- * version of Realm registered it; `legacy`: an older one did).
+ * The classes a registry of files (the JSON registry) gives a registered copy it cannot read: eight
+ * in all. What the probe finds before any byte is read (`missing`: the file went between the
+ * directory read and the probe; `unreadable`: an OS error reading it; `not_a_file`: a directory
+ * where the file belongs; `empty`; `registry_broken`: the registry directory itself) and what the
+ * read finds (`parse`: not JSON, or JSON that fails the checker; `newer`: a later version of Realm
+ * registered it; `legacy`: an older one did).
  * @public
  */
 export type FileUnreadableClass = ProbeFailureClass | 'parse' | 'newer' | 'legacy';
 
 /**
- * #616 PR-2c c5a: the classes a registry with no files (the SQLite registry) gives — the ID arm's
- * three: `legacy` (an older version of Realm registered it), `newer` (a later one did) and `parse`: a
- * copy that is not JSON or fails the checker, or a damaged pointer row (no copy under the pointer, or
- * one that is not JSON text), whose entry has no `repair` because its reason names the remedy.
+ * The classes a registry with no files (the SQLite registry) gives a registered copy it cannot
+ * read: `legacy`, `newer` and `parse`. `legacy`: an older version of Realm registered it; `newer`:
+ * a later one did; `parse`: a copy that is not JSON or fails the checker, or a damaged pointer row
+ * (no copy under the pointer, or one that is not JSON text), whose entry has no `repair` because
+ * its reason names the remedy.
  * @public
  */
 export type IdUnreadableClass = 'legacy' | 'newer' | 'parse';
 
 /**
- * #616 PR-2c c5a: a registered copy a registry of files could not read, named by its file.
+ * A registered copy a registry of files could not read, named by its file.
  * @public
  */
 export interface UnreadableFileEntry {
@@ -533,8 +534,10 @@ export interface UnreadableFileEntry {
   repair?: string;
 }
 
-/** #616 PR-2c c5a: a registered copy a registry with no files (the SQLite registry) could not read,
- *  named by its workflow's id. Never carries `file` or `errno`: no file holds it, and no class on this
+/**
+ * A registered copy a registry with no files (the SQLite registry) could not read, named by its
+ * workflow's id.
+ * Never carries `file` or `errno`: no file holds it, and no class on this
  *  arm is an OS error.
  * @public
  */
@@ -552,14 +555,16 @@ export interface UnreadableIdEntry {
   repair?: string;
 }
 
-/** #616 PR-2c c5a: a registered copy a listing could not read. Each entry carries exactly one of
+/**
+ * A registered copy a listing could not read (`RegistryListing.unreadable`).
+ * Each entry carries exactly one of
  *  `file` (the file arm) and `workflow_id` (the id arm); all of one registrar's entries are of one arm.
  * @public
  */
 export type UnreadableRegistryEntry = UnreadableFileEntry | UnreadableIdEntry;
 
 /**
- * #616 PR-2c c5a: what a registrar's diagnostic listing returns.
+ * What a registrar's diagnostic listing returns (`WorkflowRegistrar.listWithDiagnostics`).
  * @public
  */
 export interface RegistryListing {
@@ -601,14 +606,15 @@ export interface WorkflowRegistrar {
 }
 
 /**
- * #616 PR-2c c5b: what `WorkflowRegistrar.getCapped` resolves to.
+ * What `WorkflowRegistrar.getCapped` resolves to.
  * @public
  */
 export type CappedRead = { definition: WorkflowDefinition } | { over: { bytes: number } };
 
 /**
- * #616 PR-2c c5b: a registrar with every optional member (c5a's `listWithDiagnostics` and
- * `getCapped`), as Realm's own registries — the JSON registry and the SQLite registry — are. Realm's
+ * A registrar with every optional member, `listWithDiagnostics` and `getCapped`, as Realm's own
+ * JSON and SQLite registries are.
+ * Realm's
  * homes carry this type, so a command that needs a member never meets a registrar without it.
  * @public
  */
@@ -1051,11 +1057,11 @@ export function definitionAbsenceOf(
 }
 
 /**
- * Fetches the workflow definition a run-context resolution needs, wrapping a
- * `STATE_WORKFLOW_NOT_FOUND` throw with the one-time-register remedy (issue #456) — the ONE
- * chokepoint every run-context site (`respond`, `resume`, `replay`, `drain`, `agent --run-id`,
- * and the MCP `submit_human_response`/`execute_step`/`append_trace` tools) calls, instead of each
- * hand-wrapping its own raw `store.get(run.workflow_id)`.
+ * Fetches the workflow definition a run needs, turning a `STATE_WORKFLOW_NOT_FOUND` into an error
+ * that says how to register it. It is the one place every run-context site calls (`respond`,
+ * `resume`, `replay`, `drain`, `agent --run-id`, and the MCP
+ * `submit_human_response`/`execute_step`/`append_trace` tools), instead of each wrapping its own
+ * raw `store.get(run.workflow_id)`.
  *
  * The `store` and `run` parameters are narrowed to exactly what this function uses
  * (`Pick<WorkflowRegistrar, 'get'>` / `Pick<RunRecord, 'workflow_id'>`) — by necessity, not taste:

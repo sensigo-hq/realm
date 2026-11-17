@@ -55,7 +55,7 @@ import { consumesInputMap, newRunCanChangeInput, refusedInputField } from './inp
 // ─── Parties and slots ──────────────────────────────────────────────────────────────────────────
 
 /**
- * Who can take a way (PR0-CONTRACT §1): the operator, the agent, the person a question is asked of.
+ * Who can take a way: the operator, the agent, or the person a question is asked of.
  * @public
  */
 export const PARTIES = ['operator', 'agent', 'asked_person'] as const;
@@ -67,7 +67,8 @@ export const PARTIES = ['operator', 'agent', 'asked_person'] as const;
 export type Party = (typeof PARTIES)[number];
 
 /**
- * A value the caller picks from a closed set (D1 spine 1): printed by each door's own rule (T-7).
+ * A value the caller picks from a closed set, printed by each door's own rule
+ * (`RespondWay.choice`).
  * @public
  */
 export type Slot<T> = { readonly one_of: readonly T[] };
@@ -75,8 +76,9 @@ export type Slot<T> = { readonly one_of: readonly T[] };
 // ─── Conditions ─────────────────────────────────────────────────────────────────────────────────
 
 /**
- * A condition a way is offered with (PR0-CONTRACT §1, D2 D-4): offered with condition c, it is
- * admitted only when c is met (D3 A-4). PR-0's one member: `enactor_has` — the step needs a handler or
+ * A condition a way is offered with: a way offered with a condition is admitted only when the
+ * condition is met (`Base.conditions`).
+ * PR-0's one member: `enactor_has` — the step needs a handler or
  * an adapter, and whether this program has it is judged from its `basis`: `marker` (the run's own
  * `capability_blocks` record: the program that last attempted the step lacked it), `unjudged` (an
  * observer passed no registry — C33: a read surface never executes project code), `load_failed` (this
@@ -112,8 +114,8 @@ export type Cond =
   | { code: 'rerun_not_idempotent'; basis: 'not_declared' | 'definition_absent' };
 
 /**
- * #627 W: who discharges a condition outside Realm (`client`: the MCP client's own approval
- * prompt). Beside {@link Cond}, never on {@link CODE_TAGS}, which tags UNAVAILABLE codes.
+ * Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
+ * Beside {@link Cond}, never on {@link CODE_TAGS}, which tags UNAVAILABLE codes.
  * OFFER_EQUALS_ADMISSION compares offer and admission over conditions Realm judges, so it leaves a
  * `client`-tagged condition out of the compared set.
  * @public
@@ -129,6 +131,8 @@ export type CondTag = (typeof COND_TAGS)[number];
 // ─── The ways ───────────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Every verb a way can name, as a closed list (`WayVerb`).
+ *
  * PR-0's verbs (option B) and #627 W's `present` (Amendment 2): PR-1 adds resume/drain/purge, PR-2
  * reclaim/validate/export, PR-7 start.
  * @public
@@ -174,9 +178,9 @@ export interface Base<V extends WayVerb> {
 }
 
 /**
- * What a `run_step` way says about its step (D1 spine 3, 4): the step's kind, its description, the
- * prompt the agent reads (template-resolved), the input schema an agent step's answer must fit, and —
- * a fact kept as data until #516 decides its meaning — the step's handler.
+ * What a `run_step` way says about its step: its kind, its description, the prompt the agent reads,
+ * the input schema an agent's answer must fit, and its handler. The prompt is template-resolved;
+ * the handler is a fact kept as data until #516 decides its meaning.
  * @public
  */
 export interface StepBrief {
@@ -195,7 +199,7 @@ export interface StepBrief {
 }
 
 /**
- * Answer the run's open question (PR0-CONTRACT §1).
+ * Answer the run's open question.
  * @public
  */
 export type RespondWay = Base<'respond'> & {
@@ -224,13 +228,13 @@ export type RespondWay = Base<'respond'> & {
 };
 
 /**
- * Run one step: an agent step's answer, or (the operator's lever, T-17) an engine step's input.
+ * Run one step: an agent step's answer, or an engine step's input given by the operator.
  * @public
  */
 export type RunStepWay = Base<'run_step'> & { run_id: string; step: string; brief: StepBrief };
 
 /**
- * Have the engine carry out what it owes (#625 PR-2a's act): a due expiry first, then steps.
+ * Have the engine carry out what it owes: a due expiry first, then steps.
  * @public
  */
 export type AdvanceWay = Base<'advance'> & {
@@ -251,7 +255,9 @@ export type InspectWay = Base<'inspect'> & { run_id: string };
 export type AbandonWay = Base<'abandon'> & { run_id: string };
 
 /**
- * Register the run's workflow again (D3 A-10): no JUDGE — on MCP an elsewhere entry. `path` only
+ * Register the run's workflow again. No judge admits it; on MCP it is the operator's, done outside
+ * the conversation (the door renders no instruction).
+ * `path` only
  * when the registry knows the file (T-21: the unreadable, invalid, legacy and newer copies carry
  * it): the registered COPY that cannot be used — never a file to register (correction 2, 3.2: each
  * door words it as a copy to repair).
@@ -270,23 +276,24 @@ export type RegisterWay = Base<'register'> & {
 };
 
 /**
- * #627 W (Amendment 2): show the open question again, as a form in the agent's own call — the MCP
- * door's `present_question`. The agent cannot answer through it: the person's accept records the
+ * Show the open question again, as a form in the agent's own call: the MCP door's
+ * `present_question`.
+ * The agent cannot answer through it: the person's accept records the
  * answer. No `step`: a renderer reads the step from the reply it already holds.
  * @public
  */
 export type PresentWay = Base<'present'> & { run_id: string; gate_id: string };
 
 /**
- * #922 (D3 §4): free a held step so it can run again — a person's act, never an agent's. Its
- * conditions say what holds (each discharged by `force`); `claimed_at` is the claim's stamp, present
- * exactly when the claim carries one, so the act applies only to the claim it was shown.
+ * Free a held step so it can run again: a person's act, never an agent's. Its conditions say what
+ * holds, each discharged by `force`; `claimed_at` is the claim's stamp, present exactly when the claim
+ * carries one, so the act applies only to the claim it was shown (#922).
  * @public
  */
 export type ReclaimWay = Base<'reclaim'> & { run_id: string; step: string; claimed_at?: string };
 
 /**
- * One way on, discriminated on `verb` (PR0-CONTRACT §1).
+ * One act a party can take on a run, told apart by its `verb`.
  * @public
  */
 export type WayOn =
@@ -334,7 +341,8 @@ export const CODE_TAGS = ['snapshot', 'input', 'write', 'door'] as const;
 export type CodeTag = (typeof CODE_TAGS)[number];
 
 /**
- * PR-0's codes (PR0-CONTRACT §1, T-1, T-21, A-5, A-7), each with its tag and the verbs it applies to.
+ * The codes that say why a way is unavailable, each with how it is judged and the verbs it applies
+ * to.
  * One S7 law per code (rule 19): its cell in `ways.test.ts`. No member is reserved (Amendment 8).
  * @public
  */
@@ -410,21 +418,21 @@ export const UNAVAILABLE_CODES = {
 export type UnavailableCode = keyof typeof UNAVAILABLE_CODES;
 
 /**
- * The code a failed load of a program's project code carries (A-5; Amendment 16, Q19): the error's
- * catalogue code, or `uncoded` — the loader throws plain errors too, and no catalogue code is minted
- * for them (a reader is never sent to the catalogue for a code that is not there).
+ * The code a failed load of a program's project code carries: the error's catalogue code, or
+ * `uncoded`. The loader throws plain errors too, and no catalogue code is minted for them (a reader
+ * is never sent to the catalogue for a code that is not there).
  * @public
  */
 export type LoadErrorCode = ErrorCode | 'uncoded';
 
 /**
- * The checks that refuse a step before its claim (#625 PR-2a's `checkPreClaim`, minus capability).
+ * The checks other than capability that refuse a step before its claim (`checkPreClaim`).
  * @public
  */
 export type RefusedCheck = 'trust' | 'precondition' | 'input_schema';
 
 /**
- * How a `definition_absent` arose (A-5, T-21: `getWorkflowForRun`'s arms).
+ * How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
  * @public
  */
 export const DEFINITION_ABSENCES = [
@@ -463,7 +471,7 @@ export function isUnusableCopy(absent: DefinitionAbsence): boolean {
 }
 
 /**
- * The typed facts of each code (PR0-CONTRACT §1: `FactsOf<C>` typed per code).
+ * The typed facts of each unavailable code (`FactsOf`).
  * @public
  */
 export interface FactsByCode {
@@ -626,7 +634,7 @@ export type NoRemedy =
 const HELD: NoRemedy = { cause: 'another_program_holds_it' };
 
 /**
- * A way that cannot be taken now (PR0-CONTRACT §1).
+ * A way that cannot be taken now, with its code, its facts and the remedies that lead on.
  * @public
  */
 export type Unavailable = {
@@ -709,7 +717,9 @@ export const ARGS: { readonly [V in WayVerb]: Readonly<Record<string, ArgSpec>> 
 export type RouteId = string;
 
 /**
- * Where a door setting came from (P-10). PR-0's kinds, and #627 W's `negotiated` (Amendment 10): its
+ * Where a door setting came from: a flag, the environment, an option, the configuration, the
+ * default, or negotiated with the client (`DoorAnswers.source`).
+ * PR-0's kinds, and #627 W's `negotiated` (Amendment 10): its
  * only producer is `answers.forms.source`, with `ref` naming the client's `initialize` capability.
  * @public
  */
@@ -719,7 +729,7 @@ export type Source = {
 };
 
 /**
- * #627 W (§5.1, F21) and the gate-answers default (2026-11-14): how the MCP door handles gate answers.
+ * How the MCP door handles gate answers (`DoorAnswers.value`).
  * `asked` (the default): no agent gets a tool that records an answer, in any app — the question goes
  * to the person in the chat app's own form where the app shows forms, and elsewhere a person answers
  * outside the conversation; `permitted` (opt-in): the answer tool for any client, the agent included;
@@ -812,8 +822,8 @@ export interface Narrowed {
 }
 
 /**
- * A door's renderer table, keyed by verb (PR0-CONTRACT §5, Amendment 4): exhaustive over
- * {@link WayVerb}, so every verb a later PR adds is a compile-time decision in every table. An entry
+ * A door's renderer table, keyed by verb: it must cover every {@link WayVerb}, so a new verb is a
+ * compile-time decision in every table. An entry
  * takes ONE way, its basis stamp and the host's static settings — never a record, view, definition,
  * registry, clock or snapshot (the renderer law; the import census and the `Date` ban witness it).
  * A door that never renders a verb returns `null`, with its reason in a comment.
@@ -843,8 +853,9 @@ function partiesAt(way: WayOn, serves: readonly Party[], row?: AnswersRow): Part
 }
 
 /**
- * #627 W: which row of §5.2's table a door's answers setting puts it on — `permitted`; `asked` with a
- * client that shows forms; `withheld`. `undefined` for a door with no answers setting (the CLI, the
+ * The row a door's gate-answers setting puts it on: `permitted`, `asked` with a client that shows
+ * forms, or `withheld` (`answersRowOf`).
+ * `undefined` for a door with no answers setting (the CLI, the
  * library): it narrows as PR-0 did. The gate-answers default (2026-11-14): `asked` in a session whose
  * client shows no forms (and on a door that sends none) is on the `withheld` row — the same tools,
  * replies and protocol rules; F30's fallback row, which kept the agent's answer tool there, is gone.
@@ -1014,7 +1025,7 @@ function doorCannotEnact(way: WayOn, policy: DoorPolicy, reason?: 'engine_step')
 // ─── agent_action (D2 D-8, D3 A-2, D4 T-22) ─────────────────────────────────────────────────────
 
 /**
- * The kinds of reply `agentActionOf` distinguishes (D2 D-8).
+ * The kinds of reply `agentActionOf` tells apart.
  * @public
  */
 export const REPLY_KINDS = ['ok', 'confirm_required', 'refusal', 'blocked', 'error'] as const;
@@ -1137,7 +1148,8 @@ export function agentActionOf(
 // ─── One vocabulary for "another program got there first" (T-1) ────────────────────────────────
 
 /**
- * The kinds of stop a loop meets on a step it picked or ran (T-1: the way codes, one spelling). The
+ * The kinds of stop a loop meets on a step it picked or ran (`StopKind`).
+ * The
  * first six are races — another program got there first, and the loop goes on with what is left:
  * `held_elsewhere` (another program holds the step, or ran it before this call claimed it),
  * `step_settled` (another program settled the step this call ran), `run_ended`, `claim_removed` (the
@@ -1178,10 +1190,10 @@ export type HaltStopKind = Extract<StopKind, 'capability_missing' | 'failed' | '
 export type RaceStopKind = Exclude<StopKind, HaltStopKind>;
 
 /**
- * A race: its kind, and whether this call's handler ran and its outcome was not recorded
- * (`ran_here` — true only when the step's own settle was refused: `held_elsewhere`, `step_settled`,
- * `run_ended` or `claim_removed` from `STATE_STEP_ALREADY_SETTLED`, `STATE_CLAIM_LOST` or
- * `STATE_RUN_TERMINAL`).
+ * A race a loop met: its kind, and whether this call's handler ran without its outcome being
+ * recorded (`ran_here`). `ran_here` is true only when the step's own settle was refused:
+ * `held_elsewhere`, `step_settled`, `run_ended` or `claim_removed` from
+ * `STATE_STEP_ALREADY_SETTLED`, `STATE_CLAIM_LOST` or `STATE_RUN_TERMINAL`.
  * @public
  */
 export interface RaceStop {
@@ -1218,7 +1230,7 @@ export function isRaceStop(stop: StopClassification | undefined): stop is RaceSt
 }
 
 /**
- * The parts of a reply the classifier reads (T-1: the stop's step is the typed `about`).
+ * The parts of a reply the stop classifier reads; the stop's step is its typed `about`.
  * @public
  */
 export interface StopReply {
@@ -1263,8 +1275,8 @@ const CAPABILITY_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * What kind of stop a loop met on a step it picked or ran (`step`), from the reply and the record
- * RE-READ after it — asked only by a loop (core's advance loop, `realm run advance`, `realm agent`,
+ * What kind of stop a loop met on a step it picked or ran, from the reply and the record read again
+ * after it. It is asked only by a loop (core's advance loop, `realm run advance`, `realm agent`,
  * `realm workflow run`), never of a direct `execute_step` call's own reply, which is the reply.
  * First matching row wins:
  *
@@ -2952,10 +2964,9 @@ function judgeAdmission(
 // ─── Who supplied an entry's input (T-17 (ii)) ──────────────────────────────────────────────────
 
 /**
- * The supplier of an evidence entry's input or output (#729 PR-0, T-17 (ii); §5 E1 (ii)): its
- * recorded role, or why it names none — `engine_input` for an entry whose input the engine built
- * (any step that is not an agent step), `not_recorded` for an agent step's entry written before the
- * field.
+ * The supplier of an evidence entry's input or output: its recorded role, or why it names none.
+ * `engine_input` for an entry whose input the engine built (any step that is not an agent step),
+ * `not_recorded` for an agent step's entry written before the field.
  * @public
  */
 export function readSupplier(
@@ -3018,8 +3029,9 @@ export function cannotGoOnUntilCorrected(composed: {
 export type LibraryHost = Readonly<Record<string, never>>;
 
 /**
- * The library door's words for each way (PR0-CONTRACT §5): what an embedder calls to take it — the
- * library's own functions, never a CLI command or an MCP tool. Applied by embedders to a reply's
+ * The library door's words for each way: the library function an embedder calls to take it, never a
+ * CLI command or an MCP tool.
+ * Applied by embedders to a reply's
  * `ways`; never imported by core's composers (the witness reads that). A way's words come from the
  * way alone (the renderer law).
  * @public
@@ -3090,7 +3102,8 @@ export function reclaimConditionWords(cond: Cond): string | undefined {
 export type PartialWayRenderer<Host> = Partial<WayRenderer<string, Host>>;
 
 /**
- * The complete renderer from a program's partial one: the program's function for each verb it gave
+ * The complete way renderer built from a program's partial one (`PartialWayRenderer`). The
+ * program's function for each verb it gave
  * one, Realm's own words ({@link LIBRARY_WORDS}) for every other verb — a verb added in a later minor
  * release included, until the program writes its own. A member that is not a function — `undefined`
  * included — counts as not given. String words only, as `LIBRARY_WORDS` gives them: a renderer with

@@ -93,6 +93,21 @@ export const GATE_MESSAGE_SURFACE: PathSurface = {
   readsOwnOutput: true,
 };
 
+/**
+ * Fix 1, piece 3a-ii-b: a step's `prompt`'s surface: the root `stepBrief` renders over (every step's
+ * evidence, the run's params, the workflow's context entries). The step's own declared fields are
+ * never there when its prompt is sent: on a first attempt it has no evidence entry, and a failed
+ * attempt records `output: {}`. Step `instructions` read the approval question's surface (the gate's
+ * opening reply renders them over the same root, the step's own output included).
+ */
+export const PROMPT_SURFACE: PathSurface = {
+  roots: [
+    { prefix: ['run', 'params'], data: 'params' },
+    { prefix: ['context', 'resources'], data: 'step' },
+    { prefix: ['workflow', 'context'], data: 'context_entry' },
+  ],
+};
+
 /** Fix 1, piece 3a-ii-a: `display`'s surface: the names of the step's own output, bare. */
 export const DISPLAY_SURFACE: PathSurface = {
   roots: [{ prefix: [], data: 'self' }],
@@ -290,22 +305,46 @@ function stepFix(
   stepRoot: PathRoot | undefined,
   ctx: Context,
 ): string | undefined {
-  if (stepRoot === undefined || segments.length === 0) return undefined;
-  let rest: readonly string[] | undefined;
-  if (ctx.isStep(segments[0]!)) {
-    rest = segments;
-  } else if (segments[0] === SETTLEMENT && segments.length >= 2 && ctx.isStep(segments[1]!)) {
-    // Piece 3a-ii-a: `$settlement.<s>.<f>`, the `when` spelling, under the step root.
-    rest = segments;
-  } else if (
+  if (stepRoot === undefined) return undefined;
+  const rest = wrongStepStart(segments, (name) => ctx.isStep(name));
+  return rest === undefined ? undefined : [...stepRoot.prefix, ...rest].join('.');
+}
+
+/**
+ * The wrong starts the step fix names, for a step `<s>` of the workflow: a bare step name
+ * (`<s>.<f>`, the `when` spelling), `$settlement.<s>.<f>`, and `steps.<s>.output(s).<f>`. Gives
+ * the segments to write under the step root, or `undefined` when the path starts with none of them.
+ */
+function wrongStepStart(
+  segments: readonly string[],
+  isStep: (name: string) => boolean,
+): readonly string[] | undefined {
+  if (segments.length === 0) return undefined;
+  if (isStep(segments[0]!)) return segments;
+  // Piece 3a-ii-a: `$settlement.<s>.<f>`, the `when` spelling, under the step root.
+  if (segments[0] === SETTLEMENT && segments.length >= 2 && isStep(segments[1]!)) return segments;
+  if (
     segments[0] === 'steps' &&
     segments.length >= 3 &&
-    ctx.isStep(segments[1]!) &&
+    isStep(segments[1]!) &&
     (segments[2] === 'output' || segments[2] === 'outputs')
   ) {
-    rest = [segments[1]!, ...segments.slice(3)];
+    return [segments[1]!, ...segments.slice(3)];
   }
-  return rest === undefined ? undefined : [...stepRoot.prefix, ...rest].join('.');
+  return undefined;
+}
+
+/**
+ * Fix 1, piece 3a-ii-b: whether `path` starts the way the step fix names (`wrongStepStart`) for a
+ * step of `steps`, the workflow's raw steps, judged as `PathIndex` judges a step name.
+ */
+export function startsWithStepName(path: string, steps: unknown): boolean {
+  return wrongStepStart(path.trim().split('.'), (name) => isStepOf(steps, name)) !== undefined;
+}
+
+/** Whether `name` is a step of the raw `steps` (`$settlement` never is). */
+function isStepOf(steps: unknown, name: string): boolean {
+  return name !== SETTLEMENT && isObj(steps) && Object.prototype.hasOwnProperty.call(steps, name);
 }
 
 /** What a step's output is, as the resolver knows it at load. */
@@ -408,7 +447,7 @@ export class PathIndex {
   }
 
   isStep(name: string): boolean {
-    return name !== SETTLEMENT && Object.prototype.hasOwnProperty.call(this.steps, name);
+    return isStepOf(this.steps, name);
   }
 
   /** What step `name` records, one level deep: a bare step's points at the step it inherits from. */

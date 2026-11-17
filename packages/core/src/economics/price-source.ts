@@ -46,9 +46,10 @@ export const NOT_PRICED_CAUSES = [
 export type NotPricedCause = (typeof NOT_PRICED_CAUSES)[number];
 
 /**
- * One request's counters as a source prices them: the prompt is the WHOLE input (reads and writes
- * inside it); a cache counter the request did not report is 0; the 5-minute and 1-hour write
- * counters are present only when the request recorded the split, and then add up to the write.
+ * One request's token counts as a price source prices them (`PriceInput.usage`). The prompt is the
+ * whole input (reads and writes inside it); a cache counter the request did not report is 0; the
+ * 5-minute and 1-hour write counters are present only when the request recorded the split, and then
+ * add up to the write.
  * @public
  */
 export interface PriceUsage {
