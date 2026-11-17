@@ -371,6 +371,8 @@ A step that does not return `ok` prints a line that starts with `✗`, then the 
 
 This was added in 0.46.0; version 0.45.0 prints `✗ error: …` without naming the step.
 
+When the engine runs steps after the step you answered, that step's `✓` line shows the step's own hash, not the last step's, and when they stop at a question its `✓` line comes before `Gate opened for '<step>'.` A step that waits at its own question prints `Gate opened for '<step>'.` only. Added after version 0.49.0, whose `✓` line showed the last step's hash, and which printed no `✓` before a question the engine's steps reached.
+
 A gate's prompt closes when its question is settled while it waits: by its time running out, when the gate declares an `on_expiry` (this process carries the expiry out and prints its own `⏰` line), or by another process — `realm run respond` from another terminal, `realm run advance`, `realm run drain --expired` or `realm listen`. Those read the workflow from the registry, so they act on the run only once it is registered (`realm workflow register <file>`): for a workflow never registered, `realm run respond`, `realm run advance` and `realm run drain` are refused with `Workflow '<id>' is not registered in this workflow store, …`, and `realm listen` skips the run. It then prints what the run's record holds, in the words of `realm run inspect`, and the run goes on:
 
 ```text

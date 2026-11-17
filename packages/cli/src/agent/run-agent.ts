@@ -1300,6 +1300,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // and conjunct (iv) of the drive_failing predicate then suppresses the finding — because
         // progress DID happen. Chosen, not incidental.
         currentStepName = stepName;
+        // #625 A1a: the step this drive started last and has not yet been seen to complete — this
+        // step, then each step its `executeChain` call runs after it (the advanceRun path's
+        // `startedNotDone`). A `✓` is printed only for a step this program finished.
+        let chainStartedNotDone: string | undefined = stepName;
         const stepDef: StepDefinition = definition.steps[stepName]!;
 
         // issue #401 — the clock for THIS step's model requests. The step's own authored key
@@ -2079,9 +2083,45 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // recorded as sent — and said so.
           const sentBack = markersIn(stepInput);
           if (sentBack.length > 0) console.warn(`  ⚠ ${inboundMarkerWarning(sentBack)}`);
+          // #625 A1a: re-seeded for each call, each repair attempt included.
+          chainStartedNotDone = stepName;
           result = await executeChain(deps.store, definition, {
             runId,
             command: stepName,
+            // #625 A1a: the steps the chain runs after this one, printed as the advanceRun path
+            // prints them. `currentStepName` and `attemptStartedAt` stay this step's: chokepoint 3
+            // attaches this step's billed calls by them.
+            onStep: (step) => {
+              if (chainStartedNotDone !== undefined)
+                console.log(`  ✓ → ${writerCtx().word('running', RUN_PHASE_WORDS)}`);
+              chainStartedNotDone = step;
+              console.log(`→ [auto] ${step}`);
+            },
+            onTaken: (step, record, snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT) => {
+              chainStartedNotDone = undefined;
+              console.log(
+                takenLine(
+                  step,
+                  describeClaimHolder(
+                    record.claims?.[step],
+                    keepsClaims,
+                    leaseFactOf(snapshot, record.claims?.[step]),
+                  ),
+                  writerCtx(),
+                ),
+              );
+            },
+            onNotRecorded: (
+              step,
+              kind,
+              record,
+              snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
+            ) => {
+              chainStartedNotDone = undefined;
+              console.log(
+                outcomeNotRecordedLine(kind, record, step, keepsClaims, writerCtx(), snapshot),
+              );
+            },
             // #729 PR-4 (01): a question this call opens is minted with the writer's private set.
             ...((set) => (set !== undefined ? { disclosure: set } : {}))(writerSetFor('private')),
             // decision C151: an expiry this call carries out names `realm agent`.
@@ -2260,7 +2300,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         ) {
           heldCapabilityReplies.set(result.stopped_step, result);
           hold(errorSnapshot!);
-          console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
+          // #625 A1a: this step's `✓` only while no chained step started (its `onStep` printed it
+          // then); the blocked step was attempted, never finished.
+          if (chainStartedNotDone === stepName) {
+            console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
+          }
+          chainStartedNotDone = undefined;
           continue;
         }
 
@@ -2506,7 +2551,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           printResumeLine(currentSnap);
           return 'failed';
         }
-        console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
+        // #625 A1a: for the step started last, when this program finished it — none after a step
+        // another process took.
+        if (chainStartedNotDone !== undefined) {
+          console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
+        }
       }
     } finally {
       if (mcpClient) {

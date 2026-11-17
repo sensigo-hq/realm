@@ -145,11 +145,11 @@ The record keeps the handler's input and output:
 **Throw an error when the step cannot do its work.** The step fails. With a quantity of -1:
 
 ```text
-Step 'total' failed. Run is terminated.
+Run 'b6a0c3d2-5e4f-4a71-9c8b-2d1e0f3a4b5c' created for workflow 'price'. Step 'total' failed. Run is terminated.
 ENGINE_HANDLER_FAILED: Handler 'order_total' threw: quantity must be a positive number, got -1
 ```
 
-The run ends as `failed`, unless the workflow has a step that handles the failure. See [Handle failure](handle-failure.md).
+The first line opens with the run's creation after version 0.49.0. The run ends as `failed`, unless the workflow has a step that handles the failure. See [Handle failure](handle-failure.md).
 
 **Return `{ abort: { message } }` when the run should stop on purpose.** This is for a condition you expected, where carrying on makes no sense. With a quantity of 5000:
 

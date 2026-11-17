@@ -64,9 +64,11 @@ pay:
 If the handler throws, the step fails. In the refund example, a payment that was declined was recorded like this:
 
 ```text
-Step 'pay' failed. Recovery steps are available in next_actions.
+Step 'assess' completed. Step 'pay' failed. Recovery steps are available in next_actions.
 Handler 'pay' threw: payment provider declined 500
 ```
+
+The first line opens with the step the call answered, `Step 'assess' completed.`, after version 0.49.0.
 
 ## Guard steps
 
