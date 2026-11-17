@@ -56,6 +56,7 @@
 // This module and `connection.ts` import each other; neither reads the other's bindings at the top
 // level, so either may be loaded first.
 import { accessSync, constants, lstatSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import {
   REALM_STORE_APPLICATION_ID,
   REALM_STORE_PAGE_SIZE,
@@ -698,11 +699,20 @@ function openFileThroughTheLoader(
 /**
  * #616 R1b: a connection on `path` through the one loader, with none of the open's checks, for
  * `realm db restore` (`restore.ts`) alone: the scratch copy of a backup it checks before the store's
- * own check runs on it. Only the open's own error is mapped; SQLite's errors on the connection stay
- * raw, so the restore reads their codes.
+ * own check runs on it, and (R1c) its hold on a store file the open refused. Only the open's own error
+ * is mapped; SQLite's errors on the connection stay raw, so the restore reads their codes. With
+ * `unchanged` (R1c) it is read-only and immutable: SQLite reads the file alone, takes no lock, and
+ * neither opens, applies nor removes the `-wal` and `-shm` beside it.
  */
-export function openRawConnection(path: string, seams: OpenSeams = {}): DatabaseLike {
-  return connect(path, seams.openFile ?? openFileThroughTheLoader, false);
+export function openRawConnection(
+  path: string,
+  seams: OpenSeams = {},
+  unchanged = false,
+): DatabaseLike {
+  const openFile = seams.openFile ?? openFileThroughTheLoader;
+  return unchanged
+    ? connect(`${pathToFileURL(path).href}?immutable=1`, openFile, true)
+    : connect(path, openFile, false);
 }
 
 /** The device and inode the store file's path names now (`lstat`): which file it is. */
@@ -741,7 +751,7 @@ async function onTheNamedFile<T>(
 }
 
 /** Steps 1 and 2 of the open and of the check: the loader's floor and the filesystem gate. */
-function gate(home: string, seams: OpenSeams): FilesystemProbe {
+export function gate(home: string, seams: OpenSeams): FilesystemProbe {
   (seams.loadSqlite ?? loadSqlite)();
   const probe = seams.probe ?? SYSTEM_PROBE;
   assertLocalFilesystem(home, probe);
@@ -800,7 +810,7 @@ export async function openRealmDb(
   seams: OpenSeams = {},
 ): Promise<RealmDb> {
   const probe = gate(home, seams);
-  const path = prepareHome(home, false);
+  const path = prepareHome(home);
   assertAFile(path);
   assertWritable(path);
 
@@ -852,7 +862,7 @@ export async function openForCheck(
   seams: OpenSeams = {},
 ): Promise<CheckedFile> {
   const probe = gate(home, seams);
-  const path = prepareHome(home, true);
+  const path = prepareHome(home, 'check');
   assertAFile(path);
   // Asked whenever the file exists: of the folder (SQLite makes the side files there) and of the file.
   const writable = homeIsWritable(home) && writeRefusal(path) === undefined;

@@ -4,9 +4,9 @@
 // process on the store (a real child); the backup argument; a backup that is not a store, is damaged
 // or newer; a backup in DELETE journal mode, 0644 or in a read-only folder; an older backup; a stale
 // write-ahead log; the crash window (a real kill at the `rename` seam); an opener of the new file
-// right after the rename (a real child); failures before the swap; a home with no store, or an empty
-// one, refused (part one); a store file the open cannot read or with a damaged page, and one written
-// by a newer Realm, each refused, nothing changed. Every home nests
+// right after the rename (a real child); failures before the swap; (R1c) a home with no store, or an
+// empty one; the damaged-file rule, its side files looked at before any open; an opener waiting on the
+// raw hold (a real child); the raw path's own guard; a store file written by a newer Realm. Every home nests
 // (`<tmp>/h/.realm`), so its backups folder is its own scratch folder's, never `/tmp/.realm-backups`.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
+  copyFileSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -26,6 +27,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
@@ -226,6 +228,15 @@ const HOLDER =
   "import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';" +
   'const db = await openForeignConnection(process.argv[1]);' +
   "db.prepare('SELECT count(*) FROM sqlite_master').get();" +
+  "process.stdout.write('ready\\n');" +
+  'setInterval(() => {}, 1000);';
+
+// Another PROCESS that is in a write transaction on the store file and stays there (a file in
+// rollback mode, such as a zero-length one, gives an idle connection no lock).
+const WRITING =
+  "import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';" +
+  'const db = await openForeignConnection(process.argv[1]);' +
+  "db.exec('BEGIN IMMEDIATE');" +
   "process.stdout.write('ready\\n');" +
   'setInterval(() => {}, 1000);';
 
@@ -914,112 +925,456 @@ describe('#616 R1b — a failure after the rename', { timeout: 120_000 }, () => 
   });
 });
 
-describe(
-  '#616 R1b part one — what part two restores over is refused, and nothing is changed',
-  { timeout: 120_000 },
-  () => {
-    it('a home with no store file, and an empty store file: the entry refuses in its own words, before the backup is read', async () => {
-      const { root, home, file, folder } = nestedHome();
-      const source = join(root, 'src', '.realm');
-      await makeStore(source, 1);
-      const backup = join(root, 'b.db');
-      await backupTo(source, backup);
-      const words = (e: unknown): unknown =>
-        e instanceof WorkflowError ? { code: e.code, message: e.message } : String(e);
-      const missing = await restore(home, backup).catch(words);
-      mkdirSync(home, { recursive: true });
-      writeFileSync(file, '', { mode: 0o600 });
-      const empty = await restore(home, backup).catch(words);
-      // (1) red when the entry lets `'restore'` past its pre-check (the open then creates the file,
-      //     or sets the empty one up, and restores over it); (2) prints both refusals and the home.
-      expect({
-        missing,
-        empty,
-        home: names(home),
-        size: statSync(file).size,
-        folder: names(folder),
-      }).toEqual({
-        missing: {
-          code: 'STATE_STORE_RESTORE_REFUSED',
-          message: `There is no store file at ${file} to restore over.`,
-        },
-        empty: {
-          code: 'STATE_STORE_RESTORE_REFUSED',
-          message: `${file} holds no store yet: there is nothing to restore over.`,
-        },
-        home: ['realm.db'],
-        size: 0,
-        folder: [],
-      });
+describe('#616 R1b — a home with no store file, or an empty one', { timeout: 120_000 }, () => {
+  it('a missing home folder: the home made by the store`s own preparation (folder and fences), the file placed by link, nothing kept, and the next open reads it', async () => {
+    const { root, home, file, folder } = nestedHome();
+    const source = join(root, 'src', '.realm');
+    await makeStore(source, 2);
+    const backup = join(root, 'b.db');
+    await backupTo(source, backup);
+    const outcome = await restore(home, backup);
+    const h = await openHome({ home }, {});
+    h.close();
+    // (1) red when the restore refuses a home with no store file, makes it by another route than the
+    //     store's preparation (no fences), keeps something, or the file cannot be opened; (2) prints it.
+    expect({
+      replaced: outcome.report?.replaced,
+      home: names(home),
+      folder: names(folder),
+      runs: runsOf(file),
+      mode: (statSync(file).mode & 0o777).toString(8),
+    }).toEqual({
+      replaced: { kind: 'nothing' },
+      home: ['dedup', 'realm.db', 'replays', 'runs', 'workflows'],
+      folder: [],
+      runs: runsOf(backup),
+      mode: '600',
     });
+  });
 
-    it('a store file the open cannot read (text garbage): its refusal passes unchanged, nothing is changed', async () => {
-      const { root, home, file, folder } = nestedHome();
-      await makeStore(home, 1);
-      const backup = join(root, 'b.db');
-      await backupTo(home, backup);
-      rmSync(file);
-      writeFileSync(file, 'this is not a database, not even close to one'.repeat(200), {
-        mode: 0o600,
-      });
-      const before = hashOf(file);
-      const outcome = await restore(home, backup);
-      // (1) red when such a file is replaced (or kept) instead of refused by the open; (2) prints it.
-      expect({
-        code: outcome.refused?.code,
-        unchanged: hashOf(file) === before,
-        folder: names(folder),
-        left: names(home).filter((n) => n.startsWith('.realm-restore-')),
-      }).toEqual({ code: 'STATE_STORE_SETTINGS_REFUSED', unchanged: true, folder: [], left: [] });
+  it('a home with no store file but a -wal or -shm where it would be: refused, nothing made', async () => {
+    const { root, home, file } = nestedHome();
+    const source = join(root, 'src', '.realm');
+    await makeStore(source, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(source, backup);
+    mkdirSync(home, { recursive: true });
+    writeFileSync(`${file}-wal`, 'frames of a store file that was moved');
+    const outcome = await restore(home, backup);
+    // (1) red when the copy is placed beside a log that is not its own (the next open would apply it);
+    //     (2) prints the refusal and the home.
+    expect({
+      refused: outcome.refused,
+      store: existsSync(file),
+      wal: readFileSync(`${file}-wal`, 'utf8'),
+    }).toEqual({
+      refused: {
+        code: 'STATE_STORE_RESTORE_REFUSED',
+        message:
+          `There is no store file at ${file}, but a -wal or -shm file is beside where it would be: ` +
+          'they may hold the writes of a store file that was moved or deleted. Move them aside by ' +
+          'hand, then run this again. Nothing was changed.',
+      },
+      store: false,
+      wal: 'frames of a store file that was moved',
     });
+  });
 
-    it('a store file with a damaged page: it opens, its kept copy fails, and the refusal is backup`s own with "Nothing was replaced."', async () => {
-      const { root, home, file, folder } = nestedHome();
-      await makeStore(home, 1);
-      const backup = join(root, 'b.db');
-      await backupTo(home, backup);
-      damagePage13(file);
-      const before = hashOf(file);
-      const outcome = await restore(home, backup);
-      // The kept file's name holds the second the restore ran in (a real clock): read it back.
-      const kept =
-        /^Cannot back up the store to (\S+\.db): /.exec(outcome.refused?.message ?? '')?.[1] ?? '';
-      // (1) red when the kept copy's refusal loses its sentence or its code, or the file is replaced;
-      //     (2) prints it.
-      expect({
-        refused: outcome.refused,
-        named: /^realm-before-restore-\d{8}T\d{6}Z\.db$/.test(kept.slice(folder.length + 1)),
-        unchanged: hashOf(file) === before,
-        left: names(home).filter((n) => n.startsWith('.realm-restore-')),
-      }).toEqual({
-        named: true,
-        refused: {
-          code: 'STATE_STORE_BACKUP_REFUSED',
-          message:
-            `Cannot back up the store to ${kept}: SQLite could not read ${file}: database disk ` +
-            'image is malformed (SQLite error 11). The store file may be damaged. Nothing was ' +
-            `written at ${kept}. Nothing was replaced.`,
+  it('a racing creator: realm.db appears before the link, and nothing is replaced', async () => {
+    const { root, home, file } = nestedHome();
+    const source = join(root, 'src', '.realm');
+    await makeStore(source, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(source, backup);
+    const outcome = await restore(home, backup, {
+      link: (from, to) => {
+        writeFileSync(to, 'another');
+        linkSync(from, to);
+      },
+    });
+    // (1) red when the copy is placed by rename (it replaces the file that appeared); (2) prints it.
+    expect({ refused: outcome.refused, file: readFileSync(file, 'utf8') }).toEqual({
+      refused: {
+        code: 'STATE_STORE_RESTORE_REFUSED',
+        message: 'realm.db appeared while the restore ran; nothing was replaced.',
+      },
+      file: 'another',
+    });
+  });
+
+  it('a home that holds an old JSON store folder is refused as the store refuses it', async () => {
+    const { root, home } = nestedHome();
+    const source = join(root, 'src', '.realm');
+    await makeStore(source, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(source, backup);
+    mkdirSync(join(home, 'runs'), { recursive: true });
+    const outcome = await restore(home, backup);
+    // (1) red when the restore places a store beside the old store's folders; (2) prints it.
+    expect({ code: outcome.refused?.code, home: names(home) }).toEqual({
+      code: 'STATE_HOME_HOLDS_LEGACY_STORE',
+      home: ['runs'],
+    });
+  });
+
+  it('a zero-length store file: held by another process, refused STATE_STORE_IN_USE; not held, replaced and nothing kept', async () => {
+    const { root, home, file, folder } = nestedHome();
+    const source = join(root, 'src', '.realm');
+    await makeStore(source, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(source, backup);
+    mkdirSync(home, { recursive: true });
+    writeFileSync(file, '', { mode: 0o600 });
+    const writer = await startChild(WRITING, home);
+    const held = await restore(home, backup);
+    writer.kill('SIGKILL');
+    await new Promise((r) => writer.once('exit', r));
+    const free = await restore(home, backup);
+    // (1) red when the lock's answer is ignored on a zero-length file (it is replaced under the
+    //     writer), or when a zero-length file is refused or kept; (2) prints both outcomes.
+    expect({
+      held: held.refused,
+      free: free.report?.replaced,
+      runs: runsOf(file),
+      folder: names(folder),
+    }).toEqual({
+      held: { code: 'STATE_STORE_IN_USE', message: IN_USE(file) },
+      free: { kind: 'nothing' },
+      runs: runsOf(backup),
+      folder: [],
+    });
+  });
+});
+
+describe('#616 R1b — the damaged-file rule', { timeout: 120_000 }, () => {
+  it('a store file with a damaged page: it opens, its kept copy fails, so it is copied as found (byte copy) and replaced; no counts', async () => {
+    const { root, home, file, folder } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    damagePage13(file);
+    const original = { hash: hashOf(file), ino: statSync(file).ino };
+    const outcome = await restore(home, backup);
+    const replaced = outcome.report?.replaced;
+    const asFound = replaced?.kind === 'damaged' ? replaced.asFound : 'none';
+    // (1) red when the as-found file is renamed instead of copied (its inode is the store file's),
+    //     when it is not the original's bytes, or when counts are given; (2) prints it.
+    expect({
+      kind: replaced?.kind,
+      sameBytes: hashOf(asFound) === original.hash,
+      newInode: statSync(asFound).ino !== original.ino,
+      events: outcome.events.map((e) => e.kind),
+      runs: runsOf(file),
+      name:
+        asFound.startsWith(`${folder}/realm-before-restore-`) && asFound.endsWith('-as-found.db'),
+    }).toEqual({
+      kind: 'damaged',
+      sameBytes: true,
+      newInode: true,
+      events: ['as_found'],
+      runs: runsOf(backup),
+      name: true,
+    });
+  });
+
+  it('text garbage with no side file: it goes on, says SQLite could not check for another process, and replaces it; with a -wal or a -shm beside it, it refuses', async () => {
+    const { root, home, file } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    rmSync(file);
+    writeFileSync(file, 'this is not a database, not even close to one'.repeat(200), {
+      mode: 0o600,
+    });
+    const garbage = hashOf(file);
+    writeFileSync(`${file}-shm`, '');
+    const withShm = await restore(home, backup);
+    // The side files are looked at before anything opens the file (R1c item 2): none was touched.
+    const shmLeft = existsSync(`${file}-shm`);
+    rmSync(`${file}-shm`);
+    const without = await restore(home, backup);
+    // The as-found name holds the second the restore ran in (a real clock): read it from the event.
+    const found = without.events.find((e) => e.kind === 'as_found');
+    const asFoundName = found?.kind === 'as_found' ? found.asFound : 'none';
+    const replaced = without.report?.replaced;
+    // (1) red when side files are looked at only after the raw open, or ignored; when the raw open's
+    //     lock answer is taken for granted; (2) prints both outcomes.
+    expect({
+      withShm: withShm.refused,
+      shmLeft,
+      named: /^realm-before-restore-\d{8}T\d{6}Z-as-found\.db$/.test(
+        asFoundName.split('/').pop() ?? '',
+      ),
+      events: without.events,
+      kind: replaced?.kind,
+      asFound: replaced?.kind === 'damaged' && hashOf(replaced.asFound) === garbage,
+      runs: runsOf(file),
+    }).toEqual({
+      withShm: {
+        code: 'STATE_STORE_RESTORE_REFUSED',
+        message:
+          `${file} cannot be read as a store, and a -wal or -shm file is beside it: another ` +
+          'process may have it open, or a process that was killed left them. Stop every process ' +
+          `that uses the home; if none is running, move ${file} and those files aside by hand, ` +
+          'then run this again. Nothing was changed.',
+      },
+      shmLeft: true,
+      named: true,
+      events: [
+        { kind: 'unchecked_lock', path: file },
+        {
+          kind: 'as_found',
+          asFound: asFoundName,
+          wal: undefined,
         },
-        unchanged: true,
-        left: [],
-      });
+      ],
+      kind: 'damaged',
+      asFound: true,
+      runs: runsOf(backup),
     });
+  });
 
-    it('a store file written by a newer Realm: refused with the store`s message, nothing changed', async () => {
-      const { root, home, file, folder } = nestedHome();
-      await makeStore(home, 1);
-      const backup = join(root, 'b.db');
-      await backupTo(home, backup);
-      setVersion(file, 3);
-      const before = hashOf(file);
-      const outcome = await restore(home, backup);
-      // (1) red when a newer file is replaced instead of refused; (2) prints it.
-      expect({
-        code: outcome.refused?.code,
-        unchanged: hashOf(file) === before,
-        folder: names(folder),
-        left: names(home).filter((n) => n.startsWith('.realm-restore-')),
-      }).toEqual({ code: 'STATE_STORE_VERSION_NEWER', unchanged: true, folder: [], left: [] });
+  it('a truncated store file with a WAL header: the side files are looked at before the raw open, which makes a -wal of its own', async () => {
+    const { root, home, file } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    truncateSync(file, 1000);
+    const outcome = await restore(home, backup);
+    // (1) red when the side files are looked at after the raw open (its own -wal then refuses every
+    //     such file); (2) prints the outcome.
+    expect({ refused: outcome.refused, kind: outcome.report?.replaced.kind }).toEqual({
+      refused: undefined,
+      kind: 'damaged',
     });
-  },
-);
+  });
+
+  it('a valid SQLite database that is not a Realm store: the lock is granted, it is copied as found and replaced; held by another process, refused', async () => {
+    const { root, home, file } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    rmSync(file);
+    const other = openDatabase(file);
+    other.exec('PRAGMA journal_mode = WAL');
+    other.exec('CREATE TABLE notes (text TEXT)');
+    other.close();
+    const holder = await startChild(HOLDER, home);
+    const held = await restore(home, backup);
+    holder.kill('SIGKILL');
+    await new Promise((r) => holder.once('exit', r));
+    const sides = sideFiles(file);
+    for (const s of sides) rmSync(`${file}${s}`);
+    const free = await restore(home, backup);
+    // (1) red when the lock's answer is ignored (the held file is replaced); (2) prints both.
+    expect({ held: held.refused, kind: free.report?.replaced.kind, runs: runsOf(file) }).toEqual({
+      held: { code: 'STATE_STORE_IN_USE', message: IN_USE(file) },
+      kind: 'damaged',
+      runs: runsOf(backup),
+    });
+  });
+
+  it('a valid SQLite database that is not a Realm store, with a killed writer`s log: the open writes the log into it first, so the as-found copy holds those writes and has no -wal', async () => {
+    const { root, home, file } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    rmSync(file);
+    const other = openDatabase(file);
+    other.exec('PRAGMA journal_mode = WAL');
+    other.exec('CREATE TABLE notes (text TEXT)');
+    other.close();
+    // A plain SQLite writer that commits one row and is killed: the row is only in the log.
+    spawnSync(process.execPath, [
+      '-e',
+      `const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(${JSON.stringify(file)}); d.exec("PRAGMA journal_mode = WAL; INSERT INTO notes VALUES ('the killed writer')"); process.kill(process.pid, 'SIGKILL');`,
+    ]);
+    const logged = statSync(`${file}-wal`).size;
+    const outcome = await restore(home, backup);
+    const replaced = outcome.report?.replaced;
+    const asFound = replaced?.kind === 'damaged' ? replaced.asFound : 'none';
+    const look = openDatabase(asFound);
+    const notes = look
+      .prepare('SELECT text FROM notes')
+      .all()
+      .map((r) => r['text']);
+    look.close();
+    // (1) red when the page's sentence stops being true: the row missing from the as-found copy, or an
+    //     as-found -wal named although the open wrote the log in; (2) prints it.
+    expect({
+      logged: logged > 0,
+      kind: replaced?.kind,
+      wal: replaced?.kind === 'damaged' ? replaced.wal : 'none',
+      notes,
+    }).toEqual({
+      logged: true,
+      kind: 'damaged',
+      wal: undefined,
+      notes: ['the killed writer'],
+    });
+  });
+
+  it('the damaged path`s crash window: a killed writer`s -wal and -shm beside a file with a damaged page; the as-found pair is the whole original, also when the rename fails', async () => {
+    const { root, home, file, folder } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    const written = killedWriter(home);
+    damagePage13(file);
+    const original = { main: hashOf(file), wal: hashOf(`${file}-wal`) };
+    const signal = killedRestore(home, backup);
+    const pair = names(folder).filter((n) => n.includes('-as-found.db'));
+    const asFound = join(folder, pair.find((n) => n.endsWith('.db')) ?? 'none');
+    const copies = { main: hashOf(asFound), wal: hashOf(`${asFound}-wal`) };
+    // The pair, put in a home of its own as realm.db and its -wal, holds the writer's run.
+    const look = join(root, 'look');
+    mkdirSync(look);
+    copyFileSync(asFound, join(look, 'realm.db'));
+    copyFileSync(`${asFound}-wal`, join(look, 'realm.db-wal'));
+    const db = openDatabase(join(look, 'realm.db'));
+    const has = db.prepare('SELECT count(*) AS n FROM runs WHERE id = ?').get(written)?.['n'];
+    db.close();
+    // (1) red when the -wal is not copied, or the pair is named as the plain kept file; (2) prints
+    //     the pair's names, whether it is the original's bytes, and whether it holds the run.
+    expect({ signal, pair: pair.length, copies, has }).toEqual({
+      signal: 'SIGKILL',
+      pair: 2,
+      copies: original,
+      has: 1,
+    });
+  });
+
+  it('an opener that connects while the raw hold is held (a real child, an empty store file) opens the restored file after the swap: it reads and writes there', async () => {
+    const { root, home, file } = nestedHome();
+    const source = join(root, 'src', '.realm');
+    const [restoredRun] = await makeStore(source, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(source, backup);
+    mkdirSync(home, { recursive: true });
+    writeFileSync(file, '', { mode: 0o600 });
+    const go = join(root, 'go');
+    const child = spawn(
+      process.execPath,
+      ['--input-type=module', '-e', WAITER, home, go, 'none', restoredRun!],
+      { cwd: PACKAGE_ROOT, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    children.push(child);
+    let out = '';
+    let err = '';
+    child.stdout.setEncoding('utf8').on('data', (d: string) => (out += d));
+    child.stderr.setEncoding('utf8').on('data', (d: string) => (err += d));
+    const done = new Promise((r) => child.once('exit', r));
+    while (!out.includes('ready')) await new Promise((r) => setTimeout(r, 20));
+    const outcome = await restore(home, backup, {
+      // The raw hold is held here: the child connects to the EMPTY file and waits; then the rename.
+      rename: (from, to) => {
+        writeFileSync(go, '');
+        pause(800);
+        renameSync(from, to);
+      },
+    });
+    await done;
+    const line = out.split('\n').find((l) => l.startsWith('{')) ?? `none: ${err}`;
+    const saw = line.startsWith('{') ? (JSON.parse(line) as Record<string, unknown>) : line;
+    // (1) red without the opener's check that the path still names its file (the child sets the
+    //     replaced empty file up as a store of its own and writes there: its run is not in the
+    //     restored file); (2) prints what the child saw and wrote, and the runs afterwards.
+    expect({
+      replaced: outcome.report?.replaced.kind,
+      saw,
+      runs: Object.keys(runsOf(file)).sort(),
+    }).toEqual({
+      replaced: 'nothing',
+      saw: { old: false, restored: true, wrote: expect.any(String) },
+      runs: [restoredRun!, typeof saw === 'object' ? String(saw['wrote']) : 'none'].sort(),
+    });
+  });
+
+  it('the raw path`s own guard: a file renamed over realm.db between the raw connection and its lock is refused, nothing unlinked', async () => {
+    const { root, home, file } = nestedHome();
+    const source = join(root, 'src', '.realm');
+    await makeStore(source, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(source, backup);
+    const other = join(root, 'other', '.realm');
+    const otherRuns = await makeStore(other, 2);
+    const otherCopy = join(root, 'o.db');
+    await backupTo(other, otherCopy);
+    mkdirSync(home, { recursive: true });
+    writeFileSync(file, '', { mode: 0o600 });
+    let live: DatabaseLike | undefined;
+    const outcome = await restore(home, backup, {
+      // Another restore's swap after this one's raw connection opened, and a process already on it.
+      beforeHold: async () => {
+        renameSync(otherCopy, file);
+        live = openDatabase(file);
+        live.prepare('SELECT count(*) FROM runs').get();
+      },
+    });
+    const sides = sideFiles(file);
+    live?.close();
+    // (1) red without the raw path's check of the held file (the restore unlinks the other file's
+    //     side files under its process and renames over it); (2) prints the refusal and the runs.
+    expect({ refused: outcome.refused, sides, runs: Object.keys(runsOf(file)).sort() }).toEqual({
+      refused: {
+        code: 'STATE_STORE_RESTORE_REFUSED',
+        message:
+          `Cannot restore from ${backup}: another restore put a new store file in place while ` +
+          `this one waited. ${file} was not replaced.`,
+      },
+      sides: ['-wal', '-shm'],
+      runs: [...otherRuns].sort(),
+    });
+  });
+
+  it('item 2: a store file whose header SQLite cannot read, with a killed writer`s -wal and -shm: refused before any open, the file and both side files as they were', async () => {
+    const { root, home, file, folder } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    killedWriter(home);
+    const fd = openSync(file, 'r+');
+    writeSync(fd, Buffer.from('not a db header!'), 0, 16, 0);
+    closeSync(fd);
+    const before = [hashOf(file), hashOf(`${file}-wal`), hashOf(`${file}-shm`)];
+    const outcome = await restore(home, backup);
+    // (1) red when the side files are looked at only after the store's open, which applies the log
+    //     to the file and deletes both when no other process holds them (the restore then goes on with
+    //     no evidence); (2) prints the refusal and whether anything changed.
+    expect({
+      refused: outcome.refused,
+      unchanged: [hashOf(file), hashOf(`${file}-wal`), hashOf(`${file}-shm`)].every(
+        (h, i) => h === before[i],
+      ),
+      folder: names(folder),
+    }).toEqual({
+      refused: {
+        code: 'STATE_STORE_RESTORE_REFUSED',
+        message:
+          `${file} cannot be read as a store, and a -wal or -shm file is beside it: another ` +
+          'process may have it open, or a process that was killed left them. Stop every process ' +
+          `that uses the home; if none is running, move ${file} and those files aside by hand, ` +
+          'then run this again. Nothing was changed.',
+      },
+      unchanged: true,
+      folder: [],
+    });
+  });
+
+  it('a store file written by a newer Realm: refused with the store`s message, nothing changed', async () => {
+    const { root, home, file, folder } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    setVersion(file, 3);
+    const before = hashOf(file);
+    const outcome = await restore(home, backup);
+    // (1) red when a newer file is replaced instead of refused; (2) prints it.
+    expect({
+      code: outcome.refused?.code,
+      unchanged: hashOf(file) === before,
+      folder: names(folder),
+      left: names(home).filter((n) => n.startsWith('.realm-restore-')),
+    }).toEqual({ code: 'STATE_STORE_VERSION_NEWER', unchanged: true, folder: [], left: [] });
+  });
+});

@@ -1,6 +1,6 @@
-// restore.ts — #616 R1b part one (prompts/feat-616-r1b-restore.md, split by
-// prompts/feat-616-r1b-split.md): `realm db restore <backup>` over a store the open reads, the
-// maintenance entry opened for `'restore'`. It puts a backup in place of the store file, keeps the
+// restore.ts — #616 R1b (prompts/feat-616-r1b-restore.md; part one, and part two R1c,
+// prompts/feat-616-r1c-damaged-file.md): `realm db restore <backup>`, the maintenance entry opened
+// for `'restore'`. It puts a backup in place of the store file, keeps the
 // file it replaces, and says how the two differ. In this order:
 //   A. the backup is proven first, in a private scratch folder (`mkdtemp` under the system's
 //      temporary folder, 0700), before the store file is opened, so each of its refusals changes
@@ -10,18 +10,31 @@
 //      SQLite's quick check run, then the store's own check (`openMaintenance` for `'check'`, the
 //      scratch folder as the home, its copy linked there as `realm.db`). Not a store, damaged or
 //      newer is refused in the check's words; an older store is allowed, and the report says so;
-//   B. the store file opened as `backup` and `migrate` open it (older formats included); every
-//      refusal of that open passes unchanged (a newer file, one it cannot read). The copy the swap
-//      renames is made beside `realm.db`; then R1's hold; then the kept copy by `backup`'s machinery
-//      in the backups folder beside the home (any refusal of it is `backup`'s own, with " Nothing
-//      was replaced." appended);
+//   B. the file in place decides the route. None (B1): the home's own preparation without the file,
+//      then the copy placed by `link`, which never replaces a name; a zero-length one: D's lock rule,
+//      then the rename over it; nothing kept. A `-wal` or `-shm` beside an existing file: SQLite is
+//      asked first whether it reads the file without them (read-only, immutable: nothing touched),
+//      because the store's open would apply that log and delete them when no other process holds
+//      them (R1c item 2, executed); it cannot ⇒ refused, nothing changed. Then the store file opened
+//      as `backup` and `migrate` open it (older formats included): a refusal on the allow-list of an
+//      unreadable file (B4) takes D's path; every other passes unchanged (a newer file). The copy the
+//      swap renames is made beside `realm.db`; then R1's hold; then the kept copy by `backup`'s
+//      machinery in the backups folder beside the home: SQLite cannot read the file while copying it,
+//      or the copy fails its quick check ⇒ D's path under the same hold; any other refusal is
+//      `backup`'s own, with " Nothing was replaced." appended;
 //   C. one order: hold → kept copy → the counts → `wal_checkpoint(TRUNCATE)` (busy 0) → the old
 //      `-wal` and `-shm` unlinked → ONE rename of the copy over `realm.db` → the folder flushed →
-//      the hold let go last. Nothing runs after the rename: the hold covers only the OLD file;
+//      the hold let go last. Nothing runs after the rename: the hold covers only the OLD file. On the
+//      damaged path there is no checkpoint (SQLite cannot), so the file in place is not promised
+//      whole before the rename: the as-found pair is;
+//   D. the damaged path, on a raw connection: where SQLite reads page 1, its answer to an exclusive
+//      lock decides; where it cannot (26, 11), the side files decide, looked at BEFORE that connection
+//      opens (either one there ⇒ refused; none ⇒ one line on standard error). After the lock, the path
+//      must still name the file the connection opened (another restore's rename ⇒ refused). The file
+//      is set aside by BYTE COPY of it and its `-wal` under `-as-found` names (never a rename: it may
+//      cross devices; never a hard link: a close would checkpoint into it); it is not counted;
 //   E. the runs only are counted, by their record text, on the hold's connection with the scratch
 //      copy attached: nothing is opened beside the kept file or the backup.
-// A home with no store file, or an empty one, is refused by the entry's pre-check; a store file the
-// open cannot read is refused by the open (part two, #616 R1c, restores over both).
 // This module is the one that touches `realm.db` and its side files with the filesystem for the
 // restore: the source law L-FS (`open-laws-616.test.ts`) names each of those calls. Every call on
 // those paths is spelled out with its `node:fs` function, and the store file's path is passed to each
@@ -47,8 +60,10 @@ import {
   systemClock,
   WorkflowError,
 } from '@sensigo/realm';
-import type { RealmDb } from './connection.js';
-import { DATABASE_FILE, systemErrorText } from './home.js';
+import { isBusy, type RealmDb } from './connection.js';
+import type { DatabaseLike } from './driver.js';
+import { assertLocalFilesystem, SYSTEM_PROBE } from './filesystem-gate.js';
+import { DATABASE_FILE, prepareHome, systemErrorText } from './home.js';
 import {
   backupStamp,
   backupsFolderOf,
@@ -64,13 +79,15 @@ import {
   quickCheckRows,
   removeCopy,
   restoreRefused,
+  sourceUnreadable,
+  storeInUse,
   syncFileOnDisk,
   syncFolderOnDisk,
   type BackupReport,
   type MaintenanceSeams,
   type OpenedStore,
 } from './maintenance.js';
-import { openRawConnection } from './open-file.js';
+import { gate, openRawConnection } from './open-file.js';
 import type { CheckFindingCode } from './store-check.js';
 
 /** How the runs of the file a restore replaced and of the backup differ (counts only). */
@@ -83,14 +100,14 @@ export interface RunDifference {
   readonly onlyRestored: number;
 }
 
-/** What was in place of the backup before the restore: a store, kept and counted. */
-export interface RestoreReplaced {
-  readonly kind: 'store';
-  /** The kept copy of the store file it replaced, made and checked by `backup`'s machinery. */
-  readonly kept: BackupReport;
-  /** How its runs differ from the backup's. */
-  readonly difference: RunDifference;
-}
+/** What was in place of the backup before the restore. */
+export type RestoreReplaced =
+  /** No store file, or an empty one (R1c): nothing kept. */
+  | { readonly kind: 'nothing' }
+  /** A store: kept by `backup`'s machinery, its runs counted against the backup's. */
+  | { readonly kind: 'store'; readonly kept: BackupReport; readonly difference: RunDifference }
+  /** A file the store could not read (R1c): copied as it was to `asFound` (and its `-wal` to `wal`). */
+  | { readonly kind: 'damaged'; readonly asFound: string; readonly wal: string | undefined };
 
 /** What `restore` did. */
 export interface RestoreReport {
@@ -105,12 +122,15 @@ export interface RestoreReport {
   readonly replaced: RestoreReplaced;
 }
 
-/** One line `realm db restore` prints as the restore reaches it, before its report: the kept copy
- *  of the store file in place, made and checked (`backup`'s report). */
-export interface RestoreProgress {
-  readonly kind: 'kept';
-  readonly report: BackupReport;
-}
+/** One line `realm db restore` prints as the restore reaches it, before its report. */
+export type RestoreProgress =
+  /** The kept copy of the store file in place, made and checked (`backup`'s report). */
+  | { readonly kind: 'kept'; readonly report: BackupReport }
+  /** R1c: SQLite cannot read the file in place and no `-wal` or `-shm` is beside it, so it could not
+   *  say whether another process has it open (standard error; the restore goes on). */
+  | { readonly kind: 'unchecked_lock'; readonly path: string }
+  /** R1c: the file in place, unreadable as a store, copied as it was to `asFound` (and `wal`). */
+  | { readonly kind: 'as_found'; readonly asFound: string; readonly wal: string | undefined };
 
 /** A Realm home opened for `'restore'`: the store file, its restore, and `close()`. */
 export interface MaintenanceRestoreHome {
@@ -120,9 +140,10 @@ export interface MaintenanceRestoreHome {
    * Puts the backup at `backup` in place of the store file (see the module comment) and resolves to
    * its report; `progress` is called with each line's event as it happens. Refused with
    * `STATE_STORE_RESTORE_REFUSED` (the backup is not a file, is the store file, is not a store, is
-   * damaged or newer; a failure of the restore, which says whether the store file was replaced),
-   * `STATE_STORE_IN_USE` (another process has the store file open), `backup`'s refusals of the kept
-   * copy, and the store's own open refusals (a newer store file, one it cannot read). After
+   * damaged or newer; a `-wal` or `-shm` beside a store file SQLite cannot read, or beside a missing
+   * one; a store file that appeared meanwhile; a failure of the restore, which says whether the store
+   * file was replaced), `STATE_STORE_IN_USE` (another process has the store file open), `backup`'s
+   * refusals of the kept copy, and the store's other open refusals (a newer store file). After
    * `close()`, it rejects.
    */
   restore(backup: string, progress?: (event: RestoreProgress) => void): Promise<RestoreReport>;
@@ -144,6 +165,13 @@ const REFUSING: ReadonlySet<CheckFindingCode> = new Set<CheckFindingCode>([
   'integrity_failed',
   'integrity_unreadable',
   'data_unreadable',
+]);
+
+/** The open's refusals of a file it cannot read as a store: D's path (CB-AU-R1B-22). */
+const UNREADABLE: ReadonlySet<unknown> = new Set([
+  'STATE_STORE_SETTINGS_REFUSED',
+  'STATE_STORE_SCHEMA_TAMPERED',
+  'STATE_STORE_VERSION_OLDER',
 ]);
 
 /**
@@ -198,6 +226,48 @@ function lookAt(path: string): Stats | undefined {
 function fileAt(path: string): string | undefined {
   const entry = lookAt(path);
   return entry === undefined ? undefined : `${entry.dev}:${entry.ino}`;
+}
+
+/** Whether a `-wal` or a `-shm` is beside the store file now (`lstat`). */
+function hasSideFiles(source: string): boolean {
+  return lookAt(`${source}-wal`) !== undefined || lookAt(`${source}-shm`) !== undefined;
+}
+
+/** D's refusal: SQLite cannot read the store file, and a side file is beside it. */
+function sideFilesRefused(source: string): WorkflowError {
+  return restoreRefused(
+    `${source} cannot be read as a store, and a -wal or -shm file is beside it: another process ` +
+      'may have it open, or a process that was killed left them. Stop every process that uses the ' +
+      `home; if none is running, move ${source} and those files aside by hand, then run this ` +
+      'again. Nothing was changed.',
+    source,
+    'side files beside an unreadable store file',
+  );
+}
+
+/** SQLite's primary code when it cannot read the file (26: not a database; 11: damaged), else none. */
+function unreadable(err: unknown): boolean {
+  const code = (err as { errcode?: unknown } | null)?.errcode;
+  return typeof code === 'number' && ((code & 0xff) === 26 || (code & 0xff) === 11);
+}
+
+/**
+ * B's look before the store's open: with a `-wal` or `-shm` beside the store file, SQLite reads the
+ * file without them (immutable, read-only: nothing is opened, applied or removed). If it cannot, the
+ * side files are D's evidence and the store's open would apply and delete them when no other process
+ * holds them (executed, R1c item 2): refused, nothing changed.
+ */
+function refuseUnreadableWithSideFiles(r: Restore, source: string): void {
+  if (!hasSideFiles(source)) return;
+  const probe = openRawConnection(source, r.seams, true);
+  try {
+    probe.prepare('PRAGMA application_id').get();
+  } catch (err) {
+    if (unreadable(err)) throw sideFilesRefused(source);
+    throw err;
+  } finally {
+    probe.close();
+  }
 }
 
 /** A1: the backup is an existing, non-empty regular file and not the store file or a side file of it. */
@@ -338,17 +408,23 @@ async function swap(
   r: Restore,
   source: string,
   temporary: string,
-  kept: string,
-  db: RealmDb,
+  kept: string | undefined,
+  db: RealmDb | undefined,
 ): Promise<void> {
   try {
-    await checkpointed(db);
+    // The damaged path has no store connection: SQLite cannot checkpoint a file it cannot read.
+    if (db !== undefined) await checkpointed(db);
     removeSideFiles(source);
     if (r.seams.rename === undefined) renameSync(temporary, source);
     else r.seams.rename(temporary, source);
   } catch (err) {
     throw notReplaced(r, source, err, kept);
   }
+  flushHome(r, source);
+}
+
+/** The home folder flushed after the store file's name changed: a failure says it was replaced. */
+function flushHome(r: Restore, source: string): void {
   try {
     (r.seams.syncFolder ?? syncFolderOnDisk)(r.home);
   } catch (err) {
@@ -422,19 +498,23 @@ async function replaceStore(
         );
         throw notReplaced(r, source, err, undefined);
       }
-      const folder = backupsFolderOf(r.home);
-      const unmade = makeFolder(folder);
-      if (unmade !== undefined) {
-        const err = new Error(`the backups folder ${folder} cannot be used: ${unmade}`);
-        throw notReplaced(r, source, err, undefined);
-      }
+      const folder = backupsFolder(r, source);
       let kept: BackupReport;
       try {
         kept = await store.handle.backup(
           join(folder, `realm-before-restore-${backupStamp(r.at)}.db`),
         );
       } catch (err) {
-        throw keptCopyRefused(err);
+        // SQLite could not read the file, or the copy failed its quick check: D, under this hold.
+        if (
+          (err as { code?: unknown }).code !== 'STATE_STORE_BACKUP_UNVERIFIED' &&
+          !sourceUnreadable(err)
+        ) {
+          throw keptCopyRefused(err);
+        }
+        const replaced = setAside(r, source, true);
+        await swap(r, source, temporary, undefined, undefined);
+        return replaced;
       }
       r.progress({ kind: 'kept', report: kept });
       let difference: RunDifference;
@@ -454,7 +534,173 @@ async function replaceStore(
   }
 }
 
-/** A, then B, C and E: see the module comment. */
+/** The backups folder beside the home, made owner-only when missing; refused when it cannot be used. */
+function backupsFolder(r: Restore, source: string): string {
+  const folder = backupsFolderOf(r.home);
+  const unmade = makeFolder(folder);
+  if (unmade === undefined) return folder;
+  const err = new Error(`the backups folder ${folder} cannot be used: ${unmade}`);
+  throw notReplaced(r, source, err, undefined);
+}
+
+/**
+ * D's set-aside: the store file and its `-wal` byte-copied into the backups folder under the
+ * `-as-found` names, owner-only and flushed, before anything of the original is unlinked. `withWal`
+ * false: the file had no `-wal` before the raw connection made one of its own; it is not copied.
+ */
+function setAside(r: Restore, source: string, withWal: boolean): RestoreReplaced {
+  const folder = backupsFolder(r, source);
+  const asFound = join(folder, `realm-before-restore-${backupStamp(r.at)}-as-found.db`);
+  let wal: string | undefined = withWal ? `${asFound}-wal` : undefined;
+  try {
+    copyFileSync(source, asFound, constants.COPYFILE_EXCL);
+    try {
+      if (wal !== undefined) copyFileSync(`${source}-wal`, wal, constants.COPYFILE_EXCL);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      wal = undefined;
+    }
+    for (const copied of wal === undefined ? [asFound] : [asFound, wal]) {
+      chmodSync(copied, 0o600);
+      (r.seams.syncFile ?? syncFileOnDisk)(copied);
+    }
+    (r.seams.syncFolder ?? syncFolderOnDisk)(folder);
+  } catch (err) {
+    throw notReplaced(r, source, err, undefined);
+  }
+  r.progress({ kind: 'as_found', asFound, wal });
+  return { kind: 'damaged', asFound, wal };
+}
+
+/**
+ * D's hold on the store file, on a raw connection: SQLite's answer to an exclusive lock where it reads
+ * page 1 (busy: another process has it open); where it cannot, the side files looked at before the
+ * connection opened (`sides`). Then, as the swap's own guard (part one's correction 1), the path must
+ * still name the file the connection opened.
+ */
+async function rawHold(r: Restore, source: string, sides: boolean): Promise<DatabaseLike> {
+  const raw = openRawConnection(source, r.seams);
+  try {
+    const opened = fileAt(source);
+    await r.seams.beforeHold?.();
+    raw.exec('PRAGMA busy_timeout = 0');
+    raw.exec('PRAGMA locking_mode = EXCLUSIVE');
+    try {
+      raw.exec('BEGIN EXCLUSIVE');
+      raw.exec('COMMIT');
+    } catch (err) {
+      if (isBusy(err)) throw storeInUse(source);
+      if (!unreadable(err)) throw err;
+      if (sides) throw sideFilesRefused(source);
+      r.progress({ kind: 'unchecked_lock', path: source });
+    }
+    if (fileAt(source) !== opened) {
+      const err = new Error('another restore put a new store file in place while this one waited');
+      throw notReplaced(r, source, err, undefined);
+    }
+    return raw;
+  } catch (err) {
+    raw.close();
+    throw err;
+  }
+}
+
+/**
+ * B1: a home with no store file (the home's own preparation without the file, the copy placed by
+ * `link`), or with a zero-length one (D's lock rule, then the rename over it). Nothing is kept.
+ */
+async function placeInEmptyHome(
+  r: Restore,
+  source: string,
+  empty: boolean,
+): Promise<RestoreReplaced> {
+  gate(r.home, r.seams);
+  prepareHome(r.home, 'no-file');
+  const sides = hasSideFiles(source);
+  if (sides && empty) throw sideFilesRefused(source);
+  if (sides) {
+    throw restoreRefused(
+      `There is no store file at ${source}, but a -wal or -shm file is beside where it would be: ` +
+        'they may hold the writes of a store file that was moved or deleted. Move them aside by ' +
+        'hand, then run this again. Nothing was changed.',
+      source,
+      'side files beside a missing store file',
+    );
+  }
+  const temporary = placeTemporary(r);
+  try {
+    if (empty) {
+      const raw = await rawHold(r, source, sides);
+      try {
+        await swap(r, source, temporary, undefined, undefined);
+      } finally {
+        raw.close();
+      }
+      return { kind: 'nothing' };
+    }
+    try {
+      if (r.seams.link === undefined) linkSync(temporary, source);
+      else r.seams.link(temporary, source);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST')
+        throw notReplaced(r, source, err, undefined);
+      throw restoreRefused(
+        `${DATABASE_FILE} appeared while the restore ran; nothing was replaced.`,
+        source,
+        'the store file appeared',
+      );
+    }
+    removeCopy(temporary);
+    flushHome(r, source);
+    return { kind: 'nothing' };
+  } finally {
+    removeCopy(temporary);
+  }
+}
+
+/** B4: a file the store's open refused as unreadable: D, on a raw connection. */
+async function replaceUnreadable(
+  r: Restore,
+  source: string,
+  refusal: unknown,
+): Promise<RestoreReplaced> {
+  const entry = lookAt(source);
+  // A link or a folder at the name keeps the store's refusal; a FIFO would block a byte copy.
+  if (entry === undefined || !entry.isFile()) throw refusal;
+  assertLocalFilesystem(r.home, r.seams.probe ?? SYSTEM_PROBE);
+  // Looked at BEFORE the raw open: SQLite's open of a truncated file makes a `-wal` of its own, and
+  // the raw hold's open of a WAL file does too.
+  const sides = hasSideFiles(source);
+  const hadWal = lookAt(`${source}-wal`) !== undefined;
+  const temporary = placeTemporary(r);
+  try {
+    const raw = await rawHold(r, source, sides);
+    try {
+      const replaced = setAside(r, source, hadWal);
+      await swap(r, source, temporary, undefined, undefined);
+      return replaced;
+    } finally {
+      raw.close();
+    }
+  } finally {
+    removeCopy(temporary);
+  }
+}
+
+/** B2 to B4: the store's open decides: a store it reads, one it cannot read (D), or its refusal. */
+async function replaceOpened(r: Restore, source: string): Promise<RestoreReplaced> {
+  refuseUnreadableWithSideFiles(r, source);
+  let store: OpenedStore;
+  try {
+    store = await openStore(r.home, source, r.seams);
+  } catch (err) {
+    if (!UNREADABLE.has((err as { code?: unknown } | null)?.code)) throw err;
+    return replaceUnreadable(r, source, err);
+  }
+  return replaceStore(r, source, store);
+}
+
+/** A, then B, C, D and E: see the module comment. */
 async function restoreFrom(
   home: string,
   source: string,
@@ -468,8 +714,13 @@ async function restoreFrom(
     const copy = join(scratch, SCRATCH_COPY);
     const schemaVersion = await proveBackup(backup, scratch, copy, seams);
     const r: Restore = { home, backup, copy, at: systemClock.now(), seams, progress };
-    // Every refusal of the store's open passes unchanged: a newer file, one it cannot read.
-    const replaced = await replaceStore(r, source, await openStore(home, source, seams));
+    const entry = lookAt(source);
+    const replaced =
+      entry === undefined
+        ? await placeInEmptyHome(r, source, false)
+        : entry.isFile() && entry.size === 0
+          ? await placeInEmptyHome(r, source, true)
+          : await replaceOpened(r, source);
     const writes = seams.schemaVersion ?? REALM_STORE_SCHEMA_VERSION;
     return { path: source, backup, schemaVersion, writes, replaced };
   } finally {
@@ -477,7 +728,7 @@ async function restoreFrom(
   }
 }
 
-/** The entry opened for `'restore'`, past its pre-check: nothing else is opened until `restore` runs. */
+/** The entry opened for `'restore'`: nothing is opened until `restore` runs (A comes first). */
 export function openRestore(
   home: string,
   source: string,

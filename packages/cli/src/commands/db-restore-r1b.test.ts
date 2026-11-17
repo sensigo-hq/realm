@@ -201,44 +201,62 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
     );
   });
 
-  it('(4) a home with no store file, and a store file SQLite cannot read: refused in one Error line, nothing changed (part two restores over both)', async () => {
+  it('(4) a home with no store file: the home made, the copy placed, nothing kept', async () => {
     const source = join(root, 'src', '.realm');
     await makeStore(source, 1);
     const backup = join(base, 'b.db');
     await backupTo(source, backup);
-    const noStore = realm(['db', 'restore', backup]);
-    mkdirSync(home, { recursive: true });
-    writeFileSync(file, 'not a database '.repeat(500), { mode: 0o600 });
-    const garbage = realm(['db', 'restore', backup]);
-    // (1) red when either is restored over, or its refusal is not one line; (2) prints both runs.
-    expect({
-      noStore,
-      garbage: garbage.stderr.split(':')[0],
-      code: garbage.code,
-      kept: existsSync(folder),
-    }).toEqual({
-      noStore: {
-        code: 1,
-        stdout: '',
-        stderr: `Error: There is no store file at ${shown(file)} to restore over.\n`,
+    const r = realm(['db', 'restore', backup]);
+    // (1) red when a home with no store is refused, or something is kept; (2) prints the run.
+    expect({ r, kept: existsSync(folder) }).toEqual({
+      r: {
+        code: 0,
+        stdout: `Restored ${shown(file)} from ${backup} (schema version 2). The home had no store file, so nothing was replaced.\n`,
+        stderr: '',
       },
-      garbage: 'Error',
-      code: 1,
       kept: false,
     });
     claim(
       PAGE,
-      'the home has no store file: `There is no store file at <home>/realm.db to restore over.`; an empty one: `<home>/realm.db holds no store yet: there is nothing to restore over.` Nothing is changed; put the backup in place by hand for now ([Restoring a copy](#restoring-a-copy)).',
-      `cell 4; the empty file: ${STORE_CELLS}, the cell of a home with no store file`,
-    );
-    claim(
-      PAGE,
-      "the store file cannot be opened (it is damaged, not a Realm store, or written by a newer Realm): the store's own message. Nothing is changed; over a damaged store file, put the backup in place by hand for now.",
-      `cell 4; ${STORE_CELLS}, the cells of a file the open cannot read and of a newer file`,
+      '`Restored <home>/realm.db from <backup> (schema version <m>). The home had no store file, so nothing was replaced.`',
+      'cell 4',
     );
   });
 
-  it('(5) refusals: one Error line on standard error, exit 1, nothing on standard output, nothing made', async () => {
+  it('(5) a store file SQLite cannot read, with no side file: the line on standard error, the as-found line, then the restored line', async () => {
+    await makeStore(home, 1);
+    const backup = join(base, 'b.db');
+    await backupTo(home, backup);
+    rmSync(file);
+    writeFileSync(file, 'not a database '.repeat(500), { mode: 0o600 });
+    const r = realm(['db', 'restore', backup]);
+    const asFound = keptFile('-as-found.db');
+    // (1) red when the line goes to standard output, the as-found line is missing, or counts are
+    //     printed; (2) prints the run.
+    expect(r).toEqual({
+      code: 0,
+      stdout:
+        `${shown(file)} could not be read as a store, so it was copied as it was to ` +
+        `${shown(asFound)} (and its -wal beside it, if it had one). What was in it could not be ` +
+        'counted.\n' +
+        `Restored ${shown(file)} from ${backup} (schema version 2).\n`,
+      stderr:
+        `SQLite could not check whether another process has ${shown(file)} open (it cannot read ` +
+        'the file as a database) and no -wal or -shm file is beside it.\n',
+    });
+    claim(
+      PAGE,
+      '`<home>/realm.db could not be read as a store, so it was copied as it was to <as-found file> (and its -wal beside it, if it had one). What was in it could not be counted.`',
+      'cell 5',
+    );
+    claim(
+      PAGE,
+      'when neither is there, it goes on, and prints on standard error `SQLite could not check whether another process has <home>/realm.db open (it cannot read the file as a database) and no -wal or -shm file is beside it.`',
+      'cell 5',
+    );
+  });
+
+  it('(6) refusals: one Error line on standard error, exit 1, nothing on standard output, nothing made', async () => {
     await makeStore(home, 1);
     const backup = join(base, 'b.db');
     await backupTo(home, backup);
@@ -290,27 +308,27 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
     claim(
       PAGE,
       "`Cannot restore from <backup>: <the system's reason>. Nothing was changed.`",
-      'cell 5',
+      'cell 6',
     );
     claim(
       PAGE,
       '`Cannot restore from <backup>: it is a symbolic link. Nothing was changed.`',
-      'cell 5',
+      'cell 6',
     );
-    claim(PAGE, '`Cannot restore from <backup>: it is not a file. Nothing was changed.`', 'cell 5');
+    claim(PAGE, '`Cannot restore from <backup>: it is not a file. Nothing was changed.`', 'cell 6');
     claim(
       PAGE,
       '`Cannot restore from <backup>: it is the store file itself. Nothing was changed.`',
-      'cell 5; the hard link and the symlinked home: the store cell of the backup argument',
+      'cell 6; the hard link and the symlinked home: the store cell of the backup argument',
     );
     claim(
       PAGE,
       '`Cannot restore from <backup>: Written by a later version of Realm (schema version <n>; this version reads up to <m>). Nothing was changed.`',
-      'cell 5',
+      'cell 6',
     );
   });
 
-  it('(6) another process on the store: refused STATE_STORE_IN_USE, in one Error line', async () => {
+  it('(7) another process on the store: refused STATE_STORE_IN_USE, in one Error line', async () => {
     await makeStore(home, 1);
     const backup = join(base, 'b.db');
     await backupTo(home, backup);
@@ -342,7 +360,7 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
     });
   });
 
-  it('(7) realm db --help lists restore, and realm db restore --help names its argument', () => {
+  it('(8) realm db --help lists restore, and realm db restore --help names its argument', () => {
     const db = realm(['db', '--help']);
     const help = realm(['db', 'restore', '--help']);
     const line = (text: string, start: RegExp): string =>
@@ -373,7 +391,7 @@ describe('#616 R1b — the page, the files page and the codes page say what real
     [
       'step 3',
       'It makes sure that no other process has the store file open, and keeps it so until it is done. When one has it open, even an idle one, the command refuses and changes nothing.',
-      `cell 6; ${STORE_CELLS}: the idle process cell`,
+      `cell 7; ${STORE_CELLS}: the idle process cell`,
     ],
     [
       'step 3, a command started meanwhile',
@@ -386,9 +404,44 @@ describe('#616 R1b — the page, the files page and the codes page say what real
       `${STORE_CELLS}: the backup argument cell`,
     ],
     [
-      'the by-hand paragraph',
-      '[`realm db restore <backup>`](#restore) puts the copy back in place of a store file Realm can open and copy. Into a home with no store file, or an empty one, or over a store file Realm cannot open or cannot copy, restoring is done by hand for now.',
-      `cell 4; ${STORE_CELLS}: the refusal cells (a missing or empty store file, a file the open cannot read, a damaged page)`,
+      'restoring a copy',
+      '[`realm db restore <backup>`](#restore) puts the copy back: over the store file, over a store file that cannot be read as a store, and into a home with no store file, on a new machine for one. It refuses a store file that a newer Realm wrote, and one that Realm cannot open for another reason (a folder or a link where the file should be, a home on a network filesystem); its message says which.',
+      `cells 1, 4 and 5; ${STORE_CELLS}: the damaged-file rule and the newer store file cells (a folder or a link: the store's open, unchanged)`,
+    ],
+    [
+      'a newer store file, or one Realm cannot open',
+      "the store file was written by a newer Realm, or Realm cannot open it for another reason (a folder or a link where the file should be, a home on a network filesystem): the store's own message. Nothing is changed.",
+      `${STORE_CELLS}: the newer store file cell`,
+    ],
+    [
+      'side files beside an unreadable file',
+      'SQLite cannot read the store file, and a side file is beside it: `<home>/realm.db cannot be read as a store, and a -wal or -shm file is beside it: another process may have it open, or a process that was killed left them. Stop every process that uses the home; if none is running, move <home>/realm.db and those files aside by hand, then run this again. Nothing was changed.`',
+      `${STORE_CELLS}: the text-garbage cell and the item-2 cell (the file and both side files as they were)`,
+    ],
+    [
+      'side files beside a missing file',
+      'the home has no store file, but a side file is there: `There is no store file at <home>/realm.db, but a -wal or -shm file is beside where it would be: they may hold the writes of a store file that was moved or deleted. Move them aside by hand, then run this again. Nothing was changed.`',
+      `${STORE_CELLS}: the cell of side files beside a missing store file`,
+    ],
+    [
+      'a store file that appeared',
+      'a store file appeared in a home that had none while the restore ran: `realm.db appeared while the restore ran; nothing was replaced.`',
+      `${STORE_CELLS}: the racing creator cell`,
+    ],
+    [
+      'the damaged path',
+      'It also recovers a damaged store file. When the store file cannot be read as a store (it is damaged, or it is not a Realm store), the command copies it as it was, byte for byte, into the backups folder as `realm-before-restore-<UTC time>-as-found.db`, with its write-ahead log as `realm-before-restore-<UTC time>-as-found.db-wal` when it has one, prints the line below, then restores the backup. Realm never deletes them.',
+      `cell 5; ${STORE_CELLS}: the damaged-page, crash-window and non-Realm cells`,
+    ],
+    [
+      'a killed writer`s log written in first',
+      'When SQLite can read the file but it is not a Realm store, opening it may first write a write-ahead log that a killed process left beside it into the file, as any open of the store does: the as-found copy then holds those writes, and has no `-wal` of its own.',
+      `${STORE_CELLS}: the cell of a database that is not a Realm store with a killed writer's log`,
+    ],
+    [
+      'the side files looked at first',
+      'The command then looks for `realm.db-wal` and `realm.db-shm` beside it, before anything opens the file:',
+      `${STORE_CELLS}: the item-2 cell and the truncated-file cell`,
     ],
     [
       'step 4',
@@ -418,12 +471,12 @@ describe('#616 R1b — the page, the files page and the codes page say what real
     [
       'the in-use refusal',
       'another process has the store file open, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open (a Realm agent, server, MCP server or command, or another program such as a SQLite browser). Stop it and run this again. Nothing was changed.`',
-      'cell 6',
+      'cell 7',
     ],
     [
       'the kept copy refused',
-      "the kept copy cannot be made, or fails SQLite's quick check (the store file may then be damaged): `realm db backup`'s refusal, with its code, then ` Nothing was replaced.` Over such a file, put the backup in place by hand for now ([Restoring a copy](#restoring-a-copy)).",
-      `${STORE_CELLS}: the damaged page and same-second cells`,
+      "the kept copy cannot be made for another reason than a store file SQLite cannot read (a full disk, a backups folder that cannot be written): `realm db backup`'s refusal, with its code, then ` Nothing was replaced.` A kept copy that SQLite cannot read the store file for, or that fails SQLite's quick check, takes the damaged-file path above instead.",
+      `${STORE_CELLS}: the same-second cell (backup's refusal kept); the damaged-page cell (the damaged path instead)`,
     ],
     [
       'a failure before or after the rename',
@@ -433,7 +486,7 @@ describe('#616 R1b — the page, the files page and the codes page say what real
     [
       'the backup refused in the check words',
       'the backup is not a Realm store, is damaged, or was written by a newer Realm: `Cannot restore from <backup>:` and the words of [`realm db check`](#check), then `Nothing was changed.`',
-      `cell 5; ${STORE_CELLS}: the non-store, damaged or newer backup cell`,
+      `cell 6; ${STORE_CELLS}: the non-store, damaged or newer backup cell`,
     ],
   ])('%s', (_name, sentence, provedBy) => {
     claim(PAGE, sentence, provedBy);
@@ -447,13 +500,13 @@ describe('#616 R1b — the page, the files page and the codes page say what real
     );
     claim(
       ENV_PAGE,
-      '| `~/.realm-backups/realm-before-restore-<UTC time>.db` | The store file that `realm db restore` replaced, copied and checked by `realm db backup` before the restore. Realm never deletes them. |',
+      '| `~/.realm-backups/realm-before-restore-<UTC time>.db` | The store file that `realm db restore` replaced, copied and checked by `realm db backup` before the restore. A store file it could not read is copied as it was, as `realm-before-restore-<UTC time>-as-found.db` and its write-ahead log as `realm-before-restore-<UTC time>-as-found.db-wal`. Realm never deletes them. |',
       `cell 1; ${STORE_CELLS}: the first cell`,
     );
     claim(
       CODES,
-      '| `STATE_STORE_RESTORE_REFUSED` | `realm db restore` refused: the backup is not a file, is the store file or a side file of it, is not a Realm store, is damaged or is newer; the home has no store file, or an empty one; or the restore failed, and the message says whether the store file was replaced. Added after version 0.49.0. | `report_to_user` | No |',
-      `cells 4 and 5; ${STORE_CELLS}: the refusal cells`,
+      '| `STATE_STORE_RESTORE_REFUSED` | `realm db restore` refused: the backup is not a file, is the store file or a side file of it, is not a Realm store, is damaged or is newer; a `-wal` or `-shm` file is beside a store file it cannot read, or beside a missing one; a store file appeared while it ran; or the restore failed, and the message says whether the store file was replaced. Added after version 0.49.0. | `report_to_user` | No |',
+      `cell 6; ${STORE_CELLS}: the refusal cells`,
     );
   });
 });
