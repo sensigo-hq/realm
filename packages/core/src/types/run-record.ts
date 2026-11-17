@@ -1325,8 +1325,8 @@ export interface ClaimRecord {
 }
 
 /**
- * A step that the program which last tried it could not run, because its handler or adapter was not
- * registered there, keyed by step name (`RunRecord.capability_blocks`).
+ * The marker on a step that the program which last tried it could not run, because its handler or
+ * adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
  * Written when an auto step's handler/adapter is NOT REGISTERED in the executing runner's registry: the
  * step settles RECOVERABLY (removed from `in_progress_steps`, claim omitted, NOT added to `failed_steps`,
  * run NOT terminal-sealed) so a correctly-provisioned runner can reclaim it. Advisory metadata for

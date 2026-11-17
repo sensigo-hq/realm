@@ -18,9 +18,9 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`classifyRunHealth`](#classifyrunhealth) | function | Classifies a run's health into zero or more typed findings. |
 | [`classifyStop`](#classifystop) | function | What kind of stop a loop met on a step it picked or ran, from the reply and the record read again after it. |
 | [`damagedFileConcerns`](#damagedfileconcerns) | function | Whether a damaged run file can concern a workflow: the one scope test of the keyed fallback scan and of every workflow-scoped read. |
-| [`deriveRunPhase`](#deriverunphase) | function | Derives the run_phase from the run record fields. |
+| [`deriveRunPhase`](#deriverunphase) | function | Derives the `run_phase` from the run record's fields. |
 | [`describePending`](#describepending) | function | What the run owes, from the record, the definition and (when present) the registry, at the snapshot's `at`. |
-| [`describeStoredFileFault`](#describestoredfilefault) | function | What is wrong with the file, as a clause after its subject: no parser text and no position, ever. |
+| [`describeStoredFileFault`](#describestoredfilefault) | function | The words for what is wrong with a stored file, as a clause after its subject, with no parser text and no position. |
 | [`disclose`](#disclose) | function | Hides every member of `set` and, with `tier: 'all'`, every pattern, in `text`. |
 | [`discloseLeaf`](#discloseleaf) | function | The disclosure walk's leaf transform for one string at `tier`: `discloseText`, then the escaped-spelling check, exactly as the walk applies them to a `value` leaf. |
 | [`discloseSplit`](#disclosesplit) | function | `disclose` cut in two at `cut`, from the one marking pass `disclose` uses. |
@@ -43,7 +43,7 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`unreadableFactsOf`](#unreadablefactsof) | function | The facts a damaged-file error carries, or `undefined` for any other error. |
 | [`unreadableRunFilesError`](#unreadablerunfileserror) | function | The error a decision over every run fails closed with when a run file cannot be read: one error naming every such file, with nothing written. |
 | [`unreadableRunFilesOf`](#unreadablerunfilesof) | function | The facts of a decision that failed closed over damaged run files, or `undefined` for any other error. |
-| [`withLibraryWords`](#withlibrarywords) | function | The complete renderer from a program's partial one. |
+| [`withLibraryWords`](#withlibrarywords) | function | The complete way renderer built from a program's partial one (`PartialWayRenderer`). |
 | [`ExtensionRegistry`](#extensionregistry) | class | The handlers, service adapters and processors a program registers by name; the engine looks a step's handler or adapter up in it. |
 | [`JsonFileStore`](#jsonfilestore) | class | The run store that keeps each run as a JSON file, `<runId>.json`, in its runs folder. |
 | [`ActorAbsent`](#actorabsent) | interface | What stands in for a program's name when the record has none: `by: null` and the cause; read where an `Attributed` would be. |
@@ -295,7 +295,7 @@ function damagedFileConcerns(reading: {
 
 function · public
 
-Derives the run_phase from the run record fields. Called after every store write to keep
+Derives the `run_phase` from the run record's fields. Called after every store write to keep
 run_phase consistent — this function's return value is ALWAYS what gets persisted (issue #279,
 increment 2, PR-C — the PHASE_IS_GENERATED law): callers must never persist a raw/stale
 `run_phase` value, and every reader that needs the true phase should prefer this derivation over
@@ -342,7 +342,8 @@ function describePending(definition: WorkflowDefinition, snapshot: Snapshot, reg
 
 function · public
 
-What is wrong with the file, as a clause after its subject: no parser text and no position, ever.
+The words for what is wrong with a stored file, as a clause after its subject, with no parser
+text and no position.
 A registered copy keeps its shipped nouns ("not a workflow object", "empty
 (0 bytes) — not a workflow").
 
@@ -744,7 +745,8 @@ function unreadableRunFilesOf(err: unknown): UnreadableRunFilesFacts | undefined
 
 function · public
 
-The complete renderer from a program's partial one. The program's function for each verb it gave
+The complete way renderer built from a program's partial one (`PartialWayRenderer`). The
+program's function for each verb it gave
 one, Realm's own words (`LIBRARY_WORDS`) for every other verb — a verb added in a later minor
 release included, until the program writes its own. A member that is not a function — `undefined`
 included — counts as not given. String words only, as `LIBRARY_WORDS` gives them: a renderer with
@@ -2507,7 +2509,7 @@ Names this job reaches whose entry is on another page.
 - [`CacheRequest`](read-a-runs-record.md#cacherequest): One of the words in `CACHE_REQUESTS`: what Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`).
 - [`CacheRequestSource`](read-a-runs-record.md#cacherequestsource): One of the words in `CACHE_REQUEST_SOURCES`: whether a request's cache setting was stated with `--prompt-cache` or was the runner's default (`UsageRecord.cache_requested_source`).
 - [`CacheState`](read-a-runs-record.md#cachestate): One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the provider reported (`StepCacheDetail.state`).
-- [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): A step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
+- [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): The marker on a step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
 - [`CappedRead`](implement-a-store.md#cappedread): What `WorkflowRegistrar.getCapped` resolves to.
 - [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).
 - [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).

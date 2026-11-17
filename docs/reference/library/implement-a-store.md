@@ -2335,7 +2335,7 @@ Names this job reaches whose entry is on another page.
 - [`CacheRequest`](read-a-runs-record.md#cacherequest): One of the words in `CACHE_REQUESTS`: what Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`).
 - [`CacheRequestSource`](read-a-runs-record.md#cacherequestsource): One of the words in `CACHE_REQUEST_SOURCES`: whether a request's cache setting was stated with `--prompt-cache` or was the runner's default (`UsageRecord.cache_requested_source`).
 - [`CacheState`](read-a-runs-record.md#cachestate): One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the provider reported (`StepCacheDetail.state`).
-- [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): A step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
+- [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): The marker on a step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
 - [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).
 - [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).
 - [`Cond`](write-a-handler.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
@@ -2345,7 +2345,7 @@ Names this job reaches whose entry is on another page.
 - [`damagedFileConcerns`](run-and-drive-a-run.md#damagedfileconcerns): Whether a damaged run file can concern a workflow: the one scope test of the keyed fallback scan and of every workflow-scoped read.
 - [`declareReleaseLine`](write-a-handler.md#declarereleaseline): Declares that a host's store class (or plain-object store) belongs to this copy of realm.
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
-- [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the run_phase from the run record fields.
+- [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the `run_phase` from the run record's fields.
 - [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`).
 - [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`).
 - [`DueExpiry`](write-a-handler.md#dueexpiry): An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`).

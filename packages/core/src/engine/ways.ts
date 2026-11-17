@@ -247,8 +247,8 @@ export type InspectWay = Base<'inspect'> & { run_id: string };
 export type AbandonWay = Base<'abandon'> & { run_id: string };
 
 /**
- * Register the run's workflow again. No judge admits it; on MCP it is an entry the agent takes
- * elsewhere.
+ * Register the run's workflow again. No judge admits it; on MCP it is the operator's, done outside
+ * the conversation (the door renders no instruction).
  * `path` only
  * when the registry knows the file (T-21: the unreadable, invalid, legacy and newer copies carry
  * it): the registered COPY that cannot be used — never a file to register (correction 2, 3.2: each
@@ -2722,7 +2722,8 @@ export const LIBRARY_WORDS: WayRenderer<string, LibraryHost> = {
 export type PartialWayRenderer<Host> = Partial<WayRenderer<string, Host>>;
 
 /**
- * The complete renderer from a program's partial one. The program's function for each verb it gave
+ * The complete way renderer built from a program's partial one (`PartialWayRenderer`). The
+ * program's function for each verb it gave
  * one, Realm's own words ({@link LIBRARY_WORDS}) for every other verb — a verb added in a later minor
  * release included, until the program writes its own. A member that is not a function — `undefined`
  * included — counts as not given. String words only, as `LIBRARY_WORDS` gives them: a renderer with

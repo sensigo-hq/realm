@@ -19,7 +19,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`CacheAuto`](#cacheauto) | interface | A request's `cache_auto`: the basis of the `auto` choice, the gaps it read, and where its prices came from. |
 | [`CacheControlsRejected`](#cachecontrolsrejected) | interface | A custom endpoint answered 400 naming a cache field Realm added, and a retry without the cache fields worked (`UsageRecord.cache_controls_rejected`). |
 | [`CacheMissReason`](#cachemissreason) | interface | Anthropic's reason for a cache miss, with its approximate token count when given. |
-| [`CapabilityBlock`](#capabilityblock) | interface | A step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`). |
+| [`CapabilityBlock`](#capabilityblock) | interface | The marker on a step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`). |
 | [`ChannelEvidence`](#channelevidence) | interface | The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`). |
 | [`ClaimRecord`](#claimrecord) | interface | A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`). |
 | [`DriveFailureRecord`](#drivefailurerecord) | interface | One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`). |
@@ -244,8 +244,8 @@ interface CacheMissReason {
 
 interface · public
 
-A step that the program which last tried it could not run, because its handler or adapter was not
-registered there, keyed by step name (`RunRecord.capability_blocks`).
+The marker on a step that the program which last tried it could not run, because its handler or
+adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
 Written when an auto step's handler/adapter is NOT REGISTERED in the executing runner's registry: the
 step settles RECOVERABLY (removed from `in_progress_steps`, claim omitted, NOT added to `failed_steps`,
 run NOT terminal-sealed) so a correctly-provisioned runner can reclaim it. Advisory metadata for
@@ -1572,7 +1572,7 @@ Names this job reaches whose entry is on another page.
 - [`AuthStripe`](define-and-load-a-workflow.md#authstripe): Stripe timestamped HMAC body signature (header 'Stripe-Signature').
 - [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
-- [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the run_phase from the run record fields.
+- [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the `run_phase` from the run record's fields.
 - [`ExecutionMode`](define-and-load-a-workflow.md#executionmode): The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer` (`StepDefinition.execution`).
 - [`ExtensionIdentityEntry`](write-a-handler.md#extensionidentityentry): One point-in-time identity of the extension code executing a run.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.

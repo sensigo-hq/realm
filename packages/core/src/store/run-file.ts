@@ -190,7 +190,8 @@ export function jsonShapeOf(value: unknown): string {
 const NAMED_FIELDS = 3;
 
 /**
- * What is wrong with the file, as a clause after its subject: no parser text and no position, ever.
+ * The words for what is wrong with a stored file, as a clause after its subject, with no parser
+ * text and no position.
  * A registered copy keeps its shipped nouns ("not a workflow object", "empty
  * (0 bytes) — not a workflow").
  * @public

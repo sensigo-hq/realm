@@ -924,8 +924,8 @@ type QuoteState = (typeof QUOTE_STATES)[number];
 
 type · public
 
-Register the run's workflow again. No judge admits it; on MCP it is an entry the agent takes
-elsewhere.
+Register the run's workflow again. No judge admits it; on MCP it is the operator's, done outside
+the conversation (the door renders no instruction).
 `path` only
 when the registry knows the file (T-21: the unreadable, invalid, legacy and newer copies carry
 it): the registered COPY that cannot be used — never a file to register (correction 2, 3.2: each
