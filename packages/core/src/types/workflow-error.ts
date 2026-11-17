@@ -456,8 +456,10 @@ export class WorkflowError extends Error {
    * itself contain a semicolon (the #413 four-clause text does), so splitting the joined string
    * back apart is not a recoverable operation. Kept here instead, and the render walks the array.
    *
-   * ABSENT rather than `[]` on a single-error throw, so a caller can tell "there was one" from
-   * "there was a list" without counting.
+   * Absent when the throw was not a collector's (a plain `new WorkflowError(message)`); a
+   * collector attaches its list even when it holds one problem (`if (errors.length > 0)` in the
+   * loader), so a caller tells a collected throw from a plain one by the field's presence, never
+   * by its length (#495 §2: this said "absent on a single-error throw").
    */
   errors?: readonly string[];
 
