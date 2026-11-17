@@ -9,7 +9,10 @@
 // every other page whose job reaches it; the six pages' entries are the reports' tagged names, both
 // ways; the committed pages are the generator's output, byte for byte; `jobs.json`'s entry points are
 // each a tagged name; (3) where the names the docs lean on are placed; (5) the words the docs say
-// about the reference.
+// about the reference. Every cell also needs the generator to exit clean, and the generator refuses a
+// description that Markdown would misread (`<` and a letter outside a code span) and an index sentence
+// (a description's first sentence) that carries an internal marker, a shouted word, or runs over 200
+// characters: each is a red line naming the entry.
 //
 // TO REGENERATE (a change made on purpose — a new tag, a new description, a new job entry point):
 // `npm run build`, then `npm run docs:library` (both from the repository root), and commit the pages.
@@ -115,8 +118,9 @@ afterAll(() => {
 
 /** The manifest, once the generator has run clean; red with the generator's own words otherwise. */
 function manifestOrRed(): Manifest {
-  // (a) red when the generator exits 1 (an orphan, a lowercase collision, an untagged entry point);
-  // (b) prints its exit status and its error lines.
+  // (a) red when the generator exits 1 (an orphan, a lowercase collision, an untagged entry point,
+  // `<` and a letter outside a code span, a first sentence with an internal marker, a shouted word, or
+  // over 200 characters); (b) prints its exit status and its error lines.
   expect({ status: generated.status, stderr: generated.stderr.trim() }).toEqual({
     status: 0,
     stderr: '',
