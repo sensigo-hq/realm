@@ -112,7 +112,13 @@ const needsClause = (composed: ComposedWays | undefined): string => {
   return words === '' ? '' : `, ${words}`;
 };
 
-const wayOutOf = (runId: string, snap: Snapshot, pending?: OwedView): string[] => {
+const wayOutOf = (
+  runId: string,
+  snap: Snapshot,
+  // #922: whether the store keeps claims (a held step's reclaim way is offered only then).
+  persistsClaims: boolean,
+  pending?: OwedView,
+): string[] => {
   const { record: run, at: now } = snap;
   const gate = run.pending_gate;
   if (gate === undefined) {
@@ -125,6 +131,7 @@ const wayOutOf = (runId: string, snap: Snapshot, pending?: OwedView): string[] =
         ? undefined
         : composeWaysAt(run, now, {
             definition: pending.workflow,
+            persistsClaims,
             lease_facts: snap.lease_facts,
           });
     const cannotGoOn =
@@ -415,6 +422,7 @@ function renderGateExpiryDryRun(
 function renderDryRun(
   runId: string,
   snap: Snapshot,
+  persistsClaims: boolean,
   expiredFlag = false,
   declared?: ReadonlySet<string>,
   predictedGuards: readonly string[] = [],
@@ -424,7 +432,7 @@ function renderDryRun(
   const gateReported = renderGateExpiryDryRun(runId, run, now, expiredFlag, predictedGuards);
   if (!run.terminal_state) {
     if (!gateReported) {
-      const [first, ...more] = wayOutOf(runId, snap, pending);
+      const [first, ...more] = wayOutOf(runId, snap, persistsClaims, pending);
       console.log(
         `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}') — nothing to drain. ${first}`,
       );
@@ -853,6 +861,7 @@ export async function runDrainAction(
       renderDryRun(
         runId,
         read,
+        runStore.persistsClaims === true,
         opts.expired === true,
         declared,
         predictedGuards,
@@ -862,7 +871,12 @@ export async function runDrainAction(
     }
 
     if (!run.terminal_state && !hasEnactableGate) {
-      const [first, ...more] = wayOutOf(runId, read, await ownedWork(read));
+      const [first, ...more] = wayOutOf(
+        runId,
+        read,
+        runStore.persistsClaims === true,
+        await ownedWork(read),
+      );
       console.error(
         `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}') — nothing to drain. ${first}`,
       );
@@ -918,6 +932,7 @@ export async function runDrainAction(
           ? undefined
           : composeWaysAt(working.record, working.at, {
               definition: owed.workflow,
+              persistsClaims: runStore.persistsClaims === true,
               lease_facts: working.lease_facts,
             });
       if (owed !== undefined && owed.owed.length > 0) {

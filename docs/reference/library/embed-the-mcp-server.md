@@ -831,6 +831,7 @@ Names this job reaches whose entry is on another page.
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`RateLimiter`](write-a-handler.md#ratelimiter): Controls the rate at which requests are sent to an external service.
 - [`RealmWorkflowRegistrar`](implement-a-store.md#realmworkflowregistrar): A registrar with every optional member, `listWithDiagnostics` and `getCapped`, as Realm's own JSON and SQLite registries are.
+- [`ReclaimWay`](write-a-handler.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
 - [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
 - [`RegistryListing`](implement-a-store.md#registrylisting): What a registrar's diagnostic listing returns (`WorkflowRegistrar.listWithDiagnostics`).
 - [`ReleaseStepDelta`](implement-a-store.md#releasestepdelta): Releases a step's claim without settling the step.

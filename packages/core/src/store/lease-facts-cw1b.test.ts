@@ -404,7 +404,13 @@ describe('#729 CW-1b — the consumers carry a leased claim’s fact', () => {
     const snapshot = await snapshotWith(runWith({ a: claimOn('lease-1') }, ['a']), port);
     const entry = heldOf(composeWaysOn(snapshot, ctx).unavailable, 'run_step');
     // (a) red when this producer builds its facts without heldFacts (no lease); (b) prints the facts.
-    expect(entry?.facts).toEqual({ step: 'a', deadline: { absent: 'unknown_age' }, lease: HELD });
+    // #922: the facts carry the claim's stamp (this claim has none).
+    expect(entry?.facts).toEqual({
+      step: 'a',
+      deadline: { absent: 'unknown_age' },
+      claimed_at: { absent: 'not_stamped' },
+      lease: HELD,
+    });
   });
 
   it('held_elsewhere, the advance entry of the ways: lease for a leased claim', async () => {
@@ -412,7 +418,13 @@ describe('#729 CW-1b — the consumers carry a leased claim’s fact', () => {
     const snapshot = await snapshotWith(runWith({ a: claimOn('lease-1') }, ['a']), port);
     const entry = heldOf(composeWaysOn(snapshot, ctx).unavailable, 'advance');
     // (a) red when this producer builds its facts without heldFacts (no lease); (b) prints the facts.
-    expect(entry?.facts).toEqual({ step: 'a', deadline: { absent: 'unknown_age' }, lease: HELD });
+    // #922: the facts carry the claim's stamp (this claim has none).
+    expect(entry?.facts).toEqual({
+      step: 'a',
+      deadline: { absent: 'unknown_age' },
+      claimed_at: { absent: 'not_stamped' },
+      lease: HELD,
+    });
   });
 
   it('held_elsewhere, the step judged by name: lease for a leased claim', async () => {
@@ -423,7 +435,12 @@ describe('#729 CW-1b — the consumers carry a leased claim’s fact', () => {
     //     admission.
     expect('code' in admission ? [admission.code, admission.facts] : admission).toEqual([
       'held_elsewhere',
-      { step: 'a', deadline: { absent: 'unknown_age' }, lease: HELD },
+      {
+        step: 'a',
+        deadline: { absent: 'unknown_age' },
+        claimed_at: { absent: 'not_stamped' },
+        lease: HELD,
+      },
     ]);
   });
 });
@@ -455,11 +472,12 @@ describe('#729 CW-1b — an unleased claim’s results are exactly today’s', (
     }).toEqual({
       info: [['step', 'state', 'deadline']],
       holder: ['by', 'absent_cause', 'since'],
+      // #922: `claimed_at` is the claim's stamp, always present.
       ways: [
-        ['step', 'deadline'],
-        ['step', 'deadline'],
+        ['step', 'deadline', 'claimed_at'],
+        ['step', 'deadline', 'claimed_at'],
       ],
-      byName: ['step', 'deadline'],
+      byName: ['step', 'deadline', 'claimed_at'],
     });
   });
 });

@@ -2449,6 +2449,7 @@ Names this job reaches whose entry is on another page.
 - [`PrincipalAbsence`](read-a-runs-record.md#principalabsence): One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer (`Principal`'s `absent`).
 - [`ProtocolConfig`](define-and-load-a-workflow.md#protocolconfig): A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
+- [`ReclaimWay`](write-a-handler.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
 - [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
 - [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`).
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).

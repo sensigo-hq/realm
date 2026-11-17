@@ -869,6 +869,8 @@ describe('#627 W — the await entry: a question answered outside this conversat
           verb: 'run_step',
           code: 'held_elsewhere',
           step: 'side',
+          // #922: the held step's facts, which its state is read from
+          facts: { step: 'side', deadline: claimDeadline, claimed_at: opening.basis!.as_of },
           clears_at: claimDeadline,
           remedy: [],
         },
@@ -935,7 +937,12 @@ describe('#627 W — the await entry: a question answered outside this conversat
                 verb: 'run_step',
                 code: 'held_elsewhere',
                 step: 'side',
-                facts: { holder: 'another program' },
+                // #922: the held step's facts, which its state is read from
+                facts: {
+                  step: 'side',
+                  deadline: new Date(asOf + claimInMs).toISOString(),
+                  claimed_at: opening.basis!.as_of,
+                },
                 clears_at: new Date(asOf + claimInMs).toISOString(),
                 remedy: [],
               },

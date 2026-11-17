@@ -6,7 +6,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Upgrading
+
+**1. On MCP, `agent_action` is `report_to_user` and `until` is never a past held deadline when every blocker is a step past its deadline.**
+
 ### Changed
+
+- **Each held step carries a `reclaim` way for a person, with its conditions.** In the library, `WAY_VERBS` gains `reclaim`, and `WayOn` the new `ReclaimWay`; `Cond` gains the conditions `claim_deadline_ahead`, `override_claim_unknown_age` and `rerun_not_idempotent`; `UNAVAILABLE_CODES` and `FactsByCode` gain the codes `not_held`, `store_keeps_no_claims`, `fence_required` and `claim_changed`, and `held_elsewhere`'s facts gain the claim's stamp (`claimed_at`) and, for a deadline that cannot be read, `{ absent: 'unparseable_stamp' }`. `WayRenderer` and `LIBRARY_WORDS` gain `reclaim` with the list: a program that writes the full `WayRenderer` itself adds a `reclaim` function, and one built with `withLibraryWords` renders it in Realm's words.
 
 - `RunStore` gains an optional `scanListed`, a listing of runs that leaves each model call's text out; a store without it keeps working, and Realm lists through `scan` instead.
 - In the library, a listing's run has its own types, `ListedSnapshot`, `ListedRecord`, `ListedScanPage` and `ListedScanItem`, and `update` does not accept a `ListedRecord`; `RunStore`'s `scanListed` returns them, and `classifyRunHealth`, `findEligibleSteps` and `getWorkflowForRun` take a listed run as well as a full one.

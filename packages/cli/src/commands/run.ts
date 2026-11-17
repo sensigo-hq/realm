@@ -179,6 +179,8 @@ export function renderDetachMap(
     pending: PendingView;
     // #729 PR-0: the whole definition — the run's ways are composed from it.
     workflow: WorkflowDefinition;
+    /** #922: whether the store keeps claims (a held step's reclaim way is offered only then). */
+    persistsClaims: boolean;
   },
   opts?: {
     headline?: string;
@@ -267,6 +269,7 @@ export function renderDetachMap(
     // the way out (which ends with `realm run abandon`).
     const composed = composeWaysAt(record, recordAt, {
       definition: ways.workflow,
+      persistsClaims: ways.persistsClaims,
       lease_facts: snapshot.lease_facts,
     });
     lines.push(
@@ -1179,7 +1182,7 @@ export const runCommand = new Command('run')
                 record,
                 recordAt,
                 promptStep,
-                { pending, workflow: definition },
+                { pending, workflow: definition, persistsClaims: store.persistsClaims === true },
                 { headline: owed ? 'Engine work owed' : 'Workflow stalled', driveFlags },
                 read,
               ),
@@ -1483,6 +1486,7 @@ export const runCommand = new Command('run')
               {
                 pending: describePending(definition, read, registry),
                 workflow: definition,
+                persistsClaims: store.persistsClaims === true,
               },
               { driveFlags },
               read,
