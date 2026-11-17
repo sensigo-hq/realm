@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { changelogAbove } from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const PAGE = 'docs/reference/cli/realm-db.md';
@@ -15,11 +16,9 @@ const read = (page: string): string => readFileSync(join(ROOT, page), 'utf8');
 function claim(page: string, sentence: string): void {
   expect(flat(read(page)), `${page} no longer says: ${sentence}`).toContain(flat(sentence));
 }
-/** The CHANGELOG's `[Unreleased]` section. */
+/** The CHANGELOG's sections above [0.49.0]: `[Unreleased]` while open, then 0.50.0's. */
 function unreleased(): string {
-  const text = read('CHANGELOG.md');
-  const start = text.indexOf('## [Unreleased]');
-  return text.slice(start, text.indexOf('\n## [', start + 1));
+  return changelogAbove(read('CHANGELOG.md'), '0.49.0');
 }
 function claimChangelog(sentence: string): void {
   expect(flat(unreleased()), `the CHANGELOG no longer says: ${sentence}`).toContain(flat(sentence));
