@@ -116,7 +116,8 @@
         "submitHumanResponse",
         "unreadableFactsOf",
         "unreadableRunFilesError",
-        "unreadableRunFilesOf"
+        "unreadableRunFilesOf",
+        "withLibraryWords"
       ]
     },
     {

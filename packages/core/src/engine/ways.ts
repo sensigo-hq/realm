@@ -2712,6 +2712,37 @@ export const LIBRARY_WORDS: WayRenderer<string, LibraryHost> = {
 };
 
 /**
+ * The renderer a program supplies when it words some of a reply's `ways` itself: any of
+ * {@link WayRenderer}'s functions, each one optional. {@link withLibraryWords} completes it with
+ * Realm's own words ({@link LIBRARY_WORDS}), so a verb added in a later minor release renders with
+ * Realm's words until the program writes its own. String words only, as `LIBRARY_WORDS` gives them:
+ * a renderer with another output type has no default and is written whole, as a `WayRenderer`.
+ * @public
+ */
+export type PartialWayRenderer<Host> = Partial<WayRenderer<string, Host>>;
+
+/**
+ * The complete renderer from a program's partial one. The program's function for each verb it gave
+ * one, Realm's own words ({@link LIBRARY_WORDS}) for every other verb — a verb added in a later minor
+ * release included, until the program writes its own. A member that is not a function — `undefined`
+ * included — counts as not given. String words only, as `LIBRARY_WORDS` gives them: a renderer with
+ * another output type has no default and is written whole, as a {@link WayRenderer}.
+ * @public
+ */
+export function withLibraryWords<Host>(
+  partial: PartialWayRenderer<Host>,
+): WayRenderer<string, Host> {
+  const complete: Record<string, unknown> = {};
+  for (const verb of WAY_VERBS) {
+    const given = partial[verb];
+    complete[verb] = typeof given === 'function' ? given : LIBRARY_WORDS[verb];
+  }
+  // The one cast: LIBRARY_WORDS's functions read no host, but their type says `LibraryHost` ("no
+  // settings"), which a program's non-empty `Host` is not, so the completed map's type is asserted.
+  return complete as WayRenderer<string, Host>;
+}
+
+/**
  * The library door's words for why a step cannot run (C36, C41, C53) — `'<s>' cannot run
  * (<check>): <refusal>`; a capability this program lacks says so with its way out, one judged from
  * the run's marker is past tense. `undefined` for an entry that is not a step that cannot run.
