@@ -424,6 +424,7 @@ steps:
 ```text
 Valid: review-note v1 (4 steps) — 1 extension key carried, never read by realm: x-owner
   Reads a note, has it reviewed, and files the result.
+Not checked: 1 template reference(s) on data the workflow declares no shape for, or a context entry only a file adds: review.prompt: context.resources.read_note.content
 Extensions: ./registry.mjs (adapters: 0, handlers: 1, processors: 0)
 ℹ 2 steps ready for structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
 cache: spelling_look — anthropic 646 chars ≈ 350–789 tokens, with Anthropic's tool text · openai 333 chars ≈ 67–133 tokens (estimates: 2.5–5 chars/token, with margin)
