@@ -1,18 +1,24 @@
 // template-paths.ts — fix 1, piece 3a-ii-a: every `{{ … }}` path in an approval question
 // (`gate.message`) and in a step's `display`, judged against what the workflow declares through the
-// shared resolver (`path-resolver.ts`), and the words the author reads.
+// shared resolver (`path-resolver.ts`), and the words the author reads. Piece 3a-ii-b: and in a
+// step's `prompt` and its `instructions`.
 //
 // Three loader warning codes carry the findings, in the #169 channel:
-//   TEMPLATE_PATH_UNRESOLVABLE (policy 'error') — a path that can never be found, in either field;
+//   TEMPLATE_PATH_UNRESOLVABLE (policy 'error') — a path that can never be found, in any field;
 //   TEMPLATE_PATH_NO_DEFAULT (policy 'error') — a path in an approval question that may be missing,
 //     which `| default` does not fill (#648 C1);
-//   TEMPLATE_PATH_UNCERTAIN (policy 'warn') — a path in `display` that may be missing.
+//   TEMPLATE_PATH_UNCERTAIN (policy 'warn') — a path in `display`, a prompt or step instructions
+//     that may be missing (prompts stay lenient, #648 D3-3).
 // validate, register and watch refuse the two error codes; every running surface prints all three
 // and goes on. A path into data the workflow declares no shape for, or a context entry only a file
 // adds, is listed as not checked (`surface: 'template'`).
 //
 // The fields judged are `gate.message` on a step whose trust opens a gate, and `display` on the
-// kinds that render it (a gated auto step, an agent step). A placeholder piece 3a-i reports (an
+// kinds that render it (a gated auto step, an agent step); `prompt` on an auto or agent step, and
+// `instructions` on a step whose trust opens a gate (a gateless step's are passed on raw). In a
+// prompt or instructions a placeholder is judged only when it starts with Realm's own roots
+// (`context`, `run`, `workflow`) or with a wrong start naming a step of the workflow
+// (`startsWithStepName`); any other is text for the model. A placeholder piece 3a-i reports (an
 // unknown filter, an argument no value accepts) gets nothing here, nor does a field that is not
 // text. Whether `| default` fills a missing value is the renderer's own filter code's answer: the
 // placeholder's filters run in order on a missing value (`applyFilter`, `'stored'`), as
@@ -26,7 +32,9 @@ import { absentWhy } from './path-reasons.js';
 import {
   DISPLAY_SURFACE,
   GATE_MESSAGE_SURFACE,
+  PROMPT_SURFACE,
   resolveReference,
+  startsWithStepName,
   type AbsentCause,
   type NeverCause,
   type PathIndex,
@@ -35,7 +43,10 @@ import type { SourcePosition } from './source-positions.js';
 import { hasFilterFinding } from './template-check.js';
 
 /** A field whose paths this piece judges. */
-export type TemplateField = 'gate.message' | 'display';
+export type TemplateField = 'gate.message' | 'prompt' | 'instructions' | 'display';
+
+/** Realm's own roots: a placeholder in a prompt or instructions starting with one is judged. */
+const ENGINE_ROOTS: readonly string[] = ['context', 'run', 'workflow'];
 
 /** One placeholder of one judged field. */
 export interface TemplateLeaf {
@@ -52,8 +63,9 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /**
- * Every placeholder this piece judges, in the steps' file order, each step's `gate.message` before
- * its `display`. A placeholder piece 3a-i reports, and a field that is not text, are left out.
+ * Every placeholder this piece judges, in the steps' file order, each step's fields in 3a-i's order
+ * (`gate.message`, `prompt`, `instructions`, `display`). A placeholder piece 3a-i reports, a field
+ * that is not text, and text for the model in a prompt or instructions, are left out.
  */
 export function templateLeaves(stepsRaw: unknown): TemplateLeaf[] {
   const leaves: TemplateLeaf[] = [];
@@ -66,6 +78,8 @@ export function templateLeaves(stepsRaw: unknown): TemplateLeaf[] {
     const fields: Array<[TemplateField, unknown]> = [];
     const gate = raw['gate'];
     if (gated && isObj(gate)) fields.push(['gate.message', gate['message']]);
+    fields.push(['prompt', raw['prompt']]);
+    if (gated) fields.push(['instructions', raw['instructions']]);
     if (kind === 'agent' || gated) fields.push(['display', raw['display']]);
     for (const [field, value] of fields) {
       if (typeof value !== 'string') continue;
@@ -73,11 +87,23 @@ export function templateLeaves(stepsRaw: unknown): TemplateLeaf[] {
         const expr = match[1]!.trim();
         if (hasFilterFinding(expr)) continue;
         const parts = placeholderParts(expr);
+        if (modelText(field, parts.path, stepsRaw)) continue;
         leaves.push({ step, field, expr, path: parts.path, filters: parts.filters });
       }
     }
   }
   return leaves;
+}
+
+/**
+ * Piece 3a-ii-b: whether a placeholder in a prompt or instructions is text for the model. Realm has
+ * no `\{{` escape and leaves an unknown placeholder as written, so one that starts with none of
+ * Realm's own roots, nor a wrong start naming a step of the workflow, is not judged.
+ */
+function modelText(field: TemplateField, path: string, stepsRaw: Obj): boolean {
+  if (field !== 'prompt' && field !== 'instructions') return false;
+  const first = path.trim().split('.')[0]!;
+  return !ENGINE_ROOTS.includes(first) && !startsWithStepName(path, stepsRaw);
 }
 
 /**
@@ -109,6 +135,16 @@ const CONSEQUENCE: Record<TemplateField, Record<'none' | 'default' | 'other', st
     default: "the question always shows what '| default' gives",
     other: 'the question shows the placeholder as written',
   },
+  prompt: {
+    none: 'the model is sent the placeholder as written',
+    default: "the prompt always shows what '| default' gives",
+    other: 'the model is sent the placeholder as written',
+  },
+  instructions: {
+    none: 'the instructions show the placeholder as written',
+    default: "the instructions always show what '| default' gives",
+    other: 'the instructions show the placeholder as written',
+  },
   display: {
     none: 'the placeholder is shown as nothing',
     default: "the placeholder always shows what '| default' gives",
@@ -116,12 +152,29 @@ const CONSEQUENCE: Record<TemplateField, Record<'none' | 'default' | 'other', st
   },
 };
 
+const READS = "'context.resources.<step>.', 'run.params.' and 'workflow.context.<name>'";
 const ROOT_REASON: Record<TemplateField, string> = {
-  'gate.message':
-    "an approval question reads only 'context.resources.<step>.', 'run.params.' and " +
-    "'workflow.context.<name>'",
+  'gate.message': `an approval question reads only ${READS}`,
+  prompt: `a prompt reads only ${READS}`,
+  instructions: `step instructions read only ${READS}`,
   display: "display reads only the names of the step's own answer",
 };
+
+/** Piece 3a-ii-b: when the field is read, for the reasons and the may-be-missing words. */
+const WHEN_READ: Record<TemplateField, string> = {
+  'gate.message': ' when the gate opens',
+  prompt: ' when the prompt is sent',
+  instructions: ' when the gate opens',
+  display: '',
+};
+
+/** The field's surface: instructions read what an approval question reads (the gate's root). */
+const SURFACE = {
+  'gate.message': GATE_MESSAGE_SURFACE,
+  prompt: PROMPT_SURFACE,
+  instructions: GATE_MESSAGE_SURFACE,
+  display: DISPLAY_SURFACE,
+} as const;
 
 const DEFAULT_FIX =
   "Add '| default: <value>' as its first filter, keeping after it only filters that take that value";
@@ -137,8 +190,7 @@ export function judgeTemplateLeaf(
   leaf: TemplateLeaf,
   positionOf: (segments: readonly string[]) => SourcePosition | undefined,
 ): LeafFindings {
-  const surface = leaf.field === 'gate.message' ? GATE_MESSAGE_SURFACE : DISPLAY_SURFACE;
-  const judgement = resolveReference(leaf.path, surface, leaf.step, index);
+  const judgement = resolveReference(leaf.path, SURFACE[leaf.field], leaf.step, index);
   const filled = filledByDefault(leaf.filters);
   const form = leaf.filters.length === 0 ? 'none' : filled ? 'default' : 'other';
   const findings: LeafFindings = {};
@@ -156,7 +208,14 @@ export function judgeTemplateLeaf(
   };
   const mayBeMissing = (cause: AbsentCause): void => {
     if (cause.rule === 'runs_after') {
-      never({ text: runsAfterReason(cause.step) });
+      // Piece 3a-ii-b: a prompt never finds its own step's output (no evidence entry yet, or a
+      // failed attempt's `output: {}`).
+      never({
+        text:
+          leaf.field === 'prompt' && cause.step === leaf.step
+            ? "this step's own output is not there when its prompt is sent"
+            : runsAfterReason(cause.step, leaf.field),
+      });
       return;
     }
     if (filled) return;
@@ -165,8 +224,7 @@ export function judgeTemplateLeaf(
     finding = {
       code: leaf.field === 'gate.message' ? 'TEMPLATE_PATH_NO_DEFAULT' : 'TEMPLATE_PATH_UNCERTAIN',
       text:
-        `${opening(leaf)}, which may be missing` +
-        `${leaf.field === 'gate.message' ? ' when the gate opens' : ''} (${words.why}), so then ` +
+        `${opening(leaf)}, which may be missing${WHEN_READ[leaf.field]} (${words.why}), so then ` +
         `${CONSEQUENCE[leaf.field][form]}.` +
         (fix !== undefined ? ` ${fix}` : ''),
       ...(words.didYouMean !== undefined ? { didYouMean: words.didYouMean } : {}),
@@ -193,7 +251,7 @@ export function judgeTemplateLeaf(
   const keyPos = positionOf([
     'steps',
     leaf.step,
-    ...(leaf.field === 'gate.message' ? ['gate', 'message'] : ['display']),
+    ...(leaf.field === 'gate.message' ? ['gate', 'message'] : [leaf.field]),
   ]);
   const stepLine = positionOf(['steps', leaf.step])?.line;
   const at =
@@ -237,8 +295,11 @@ interface Reason {
   didYouMean?: string;
 }
 
-function runsAfterReason(step: string): string {
-  return `step '${capText(step)}' runs after this one, so its output is not there when the gate opens`;
+function runsAfterReason(step: string, field: TemplateField): string {
+  return (
+    `step '${capText(step)}' runs after this one, so its output is not there` +
+    (field === 'prompt' ? ' when the prompt is sent' : ' when the gate opens')
+  );
 }
 
 /** Item 1's reasons, by the resolver's never rows, worded as unit 1 and piece 2a word them. */
