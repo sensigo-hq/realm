@@ -348,13 +348,16 @@ describe('#616 R3 — rollback: the file moved before the hold, or since the rec
       beforeHold: () => moveForeign(home, versions, 3),
     });
     const rolled = await refusal(m.rollback());
+    // Read while the handle is still open: closing it would let go of a hold that leaked.
+    const free = await writable(home);
     m.close();
     // (1) red when the plan under the hold is judged against the target only (version 3 would be
-    //     stepped back to 2), or the hold is not released; (2) prints the refusal and the file.
+    //     stepped back to 2), or the hold is not released on the refusal; (2) prints the refusal and
+    //     the file.
     expect({
       rolled,
       version: versionOf(file),
-      free: await writable(home),
+      free,
       record: recordLines(folder).length,
     }).toEqual({
       rolled: {
@@ -383,10 +386,12 @@ describe('#616 R3 — rollback: the file moved before the hold, or since the rec
       beforeHold: () => moveForeign(home, versions, 4),
     });
     const rolled = await refusal(m.rollback());
+    // Read while the handle is still open: closing it would let go of a hold that leaked.
+    const free = await writable(home);
     m.close();
     // (1) red when a file moved ABOVE the line's `to_format` is stepped back further (to 2, through
-    //     4 and 3); (2) prints the refusal and the file.
-    expect({ rolled, version: versionOf(file), free: await writable(home) }).toEqual({
+    //     4 and 3), or the hold is not released on the refusal; (2) prints the refusal and the file.
+    expect({ rolled, version: versionOf(file), free }).toEqual({
       rolled: {
         code: 'STATE_STORE_MIGRATE_REFUSED',
         message:
@@ -454,6 +459,113 @@ describe('#616 R3 — rollback: a record line with more fields than the six', ()
       version: 1,
       to: 1,
       last: 1,
+    });
+  });
+});
+
+describe('#616 R3 — rollback: the install sentence for a file an older Realm writes (states 4 and 5)', () => {
+  const INSTALL_1 = (which: string): string =>
+    ` If you want ${which}, install one that writes schema version 1: npm install -g ` +
+    '"@sensigo/realm-cli@0.49".';
+
+  it('the real version-1 file: state 4 and state 5 both name the release that writes it', async () => {
+    const four = nestedHome();
+    await storeAt(four.home, 1);
+    await migrateForward(four.home, {}, false);
+    await moveForeign(four.home, REALM_STORE_VERSIONS, 1);
+    const at4 = recordLines(four.folder)[0]?.['at'];
+    const stateFour = await refusal((await maintain(four.home)).rollback());
+    const five = nestedHome();
+    await storeAt(five.home, 1);
+    await migrateForward(five.home, {}, false);
+    const back = await maintain(five.home, {}, 'migrate');
+    await back.migrate({ to: 1, backup: false });
+    back.close();
+    const at5 = recordLines(five.folder).at(-1)?.['at'];
+    const stateFive = await refusal((await maintain(five.home)).rollback());
+    // (1) red when the sentence is missing, names another range or version, or sits after "Nothing
+    //     was changed."; (2) prints both refusals.
+    expect({ stateFour, stateFive }).toEqual({
+      stateFour: {
+        code: 'STATE_STORE_MIGRATE_REFUSED',
+        message:
+          `The last record for ${four.home} (${String(at4)}) took the store file from schema version ` +
+          '1 to 2, but it is at schema version 1 now. Realm does not know what to roll back. Use ' +
+          'realm db migrate --to <n> to choose the version yourself, or realm db restore <backup>.' +
+          `${INSTALL_1('an older Realm')} Nothing was changed.`,
+      },
+      stateFive: {
+        code: 'STATE_STORE_MIGRATE_REFUSED',
+        message:
+          `The last record for ${five.home} is a step back to schema version 1 (${String(at5)}). ` +
+          'There is nothing to roll back: to go back further, use realm db migrate --to <n>.' +
+          `${INSTALL_1('that older Realm')} Nothing was changed.`,
+      },
+    });
+  });
+
+  it('a file at the version this Realm writes: no sentence (state 4, the file at 2)', async () => {
+    const { home, folder } = nestedHome();
+    await storeAt(home, 1);
+    await migrateForward(home, {}, false);
+    const back = await maintain(home, {}, 'migrate');
+    await back.migrate({ to: 1, backup: false });
+    back.close();
+    await moveForeign(home, REALM_STORE_VERSIONS, 2);
+    const at = recordLines(folder).at(-1)?.['at'];
+    const rolled = await refusal((await maintain(home)).rollback());
+    // (1) red when the sentence is added for the version this Realm writes; (2) prints the refusal.
+    expect(rolled).toEqual({
+      code: 'STATE_STORE_MIGRATE_REFUSED',
+      message:
+        `The last record for ${home} (${String(at)}) took the store file from schema version 2 to ` +
+        '1, but it is at schema version 2 now. Realm does not know what to roll back. Use realm ' +
+        'db migrate --to <n> to choose the version yourself, or realm db restore <backup>. ' +
+        'Nothing was changed.',
+    });
+  });
+
+  it('a synthetic version below this Realm’s: named with its writtenBy, and no sentence without one', async () => {
+    // With a writtenBy (version 3 written by 0.51), state 4: the file moved to 3, unrecorded.
+    const withRange = nestedHome();
+    const ranged = backLadder({ downgrade: V3_DOWN, writtenBy: '0.51' });
+    await storeAt(withRange.home, 2, ranged);
+    await migrateForward(withRange.home, { schemaVersion: 4, versions: ranged }, false);
+    await moveForeign(withRange.home, ranged, 3);
+    const atRanged = recordLines(withRange.folder)[0]?.['at'];
+    const named = await refusal(
+      (await maintain(withRange.home, { schemaVersion: 4, versions: ranged })).rollback(),
+    );
+    // Without one, state 5: a step back from 4 to 3 recorded, the file at 3.
+    const without = nestedHome();
+    const plain = backLadder();
+    await storeAt(without.home, 4, plain);
+    const back = await maintain(without.home, { schemaVersion: 4, versions: plain }, 'migrate');
+    await back.migrate({ to: 3, backup: false });
+    back.close();
+    const atPlain = recordLines(without.folder).at(-1)?.['at'];
+    const unnamed = await refusal(
+      (await maintain(without.home, { schemaVersion: 4, versions: plain })).rollback(),
+    );
+    // (1) red when the range is hard-coded (0.49 for every version), or a version with no writtenBy
+    //     gets a sentence ("@undefined"); (2) prints both refusals.
+    expect({ named, unnamed }).toEqual({
+      named: {
+        code: 'STATE_STORE_MIGRATE_REFUSED',
+        message:
+          `The last record for ${withRange.home} (${String(atRanged)}) took the store file from ` +
+          'schema version 2 to 4, but it is at schema version 3 now. Realm does not know what to ' +
+          'roll back. Use realm db migrate --to <n> to choose the version yourself, or realm db ' +
+          'restore <backup>. If you want an older Realm, install one that writes schema version 3: ' +
+          'npm install -g "@sensigo/realm-cli@0.51". Nothing was changed.',
+      },
+      unnamed: {
+        code: 'STATE_STORE_MIGRATE_REFUSED',
+        message:
+          `The last record for ${without.home} is a step back to schema version 3 ` +
+          `(${String(atPlain)}). There is nothing to roll back: to go back further, use realm db ` +
+          'migrate --to <n>. Nothing was changed.',
+      },
     });
   });
 });

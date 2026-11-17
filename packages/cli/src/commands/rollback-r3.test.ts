@@ -185,14 +185,19 @@ const NO_RECORD = (): string =>
 const UNREADABLE = (reason: string): string =>
   `Error: Cannot read ${shown(record)}: ${reason}. Nothing was changed. Use realm db migrate --to ` +
   '<n> to choose the version yourself, or realm db restore <backup> to put a backup back.';
+/** Correction 1 (C3): the sentence states 4 and 5 add for a file at version 1, written by 0.49. */
+const INSTALL_1 = (which: string): string =>
+  ` If you want ${which}, install one that writes schema version 1: npm install -g ` +
+  '"@sensigo/realm-cli@0.49".';
 const MISMATCH = (at: string, from: number, to: number, v: number): string =>
   `Error: The last record for ${shown(home)} (${at}) took the store file from schema version ` +
   `${from} to ${to}, but it is at schema version ${v} now. Realm does not know what to roll back. ` +
-  'Use realm db migrate --to <n> to choose the version yourself, or realm db restore <backup>. ' +
-  'Nothing was changed.';
+  'Use realm db migrate --to <n> to choose the version yourself, or realm db restore <backup>.' +
+  `${v === 1 ? INSTALL_1('an older Realm') : ''} Nothing was changed.`;
 const STEPPED_BACK = (at: string, to: number): string =>
   `Error: The last record for ${shown(home)} is a step back to schema version ${to} (${at}). There ` +
-  'is nothing to roll back: to go back further, use realm db migrate --to <n>. Nothing was changed.';
+  'is nothing to roll back: to go back further, use realm db migrate --to <n>.' +
+  `${to === 1 ? INSTALL_1('that older Realm') : ''} Nothing was changed.`;
 
 /** A record line as R1 writes it, for this home unless another is named. */
 function line(fields: Record<string, unknown> = {}): string {
@@ -540,6 +545,23 @@ describe('#616 R3 — realm rollback, on the built CLI', { timeout: 120_000 }, (
     ]) {
       claim(PAGE, sentence);
     }
+    // Correction 1: the install sentence of states 4 and 5, and the `--to` section's pointer.
+    claim(
+      PAGE,
+      '` If you want an older Realm, install one that writes schema version <v>: npm install -g "@sensigo/realm-cli@<range>".` comes before `Nothing was changed.`',
+    );
+    claim(
+      PAGE,
+      '` If you want that older Realm, install one that writes schema version <to_format>: npm install -g "@sensigo/realm-cli@<range>".` comes before `Nothing was changed.`',
+    );
+    claim(
+      PAGE,
+      'To undo the last migrate without naming the version, run [`realm rollback`](#realm-rollback).',
+    );
+    claim(
+      'docs/reference/environment-and-files.md',
+      'One JSON line per `realm db migrate` or `realm rollback` that ran a schema step',
+    );
     claim(GUIDE, '`realm rollback` finds the version for you');
     claim(
       'CHANGELOG.md',

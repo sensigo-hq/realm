@@ -1048,28 +1048,58 @@ function lastRecordOf(home: string, source: string, versions: StoreSchemaVersion
   return last;
 }
 
-/** R3: the file is not at the last record's `to_format` (before the hold, or under it). */
+/**
+ * R3: the sentence a state-4 or state-5 refusal adds for a file an older Realm writes: how to install
+ * one that writes version `v`, from the version's own `writtenBy` (the source of R2's install line).
+ * Only when `v` is below `realm`, the version this Realm writes, and has a `writtenBy`; else nothing.
+ */
+function olderInstall(
+  versions: StoreSchemaVersions,
+  v: number,
+  realm: number,
+  which: 'an older Realm' | 'that older Realm',
+): string {
+  const range = v < realm ? versions.get(v)?.writtenBy : undefined;
+  return range === undefined
+    ? ''
+    : ` If you want ${which}, install one that writes schema version ${v}: npm install -g ` +
+        `"@sensigo/realm-cli@${range}".`;
+}
+
+/**
+ * R3: the file is not at the last record's `to_format` (before the hold, or under it); `install` is
+ * {@link olderInstall}'s sentence for the file's version, or nothing.
+ */
 function recordMismatch(
   home: string,
   source: string,
   line: RollbackLine,
   at: number,
+  install: string,
 ): WorkflowError {
   return migrateRefused(
     `The last record for ${home} (${line.at}) took the store file from schema version ` +
       `${line.from_format} to ${line.to_format}, but it is at schema version ${at} now. Realm does ` +
-      `not know what to roll back. ${ROLLBACK_WAYS}. Nothing was changed.`,
+      `not know what to roll back. ${ROLLBACK_WAYS}.${install} Nothing was changed.`,
     source,
     `the store file is at schema version ${at}, not ${line.to_format}`,
   );
 }
 
-/** R3: the last record for the home is a step back, and the file is at its `to_format`. */
-function lastIsStepBack(home: string, source: string, line: RollbackLine): WorkflowError {
+/**
+ * R3: the last record for the home is a step back, and the file is at its `to_format`; `install` is
+ * {@link olderInstall}'s sentence for that version, or nothing.
+ */
+function lastIsStepBack(
+  home: string,
+  source: string,
+  line: RollbackLine,
+  install: string,
+): WorkflowError {
   return migrateRefused(
     `The last record for ${home} is a step back to schema version ${line.to_format} (${line.at}). ` +
-      'There is nothing to roll back: to go back further, use realm db migrate --to <n>. Nothing ' +
-      'was changed.',
+      `There is nothing to roll back: to go back further, use realm db migrate --to <n>.${install} ` +
+      'Nothing was changed.',
     source,
     `the last record for ${home} is a step back`,
   );
@@ -1280,7 +1310,13 @@ export async function openStore(
     // file's version down to `to` must be one that can be undone, so a refusal never leaves it half-way.
     const plan = (at: number): boolean => {
       if (undoing !== undefined && at !== undoing.to_format) {
-        throw recordMismatch(home, source, undoing, at);
+        throw recordMismatch(
+          home,
+          source,
+          undoing,
+          at,
+          olderInstall(versions, at, realm, 'an older Realm'),
+        );
       }
       if (at > realm) throw versionNewerError(at, realm);
       if (at === to) return false;
@@ -1549,8 +1585,24 @@ export async function openStore(
       // stale step-back line never decides for a file it does not describe.
       const line = lastRecordOf(home, source, versions);
       const at = await fileVersion(db);
-      if (at !== line.to_format) throw recordMismatch(home, source, line, at);
-      if (line.from_format > line.to_format) throw lastIsStepBack(home, source, line);
+      const realm = db.schemaVersion;
+      if (at !== line.to_format) {
+        throw recordMismatch(
+          home,
+          source,
+          line,
+          at,
+          olderInstall(versions, at, realm, 'an older Realm'),
+        );
+      }
+      if (line.from_format > line.to_format) {
+        throw lastIsStepBack(
+          home,
+          source,
+          line,
+          olderInstall(versions, line.to_format, realm, 'that older Realm'),
+        );
+      }
       progress({
         kind: 'rollingBack',
         at: line.at,
