@@ -423,7 +423,8 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
     await makeStore(home, 1);
     const backup = join(root, 'b.db');
     await backupTo(home, backup);
-    const first = reported(await restore(home, backup)).replaced.kept.path;
+    const restored = reported(await restore(home, backup)).replaced;
+    const first = restored.kind === 'store' ? restored.kept.path : 'none';
     // The second restore takes the name of the second it runs in: the first's, or, should the clock
     // move on meanwhile, one of the next three, counted from the first restore's own second (read
     // from its kept file's name, whatever second it ended in), each held by a file already.
