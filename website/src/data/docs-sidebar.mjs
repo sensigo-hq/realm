@@ -100,7 +100,19 @@ const SIDEBAR = [
       'docs/reference/cache-economics',
       'docs/reference/project-extensions',
       'docs/reference/testing-package',
+    ],
+  },
+  {
+    label: 'Reference: library',
+    collapsed: true,
+    items: [
       'docs/reference/core-library',
+      'docs/reference/library/define-and-load-a-workflow',
+      'docs/reference/library/run-and-drive-a-run',
+      'docs/reference/library/write-a-handler',
+      'docs/reference/library/implement-a-store',
+      'docs/reference/library/embed-the-mcp-server',
+      'docs/reference/library/read-a-runs-record',
     ],
   },
   {

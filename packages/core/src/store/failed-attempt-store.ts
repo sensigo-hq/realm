@@ -37,7 +37,11 @@ export const SIDECAR_SUFFIX = '.attempts.jsonl';
  */
 export const FAILED_ATTEMPT_SIDECAR_MAX_BYTES = 256 * 1024;
 
-/** @public */
+/**
+ * What a failed-attempt store returns for a run: its records in the order they were written, and
+ * whether later ones were dropped at the size limit (`FailedAttemptStore.read`).
+ * @public
+ */
 export interface FailedAttemptReadResult {
   /** Parsed records, in append order; torn/unparseable lines are skipped. */
   records: FailedAttemptRecord[];

@@ -196,7 +196,11 @@ export interface StepMeta {
   usage?: UsageRecord[];
 }
 
-/** @public */
+/**
+ * What `executeStep` is given: the run, the step to run and its input, and the host's dispatcher,
+ * registry and other settings.
+ * @public
+ */
 export interface ExecuteStepOptions {
   runId: string;
   command: string;
@@ -282,7 +286,11 @@ export interface ExecuteStepOptions {
   disclosure?: DisclosureSet;
 }
 
-/** @public */
+/**
+ * What `submitHumanResponse` is given: the run, the question and the chosen answer, and who
+ * answered, through which channel.
+ * @public
+ */
 export interface SubmitGateOptions {
   runId: string;
   gateId: string;
@@ -375,7 +383,10 @@ export interface SubmitGateOptions {
   projectAnswerers?: string[];
 }
 
-/** @public */
+/**
+ * What `executeChain` is given; the same settings as `ExecuteStepOptions`, each documented there.
+ * @public
+ */
 export interface ExecuteChainOptions {
   runId: string;
   command: string;
@@ -2324,7 +2335,11 @@ export function deriveCacheDetail(input: UsageRecord[]): StepCacheDetail {
   return { state: 'partially_observed', basis: 'provider_reported', requests };
 }
 
-/** @public */
+/**
+ * Runs the one step `options.command` names with the caller's input and returns the engine's reply;
+ * unlike `executeChain`, it does not go on to the `auto` steps after it.
+ * @public
+ */
 export async function executeStep(
   store: RunStore,
   definition: WorkflowDefinition,

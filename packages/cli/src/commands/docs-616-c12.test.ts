@@ -628,6 +628,41 @@ describe('#616 PR-2c c12 — no JSON-era sentence is left (C6)', () => {
       words: 'such as `JsonFileStore` on `location.runsDir`',
       why: "L: the clock contract's location route",
     },
+    {
+      page: 'docs/reference/library/run-and-drive-a-run.md',
+      words: 'JsonFileStore',
+      why: "L: the class's own entry in the generated library reference (CP-1 PR 2), its declaration and its JSDoc, and the types its methods return",
+    },
+    {
+      page: 'docs/reference/library/implement-a-store.md',
+      words: 'JsonFileStore',
+      why: "L: the generated reference prints the JSDoc of the types `JsonFileStore`'s methods return, and links to the class's entry",
+    },
+    {
+      page: 'docs/reference/library/implement-a-store.md',
+      words: 'Stores WorkflowDefinition objects as JSON files at ~/.realm/workflows/{id}.json.',
+      why: "L: `JsonWorkflowStore`'s own JSDoc, printed in the generated reference",
+    },
+    {
+      page: 'docs/reference/library/implement-a-store.md',
+      words: "`JsonFileFailedAttemptStore` is Realm's file store",
+      why: "L: `FailedAttemptStore`'s JSDoc, printed in the generated reference",
+    },
+    {
+      page: 'docs/reference/library/implement-a-store.md',
+      words: 'the JSON-file store reads each file in turn',
+      why: "L: `Listing`'s JSDoc about `JsonFileStore`, printed in the generated reference",
+    },
+    {
+      page: 'docs/reference/library/embed-the-mcp-server.md',
+      words: 'like `JsonFileStore`, this store never calls `fsync`',
+      why: "L: `JsonTraceBufferStore`'s JSDoc comparing it with the library class, printed in the generated reference",
+    },
+    {
+      page: 'docs/reference/library/embed-the-mcp-server.md',
+      words: 'Stores WorkflowDefinition objects as JSON files at ~/.realm/workflows/{id}.json.',
+      why: "L: the generated reference's link to `JsonWorkflowStore`, with its JSDoc's first sentence",
+    },
   ];
   const NOUNS = [
     '~/.realm/runs',

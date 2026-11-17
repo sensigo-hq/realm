@@ -14,3 +14,8 @@ website/src/live/manifest.json
 # package. The cells compare it parsed, so its formatting is never the check; formatting it would
 # change recorded files. The cells and the rules file beside the folders stay checked.
 packages/cli/src/corpus/[0-9]*/
+
+# CP-1 PR 2: the library reference, written by scripts/generate-library-reference.mjs
+# (`npm run docs:library`). A cell compares the committed pages with the generator's output byte for
+# byte, so formatting them would make that cell red. Their input, jobs.json, stays checked.
+docs/reference/library/*.md

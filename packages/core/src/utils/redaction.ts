@@ -273,7 +273,11 @@ export interface DisclosureEntry {
  * @public
  */
 export const KIND = { pattern: 1, environment: 2, declared: 3 } as const;
-/** @public */
+/**
+ * Where a value a disclosure set hides came from: the environment, or the values declared to it;
+ * the declared kind wins where two overlap (`DisclosureSet.forms`).
+ * @public
+ */
 export type MemberKind = typeof KIND.environment | typeof KIND.declared;
 
 /**

@@ -79,7 +79,16 @@ Realm is a workflow engine that an AI agent calls. These pages describe Realm 0.
 - [Cache economics file](reference/cache-economics.md)
 - [Project extensions](reference/project-extensions.md)
 - [Testing package](reference/testing-package.md)
+
+## Reference: library
+
 - [Core library: stores and the store contract](reference/core-library.md)
+- [Define and load a workflow](reference/library/define-and-load-a-workflow.md)
+- [Run and drive a run from a program](reference/library/run-and-drive-a-run.md)
+- [Write a handler, an adapter or an extension file](reference/library/write-a-handler.md)
+- [Implement a store](reference/library/implement-a-store.md)
+- [Embed the MCP server](reference/library/embed-the-mcp-server.md)
+- [Read a run's record or export from a program](reference/library/read-a-runs-record.md)
 
 ## Reference: lookups
 

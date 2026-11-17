@@ -1,0 +1,227 @@
+{
+  "$comment": "CP-1 PR 2: the six jobs of the library reference, in the jobs table's order (rule (i): a documented entry point named by two jobs goes under the first here). `precedence` orders the jobs for a name only their reach finds (rule (ii): the most specific first). `entryPoints` are the names the docs name for the job (CP-1 lane J). scripts/generate-library-reference.mjs reads this file. The record job's last two entry points, `armToOutcome` and `classifyLegacySeal`, are named by no docs page yet: CP-1 decided they read a stored record (job 6) and are documented here (R050-CP1-MA1-07).",
+  "jobs": [
+    {
+      "job": "handler",
+      "page": "write-a-handler.md",
+      "precedence": 1,
+      "title": "Write a handler, an adapter or an extension file",
+      "description": "Every name a step handler, a service adapter, a processor or an extension file uses from @sensigo/realm, each with its declaration.",
+      "purpose": "A step's own work runs in a step handler (`StepHandler`), a call to an outside service in a service adapter (`ServiceAdapter`), and a project's extension file exports them for `realm.yaml` to name. This page lists the interfaces such code implements, the helper functions it can call, the error it throws (`WorkflowError`), and every type their declarations refer to that no other page holds first.",
+      "handPages": [
+        {
+          "title": "Handlers",
+          "link": "../handlers.md"
+        },
+        {
+          "title": "Project extensions",
+          "link": "../project-extensions.md"
+        }
+      ],
+      "entryPoints": [
+        "Processor",
+        "ServiceAdapter",
+        "StepContext",
+        "StepHandler",
+        "StepHandlerInputs",
+        "StepHandlerResult",
+        "WorkflowError",
+        "compareStrings",
+        "countResults",
+        "createDefaultRegistry",
+        "declareReleaseLine",
+        "locateQuote",
+        "partitionBySubstring",
+        "resolveResource",
+        "walkField"
+      ]
+    },
+    {
+      "job": "workflow",
+      "page": "define-and-load-a-workflow.md",
+      "precedence": 2,
+      "title": "Define and load a workflow",
+      "description": "The loaders that read a workflow into a WorkflowDefinition, and the types of the definition they return.",
+      "purpose": "`loadWorkflowFromFile` and `loadWorkflowFromString` read a workflow and return its `WorkflowDefinition`; their `…WithDiagnostics` forms also return the loader's warnings and the paths it could not check. This page lists the loaders, the error codes Realm raises, and the definition's types; what each field of the workflow file means is on the workflow reference pages.",
+      "handPages": [
+        {
+          "title": "Workflow file: top-level fields",
+          "link": "../workflow/top-level-fields.md"
+        },
+        {
+          "title": "Core library: run a workflow from your own program",
+          "link": "../core-library.md#run-a-workflow-from-your-own-program"
+        }
+      ],
+      "entryPoints": [
+        "ErrorCode",
+        "WorkflowError",
+        "loadWorkflowFromFile",
+        "loadWorkflowFromFileWithDiagnostics",
+        "loadWorkflowFromString",
+        "loadWorkflowFromStringWithDiagnostics"
+      ]
+    },
+    {
+      "job": "run",
+      "page": "run-and-drive-a-run.md",
+      "precedence": 6,
+      "title": "Run and drive a run from a program",
+      "description": "The functions a program calls to step, advance, answer and abandon runs, with the option and reply types they use.",
+      "purpose": "A program that drives runs itself calls these functions with a `RunStore` and a `WorkflowDefinition`: `executeStep`, `executeChain` and `advanceRun` move a run forward, `submitHumanResponse` answers an open question, and `abandonRun` ends a run. Each returns an `EngineReply`, except `abandonRun`, which returns the run's `RunRecord`. This page lists them, the other functions the docs name for driving runs, and every type they reach that no more specific page holds.",
+      "handPages": [
+        {
+          "title": "Core library: run a workflow from your own program",
+          "link": "../core-library.md#run-a-workflow-from-your-own-program"
+        }
+      ],
+      "entryPoints": [
+        "EngineReply",
+        "ExtensionRegistry",
+        "JsonFileStore",
+        "LIBRARY_WORDS",
+        "STOP_KINDS",
+        "UnreadableFileFacts",
+        "WorkflowError",
+        "abandonRun",
+        "advanceRun",
+        "buildDisclosureSet",
+        "callsHostDispatcher",
+        "claimStepForDrive",
+        "classifyRunHealth",
+        "classifyStop",
+        "createDefaultRegistry",
+        "damagedFileConcerns",
+        "deriveRunPhase",
+        "describePending",
+        "describeStoredFileFault",
+        "disclose",
+        "discloseLeaf",
+        "discloseSplit",
+        "discloseSplitSize",
+        "displayId",
+        "drainFinalizers",
+        "executeChain",
+        "executeEngineStep",
+        "executeStep",
+        "findEligibleSteps",
+        "getWorkflowForRun",
+        "isCopyOfReadableRun",
+        "isRunRecordShape",
+        "judgedSnapshotOf",
+        "reclaimStep",
+        "releaseDriveClaim",
+        "renderStepPromptWithBoundary",
+        "renderUnreadableStoredFile",
+        "submitHumanResponse",
+        "unreadableFactsOf",
+        "unreadableRunFilesError",
+        "unreadableRunFilesOf",
+        "withLibraryWords"
+      ]
+    },
+    {
+      "job": "store",
+      "page": "implement-a-store.md",
+      "precedence": 4,
+      "title": "Implement a store",
+      "description": "The store interfaces a program implements to keep runs in a store of its own, the stores Realm ships, and the helpers a store calls.",
+      "purpose": "A `RunStore` keeps runs; the other store interfaces keep what Realm stores beside them, such as refused answers (`FailedAttemptStore`), trace lines (`TraceBufferStore`) and registered workflows (`WorkflowRegistrar`). This page lists those interfaces, the stores Realm ships that implement them, and the helpers a store calls for its clock, its readings and its settlements.",
+      "handPages": [
+        {
+          "title": "Core library: the run store interface",
+          "link": "../core-library.md#the-run-store-interface"
+        },
+        {
+          "title": "Testing package",
+          "link": "../testing-package.md"
+        }
+      ],
+      "entryPoints": [
+        "CLOCK_READ_CLASSES",
+        "Clock",
+        "DedupStore",
+        "FailedAttemptStore",
+        "InMemoryTraceBufferStore",
+        "JsonFileFailedAttemptStore",
+        "JsonFileStore",
+        "JsonWorkflowStore",
+        "OrphanSweepableStore",
+        "PerRunArtifactStore",
+        "ReplayStore",
+        "RunStore",
+        "TraceBufferStore",
+        "WorkflowError",
+        "WorkflowRegistrar",
+        "applySettlement",
+        "assertSealIntegrity",
+        "clockErrorSink",
+        "computeClaimDeadline",
+        "createSystemClock",
+        "damagedFileConcerns",
+        "decideIdempotencyPolicy",
+        "declareReleaseLine",
+        "deriveRunPhase",
+        "findEligibleSteps",
+        "floorAtHolder",
+        "floorAtRecord",
+        "isCopyOfReadableRun",
+        "leaseFactOf",
+        "leaseFactsOf",
+        "releaseLineOf",
+        "setClockErrorSink",
+        "systemClock",
+        "takeRawReading",
+        "takeReading",
+        "writtenSnapshot"
+      ]
+    },
+    {
+      "job": "mcp",
+      "page": "embed-the-mcp-server.md",
+      "precedence": 5,
+      "title": "Embed the MCP server",
+      "description": "The functions that serve Realm's MCP tools from a program of your own, their options, and the types those options name.",
+      "purpose": "`createRealmMcpServer` (from `@sensigo/realm-mcp`) takes a run store and a workflow store in its options and returns an MCP server; `createRealmMcpServerOnHome` (from `@sensigo/realm-mcp/home`) opens a Realm home and returns the server with a `close` function. This page lists both, their options, and the types those options name that no other page holds first.",
+      "handPages": [
+        {
+          "title": "Core library: serve MCP from your own program",
+          "link": "../core-library.md#serve-mcp-from-your-own-program"
+        }
+      ],
+      "entryPoints": [
+        "AnswersRow",
+        "GATE_ANSWERS_VALUES",
+        "GateAnswers",
+        "JsonWorkflowStore",
+        "WorkflowRegistrar",
+        "buildDisclosureSet",
+        "JsonTraceBufferStore",
+        "createRealmMcpServer",
+        "loadPriceSource",
+        "createRealmMcpServerOnHome"
+      ]
+    },
+    {
+      "job": "record",
+      "page": "read-a-runs-record.md",
+      "precedence": 3,
+      "title": "Read a run's record or export from a program",
+      "description": "The run record's types, the evidence entry's, and the functions that read a run's phase and an entry's sources.",
+      "purpose": "A run's record (`RunRecord`) is one object that holds everything Realm knows about the run, and `realm run export` writes all of it into a bundle. `deriveRunPhase` gives a run's phase from its record, and `outputSourceOf` and `readSupplier` say where an evidence entry's output and supplier came from. A record written before Realm recorded how a run ended has no `sealed_by`: `classifyLegacySeal` gives the arm it would have carried, and `armToOutcome` the outcome an arm means. This page lists the record's types, the evidence entry's, and those functions.",
+      "handPages": [
+        {
+          "title": "Run record and export bundle format",
+          "link": "../run-record-and-export.md"
+        }
+      ],
+      "entryPoints": [
+        "deriveRunPhase",
+        "outputSourceOf",
+        "readSupplier",
+        "armToOutcome",
+        "classifyLegacySeal"
+      ]
+    }
+  ]
+}

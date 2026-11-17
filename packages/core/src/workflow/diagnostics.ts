@@ -14,7 +14,10 @@
 import type { SourcePosition } from './source-positions.js';
 import { capText } from '../utils/redaction.js';
 
-/** @public */
+/**
+ * Every warning code the workflow loader can give (`LoaderWarning.code`).
+ * @public
+ */
 export type WarningCode =
   | 'UNKNOWN_WORKFLOW_KEY'
   | 'UNKNOWN_STEP_KEY'

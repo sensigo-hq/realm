@@ -59,7 +59,11 @@ import { consumesInputMap, newRunCanChangeInput, refusedInputField } from './inp
  * @public
  */
 export const PARTIES = ['operator', 'agent', 'asked_person'] as const;
-/** @public */
+/**
+ * Who can take a way on a run: the operator, the agent, or the person a question is asked of
+ * (`WAY_PARTIES`, `ForWay.for`).
+ * @public
+ */
 export type Party = (typeof PARTIES)[number];
 
 /**
@@ -115,7 +119,11 @@ export type Cond =
  * @public
  */
 export const COND_TAGS = ['client'] as const;
-/** @public */
+/**
+ * Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt
+ * (`Cond`'s `client_prompt` member).
+ * @public
+ */
 export type CondTag = (typeof COND_TAGS)[number];
 
 // ─── The ways ───────────────────────────────────────────────────────────────────────────────────
@@ -135,7 +143,12 @@ export const WAY_VERBS = [
   'present',
   'reclaim',
 ] as const;
-/** @public */
+/**
+ * The acts a way names: answer a question, run a step, have the engine carry out what it owes, read
+ * the run, end it, register its workflow again, or send a question's form to the person
+ * (`Base.verb`).
+ * @public
+ */
 export type WayVerb = (typeof WAY_VERBS)[number];
 
 /**
@@ -150,7 +163,11 @@ export const PROGRESS_VERBS = [
 ] as const satisfies readonly WayVerb[];
 export type ProgressVerb = (typeof PROGRESS_VERBS)[number];
 
-/** @public */
+/**
+ * What every way carries: its verb and the conditions it is offered with; each way type adds its
+ * own fields to it.
+ * @public
+ */
 export interface Base<V extends WayVerb> {
   readonly verb: V;
   readonly conditions: readonly Cond[];
@@ -386,7 +403,10 @@ export const UNAVAILABLE_CODES = {
   asks_exhausted: { tag: 'door', verbs: ['present'] },
   door_withholds_answers: { tag: 'door', verbs: ['respond'] },
 } as const satisfies Record<string, { tag: CodeTag; verbs: readonly WayVerb[] }>;
-/** @public */
+/**
+ * The codes that say why a way cannot be taken now, one per reason (`Unavailable.code`).
+ * @public
+ */
 export type UnavailableCode = keyof typeof UNAVAILABLE_CODES;
 
 /**
@@ -417,7 +437,11 @@ export const DEFINITION_ABSENCES = [
   // #627 W (W-r2): the stored copy was written by a LATER Realm (the mirror of `legacy`).
   'newer',
 ] as const;
-/** @public */
+/**
+ * Why a run's workflow definition could not be had: never registered, an agent's copy gone,
+ * unreadable, not a valid workflow, an older or a later format, or not read.
+ * @public
+ */
 export type DefinitionAbsence = (typeof DEFINITION_ABSENCES)[number];
 
 /**
@@ -531,7 +555,10 @@ export interface FactsByCode {
   /** #627 W: the party the door removed from the question's `respond` (the conservation law). */
   door_withholds_answers: { party: 'agent' };
 }
-/** @public */
+/**
+ * The typed facts an `Unavailable` entry carries for its code (`Unavailable.facts`).
+ * @public
+ */
 export type FactsOf<C extends UnavailableCode> = FactsByCode[C];
 
 /**
@@ -583,7 +610,11 @@ export const NO_REMEDY_CAUSES = [
   'already_settled',
   'engine_runs_it_when_owed',
 ] as const;
-/** @public */
+/**
+ * Why an `Unavailable` entry offers no way on, with the cause's own facts
+ * (`Unavailable.no_remedy`).
+ * @public
+ */
 export type NoRemedy =
   | { cause: 'operator_command_untyped'; command: 'resume' | 'drain' | 'purge' | 'start' }
   | { cause: 'requires_other_program'; requirement: { kind: 'handler' | 'adapter'; name: string } }
@@ -698,7 +729,11 @@ export type Source = {
  * @public
  */
 export const GATE_ANSWERS_VALUES = ['asked', 'permitted', 'withheld'] as const;
-/** @public */
+/**
+ * How the MCP door handles a gate's answer: `asked` (the default, a person answers), `permitted`
+ * (the agent may answer too) or `withheld` (no way to answer).
+ * @public
+ */
 export type GateAnswers = (typeof GATE_ANSWERS_VALUES)[number];
 
 /**
@@ -983,7 +1018,10 @@ function doorCannotEnact(way: WayOn, policy: DoorPolicy, reason?: 'engine_step')
  * @public
  */
 export const REPLY_KINDS = ['ok', 'confirm_required', 'refusal', 'blocked', 'error'] as const;
-/** @public */
+/**
+ * The kinds of reply `agentActionOf` tells apart: ok, confirm required, refusal, blocked, error.
+ * @public
+ */
 export type ReplyKind = (typeof REPLY_KINDS)[number];
 
 /**
@@ -1120,7 +1158,11 @@ export const STOP_KINDS = [
   'failed',
   'refused',
 ] as const;
-/** @public */
+/**
+ * Why a loop stopped on a step it picked or ran: six races, after which it goes on with what is
+ * left, and three kinds that stop it.
+ * @public
+ */
 export type StopKind = (typeof STOP_KINDS)[number];
 
 /**
@@ -3030,6 +3072,37 @@ export function reclaimConditionWords(cond: Cond): string | undefined {
     case 'client_prompt':
       return undefined;
   }
+}
+
+/**
+ * The renderer a program supplies when it words some of a reply's `ways` itself: any of
+ * {@link WayRenderer}'s functions, each one optional. {@link withLibraryWords} completes it with
+ * Realm's own words ({@link LIBRARY_WORDS}), so a verb added in a later minor release renders with
+ * Realm's words until the program writes its own. String words only, as `LIBRARY_WORDS` gives them:
+ * a renderer with another output type has no default and is written whole, as a `WayRenderer`.
+ * @public
+ */
+export type PartialWayRenderer<Host> = Partial<WayRenderer<string, Host>>;
+
+/**
+ * The complete renderer from a program's partial one: the program's function for each verb it gave
+ * one, Realm's own words ({@link LIBRARY_WORDS}) for every other verb — a verb added in a later minor
+ * release included, until the program writes its own. A member that is not a function — `undefined`
+ * included — counts as not given. String words only, as `LIBRARY_WORDS` gives them: a renderer with
+ * another output type has no default and is written whole, as a {@link WayRenderer}.
+ * @public
+ */
+export function withLibraryWords<Host>(
+  partial: PartialWayRenderer<Host>,
+): WayRenderer<string, Host> {
+  const complete: Record<string, unknown> = {};
+  for (const verb of WAY_VERBS) {
+    const given = partial[verb];
+    complete[verb] = typeof given === 'function' ? given : LIBRARY_WORDS[verb];
+  }
+  // The one cast: LIBRARY_WORDS's functions read no host, but their type says `LibraryHost` ("no
+  // settings"), which a program's non-empty `Host` is not, so the completed map's type is asserted.
+  return complete as WayRenderer<string, Host>;
 }
 
 /**
