@@ -16,6 +16,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   loadWorkflowFromStringWithDiagnostics,
 } from '@sensigo/realm';
+import { changelogPart, changelogSectionsAbove } from '../test-support/changelog.js';
 import { validateCommand } from './validate.js';
 import { registerCommand } from './register.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -451,18 +452,20 @@ describe('fix 1, piece 2b — the words the docs and the changelog carry (check 
       "**6. `register` and `watch` refuse a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled.** Run `realm workflow validate` on each file with a `trigger:` block, or `realm workflow validate --registered <id>` on each stored one, and fix what the refusal names. Such a trigger's requests that passed its filter were refused: all of them for a required parameter left unfilled, and those carrying a misnamed parameter's value. A stored copy keeps running as it was until you register it again.",
     );
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const unreleased = changelog.slice(
-      changelog.indexOf('## [Unreleased]'),
-      changelog.indexOf('\n## [', changelog.indexOf('## [Unreleased]') + 1),
-    );
-    const upgrading = unreleased.slice(
-      unreleased.indexOf('### Upgrading'),
-      unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
-    );
-    // (1) red when an item is lost from the middle, two items share a number, or the list stops
-    // before this file's own item 6; (2) prints the numbers found beside the run 1..N expected.
-    // Each item's own text is pinned by the file that added it, so a new item moves no pin here.
-    const numbers = [...upgrading.matchAll(/^\*\*(\d+)\. /gm)].map((m) => Number(m[1]));
-    expect(numbers).toEqual(Array.from({ length: Math.max(numbers.length, 6) }, (_, i) => i + 1));
+    // Each section above [0.49.0] (`[Unreleased]` while a cycle is open, then 0.50.0's) numbers
+    // its own Upgrading list.
+    const lists = changelogSectionsAbove(changelog, '0.49.0')
+      .map((s) =>
+        [...changelogPart(s, 'Upgrading').matchAll(/^\*\*(\d+)\. /gm)].map((m) => Number(m[1])),
+      )
+      .filter((numbers) => numbers.length > 0);
+    // (1) red when an item is lost from the middle, two items share a number, or no list reaches
+    // this file's own item 6; (2) prints the lists found. Each item's own text is pinned by the
+    // file that added it, so a new item moves no pin here.
+    expect({
+      lists,
+      runs: lists.every((numbers) => numbers.every((n, i) => n === i + 1)),
+      reaches6: lists.some((numbers) => numbers.length >= 6),
+    }).toEqual({ lists, runs: true, reaches6: true });
   });
 });
