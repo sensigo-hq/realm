@@ -170,8 +170,15 @@ function recorder(): { seen: string[]; progress: (event: MigrateProgress) => voi
     } else if (event.kind === 'restamped') {
       seen.push(`restamped ${event.runs}`);
     } else {
-      // #616 R1: a migrate that ran a step records it (or warns that it could not).
-      seen.push(event.kind === 'recorded' ? 'recorded' : `unrecorded: ${event.reason}`);
+      // #616 R1: a migrate that ran a step records it (or warns that it could not). #616 R2: the step
+      // back's own events (none here) are named by their kind.
+      seen.push(
+        event.kind === 'unrecorded'
+          ? `unrecorded: ${event.reason}`
+          : event.kind === 'recorded'
+            ? 'recorded'
+            : event.kind,
+      );
     }
   };
   return { seen, progress };

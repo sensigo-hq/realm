@@ -12,7 +12,11 @@
 // the default backup, in the backups folder beside the home, when a schema step is pending; a migrate
 // that ran a step is recorded there (a record that cannot be written is a warning on standard error).
 import { Command } from 'commander';
-import { openRealmHomeForMaintenance, type MigrateProgress } from '@sensigo/realm-store-sqlite';
+import {
+  openRealmHomeForMaintenance,
+  stepBackTarget,
+  type MigrateProgress,
+} from '@sensigo/realm-store-sqlite';
 import { rootRawArgs } from '../lib/option-value-guard.js';
 
 /**
@@ -46,6 +50,27 @@ export function lineOf(file: string, event: MigrateProgress): string {
         `Could not record this migrate in ${event.path}: ${event.reason}. The file is migrated; ` +
         'the record is only a note for going back.'
       );
+    // #616 R2: the step back's lines.
+    case 'stepBack': {
+      const { from, to, statements } = event.report;
+      return (
+        `Stepped ${file} back from schema version ${from} to ${to}: ${statements} statement(s) ran, ` +
+        `the schema matches version ${to}'s.${event.loses === undefined ? '' : ` ${event.loses}`}`
+      );
+    }
+    case 'nothingToUndo':
+      return `${file} is already at schema version ${event.schemaVersion}; no step to undo.`;
+    case 'install':
+      return (
+        'Every command of this Realm that uses the store, except `realm db check`, ' +
+        '`realm db backup`, `realm db migrate` and `realm db restore`, now refuses the file, ' +
+        `because it is at schema version ${event.schemaVersion} and this Realm writes version ` +
+        `${event.realm}. To use it, install a Realm that writes schema version ` +
+        `${event.schemaVersion}: npm install -g ` +
+        `"@sensigo/realm-cli@${event.range}" (in a project that lists Realm packages, give every one ` +
+        `of them the same exact version within ${event.range}; see "Upgrade every package together" ` +
+        'in the upgrade guide).'
+      );
   }
 }
 
@@ -58,7 +83,11 @@ export const dbMigrateCommand = new Command('migrate')
     'a copy of the store file, made before anything changes; outside the Realm home, not yet existing',
   )
   .option('--no-backup', 'make no copy first: you have one, or you accept the risk')
-  .action(async (opts: { backup?: string | false }, command: Command) => {
+  .option(
+    '--to <n>',
+    'step the store file back to schema version <n>, one version at a time, keeping every run; run it with the Realm that wrote the file',
+  )
+  .action(async (opts: { backup?: string | false; to?: string }, command: Command) => {
     const raw = rootRawArgs(command);
     const noBackup = raw.includes('--no-backup');
     const backup = raw.some((word) => word === '--backup' || word.startsWith('--backup='));
@@ -66,11 +95,14 @@ export const dbMigrateCommand = new Command('migrate')
       console.error('Cannot combine --backup with --no-backup. Use one or the other.');
       process.exit(1);
     }
+    // #616 R2: the value is judged before the store is opened (a word that is not a version it knows).
+    const to = opts.to === undefined ? undefined : stepBackTarget(opts.to);
     const home = await openRealmHomeForMaintenance({ verb: 'migrate' });
     try {
       await home.migrate({
         // Neither flag: the default backup (R1).
         ...(noBackup ? { backup: false } : backup ? { backup: opts.backup as string } : {}),
+        ...(to === undefined ? {} : { to }),
         // The record's warning goes to standard error; every other line is progress, on standard output.
         progress: (event) =>
           (event.kind === 'unrecorded' ? console.error : console.log)(lineOf(home.path, event)),

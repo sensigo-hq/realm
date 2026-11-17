@@ -3,7 +3,7 @@
 // cannot ship unclassified:
 //   - GUARDED (production, `option-value-guard.ts`): takes any word without a check of its own; the
 //     guard refuses a flag-like word typed after it;
-//   - OWN_CHECK (here): already refuses such a word with its own message (28 by an `argParser`, 33 by
+//   - OWN_CHECK (here): already refuses such a word with its own message (28 by an `argParser`, 34 by
 //     a check in the action).
 // Rule for a new option: it already refuses → OWN_CHECK; otherwise → GUARDED. Prints only the
 // (leaf, flag) pairs that break the law.
@@ -19,7 +19,7 @@ import { GUARDED_OPTIONS } from './option-value-guard.js';
 
 type Pair = `${string} ${string}`;
 
-/** The 61 that already refuse a flag-like word with their own message (do NOT guard). */
+/** The 62 that already refuse a flag-like word with their own message (do NOT guard). */
 const OWN_CHECK: readonly Pair[] = [
   // by an argParser (28)
   'validate --provider',
@@ -54,7 +54,7 @@ const OWN_CHECK: readonly Pair[] = [
   // R1.2: `--max-wait` by `option-parsers.ts`, `--max-waiting` by its own parser (digits only)
   'listen --max-wait',
   'listen --max-waiting',
-  // in the action (33)
+  // in the action (34)
   'validate --registered',
   'validate --extensions-module',
   'validate --floor',
@@ -82,6 +82,8 @@ const OWN_CHECK: readonly Pair[] = [
   'drain --void',
   'mcp --gate-answers',
   'mcp --form-wait-seconds',
+  // #616 R2: `realm db migrate --to` refuses a word that is not a schema version it knows
+  'migrate --to',
   'serve --gate-answers',
   'serve --form-wait-seconds',
   'agent --workflow',
@@ -110,7 +112,7 @@ function derived(): Map<Pair, Command[]> {
 }
 
 describe('#920 C-2 — every value-taking option is classified exactly once', () => {
-  it('1. the two tables and the command tree agree (26 + 61 = 87)', () => {
+  it('1. the two tables and the command tree agree (26 + 62 = 88)', () => {
     // (a) red when a guarded row is deleted, an option is added to a command, or a row is in two
     // tables; (b) prints the unclassified, extra and duplicated (leaf, flag) pairs only.
     const tree = derived();
@@ -136,9 +138,10 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
       },
       JSON.stringify({ inTwo, unclassified, notInTree, shared }),
     ).toEqual({
-      // The filter-mask fix, PR 2: `realm db check --project` is guarded (26, 87).
-      counts: { guarded: 26, ownCheck: 61 },
-      tree: 87,
+      // The filter-mask fix, PR 2: `realm db check --project` is guarded (26, 87). #616 R2:
+      // `realm db migrate --to` checks its own value (62, 88).
+      counts: { guarded: 26, ownCheck: 62 },
+      tree: 88,
       inTwo: [],
       unclassified: [],
       notInTree: [],

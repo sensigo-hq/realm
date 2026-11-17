@@ -216,3 +216,65 @@ export function migrateSchema(
   for (let to = start + 1; to <= target; to++) reports.push(step(db, to, versions.get(to)!));
   return reports;
 }
+
+/** #616 R2: what one step back did. The command that runs it words it. */
+export interface SchemaStepBackReport {
+  /** The version the file was at. */
+  readonly from: number;
+  /** The version the step took it back to. */
+  readonly to: number;
+  /** How many of the step's statements ran. */
+  readonly statements: number;
+  /** The number the version's `loses.count` query read before the step; absent with no query. */
+  readonly lost?: number;
+}
+
+/**
+ * #616 R2: moves the file open on `db` one schema version back, from `from` to `from - 1`, in its own
+ * transaction: the version read again under the lock, the count of what the step drops (when the
+ * version counts it), the version's `downgrade` statements, the compare with version `from - 1`'s
+ * schema (the ladder's own compare), and only then `user_version` moved and the transaction committed.
+ * No evidence re-check: a step back does not touch evidence. A step that fails leaves the file at
+ * `from`, with nothing of the step in it, and throws a plain error.
+ */
+export function stepBackSchema(
+  db: DatabaseLike,
+  from: number,
+  versions: StoreSchemaVersions = REALM_STORE_VERSIONS,
+): SchemaStepBackReport {
+  const version = versions.get(from);
+  const before = versions.get(from - 1);
+  if (version?.downgrade === undefined || before === undefined) {
+    throw new Error(`The step from schema version ${from} to ${from - 1} cannot be undone.`);
+  }
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const at = userVersion(db);
+    if (at !== from) {
+      throw new Error(
+        `The file moved to schema version ${at} while the step back was taking it from version ${from} to ${from - 1}.`,
+      );
+    }
+    const query = version.loses?.count;
+    const lost =
+      query === undefined ? undefined : Number(Object.values(db.prepare(query).get() ?? {})[0]);
+    for (const statement of version.downgrade) db.exec(statement);
+    const difference = storedSchemaDifference(db, before.schema);
+    if (difference.missing.length + difference.extra.length + difference.changed.length > 0) {
+      throw new Error(
+        `After the step back to schema version ${from - 1}, the file's schema is not version ${from - 1}'s: ${describeDifference(difference)}.`,
+      );
+    }
+    db.exec(`PRAGMA user_version = ${from - 1}`);
+    db.exec('COMMIT');
+    return {
+      from,
+      to: from - 1,
+      statements: version.downgrade.length,
+      ...(lost === undefined ? {} : { lost }),
+    };
+  } catch (err) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw err;
+  }
+}

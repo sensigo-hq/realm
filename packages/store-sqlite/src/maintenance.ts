@@ -110,8 +110,15 @@ import {
   WorkflowError,
   type RunPhase,
   type RunRecord,
+  type StoreSchemaVersions,
 } from '@sensigo/realm';
-import { BUSY_SLICE_MS, isBusy, type RealmDb, type Verify } from './connection.js';
+import {
+  BUSY_SLICE_MS,
+  isBusy,
+  versionNewerError,
+  type RealmDb,
+  type Verify,
+} from './connection.js';
 import { loadSqlite, openDatabase, type DatabaseLike } from './driver.js';
 import { assertLocalFilesystem, SYSTEM_PROBE } from './filesystem-gate.js';
 import { DATABASE_FILE, systemErrorText } from './home.js';
@@ -119,7 +126,12 @@ import { openForCheck, openRealmDb, type OpenSeams } from './open-file.js';
 import { openRestore, type MaintenanceRestoreHome } from './restore.js';
 import { runCheck, type CheckOptions, type CheckReport } from './store-check.js';
 import { staleStampsOf } from './run-scan.js';
-import { migrateSchema, type SchemaStepReport } from './schema-ladder.js';
+import {
+  migrateSchema,
+  stepBackSchema,
+  type SchemaStepBackReport,
+  type SchemaStepReport,
+} from './schema-ladder.js';
 
 /** What `backup` reports of the copy it made and checked. */
 export interface BackupReport {
@@ -196,7 +208,22 @@ export type MigrateProgress =
   /** R1: this migrate's line, appended to `path` (`migrations.jsonl` beside the backups). */
   | { readonly kind: 'recorded'; readonly path: string }
   /** R1: the line could not be appended to `path`, for `reason` (the system's): a warning only. */
-  | { readonly kind: 'unrecorded'; readonly path: string; readonly reason: string };
+  | { readonly kind: 'unrecorded'; readonly path: string; readonly reason: string }
+  /** R2: one step back, committed, with what it dropped (`loses`, the version's own sentence). */
+  | {
+      readonly kind: 'stepBack';
+      readonly report: SchemaStepBackReport;
+      readonly loses: string | undefined;
+    }
+  /** R2: `to` is the file's version: there is no step to undo. */
+  | { readonly kind: 'nothingToUndo'; readonly schemaVersion: number }
+  /** R2: after the last step back: the file's version, this Realm's, and the releases that write it. */
+  | {
+      readonly kind: 'install';
+      readonly schemaVersion: number;
+      readonly realm: number;
+      readonly range: string;
+    };
 
 /** What `migrate` is asked to do. */
 export interface MigrateOptions {
@@ -208,6 +235,12 @@ export interface MigrateOptions {
   readonly backup?: string | false;
   /** Called with each line's event, in order, as it happens. */
   readonly progress?: (event: MigrateProgress) => void;
+  /**
+   * #616 R2: step the file back to this schema version, one version at a time (`realm db migrate
+   * --to`), instead of upgrading it. Every step from the file's version down to it must be one that
+   * can be undone, or nothing is changed.
+   */
+  readonly to?: number;
 }
 
 /** What `migrate` did. */
@@ -220,6 +253,8 @@ export interface MigrateReport {
   readonly schemaVersion: number;
   /** How many runs the re-stamp stamped with the running derivation. */
   readonly restamped: number;
+  /** #616 R2: the steps back, in order, for a migrate given `to`. */
+  readonly stepsBack?: readonly SchemaStepBackReport[];
 }
 
 /** What a test replaces besides the open's seams (package-internal). */
@@ -797,6 +832,137 @@ export function storeInUse(source: string): WorkflowError {
   );
 }
 
+/** The default copy's path for a migrate from `from` to `to` (R1, and R2's step back): the backups
+ *  folder made first, or `realm db migrate` refused with nothing changed. */
+function defaultCopyPath(home: string, from: number, to: number): string {
+  const folder = backupsFolderOf(home);
+  const unmade = makeFolder(folder);
+  if (unmade !== undefined) throw backupsFolderRefused(folder, unmade);
+  return join(folder, backupName(from, to, systemClock.now()));
+}
+
+/** Records a migrate from `from` to `to` in the backups folder (R1, and R2's step back): its event. */
+function recordMigrate(
+  home: string,
+  from: number,
+  to: number,
+  backup: string | undefined,
+): MigrateProgress {
+  return appendRecord(backupsFolderOf(home), {
+    at: systemClock.now().toISOString(),
+    home: realPathOf(home),
+    from_format: from,
+    to_format: to,
+    backup: backup ?? null,
+    migrated_by: VERSION,
+  });
+}
+
+/** R2: the `--to` value is not a schema version this Realm knows. */
+function stepBackTargetRefused(
+  value: string,
+  source: string,
+  versions: StoreSchemaVersions,
+): WorkflowError {
+  const known = [...versions.keys()];
+  return migrateRefused(
+    `Cannot step back to ${value}: give a whole number that is a schema version this Realm knows ` +
+      `(${Math.min(...known)} to ${Math.max(...known)}).`,
+    source,
+    `${value} is not a schema version this Realm knows`,
+  );
+}
+
+/**
+ * #616 R2: the `--to` value as a schema version, read before the store is opened: a whole number this
+ * Realm knows, or refused `STATE_STORE_MIGRATE_REFUSED`. `home` as the maintenance entry takes it.
+ */
+export function stepBackTarget(
+  value: string,
+  home?: string,
+  versions: StoreSchemaVersions = REALM_STORE_VERSIONS,
+): number {
+  const to = /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!versions.has(to)) {
+    throw stepBackTargetRefused(value, join(realmHomePath(home), DATABASE_FILE), versions);
+  }
+  return to;
+}
+
+/** R2: the file is below the version asked for: `--to` steps back only. */
+function stepsBackOnly(at: number, source: string): WorkflowError {
+  return migrateRefused(
+    `The store file is at schema version ${at}; --to steps back only. Run realm db migrate, ` +
+      'without --to, to go forward.',
+    source,
+    `the store file is at schema version ${at}`,
+  );
+}
+
+/** R2: a step on the way down cannot be undone: the whole plan is refused, nothing changed. */
+function cannotUndoRefused(
+  from: number,
+  words: string | undefined,
+  home: string,
+  source: string,
+): WorkflowError {
+  return migrateRefused(
+    `The step from schema version ${from} to ${from - 1} cannot be undone: ` +
+      `${words ?? `schema version ${from} has no step back`}. Nothing was changed. To go back ` +
+      'anyway, restore a backup made before the upgrade: realm db restore <backup> (the backups ' +
+      `realm db migrate makes are in ${backupsFolderOf(home)}/).`,
+    source,
+    `the step from schema version ${from} to ${from - 1} cannot be undone`,
+  );
+}
+
+/** R2: a step back failed; `at` is the file's version read after the failure (see `migrateFailed`). */
+function stepBackFailed(
+  source: string,
+  from: number,
+  err: unknown,
+  at: number,
+  backup: string | undefined,
+): WorkflowError {
+  const reason = (err instanceof Error ? err.message : String(err)).replace(/\.$/, '');
+  const kept = backup === undefined ? '' : ` The backup made before the step is at ${backup}.`;
+  const state =
+    at < from
+      ? `${source} is at schema version ${at}: the step is in it.${kept} Run the command again to ` +
+        'continue from there.'
+      : `${source} is at schema version ${at}; nothing of the step is in it.${kept} Run the ` +
+        'command again once the cause is fixed.';
+  return new WorkflowError(
+    `The step back from schema version ${from} to ${from - 1} failed: ${reason}. ${state}`,
+    {
+      code: 'STATE_STORE_MIGRATE_FAILED',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: {
+        path: source,
+        from,
+        to: from - 1,
+        at,
+        reason,
+        ...(backup === undefined ? {} : { backup }),
+      },
+    },
+  );
+}
+
+/** R2: what a step back from `from` dropped, in the version's own words, with the count it read. */
+function lossOf(
+  versions: StoreSchemaVersions,
+  from: number,
+  lost: number | undefined,
+): string | undefined {
+  const loses = versions.get(from)?.loses;
+  if (loses === undefined) return undefined;
+  if (lost === 0 && loses.none !== undefined) return loses.none;
+  return loses.words.replace('{count}', String(lost));
+}
+
 /** The hold on a store file (R1): kept until `release()`; closing the connection releases it too. */
 export interface StoreHold {
   /** Lets go of the file: other processes may open it again. A second call does nothing. */
@@ -937,6 +1103,77 @@ export async function openStore(
   const syncFile = seams.syncFile ?? syncFileOnDisk;
   const syncFolder = seams.syncFolder ?? syncFolderOnDisk;
   let closed = false;
+  // #616 R2: `migrate` given `to`, the step back: the plan judged before any change, the hold, the plan
+  // judged again on the version read under it, the copy, then each step back in its own transaction,
+  // the record and the install line. No evidence re-check and no re-stamp.
+  const stepBack = async (
+    to: number,
+    backup: string | false | undefined,
+    progress: (event: MigrateProgress) => void,
+  ): Promise<MigrateReport> => {
+    if (!Number.isInteger(to) || !versions.has(to)) {
+      throw stepBackTargetRefused(String(to), source, versions);
+    }
+    const realm = db.schemaVersion;
+    // True when there is a step to undo; the refusals when one cannot be taken. Every step from the
+    // file's version down to `to` must be one that can be undone, so a refusal never leaves it half-way.
+    const plan = (at: number): boolean => {
+      if (at > realm) throw versionNewerError(at, realm);
+      if (at === to) return false;
+      if (at < to) throw stepsBackOnly(at, source);
+      for (let from = at; from > to; from--) {
+        const version = versions.get(from);
+        if (version?.downgrade === undefined) {
+          throw cannotUndoRefused(from, version?.cannotUndo, home, source);
+        }
+      }
+      return true;
+    };
+    const nothing = (at: number): MigrateReport => {
+      progress({ kind: 'nothingToUndo', schemaVersion: at });
+      return { backup: undefined, steps: [], schemaVersion: at, restamped: 0, stepsBack: [] };
+    };
+    let at = await fileVersion(db);
+    if (!plan(at)) return nothing(at);
+    await seams.beforeHold?.();
+    const hold = await holdStoreFile(db, source);
+    try {
+      // Read again under the hold, and the plan judged again: another process may have moved the file.
+      at = await fileVersion(db);
+      if (!plan(at)) return nothing(at);
+      const copyPath =
+        backup === undefined
+          ? defaultCopyPath(home, at, to)
+          : backup === false
+            ? undefined
+            : resolve(backup);
+      const copy = copyPath === undefined ? undefined : await handle.backup(copyPath);
+      if (copy !== undefined) progress({ kind: 'backup', report: copy });
+      const from = at;
+      const stepsBack: SchemaStepBackReport[] = [];
+      while (at > to) {
+        const step = at;
+        let report: SchemaStepBackReport;
+        try {
+          report = await db.autocommit((c) => stepBackSchema(c, step, versions));
+        } catch (err) {
+          const now = await fileVersion(db);
+          // The record covers the steps committed before the failure.
+          if (now < from) progress(recordMigrate(home, from, now, copyPath));
+          throw stepBackFailed(source, step, err, now, copy?.path);
+        }
+        stepsBack.push(report);
+        progress({ kind: 'stepBack', report, loses: lossOf(versions, step, report.lost) });
+        at = report.to;
+      }
+      progress(recordMigrate(home, from, at, copyPath));
+      const range = versions.get(at)?.writtenBy;
+      if (range !== undefined) progress({ kind: 'install', schemaVersion: at, realm, range });
+      return { backup: copy, steps: [], schemaVersion: at, restamped: 0, stepsBack };
+    } finally {
+      await hold.release().catch(() => undefined);
+    }
+  };
   const handle: MaintenanceHome = {
     path: source,
     schemaVersion,
@@ -1052,6 +1289,7 @@ export async function openStore(
     async migrate(options: MigrateOptions): Promise<MigrateReport> {
       if (closed) throw new Error(`The maintenance handle on ${source} is closed.`);
       const progress = options.progress ?? ((): void => undefined);
+      if (options.to !== undefined) return stepBack(options.to, options.backup, progress);
       const target = db.schemaVersion;
       // 1. Is a schema step pending? The open read the file; the hold is taken only then (R1).
       let at = await fileVersion(db);
@@ -1073,10 +1311,7 @@ export async function openStore(
         // The copy's path, as `backup` resolves it: what the record names.
         let copyPath: string | undefined;
         if (hold !== undefined && options.backup === undefined) {
-          const folder = backupsFolderOf(home);
-          const unmade = makeFolder(folder);
-          if (unmade !== undefined) throw backupsFolderRefused(folder, unmade);
-          copyPath = join(folder, backupName(at, target, systemClock.now()));
+          copyPath = defaultCopyPath(home, at, target);
         } else if (typeof options.backup === 'string') {
           copyPath = resolve(options.backup);
         }
@@ -1084,17 +1319,7 @@ export async function openStore(
         if (copy !== undefined) progress({ kind: 'backup', report: copy });
         // 3. The ladder, one version per autocommit body (the ladder opens each step's transaction).
         const from = at;
-        const record = (to: number): void =>
-          progress(
-            appendRecord(backupsFolderOf(home), {
-              at: systemClock.now().toISOString(),
-              home: realPathOf(home),
-              from_format: from,
-              to_format: to,
-              backup: copyPath ?? null,
-              migrated_by: VERSION,
-            }),
-          );
+        const record = (to: number): void => progress(recordMigrate(home, from, to, copyPath));
         const steps: SchemaStepReport[] = [];
         while (at < target) {
           const to = at + 1;
