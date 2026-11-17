@@ -69,6 +69,7 @@ describe('issue #759 — the cannot-run line is the same three-problem sentence 
 
       const { record: run } = await runStore.get(reply.run_id);
       const entry = composeWaysAt(run, new Date(), {
+        persistsClaims: false,
         definition: refusedHead,
         registry: new ExtensionRegistry(),
       }).unavailable.find((u) => u.verb === 'run_step' && u.step === 'compute');

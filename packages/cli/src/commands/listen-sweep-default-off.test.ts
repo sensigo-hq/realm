@@ -17,6 +17,7 @@ function makeDeps(): ListenDeps {
       },
     },
     runStore: {
+      persistsClaims: false,
       create: async () => {
         throw new Error('n/a');
       },

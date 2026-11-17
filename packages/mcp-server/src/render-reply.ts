@@ -23,6 +23,7 @@ import {
   narrowForDoor,
   quotedNames,
   raceClausesOf,
+  reclaimConditionWords,
   withFullStop,
   answersRowOf,
   endsWithCutSentence,
@@ -533,6 +534,9 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
   }),
   // An operator's way: never an agent's instruction on this door (A-10; an elsewhere entry).
   register: () => null,
+  // #922: a person's act — on MCP never an instruction (`null`; an elsewhere entry and, with an
+  // operator route, the person block's command).
+  reclaim: () => null,
   // #627 W (§5.2b): show the waiting question again, as a form in the user's app — offered only on
   // the `asked`-with-forms row (`narrowForDoor`'s door verdict). Its words are the tool's own (W-q1).
   present: (way) => ({
@@ -679,11 +683,66 @@ function renderWay(way: WayOn, basis: Basis | undefined, host: McpHost): McpNext
 function elsewhereWords(entry: Unavailable, host: McpHost): string {
   const way = entry.remedy[0];
   if (way?.verb === 'register') return registerWords(way, host);
+  if (way?.verb === 'reclaim') {
+    // #922 (B, b7f72a42): the conditions' words come before any command that frees the step.
+    const words = way.conditions.flatMap((c) => reclaimConditionWords(c) ?? []);
+    return [`An operator can free step '${way.step}', outside this conversation.`, ...words].join(
+      ' ',
+    );
+  }
   if (way?.verb === 'run_step') {
     // PR0-CONTRACT Amendment 14 (Q12): a fact, never a schedule.
     return `'${way.step}' takes its input from an operator, checked against its input_schema; no realm command supplies it.`;
   }
   return `An operator can take this way (${entry.verb}), outside this conversation.`;
+}
+
+/**
+ * #922 (D3 §4, m4): the elsewhere entries a reply shows — every entry but the reclaim ways, and at
+ * most `NAMES_SHOWN` of those, in their composed order (past → unknown → ahead); `more` counts the
+ * rest, which the run's `inspect` way lists.
+ */
+function boundedElsewhere(entries: readonly Unavailable[]): {
+  shown: Unavailable[];
+  more?: { count: number; inspect: InspectWay };
+} {
+  const reclaims = entries.filter((u) => u.remedy[0]?.verb === 'reclaim');
+  if (reclaims.length <= NAMES_SHOWN) return { shown: [...entries] };
+  const cut = new Set(reclaims.slice(NAMES_SHOWN));
+  const runId = (reclaims[0]!.remedy[0] as WayOf<'reclaim'>).run_id;
+  return {
+    shown: entries.filter((u) => !cut.has(u)),
+    more: { count: cut.size, inspect: { verb: 'inspect', conditions: [], run_id: runId } },
+  };
+}
+
+/** #922 correction 1: "1 more held step", "<n> more held steps". */
+const moreHeld = (n: number): string => `${n} more held step${n === 1 ? '' : 's'}`;
+
+/** #922: a reply's `elsewhere` — the bounded entries, then the line naming how many more. */
+function elsewhereOf(entries: readonly Unavailable[], host: McpHost): McpElsewhereEntry[] {
+  const { shown, more } = boundedElsewhere(entries);
+  const listed: McpElsewhereEntry[] = shown.map((u) => ({
+    verb: u.verb,
+    ...(u.step !== undefined ? { step: u.step } : {}),
+    instruction: null,
+    for: 'operator',
+    reason: 'door_cannot_enact',
+    human_readable: elsewhereWords(u, host),
+  }));
+  if (more === undefined) return listed;
+  const tool = MCP_WAYS.inspect(more.inspect, undefined, host)!.instruction!.tool;
+  // correction 1: the reclaim ways left out are what this door cannot enact for the operator
+  return [
+    ...listed,
+    {
+      verb: 'reclaim',
+      instruction: null,
+      for: 'operator',
+      reason: 'door_cannot_enact',
+      human_readable: `and ${moreHeld(more.count)} — ${tool}'s in_progress_steps names them.`,
+    },
+  ];
 }
 
 /**
@@ -1246,14 +1305,7 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
   const elsewhereEntries = (narrowed?.unavailable ?? []).filter(
     (u) => u.code === 'door_cannot_enact',
   );
-  const elsewhere: McpElsewhereEntry[] = elsewhereEntries.map((u) => ({
-    verb: u.verb,
-    ...(u.step !== undefined ? { step: u.step } : {}),
-    instruction: null,
-    for: 'operator',
-    reason: 'door_cannot_enact',
-    human_readable: elsewhereWords(u, host),
-  }));
+  const elsewhere = elsewhereOf(elsewhereEntries, host);
   const ended = reply.run_phase !== undefined && TERMINAL_PHASES.has(reply.run_phase);
   const rendered = renderedListOf(reply, narrowed, progress);
   const agentAction = agentActionOf(reply.intrinsic_action, reply.reply_kind, rendered);
@@ -1392,7 +1444,8 @@ function personBlockOf(
 ): string | undefined {
   const route = host.operatorRoute;
   if (route === undefined) return undefined;
-  const lines = entries
+  const { shown, more } = boundedElsewhere(entries);
+  const lines = shown
     .map((u) => {
       const way = u.remedy[0];
       if (way === undefined || !WAY_PARTIES[way.verb].includes('operator')) return undefined;
@@ -1402,6 +1455,10 @@ function personBlockOf(
         : `${elsewhereWords(u, host)} The operator's command: ${command}`;
     })
     .filter((line): line is string => line !== undefined);
+  const inspect = more !== undefined ? route.render(more.inspect, basis) : null;
+  if (more !== undefined && inspect !== null) {
+    lines.push(`and ${moreHeld(more.count)} — ${inspect} lists them.`);
+  }
   return lines.length > 0 ? lines.join('\n') : undefined;
 }
 
@@ -1478,14 +1535,7 @@ export function renderWaysOf(
   const elsewhereEntries = (narrowed?.unavailable ?? []).filter(
     (u) => u.code === 'door_cannot_enact',
   );
-  const elsewhere: McpElsewhereEntry[] = elsewhereEntries.map((u) => ({
-    verb: u.verb,
-    ...(u.step !== undefined ? { step: u.step } : {}),
-    instruction: null,
-    for: 'operator',
-    reason: 'door_cannot_enact',
-    human_readable: elsewhereWords(u, host),
-  }));
+  const elsewhere = elsewhereOf(elsewhereEntries, host);
   const rendered = renderedListOf(reply, narrowed, progress);
   const person = personBlockOf(elsewhereEntries, composed.basis, host);
   return {

@@ -283,7 +283,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
         params: {},
       });
       // #729 PR-0: the run's ways, in the door's order — the agent's step first, the act last.
-      const composed = composeWaysAt(run, new Date(), { definition: d });
+      const composed = composeWaysAt(run, new Date(), { persistsClaims: false, definition: d });
       expect(
         composed.ways
           .filter((w) => w.verb === 'run_step' || w.verb === 'advance')
@@ -1304,6 +1304,7 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
     // MCP and CLI renderer tests keep the present- and past-tense words).
     const capFacts = (r: RunRecord, registry?: ExtensionRegistry) =>
       composeWaysAt(r, new Date(), {
+        persistsClaims: false,
         definition: d,
         ...(registry !== undefined ? { registry } : {}),
       }).unavailable.find((u) => u.verb === 'run_step' && u.code === 'capability_missing')?.facts;
@@ -1438,7 +1439,7 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       expect(entry.refusal).not.toContain('parked');
       // #729 PR-0: the view's words ride the `refused_before_claim` entry's facts.
       expect(
-        composeWaysAt(run, new Date(), { definition: d }).unavailable.find(
+        composeWaysAt(run, new Date(), { persistsClaims: false, definition: d }).unavailable.find(
           (u) => u.verb === 'run_step' && u.step === 'work',
         )?.facts,
       ).toEqual({ step: 'work', check: 'trust', refusal: FINDING_VOICE });
@@ -1493,7 +1494,9 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran.`);
       expect(nextCalls(reply)).toEqual(['run_step:ask']);
       expect(
-        cannotGoOnUntilCorrected(composeWaysAt(run, new Date(), { definition: withAgent })),
+        cannotGoOnUntilCorrected(
+          composeWaysAt(run, new Date(), { persistsClaims: false, definition: withAgent }),
+        ),
       ).toBe(false);
     });
     // Absent for capability: another runner can run the step.
@@ -1513,6 +1516,7 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       expect(
         cannotGoOnUntilCorrected(
           composeWaysAt((await store.get(run.id)).record, new Date(), {
+            persistsClaims: false,
             definition: cap,
             registry: lacking,
           }),
@@ -1533,12 +1537,16 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       evidence: [],
       terminal_state: false,
     } as unknown as RunRecord;
-    expect(cannotGoOnUntilCorrected(composeWaysAt(live, new Date(), { definition: refused }))).toBe(
-      true,
-    );
+    expect(
+      cannotGoOnUntilCorrected(
+        composeWaysAt(live, new Date(), { persistsClaims: false, definition: refused }),
+      ),
+    ).toBe(true);
     const inFlight = { ...live, in_progress_steps: ['other'] } as unknown as RunRecord;
     expect(
-      cannotGoOnUntilCorrected(composeWaysAt(inFlight, new Date(), { definition: refused })),
+      cannotGoOnUntilCorrected(
+        composeWaysAt(inFlight, new Date(), { persistsClaims: false, definition: refused }),
+      ),
     ).toBe(false);
   });
 
@@ -1718,7 +1726,9 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       compute: { description: 'C', execution: 'auto', depends_on: [], input_schema: needsN },
     });
     const applies = (r: RunRecord) =>
-      cannotGoOnUntilCorrected(composeWaysAt(r, new Date(), { definition: only }));
+      cannotGoOnUntilCorrected(
+        composeWaysAt(r, new Date(), { persistsClaims: false, definition: only }),
+      );
     expect(applies(OPEN_RUN)).toBe(true);
     expect(applies({ ...OPEN_RUN, in_progress_steps: ['other'] } as unknown as RunRecord)).toBe(
       false,
