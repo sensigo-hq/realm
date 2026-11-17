@@ -298,7 +298,8 @@ describe('#922 P1a — check 13, the bound: 100 held steps', () => {
     const { json, text, person } = await d.call('get_run_state', { run_id: runId });
     const elsewhere =
       (json['elsewhere'] as Array<{ verb: string; step?: string; human_readable: string }>) ?? [];
-    const reclaims = elsewhere.filter((e) => e.verb === 'reclaim');
+    // the reclaim ways shown, each naming its step (the closing entry names none)
+    const reclaims = elsewhere.filter((e) => e.verb === 'reclaim' && e.step !== undefined);
     const personLines = (person ?? '').split('\n');
     // (a) red when the bound is removed (100 reclaim entries and 100 person lines), the order is
     //     lost, the rest is not named, or the reply is cut to fit; (b) prints the sizes, the steps
@@ -332,15 +333,36 @@ describe('#922 P1a — check 13, the bound: 100 held steps', () => {
         'step_078',
         'step_079',
       ],
+      // correction 1: the entry left out is a reclaim (the operator's), never the agent's inspect
       tail: {
-        verb: 'inspect',
+        verb: 'reclaim',
         instruction: null,
         for: 'operator',
         reason: 'door_cannot_enact',
-        human_readable: 'and 90 more held steps — get_run_state lists them.',
+        human_readable: "and 90 more held steps — get_run_state's in_progress_steps names them.",
       },
       personReclaims: 10,
       personTail: `and 90 more held steps — INSPECT ${runId} lists them.`,
     });
+  });
+
+  it('11 held steps: the one left out is named in the singular, on both lines', async () => {
+    const steps: WorkflowDefinition['steps'] = {};
+    const claims: Record<string, Claim> = {};
+    for (let i = 0; i < 11; i += 1) {
+      const name = `step_${String(i).padStart(2, '0')}`;
+      steps[name] = agent();
+      claims[name] = { deadline: plus(-60_000 - i * 1000), since: SINCE };
+    }
+    const d = await door(workflow('held-922-c13-one', steps), { route: true });
+    const runId = await d.start();
+    await d.hold(runId, claims);
+    const { json, person } = await d.call('get_run_state', { run_id: runId });
+    const elsewhere = (json['elsewhere'] as Array<{ verb: string; human_readable: string }>) ?? [];
+    // (a) red when one left out reads "1 more held steps"; (b) prints both closing lines.
+    expect([elsewhere.at(-1)?.human_readable, (person ?? '').split('\n').at(-1)]).toEqual([
+      "and 1 more held step — get_run_state's in_progress_steps names them.",
+      `and 1 more held step — INSPECT ${runId} lists them.`,
+    ]);
   });
 });

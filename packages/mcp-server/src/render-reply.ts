@@ -716,6 +716,9 @@ function boundedElsewhere(entries: readonly Unavailable[]): {
   };
 }
 
+/** #922 correction 1: "1 more held step", "<n> more held steps". */
+const moreHeld = (n: number): string => `${n} more held step${n === 1 ? '' : 's'}`;
+
 /** #922: a reply's `elsewhere` — the bounded entries, then the line naming how many more. */
 function elsewhereOf(entries: readonly Unavailable[], host: McpHost): McpElsewhereEntry[] {
   const { shown, more } = boundedElsewhere(entries);
@@ -729,14 +732,15 @@ function elsewhereOf(entries: readonly Unavailable[], host: McpHost): McpElsewhe
   }));
   if (more === undefined) return listed;
   const tool = MCP_WAYS.inspect(more.inspect, undefined, host)!.instruction!.tool;
+  // correction 1: the reclaim ways left out are what this door cannot enact for the operator
   return [
     ...listed,
     {
-      verb: 'inspect',
+      verb: 'reclaim',
       instruction: null,
       for: 'operator',
       reason: 'door_cannot_enact',
-      human_readable: `and ${more.count} more held steps — ${tool} lists them.`,
+      human_readable: `and ${moreHeld(more.count)} — ${tool}'s in_progress_steps names them.`,
     },
   ];
 }
@@ -1453,7 +1457,7 @@ function personBlockOf(
     .filter((line): line is string => line !== undefined);
   const inspect = more !== undefined ? route.render(more.inspect, basis) : null;
   if (more !== undefined && inspect !== null) {
-    lines.push(`and ${more.count} more held steps — ${inspect} lists them.`);
+    lines.push(`and ${moreHeld(more.count)} — ${inspect} lists them.`);
   }
   return lines.length > 0 ? lines.join('\n') : undefined;
 }

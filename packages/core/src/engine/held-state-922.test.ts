@@ -378,11 +378,22 @@ describe('#922 P1a — check 6: OFFER_EQUALS_ADMISSION (R26) for reclaim, throug
           if (admitted && !isOffered && !fenceFree) {
             found.push(`${c.name}: ${step} stamp ${stamp ?? 'none'} admitted, not offered`);
           }
+          // correction 1: `force` other than `true` discharges nothing — out of contract, on `force`
+          const unforced = admitWay('reclaim', snap, c.ctx, { ...input, force: false });
+          if ('ok' in unforced || unforced.code !== 'argument_out_of_contract') {
+            found.push(`${c.name}: ${step} stamp ${stamp ?? 'none'} force false not refused`);
+          } else if (
+            unforced.code === 'argument_out_of_contract' &&
+            unforced.facts.arg !== 'force'
+          ) {
+            found.push(`${c.name}: ${step} force false refused on ${unforced.facts.arg}`);
+          }
         }
       }
     }
     // (a) red when the judge admits an input the composer does not offer (or refuses one it does),
-    //     on any state, definition or store; (b) prints the case, the step and the stamp.
+    //     on any state, definition or store, or admits `force: false`; (b) prints the case, the
+    //     step and the stamp.
     expect(found).toEqual([]);
     // the witness is not vacuous: the stores that keep claims offer one way per held step
     expect(offeredCount).toBe(Object.keys(CLAIMS).length * 2 * 3);

@@ -2692,6 +2692,11 @@ export function admitWay(
   if (contract !== undefined) return withSameWay(contract, verb, input, composeWaysOn(snap, ctx));
   if (verb === 'inspect' || verb === 'register') return { ok: true };
   if (verb === 'reclaim') {
+    // #922 P1a correction 1: `force` discharges the conditions only when it is `true`; any other
+    // value is out of contract (its type alone is boolean)
+    if (input['force'] !== true) {
+      return withSameWay(outOfContract(verb, 'force'), verb, input, composeWaysOn(snap, ctx));
+    }
     const definition = 'ok' in ctx.definition ? ctx.definition.ok : undefined;
     const step = String(input['step']);
     const progress = (): WayOn[] => progressWays(composeWaysOn(snap, ctx).ways);
