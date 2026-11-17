@@ -16,8 +16,10 @@
 // through a function value it cannot resolve.
 //
 // #616 R1b (`realm db restore`) amends L-FS: the restore's own calls on `realm.db` and its side files
-// live in ONE module, `src/restore.ts`, and are named below one by one (`RESTORE_CALLS`), so a fifth
-// call there (a third side file unlinked included), or any such call in another module, still fails. The restore passes the store
+// live in ONE module, `src/restore.ts`, and are named below one by one (`RESTORE_CALLS`), so an eighth
+// call there (a third side file unlinked included), or any such call in another module, still fails.
+// R1c adds three: the copy linked into a home with no store file, and the byte copies of an
+// unreadable store file and of its -wal. The restore passes the store
 // file's path to each step as a parameter, never in an object's property, and builds no path from
 // parts, so that the scan sees every call; a test of the restore that finds a call the list does not
 // name means the module dodged the scan, which the list cannot see either.
@@ -30,8 +32,10 @@
 // (`claim-lease.ts`), which opens the claim leases' own files and never realm.db: its three calls are
 // named one by one, so a fourth open there still fails the law. #616 R1b: `open-file.ts` exports
 // `openRawConnection`, a connection through that one call with none of the open's checks, for
-// `realm db restore`'s scratch copy of a backup, checked before the store's check runs on it; the
-// law names its one call (in `restore.ts`, by its text), so the export opens no second door.
+// `realm db restore`'s scratch copy of a backup, checked before the store's check runs on it, and
+// (R1c) its read-only, immutable look at a store file with side files and its raw hold on a store file
+// the open refused; the law names each of those three calls (in `restore.ts`, by its text), so the
+// export opens no second door.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { readdirSync, statSync } from 'node:fs';
@@ -51,6 +55,12 @@ const RESTORE_CALLS: ReadonlyArray<readonly [call: string, why: string]> = [
   ['unlinkSync(`${source}-wal`)', 'C: the old -wal, under the hold, before the rename'],
   ['unlinkSync(`${source}-shm`)', 'C: the old -shm, under the hold, before the rename'],
   ['renameSync(temporary, source)', 'C: the one rename of the checked copy over realm.db'],
+  [
+    'copyFileSync(source, asFound, constants.COPYFILE_EXCL)',
+    'D (R1c): the unreadable file set aside',
+  ],
+  ['copyFileSync(`${source}-wal`, wal, constants.COPYFILE_EXCL)', 'D (R1c): and its -wal'],
+  ['linkSync(temporary, source)', 'B1 (R1c): the copy placed in a home with no store file'],
 ];
 /** The modules that may open a connection on a file through the loader, each with its reason. */
 const OPENERS: Record<string, string> = {
@@ -301,7 +311,13 @@ describe('#616 unit 7a — the source laws of the open', () => {
         // #616 PR-2c c8a1: the open's one call now passes the check's read-only option through.
         'src/open-file.ts: openDatabase(path, options)',
       ],
-      raw: [`${RESTORE}: openRawConnection(copy, seams)`],
+      raw: [
+        // R1c: the read-only, immutable look before the store's open (B), with side files only.
+        `${RESTORE}: openRawConnection(source, r.seams, true)`,
+        `${RESTORE}: openRawConnection(copy, seams)`,
+        // R1c: D's raw hold on a store file the open refused, or an empty one.
+        `${RESTORE}: openRawConnection(source, r.seams)`,
+      ],
       memorySeen: true,
     });
   });

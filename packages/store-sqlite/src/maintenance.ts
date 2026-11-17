@@ -78,9 +78,9 @@
 // wrong; every other refusal of the open is an outcome the report gives as a finding, an older file
 // included. `check()` returns the published report (`store-check.ts`).
 //
-// Opened for `'restore'` (#616 R1b), the entry runs the pre-check above (a home with no store file,
-// or an empty one, is refused in the verb's own words) and opens nothing more: the restore proves the
-// backup before it opens the store file. It returns `restore.ts`'s handle, `{ path, restore(), close() }`.
+// Opened for `'restore'` (#616 R1b), the entry opens nothing and skips the pre-check above (R1c): the
+// restore proves the backup before it opens the store file, and a home with no store file, or an empty
+// one, is one it restores into. It returns `restore.ts`'s handle, `{ path, restore(), close() }`.
 import { randomBytes } from 'node:crypto';
 import {
   accessSync,
@@ -326,9 +326,13 @@ export function restoreRefused(message: string, path: string, reason: string): W
  * The pre-check's refusal of the store file (`missing`: none there; else an empty one), in the words
  * and with the code of the verb the entry was opened for. An exhaustive switch: a verb added to
  * {@link MaintenanceVerb} does not compile until it names its code and its two sentences here (MA 3's
- * rider R1, DELTAS row 48b).
+ * rider R1, DELTAS row 48b). `'restore'` has none: it restores into such a home (#616 R1c).
  */
-function sourceRefused(verb: MaintenanceVerb, source: string, missing: boolean): WorkflowError {
+function sourceRefused(
+  verb: Exclude<MaintenanceVerb, 'restore'>,
+  source: string,
+  missing: boolean,
+): WorkflowError {
   switch (verb) {
     case 'backup':
       return missing
@@ -363,18 +367,6 @@ function sourceRefused(verb: MaintenanceVerb, source: string, missing: boolean):
           )
         : checkRefused(
             `${source} holds no store yet: there is nothing to check.`,
-            source,
-            `${source} holds no store yet`,
-          );
-    case 'restore':
-      return missing
-        ? restoreRefused(
-            `There is no store file at ${source} to restore over.`,
-            source,
-            `there is no store file at ${source} to restore over`,
-          )
-        : restoreRefused(
-            `${source} holds no store yet: there is nothing to restore over.`,
             source,
             `${source} holds no store yet`,
           );
@@ -490,6 +482,18 @@ const PASSED_ON = new Set([
 ]);
 
 /**
+ * #616 R1c: the refusals `copyFailed` made because SQLite could not read the store file (11, 26 from
+ * the store's connection, by the original error's primary code): `realm db restore` takes the
+ * damaged-file path for them ({@link sourceUnreadable}).
+ */
+const UNREADABLE_SOURCE = new WeakSet<object>();
+
+/** Whether `err` is a refusal of `backup` made because SQLite could not read the store file. */
+export function sourceUnreadable(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && UNREADABLE_SOURCE.has(err);
+}
+
+/**
  * A failure after the up-front checks (the copy, the steps on it, its publish), as ONE refusal
  * naming the target, its sentence chosen by what failed: it blames the store file only when SQLite
  * could not read it (11, 26 from the store's connection), and says the copy could not be written
@@ -522,10 +526,12 @@ function copyFailed(target: string, source: string, err: unknown): unknown {
     const reason = causeText(err);
     // A plain error of the primitive (no code) comes from the store's connection: VACUUM INTO.
     if ((primary === 11 || primary === 26) && code === undefined) {
-      return refuse(
+      const refusal = refuse(
         reason,
         `SQLite could not read ${source}: ${clause(reason)}. The store file may be damaged.`,
       );
+      UNREADABLE_SOURCE.add(refusal);
+      return refusal;
     }
     if (primary === 13) {
       return refuse('the disk is full', 'the copy could not be written: the disk is full.');
@@ -1061,6 +1067,7 @@ export async function openMaintenance(
   const verb = options.verb ?? 'backup';
   const home = realmHomePath(options.home);
   const source = join(home, DATABASE_FILE);
+  if (verb === 'restore') return openRestore(home, source, seams);
   let size: number | undefined;
   try {
     size = lstatSync(source).size;
@@ -1070,7 +1077,6 @@ export async function openMaintenance(
   }
   if (size === 0) throw sourceRefused(verb, source, false);
   if (verb === 'check') return openCheck(home, source, seams);
-  if (verb === 'restore') return openRestore(home, source, seams);
   return (await openStore(home, source, seams)).handle;
 }
 
