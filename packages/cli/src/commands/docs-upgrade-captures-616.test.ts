@@ -1,20 +1,21 @@
 // docs-upgrade-captures-616.test.ts — issue #616 PR-2c (release 0.49.0, row 11): the upgrade guide's
-// sections 3–6 quote what the published 0.49.0 printed for the guide's own story, captured from one
-// real run on Node 22. This file runs the BUILT CLI through the same story on a scratch home, from the
-// same workflow files the capture registered (`fixtures/upgrade-story`: tidy-notes, digest and the
-// misspelt intake; `fixtures/upgrade-story-corrected`: intake fixed), and asserts that each quoted
-// block is what the command prints.
+// sections 3–6 quote what the published 0.50.0 printed for the guide's own story, captured from one
+// real run on Node 22 (re-taken at release 0.50.0, row 7). This file runs the BUILT CLI through the
+// same story on a scratch home, from the same workflow files the capture registered
+// (`fixtures/upgrade-story`: tidy-notes, digest and the misspelt intake;
+// `fixtures/upgrade-story-corrected`: intake fixed), and asserts that each quoted block is what the
+// command prints.
 //
 // The page's elision rule, applied here: a line that is only `…` stands for one or more whole lines
 // left out (the lines before the first `…` are the output's head, those after the last its tail, the
 // ones between found in order); a line ending in ` …` is cut after that point (a prefix). Nothing else
 // on a block is edited. Where a line prints Realm's version, the tree's own version is written as the
-// page's, 0.49.0, so this file pins the words of each output, not the number.
+// page's, 0.50.0, so this file pins the words of each output, not the number.
 //
 // A red here after a product change means the page no longer shows what Realm prints: re-capture the
 // outputs on the published version that carries the change and update the intro's versions. The
-// release sitting's captures row owns that (row 11 for 0.49.0; the pre-publication checklist has no
-// such step yet).
+// release sitting's captures row owns that (row 7 for 0.50.0, row 11 for 0.49.0; the pre-publication
+// checklist's step "The upgrade guide's captures").
 //
 // Section 2's `npm ls` block needs the registry and is not run here: a static cell checks its shape.
 // The children run with an environment of PATH and HOME only. The describe that starts the CLI and the
@@ -40,7 +41,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const FIXTURES = fileURLToPath(new URL('./fixtures', import.meta.url));
 const UPGRADE = 'docs/guides/upgrade.md';
-const PAGE_VERSION = '0.49.0';
+const PAGE_VERSION = '0.50.0';
 const SUMMARY = 'The customer was charged twice and wants one charge refunded.';
 
 /** The code blocks of one language in a section of the page (from `heading` to the next `## `). */

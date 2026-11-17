@@ -49,6 +49,7 @@ import {
 import { capabilityRefusalWords, requirementForStep } from './capability.js';
 import { capText, tierFor, type DisclosureSet } from '../utils/redaction.js';
 import { quotedNames } from '../utils/list-words.js';
+import { isPastDeadline, parseStamp } from './instants.js';
 import { consumesInputMap, newRunCanChangeInput, refusedInputField } from './input-map.js';
 
 // ─── Parties and slots ──────────────────────────────────────────────────────────────────────────
@@ -104,7 +105,13 @@ export type Cond =
    * waited on it, since Realm cannot see the prompt. Its `tag` names the outside discharger. Since the
    * gate-answers default (2026-11-14) no door composes it: that row is gone.
    */
-  | { code: 'client_prompt'; tag: CondTag };
+  | { code: 'client_prompt'; tag: CondTag }
+  /** #922 (A31): a reclaim inside the claim's window — its program may still be running. */
+  | { code: 'claim_deadline_ahead'; deadline: string }
+  /** #922 (A25): a reclaim of a claim whose age is unknown, unreadable, or not recorded. */
+  | { code: 'override_claim_unknown_age'; state: 'unknown_age' | 'unreadable' | 'no_claim_record' }
+  /** #922 (A27): running the step again may repeat its effects. */
+  | { code: 'rerun_not_idempotent'; basis: 'not_declared' | 'definition_absent' };
 
 /**
  * Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
@@ -138,6 +145,7 @@ export const WAY_VERBS = [
   'abandon',
   'register',
   'present',
+  'reclaim',
 ] as const;
 /**
  * The acts a way names: answer a question, run a step, have the engine carry out what it owes, read
@@ -277,11 +285,26 @@ export type RegisterWay = Base<'register'> & {
 export type PresentWay = Base<'present'> & { run_id: string; gate_id: string };
 
 /**
+ * Free a held step so it can run again: a person's act, never an agent's. Its conditions say what
+ * holds, each discharged by `force`; `claimed_at` is the claim's stamp, present exactly when the claim
+ * carries one, so the act applies only to the claim it was shown (#922).
+ * @public
+ */
+export type ReclaimWay = Base<'reclaim'> & { run_id: string; step: string; claimed_at?: string };
+
+/**
  * One act a party can take on a run, told apart by its `verb`.
  * @public
  */
 export type WayOn =
-  RespondWay | RunStepWay | AdvanceWay | InspectWay | AbandonWay | RegisterWay | PresentWay;
+  | RespondWay
+  | RunStepWay
+  | AdvanceWay
+  | InspectWay
+  | AbandonWay
+  | RegisterWay
+  | PresentWay
+  | ReclaimWay;
 
 /**
  * The way of one verb.
@@ -304,6 +327,8 @@ export const WAY_PARTIES: { readonly [V in WayVerb]: readonly Party[] } = {
   register: ['operator'],
   // #627 W: only the agent asks again (Amendment 2); the person answers through the form itself.
   present: ['agent'],
+  // #922: a person's act, never in an agent's `next_actions`.
+  reclaim: ['operator'],
 };
 
 // ─── Why a way is not available ─────────────────────────────────────────────────────────────────
@@ -324,16 +349,19 @@ export type CodeTag = (typeof CODE_TAGS)[number];
 export const UNAVAILABLE_CODES = {
   // respond
   // #627 W: `present` shares respond's snapshot codes (Amendment 5), named here by verb.
-  run_ended: { tag: 'snapshot', verbs: ['respond', 'run_step', 'advance', 'abandon', 'present'] },
+  run_ended: {
+    tag: 'snapshot',
+    verbs: ['respond', 'run_step', 'advance', 'abandon', 'present', 'reclaim'],
+  },
   question_settled: { tag: 'snapshot', verbs: ['respond', 'present'] },
   question_due: { tag: 'snapshot', verbs: ['respond', 'run_step', 'advance', 'present'] },
   question_past_deadline: { tag: 'write', verbs: ['respond'] },
   gate_not_open: { tag: 'input', verbs: ['respond', 'present'] },
   // run_step / advance
-  not_a_step: { tag: 'input', verbs: ['run_step'] },
+  not_a_step: { tag: 'input', verbs: ['run_step', 'reclaim'] },
   step_settled: { tag: 'snapshot', verbs: ['run_step'] },
   question_open: { tag: 'snapshot', verbs: ['run_step', 'advance', 'abandon'] },
-  gated_step: { tag: 'snapshot', verbs: ['run_step'] },
+  gated_step: { tag: 'snapshot', verbs: ['run_step', 'reclaim'] },
   held_elsewhere: { tag: 'snapshot', verbs: ['run_step', 'advance'] },
   upstream_cannot_run: { tag: 'snapshot', verbs: ['run_step'] },
   deps_unsettled: { tag: 'snapshot', verbs: ['run_step'] },
@@ -350,12 +378,28 @@ export const UNAVAILABLE_CODES = {
   // admission's input code (P-5)
   argument_out_of_contract: {
     tag: 'input',
-    verbs: ['respond', 'run_step', 'advance', 'inspect', 'abandon', 'present'],
+    verbs: ['respond', 'run_step', 'advance', 'inspect', 'abandon', 'present', 'reclaim'],
   },
+  // #922: reclaim's own (D3 §5). `not_held`: the step is not in progress; `store_keeps_no_claims`: no
+  // claim to free; `fence_required`: a stamped claim, reclaimed without its stamp; `claim_changed`:
+  // the stamp given is not the claim's.
+  not_held: { tag: 'snapshot', verbs: ['reclaim'] },
+  store_keeps_no_claims: { tag: 'snapshot', verbs: ['reclaim'] },
+  fence_required: { tag: 'input', verbs: ['reclaim'] },
+  claim_changed: { tag: 'write', verbs: ['reclaim'] },
   // the door's
   door_cannot_enact: {
     tag: 'door',
-    verbs: ['respond', 'run_step', 'advance', 'inspect', 'abandon', 'register', 'present'],
+    verbs: [
+      'respond',
+      'run_step',
+      'advance',
+      'inspect',
+      'abandon',
+      'register',
+      'present',
+      'reclaim',
+    ],
   },
   // #627 W's door codes (§5.2, §5.2b; Amendments 2, 3): judged by the door from its own facts.
   // `no_form_here`: this door sends no form for the question (every row of §5.2's table but
@@ -454,7 +498,10 @@ export interface FactsByCode {
    *  #729 CW-1b: `lease`, the claim's lease fact (`leaseFactOf`), only for a claim that names a lease. */
   held_elsewhere: {
     step: string;
-    deadline: string | { absent: 'unknown_age' };
+    /** #922: `unparseable_stamp` for a deadline that cannot be read. */
+    deadline: string | { absent: 'unknown_age' } | { absent: 'unparseable_stamp' };
+    /** #922: the claim's `since`, as stored, or why there is none. */
+    claimed_at: string | { absent: 'no_claim_record' } | { absent: 'not_stamped' };
     lease?: LeaseFact;
   };
   upstream_cannot_run: { step: string; upstream: readonly string[] };
@@ -489,6 +536,18 @@ export interface FactsByCode {
     format?: { schema_version: number; reads_up_to: number };
   };
   argument_out_of_contract: { arg: string };
+  /** #922: the step is not in progress. */
+  not_held: { step: string };
+  /** #922: the store keeps no claim records, so no claim can be freed. */
+  store_keeps_no_claims: { step: string };
+  /** #922: the claim's stamp, which the reclaim must name. */
+  fence_required: { step: string; current_claimed_at: string };
+  /** #922: the stamp the reclaim named, and the claim's own (or why it has none). */
+  claim_changed: {
+    step: string;
+    offered_claimed_at: string;
+    current_claimed_at: FactsOf<'held_elsewhere'>['claimed_at'];
+  };
   /**
    * The door cannot enact the way for some party (the conservation law). `engine_step` (T-13,
    * Amendment 13 Q4): an engine step's input is never the agent's, so the agent is removed from a
@@ -638,6 +697,17 @@ export const ARGS: { readonly [V in WayVerb]: Readonly<Record<string, ArgSpec>> 
   present: {
     run_id: { type: 'string', required: true, discharges: [] },
     gate_id: { type: 'string', required: true, discharges: [] },
+  },
+  // #922 (D3 §4): `force` discharges every reclaim condition; `claimed_at` fences a stamped claim.
+  reclaim: {
+    run_id: { type: 'string', required: true, discharges: [] },
+    step: { type: 'string', required: true, discharges: [] },
+    force: {
+      type: 'boolean',
+      required: true,
+      discharges: ['claim_deadline_ahead', 'override_claim_unknown_age', 'rerun_not_idempotent'],
+    },
+    claimed_at: { type: 'string', required: false, discharges: [] },
   },
 };
 
@@ -1009,18 +1079,23 @@ export function agentRenderedList(
       )
       .map((w) => w.gate_id),
   );
+  // #922 (D3 §3): a held step waits only while it can still finish — its deadline ahead, or its
+  // age unknown or unreadable; a held step past its deadline is no wait, and never one alone.
   const waitsOnOthers = (u: Unavailable): boolean => {
-    if (u.code === 'held_elsewhere') return true;
+    if (u.code === 'held_elsewhere') return heldStateOf(u).state !== 'past';
     if (u.code === 'door_withholds_answers') return true;
     if (u.code === 'question_open' || u.code === 'gated_step') {
       return handedOff.has(u.facts.gate_id);
     }
     return false;
   };
+  const pastHeld = (u: Unavailable): boolean =>
+    u.code === 'held_elsewhere' && heldStateOf(u).state === 'past';
   return {
     callable,
     run_ended: runEnded,
-    only_waits_on_others: blockers.length > 0 && blockers.every(waitsOnOthers),
+    only_waits_on_others:
+      blockers.some(waitsOnOthers) && blockers.every((u) => waitsOnOthers(u) || pastHeld(u)),
   };
 }
 
@@ -1585,10 +1660,161 @@ function refusedParamOf(
 export function heldFacts(snap: Snapshot, step: string): FactsOf<'held_elsewhere'> {
   const run = snap.record;
   const claim = run.in_progress_steps.includes(step) ? run.claims?.[step] : undefined;
-  const deadline: string | { absent: 'unknown_age' } =
-    typeof claim?.deadline === 'string' ? claim.deadline : { absent: 'unknown_age' };
+  const deadline: FactsOf<'held_elsewhere'>['deadline'] =
+    typeof claim?.deadline !== 'string'
+      ? { absent: 'unknown_age' }
+      : parseStamp(claim.deadline) === undefined
+        ? { absent: 'unparseable_stamp' }
+        : claim.deadline;
+  const claimed_at: FactsOf<'held_elsewhere'>['claimed_at'] =
+    claim === undefined
+      ? { absent: 'no_claim_record' }
+      : typeof claim.since === 'string'
+        ? claim.since
+        : { absent: 'not_stamped' };
   const lease = leaseFactOf(snap, claim);
-  return isLeaseFact(lease) ? { step, deadline, lease } : { step, deadline };
+  return isLeaseFact(lease)
+    ? { step, deadline, claimed_at, lease }
+    : { step, deadline, claimed_at };
+}
+
+/**
+ * #922 (D4 decision 1): a held step's state at a reply's `as_of` — the one classification the reply
+ * rule, the reclaim way's conditions, its judge and the bounded order switch on. A claim that names a
+ * lease is classed by its deadline (CW-3 adds the lease states here). `no_claim_record` behaves as
+ * `unknown_age` everywhere; only its words differ.
+ */
+export type HeldState =
+  | { state: 'ahead'; deadline: string }
+  | { state: 'past'; deadline: string }
+  | { state: 'unknown_age' }
+  | { state: 'unreadable' }
+  | { state: 'no_claim_record' };
+
+/** #922: a held step's state from its facts at `at` (past means `isPastDeadline`, ≥). */
+export function heldStateAt(facts: FactsOf<'held_elsewhere'>, at: Date): HeldState {
+  if (typeof facts.deadline === 'string') {
+    return isPastDeadline(facts.deadline, at)
+      ? { state: 'past', deadline: facts.deadline }
+      : { state: 'ahead', deadline: facts.deadline };
+  }
+  if (facts.deadline.absent === 'unparseable_stamp') return { state: 'unreadable' };
+  return typeof facts.claimed_at !== 'string' && facts.claimed_at.absent === 'no_claim_record'
+    ? { state: 'no_claim_record' }
+    : { state: 'unknown_age' };
+}
+
+/** #922: the entry face — a composed entry's state, read from its facts and `clears_at` (set exactly
+ *  when the deadline is ahead at the reply's `as_of`); the only reader after composition. */
+export function heldStateOf(entry: {
+  facts: FactsOf<'held_elsewhere'>;
+  clears_at?: string;
+}): HeldState {
+  const { deadline } = entry.facts;
+  if (typeof deadline === 'string') {
+    return entry.clears_at !== undefined
+      ? { state: 'ahead', deadline }
+      : { state: 'past', deadline };
+  }
+  return heldStateAt(entry.facts, new Date(0));
+}
+
+/** #922: the one helper that sets `clears_at` — only for a deadline ahead of `at`. */
+function heldClears(facts: FactsOf<'held_elsewhere'>, at: Date): { clears_at?: string } {
+  const state = heldStateAt(facts, at);
+  return state.state === 'ahead' ? { clears_at: state.deadline } : {};
+}
+
+/**
+ * #922 (D3 §4): a held step's reclaim way — its conditions by its state at `at` (each discharged by
+ * `force`), and its stamp when the claim carries one. With no definition, whether a rerun is safe is
+ * not known (`definition_absent`), beside the state's own condition.
+ */
+export function reclaimWayOf(
+  snap: Snapshot,
+  facts: FactsOf<'held_elsewhere'>,
+  definition: WorkflowDefinition | undefined,
+): ReclaimWay {
+  const state = heldStateAt(facts, snap.at);
+  const conditions: Cond[] = [];
+  if (state.state === 'ahead') {
+    conditions.push({ code: 'claim_deadline_ahead', deadline: state.deadline });
+  } else if (state.state !== 'past') {
+    conditions.push({ code: 'override_claim_unknown_age', state: state.state });
+  }
+  if (definition === undefined) {
+    conditions.push({ code: 'rerun_not_idempotent', basis: 'definition_absent' });
+  } else if (definition.steps[facts.step]?.idempotent !== true) {
+    conditions.push({ code: 'rerun_not_idempotent', basis: 'not_declared' });
+  }
+  return {
+    verb: 'reclaim',
+    conditions,
+    run_id: snap.record.id,
+    step: facts.step,
+    ...(typeof facts.claimed_at === 'string' ? { claimed_at: facts.claimed_at } : {}),
+  };
+}
+
+/** #729 CW-2b: the agent step this call holds under its lease, while its claim names that lease. */
+function heldHereOf(
+  run: RunRecord,
+  definition: WorkflowDefinition | undefined,
+  ctx: WaysContext,
+): string | undefined {
+  return ctx.held_claim !== undefined &&
+    definition?.steps[ctx.held_claim.step]?.execution === 'agent' &&
+    isHeldUnder(run, ctx.held_claim.step, ctx.held_claim.lease_id)
+    ? ctx.held_claim.step
+    : undefined;
+}
+
+/** #922: one held step's entry — its remedy its reclaim way, or (a store that keeps no claims) none. */
+function heldEntry(
+  snap: Snapshot,
+  step: string,
+  definition: WorkflowDefinition | undefined,
+  persistsClaims: boolean,
+): Unavailable {
+  const facts = heldFacts(snap, step);
+  const reclaim = persistsClaims ? reclaimWayOf(snap, facts, definition) : undefined;
+  return {
+    verb: 'run_step',
+    step,
+    code: 'held_elsewhere',
+    facts,
+    ...heldClears(facts, snap.at),
+    remedy: reclaim !== undefined ? [reclaim] : [],
+    ...(reclaim === undefined ? { no_remedy: HELD } : {}),
+  };
+}
+
+/** #922 (D3 §4, S8): the held steps' reclaim ways, past → unknown → ahead (the order a bounded list
+ *  shows first); on a store that keeps no claims, why there is none. */
+function offerReclaims(
+  ways: WayOn[],
+  unavailable: Unavailable[],
+  held: readonly Unavailable[],
+): void {
+  const rank = (u: Unavailable): number => {
+    if (u.code !== 'held_elsewhere') return 1;
+    const state = heldStateOf(u).state;
+    return state === 'past' ? 0 : state === 'ahead' ? 2 : 1;
+  };
+  for (const entry of [...held].sort((a, b) => rank(a) - rank(b))) {
+    const way = entry.remedy[0];
+    if (way?.verb === 'reclaim') ways.push(way);
+    else if (entry.step !== undefined) {
+      unavailable.push({
+        verb: 'reclaim',
+        step: entry.step,
+        code: 'store_keeps_no_claims',
+        facts: { step: entry.step },
+        // Amendment 15: exempt — it names why no reclaim exists.
+        remedy: [],
+      });
+    }
+  }
 }
 
 /**
@@ -1719,6 +1945,13 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
     for (const verb of ['advance', 'run_step'] as const) {
       unavailable.push({ verb, code: 'definition_absent', facts, remedy: repair });
     }
+    // #922 (m-I): a held step needs no definition to be freed — its entry and its reclaim way, whose
+    // rerun is not known safe (`definition_absent`).
+    const heldEntries = run.in_progress_steps
+      .filter((step) => step !== gate?.step_name)
+      .map((step) => heldEntry(snap, step, undefined, ctx.store.persistsClaims === true));
+    unavailable.push(...heldEntries);
+    offerReclaims(ways, unavailable, heldEntries);
     // abandon reads no definition: offered, unless a question is open (then the answer is the way
     // on, and it too waits on the definition — listed above, so the remedy is judged).
     if (gate !== undefined) {
@@ -1812,12 +2045,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
   // this call holds under its lease (`held_claim`) is offered to it, an open question on another step
   // notwithstanding, and is neither held elsewhere nor waiting on the answer.
   const enactorFailed = ctx.enactor.kind === 'load_failed';
-  const heldHere =
-    ctx.held_claim !== undefined &&
-    definition.steps[ctx.held_claim.step]?.execution === 'agent' &&
-    isHeldUnder(run, ctx.held_claim.step, ctx.held_claim.lease_id)
-      ? ctx.held_claim.step
-      : undefined;
+  const heldHere = heldHereOf(run, definition, ctx);
   for (const step of [...pending.agent_steps, ...(heldHere !== undefined ? [heldHere] : [])]) {
     if (enactorFailed) continue;
     ways.push({
@@ -1850,18 +2078,11 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
   const held = run.in_progress_steps.filter(
     (step) => step !== run.pending_gate?.step_name && step !== heldHere,
   );
-  for (const step of held) {
-    const facts = heldFacts(snap, step);
-    unavailable.push({
-      verb: 'run_step',
-      step,
-      code: 'held_elsewhere',
-      facts,
-      ...(typeof facts.deadline === 'string' ? { clears_at: facts.deadline } : {}),
-      remedy: [],
-      no_remedy: HELD,
-    });
-  }
+  const heldEntries = held.map((step) =>
+    heldEntry(snap, step, definition, ctx.store.persistsClaims === true),
+  );
+  unavailable.push(...heldEntries);
+  offerReclaims(ways, unavailable, heldEntries);
 
   // advance — offered iff something is owed (Amendment 13 Q11); otherwise the most specific why.
   const advance = advanceWayOf(run, pending, definition);
@@ -1880,7 +2101,16 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
     ways.push(advance);
   } else {
     unavailable.push(
-      advanceUnavailable(run, definition, pending, respond, held, ways, snap, ctx.disclosure),
+      advanceUnavailable(
+        run,
+        definition,
+        pending,
+        respond,
+        heldEntries,
+        ways,
+        snap,
+        ctx.disclosure,
+      ),
     );
   }
 
@@ -1922,7 +2152,8 @@ export function composeWaysAt(
   input: {
     definition: WorkflowDefinition;
     registry?: ExtensionRegistry;
-    persistsClaims?: boolean;
+    /** #922: required — a store that keeps claims offers each held step's reclaim way. */
+    persistsClaims: boolean;
     lease_facts?: LeaseFacts | undefined;
     /** The filter-mask fix (B2): the host's set — a `run_step` way's prompt masks each value before
      *  its filters (`WaysContext.disclosure`). */
@@ -1935,7 +2166,7 @@ export function composeWaysAt(
       input.registry !== undefined
         ? { kind: 'this_program', registry: input.registry }
         : { kind: 'observer' },
-    store: { persistsClaims: input.persistsClaims === true },
+    store: { persistsClaims: input.persistsClaims },
     ...(input.disclosure !== undefined ? { disclosure: input.disclosure } : {}),
   });
 }
@@ -1951,7 +2182,8 @@ function advanceUnavailable(
   definition: WorkflowDefinition,
   pending: PendingView,
   respond: RespondWay | undefined,
-  held: readonly string[],
+  // #922: the held steps' entries, each with its reclaim way.
+  held: readonly Unavailable[],
   ways: readonly WayOn[],
   // #715 (b) (02 §D.4): the snapshot (its reading: a refused step's remedy brief renders there; #729
   // CW-1b: the held step's lease fact).
@@ -1974,17 +2206,7 @@ function advanceUnavailable(
   }
   const offeredSteps = ways.filter((w): w is RunStepWay => w.verb === 'run_step');
   if (offeredSteps.length === 0 && held.length > 0) {
-    const step = held[0]!;
-    const facts = heldFacts(snap, step);
-    return {
-      verb: 'advance',
-      step,
-      code: 'held_elsewhere',
-      facts,
-      ...(typeof facts.deadline === 'string' ? { clears_at: facts.deadline } : {}),
-      remedy: [],
-      no_remedy: HELD,
-    };
+    return { ...held[0]!, verb: 'advance' };
   }
   // A step that cannot run: advance is refused with that step's own entry — its check, its
   // remedies (correct the workflow; the operator's lever; a new run only where one can help).
@@ -2021,6 +2243,8 @@ function wayKey(way: WayOn): string {
         : `run_step:${way.step}:lever`;
     case 'register':
       return `register:${way.workflow_id}`;
+    case 'reclaim':
+      return `reclaim:${way.step}`;
     default:
       return way.verb;
   }
@@ -2206,13 +2430,19 @@ function judgeStepByName(
         };
   }
   if (run.in_progress_steps.includes(step)) {
+    // #922: the composed entry, its reclaim way its remedy; a step the composer leaves out (the
+    // claim this call holds, CW-2b) keeps the wait.
+    const composedHeld = composed.unavailable.find(
+      (u) => u.code === 'held_elsewhere' && u.verb === 'run_step' && u.step === step,
+    );
+    if (composedHeld !== undefined) return composedHeld;
     const facts = heldFacts(snap, step);
     return {
       verb: 'run_step',
       step,
       code: 'held_elsewhere',
       facts,
-      ...(typeof facts.deadline === 'string' ? { clears_at: facts.deadline } : {}),
+      ...heldClears(facts, snap.at),
       remedy: [],
       no_remedy: HELD,
     };
@@ -2473,7 +2703,120 @@ export function admitWay(
   const contract = argumentOutOfContract(verb, input);
   if (contract !== undefined) return withSameWay(contract, verb, input, composeWaysOn(snap, ctx));
   if (verb === 'inspect' || verb === 'register') return { ok: true };
+  if (verb === 'reclaim') {
+    // #922 P1a correction 1: `force` discharges the conditions only when it is `true`; any other
+    // value is out of contract (its type alone is boolean)
+    if (input['force'] !== true) {
+      return withSameWay(outOfContract(verb, 'force'), verb, input, composeWaysOn(snap, ctx));
+    }
+    const definition = 'ok' in ctx.definition ? ctx.definition.ok : undefined;
+    const step = String(input['step']);
+    const progress = (): WayOn[] => progressWays(composeWaysOn(snap, ctx).ways);
+    if (step === heldHereOf(snap.record, definition, ctx)) {
+      // CW-2b: this call's own claim is not held elsewhere — not offered, so not admitted (R26)
+      return { verb: 'reclaim', step, code: 'not_held', facts: { step }, remedy: progress() };
+    }
+    const judged = judgeReclaim(
+      snap,
+      definition,
+      ctx.store.persistsClaims === true,
+      step,
+      typeof input['claimed_at'] === 'string' ? input['claimed_at'] : undefined,
+      progress,
+    );
+    return 'ok' in judged ? { ok: true } : judged;
+  }
   return judgeAdmission(verb, snap, ctx, input, composeWaysOn(snap, ctx));
+}
+
+/**
+ * #922 (D3 §5, D4): JUDGE.reclaim — the ONE judge of a reclaim, run by the admission and by
+ * `reclaimStep` at its write, in this order: the run ended; a step not in progress (`not_a_step` when
+ * a present definition lacks the name, else `not_held`); the open gate's own step; a store that keeps
+ * no claims; a stamped claim inside its window or of unknown age, named without its stamp
+ * (`fence_required`); a stamp that is not the claim's (`claim_changed`). Admitted: the step's reclaim
+ * way, its conditions those `force` discharges. A step in progress is always judged as held.
+ * `progress`: the run's progress ways, the act of `not_a_step` and `not_held` (D3 §5's table).
+ */
+export function judgeReclaim(
+  snap: Snapshot,
+  definition: WorkflowDefinition | undefined,
+  persistsClaims: boolean,
+  step: string,
+  claimedAt: string | undefined,
+  progress: () => readonly WayOn[],
+): { ok: true; way: ReclaimWay } | Unavailable {
+  const run = snap.record;
+  const inspect: InspectWay = { verb: 'inspect', conditions: [], run_id: run.id };
+  if (run.terminal_state) {
+    return {
+      verb: 'reclaim',
+      step,
+      code: 'run_ended',
+      facts: { phase: deriveRunPhase(run) },
+      remedy: [],
+      no_remedy: { cause: 'operator_command_untyped', command: endedRunCommand(run, definition) },
+    };
+  }
+  if (!run.in_progress_steps.includes(step)) {
+    const on = progress();
+    if (definition !== undefined && definition.steps[step] === undefined) {
+      // a name the definition lacks: the ways on, else the inspect way (it lists the run's steps)
+      return {
+        verb: 'reclaim',
+        step,
+        code: 'not_a_step',
+        facts: { step, workflow_id: definition.id },
+        remedy: on.length > 0 ? [...on] : [inspect],
+      };
+    }
+    return {
+      verb: 'reclaim',
+      step,
+      code: 'not_held',
+      facts: { step },
+      remedy: [...on],
+      ...(on.length === 0 ? { no_remedy: { cause: 'already_settled' as const } } : {}),
+    };
+  }
+  const gate = run.pending_gate;
+  if (gate?.step_name === step) {
+    return {
+      verb: 'reclaim',
+      step,
+      code: 'gated_step',
+      facts: { step, gate_id: gate.gate_id, choices: [...gate.choices] },
+      remedy: [respondWayOfGate(run.id, gate)],
+    };
+  }
+  if (!persistsClaims) {
+    return { verb: 'reclaim', step, code: 'store_keeps_no_claims', facts: { step }, remedy: [] };
+  }
+  const facts = heldFacts(snap, step);
+  const way = reclaimWayOf(snap, facts, definition);
+  if (claimedAt === undefined) {
+    const state = heldStateAt(facts, snap.at).state;
+    if (typeof facts.claimed_at === 'string' && state !== 'past') {
+      return {
+        verb: 'reclaim',
+        step,
+        code: 'fence_required',
+        facts: { step, current_claimed_at: facts.claimed_at },
+        remedy: [way],
+      };
+    }
+    return { ok: true, way };
+  }
+  if (facts.claimed_at !== claimedAt) {
+    return {
+      verb: 'reclaim',
+      step,
+      code: 'claim_changed',
+      facts: { step, offered_claimed_at: claimedAt, current_claimed_at: facts.claimed_at },
+      remedy: [inspect],
+    };
+  }
+  return { ok: true, way };
 }
 
 /**
@@ -2495,7 +2838,9 @@ function withSameWay(
       ? w.gate_id === input['gate_id']
       : w.verb === 'run_step'
         ? w.step === input['command']
-        : false,
+        : w.verb === 'reclaim'
+          ? w.step === input['step']
+          : false,
   );
   const same = target.length > 0 ? target : ofVerb;
   if (same.length > 0) return { ...contract, remedy: same };
@@ -2709,7 +3054,42 @@ export const LIBRARY_WORDS: WayRenderer<string, LibraryHost> = {
   // `unavailable` (`no_form_here`), so this entry renders only a way a door offered.
   present: (way) =>
     `the question on gate '${way.gate_id}' of run '${way.run_id}' is shown again only by an MCP server whose client shows forms (present_question)`,
+  // #922: the person's act, through the library's own function.
+  reclaim: (way) =>
+    `free step '${way.step}' of run '${way.run_id}' with reclaimStep, passing force: true${way.claimed_at !== undefined ? ` and claimed_at '${way.claimed_at}'` : ''}`,
 };
+
+/** #922: the progress ways among `ways` (the act of a reclaim refusal on a step not in progress). */
+export function progressWays(ways: readonly WayOn[]): WayOn[] {
+  return ways.filter((w) => (PROGRESS_VERBS as readonly string[]).includes(w.verb));
+}
+
+/**
+ * #922 (R13): the ONE table of a reclaim condition's words, read by every place that prints a reclaim
+ * (the CLI before "Reclaimed …" and in `fence_required`'s refusal; the MCP person block) — each said
+ * before the command (the owner's B). `undefined` for a condition that is not a reclaim's.
+ */
+export function reclaimConditionWords(cond: Cond): string | undefined {
+  const unknown =
+    'so whether its program still runs is not known; if it does, the step runs twice.';
+  switch (cond.code) {
+    case 'claim_deadline_ahead':
+      return `Its deadline is ahead (${cond.deadline}); if its program is still running, the step runs twice.`;
+    case 'override_claim_unknown_age':
+      return cond.state === 'unreadable'
+        ? `Its claim's deadline cannot be read, ${unknown}`
+        : cond.state === 'no_claim_record'
+          ? `It is held with no claim record, ${unknown}`
+          : `Its claim has no deadline, ${unknown}`;
+    case 'rerun_not_idempotent':
+      return cond.basis === 'not_declared'
+        ? 'It is not declared idempotent, so running it again may repeat its effects.'
+        : 'Its workflow definition is not available here, so whether running it again is safe is not known.';
+    case 'enactor_has':
+    case 'client_prompt':
+      return undefined;
+  }
+}
 
 /**
  * The renderer a program supplies when it words some of a reply's `ways` itself: any of

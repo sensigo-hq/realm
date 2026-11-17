@@ -102,7 +102,12 @@ describe('the dev-run detach map prints the model flags to fill in (issue #676)'
       updated_at: '2026-09-01T00:00:00.000Z',
     } as unknown as RunRecord;
     // decision C202: the map offers the drive where an agent step is ready — here, the step asked for.
-    const agentReady: { pending: PendingView; workflow: WorkflowDefinition } = {
+    const agentReady: {
+      pending: PendingView;
+      workflow: WorkflowDefinition;
+      persistsClaims: boolean;
+    } = {
+      persistsClaims: false,
       pending: {
         owed: [],
         agent_steps: ['summarise'],

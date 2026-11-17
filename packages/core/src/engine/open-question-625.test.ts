@@ -195,7 +195,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     expect(openQuestionOf({ ...run, terminal_state: true } as RunRecord)).toBe(undefined);
     // (a) red when the respond way composed from the record does not give back the gate and
     //     choices (F6: from the record's open question); (b) prints it.
-    const way = respondOf(composeWaysAt(run, new Date(), { definition: d }));
+    const way = respondOf(composeWaysAt(run, new Date(), { persistsClaims: false, definition: d }));
     expect({ gate_id: way?.gate_id, choices: way?.choice.one_of }).toEqual({
       gate_id: gateId,
       choices: ['approve', 'reject'],

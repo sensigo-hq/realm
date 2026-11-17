@@ -1244,7 +1244,12 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
     //     (b) prints both lists.
     expect([
       nextCalls(reply),
-      nextCalls(composeWaysAt((await store.get(runId)).record, new Date(), { definition: d })),
+      nextCalls(
+        composeWaysAt((await store.get(runId)).record, new Date(), {
+          persistsClaims: false,
+          definition: d,
+        }),
+      ),
     ]).toEqual([['run_step:x', 'advance'], ['respond']]);
     // The call's own verdict rides `refusal` (D-A); the reply's ways stay the run's.
     expect(reply.refusal?.code).toBe('not_a_step');
