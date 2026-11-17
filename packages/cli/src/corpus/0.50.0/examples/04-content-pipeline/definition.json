@@ -1,0 +1,104 @@
+{
+  "id": "content-pipeline",
+  "name": "Content Enrichment Pipeline",
+  "version": 1,
+  "params_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "path"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the article text file"
+      }
+    }
+  },
+  "services": {
+    "articles": {
+      "adapter": "filesystem",
+      "trust": "engine_delivered"
+    }
+  },
+  "steps": {
+    "fetch_content": {
+      "description": "Load article text from disk",
+      "execution": "auto",
+      "depends_on": [],
+      "uses_service": "articles",
+      "operation": "read",
+      "input_map": {
+        "path": "run.params.path"
+      }
+    },
+    "summarise": {
+      "description": "Summarise the article. Produces title, summary, and word_count — all validated before tag_content starts. The tagger cannot receive a malformed summary.\n",
+      "execution": "agent",
+      "depends_on": [
+        "fetch_content"
+      ],
+      "prompt": "Summarise the article below.\n\nRequired fields:\n- title: the article title or a concise descriptive title (5–200 characters)\n- summary: a 2–5 sentence summary of the article's key points (20–500 characters)\n- word_count: estimated word count as an integer (must be at least 1)\n\nReturn exactly these three fields. Any missing or invalid field will be rejected\nbefore this response is accepted.\n\nArticle:\n{{ context.resources.fetch_content.content }}\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "summary",
+          "word_count"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 500
+          },
+          "word_count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "tag_content": {
+      "description": "Generate tags for the article using the verified summary from summarise. The tagger receives schema-validated data — it cannot receive a bad summary. This is the step that provider timeouts target in the resume-after-timeout fixture.\n",
+      "execution": "agent",
+      "depends_on": [
+        "summarise"
+      ],
+      "prompt": "Generate tags for this article.\n\nTitle: {{ context.resources.summarise.title }}\nWord count: {{ context.resources.summarise.word_count }}\nSummary: {{ context.resources.summarise.summary }}\n\nRequired fields:\n- headline: article title followed by word count.\n  Example: \"Building Reliable ML Infrastructure — 210 words\"\n- message: full tagging result. Use this exact layout — a blank line between each section:\n\n    Summary: <the article summary, one paragraph>\n\n    Tags: tag1, tag2, tag3\n    (1–10 tags, lowercase, hyphens for multi-word, e.g. machine-learning)\n\nReturn exactly these two fields. Any tag outside the format constraints will be rejected.\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "headline",
+          "message"
+        ],
+        "properties": {
+          "headline": {
+            "type": "string",
+            "description": "Article title and word count",
+            "minLength": 5
+          },
+          "message": {
+            "type": "string",
+            "description": "Full result with Summary and Tags sections",
+            "minLength": 20
+          }
+        }
+      }
+    },
+    "record_result": {
+      "description": "Mark the pipeline complete. Data is already in the evidence chain from summarise and tag_content — this step exists to give the pipeline a clean terminal step distinct from the final agent step.",
+      "execution": "auto",
+      "depends_on": [
+        "tag_content"
+      ]
+    }
+  }
+}

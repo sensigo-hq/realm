@@ -1,0 +1,148 @@
+{
+  "id": "incident-response",
+  "name": "Incident First-Response",
+  "version": 1,
+  "params_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "path"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the alert JSON file (relative paths resolved from example root)"
+      }
+    }
+  },
+  "services": {
+    "alerts": {
+      "adapter": "filesystem",
+      "trust": "engine_delivered"
+    }
+  },
+  "steps": {
+    "read_alert": {
+      "description": "Load alert data from disk",
+      "execution": "auto",
+      "depends_on": [],
+      "uses_service": "alerts",
+      "operation": "read",
+      "input_map": {
+        "path": "run.params.path"
+      }
+    },
+    "analyze_cause": {
+      "description": "Identify root cause, severity, and impacted services from the alert",
+      "execution": "agent",
+      "depends_on": [
+        "read_alert"
+      ],
+      "agent_profile": "incident-analyzer",
+      "prompt": "You are an on-call engineer performing incident triage.\n\nReview the alert below and identify:\n- The root cause (one clear sentence — state what failed and why)\n- Severity: P1 (critical — service down or data loss), P2 (degraded — partial outage),\n  P3 (warning — no user impact yet)\n- Impacted services: list by service name\n- Confidence: high (clear signal), medium (likely cause), low (speculative)\n- Recommended runbook (if identifiable from the alert data)\n\nAlert:\n{{ context.resources.read_alert.content }}\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "root_cause",
+          "severity",
+          "impacted_services",
+          "confidence"
+        ],
+        "properties": {
+          "root_cause": {
+            "type": "string",
+            "description": "One-sentence root cause statement"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "impacted_services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "runbook": {
+            "type": "string",
+            "description": "Runbook name or URL if identifiable from the alert data"
+          }
+        }
+      }
+    },
+    "draft_response": {
+      "description": "Draft the oncall channel message based on the triage analysis",
+      "execution": "agent",
+      "depends_on": [
+        "analyze_cause"
+      ],
+      "agent_profile": "response-drafter",
+      "prompt": "Draft an oncall incident message based on the triage analysis below.\n\nThe message will be posted to the incident channel. Write it for a technical audience\nunder pressure. Be direct. No markdown headers. No emoji. Under 200 words.\n\nStructure:\n1. One-line headline: severity + impacted service + root cause\n2. Impact statement: what users or systems are affected and how\n3. Runbook reference (include only if the runbook field is present)\n4. Next steps: 2-3 concrete bullet points for the responding engineer\n\nAnalysis:\nRoot cause: {{ context.resources.analyze_cause.root_cause }}\nSeverity: {{ context.resources.analyze_cause.severity }}\nImpacted services: {{ context.resources.analyze_cause.impacted_services }}\nConfidence: {{ context.resources.analyze_cause.confidence }}\nRunbook: {{ context.resources.analyze_cause.runbook | default: 'none given' }}\n\nRaw alert data:\n{{ context.resources.read_alert.content }}\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "headline",
+          "message"
+        ],
+        "properties": {
+          "headline": {
+            "type": "string",
+            "description": "One-line headline for the incident"
+          },
+          "message": {
+            "type": "string",
+            "description": "Full channel message text"
+          }
+        }
+      }
+    },
+    "confirm_and_send": {
+      "description": "Present the analysis and draft to the oncall engineer for approval",
+      "execution": "auto",
+      "depends_on": [
+        "draft_response"
+      ],
+      "trust": "human_confirmed",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "choice": {
+            "type": "string",
+            "enum": [
+              "send",
+              "reject"
+            ]
+          }
+        }
+      },
+      "gate": {
+        "choices": [
+          "send",
+          "reject"
+        ],
+        "resolution_messages": {
+          "send": "Draft approved — choice recorded in the evidence chain.",
+          "reject": "Draft rejected — choice recorded in the evidence chain."
+        },
+        "message": "{{ context.resources.analyze_cause.severity | upper }} — {{ context.resources.analyze_cause.root_cause | truncate: 80 }}\nImpacted: {{ context.resources.analyze_cause.impacted_services | join }}\nConfidence: {{ context.resources.analyze_cause.confidence }}\n\nDraft: {{ context.resources.draft_response.headline | truncate: 80 }}\n"
+      },
+      "prompt": "INCIDENT ANALYSIS\nSeverity:  {{ context.resources.analyze_cause.severity }}\nRoot cause: {{ context.resources.analyze_cause.root_cause }}\nImpacted:  {{ context.resources.analyze_cause.impacted_services }}\nConfidence: {{ context.resources.analyze_cause.confidence }}\n\nDRAFT MESSAGE\n{{ context.resources.draft_response.message }}\n\nSend this message to the incident channel? Choose 'send' to post it or 'reject' to discard it.\n",
+      "instructions": "Present the display content to the user verbatim. The person answers the question; follow\nnext_actions for what to do while it waits.\n"
+    }
+  }
+}

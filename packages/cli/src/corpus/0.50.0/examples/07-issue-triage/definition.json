@@ -1,0 +1,126 @@
+{
+  "id": "issue-triage",
+  "name": "Issue Triage",
+  "version": 1,
+  "params_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "repo": {
+        "type": "string",
+        "description": "GitHub repository in owner/repo format (e.g. acme/api-service)"
+      },
+      "issue_number": {
+        "type": "integer",
+        "description": "The GitHub issue number to triage"
+      }
+    },
+    "required": [
+      "repo",
+      "issue_number"
+    ]
+  },
+  "services": {
+    "github": {
+      "adapter": "github",
+      "trust": "engine_delivered"
+    }
+  },
+  "steps": {
+    "fetch_issue": {
+      "description": "Fetch the issue details from GitHub",
+      "execution": "auto",
+      "depends_on": [],
+      "uses_service": "github",
+      "service_method": "fetch",
+      "operation": "get_issue",
+      "input_map": {
+        "repo": "run.params.repo",
+        "issue_number": "run.params.issue_number"
+      }
+    },
+    "triage_issue": {
+      "description": "Classify the issue severity and draft a triage comment. Pauses for human approval — the agent's output (severity, labels, comment_draft) is displayed to the reviewer before any writes reach GitHub.\n",
+      "execution": "agent",
+      "depends_on": [
+        "fetch_issue"
+      ],
+      "trust": "human_confirmed",
+      "structured_output": "strict",
+      "prompt": "Triage GitHub issue #{{ run.params.issue_number }} in {{ run.params.repo }}.\n\nISSUE\nTitle: {{ context.resources.fetch_issue.title }}\nBody:\n{{ context.resources.fetch_issue.body }}\n\nProduce a triage output for the engineering team:\n- severity: one of critical, high, medium, low\n  (critical = service down or data loss; high = significant degradation;\n  medium = user-impacting bug without outage; low = minor or no user impact)\n- labels: array of label strings for issue type and priority (e.g. [\"bug\", \"P1\", \"memory-leak\"])\n- comment_draft: a concise internal triage note — not a customer reply\n  - One sentence stating the assessed severity and reason\n  - 2–3 concrete next steps for the responding engineer\n  - No greetings, no \"thank you for reporting\", no customer-facing language; under 150 words\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "comment_draft": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "labels",
+          "comment_draft"
+        ]
+      },
+      "display": "Severity: {{ severity }}\nLabels: {{ labels }}\n\n{{ comment_draft }}\n",
+      "gate": {
+        "choices": [
+          "approve",
+          "reject"
+        ],
+        "message": "{{ context.resources.fetch_issue.title }}\n{{ run.params.repo }} · Issue #{{ run.params.issue_number }}\n\nSeverity: {{ context.resources.triage_issue.severity | upper }}\nLabels:\n{{ context.resources.triage_issue.labels | bullets }}\n\nDraft comment:\n{{ context.resources.triage_issue.comment_draft }}\n",
+        "resolution_messages": {
+          "approve": "Approved — comment and labels will be posted to GitHub.",
+          "reject": "Rejected — no writes posted to GitHub."
+        }
+      }
+    },
+    "post_comment": {
+      "description": "Post the approved triage comment on the GitHub issue",
+      "execution": "auto",
+      "depends_on": [
+        "triage_issue"
+      ],
+      "when": "triage_issue.choice == 'approve'",
+      "uses_service": "github",
+      "service_method": "create",
+      "operation": "post_comment",
+      "input_map": {
+        "repo": "run.params.repo",
+        "issue_number": "run.params.issue_number",
+        "body": "context.resources.triage_issue.comment_draft"
+      }
+    },
+    "apply_labels": {
+      "description": "Apply the triage labels to the GitHub issue",
+      "execution": "auto",
+      "depends_on": [
+        "triage_issue"
+      ],
+      "when": "triage_issue.choice == 'approve'",
+      "uses_service": "github",
+      "service_method": "create",
+      "operation": "apply_labels",
+      "input_map": {
+        "repo": "run.params.repo",
+        "issue_number": "run.params.issue_number",
+        "labels": "context.resources.triage_issue.labels"
+      }
+    }
+  }
+}
