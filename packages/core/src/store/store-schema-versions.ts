@@ -18,6 +18,26 @@ export interface StoreSchemaVersion {
    * transaction. Empty for version 1: a file is created at version 1, never upgraded to it.
    */
   readonly upgrade: readonly string[];
+  /**
+   * #616 R2: the statements that move a file from this version back to the one before, run in order in
+   * one transaction (`realm db migrate --to`). Absent: the step to this version cannot be undone, and
+   * `cannotUndo` says why. Above version 1, a version has exactly one of the two.
+   */
+  readonly downgrade?: readonly string[];
+  /**
+   * #616 R2: what the step back drops, said after it (only with `downgrade`). `count`, when given, is a
+   * query read on the file before the step whose one value is the number `words` names as `{count}`;
+   * `none` is said instead when that number is 0.
+   */
+  readonly loses?: { readonly words: string; readonly count?: string; readonly none?: string };
+  /** #616 R2: why the step to this version cannot be undone, as a clause. Only without `downgrade`. */
+  readonly cannotUndo?: string;
+  /**
+   * #616 R2: the npm range of the Realm releases that write exactly this format, for the install line a
+   * step back prints. Closed below the newest version (`0.49`, `>=0.50.0 <0.52.0`), open at the newest
+   * (`>=0.50.0`): the release that adds a version closes the one before.
+   */
+  readonly writtenBy?: string;
 }
 
 /** The versions a Realm knows, by the `user_version` a file at each one carries. */
@@ -50,7 +70,22 @@ const REALM_STORE_SCHEMA_V2: readonly string[] = [...REALM_STORE_SCHEMA, OUTBOUN
 
 /** This Realm's versions of the store's schema. */
 export const REALM_STORE_VERSIONS: StoreSchemaVersions = new Map([
-  [1, { schema: REALM_STORE_SCHEMA, upgrade: [] }],
-  // #597 D1c-1: the first real step, one statement in the ladder's one transaction.
-  [2, { schema: REALM_STORE_SCHEMA_V2, upgrade: [OUTBOUND_TABLE] }],
+  [1, { schema: REALM_STORE_SCHEMA, upgrade: [], writtenBy: '0.49' }],
+  // #597 D1c-1: the first real step, one statement in the ladder's one transaction. #616 R2: its step
+  // back drops the table, and with it the record of the reminders and escalations sent.
+  [
+    2,
+    {
+      schema: REALM_STORE_SCHEMA_V2,
+      upgrade: [OUTBOUND_TABLE],
+      downgrade: ['DROP TABLE outbound'],
+      loses: {
+        words:
+          'The outbound table was dropped: the record of {count} reminder(s) and escalation(s) sent is no longer in the file.',
+        count: "SELECT COUNT(*) FROM outbound WHERE status = 'sent'",
+        none: 'The outbound table was dropped; it held no record of a reminder or escalation sent.',
+      },
+      writtenBy: '>=0.50.0',
+    },
+  ],
 ]);

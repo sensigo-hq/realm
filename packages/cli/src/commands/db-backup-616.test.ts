@@ -17,8 +17,6 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
-  copyFileSync,
-  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -267,25 +265,29 @@ describe('#616 PR-2c c6 — realm db backup, on the built CLI', { timeout: 120_0
     },
   );
 
-  it("the page's restore, into a home that does not exist yet (a new machine): the restored store opens, so a second backup from it works", async () => {
+  it("the page's restore, into a home that does not exist yet (a new machine): `realm db restore` places the copy, the restored store opens, so a second backup from it works", async () => {
     await makeStore();
     const copy = join(base, 'copy.db');
     const first = realm(['db', 'backup', copy]);
     const newRoot = mkdtempSync(join(tmpdir(), 'realm-616-c6-new-'));
     try {
-      // The page's steps: create the home folder, put the copy in place of realm.db (there is
-      // no realm.db-wal or realm.db-shm to remove in a new home).
-      const newHome = join(newRoot, '.realm');
-      mkdirSync(newHome);
-      copyFileSync(copy, join(newHome, 'realm.db'));
+      // #616 R1b: the page's restore is the command now (it was steps by hand): into a home folder
+      // that does not exist yet.
+      const restored = realm(['db', 'restore', copy], newRoot);
       const again = join(base, 'again.db');
       const r = realm(['db', 'backup', again], newRoot);
       // The copy's size, read only when the run made one: a refused run prints its own line below.
       const bytes = r.code === 0 ? statSync(again).size : 0;
       // (1) red when the copy is not one Realm's open accepts in a home of its own (it is then
-      //     refused, one Error line), or the first backup failed; (2) prints both runs.
-      expect({ first: first.code, r }).toEqual({
+      //     refused, one Error line), when the restore does not place it in a new home, or the first
+      //     backup failed; (2) prints the three runs.
+      expect({ first: first.code, restored, r }).toEqual({
         first: 0,
+        restored: {
+          code: 0,
+          stdout: `Restored [REDACTED]/.realm/realm.db from ${copy} (schema version 2). The home had no store file, so nothing was replaced.\n`,
+          stderr: '',
+        },
         r: {
           code: 0,
           stdout: `Backed up [REDACTED]/.realm/realm.db (schema version 2, ${bytes} bytes) to ${again}; the copy passes SQLite's quick check.\n`,
@@ -357,10 +359,10 @@ describe('#616 PR-2c c6 correction — the page says what the command does', () 
       PAGE,
       "The quick check judges the copy. A copy that passes was rebuilt from the pages SQLite could read. To look for damage in the store itself, run SQLite's quick check on the store file.",
     );
-    // Executed by this file's restore cell (a home that did not exist) and the store's cell 1.
+    // Executed by this file's restore cell (`realm db restore` into a home that did not exist).
     claim(
       PAGE,
-      'If the home folder does not exist, on a new machine for one, create it. Put the copy in place of `realm.db` in the home.',
+      '[`realm db restore <backup>`](#restore) puts the copy back: over the store file, over a store file that cannot be read as a store, and into a home with no store file, on a new machine for one.',
     );
   });
 

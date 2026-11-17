@@ -38,7 +38,7 @@ The quick check judges the copy. A copy that passes was rebuilt from the pages S
 
 ### Restoring a copy
 
-[`realm db restore <backup>`](#restore) puts the copy back in place of a store file Realm can open and copy. Into a home with no store file, or an empty one, or over a store file Realm cannot open or cannot copy, restoring is done by hand for now. Stop every Realm process that uses the home. If the home folder does not exist, on a new machine for one, create it. Put the copy in place of `realm.db` in the home. Then remove `realm.db-wal` and `realm.db-shm` from the home if they are there: a stale write-ahead log beside a restored file corrupts it. Realm then opens the store as it was when the copy was made.
+[`realm db restore <backup>`](#restore) puts the copy back: over the store file, over a store file that cannot be read as a store, and into a home with no store file, on a new machine for one. It refuses a store file that a newer Realm wrote, and one that Realm cannot open for another reason (a folder or a link where the file should be, a home on a network filesystem); its message says which.
 
 **Exit code:** 0 when the copy is made and passes the check. 1 when the command refuses, with one `Error:` line on standard error, nothing written at `<path>`, and in the home only what is said above:
 
@@ -55,7 +55,7 @@ These refusals have the code [`STATE_STORE_BACKUP_REFUSED`](../error-codes.md). 
 
 ## `migrate`
 
-`realm db migrate`, `realm db migrate --backup <path>` or `realm db migrate --no-backup`
+`realm db migrate`, `realm db migrate --backup <path>` or `realm db migrate --no-backup`; `realm db migrate --to <n>` to step back (below)
 
 Upgrades the store file to the schema version this Realm writes. Stop every Realm process that uses the home first: the command refuses to run a schema step while any other process has the store file open.
 
@@ -80,7 +80,7 @@ realm db migrate
 
 It prints one line per step:
 
-`Migrated <home>/realm.db from schema version <v> to <v+1>: <s> statement(s) ran, the schema matches version <v+1>'s, <e> evidence entries match their stored hashes.`
+`Migrated <home>/realm.db from schema version <v> to <v+1>: <s> statement(s) ran, the schema matches version <v+1>'s, <e> evidence entries match their stored hashes.` With exactly one evidence entry the last clause reads `1 evidence entry matches its stored hash.`
 
 or, when the file is already at this Realm's version:
 
@@ -97,11 +97,47 @@ When the record cannot be written, the command prints `Could not record this mig
 - both flags: `Cannot combine --backup with --no-backup. Use one or the other.` Nothing is opened.
 - the home has no store file: `There is no store file at <home>/realm.db to migrate.`; an empty one: `<home>/realm.db holds no store yet: there is nothing to migrate.` These have the code [`STATE_STORE_MIGRATE_REFUSED`](../error-codes.md); nothing is created or copied.
 - the store file cannot be opened (not a Realm store, damaged, written by a newer Realm, or older than any version this Realm can upgrade): the store's own message. Nothing is copied or migrated.
-- another process has the store file open while a step is pending, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open (a Realm agent, server, MCP server or command, or another program such as a SQLite browser). Stop it and run this again. Nothing was changed.`
+- another process has the store file open while a step is pending, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open: a Realm agent, server or command, an MCP server that an assistant or editor keeps running, or another program such as a SQLite browser. Stop it and run this again. Nothing was changed.`
 - with no flag, the backups folder cannot be made or written, [`STATE_STORE_MIGRATE_REFUSED`](../error-codes.md): `Cannot make the backups folder <folder>: <the system's reason>. Nothing was changed. Use --backup <path> to name another place, or --no-backup.`
 - the copy cannot be made, or fails the quick check: `realm db backup`'s refusals, above.
 - a step fails, [`STATE_STORE_MIGRATE_FAILED`](../error-codes.md): `The step from schema version <v> to <v+1> failed: <the reason>. <home>/realm.db is at schema version <v>; nothing of the step is in it. Run the command again once the cause is fixed.` When the file is found at a higher version after the failure, the step is in it: `The step from schema version <v> to <v+1> failed: <the reason>. <home>/realm.db is at schema version <n>: the step is in it. Run the command again to continue from there.` Either line ends, when a copy was made, with ` The backup made before the step is at <path>.`
 - another writer holds the store for longer than its wait during the re-stamp: the re-stamp line with the number of runs re-stamped so far, then `The store was busy for <s> s: another writer held it. Nothing was written. Try again.`
+
+### Stepping back: `--to <n>`
+
+`realm db migrate --to <n>` steps the store file back to schema version `<n>`, one version at a time, and keeps every run. It steps back only: to go forward, run `realm db migrate` without `--to`. Run it with the Realm that wrote the file, before you install the older Realm. Stop every Realm process that uses the home first. `--backup <path>` and `--no-backup` work as above.
+
+It works in this order:
+
+1. `<n>` must be a whole number that is a schema version this Realm knows; otherwise it refuses before it opens the store.
+2. When the file is already at `<n>`, it prints `<home>/realm.db is already at schema version <n>; no step to undo.`, exits 0 and changes nothing; a `--backup <path>` given with it is ignored. When the file is below `<n>`, it refuses.
+3. Every step from the file's version down to `<n>` must be one that can be undone. When one cannot, it refuses before any change.
+4. It makes sure that no other process has the store file open, as a forward migrate does, then reads the file's version again and judges the plan again.
+5. It makes the copy as a forward migrate does: with no flag, in the backups folder, named from the schema versions before and after, such as `realm-v2-to-v1-20261117T103918Z.db`.
+6. It runs each step back in its own transaction: the version's own statements, then a check that the file's schema is exactly the version below's, then the file's version moved. It prints one line per step. It re-checks no evidence and re-stamps no phase: a step back changes neither.
+7. It stops at the first step that fails. The file is then at the last version it completed.
+8. It records the step back in `migrations.jsonl`, as a forward migrate does: its `from_format` is above its `to_format`.
+9. It prints how to install a Realm that writes the version it reached.
+
+Each step prints:
+
+`Stepped <home>/realm.db back from schema version <v> to <v-1>: <s> statement(s) ran, the schema matches version <v-1>'s. <what the step dropped>`
+
+Version 2's step back drops the `outbound` table, where `realm agent` and `realm listen --send-reminders` record the Slack reminders and escalations they send: `The outbound table was dropped: the record of <k> reminder(s) and escalation(s) sent is no longer in the file.`, where `<k>` counts those recorded as sent, or, when it held none, `The outbound table was dropped; it held no record of a reminder or escalation sent.` Every run is kept.
+
+After the last step:
+
+``Every command of this Realm that uses the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, now refuses the file, because it is at schema version <n> and this Realm writes version <r>. To use it, install a Realm that writes schema version <n>: npm install -g "@sensigo/realm-cli@<range>" (in a project that lists Realm packages, give every one of them the same exact version within <range>; see "Upgrade every package together" in the upgrade guide).``
+
+`<range>` is `0.49` for schema version 1.
+
+**Exit code:** 0 when every step ran, or none was needed. 1 when the command refuses or a step fails, with one `Error:` line on standard error. Besides the refusals above (the store file cannot be opened, another process has it open, the backups folder or the copy):
+
+- `<n>` is not a schema version this Realm knows, [`STATE_STORE_MIGRATE_REFUSED`](../error-codes.md): `Cannot step back to <value>: give a whole number that is a schema version this Realm knows (<lowest> to <highest>).` Nothing is opened.
+- the file is below `<n>`: `The store file is at schema version <v>; --to steps back only. Run realm db migrate, without --to, to go forward.`
+- a step down to `<n>` cannot be undone: `The step from schema version <v> to <v-1> cannot be undone: <why>. Nothing was changed. To go back anyway, restore a backup made before the upgrade: realm db restore <backup> (the backups realm db migrate makes are in <backups folder>/).`
+- a file written by a newer Realm: the store's own message. Run `--to` with the Realm that wrote the file.
+- a step back fails, [`STATE_STORE_MIGRATE_FAILED`](../error-codes.md): `The step back from schema version <v> to <v-1> failed: <the reason>. <home>/realm.db is at schema version <v>; nothing of the step is in it. Run the command again once the cause is fixed.` When a copy was made, ` The backup made before the step is at <path>.` comes before `Run the command again`.
 
 ## `check`
 
@@ -174,7 +210,7 @@ It works in this order:
 
 1. It checks the backup before it opens the store file. It copies the backup into a private folder of its own in the system's temporary folder, readable by your account only, and checks the copy there: that it is a Realm store, that SQLite's quick check passes, and that this Realm reads its schema version. The backup itself is only read: a backup in a read-only folder can be restored, and nothing is created beside it.
 2. It puts a second copy of the checked backup in the home, as `.realm-restore-<pid>-<random>.db`, readable and writable by your account only (mode 600). A restore that was killed may leave one: it is a full copy of the backup, which you can delete when no restore is running.
-3. It makes sure that no other process has the store file open, and keeps it so until it is done. When one has it open, even an idle one, the command refuses and changes nothing. A Realm command started while the restore runs waits, then opens the restored file (or fails as busy after about 5 seconds). A program other than Realm (a SQLite browser, a script) that opens the store file while the restore runs may still write into the file it replaced and leave `realm.db-wal` and `realm.db-shm` beside the restored one: close such programs before you restore.
+3. It makes sure that no other process has the store file open, and keeps it so until it is done. When a Realm process has it open, even an idle one, the command refuses and changes nothing. (A program that only holds an empty store file open takes no lock, and is not seen.) A Realm command started while the restore runs waits, then opens the restored file (or fails as busy after about 5 seconds). A program other than Realm (a SQLite browser, a script) that opens the store file while the restore runs may still write into the file it replaced and leave `realm.db-wal` and `realm.db-shm` beside the restored one: close such programs before you restore.
 4. It keeps the file it replaces: [`realm db backup`](#backup) copies it into the backups folder beside the home, `~/.realm-backups/` for the home `~/.realm` (made owner-only when it is missing), as `realm-before-restore-<UTC time>.db`, and prints its line.
 5. It counts how the runs of the two files differ.
 6. It writes the store's write-ahead log into the store file, removes `realm.db-wal` and `realm.db-shm`, and renames the copy over `realm.db` in one step. A stale write-ahead log is never applied to the restored file.
@@ -187,23 +223,39 @@ It prints `realm db backup`'s line for the kept file, then:
 
 `Restored <home>/realm.db from <backup> (schema version <m>).`
 
-and then either `The file it replaced and the backup hold the same runs.` or `The file it replaced had <a> run(s) the backup lacks and <b> that differ; the backup has <c> it lacked (they are back). The replaced file is the copy above. Only runs are counted.`
+and then either `The file it replaced and the backup hold the same runs.` or `Left out of the restored file: <a> run(s) that only the replaced file had, and the replaced file's version of <b> run(s) that both files hold. Brought back: <c> run(s) that only the backup had. All of the replaced file is in the copy above. Only runs are counted.`
 
 The counts cover runs only. Not counted: the Slack reminders and escalations already sent, which are not restored and are sent again; `realm listen`'s duplicate-webhook marks; saved replays; refused answers. A run purged after the backup was made comes back, and the record of its purge is gone.
 
-When the backup is at an older schema version than this Realm writes, a last line says what comes next: ``This backup is at schema version <m> and this Realm writes version <r>. To use it with this Realm, run `realm db migrate`; to use it with an older Realm, install that Realm now.`` To go back to an older Realm, restore first with this Realm, then install the older one.
+When the backup is at an older schema version than this Realm writes, a last line says what comes next: ``This backup is at schema version <m> and this Realm writes version <r>. To use it with this Realm, run `realm db migrate`; to use it with an older Realm, install that Realm now.`` To go back to an older Realm, restore first with this Realm, then install the older one. A file that is already migrated can instead be stepped back without losing a run: `realm db migrate --to 1` (see [Going back without losing runs](../guides/upgrade.md#going-back-without-losing-runs)).
+
+Into a home with no store file, or an empty one, on a new machine for one, it prepares the home as the first command on a new home does, places the copy and keeps nothing:
+
+`Restored <home>/realm.db from <backup> (schema version <m>). The home had no store file, so nothing was replaced.`
+
+or, over an empty store file: `Restored <home>/realm.db from <backup> (schema version <m>). The store file was empty, so nothing was replaced.`
+
+It also recovers a damaged store file. When the store file cannot be read as a store (it is damaged, or it is not a Realm store), the command copies it as it was, byte for byte, into the backups folder as `realm-before-restore-<UTC time>-as-found.db`, with its write-ahead log as `realm-before-restore-<UTC time>-as-found.db-wal` when it has one, prints the line below, then restores the backup. Realm never deletes them. When the kept copy was made but fails SQLite's quick check, it stays under the kept name, unverified, and the file is then also copied as found, under its own names.
+
+`<home>/realm.db could not be read as a store, so it was copied as it was to <as-found file> (and its -wal beside it, if it had one). What was in it could not be counted.`
+
+When SQLite can read the file but it is not a Realm store, opening it may first write a write-ahead log that a killed process left beside it into the file, as any open of the store does: the as-found copy then holds those writes, and has no `-wal` of its own.
+
+When SQLite cannot read the file at all, it cannot say whether another process has it open. The command then looks for `realm.db-wal` and `realm.db-shm` beside it, before anything opens the file: when neither is there, it goes on, and prints on standard error `SQLite could not check whether another process has <home>/realm.db open (it cannot read the file as a database) and no -wal or -shm file is beside it.` When one is there, it refuses, and the file and both side files stay as they were (below).
 
 A backup made by copying a live `realm.db` without its `realm.db-wal` lacks the newest writes: make backups with `realm db backup`. To undo a restore, restore the kept file: `realm db restore ~/.realm-backups/realm-before-restore-<UTC time>.db`. The kept file's name holds the second it was made, so a second restore in the same second is refused by `realm db backup`'s rule, and changes nothing.
 
-**Exit code:** 0 when the backup is in place. 1 when the command refuses, with one `Error:` line on standard error. The refusals have the code [`STATE_STORE_RESTORE_REFUSED`](../error-codes.md) unless another is named:
+**Exit code:** 0 when the backup is in place. 1 when the command refuses, with one `Error:` line on standard error. "Nothing was changed" is about the store file: a refusal that comes after the store's open, in a home that does not have them yet, may leave Realm's four small read-only fence files in the home (`runs`, `dedup`, `replays` and `workflows`), as any open of the store does. The refusals have the code [`STATE_STORE_RESTORE_REFUSED`](../error-codes.md) unless another is named:
 
 - the backup is missing or cannot be read: `Cannot restore from <backup>: <the system's reason>. Nothing was changed.`; a symbolic link: `Cannot restore from <backup>: it is a symbolic link. Nothing was changed.`; a folder, or anything but a file: `Cannot restore from <backup>: it is not a file. Nothing was changed.`; an empty file: `Cannot restore from <backup>: it is empty: it holds no store. Nothing was changed.`
 - the backup is the store file, by any path: `Cannot restore from <backup>: it is the store file itself. Nothing was changed.`; one of its side files: `Cannot restore from <backup>: it is the store file's -wal file. Nothing was changed.` (or `-shm`).
 - the backup is not a Realm store, is damaged, or was written by a newer Realm: `Cannot restore from <backup>:` and the words of [`realm db check`](#check), then `Nothing was changed.`, such as `Cannot restore from <backup>: Written by a later version of Realm (schema version <n>; this version reads up to <m>). Nothing was changed.`
-- the home has no store file: `There is no store file at <home>/realm.db to restore over.`; an empty one: `<home>/realm.db holds no store yet: there is nothing to restore over.` Nothing is changed; put the backup in place by hand for now ([Restoring a copy](#restoring-a-copy)).
-- the store file cannot be opened (it is damaged, not a Realm store, or written by a newer Realm): the store's own message. Nothing is changed; over a damaged store file, put the backup in place by hand for now.
-- another process has the store file open, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open (a Realm agent, server, MCP server or command, or another program such as a SQLite browser). Stop it and run this again. Nothing was changed.`
-- the kept copy cannot be made, or fails SQLite's quick check (the store file may then be damaged): `realm db backup`'s refusal, with its code, then ` Nothing was replaced.` Over such a file, put the backup in place by hand for now ([Restoring a copy](#restoring-a-copy)).
+- the store file was written by a newer Realm, or Realm cannot open it for another reason (a folder or a link where the file should be, a home on a network filesystem): the store's own message. Nothing is changed.
+- SQLite cannot read the store file, and a side file is beside it: `<home>/realm.db cannot be read as a store, and a -wal or -shm file is beside it: another process may have it open, or a process that was killed left them. Stop every process that uses the home; if none is running, move <home>/realm.db and those files aside by hand, then run this again. Nothing was changed.`
+- the home has no store file, but a side file is there: `There is no store file at <home>/realm.db, but a -wal or -shm file is beside where it would be: they may hold the writes of a store file that was moved or deleted. Move them aside by hand, then run this again. Nothing was changed.`
+- a store file appeared in a home that had none while the restore ran: `realm.db appeared while the restore ran; nothing was replaced.`
+- another process has the store file open, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open: a Realm agent, server or command, an MCP server that an assistant or editor keeps running, or another program such as a SQLite browser. Stop it and run this again. Nothing was changed.`
+- the kept copy cannot be made for another reason than a store file SQLite cannot read (a full disk, a backups folder that cannot be written): `realm db backup`'s refusal, with its code, then ` Nothing was replaced.` A kept copy that SQLite cannot read the store file for, or that fails SQLite's quick check, takes the damaged-file path above instead.
 - another failure before the rename: `Cannot restore from <backup>: <the reason>. <home>/realm.db was not replaced.`, then ` A copy of it is at <kept file>.` when the kept copy was made. After the rename, when the folder cannot be flushed: `Cannot restore from <backup>: <the reason>. <home>/realm.db was replaced.`
 
 ## See also

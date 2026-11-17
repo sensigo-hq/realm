@@ -147,7 +147,7 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
   {
     page: 'CHANGELOG.md',
     words:
-      "**A reply that ran a chain after your step says your step was recorded.** `execute_step`, `start_run` and `executeChain` keep `status`, `errors`, `error_code`, `agent_action` and `stopped_step` as before, and add `own_act` (`EngineReply`, beta): the called step, or the run's creation, was recorded, and the reply's text opens with it. `realm agent` prints the agent step's own ✓ and the chained steps' `→ [auto]` lines, and `realm workflow run` the agent step's own ✓, after its chain. `executeChain` takes `advanceRun`'s step callbacks. (#625)",
+      "**A reply that ran a chain after your step says your step was recorded.** `execute_step`, `start_run` and `executeChain` keep `status`, `errors`, `error_code`, `agent_action` and `stopped_step` as before, and add `own_act` (`EngineReply`, beta): the called step, or the run's creation, was recorded, and the reply's text opens with it. `realm agent` prints the agent step's own ✓ and the chained steps' `→ [auto]` lines, and `realm workflow run` the agent step's own ✓, after its chain. `executeChain` takes `advanceRun`'s step callbacks (`ExecuteChainOptions`). (#625)",
     cells: [CHECK_1, CHECK_7, AGENT_GATE, RUN_HASH, CHECK_2],
   },
 ];

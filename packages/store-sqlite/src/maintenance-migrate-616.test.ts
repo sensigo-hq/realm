@@ -170,8 +170,15 @@ function recorder(): { seen: string[]; progress: (event: MigrateProgress) => voi
     } else if (event.kind === 'restamped') {
       seen.push(`restamped ${event.runs}`);
     } else {
-      // #616 R1: a migrate that ran a step records it (or warns that it could not).
-      seen.push(event.kind === 'recorded' ? 'recorded' : `unrecorded: ${event.reason}`);
+      // #616 R1: a migrate that ran a step records it (or warns that it could not). #616 R2: the step
+      // back's own events (none here) are named by their kind.
+      seen.push(
+        event.kind === 'unrecorded'
+          ? `unrecorded: ${event.reason}`
+          : event.kind === 'recorded'
+            ? 'recorded'
+            : event.kind,
+      );
     }
   };
   return { seen, progress };
@@ -414,8 +421,9 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
         failed: {
           code: 'STATE_STORE_IN_USE',
           message:
-            `Another process has ${file} open (a Realm agent, server, MCP server or command, or ` +
-            'another program such as a SQLite browser). Stop it and run this again. Nothing was changed.',
+            `Another process has ${file} open: a Realm agent, server or command, an MCP server that ` +
+            'an assistant or editor keeps running, or another program such as a SQLite browser. ' +
+            'Stop it and run this again. Nothing was changed.',
           details: { path: file },
         },
         file: 1,

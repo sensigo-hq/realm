@@ -245,9 +245,12 @@ function createDatabaseFile(path: string): boolean {
  * opens the connection. With `check` (the maintenance entry opened for `'check'`, #616 PR-2c c8a1,
  * c8a3) it only looks: whether the folder can be searched, and the old-store guard, their refusals
  * unchanged; it makes no folder, no fence and no file, and leaves the folder's writability to the
- * check, which reports it ({@link homeIsWritable}).
+ * check, which reports it ({@link homeIsWritable}). With `'no-file'` (#616 R1c: `realm db restore`
+ * into a home with no store file) it prepares the home as the open does and returns before the file
+ * is created: the restore places its own file there.
  */
-export function prepareHome(home: string, check = false): string {
+export function prepareHome(home: string, how: 'open' | 'check' | 'no-file' = 'open'): string {
+  const check = how === 'check';
   writing(home, () => {
     if (!check) mkdirSync(home, { recursive: true });
     // The check asks only the search half (c8a3 correction 1): the write half is its finding.
@@ -259,6 +262,7 @@ export function prepareHome(home: string, check = false): string {
   // #616 PR-2c c8a1: the check looks and makes nothing — no folder, no fence, no file.
   if (check) return database;
   for (const f of found) if (f.is === 'absent') placeFence(home, f.name);
+  if (how === 'no-file') return database;
   writing(database, () => createDatabaseFile(database));
   return database;
 }
