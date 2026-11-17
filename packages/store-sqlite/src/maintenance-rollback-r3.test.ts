@@ -10,7 +10,15 @@
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -417,6 +425,35 @@ describe('#616 R3 — rollback: the file moved before the hold, or since the rec
       },
       seen: [],
       after: before,
+    });
+  });
+});
+
+describe('#616 R3 — rollback: a record line with more fields than the six', () => {
+  it('a line that carries an extra field is used: the file steps back to its from_format', async () => {
+    const { home, file, folder } = nestedHome();
+    await storeAt(home, 1);
+    await migrateForward(home, {}, false);
+    // A later Realm may add a field to the line: the six are there, of the right types.
+    const path = join(folder, 'migrations.jsonl');
+    const [line] = recordLines(folder);
+    writeFileSync(path, `${JSON.stringify({ ...line, reason: 'a field a later Realm adds' })}\n`);
+    const r = recorder();
+    const m = await maintain(home);
+    const report = await m.rollback({ progress: r.progress });
+    m.close();
+    // (1) red when a line is valid only with exactly six fields (the rollback refuses: no record);
+    //     (2) prints the events, the version and the record's lines.
+    expect({
+      seen: r.seen,
+      version: versionOf(file),
+      to: report.schemaVersion,
+      last: recordLines(folder).at(-1)?.['to_format'],
+    }).toEqual({
+      seen: ['rolling back 1 to 2', 'backup', 'back 2 to 1', 'recorded', 'install'],
+      version: 1,
+      to: 1,
+      last: 1,
     });
   });
 });
