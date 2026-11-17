@@ -84,6 +84,8 @@ function nextLines(
   snap: Snapshot,
   registry: ExtensionRegistry,
   hasCode: boolean,
+  // #922: whether the store keeps claims (a held step's reclaim way is offered only then).
+  persistsClaims: boolean,
 ): string[] {
   const { record: run, at: now } = snap;
   const pending = describePending(workflow, snap, registry);
@@ -91,6 +93,7 @@ function nextLines(
   const ways = composeWaysAt(run, now, {
     definition: workflow,
     registry,
+    persistsClaims,
     lease_facts: snap.lease_facts,
   });
   // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
@@ -383,7 +386,14 @@ export async function respondToGate(
           ? [
               notRecordedLine(runId, late),
               // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
-              ...nextLines(runId, workflow, judged, effectiveRegistry, hasCode),
+              ...nextLines(
+                runId,
+                workflow,
+                judged,
+                effectiveRegistry,
+                hasCode,
+                runStore.persistsClaims === true,
+              ),
             ]
           : []),
       ];
@@ -436,7 +446,14 @@ export async function respondToGate(
       // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
       lastLine: [
         notRecordedLine(runId, late),
-        ...nextLines(runId, workflow, judged, effectiveRegistry, hasCode),
+        ...nextLines(
+          runId,
+          workflow,
+          judged,
+          effectiveRegistry,
+          hasCode,
+          runStore.persistsClaims === true,
+        ),
       ].join('\n'),
     };
   }
@@ -450,9 +467,17 @@ export async function respondToGate(
       newState: deriveRunPhase(updatedRun),
       recorded: false,
       lines,
-      lastLine: [beaten, ...nextLines(runId, workflow, judged, effectiveRegistry, hasCode)].join(
-        '\n',
-      ),
+      lastLine: [
+        beaten,
+        ...nextLines(
+          runId,
+          workflow,
+          judged,
+          effectiveRegistry,
+          hasCode,
+          runStore.persistsClaims === true,
+        ),
+      ].join('\n'),
     };
   }
   // issue #625 PR-2a (decision C11): the answerer the record holds — read after the call, for the
@@ -474,7 +499,14 @@ export async function respondToGate(
     lines,
     lastLine: [
       `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${writerCtx().word(phase, RUN_PHASE_WORDS)}'`,
-      ...nextLines(runId, workflow, judged, effectiveRegistry, hasCode),
+      ...nextLines(
+        runId,
+        workflow,
+        judged,
+        effectiveRegistry,
+        hasCode,
+        runStore.persistsClaims === true,
+      ),
     ].join('\n'),
   };
 }

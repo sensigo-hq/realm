@@ -58,6 +58,7 @@ Where the docs teach it: [Handlers](../handlers.md), [Project extensions](../pro
 | [`InspectWay`](#inspectway) | type | Read the run's record. |
 | [`PresentWay`](#presentway) | type | Show the open question again, as a form in the agent's own call: the MCP door's `present_question`. |
 | [`QuoteState`](#quotestate) | type | How a quote was found in its source: whole, reformatted, stitched from parts in order or out of order, or not found; `unquoted` is for a value given with no quote. |
+| [`ReclaimWay`](#reclaimway) | type | Free a held step so it can run again: a person's act, never an agent's. |
 | [`RegisterWay`](#registerway) | type | Register the run's workflow again. |
 | [`RespondWay`](#respondway) | type | Answer the run's open question. |
 | [`RunStepWay`](#runstepway) | type | Run one step: an agent step's answer, or an engine step's input given by the operator. |
@@ -846,6 +847,15 @@ type Cond = {
 } | {
     code: 'client_prompt';
     tag: CondTag;
+} | {
+    code: 'claim_deadline_ahead';
+    deadline: string;
+} | {
+    code: 'override_claim_unknown_age';
+    state: 'unknown_age' | 'unreadable' | 'no_claim_record';
+} | {
+    code: 'rerun_not_idempotent';
+    basis: 'not_declared' | 'definition_absent';
 };
 ```
 
@@ -918,6 +928,22 @@ order, or not found; `unquoted` is for a value given with no quote.
 
 ```ts
 type QuoteState = (typeof QUOTE_STATES)[number];
+```
+
+### ReclaimWay
+
+type · public
+
+Free a held step so it can run again: a person's act, never an agent's. Its conditions say what
+holds, each discharged by `force`; `claimed_at` is the claim's stamp, present exactly when the claim
+carries one, so the act applies only to the claim it was shown (#922).
+
+```ts
+type ReclaimWay = Base<'reclaim'> & {
+    run_id: string;
+    step: string;
+    claimed_at?: string;
+};
 ```
 
 ### RegisterWay
@@ -1052,7 +1078,7 @@ type · public
 One act a party can take on a run, told apart by its `verb`.
 
 ```ts
-type WayOn = RespondWay | RunStepWay | AdvanceWay | InspectWay | AbandonWay | RegisterWay | PresentWay;
+type WayOn = RespondWay | RunStepWay | AdvanceWay | InspectWay | AbandonWay | RegisterWay | PresentWay | ReclaimWay;
 ```
 
 ### WayVerb
@@ -1192,7 +1218,8 @@ const WAY_VERBS: readonly [
     "inspect",
     "abandon",
     "register",
-    "present"
+    "present",
+    "reclaim"
 ];
 ```
 
