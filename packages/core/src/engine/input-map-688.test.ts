@@ -76,9 +76,11 @@ const SHAPE_B = def({
  * and whether a new run with other params can change what the schema checks (`no_remedy` `start`).
  */
 function wayOut(run: RunRecord, d: WorkflowDefinition, registry: ExtensionRegistry, step: string) {
-  const entry = composeWaysAt(run, new Date(), { definition: d, registry }).unavailable.find(
-    (u) => u.verb === 'run_step' && u.step === step,
-  );
+  const entry = composeWaysAt(run, new Date(), {
+    persistsClaims: false,
+    definition: d,
+    registry,
+  }).unavailable.find((u) => u.verb === 'run_step' && u.step === step);
   return {
     code: entry?.code,
     check: entry?.code === 'refused_before_claim' ? entry.facts.check : undefined,

@@ -274,6 +274,7 @@ export const resumeCommand = new Command('resume')
         // C33), for both the owed line and the cannot-go-on lines.
         const composed = composeWaysAt(resumed, resumedAt, {
           definition: wf,
+          persistsClaims: runStore.persistsClaims === true,
           lease_facts: written.lease_facts,
         });
         // issue #923 (C33): resume loads no project code, so the code an owed step needs is a

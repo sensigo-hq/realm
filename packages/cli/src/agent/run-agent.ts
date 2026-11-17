@@ -1388,6 +1388,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // composer, no registry read (an observer), as before.
             const stepWays = composeWaysAt(currentRun, currentAt!, {
               definition,
+              persistsClaims: deps.store.persistsClaims === true,
               lease_facts: currentSnap.lease_facts,
               // The filter-mask fix (B2): the prompt bound for the model masks each value before
               // its filters, with the agent set the provider edge masks with (tier `all`).

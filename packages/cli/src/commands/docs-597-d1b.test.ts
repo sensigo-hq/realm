@@ -16,8 +16,8 @@ const read = (page: string): string => readFileSync(join(ROOT, page), 'utf8');
 function claim(page: string, sentence: string): void {
   expect(flat(read(page)), `${page} no longer says: ${sentence}`).toContain(flat(sentence));
 }
-/** The CHANGELOG's sections above [0.49.0]: `[Unreleased]` while a cycle is open, then the releases
- *  (the 0.50.0 release's helper — a pin that read one section went red when the next cycle opened). */
+/** The CHANGELOG's sections above `[0.49.0]` (an open `[Unreleased]`, then 0.50.0), so the pins hold
+ *  across a release and a new cycle (test-support/changelog.ts). */
 function unreleased(): string {
   return changelogAbove(read('CHANGELOG.md'), '0.49.0');
 }

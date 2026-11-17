@@ -238,6 +238,9 @@ function keyOf(way: WayOn): string {
       return `run_step:${way.step}:${way.brief.execution}`;
     case 'register':
       return `register:${way.workflow_id}`;
+    // #922: one reclaim way per held step.
+    case 'reclaim':
+      return `reclaim:${way.step}`;
     default:
       return way.verb;
   }
@@ -260,6 +263,7 @@ function listedKeysOf(entry: Unavailable): string[] {
   if (entry.verb === 'run_step' && entry.step !== undefined) {
     return [`run_step:${entry.step}:agent`, `run_step:${entry.step}:auto`];
   }
+  if (entry.verb === 'reclaim' && entry.step !== undefined) return [`reclaim:${entry.step}`];
   return [entry.verb];
 }
 
@@ -274,6 +278,8 @@ function exempt(entry: Unavailable): boolean {
   return (
     entry.code === 'door_cannot_enact' ||
     entry.code === 'enactor_load_failed' ||
+    // #922 (Amendment 15's list): it names why no reclaim exists.
+    entry.code === 'store_keeps_no_claims' ||
     (entry.code === 'not_a_step' && entry.remedy.length === 0)
   );
 }
@@ -397,7 +403,7 @@ describe('#729 PR-0 â€” S7: one law per UnavailableCode (rule 19), Amendment 15â
     store = await newStore();
   });
 
-  it('the code list is exactly the 21 PR-0 produces and the 4 #627 W produces, each tagged (Amendment 8: none reserved)', () => {
+  it('the code list is exactly the 21 PR-0 produces, the 4 #627 W produces and the 4 #922 produces, each tagged (Amendment 8: none reserved)', () => {
     // (a) red when a code is added without its cell or one is removed; (b) prints the list.
     expect(Object.keys(UNAVAILABLE_CODES).sort()).toEqual(
       [
@@ -406,6 +412,11 @@ describe('#729 PR-0 â€” S7: one law per UnavailableCode (rule 19), Amendment 15â
         'door_withholds_answers',
         'form_open',
         'no_form_here',
+        // #922: the reclaim judge's own codes.
+        'not_held',
+        'store_keeps_no_claims',
+        'fence_required',
+        'claim_changed',
         'argument_out_of_contract',
         'capability_missing',
         'claim_removed',
@@ -700,7 +711,9 @@ describe('#729 PR-0 â€” S7: one law per UnavailableCode (rule 19), Amendment 15â
     // (b) prints the facts' deadline and the cause.
     expect(entry.code === 'held_elsewhere' ? entry.facts.deadline : undefined).toBe(deadline);
     expect(entry.clears_at).toBe(deadline);
-    expect(entry.no_remedy).toEqual({ cause: 'another_program_holds_it' });
+    // #922: on a store that keeps claims, the held step's remedy is its reclaim way.
+    expect(entry.no_remedy).toBeUndefined();
+    expect(entry.remedy.map(keyOf)).toEqual(['reclaim:a']);
     expect(UNAVAILABLE_CODES.held_elsewhere.tag).toBe('snapshot');
     expectLaws(entry, composed);
     const unknown = { ...BASE, in_progress_steps: ['a'] } as RunRecord;
@@ -713,13 +726,12 @@ describe('#729 PR-0 â€” S7: one law per UnavailableCode (rule 19), Amendment 15â
     expectLaws(unknownEntry, unknownComposed);
     // advance, refused for the same step; and the step by name.
     const advance = listedOf(unknownComposed, 'held_elsewhere', 'advance');
-    expect(advance.no_remedy).toEqual({ cause: 'another_program_holds_it' });
+    expect(advance.no_remedy).toBeUndefined();
+    expect(advance.remedy.map(keyOf)).toEqual(['reclaim:a']);
     expectLaws(advance, unknownComposed);
     const byName = refusalOf('run_step', unknown, ctxOf(W), { run_id: 'r', command: 'a' });
-    expect(`${byName.code}:${byName.no_remedy?.cause}`).toBe(
-      'held_elsewhere:another_program_holds_it',
-    );
-    expect(byName.remedy).toEqual([]);
+    expect(`${byName.code}:${byName.no_remedy?.cause}`).toBe('held_elsewhere:undefined');
+    expect(byName.remedy.map(keyOf)).toEqual(['reclaim:a']);
     expectLaws(byName, unknownComposed);
   });
 
@@ -748,9 +760,9 @@ describe('#729 PR-0 â€” S7: one law per UnavailableCode (rule 19), Amendment 15â
     // `b`, its dependency `a` held elsewhere: `a`'s entry's act.
     const held = { ...BASE, in_progress_steps: ['a'] } as RunRecord;
     const waiting = refusalOf('run_step', held, ctxOf(W), { run_id: 'r', command: 'b' });
-    expect(`${waiting.code}:${waiting.no_remedy?.cause}`).toBe(
-      'deps_unsettled:another_program_holds_it',
-    );
+    // #922: `a`'s entry's act is its reclaim way.
+    expect(`${waiting.code}:${waiting.no_remedy?.cause}`).toBe('deps_unsettled:undefined');
+    expect(waiting.remedy.map(keyOf)).toEqual(['reclaim:a']);
     expectLaws(waiting, compose(held, ctxOf(W)));
     // `x`, its dependency `b` owed to the engine: [advance].
     const owed = { ...BASE, completed_steps: ['a'] } as RunRecord;
@@ -876,9 +888,12 @@ describe('#729 PR-0 â€” S7: one law per UnavailableCode (rule 19), Amendment 15â
     const observed = compose(record, ctxOf(HANDLED));
     const advance = observed.ways.find((w) => w.verb === 'advance');
     // #627 W: `Cond` gained the client-tagged `client_prompt`, which has no basis.
-    expect(advance?.conditions.map((c) => `${c.code}:${'basis' in c ? c.basis : c.tag}`)).toEqual([
-      'enactor_has:unjudged',
-    ]);
+    // #922: a reclaim's conditions carry neither (their `basis` is the rerun's own).
+    expect(
+      advance?.conditions.map(
+        (c) => `${c.code}:${'basis' in c ? c.basis : 'tag' in c ? c.tag : ''}`,
+      ),
+    ).toEqual(['enactor_has:unjudged']);
   });
 
   it('step_engine_decided (snapshot) + NoRemedy engine_runs_it_when_owed: a guard or cleanup step called by name â€” [advance] when owed, else the engine runs it when owed', () => {
@@ -1087,6 +1102,13 @@ async function curatedStates(): Promise<State[]> {
       } as unknown as RunRecord,
       ctxOf(W),
     ),
+    // #922: on a store that keeps no claims no reclaim is offered, and store_keeps_no_claims says why.
+    s(
+      'held, a store that keeps no claims',
+      W,
+      held,
+      ctxOf(W, { store: { persistsClaims: false } }),
+    ),
     s('a completed (b owed)', W, { ...BASE, completed_steps: ['a'] } as RunRecord, ctxOf(W)),
     s(
       'a, b completed (x owed)',
@@ -1168,6 +1190,16 @@ function candidates(state: State): [WayOn['verb'], Record<string, unknown>][] {
     if (entry.outcome === 'gate' && typeof entry.token === 'string') gates.add(entry.token);
   }
   const steps = [...Object.keys(state.definition?.steps ?? {}), 'zz'];
+  // #922: a reclaim of every step a caller could name and every step in progress â€” with no stamp, the
+  // claim's own stamp, and one that is not the claim's.
+  const reclaims = [...new Set([...steps, ...state.record.in_progress_steps])].flatMap((step) => {
+    const since = state.record.claims?.[step]?.since;
+    const stamps = [undefined, ...(since !== undefined ? [since] : []), '1999-01-01T00:00:00.000Z'];
+    return stamps.map((stamp): [WayOn['verb'], Record<string, unknown>] => [
+      'reclaim',
+      { run_id: runId, step, force: true, ...(stamp !== undefined ? { claimed_at: stamp } : {}) },
+    ]);
+  });
   return [
     ...[...gates].map((gate): [WayOn['verb'], Record<string, unknown>] => [
       'respond',
@@ -1180,6 +1212,7 @@ function candidates(state: State): [WayOn['verb'], Record<string, unknown>][] {
     ['advance', { run_id: runId }],
     ['abandon', { run_id: runId }],
     ['inspect', { run_id: runId }],
+    ...reclaims,
   ];
 }
 
@@ -1218,6 +1251,10 @@ describe('#729 PR-0 â€” the laws over curated run states', () => {
           if (state.definition?.steps[step]?.execution === 'agent') {
             admitted.push(`run_step:${step}:agent`);
           } else autoByName.push(step);
+        } else if (verb === 'reclaim') {
+          // #922: one key per step, whichever stamps it was admitted with
+          const key = `reclaim:${String(input['step'])}`;
+          if (!admitted.includes(key)) admitted.push(key);
         } else admitted.push(verb);
       }
       const offered = composed.ways
@@ -1692,6 +1729,14 @@ describe('CP-1 word lists â€” withLibraryWords: a program words the verbs it wan
     abandon: { verb: 'abandon', conditions: [], run_id: 'r1' },
     register: { verb: 'register', conditions: [], workflow_id: 'wf', path: 'wf.yaml' },
     present: { verb: 'present', conditions: [], run_id: 'r1', gate_id: 'g1' },
+    // #922: the verb the word list gained (a type keyed by the list gains the member with it).
+    reclaim: {
+      verb: 'reclaim',
+      conditions: [],
+      run_id: 'r1',
+      step: 'draft',
+      claimed_at: '2026-11-17T00:00:00.000Z',
+    },
   };
   type AnyEntry = (way: WayOn, basis: undefined, host: object) => string | null;
   /** Each verb's words from `renderer`, or `(no function)` where it has none for the verb. */

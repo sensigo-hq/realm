@@ -1215,6 +1215,13 @@ interface FactsByCode {
         step: string;
         deadline: string | {
             absent: 'unknown_age';
+        } | {
+            absent: 'unparseable_stamp';
+        };
+        claimed_at: string | {
+            absent: 'no_claim_record';
+        } | {
+            absent: 'not_stamped';
         };
         lease?: LeaseFact;
     };
@@ -1267,6 +1274,21 @@ interface FactsByCode {
     };
     argument_out_of_contract: {
         arg: string;
+    };
+    not_held: {
+        step: string;
+    };
+    store_keeps_no_claims: {
+        step: string;
+    };
+    fence_required: {
+        step: string;
+        current_claimed_at: string;
+    };
+    claim_changed: {
+        step: string;
+        offered_claimed_at: string;
+        current_claimed_at: FactsOf<'held_elsewhere'>['claimed_at'];
     };
     door_cannot_enact: {
         door: string;
@@ -2285,7 +2307,8 @@ const UNAVAILABLE_CODES: {
             "run_step",
             "advance",
             "abandon",
-            "present"
+            "present",
+            "reclaim"
         ];
     };
     readonly question_settled: {
@@ -2320,7 +2343,8 @@ const UNAVAILABLE_CODES: {
     readonly not_a_step: {
         readonly tag: "input";
         readonly verbs: readonly [
-            "run_step"
+            "run_step",
+            "reclaim"
         ];
     };
     readonly step_settled: {
@@ -2340,7 +2364,8 @@ const UNAVAILABLE_CODES: {
     readonly gated_step: {
         readonly tag: "snapshot";
         readonly verbs: readonly [
-            "run_step"
+            "run_step",
+            "reclaim"
         ];
     };
     readonly held_elsewhere: {
@@ -2420,7 +2445,32 @@ const UNAVAILABLE_CODES: {
             "advance",
             "inspect",
             "abandon",
-            "present"
+            "present",
+            "reclaim"
+        ];
+    };
+    readonly not_held: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly store_keeps_no_claims: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly fence_required: {
+        readonly tag: "input";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly claim_changed: {
+        readonly tag: "write";
+        readonly verbs: readonly [
+            "reclaim"
         ];
     };
     readonly door_cannot_enact: {
@@ -2432,7 +2482,8 @@ const UNAVAILABLE_CODES: {
             "inspect",
             "abandon",
             "register",
-            "present"
+            "present",
+            "reclaim"
         ];
     };
     readonly no_form_here: {
@@ -2614,6 +2665,7 @@ Names this job reaches whose entry is on another page.
 - [`PurgedItem`](implement-a-store.md#purgeditem): A deleted run's tombstone, as a scan with `include_purged` gives it.
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`RateLimiter`](write-a-handler.md#ratelimiter): Controls the rate at which requests are sent to an external service.
+- [`ReclaimWay`](write-a-handler.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
 - [`ReconcileSummary`](implement-a-store.md#reconcilesummary): Summary returned by `JsonFileStore.reconcileKeys`.
 - [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
 - [`RegistryListing`](implement-a-store.md#registrylisting): What a registrar's diagnostic listing returns (`WorkflowRegistrar.listWithDiagnostics`).

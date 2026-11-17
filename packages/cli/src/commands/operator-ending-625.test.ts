@@ -177,6 +177,7 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
       abandoned_at: undefined,
     } as unknown as RunRecord;
     const ways = {
+      persistsClaims: false,
       pending: describePending(TWO, writtenSnapshot(run, new Date()), undefined),
       workflow: TWO,
     };

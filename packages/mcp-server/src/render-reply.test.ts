@@ -55,7 +55,11 @@ const nextSentenceOf = (
   registry?: ExtensionRegistry,
 ): string =>
   renderWaysOf(
-    composeWaysAt(run, new Date(), { definition, ...(registry !== undefined ? { registry } : {}) }),
+    composeWaysAt(run, new Date(), {
+      persistsClaims: false,
+      definition,
+      ...(registry !== undefined ? { registry } : {}),
+    }),
     {},
   ).next_sentence;
 
@@ -262,6 +266,7 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
   it('C37: the act agrees with the count — the step / it, the steps / them', () => {
     const two = renderWaysOf(
       composeWaysAt(openRun(), new Date(), {
+        persistsClaims: false,
         definition: def({
           a: { description: 'A', execution: 'auto', depends_on: [] },
           b: { description: 'B', execution: 'auto', depends_on: [] },
@@ -274,6 +279,7 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
     );
     const one = renderWaysOf(
       composeWaysAt(openRun(), new Date(), {
+        persistsClaims: false,
         definition: def({ a: { description: 'A', execution: 'auto', depends_on: [] } }),
       }),
       {},
@@ -482,8 +488,10 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
           workflowVersion: 1,
           params: {},
         });
-        const action = renderWaysOf(composeWaysAt(run, new Date(), { definition: def }), {})
-          .next_actions[0]!;
+        const action = renderWaysOf(
+          composeWaysAt(run, new Date(), { persistsClaims: false, definition: def }),
+          {},
+        ).next_actions[0]!;
         expect(action.instruction!.tool).toBe('execute_step');
         expect(Object.keys(action)).not.toContain('expected_timeout');
         expect(JSON.stringify(action)).not.toContain('60s');
@@ -516,8 +524,10 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
         });
         // issue #625 PR-2a (decision C5): an auto step is never its own next action — its handler is
         // no tool a client can call; the one act is `advance_run`.
-        const action = renderWaysOf(composeWaysAt(run, new Date(), { definition: def }), {})
-          .next_actions[0]!;
+        const action = renderWaysOf(
+          composeWaysAt(run, new Date(), { persistsClaims: false, definition: def }),
+          {},
+        ).next_actions[0]!;
         expect(action.instruction!.tool).toBe('advance_run');
         expect(Object.keys(action)).not.toContain('expected_timeout');
         expect(JSON.stringify(action)).not.toContain('60s');
@@ -547,7 +557,7 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
         });
 
         const actions = renderWaysOf(
-          composeWaysAt(run, new Date(), { definition: agentStepDef }),
+          composeWaysAt(run, new Date(), { persistsClaims: false, definition: agentStepDef }),
           {},
         ).next_actions;
         expect(actions).toHaveLength(1);
@@ -597,7 +607,7 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
 
         // issue #625 PR-2a: an auto step is never its own next action — the one act runs it
         const actions = renderWaysOf(
-          composeWaysAt(run, new Date(), { definition: autoStepDef }),
+          composeWaysAt(run, new Date(), { persistsClaims: false, definition: autoStepDef }),
           {},
         ).next_actions;
         expect(actions).toHaveLength(1);
