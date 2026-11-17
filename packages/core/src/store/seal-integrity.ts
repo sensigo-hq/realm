@@ -18,7 +18,8 @@ import { WorkflowError } from '../types/workflow-error.js';
 import { armToPhase, classifyForCoherence } from '../engine/eligibility.js';
 
 /**
- * The four seal-integrity clauses plus the `SEAL_COHERENT` check (issue #367, design rev 3 §6-L2).
+ * Checks a store write against the four seal-integrity clauses and `SEAL_COHERENT`, throwing on a
+ * violation.
  * Call from every store write tail that persists `next` over `stored`. Throws on violation;
  * returns on every honest write — including the entire pre-#367 legacy population within a
  * single-version fleet (the mixed-fleet caveat is a named residual, not a solved case).

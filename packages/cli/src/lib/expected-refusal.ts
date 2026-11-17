@@ -7,8 +7,8 @@
 // (i): HOME empty or not an absolute path, or no home at all); the refusals of `realm db backup`
 // (#616 PR-2c c6) — its own two and those of the store's open that its maintenance entry can meet —
 // of `realm db migrate` (c7): its own two, and the store busy beyond its budget, which every
-// command that meets it now prints as one line too; and of `realm db check` (c8a2): its one, and
-// its `--project` refusals (the filter-mask fix, PR 2).
+// command that meets it now prints as one line too; of `realm db check` (c8a2): its one, and
+// its `--project` refusals (the filter-mask fix, PR 2); and of `realm db restore` (#616 R1b): its one.
 // Every other error keeps escaping loud, a `WorkflowError` included — "bugs stay loud" (`validate.ts`,
 // #123); the writer's fatal handler prints those with their stack. The code is read from the error's
 // fields, never by `instanceof`: the CLI and the library it loads can be separate copies.
@@ -26,6 +26,13 @@ const EXPECTED_CODES: ReadonlySet<string> = new Set([
   'STATE_STORE_MIGRATE_REFUSED',
   // `realm db migrate`: a schema step failed; the line names the version the file is at.
   'STATE_STORE_MIGRATE_FAILED',
+  // `realm db migrate` (R1): a step is pending and another process has the store file open; and
+  // `realm db restore` (R1b): another process has it open.
+  'STATE_STORE_IN_USE',
+  // `realm db restore` (#616 R1b): the backup is not a file, is the store file, is not a store, is
+  // damaged or newer; side files beside a store file it cannot read; a failure of the restore, whose
+  // line says whether the store file was replaced.
+  'STATE_STORE_RESTORE_REFUSED',
   // `realm db check`: a home with no store file, or an empty one; with `--project`, a folder with no
   // realm.yaml, a realm.yaml that cannot be read or is invalid, or a secret it names that cannot be
   // resolved (the resolver's message, which names each `${secret:NAME}` and no value).

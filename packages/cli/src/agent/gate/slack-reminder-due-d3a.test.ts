@@ -20,6 +20,7 @@ import {
   type PendingGate,
   type RunRecord,
 } from '@sensigo/realm';
+import { changelogAbove } from '../../test-support/changelog.js';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
   composeReminderPost,
@@ -752,8 +753,7 @@ describe('#597 D3a — the words', () => {
   const claim = (page: string, sentence: string): void =>
     expect(flat(read(page)), `${page} no longer says: ${sentence}`).toContain(flat(sentence));
   const unreleased = (): string => {
-    const text = read('CHANGELOG.md');
-    return text.slice(text.indexOf('## [Unreleased]'), text.indexOf('\n## [0.49.0]'));
+    return changelogAbove(read('CHANGELOG.md'), '0.49.0');
   };
 
   it('slack-gates.md and deployment-manifest.md: counted from the post; the not-listening reminder', () => {

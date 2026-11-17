@@ -155,18 +155,30 @@ function versionOf(file: string): number {
  * Each event `migrate` reports, as a line of what was true WHEN it fired: a step with the version the
  * store file is at by then, the backup with the version its copy is at.
  */
-function recorder(file: string): { seen: string[]; progress: (event: MigrateProgress) => void } {
+function recorder(): { seen: string[]; progress: (event: MigrateProgress) => void } {
   const seen: string[] = [];
   const progress = (event: MigrateProgress): void => {
     if (event.kind === 'backup') {
       seen.push(`backup at version ${versionOf(event.report.path)}`);
     } else if (event.kind === 'step') {
       const { from, to } = event.report;
-      seen.push(`step ${from} to ${to}, the file at ${versionOf(file)}`);
+      // #616 R1: no other connection can read the file while the migrate holds it, so a step's
+      // event is its own report; the file's version is read after the migrate.
+      seen.push(`step ${from} to ${to}`);
     } else if (event.kind === 'current') {
       seen.push(`already at ${event.schemaVersion}`);
-    } else {
+    } else if (event.kind === 'restamped') {
       seen.push(`restamped ${event.runs}`);
+    } else {
+      // #616 R1: a migrate that ran a step records it (or warns that it could not). #616 R2: the step
+      // back's own events (none here) are named by their kind.
+      seen.push(
+        event.kind === 'unrecorded'
+          ? `unrecorded: ${event.reason}`
+          : event.kind === 'recorded'
+            ? 'recorded'
+            : event.kind,
+      );
     }
   };
   return { seen, progress };
@@ -257,17 +269,17 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     const seams = { schemaVersion: 3, versions: ladder() };
     const m = await maintain(live, seams);
     const copy = join(root, 'before-upgrade.db');
-    const { seen, progress } = recorder(file);
+    const { seen, progress } = recorder();
     const report = await m.migrate({ backup: copy, progress });
     m.close();
     const ordinary = await openHome({ home: live }, seams);
     closers.push(() => ordinary.close());
     const runs: string[] = [];
     for (const id of ids) runs.push((await ordinary.runStore.get(id)).record.id);
-    // (1) red when the steps run in one transaction (step 1's report fires with the file already at
-    //     3), when the backup is made after the ladder (its copy is at 3 and its event comes last), or
-    //     when a step is not reported; (2) prints each event with the versions read when it fired, the
-    //     steps' reports, the copy's and the file's versions now, and the runs read back.
+    // (1) red when the backup is made after the ladder (its copy is at 3 and its event comes last),
+    //     or when a step is not reported (one transaction per step is cell (B)'s: the hold of #616 R1
+    //     keeps every other connection from reading the file while the migrate runs); (2) prints each
+    //     event, the steps' reports, the copy's and the file's versions now, and the runs read back.
     expect({
       seen,
       steps: report.steps,
@@ -275,12 +287,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
       file: versionOf(file),
       runs,
     }).toEqual({
-      seen: [
-        'backup at version 1',
-        'step 1 to 2, the file at 2',
-        'step 2 to 3, the file at 3',
-        'restamped 0',
-      ],
+      seen: ['backup at version 1', 'step 1 to 2', 'step 2 to 3', 'recorded', 'restamped 0'],
       steps: [
         { from: 1, to: 2, statements: 3, evidenceChecked: 0 },
         { from: 2, to: 3, statements: 5, evidenceChecked: 0 },
@@ -300,13 +307,13 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     const drift = [...STEP_3.slice(0, -1), 'CREATE INDEX ladder_notes_by_k ON ladder_notes (w)'];
     const m = await maintain(live, { schemaVersion: 3, versions: ladder(drift) });
     const copy = join(root, 'before-upgrade.db');
-    const first = recorder(file);
+    const first = recorder();
     const failed = await refusal(m.migrate({ backup: copy, progress: first.progress }));
     m.close();
     const seams = { schemaVersion: 3, versions: ladder() };
     const ordinary = await codeOf(openHome({ home: live }, seams));
     const again = await maintain(live, seams);
-    const second = recorder(file);
+    const second = recorder();
     await again.migrate({ backup: false, progress: second.progress });
     const reason =
       "After the step to schema version 3, the file's schema is not version 3's: index " +
@@ -323,7 +330,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
       reopenedAt: again.schemaVersion,
       resumed: second.seen,
     }).toEqual({
-      seen: ['backup at version 1', 'step 1 to 2, the file at 2'],
+      seen: ['backup at version 1', 'step 1 to 2', 'recorded'],
       failed: {
         code: 'STATE_STORE_MIGRATE_FAILED',
         message:
@@ -335,7 +342,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
       copy: 1,
       ordinary: 'STATE_STORE_VERSION_OLDER',
       reopenedAt: 2,
-      resumed: ['step 2 to 3, the file at 3', 'restamped 0'],
+      resumed: ['step 2 to 3', 'recorded', 'restamped 0'],
     });
   });
 
@@ -346,7 +353,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     const files = faultyFiles(openDatabase);
     const seams = { schemaVersion: 3, versions: ladder() };
     const m = await maintain(live, { ...seams, openFile: files.openFile });
-    const first = recorder(file);
+    const first = recorder();
     const failed = await refusal(
       m.migrate({
         backup: false,
@@ -367,7 +374,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     const fired = files.opened[0]?.hits();
     m.close();
     const again = await maintain(live, seams);
-    const second = recorder(file);
+    const second = recorder();
     await again.migrate({ backup: false, progress: second.progress });
     const reason = 'disk I/O error (SQLite error 10)';
     // (1) red when the version is assumed from the step's start (the line says version 2 and
@@ -375,7 +382,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     //     the step; (2) prints the events, how many times the fault fired, the refusal's code,
     //     message and details, and the second run's events.
     expect({ seen: first.seen, fired, failed, second: second.seen }).toEqual({
-      seen: ['step 1 to 2, the file at 2'],
+      seen: ['step 1 to 2', 'recorded'],
       fired: 1,
       failed: {
         code: 'STATE_STORE_MIGRATE_FAILED',
@@ -388,10 +395,10 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     });
   });
 
-  // State 6's busy case (the operator did not stop Realm): the error-codes row names it. The store's
-  // busy wait runs its 5 s budget, so the cell has its own.
+  // State 6's busy case (the operator did not stop Realm): since #616 R1 the hold refuses it before
+  // any step (the error-codes row of STATE_STORE_IN_USE names it). The cell keeps its own budget.
   it(
-    '(B3) a step that meets another writer holding the store beyond its budget fails as that step: the file at version 1 with nothing of the step in it, and the line says so',
+    '(B3) #616 R1: another writer holding the store is refused before any step, STATE_STORE_IN_USE, in about a second: the file at version 1 with nothing of the step in it',
     { timeout: 30_000 },
     async () => {
       const live = join(tmp(), '.realm');
@@ -407,17 +414,17 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
         holder.exec('ROLLBACK');
         holder.close();
       }
-      const reason =
-        'The store was busy for 5 s: another writer held it. Nothing was written. Try again';
-      // (1) red when the busy refusal leaves the ladder as it is (STATE_RUN_BUSY, which names no step
-      //     and no version); (2) prints the refusal's code, message and details, and the file's version.
+      // (1) red when a step runs while another connection holds the store (before R1 the step met
+      //     the writer and failed STATE_STORE_MIGRATE_FAILED after the store's 5 s wait); (2) prints
+      //     the refusal's code, message and details, and the file's version.
       expect({ failed, file: versionOf(file) }).toEqual({
         failed: {
-          code: 'STATE_STORE_MIGRATE_FAILED',
+          code: 'STATE_STORE_IN_USE',
           message:
-            `The step from schema version 1 to 2 failed: ${reason}. ${file} is at schema version 1; ` +
-            'nothing of the step is in it. Run the command again once the cause is fixed.',
-          details: { path: file, from: 1, to: 2, at: 1, reason },
+            `Another process has ${file} open: a Realm agent, server or command, an MCP server that ` +
+            'an assistant or editor keeps running, or another program such as a SQLite browser. ' +
+            'Stop it and run this again. Nothing was changed.',
+          details: { path: file },
         },
         file: 1,
       });
@@ -430,7 +437,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     await storeWithRuns(live);
     const m = await openRealmHomeForMaintenance({ home: live, verb: 'migrate' });
     closers.push(() => m.close());
-    const { seen, progress } = recorder(file);
+    const { seen, progress } = recorder();
     // (1) red when a step is run for a version this Realm does not hold (the ladder's loop past its
     //     target: the verb fails), or when the "already at" event is not reported; (2) prints the
     //     verb's outcome, its events and the file's version.
@@ -455,9 +462,9 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     const before = phaseRows(file);
     const m = await openRealmHomeForMaintenance({ home: live, verb: 'migrate' });
     closers.push(() => m.close());
-    const first = recorder(file);
+    const first = recorder();
     await m.migrate({ backup: false, progress: first.progress });
-    const second = recorder(file);
+    const second = recorder();
     await m.migrate({ backup: false, progress: second.progress });
     const after = phaseRows(file);
     const running = runPhaseDerivationFingerprint();
@@ -503,7 +510,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     await storeWithRuns(live, 1, V1);
     const seams = { schemaVersion: 3, versions: ladder() };
     const inside = await maintain(live, seams);
-    const a = recorder(file);
+    const a = recorder();
     const insideOutcome = await codeOf(
       inside.migrate({ backup: join(live, 'inside.db'), progress: a.progress }),
     );
@@ -514,7 +521,7 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
       quickCheck: () => ['row 2 missing from index runs_by_phase'],
     });
     const copy = join(root, 'before-upgrade.db');
-    const b = recorder(file);
+    const b = recorder();
     const uncheckedOutcome = await codeOf(damaged.migrate({ backup: copy, progress: b.progress }));
     // (1) red when the ladder runs before the backup's verdict (the file ends at 3, and the steps
     //     are reported); (2) prints each outcome's code, the events, the file's version after each

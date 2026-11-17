@@ -6,7 +6,7 @@
 // without replacing anything; a path inside the home or where anything exists is refused, and a run
 // killed before the publish leaves nothing at <path>. Every refusal, a failed copy's included, is a
 // typed one, printed by the entry as one `Error:` line with exit code 1 (`lib/expected-refusal.ts`).
-// Restoring a copy is a documented procedure, never a command.
+// `realm db restore <backup>` puts such a copy back (#616 R1b).
 import { Command } from 'commander';
 import { openRealmHomeForMaintenance } from '@sensigo/realm-store-sqlite';
 

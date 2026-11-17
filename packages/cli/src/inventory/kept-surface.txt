@@ -50,6 +50,10 @@ realm db migrate — command
 realm db migrate --backup — option, takes a value
 realm db migrate --help — option, short -h, no value
 realm db migrate --no-backup — option, no value, negates
+realm db migrate --to — option, takes a value
+realm db restore — command
+realm db restore <backup> — argument 1, required
+realm db restore --help — option, short -h, no value
 realm help — command, Commander's help
 realm help <command> — argument 1, optional
 realm listen — command

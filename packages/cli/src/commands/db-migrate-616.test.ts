@@ -153,10 +153,11 @@ const RESTAMPED = (runs: number): string =>
 // Each cell starts the built CLI (a cold start each time), so the describe carries its own budget
 // (spawn-budget-guard.test.ts).
 describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_000 }, () => {
-  it('(I) one of the two flags is required: neither, or both in either order, is its usage line, exit 1, and the home is as it was', async () => {
+  it('(I) both flags, in either order, are the usage line, exit 1, and the home is as it was; #616 R1: neither flag is no longer refused (a current file: the two lines, no backups folder)', async () => {
     await makeStore();
     const before = holds(home);
     const copy = join(base, 'copy.db');
+    const file = shown(join(home, 'realm.db'));
     const runs = {
       neither: realm(['db', 'migrate']),
       both: realm(['db', 'migrate', '--backup', copy, '--no-backup']),
@@ -168,19 +169,21 @@ describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_
       stderr: 'Cannot combine --backup with --no-backup. Use one or the other.\n',
     };
     // (1) red when the pair is told from Commander's options (it folds them into one value, the last
-    //     wins, so both runs go ahead and migrate), or when neither flag goes ahead; (2) prints each
-    //     run, what the home holds and what the working folder holds.
-    expect({ ...runs, home: holds(home), base: readdirSync(base) }).toEqual({
-      neither: {
-        code: 1,
-        stdout: '',
-        stderr:
-          'Provide --backup <path> (a copy of the store file, made before anything changes) or --no-backup.\n',
-      },
+    //     wins, so both runs go ahead and migrate), or when neither flag is still refused, or makes a
+    //     copy or a folder for a file with no step pending; (2) prints each run, what the home holds,
+    //     what the working folder holds and what the scratch root holds.
+    expect({
+      ...runs,
+      home: holds(home),
+      base: readdirSync(base),
+      root: readdirSync(root),
+    }).toEqual({
+      neither: { code: 0, stdout: ALREADY(file) + RESTAMPED(0), stderr: '' },
       both,
       bothReversed: both,
       home: before,
       base: [],
+      root: ['.realm'],
     });
   });
 
@@ -364,6 +367,8 @@ describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_
             report: { from: 1, to: 2, statements: 1, evidenceChecked: 0 },
           }) +
           '\n' +
+          // #616 R1: a migrate that ran a step records it beside the home.
+          `Recorded this migrate in ${shown(join(root, '.realm-backups', 'migrations.jsonl'))}.\n` +
           RESTAMPED(0),
         stderr: '',
       },
@@ -427,18 +432,19 @@ describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_
 // The page's sentences about `migrate`, each quoted word for word, and the cell that executes it.
 describe('#616 PR-2c c7 — the page says what realm db migrate does', () => {
   it('the flags, the order of the work, and the lines it prints', () => {
-    // I: both usage lines; J: the already-at and re-stamp lines; the step line: the next cell.
-    claim(PAGE, 'It has three subcommands.');
+    // I: the both-flags usage line; J: the already-at and re-stamp lines; the step line: the next cell.
+    // #616 R1b: four, with `restore`.
+    claim(PAGE, 'It has four subcommands.');
     claim(
       PAGE,
-      'neither flag: `Provide --backup <path> (a copy of the store file, made before anything changes) or --no-backup.`; both: `Cannot combine --backup with --no-backup. Use one or the other.` Nothing is opened.',
+      'both flags: `Cannot combine --backup with --no-backup. Use one or the other.` Nothing is opened.',
     );
     claim(PAGE, '`<home>/realm.db is already at schema version <n>; no schema step to run.`');
     claim(PAGE, '`Re-stamped the phase index of <k> run(s) with the current derivation.`');
     // E (store): the backup's refusal and an unverified copy end the verb before any step.
     claim(
       PAGE,
-      "With `--backup <path>`, it makes the copy and prints `realm db backup`'s line. When the copy cannot be made, or fails SQLite's quick check, the command stops there: nothing is migrated.",
+      "Unless `--no-backup` is given, it makes the copy and prints `realm db backup`'s line. When the copy cannot be made, or fails SQLite's quick check, the command stops there: nothing is migrated.",
     );
     // D (store): the record untouched, and the count.
     claim(PAGE, 'It changes no run record.');

@@ -192,7 +192,8 @@ export function omitClaim(
 }
 
 /**
- * The 3-state liveness classification of a single in-progress claim (issue #101):
+ * How alive a single in-progress claim is: `healthy`, `claim_stale` or `claim_unknown_age`. The
+ * states:
  * - `healthy` — a concrete deadline that has not yet passed (a live runner is presumed on it).
  * - `claim_stale` — a concrete deadline that has passed (the runner is presumed dead).
  * - `claim_unknown_age` — no claim record, or a `null` deadline (agent / finalizer-bearing /

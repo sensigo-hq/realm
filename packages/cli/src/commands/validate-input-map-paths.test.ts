@@ -19,6 +19,7 @@ import { registerCommand } from './register.js';
 import { runCommand } from './run.js';
 import { watchWorkflow } from './watch.js';
 import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
+import { changelogPart, changelogSectionsAbove } from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -496,19 +497,21 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     );
     // The two items sit in [Unreleased]'s Upgrading section, as its items 2 and 3.
     const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const unreleased = changelog.slice(
-      changelog.indexOf('## [Unreleased]'),
-      changelog.indexOf('\n## [', changelog.indexOf('## [Unreleased]') + 1),
-    );
-    const upgrading = unreleased.slice(
-      unreleased.indexOf('### Upgrading'),
-      unreleased.indexOf('\n### ', unreleased.indexOf('### Upgrading') + 1),
-    );
-    // (1) red when an item is lost from the middle, two items share a number, or the list stops
-    // before this file's own item 3; (2) prints the numbers found beside the run 1..N expected.
-    // Each item's own text is pinned by the file that added it, so a new item moves no pin here.
-    const numbers = [...upgrading.matchAll(/^\*\*(\d+)\. /gm)].map((m) => Number(m[1]));
-    expect(numbers).toEqual(Array.from({ length: Math.max(numbers.length, 3) }, (_, i) => i + 1));
+    // Each section above [0.49.0] (`[Unreleased]` while a cycle is open, then 0.50.0's) numbers
+    // its own Upgrading list.
+    const lists = changelogSectionsAbove(changelog, '0.49.0')
+      .map((s) =>
+        [...changelogPart(s, 'Upgrading').matchAll(/^\*\*(\d+)\. /gm)].map((m) => Number(m[1])),
+      )
+      .filter((numbers) => numbers.length > 0);
+    // (1) red when an item is lost from the middle, two items share a number, or no list reaches
+    // this file's own item 3; (2) prints the lists found. Each item's own text is pinned by the
+    // file that added it, so a new item moves no pin here.
+    expect({
+      lists,
+      runs: lists.every((numbers) => numbers.every((n, i) => n === i + 1)),
+      reaches3: lists.some((numbers) => numbers.length >= 3),
+    }).toEqual({ lists, runs: true, reaches3: true });
   });
 });
 

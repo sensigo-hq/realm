@@ -15,6 +15,7 @@ import {
   createDefaultRegistry,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import { changelogAbove } from '../../test-support/changelog.js';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { runAgent } from '../run-agent.js';
 import { LlmProvider } from './llm-provider.js';
@@ -113,16 +114,10 @@ describe('the filter-mask fix (constraint 3) — the writer’s span-aware print
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../../..');
 const flat = (t: string): string => t.replace(/\s+/g, ' ');
-/** The `[Unreleased]` section's `### <heading>` part of CHANGELOG.md. */
+/** The `### <heading>` part of CHANGELOG.md's sections above [0.49.0] (`[Unreleased]` while open,
+ *  then 0.50.0's). */
 function unreleased(heading: string): string {
-  const all = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-  const section = all.slice(
-    all.indexOf('## [Unreleased]'),
-    all.indexOf('\n## [', all.indexOf('## [Unreleased]') + 1),
-  );
-  const start = section.indexOf(`### ${heading}`);
-  const end = section.indexOf('\n### ', start + 1);
-  return section.slice(start, end === -1 ? undefined : end);
+  return changelogAbove(readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8'), '0.49.0', heading);
 }
 
 describe('the filter-mask fix — the words', () => {

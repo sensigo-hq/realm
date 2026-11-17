@@ -218,7 +218,8 @@ process.kill(process.pid, 'SIGKILL');`,
         'A duplicate-webhook mark expires at the end of its window; `realm listen` removes up to 100 expired marks of a workflow each time it records a new one. Nothing removes a registered workflow or a saved replay.',
         '## A store other than `realm.db`',
         'Every `realm` command and the `realm-mcp` server use the SQLite store in the Realm home. A program that calls Realm as a library can keep runs in a store of its own.',
-        '- [`realm db`](cli/realm-db.md) covers `backup`, `migrate` and `check`.',
+        // #616 R1b: and `restore`.
+        '- [`realm db`](cli/realm-db.md) covers `backup`, `migrate`, `check` and `restore`.',
       ])
         claim(ENV, sentence);
       // C13: the names the page gives, in the store's code.

@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { changelogAbove } from '../test-support/changelog.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const LISTEN = 'docs/reference/cli/realm-listen.md';
@@ -39,9 +40,7 @@ describe('U3b (#963) — realm-listen.md and the CHANGELOG', () => {
   });
 
   it('the CHANGELOG line under Fixed', () => {
-    const all = read('CHANGELOG.md');
-    const unreleased = all.slice(all.indexOf('## [Unreleased]'), all.indexOf('\n## [0.49.0]'));
-    const fixed = unreleased.slice(unreleased.indexOf('### Fixed'));
+    const fixed = changelogAbove(read('CHANGELOG.md'), '0.49.0', 'Fixed');
     // C1 (only the runs waiting at a gate), C2 (one more pass, not several), C4a (carried out when
     // its time arrives).
     expect(flat(fixed), 'the CHANGELOG no longer says the #963 line under Fixed').toContain(

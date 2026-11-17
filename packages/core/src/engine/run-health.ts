@@ -148,8 +148,7 @@ import { formatInstantWords } from '../utils/duration.js';
 export const DEFAULT_IDLE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 
 /**
- * A single, typed run-health observation (issue #221) — the shared vocabulary every surface
- * renders from.
+ * A single, typed run-health observation: the shared vocabulary every surface renders from.
  * @public
  */
 export interface RunHealthFinding {
@@ -427,7 +426,7 @@ function findDriveFailing(snapshot: ListedSnapshot): RunHealthFinding | undefine
 }
 
 /**
- * CP-1 PR 1: {@link classifyRunHealth}'s options, named (the bag `classifyRecordHealth` takes).
+ * The options of `classifyRunHealth`, the bag `classifyRecordHealth` takes.
  * @public
  */
 export interface ClassifyRunHealthOptions {
