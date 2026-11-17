@@ -257,6 +257,7 @@ export {
   cannotGoOnFrom,
   cannotGoOnUntilCorrected,
   LIBRARY_WORDS,
+  withLibraryWords,
   libraryCannotRunWords,
   // #872 (a): the one bounded renderer of a cannot-run entry's parts, and the hand-back hint's
   // grouped summary (door-neutral: the MCP door adds its pointer).
@@ -307,6 +308,7 @@ export type {
   ForWay,
   Narrowed,
   WayRenderer,
+  PartialWayRenderer,
   LibraryHost,
   ReplyKind,
   RenderedList,

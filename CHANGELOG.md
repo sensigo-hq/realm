@@ -64,6 +64,8 @@ All notable changes to this project are documented here.
 - `@sensigo/realm/internal` and `@sensigo/realm-mcp/internal`: each exports everything its main entry exports, from the same files, so a class is one object whichever entry imports it. Nothing moves: the main entries are unchanged before 1.0 (the compatibility page's road to 1.0 says what moves then).
 - The library reference: six pages under `docs/reference/library/`, one per job Realm supports, generated from the `@public`/`@beta` tags with each declaration and its description; a promised name without a description, or missing from its page, fails a test.
 
+- `PartialWayRenderer` and `withLibraryWords`: a program that renders a reply's ways supplies the verbs it wants and completes the map with Realm's own words, so a verb Realm adds later renders until the program writes its own; `WayRenderer` stays the complete map Realm reads. The compatibility page now says a promised list of words may gain a member in a minor release; a switch over one keeps a default branch.
+
 ### Changed
 
 - **The screens name the Slack account that answered, as Slack reports it.** `realm run inspect`'s answer line, which said '(not stated)', and the outcome sentences and the thread's receipt, which named no one, now name the account Slack reported for the reply. The MCP answer instruction offers `responded_by` for the person's own name; a value wrapped whole in `<` `>`, as the placeholder is, records no name. (#603)
