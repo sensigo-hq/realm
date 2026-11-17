@@ -21,7 +21,9 @@
 //      holds it — and only when it matches, the meta row (a
 //      dropped or renamed meta table is tampering, not a missing row); then the journal mode,
 //      `auto_vacuum` and the page size the file recorded, every difference named at once. A file
-//      that is not SQLite or is damaged is refused too. A refused file is never changed or replaced;
+//      that is not SQLite or is damaged is refused too. A refused file is never changed or replaced.
+//      (#616 R1b correction 1) After that first read, which may have waited on `realm db restore`'s
+//      hold, the path must still name the file the connection opened, or the open connects again;
 //   6. the connection pragmas, each through `autocommit` and read back;
 //   7. the phase derivation's fingerprint, computed once per process by core.
 // The first-open setup: in autocommit, before anything is written, the page count, page size and
@@ -66,6 +68,8 @@ import {
 } from '@sensigo/realm';
 import {
   BUSY_SLICE_MS,
+  busyError,
+  DEFAULT_BUSY_BUDGET_MS,
   isBusy,
   mapSqliteError,
   readOnlyError,
@@ -701,6 +705,41 @@ export function openRawConnection(path: string, seams: OpenSeams = {}): Database
   return connect(path, seams.openFile ?? openFileThroughTheLoader, false);
 }
 
+/** The device and inode the store file's path names now (`lstat`): which file it is. */
+function fileAt(path: string): string {
+  const entry = lstatSync(path);
+  return `${entry.dev}:${entry.ino}`;
+}
+
+/**
+ * #616 R1b correction 1: connects (`connectOnce`) and runs the first read (`firstRead`, which may wait
+ * on another process's hold), then checks that `path` still names the file it connected to (device and
+ * inode, taken before it connected). When `realm db restore` renamed a file over the name meanwhile,
+ * this connection is on the replaced file: it is closed before anything is written, and the open
+ * connects again, at most three times, then refuses as busy.
+ */
+async function onTheNamedFile<T>(
+  path: string,
+  budgetMs: number,
+  connectOnce: () => RealmDb,
+  firstRead: (db: RealmDb) => Promise<T>,
+): Promise<{ readonly db: RealmDb; readonly first: T }> {
+  for (let attempt = 1; ; attempt += 1) {
+    const before = fileAt(path);
+    const db = connectOnce();
+    let first: T;
+    try {
+      first = await firstRead(db);
+    } catch (err) {
+      db.close();
+      throw err;
+    }
+    if (fileAt(path) === before) return { db, first };
+    db.close();
+    if (attempt === 3) throw busyError(budgetMs);
+  }
+}
+
 /** Steps 1 and 2 of the open and of the check: the loader's floor and the filesystem gate. */
 function gate(home: string, seams: OpenSeams): FilesystemProbe {
   (seams.loadSqlite ?? loadSqlite)();
@@ -769,15 +808,20 @@ export async function openRealmDb(
   const older = options.acceptOlderSchema === true;
   const openFile = seams.openFile ?? openFileThroughTheLoader;
   const pragmas = connectionPragmas(probe.platform);
-  const db = new RealmDb(connect(path, openFile, false), {
+  const { db, first: file } = await onTheNamedFile(
     path,
-    clock: options.clock,
-    reopen: reopener(path, openFile, false, pragmas),
-    schemaVersion: realm,
-    ...(options.budgetMs === undefined ? {} : { budgetMs: options.budgetMs }),
-  });
+    options.budgetMs ?? DEFAULT_BUSY_BUDGET_MS,
+    () =>
+      new RealmDb(connect(path, openFile, false), {
+        path,
+        clock: options.clock,
+        reopen: reopener(path, openFile, false, pragmas),
+        schemaVersion: realm,
+        ...(options.budgetMs === undefined ? {} : { budgetMs: options.budgetMs }),
+      }),
+    (connected) => checkFile(connected, path, realm, schema, versions, older),
+  );
   try {
-    const file = await checkFile(db, path, realm, schema, versions, older);
     if (file.state === 'uninitialised') {
       await setUp(db, path, realm, schema);
       if ((await checkFile(db, path, realm, schema, versions, older)).state !== 'ready') {

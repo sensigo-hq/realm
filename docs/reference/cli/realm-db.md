@@ -38,7 +38,7 @@ The quick check judges the copy. A copy that passes was rebuilt from the pages S
 
 ### Restoring a copy
 
-[`realm db restore <path>`](#restore) puts the copy back in place of a store file Realm can open. Into a home with no store file, or an empty one, or over a store file Realm cannot open, restoring is done by hand for now. Stop every Realm process that uses the home. If the home folder does not exist, on a new machine for one, create it. Put the copy in place of `realm.db` in the home. Then remove `realm.db-wal` and `realm.db-shm` from the home if they are there: a stale write-ahead log beside a restored file corrupts it. Realm then opens the store as it was when the copy was made.
+[`realm db restore <backup>`](#restore) puts the copy back in place of a store file Realm can open and copy. Into a home with no store file, or an empty one, or over a store file Realm cannot open or cannot copy, restoring is done by hand for now. Stop every Realm process that uses the home. If the home folder does not exist, on a new machine for one, create it. Put the copy in place of `realm.db` in the home. Then remove `realm.db-wal` and `realm.db-shm` from the home if they are there: a stale write-ahead log beside a restored file corrupts it. Realm then opens the store as it was when the copy was made.
 
 **Exit code:** 0 when the copy is made and passes the check. 1 when the command refuses, with one `Error:` line on standard error, nothing written at `<path>`, and in the home only what is said above:
 
@@ -174,7 +174,7 @@ It works in this order:
 
 1. It checks the backup before it opens the store file. It copies the backup into a private folder of its own in the system's temporary folder, readable by your account only, and checks the copy there: that it is a Realm store, that SQLite's quick check passes, and that this Realm reads its schema version. The backup itself is only read: a backup in a read-only folder can be restored, and nothing is created beside it.
 2. It puts a second copy of the checked backup in the home, as `.realm-restore-<pid>-<random>.db`, readable and writable by your account only (mode 600). A restore that was killed may leave one: it is a full copy of the backup, which you can delete when no restore is running.
-3. It makes sure that no other process has the store file open, and keeps it so until it is done. When one has it open, even an idle one, the command refuses and changes nothing.
+3. It makes sure that no other process has the store file open, and keeps it so until it is done. When one has it open, even an idle one, the command refuses and changes nothing. A Realm command started while the restore runs waits, then opens the restored file (or fails as busy after about 5 seconds).
 4. It keeps the file it replaces: [`realm db backup`](#backup) copies it into the backups folder beside the home, `~/.realm-backups/` for the home `~/.realm` (made owner-only when it is missing), as `realm-before-restore-<UTC time>.db`, and prints its line.
 5. It counts how the runs of the two files differ.
 6. It writes the store's write-ahead log into the store file, removes `realm.db-wal` and `realm.db-shm`, and renames the copy over `realm.db` in one step. A stale write-ahead log is never applied to the restored file.
@@ -197,13 +197,13 @@ A backup made by copying a live `realm.db` without its `realm.db-wal` lacks the 
 
 **Exit code:** 0 when the backup is in place. 1 when the command refuses, with one `Error:` line on standard error. The refusals have the code [`STATE_STORE_RESTORE_REFUSED`](../error-codes.md) unless another is named:
 
-- the backup is missing or cannot be read: `Cannot restore from <backup>: <the system's reason>. Nothing was changed.`; a symbolic link: `Cannot restore from <backup>: it is a symbolic link. Nothing was changed.`; a folder, or anything but a file: `Cannot restore from <backup>: it is not a file. Nothing was changed.`
+- the backup is missing or cannot be read: `Cannot restore from <backup>: <the system's reason>. Nothing was changed.`; a symbolic link: `Cannot restore from <backup>: it is a symbolic link. Nothing was changed.`; a folder, or anything but a file: `Cannot restore from <backup>: it is not a file. Nothing was changed.`; an empty file: `Cannot restore from <backup>: it is empty: it holds no store. Nothing was changed.`
 - the backup is the store file, by any path: `Cannot restore from <backup>: it is the store file itself. Nothing was changed.`; one of its side files: `Cannot restore from <backup>: it is the store file's -wal file. Nothing was changed.` (or `-shm`).
 - the backup is not a Realm store, is damaged, or was written by a newer Realm: `Cannot restore from <backup>:` and the words of [`realm db check`](#check), then `Nothing was changed.`, such as `Cannot restore from <backup>: Written by a later version of Realm (schema version <n>; this version reads up to <m>). Nothing was changed.`
 - the home has no store file: `There is no store file at <home>/realm.db to restore over.`; an empty one: `<home>/realm.db holds no store yet: there is nothing to restore over.` Nothing is changed; put the backup in place by hand for now ([Restoring a copy](#restoring-a-copy)).
 - the store file cannot be opened (it is damaged, not a Realm store, or written by a newer Realm): the store's own message. Nothing is changed; over a damaged store file, put the backup in place by hand for now.
 - another process has the store file open, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open (a Realm agent, server, MCP server or command, or another program such as a SQLite browser). Stop it and run this again. Nothing was changed.`
-- the kept copy cannot be made, or fails SQLite's quick check (the store file may then be damaged): `realm db backup`'s refusal, with its code, then ` Nothing was replaced.`
+- the kept copy cannot be made, or fails SQLite's quick check (the store file may then be damaged): `realm db backup`'s refusal, with its code, then ` Nothing was replaced.` Over such a file, put the backup in place by hand for now ([Restoring a copy](#restoring-a-copy)).
 - another failure before the rename: `Cannot restore from <backup>: <the reason>. <home>/realm.db was not replaced.`, then ` A copy of it is at <kept file>.` when the kept copy was made. After the rename, when the folder cannot be flushed: `Cannot restore from <backup>: <the reason>. <home>/realm.db was replaced.`
 
 ## See also

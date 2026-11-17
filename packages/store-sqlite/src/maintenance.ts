@@ -235,6 +235,7 @@ export type MaintenanceSeams = OpenSeams & {
   /**
    * #616 R1: runs when `migrate` has read a pending step's version and before it takes the hold: the
    * window in which another writer can move the file (the cell that holds the version's re-read).
+   * R1b: and when `restore` has opened the store file, before its hold (another restore's swap).
    */
   readonly beforeHold?: () => Promise<void>;
   /** #616 R1b: renames the restore's copy over `realm.db` (the crash cells sit before it); `renameSync`

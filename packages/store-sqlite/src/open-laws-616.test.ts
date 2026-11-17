@@ -16,8 +16,8 @@
 // through a function value it cannot resolve.
 //
 // #616 R1b (`realm db restore`) amends L-FS: the restore's own calls on `realm.db` and its side files
-// live in ONE module, `src/restore.ts`, and are named below one by one (`RESTORE_CALLS`), so a fourth
-// call there, or any such call in another module, still fails the law. The restore passes the store
+// live in ONE module, `src/restore.ts`, and are named below one by one (`RESTORE_CALLS`), so a fifth
+// call there (a third side file unlinked included), or any such call in another module, still fails. The restore passes the store
 // file's path to each step as a parameter, never in an object's property, and builds no path from
 // parts, so that the scan sees every call; a test of the restore that finds a call the list does not
 // name means the module dodged the scan, which the list cannot see either.
@@ -31,7 +31,7 @@
 // named one by one, so a fourth open there still fails the law. #616 R1b: `open-file.ts` exports
 // `openRawConnection`, a connection through that one call with none of the open's checks, for
 // `realm db restore`'s scratch copy of a backup, checked before the store's check runs on it; the
-// law also names the only module that may call it (`restore.ts`), so the export opens no second door.
+// law names its one call (in `restore.ts`, by its text), so the export opens no second door.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { readdirSync, statSync } from 'node:fs';
@@ -48,10 +48,8 @@ const RESTORE = 'src/restore.ts';
 /** The restore's calls on `realm.db` and its side files, in the module's order, each with its step. */
 const RESTORE_CALLS: ReadonlyArray<readonly [call: string, why: string]> = [
   ['linkSync(copy, named)', "A: the scratch copy's second name, realm.db, for the store's check"],
-  [
-    'unlinkSync(`${source}${suffix}`)',
-    'C: the old -wal and -shm, under the hold, before the rename',
-  ],
+  ['unlinkSync(`${source}-wal`)', 'C: the old -wal, under the hold, before the rename'],
+  ['unlinkSync(`${source}-shm`)', 'C: the old -shm, under the hold, before the rename'],
   ['renameSync(temporary, source)', 'C: the one rename of the checked copy over realm.db'],
 ];
 /** The modules that may open a connection on a file through the loader, each with its reason. */
@@ -259,8 +257,8 @@ describe('#616 unit 7a — the source laws of the open', () => {
   it('one opener: no module but the open opens a connection on a file through the loader', () => {
     const opens: string[] = [];
     const admitted: string[] = [];
-    /** #616 R1b: the calls of open-file.ts's raw connection, by file. */
-    const raw = new Set<string>();
+    /** #616 R1b: the calls of open-file.ts's raw connection, each by its file and text. */
+    const raw: string[] = [];
     let memory = 0;
     for (const file of files) {
       if (rel(file) === LOADER) continue;
@@ -273,7 +271,7 @@ describe('#616 unit 7a — the source laws of the open', () => {
           declaration.name?.text === 'openRawConnection' &&
           rel(declaration.getSourceFile()) === 'src/open-file.ts'
         ) {
-          raw.add(rel(file));
+          raw.push(`${rel(file)}: ${n.getText()}`);
         }
         if (declaration === undefined || rel(declaration.getSourceFile()) !== LOADER) return;
         if (!ts.isFunctionDeclaration(declaration) || declaration.name?.text !== 'openDatabase')
@@ -288,11 +286,11 @@ describe('#616 unit 7a — the source laws of the open', () => {
     // (1) red when a module outside the open's list opens a database on a path through the loader
     //     (a second opener, which would skip the open's checks), when the open's own call is no
     //     longer the one the scan sees, or when the scan stops seeing the schema ladder's in-memory
-    //     open (it would then be resolving nothing); and (#616 R1b) when a module other than the
-    //     restore calls the raw connection, or the restore stops calling it; (2) prints each opener
-    //     with its file and line, the open's calls, the raw connection's callers, and the count of
-    //     in-memory opens.
-    expect({ opens, admitted, raw: [...raw], memorySeen: memory > 0 }).toEqual({
+    //     open (it would then be resolving nothing); and (#616 R1b) when the raw connection is called
+    //     anywhere but its one named call (a second call in the restore included), or that call stops;
+    //     (2) prints each opener with its file and line, the open's calls, the raw connection's
+    //     calls, and the count of in-memory opens.
+    expect({ opens, admitted, raw, memorySeen: memory > 0 }).toEqual({
       opens: [],
       admitted: [
         // #729 CW-1: the lease's initialising connection, its holder's, and a probe's.
@@ -303,7 +301,7 @@ describe('#616 unit 7a — the source laws of the open', () => {
         // #616 PR-2c c8a1: the open's one call now passes the check's read-only option through.
         'src/open-file.ts: openDatabase(path, options)',
       ],
-      raw: [RESTORE],
+      raw: [`${RESTORE}: openRawConnection(copy, seams)`],
       memorySeen: true,
     });
   });

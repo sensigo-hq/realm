@@ -34,7 +34,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WorkflowError, type CreateRunOptions } from '@sensigo/realm';
 import { afterEach, describe, expect, it } from 'vitest';
-import { openDatabase } from './driver.js';
+import { openDatabase, type DatabaseLike } from './driver.js';
 import { backupStamp, openMaintenance, type MaintenanceSeams } from './maintenance.js';
 import { openHome } from './open-realm-home.js';
 import type { RestoreProgress, RestoreReport } from './restore.js';
@@ -272,14 +272,37 @@ const KILLED_RESTORE =
   "const h = await openMaintenance({ home: process.argv[1], verb: 'restore' }, { rename: () => process.kill(process.pid, 'SIGKILL') });" +
   'await h.restore(process.argv[2]);';
 
-/** Runs a restore of `backup` into `home` that is killed at the rename seam; its signal. */
-function killedRestore(home: string, backup: string): string | null {
+/**
+ * Runs a restore of `backup` into `home` that is killed at the rename seam, with `temporary` as its
+ * system temporary folder (`TMPDIR`); its signal.
+ */
+function killedRestore(home: string, backup: string, temporary = tmpdir()): string | null {
   const r = spawnSync(
     process.execPath,
     ['--input-type=module', '-e', KILLED_RESTORE, home, backup],
-    { cwd: PACKAGE_ROOT, encoding: 'utf8' },
+    { cwd: PACKAGE_ROOT, encoding: 'utf8', env: { ...process.env, TMPDIR: temporary } },
   );
   return r.signal;
+}
+
+// A PROCESS that opens the home through the store's entry the moment a file appears at `go` (while
+// a restore holds the store file), reads two runs, writes one, and prints what it saw and wrote.
+const WAITER =
+  "import { existsSync, writeSync } from 'node:fs';" +
+  "import { openRealmHome } from '@sensigo/realm-store-sqlite';" +
+  'const [home, go, oldRun, restoredRun] = process.argv.slice(1);' +
+  "writeSync(1, 'ready\\n');" +
+  'while (!existsSync(go)) await new Promise((r) => setTimeout(r, 10));' +
+  'const h = await openRealmHome({ home });' +
+  'const has = async (id) => { try { await h.runStore.get(id); return true; } catch { return false; } };' +
+  'const seen = { old: await has(oldRun), restored: await has(restoredRun) };' +
+  "const { record } = await h.runStore.create({ workflowId: 'triage', workflowVersion: 1, params: {}, extensionIdentity: [] });" +
+  'h.close();' +
+  "writeSync(1, JSON.stringify({ ...seen, wrote: record.id }) + '\\n');";
+
+/** Blocks this process (not the child) for `ms`: a seam is synchronous, and the hold is held in it. */
+function pause(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 const IN_USE = (file: string): string =>
@@ -381,10 +404,13 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
     await backupTo(home, backup);
     const first = reported(await restore(home, backup)).replaced.kept.path;
     // The second restore takes the name of the second it runs in: the first's, or, should the clock
-    // move on meanwhile, one of the next three, each held by a file already (the clock is real).
-    const held = [1, 2, 3].map((k) =>
-      join(folder, `realm-before-restore-${backupStamp(new Date(Date.now() + k * 1000))}.db`),
-    );
+    // move on meanwhile, one of the next three, counted from the first restore's own second (read
+    // from its kept file's name, whatever second it ended in), each held by a file already.
+    const stamp = /(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z\.db$/.exec(first)!.slice(1).map(Number);
+    const at = Date.UTC(stamp[0]!, stamp[1]! - 1, stamp[2]!, stamp[3]!, stamp[4]!, stamp[5]!);
+    const held = [1, 2, 3]
+      .map((k) => join(folder, `realm-before-restore-${backupStamp(new Date(at + k * 1000))}.db`))
+      .filter((path) => !existsSync(path));
     for (const path of held) writeFileSync(path, 'held');
     const before = hashOf(file);
     const firstBytes = hashOf(first);
@@ -408,7 +434,7 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
       },
       named: true,
       unchanged: true,
-      there: [true, 'held', 'held', 'held'],
+      there: [true, ...held.map(() => 'held')],
     });
   });
 
@@ -442,7 +468,7 @@ describe(
   '#616 R1b — the backup argument and the backup, proven before anything is touched',
   { timeout: 120_000 },
   () => {
-    it('a link, a folder, a FIFO, a missing path, the store file itself (by its path, a hard link, a symlinked home) and its -wal: each refused in its own words, and nothing is changed', async () => {
+    it('a link, a folder, a FIFO, an empty file, a missing path, the store file itself (by its path, a hard link, a symlinked home) and its -wal: each refused in its own words, and nothing is changed', async () => {
       const { root, home, file, folder } = nestedHome();
       await makeStore(home, 1);
       const backup = join(root, 'b.db');
@@ -453,6 +479,8 @@ describe(
       mkdirSync(dir);
       const fifo = join(root, 'fifo.db');
       spawnSync('mkfifo', [fifo]);
+      const empty = join(root, 'empty.db');
+      writeFileSync(empty, '');
       const hard = join(root, 'hard.db');
       linkSync(file, hard);
       const aliasRoot = join(root, 'alias');
@@ -469,6 +497,7 @@ describe(
         link: (await restore(home, link)).refused,
         folder: (await restore(home, dir)).refused,
         fifo: (await restore(home, fifo)).refused,
+        empty: (await restore(home, empty)).refused,
         missing: (await restore(home, join(root, 'missing.db'))).refused,
         itself: (await restore(home, file)).refused,
         hardLink: (await restore(home, hard)).refused,
@@ -490,6 +519,7 @@ describe(
           link: words(link, 'it is a symbolic link'),
           folder: words(dir, 'it is not a file'),
           fifo: words(fifo, 'it is not a file'),
+          empty: words(empty, 'it is empty: it holds no store'),
           missing: words(join(root, 'missing.db'), 'no such file or directory'),
           itself: words(file, 'it is the store file itself'),
           hardLink: words(hard, 'it is the store file itself'),
@@ -670,12 +700,17 @@ describe(
       const backup = join(root, 'b.db');
       await backupTo(home, backup);
       const written = killedWriter(home);
-      const signal = killedRestore(home, backup);
+      const temporary = join(root, 'tmp');
+      mkdirSync(temporary);
+      const signal = killedRestore(home, backup, temporary);
       // The killed restore's copy beside the store file: a full copy of the backup, owner-only.
       const left = names(home).filter((n) => n.startsWith('.realm-restore-'));
       const copy = join(home, left[0] ?? 'none');
+      // And its scratch folder in the system's temporary folder: owner-only, the backup's copy in it.
+      const scratch = names(temporary).filter((n) => n.startsWith('realm-restore-'));
+      const scratchCopy = join(temporary, scratch[0] ?? 'none', 'backup.db');
       // (1) red without the checkpoint (the unlink then drops the writer's rows, which were only in the
-      //     log); (2) prints the signal, whether the run is there, the side files and the copy left.
+      //     log); (2) prints the signal, whether the run is there, the side files and what was left.
       expect({
         signal,
         has: written in runsOf(file),
@@ -683,6 +718,9 @@ describe(
         left: left.length,
         mode: existsSync(copy) ? (statSync(copy).mode & 0o777).toString(8) : 'none',
         copy: existsSync(copy) ? runsOf(copy) : 'none',
+        scratch: scratch.length,
+        scratchMode: (statSync(join(temporary, scratch[0] ?? '')).mode & 0o777).toString(8),
+        scratchCopy: existsSync(scratchCopy) ? runsOf(scratchCopy) : 'none',
       }).toEqual({
         signal: 'SIGKILL',
         has: true,
@@ -690,6 +728,9 @@ describe(
         left: 1,
         mode: '600',
         copy: runsOf(backup),
+        scratch: 1,
+        scratchMode: '700',
+        scratchCopy: runsOf(backup),
       });
     });
 
@@ -714,6 +755,90 @@ describe(
       expect({ kind: report.replaced.kind, has: written in runsOf(file) }).toEqual({
         kind: 'store',
         has: true,
+      });
+    });
+
+    it('an opener that connects while the restore holds the file (a real child) opens the restored file after the swap: it reads and writes there, and the restore stays', async () => {
+      const { root, home, file } = nestedHome();
+      const [restoredRun] = await makeStore(home, 1);
+      const backup = join(root, 'b.db');
+      await backupTo(home, backup);
+      const [oldRun] = await makeStore(home, 1);
+      const go = join(root, 'go');
+      const child = spawn(
+        process.execPath,
+        ['--input-type=module', '-e', WAITER, home, go, oldRun!, restoredRun!],
+        { cwd: PACKAGE_ROOT, stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      children.push(child);
+      let out = '';
+      let err = '';
+      child.stdout.setEncoding('utf8').on('data', (d: string) => (out += d));
+      child.stderr.setEncoding('utf8').on('data', (d: string) => (err += d));
+      const done = new Promise((r) => child.once('exit', r));
+      while (!out.includes('ready')) await new Promise((r) => setTimeout(r, 20));
+      const outcome = await restore(home, backup, {
+        // The hold is held here: the child connects to the OLD file and waits on it; then the rename.
+        rename: (from, to) => {
+          writeFileSync(go, '');
+          pause(800);
+          renameSync(from, to);
+        },
+      });
+      await done;
+      const line = out.split('\n').find((l) => l.startsWith('{')) ?? `none: ${err}`;
+      const saw = line.startsWith('{') ? (JSON.parse(line) as Record<string, unknown>) : line;
+      const db = openDatabase(file);
+      const quick = db.prepare('PRAGMA quick_check').get()?.['quick_check'];
+      db.close();
+      // (1) red without the opener's check that the path still names its file (the child reads and
+      //     writes the replaced file, and the next opener sees its rows: the restore undone); (2)
+      //     prints what the child saw and wrote, and the runs of the store file afterwards.
+      expect({
+        replaced: outcome.report?.replaced.kind,
+        saw,
+        runs: Object.keys(runsOf(file)).sort(),
+        quick,
+      }).toEqual({
+        replaced: 'store',
+        saw: { old: false, restored: true, wrote: expect.any(String) },
+        runs: [restoredRun!, typeof saw === 'object' ? String(saw['wrote']) : 'none'].sort(),
+        quick: 'ok',
+      });
+    });
+
+    it('a restore whose hold comes after another restore put a new file in place is refused: nothing is unlinked, the other file stays', async () => {
+      const { root, home, file } = nestedHome();
+      await makeStore(home, 1);
+      const backup = join(root, 'b.db');
+      await backupTo(home, backup);
+      const other = join(root, 'other', '.realm');
+      const otherRuns = await makeStore(other, 2);
+      const otherCopy = join(root, 'o.db');
+      await backupTo(other, otherCopy);
+      let live: DatabaseLike | undefined;
+      const outcome = await restore(home, backup, {
+        // Another restore's swap between this one's open and its hold, and a process already on it.
+        beforeHold: async () => {
+          renameSync(otherCopy, file);
+          live = openDatabase(file);
+          live.prepare('SELECT count(*) FROM runs').get();
+        },
+      });
+      const sides = sideFiles(file);
+      live?.close();
+      // (1) red without the swap's check that the hold is on the file the open settled on (the
+      //     restore then unlinks the other file's side files under its process and renames over it);
+      //     (2) prints the refusal, the side files and the runs.
+      expect({ refused: outcome.refused, sides, runs: Object.keys(runsOf(file)).sort() }).toEqual({
+        refused: {
+          code: 'STATE_STORE_RESTORE_REFUSED',
+          message:
+            `Cannot restore from ${backup}: another restore put a new store file in place while ` +
+            `this one waited. ${file} was not replaced.`,
+        },
+        sides: ['-wal', '-shm'],
+        runs: [...otherRuns].sort(),
       });
     });
 

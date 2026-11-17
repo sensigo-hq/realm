@@ -161,7 +161,7 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
     claim(PAGE, "It prints `realm db backup`'s line for the kept file, then:", 'cell 1');
   });
 
-  it('(2) a backup that holds the same runs, then the undo by the kept file', async () => {
+  it('(2) a backup that holds the same runs: the same-runs line (and the page`s undo sentence, executed by the store`s undo cell)', async () => {
     await makeStore(home, 1);
     const backup = join(base, 'b.db');
     await backupTo(home, backup);
@@ -376,6 +376,21 @@ describe('#616 R1b — the page, the files page and the codes page say what real
       `cell 6; ${STORE_CELLS}: the idle process cell`,
     ],
     [
+      'step 3, a command started meanwhile',
+      'A Realm command started while the restore runs waits, then opens the restored file (or fails as busy after about 5 seconds).',
+      `${STORE_CELLS}: the cell of an opener that connects while the restore holds the file (a real child); the busy refusal: the open's own budget, unchanged`,
+    ],
+    [
+      'an empty backup',
+      'an empty file: `Cannot restore from <backup>: it is empty: it holds no store. Nothing was changed.`',
+      `${STORE_CELLS}: the backup argument cell`,
+    ],
+    [
+      'the by-hand paragraph',
+      '[`realm db restore <backup>`](#restore) puts the copy back in place of a store file Realm can open and copy. Into a home with no store file, or an empty one, or over a store file Realm cannot open or cannot copy, restoring is done by hand for now.',
+      `cell 4; ${STORE_CELLS}: the refusal cells (a missing or empty store file, a file the open cannot read, a damaged page)`,
+    ],
+    [
       'step 4',
       'It keeps the file it replaces: [`realm db backup`](#backup) copies it into the backups folder beside the home, `~/.realm-backups/` for the home `~/.realm` (made owner-only when it is missing), as `realm-before-restore-<UTC time>.db`, and prints its line.',
       `cell 1; ${STORE_CELLS}: the first cell (the kept file's name and runs)`,
@@ -407,7 +422,7 @@ describe('#616 R1b — the page, the files page and the codes page say what real
     ],
     [
       'the kept copy refused',
-      "the kept copy cannot be made, or fails SQLite's quick check (the store file may then be damaged): `realm db backup`'s refusal, with its code, then ` Nothing was replaced.`",
+      "the kept copy cannot be made, or fails SQLite's quick check (the store file may then be damaged): `realm db backup`'s refusal, with its code, then ` Nothing was replaced.` Over such a file, put the backup in place by hand for now ([Restoring a copy](#restoring-a-copy)).",
       `${STORE_CELLS}: the damaged page and same-second cells`,
     ],
     [
@@ -427,7 +442,7 @@ describe('#616 R1b — the page, the files page and the codes page say what real
   it('the files page and the codes page', () => {
     claim(
       ENV_PAGE,
-      '| `.realm-restore-<pid>-<random>.db` | The checked copy of a backup that `realm db restore` renames over `realm.db`, owner-only (mode 0600). One left behind by a restore that was killed is a full copy of the backup, which can be deleted when no restore is running. | `realm db restore` |',
+      "| `.realm-restore-<pid>-<random>.db` | The checked copy of a backup that `realm db restore` renames over `realm.db`, owner-only (mode 0600). One left behind by a restore that was killed is a full copy of the backup, which can be deleted when no restore is running. A restore that was killed may also leave a folder `realm-restore-<random>` in the system's temporary folder, owner-only, holding a full copy of the backup: delete it. | `realm db restore` |",
       `${STORE_CELLS}: the crash window cell`,
     );
     claim(

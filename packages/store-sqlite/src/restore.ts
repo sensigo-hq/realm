@@ -194,7 +194,13 @@ function lookAt(path: string): Stats | undefined {
   }
 }
 
-/** A1: the backup is an existing regular file and not the store file or a side file of it. */
+/** The device and inode `path` names now, or nothing when it cannot be looked at. */
+function fileAt(path: string): string | undefined {
+  const entry = lookAt(path);
+  return entry === undefined ? undefined : `${entry.dev}:${entry.ino}`;
+}
+
+/** A1: the backup is an existing, non-empty regular file and not the store file or a side file of it. */
 function refuseBackupEntry(backup: string, source: string): void {
   let entry: Stats;
   try {
@@ -212,6 +218,7 @@ function refuseBackupEntry(backup: string, source: string): void {
     throw backupRefused(backup, "it is the store file's -wal file");
   if (same(lookAt(`${source}-shm`)))
     throw backupRefused(backup, "it is the store file's -shm file");
+  if (entry.size === 0) throw backupRefused(backup, 'it is empty: it holds no store');
 }
 
 /**
@@ -297,14 +304,20 @@ function placeTemporary(r: Restore): string {
   return temporary;
 }
 
-/** C's unlink: the old `-wal` and `-shm`, under the hold; one already gone is fine. */
+/** C's unlink: the old `-wal` and `-shm`, under the hold, each its own call; one already gone is fine. */
 function removeSideFiles(source: string): void {
-  for (const suffix of ['-wal', '-shm']) {
-    try {
-      unlinkSync(`${source}${suffix}`);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    }
+  const gone = (err: unknown): void => {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  };
+  try {
+    unlinkSync(`${source}-wal`);
+  } catch (err) {
+    gone(err);
+  }
+  try {
+    unlinkSync(`${source}-shm`);
+  } catch (err) {
+    gone(err);
   }
 }
 
@@ -395,9 +408,20 @@ async function replaceStore(
   store: OpenedStore,
 ): Promise<RestoreReplaced> {
   try {
+    // The file the open settled on (its own check made the path name it): the hold must be on it.
+    const opened = fileAt(source);
     const temporary = placeTemporary(r);
     try {
+      await r.seams.beforeHold?.();
       await holdStoreFile(store.db, source);
+      // Another restore's rename between this open and this hold leaves the hold on the file it
+      // replaced: nothing is copied, unlinked or renamed (correction 1).
+      if (fileAt(source) !== opened) {
+        const err = new Error(
+          'another restore put a new store file in place while this one waited',
+        );
+        throw notReplaced(r, source, err, undefined);
+      }
       const folder = backupsFolderOf(r.home);
       const unmade = makeFolder(folder);
       if (unmade !== undefined) {
