@@ -33,9 +33,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WorkflowError, type CreateRunOptions } from '@sensigo/realm';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from './driver.js';
-import { openMaintenance, type MaintenanceSeams } from './maintenance.js';
+import { backupStamp, openMaintenance, type MaintenanceSeams } from './maintenance.js';
 import { openHome } from './open-realm-home.js';
 import type { RestoreProgress, RestoreReport } from './restore.js';
 
@@ -52,7 +52,6 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dirs: string[] = [];
 const children: ChildProcess[] = [];
 afterEach(() => {
-  vi.useRealTimers();
   for (const child of children.splice(0)) child.kill('SIGKILL');
   for (const d of dirs.splice(0)) {
     try {
@@ -202,6 +201,16 @@ function damagePage13(file: string): void {
   }
 }
 
+/**
+ * Waits until the wall clock's UTC second moves on, so the next restore's kept file gets a name of
+ * its own (the name holds the second; the global `Date` is never faked here: the source law of
+ * test-time-715b forbids it beside child processes).
+ */
+async function nextSecond(): Promise<void> {
+  const second = Math.floor(Date.now() / 1000);
+  while (Math.floor(Date.now() / 1000) === second) await new Promise((r) => setTimeout(r, 20));
+}
+
 /** Sets a store file's schema version (`user_version`) through a raw connection. */
 function setVersion(file: string, version: number): void {
   const db = openDatabase(file);
@@ -339,8 +348,6 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
     await h.runStore.update({ ...v1, params: { later: 'work' } });
     h.close();
     const beforeRestore = runsOf(file);
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-11-17T08:00:00Z'));
     const first = reported(await restore(home, backup));
     const kept = first.replaced.kind === 'store' ? first.replaced.kept.path : 'none';
     // Work on the restored file reaches the same version with other content.
@@ -352,7 +359,7 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
     const version = (path: string): unknown =>
       (JSON.parse(runsOf(path)[id!] ?? '{}') as { version?: unknown }).version;
     const versions = [version(kept), version(file)];
-    vi.setSystemTime(new Date('2026-11-17T08:00:05Z'));
+    await nextSecond();
     const undo = reported(await restore(home, kept));
     // (1) red when the counts compare versions (the same-version run is then not counted), or the
     //     undo does not bring back the file as it was; (2) prints the counts and both run sets.
@@ -372,22 +379,36 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
     await makeStore(home, 1);
     const backup = join(root, 'b.db');
     await backupTo(home, backup);
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-11-17T08:30:00Z'));
-    reported(await restore(home, backup));
+    const first = reported(await restore(home, backup)).replaced.kept.path;
+    // The second restore takes the name of the second it runs in: the first's, or, should the clock
+    // move on meanwhile, one of the next three, each held by a file already (the clock is real).
+    const held = [1, 2, 3].map((k) =>
+      join(folder, `realm-before-restore-${backupStamp(new Date(Date.now() + k * 1000))}.db`),
+    );
+    for (const path of held) writeFileSync(path, 'held');
     const before = hashOf(file);
+    const firstBytes = hashOf(first);
     const second = await restore(home, backup);
-    const kept = join(folder, 'realm-before-restore-20261117T083000Z.db');
-    // (1) red when the second kept copy replaces the first, or its refusal loses its sentence; (2)
-    //     prints the refusal and whether the file changed.
-    expect({ refused: second.refused, unchanged: hashOf(file) === before }).toEqual({
+    const kept = /^Cannot back up the store to (\S+\.db): /.exec(
+      second.refused?.message ?? '',
+    )?.[1];
+    // (1) red when the second kept copy replaces a file there, or its refusal loses its sentence;
+    //     (2) prints the refusal, whether the store file changed, and the files that were there.
+    expect({
+      refused: second.refused,
+      named: kept !== undefined && [first, ...held].includes(kept),
+      unchanged: hashOf(file) === before,
+      there: [hashOf(first) === firstBytes, ...held.map((p) => readFileSync(p, 'utf8'))],
+    }).toEqual({
       refused: {
         code: 'STATE_STORE_BACKUP_REFUSED',
         message:
           `Cannot back up the store to ${kept}: a file already exists there. Realm never replaces a ` +
           'file; name a path where nothing exists. Nothing was replaced.',
       },
+      named: true,
       unchanged: true,
+      there: [true, 'held', 'held', 'held'],
     });
   });
 
@@ -566,10 +587,8 @@ describe(
       const hashes = [plain, inLocked].map(hashOf);
       const results: unknown[] = [];
       for (const backup of [plain, inLocked]) {
-        vi.useFakeTimers({ toFake: ['Date'] });
-        vi.setSystemTime(new Date(Date.UTC(2026, 10, 17, 9, 0, results.length * 2)));
+        if (results.length > 0) await nextSecond();
         const outcome = await restore(home, backup);
-        vi.useRealTimers();
         const mode = statSync(file).mode & 0o777;
         const db = openDatabase(file);
         const journal = db.prepare('PRAGMA journal_mode').get()?.['journal_mode'];
@@ -834,17 +853,19 @@ describe(
       await backupTo(home, backup);
       damagePage13(file);
       const before = hashOf(file);
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date('2026-11-17T09:20:00Z'));
       const outcome = await restore(home, backup);
-      const kept = join(folder, 'realm-before-restore-20261117T092000Z.db');
+      // The kept file's name holds the second the restore ran in (a real clock): read it back.
+      const kept =
+        /^Cannot back up the store to (\S+\.db): /.exec(outcome.refused?.message ?? '')?.[1] ?? '';
       // (1) red when the kept copy's refusal loses its sentence or its code, or the file is replaced;
       //     (2) prints it.
       expect({
         refused: outcome.refused,
+        named: /^realm-before-restore-\d{8}T\d{6}Z\.db$/.test(kept.slice(folder.length + 1)),
         unchanged: hashOf(file) === before,
         left: names(home).filter((n) => n.startsWith('.realm-restore-')),
       }).toEqual({
+        named: true,
         refused: {
           code: 'STATE_STORE_BACKUP_REFUSED',
           message:
