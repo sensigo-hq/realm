@@ -725,9 +725,9 @@ function · public
 
 The complete renderer from a program's partial one: the program's function for each verb it gave
 one, Realm's own words (`LIBRARY_WORDS`) for every other verb — a verb added in a later minor
-release included, until the program writes its own. A member given as `undefined` counts as not
-given. String words only, as `LIBRARY_WORDS` gives them: a renderer with another output type has no
-default and is written whole, as a `WayRenderer`.
+release included, until the program writes its own. A member that is not a function — `undefined`
+included — counts as not given. String words only, as `LIBRARY_WORDS` gives them: a renderer with
+another output type has no default and is written whole, as a `WayRenderer`.
 
 ```ts
 function withLibraryWords<Host>(partial: PartialWayRenderer<Host>): WayRenderer<string, Host>;

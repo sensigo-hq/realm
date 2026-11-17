@@ -1721,7 +1721,7 @@ describe('CP-1 word lists — withLibraryWords: a program words the verbs it wan
 
   it('a program’s own host reaches its functions: the type takes any host, not LibraryHost', () => {
     // The call below is the compile check: with the helper's `Host` narrowed to `LibraryHost`,
-    // `npm run typecheck:tests` refuses it (TS2345). At run time: (a) red when the program's function
+    // `npm run typecheck:tests` refuses it (TS2344). At run time: (a) red when the program's function
     // does not get the host passed in; (b) prints each verb's words.
     const renderer = withLibraryWords<{ ctx: number }>({ respond: (_w, _b, h) => String(h.ctx) });
     expect(wordsOf(renderer, { ctx: 7 })).toEqual({ ...LIBRARY, respond: '7' });
