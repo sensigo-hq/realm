@@ -18,10 +18,12 @@ import {
   NO_LEASE_FACTS,
   parseStamp,
   writtenSnapshot,
+  listedSnapshotOf,
   SCAN_MAX_PAGE_SIZE,
   type Clock,
   type CreateResult,
   type KeyAnswer,
+  type ListedScanPage,
   type RunRow,
   type ScanFilter,
   type ScanOptions,
@@ -448,6 +450,10 @@ export class InMemoryStore implements RunStore {
     // issue #367: the seal-integrity boundary — identical to JsonFileStore's update tail (the
     // measured update/settle asymmetry closed; the listen/run-attach suites drive THIS store).
     assertSealIntegrity(existing, record);
+    // Gap 1, unit A0: an update that drops a stored evidence entry's `model_text` is refused, as the
+    // SQLite store refuses a changed entry: a listing's record leaves the texts out, and is never
+    // written back over them.
+    assertKeepsModelText(existing, record);
     const updated: RunRecord = {
       ...record,
       run_phase: deriveRunPhase(record),
@@ -760,6 +766,31 @@ export class InMemoryStore implements RunStore {
   }
 
   /**
+   * Gap 1, unit A0: the runs `scan` gives in its `'record'` projection, each without its model
+   * calls' texts, built from copies: this store's `scan` hands out its stored records themselves, so
+   * each listed record is a copy (`structuredClone`) with the texts left out (`listedSnapshotOf`),
+   * and the stored records keep theirs. The pages, filters, readings and lease facts are `scan`'s.
+   */
+  async *scanListed(
+    filter: ScanFilter,
+    options: Omit<ScanOptions, 'projection'>,
+  ): AsyncGenerator<ListedScanPage, void, undefined> {
+    for await (const page of this.scan(filter, { ...options, projection: 'record' })) {
+      yield {
+        ...page,
+        items: page.items.map((item) =>
+          item.kind === 'run'
+            ? {
+                kind: 'run',
+                run: listedSnapshotOf({ ...item.run, record: structuredClone(item.run.record) }),
+              }
+            : item,
+        ),
+      };
+    }
+  }
+
+  /**
    * Who holds `workflowId`'s idempotency key `key` (#616 PR-2c c4-i): `held`, with the run's id, when
    * the key's pointer names a run this store holds; otherwise `unseen`. Never `purged`: this store
    * deletes no run. `since` is the epoch: a store that never deletes a run has forgotten nothing.
@@ -778,3 +809,30 @@ export class InMemoryStore implements RunStore {
 }
 
 brandClass(InMemoryStore, Symbol.for('@sensigo/realm-testing/InMemoryStore'), REALM_TESTING_BRAND);
+
+/**
+ * Gap 1, unit A0: refuses an update that drops the `model_text` a stored evidence entry holds (the
+ * entry gone, or the key gone from it), with the SQLite store's code for a changed entry.
+ */
+function assertKeepsModelText(existing: RunRecord, record: RunRecord): void {
+  const stored = Array.isArray(existing.evidence) ? existing.evidence : [];
+  const next = Array.isArray(record.evidence) ? record.evidence : [];
+  const dropped = stored.findIndex(
+    (entry, i) =>
+      Object.prototype.hasOwnProperty.call(entry, 'model_text') &&
+      (next[i] === undefined || !Object.prototype.hasOwnProperty.call(next[i], 'model_text')),
+  );
+  if (dropped === -1) return;
+  throw new WorkflowError(
+    `The store refused a write that would remove the model calls' text from evidence entry ` +
+      `${dropped} of run ${record.id}: a listing of runs leaves the texts out, and its record is ` +
+      `never written back.`,
+    {
+      code: 'STATE_EVIDENCE_REWRITTEN',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { runId: record.id, entry: dropped },
+    },
+  );
+}

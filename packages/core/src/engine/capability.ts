@@ -9,7 +9,7 @@
 // Keeping this logic pure and centralized guarantees the pre-flight warning and the mid-run settle
 // reason about capability the SAME way the dispatcher does, so a warning and a block can never disagree.
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
-import type { RunRecord } from '../types/run-record.js';
+import type { ListedRecord } from '../types/run-record.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import type { CapabilityBasis } from './pending.js';
 
@@ -112,7 +112,7 @@ export interface CapabilityBlockInfo {
  * correctly-provisioned runner, its marker is silently ignored, so CLEARING the marker on recovery is
  * hygiene, not correctness. Returns [] for legacy/capability-clean records (no `capability_blocks`).
  */
-export function findCapabilityBlockedSteps(run: RunRecord): CapabilityBlockInfo[] {
+export function findCapabilityBlockedSteps(run: ListedRecord): CapabilityBlockInfo[] {
   const blocks = run.capability_blocks;
   if (blocks === undefined) return [];
   const settled = new Set<string>([

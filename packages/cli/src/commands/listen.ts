@@ -126,6 +126,8 @@ import { DEPRECATIONS_SAID_ENV, addDeclaredValues } from '../output/writer.js';
 import { saidIds } from '@sensigo/realm';
 import { openCliHome } from '../lib/home.js';
 import { REMINDER_POLL_MS, reminderSenderOf, type ReminderSource } from './listen-reminders.js';
+// Gap 1, unit A0: the listing that reads no model call's text.
+import { scanListedRuns, type ListedRecord } from '@sensigo/realm';
 
 const DEFAULT_TTL_MINUTES = 60;
 // Fixed signature-header names for the body-signature presets.
@@ -1178,7 +1180,7 @@ export interface SweepResult {
  */
 async function enactSweptGate(
   deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'>,
-  run: RunRecord,
+  run: ListedRecord,
   gate: PendingGate,
   result: SweepResult,
 ): Promise<void> {
@@ -1276,7 +1278,7 @@ async function enactSweptGate(
  * would replace this one read, not the runner.
  */
 export interface SweepRead {
-  due: Array<{ run: RunRecord; gate: PendingGate }>;
+  due: Array<{ run: ListedRecord; gate: PendingGate }>;
   /** The earliest `expires_at` (epoch ms) among the gates not yet due; undefined when none. */
   nextDeadlineMs: number | undefined;
 }
@@ -1286,10 +1288,13 @@ export interface SweepRead {
  * filter (no schema change), every page, each record still judged by itself, because the filter only
  * narrows the read (another store filters on a stored label).
  */
-export async function readWaitingGates(runStore: Pick<RunStore, 'scan'>): Promise<SweepRead> {
+export async function readWaitingGates(
+  runStore: Pick<RunStore, 'scan' | 'scanListed'>,
+): Promise<SweepRead> {
   const due: SweepRead['due'] = [];
   let nextDeadlineMs: number | undefined;
-  const pages = runStore.scan({ phase: 'gate_waiting' }, { pageSize: 1000, projection: 'record' });
+  // Gap 1, unit A0: listed, so no model call's text is read; each gate is enacted by run id.
+  const pages = scanListedRuns(runStore, { phase: 'gate_waiting' }, { pageSize: 1000 });
   for await (const page of pages) {
     for (const item of page.items) {
       if (item.kind !== 'run') continue;

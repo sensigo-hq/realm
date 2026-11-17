@@ -1648,6 +1648,33 @@ LeaseUnavailableReason · type · beta
 LibraryHost · type · public
   type LibraryHost = Readonly<Record<string, never>>;
 
+ListedRecord · type · public
+  type ListedRecord = Omit<RunRecord, 'evidence'> & {
+      readonly evidence: readonly Omit<EvidenceSnapshot, 'model_text'>[];
+  };
+
+ListedScanItem · type · public
+  type ListedScanItem = {
+      kind: 'run';
+      run: ListedSnapshot;
+  } | PurgedItem;
+
+ListedScanPage · type · public
+  interface ListedScanPage {
+      items: ListedScanItem[];
+      read_at: Date;
+      consistent_snapshot: true;
+      derived_at_read: number;
+      next_after?: string;
+  }
+
+ListedSnapshot · type · public
+  interface ListedSnapshot {
+      readonly record: ListedRecord;
+      readonly at: Date;
+      readonly lease_facts?: LeaseFacts;
+  }
+
 Listing · type · public
   interface Listing {
       snapshots: Snapshot[];
@@ -2568,6 +2595,7 @@ RunStore · type · public (beta: claimStep.hold, leases, outbound)
           projection?: 'record';
       }): AsyncGenerator<ScanPage<'record'>, void, undefined>;
       scan(filter: ScanFilter, options: ScanOptions): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
+      scanListed?(filter: ScanFilter, options: Omit<ScanOptions, 'projection'>): AsyncGenerator<ListedScanPage, void, undefined>;
       resolveKey(workflowId: string, key: string): Promise<KeyAnswer>;
       tombstonesSince(): Promise<string>;
       claimStep(runId: string, stepName: string, definition: WorkflowDefinition, claimant?: Attributed, hold?: LeaseHold): Promise<Snapshot>;
@@ -3888,7 +3916,7 @@ classifyLegacySeal · value · public
 
 classifyRegisteredCopy · value · internal
 classifyRunHealth · value · public
-  function classifyRunHealth(snapshot: Snapshot, opts?: ClassifyRunHealthOptions): RunHealthFinding[];
+  function classifyRunHealth(snapshot: ListedSnapshot, opts?: ClassifyRunHealthOptions): RunHealthFinding[];
 
 classifyStepTrust · value · internal
 classifyStop · value · public
@@ -4048,7 +4076,7 @@ fileClock · value · internal
 finalizerOutcomeLines · value · internal
 findCapabilityBlockedSteps · value · internal
 findEligibleSteps · value · public
-  function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord): string[];
+  function findEligibleSteps(definition: WorkflowDefinition, run: ListedRecord): string[];
 
 findSecretRefSites · value · internal
 findTrustRoot · value · internal
@@ -4070,7 +4098,7 @@ gateChoicesOf · value · internal
 gateRepairOf · value · internal
 generateSchemaSkeleton · value · internal
 getWorkflowForRun · value · public
-  function getWorkflowForRun(store: Pick<WorkflowRegistrar, 'get'>, run: RunRecord, opts: {
+  function getWorkflowForRun(store: Pick<WorkflowRegistrar, 'get'>, run: ListedRecord, opts: {
       retryVerb: string;
       verb: string;
       terminalOk?: boolean;
@@ -4137,6 +4165,7 @@ libraryCannotRunWords · value · internal
 linkNoClobberThenUnlink · value · internal
 listWords · value · internal
 listWorkflowsDiagnosed · value · internal
+listedSnapshotOf · value · internal
 loadSnapshot · value · internal
 loadWorkflowFromFile · value · public
   function loadWorkflowFromFile(filePath: string, registry?: ExtensionRegistry): WorkflowDefinition;
@@ -4304,6 +4333,7 @@ runNotFoundError · value · internal
 runPhaseDerivationFingerprint · value · internal
 runReadError · value · internal
 saidIds · value · internal
+scanListedRuns · value · internal
 scanSecretString · value · internal
 sealRunLevel · value · internal
 seedSaid · value · internal

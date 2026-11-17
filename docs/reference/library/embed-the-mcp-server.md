@@ -786,6 +786,10 @@ Names this job reaches whose entry is on another page.
 - [`LeasePort`](implement-a-store.md#leaseport): A store's claim leases.
 - [`LeaseProbeReason`](implement-a-store.md#leaseprobereason): Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
 - [`LeaseUnavailableReason`](implement-a-store.md#leaseunavailablereason): Why a store could not make a claim lease, from the error the operating system or SQLite gave (`LeaseHoldResult`'s `unavailable`).
+- [`ListedRecord`](implement-a-store.md#listedrecord): A run as a listing of runs gives it: the record, with each evidence entry's `model_text` left out and the evidence read-only, so `update` refuses it and a listing's record is never written back over the texts it left out.
+- [`ListedScanItem`](implement-a-store.md#listedscanitem): One item of a listing of runs (`RunStore.scanListed`): a run as a `ListedSnapshot`, or a tombstone.
+- [`ListedScanPage`](implement-a-store.md#listedscanpage): One page of a listing of runs (`RunStore.scanListed`): a `'record'` scan's page, its runs without their model calls' texts.
+- [`ListedSnapshot`](implement-a-store.md#listedsnapshot): One run and the reading it is judged at, as a listing of runs gives it: a `Snapshot` whose record is a `ListedRecord`, with the model calls' texts left out.
 - [`LiteralNode`](define-and-load-a-workflow.md#literalnode): A node in an input_map tree.
 - [`LoadBearingRunRecordField`](implement-a-store.md#loadbearingrunrecordfield): The load-bearing `RunRecord` fields the engine treats specially enough that a store must DECLARE which it round-trips (issue #188).
 - [`MarkFinalizerDelta`](implement-a-store.md#markfinalizerdelta): Record a finalizer handler's outcome against the lease that authorized running it.

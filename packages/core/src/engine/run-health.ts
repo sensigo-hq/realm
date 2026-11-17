@@ -125,8 +125,9 @@
 // slot, not this one's. A TRACE-rejection count (VALIDATION_TRACE_SCHEMA, uncounted v1 — see
 // execution-loop.ts's countRejection doc) still requires sidecar evidence this function
 // structurally cannot see (classification here is write-free by construction).
-import type { RunRecord } from '../types/run-record.js';
-import type { Snapshot } from './snapshot.js';
+import type { ListedRecord } from '../types/run-record.js';
+import type { ListedSnapshot } from './snapshot.js';
+import { recordToJudge } from './snapshot.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { classifyInProgressClaims } from './claim-liveness.js';
@@ -233,7 +234,7 @@ export interface RunHealthFinding {
  * {@link classifyRunHealth} (a live pending_gate can coexist with this corruption whether or not
  * the run has separately gone terminal).
  */
-function findGateCorruption(run: RunRecord): RunHealthFinding | undefined {
+function findGateCorruption(run: ListedRecord): RunHealthFinding | undefined {
   if (run.pending_gate === undefined) return undefined;
   const gateId = run.pending_gate.gate_id;
   for (const [step, entry] of Object.entries(run.settled ?? {})) {
@@ -293,7 +294,7 @@ function findGateCorruption(run: RunRecord): RunHealthFinding | undefined {
  *    KNOW what an external driver did, whereas compat is realm's own decision — the same footing
  *    as `unsupported_context_tools`, which is also included.
  */
-function findStructuredOutputDowngrades(run: RunRecord): RunHealthFinding | undefined {
+function findStructuredOutputDowngrades(run: ListedRecord): RunHealthFinding | undefined {
   const reasonsByStep = new Map<string, Set<string>>();
   for (const entry of run.evidence) {
     const meta = entry.diagnostics?.structured_output;
@@ -353,7 +354,7 @@ function findStructuredOutputDowngrades(run: RunRecord): RunHealthFinding | unde
  * Record-only by construction — no definition, no I/O — so `list --stuck`, which passes neither,
  * gets this finding for free.
  */
-function findDriveFailing(snapshot: Snapshot): RunHealthFinding | undefined {
+function findDriveFailing(snapshot: ListedSnapshot): RunHealthFinding | undefined {
   const { record: run, at: now } = snapshot;
   const field = run.drive_failures;
   const lastEntry = field?.entries[field.entries.length - 1];
@@ -453,7 +454,8 @@ export interface ClassifyRunHealthOptions {
  */
 export function classifyRunHealth(
   // #715 (b) (D6-17): one snapshot — the record and the reading it is judged at; no default clock.
-  snapshot: Snapshot,
+  // Gap 1, unit A0: a listing's snapshot too (every `Snapshot` is one).
+  snapshot: ListedSnapshot,
   opts?: ClassifyRunHealthOptions,
 ): RunHealthFinding[] {
   // #715 (b) (02 §D.1): the stamped-ahead finding is about the record and the reader's clock, on
@@ -471,7 +473,7 @@ export function classifyRunHealth(
  * is not supported by this finding. Evidence: `{ record_updated_at, reader_at, delta_ms }`, the RAW
  * lead (never the capped one).
  */
-export function recordStampedAheadOf(snapshot: Snapshot): RunHealthFinding | undefined {
+export function recordStampedAheadOf(snapshot: ListedSnapshot): RunHealthFinding | undefined {
   const stamped = parseStamp(snapshot.record.updated_at);
   if (stamped === undefined || stamped <= snapshot.at.getTime()) return undefined;
   const readerMs = snapshot.at.getTime() - CLOCK_SKEW_EPSILON_MS;
@@ -532,7 +534,7 @@ void _everyKindListed;
 
 /** The run's findings but `record_stamped_ahead` — see {@link classifyRunHealth}. */
 function classifyRecordHealth(
-  snapshot: Snapshot,
+  snapshot: ListedSnapshot,
   opts?: ClassifyRunHealthOptions,
 ): RunHealthFinding[] {
   const { record: run, at: now } = snapshot;
@@ -778,7 +780,8 @@ function classifyRecordHealth(
     derivedPhase === 'running' &&
     run.in_progress_steps.length === 0
   ) {
-    const composed = composeWaysAt(run, now, {
+    // Gap 1, unit A0: the ways engine judges a full record; a listing's is given as one to judge.
+    const composed = composeWaysAt(recordToJudge(run), now, {
       definition: opts.definition,
       ...(opts.registry !== undefined ? { registry: opts.registry } : {}),
       lease_facts: snapshot.lease_facts,

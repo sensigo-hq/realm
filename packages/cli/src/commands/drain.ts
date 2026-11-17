@@ -49,6 +49,8 @@ import { agentReadyReason, inFlightReasons } from './run-advance.js';
 import { RUN_PHASE_WORDS, exitProcess, writerCtx } from '../output/writer.js';
 import { relayIfLogged } from '../output/relay.js';
 import { openCliHome } from '../lib/home.js';
+// Gap 1, unit A0: the listing that reads no model call's text.
+import { scanListedRuns, type ListedRecord, type ListedSnapshot } from '@sensigo/realm';
 
 /**
  * issue #558 PR-C: ONE mint, rendered by BOTH surfaces that can find nothing to drain — the
@@ -184,7 +186,7 @@ export type GateExpiryClass =
       words: string;
     };
 
-export function classifyGateExpiry(run: RunRecord, now: Date): GateExpiryClass {
+export function classifyGateExpiry(run: ListedRecord, now: Date): GateExpiryClass {
   const gate = run.pending_gate;
   if (gate === undefined || gate.expires_at === undefined) return { kind: 'none' };
   // #715 (b) (D-25): through core's one deadline reader. An unparseable `expires_at` is never past
@@ -208,7 +210,7 @@ export function classifyGateExpiry(run: RunRecord, now: Date): GateExpiryClass {
 async function enactGateExpiry(
   runStore: RunStore,
   definition: WorkflowDefinition,
-  run: RunRecord,
+  run: ListedRecord,
 ): Promise<{
   run: RunRecord;
   at: Date;
@@ -369,7 +371,7 @@ export function classifyDrainRankPass(
 /** Batch actionability (design record §6): `status 'pending' ∧ (lease absent ∨ expired)` — a
  *  never-leased pending entry is IN (it has never been attempted), matching `classifyDrainRankPass`
  *  labeling it `actionable` rather than excluding it for lacking a lease at all. */
-export function isBatchActionable(run: RunRecord, now: Date): boolean {
+export function isBatchActionable(run: ListedRecord, now: Date): boolean {
   return classifyDrainRankPass(run.finalizer_ledger, now).some((e) => e.class === 'actionable');
 }
 
@@ -631,13 +633,14 @@ export async function runDrainAction(
     }
     // issue #719 (B3): its own `try` — a listing that throws is rendered like every other failure
     // here, never an unhandled rejection.
-    let runs: RunRecord[];
+    let runs: ListedRecord[];
     // #715 (b) (D-26): each row is judged at its own snapshot's `at`.
     let atOf: Map<string, Date>;
     try {
       // #616 PR-2c c4: every page of the store's scan.
-      const snapshots: Snapshot[] = [];
-      for await (const page of runStore.scan({}, { pageSize: 1000, projection: 'record' })) {
+      // Gap 1, unit A0: listed, so no model call's text is read; each run is drained by its id.
+      const snapshots: ListedSnapshot[] = [];
+      for await (const page of scanListedRuns(runStore, {}, { pageSize: 1000 })) {
         for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
       }
       runs = snapshots.map((s) => s.record);

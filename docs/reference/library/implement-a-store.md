@@ -43,6 +43,8 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`LeaseFinalizerDelta`](#leasefinalizerdelta) | interface | Acquire (or re-acquire, same-token) the lease on one PENDING finalizer ledger entry — the drain loop's mint-before-execute step. |
 | [`LeaseHold`](#leasehold) | interface | A lease this program holds. |
 | [`LeasePort`](#leaseport) | interface | A store's claim leases. |
+| [`ListedScanPage`](#listedscanpage) | interface | One page of a listing of runs (`RunStore.scanListed`): a `'record'` scan's page, its runs without their model calls' texts. |
+| [`ListedSnapshot`](#listedsnapshot) | interface | One run and the reading it is judged at, as a listing of runs gives it: a `Snapshot` whose record is a `ListedRecord`, with the model calls' texts left out. |
 | [`Listing`](#listing) | interface | What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics (the shape `list` returned until #616 c4): every record with the reading it is judged at, and the listing's own reading. |
 | [`MarkFinalizerDelta`](#markfinalizerdelta) | interface | Record a finalizer handler's outcome against the lease that authorized running it. |
 | [`OpenGateDelta`](#opengatedelta) | interface | Opens a human gate on a claimed step (issue #279, increment 2, PR-C; design record `design-d5-increment2.md` §2/§3 `openGateArms`). |
@@ -94,6 +96,8 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`LeaseHoldResult`](#leaseholdresult) | type | What `hold()` answers: the lease, or why there is none. |
 | [`LeaseProbeReason`](#leaseprobereason) | type | Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state). |
 | [`LeaseUnavailableReason`](#leaseunavailablereason) | type | Why a store could not make a claim lease, from the error the operating system or SQLite gave (`LeaseHoldResult`'s `unavailable`). |
+| [`ListedRecord`](#listedrecord) | type | A run as a listing of runs gives it: the record, with each evidence entry's `model_text` left out and the evidence read-only, so `update` refuses it and a listing's record is never written back over the texts it left out. |
+| [`ListedScanItem`](#listedscanitem) | type | One item of a listing of runs (`RunStore.scanListed`): a run as a `ListedSnapshot`, or a tombstone. |
 | [`LoadBearingRunRecordField`](#loadbearingrunrecordfield) | type | The load-bearing `RunRecord` fields the engine treats specially enough that a store must DECLARE which it round-trips (issue #188). |
 | [`MarkFinalizerResult`](#markfinalizerresult) | type | Result a `mark_finalizer` delta reports for one finalizer's handler outcome — mirrors `finalizer_ledger[name].status`'s two live-outcome values (`pending`/`voided` are never a mark-delta's OWN result; they are prior/other-path states the predicate reads, never writes via this delta). |
 | [`OpeningGate`](#openinggate) | type | The gate an `open_gate` delta opens, WITHOUT its instants (#715 (b), D-20; D5 §2.4, D6-12): the caller builds everything a `PendingGate` holds (gate_id, choices, preview, the frozen enforce/notify fields) except `opened_at` and `expires_at`, which the transform mints from the write's one reading `at` — so no gate is ever born expired. |
@@ -772,6 +776,39 @@ interface LeasePort {
 }
 ```
 
+### ListedScanPage
+
+interface · public
+
+One page of a listing of runs (`RunStore.scanListed`): a `'record'` scan's page, its runs
+without their model calls' texts. Every `'record'` scan page fits into it.
+
+```ts
+interface ListedScanPage {
+    items: ListedScanItem[];
+    read_at: Date;
+    consistent_snapshot: true;
+    derived_at_read: number;
+    next_after?: string;
+}
+```
+
+### ListedSnapshot
+
+interface · public
+
+One run and the reading it is judged at, as a listing of runs gives it: a `Snapshot`
+whose record is a `ListedRecord`, with the model calls' texts left out. Every `Snapshot`
+fits into it.
+
+```ts
+interface ListedSnapshot {
+    readonly record: ListedRecord;
+    readonly at: Date;
+    readonly lease_facts?: LeaseFacts;
+}
+```
+
 ### Listing
 
 interface · public
@@ -1182,6 +1219,7 @@ interface RunStore {
         projection?: 'record';
     }): AsyncGenerator<ScanPage<'record'>, void, undefined>;
     scan(filter: ScanFilter, options: ScanOptions): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
+    scanListed?(filter: ScanFilter, options: Omit<ScanOptions, 'projection'>): AsyncGenerator<ListedScanPage, void, undefined>;
     resolveKey(workflowId: string, key: string): Promise<KeyAnswer>;
     tombstonesSince(): Promise<string>;
     claimStep(runId: string, stepName: string, definition: WorkflowDefinition, claimant?: Attributed, hold?: LeaseHold): Promise<Snapshot>;
@@ -1771,6 +1809,34 @@ Why a store could not make a claim lease, from the error the operating system or
 
 ```ts
 type LeaseUnavailableReason = (typeof LEASE_UNAVAILABLE_REASONS)[number];
+```
+
+### ListedRecord
+
+type · public
+
+A run as a listing of runs gives it: the record, with each evidence entry's `model_text` left
+out and the evidence read-only, so `update` refuses it and a listing's record is never written
+back over the texts it left out. Every record fits into it.
+
+```ts
+type ListedRecord = Omit<RunRecord, 'evidence'> & {
+    readonly evidence: readonly Omit<EvidenceSnapshot, 'model_text'>[];
+};
+```
+
+### ListedScanItem
+
+type · public
+
+One item of a listing of runs (`RunStore.scanListed`): a run as a `ListedSnapshot`, or
+a tombstone. Every `'record'` scan item fits into it.
+
+```ts
+type ListedScanItem = {
+    kind: 'run';
+    run: ListedSnapshot;
+} | PurgedItem;
 ```
 
 ### LoadBearingRunRecordField
