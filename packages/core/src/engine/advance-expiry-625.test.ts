@@ -170,7 +170,9 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     });
     // (a) red when the view owes engine work for it; (b) prints the view's owed list.
     expect(describePending(d, writtenSnapshot(after, past), undefined).owed).toEqual([]);
-    expect(nextCalls(composeWaysAt(after, past, { definition: d }))).toEqual(['respond']);
+    expect(nextCalls(composeWaysAt(after, past, { persistsClaims: false, definition: d }))).toEqual(
+      ['respond'],
+    );
   });
 
   it('the view, given a clock: a due expiry is owed engine work — the advance way, advance_owed; before its time is up, nothing', async () => {
@@ -190,11 +192,13 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     const due = { expiry: { gate_id: gateId, step: 'confirm', on_expiry: 'settle_default' } };
     expect(view.owed).toEqual([due]);
     expect(owedList(view)).toBe("the expired question on 'confirm' (its declared settle_default)");
-    const composed = composeWaysAt(run, past, { definition: d });
+    const composed = composeWaysAt(run, past, { persistsClaims: false, definition: d });
     expect([nextCalls(composed), owedOf(composed)]).toEqual([['advance'], [`expiry:${gateId}`]]);
     // (a) red when a view before the expiry reads one; (b) prints the acts.
     expect(describePending(d, writtenSnapshot(run, before), undefined).owed).toEqual([]);
-    expect(nextCalls(composeWaysAt(run, before, { definition: d }))).toEqual(['respond']);
+    expect(nextCalls(composeWaysAt(run, before, { persistsClaims: false, definition: d }))).toEqual(
+      ['respond'],
+    );
     expect(dueExpiry(run.pending_gate, before)).toBeUndefined();
   });
 });

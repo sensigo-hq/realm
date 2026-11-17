@@ -238,6 +238,7 @@ describe('#715 (b) §B.2 — the CLI composers judge at the record’s reading',
     } as unknown as RunRecord;
     const at = new Date(Date.parse(LEASE) - 1_000);
     const map = renderDetachMap(ended, at, undefined, {
+      persistsClaims: false,
       pending: describePending(def, writtenSnapshot(ended, at), undefined),
       workflow: def,
     });

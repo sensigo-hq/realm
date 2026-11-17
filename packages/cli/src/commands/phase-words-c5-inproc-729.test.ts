@@ -97,8 +97,9 @@ const ABANDONED: Partial<RunRecord> = {
   sealed_by: { arm: 'abandon_requested' },
 } as Partial<RunRecord>;
 
-function ways(): { pending: PendingView; workflow: WorkflowDefinition } {
+function ways(): { pending: PendingView; workflow: WorkflowDefinition; persistsClaims: boolean } {
   return {
+    persistsClaims: false,
     pending: {
       owed: [],
       agent_steps: [],

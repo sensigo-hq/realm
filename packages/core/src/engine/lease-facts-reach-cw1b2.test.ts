@@ -192,6 +192,7 @@ describe('#729 CW-1b part 2a — the lease facts reach core’s judges', () => {
     await claimUnderLease(store, run.id, 'a');
     const read = await store.get(run.id);
     const held = composeWaysAt(read.record, read.at, {
+      persistsClaims: false,
       definition: AGENT,
       lease_facts: read.lease_facts,
     }).unavailable.find((u) => u.code === 'held_elsewhere' && u.verb === 'run_step');
@@ -200,6 +201,8 @@ describe('#729 CW-1b part 2a — the lease facts reach core’s judges', () => {
     expect(held !== undefined && 'facts' in held ? held.facts : held).toEqual({
       step: 'a',
       deadline: PAST,
+      // #922: the claim's stamp.
+      claimed_at: PAST,
       lease: HELD,
     });
   });

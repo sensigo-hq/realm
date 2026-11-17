@@ -195,10 +195,15 @@ function cliRespondWay(
   // #715 (b) (D6-17): the read — the ways are judged at its reading, with its lease facts.
   snap: Snapshot,
   definition: WorkflowDefinition | undefined,
+  persistsClaims: boolean,
 ): Extract<WayOn, { verb: 'respond' }> | undefined {
   const run = snap.record;
   if (definition === undefined || run.terminal_state) return undefined;
-  const composed = composeWaysAt(run, snap.at, { definition, lease_facts: snap.lease_facts });
+  const composed = composeWaysAt(run, snap.at, {
+    definition,
+    persistsClaims,
+    lease_facts: snap.lease_facts,
+  });
   const narrowed = narrowForDoor(composed, {
     door: 'cli',
     serves: DOOR_SERVES.cli,
@@ -1547,7 +1552,11 @@ export async function inspectRun(
     const pending = describePending(definition, read, undefined);
     // #729 PR-0 (A-10): the run's ways, composed by core with no registry (an observer, C33), and
     // rendered by the CLI's one renderer.
-    const ways = composeWaysAt(run, inspectNow, { definition, lease_facts: read.lease_facts });
+    const ways = composeWaysAt(run, inspectNow, {
+      definition,
+      persistsClaims: store.persistsClaims === true,
+      lease_facts: read.lease_facts,
+    });
     const advance = ways.ways.find((w) => w.verb === 'advance');
     if (advance !== undefined && advance.verb === 'advance') {
       // decision C207: with several owed, where the call stops — the clause the preview ends with.
@@ -1593,6 +1602,7 @@ export async function inspectRun(
   ) {
     // #729 PR-0 (Part B): the steps the question holds are its `respond` way's, in the CLI's words.
     const respond = composeWaysAt(run, inspectNow, {
+      persistsClaims: store.persistsClaims === true,
       definition,
       lease_facts: read.lease_facts,
     }).ways.find((w) => w.verb === 'respond');
@@ -1760,7 +1770,7 @@ export async function inspectRun(
     }
     // #627 W (§5.4b): the person's route — whenever the CLI door's narrowed list holds a callable
     // `respond` (W-s1 says `realm run inspect` shows the question, its gate id and its choices).
-    const respond = cliRespondWay(read, definition);
+    const respond = cliRespondWay(read, definition, store.persistsClaims === true);
     if (respond !== undefined) {
       lines.push(`  To answer: ${CLI_COMMANDS.respond(respond, undefined, { driveFlags: '' })}`);
     }

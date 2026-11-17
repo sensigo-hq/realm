@@ -992,6 +992,7 @@ describe(
       // #729 PR-0 (D-L): the view names what is owed (`owed`); the map composes the run's ways from
       // the whole definition.
       const view = (agentSteps: string[]) => ({
+        persistsClaims: false,
         pending: {
           owed: [],
           agent_steps: agentSteps,

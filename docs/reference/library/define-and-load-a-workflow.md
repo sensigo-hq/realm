@@ -702,6 +702,7 @@ Names this job reaches whose entry is on another page.
 - [`ProcessorOutput`](write-a-handler.md#processoroutput): The text and metadata a processor returns; the next processor in the pipeline is given it.
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`RateLimiter`](write-a-handler.md#ratelimiter): Controls the rate at which requests are sent to an external service.
+- [`ReclaimWay`](write-a-handler.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
 - [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
 - [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question.
 - [`RunRecordFieldProblem`](write-a-handler.md#runrecordfieldproblem): One field a value lacks, or holds with the wrong type.
