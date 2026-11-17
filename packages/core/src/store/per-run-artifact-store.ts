@@ -13,7 +13,7 @@
  * another store's filename layout.
  */
 /**
- * What a store reports about the artifacts it just deleted (issue #189).
+ * What a store reports about the artifacts it just deleted: the bytes it deleted.
  *
  * Bytes are a STORE-DEFINED, internally-consistent measure — exact on-disk bytes for the
  * filesystem stores, a documented approximation elsewhere (a Postgres store uses the same

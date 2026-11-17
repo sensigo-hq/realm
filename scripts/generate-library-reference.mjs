@@ -385,6 +385,77 @@ for (const n of names.values()) {
       );
   }
 }
+
+// The index sentence (a description's first sentence, as the index table prints it) is for a reader
+// who scans the table. It may not carry Realm's internal markers, a shouted word, or run past 200
+// characters (clippy's `too_long_first_doc_paragraph` bound). Each is refused here, naming the entry,
+// the match and the remedy; text inside a code span is never read.
+const INDEX_MARKERS = [
+  ['an issue number', /#\d+/g],
+  ['a section sign', /§/g],
+  ['a decision id', /\bD\d+-\d+/g],
+  ['`PR-` and a digit', /\bPR-\d/g],
+  ['`CW-` and a digit', /\bCW-\d/g],
+  ['`MA` and a digit', /\bMA \d/g],
+  ['`rev` and a digit', /\brev \d/g],
+  ['`T-` and digits', /\bT-\d+/g],
+  ['`A-` and digits', /\bA-\d+/g],
+  ['a decision number', /\bdecisions? C\d+/g],
+  ['`Amendment`', /Amendment/g],
+  ['`PR` and a number or letter', /\bPR[- ]?(?:\d|[A-Z])/g],
+  ['`CP-` and a digit', /\bCP-\d/g],
+  ['a digit, `-` and a capital', /\d-[A-Z]/g],
+  ['`piece` and a label', /\bpiece [A-Z]\d/g],
+  ['a design label', /(?<![\w-])[A-Z]{1,2}-?\d+[a-z]?\b(?![-\w])/g],
+  ['`RECORD`', /\bRECORD\b/g],
+  ['the word `issue`', /\bissue\b/gi],
+  ['a date', /\b20\d\d-\d\d-\d\d\b/g],
+];
+// The acronyms the pages use as ordinary words. A shouted English word (`ONE`, `NOT`, `CONTRACT`) is
+// never one: it is written in lower case.
+const ACRONYMS = new Set([
+  'API',
+  'CLI',
+  'GPT',
+  'HMAC',
+  'HTTP',
+  'JSON',
+  'JSONL',
+  'MCP',
+  'SDK',
+  'SHA',
+  'UTF',
+  'WAL',
+  'YAML',
+]);
+const INDEX_MAX = 200;
+const outsideCode = (text) =>
+  text
+    .split('`')
+    .map((part, i) => (i % 2 === 0 ? part : ' '))
+    .join('`');
+for (const n of names.values()) {
+  const sentence = firstSentence(n.description);
+  const text = outsideCode(sentence);
+  const markers = INDEX_MARKERS.flatMap(([what, re]) =>
+    (text.match(re) ?? []).map((m) => `\`${m}\` (${what})`),
+  );
+  if (markers.length > 0)
+    errors.push(
+      `\`${n.name}\`: its index sentence holds ${[...new Set(markers)].join(', ')}: write the first sentence for a reader; the note may follow it or go under \`@remarks\``,
+    );
+  const shouted = [
+    ...new Set((text.match(/\b[A-Z]{3,}\b/g) ?? []).filter((w) => !ACRONYMS.has(w))),
+  ];
+  if (shouted.length > 0)
+    errors.push(
+      `\`${n.name}\`: its index sentence holds ${shouted.map((w) => `\`${w}\``).join(', ')} in capitals: an acronym: add it to \`ACRONYMS\` in this script; an identifier: backticks; a shouted word: lower case`,
+    );
+  if (sentence.length > INDEX_MAX)
+    errors.push(
+      `\`${n.name}\`: its index sentence is ${sentence.length} characters, at most ${INDEX_MAX}: end the first sentence sooner`,
+    );
+}
 if (errors.length > 0) {
   for (const e of [...new Set(errors)].sort()) console.error(e);
   process.exit(1);

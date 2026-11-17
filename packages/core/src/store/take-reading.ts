@@ -10,8 +10,8 @@ import type { SettlementDelta } from '../types/settlement.js';
 import type { Clock } from '../utils/clock.js';
 
 /**
- * Takes the RAW reading of `clock` (#715 (b), D-17): exactly ONE `clock.now()` call, validated, as a
- * fresh `Date`. A throw from `clock.now()` propagates unchanged, having spent the one reading (D6-4).
+ * Takes the raw reading of `clock`: exactly one `clock.now()` call, validated, as a fresh `Date`.
+ * A throw from `clock.now()` propagates unchanged, having spent the one reading (D6-4).
  * A `clock.now()` that returns an invalid `Date` fails here, loud, instead of as a `RangeError` from
  * `toISOString()` later. A READ takes it BEFORE it loads (D6-16): every statement about what it then
  * loads holds at the reading; a listing's `read_at` is this raw value.
@@ -25,10 +25,11 @@ export function takeRawReading(clock: Clock): Date {
 }
 
 /**
- * Floors a reading by a record's own stamp (#715 (b), D-17; D5 §2.1, D6-3): when the record's
- * `updated_at` parses (`u`), returns `max(r, min(u, r + ε))` — MONOTONE, capped: a record stamped far
- * ahead lifts the reading by at most ε ({@link CLOCK_SKEW_EPSILON_MS}), so no deadline is minted more
- * than ε late. An `updated_at` that does not parse is ignored (D6-68), never `NaN`. PURE: reads no
+ * Floors a reading by a record's own stamp, lifting it by at most `CLOCK_SKEW_EPSILON_MS`. When the
+ * record's `updated_at` parses (`u`), it returns `max(r, min(u, r + ε))`: monotone and capped, so a
+ * record stamped far ahead lifts the reading by at most ε and no deadline is minted more than ε
+ * late.
+ * An `updated_at` that does not parse is ignored (D6-68), never `NaN`. PURE: reads no
  * clock. Returns a fresh `Date`.
  * @public
  */
@@ -40,8 +41,9 @@ export function floorAtRecord(r: Date, record: { updated_at: string }): Date {
 }
 
 /**
- * Takes a write's reading (D5 §2.1, D6-3, D6-4): {@link takeRawReading} — exactly ONE `clock.now()`
- * call, no other time source — floored by `record` when it is given ({@link floorAtRecord}). When
+ * Takes a write's reading: one `clock.now()` call and no other time source, floored by `record`
+ * when it is given (`floorAtRecord`).
+ * When
  * `delta` is given (a `settleStep`), the delta's EVENT instants — the `started_at` / `completed_at`
  * of the evidence it carries ({@link eventInstantsOf}) — are folded in: `at = max(floored reading,
  * ...events)`. Event instants are NOT capped by ε. Most are this process's own readings, taken when
@@ -79,7 +81,9 @@ export function foldReading(
 }
 
 /**
- * The per-key floor (D6-14, D6-35, D6-60, D6-68). PURE: the reading was already taken, once, by
+ * The per-key floor of a keyed create's reading, by the `created_at` of the run it supersedes or
+ * the newest of the key's runs.
+ * PURE: the reading was already taken, once, by
  * {@link takeReading}. When `holderCreatedAt` (the `created_at` of the run a keyed create supersedes,
  * or the newest among the key's runs) parses to `h`, returns `max(reading, min(h + 1 ms, reading + ε))`;
  * otherwise the reading. So a successor under a key is stamped strictly after the run it supersedes

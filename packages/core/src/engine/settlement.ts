@@ -1573,8 +1573,9 @@ function applyMarkFinalizer(fresh: RunRecord, delta: MarkFinalizerDelta): Settle
 // ---------------------------------------------------------------------------
 
 /**
- * Applies one {@link SettlementDelta} against `fresh` — pure, synchronous, no I/O, no registry
- * (design record §7 CS-purity: `options` carries VALUES only). `definition` is passed per call
+ * Applies one `SettlementDelta` against `fresh`: pure, synchronous, with no I/O and no registry.
+ * `options` carries values only.
+ * `definition` is passed per call
  * (never cached) — `lease_finalizer`/`mark_finalizer` deltas do not use it (their arms never
  * reference the workflow definition; only `settle_step`'s terminal-edge `mintFresh` does).
  *

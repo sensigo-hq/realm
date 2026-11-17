@@ -5,7 +5,7 @@
 // clock) is another `Clock`.
 
 /**
- * The time a run store holds (D5 §1.1).
+ * The clock a run store reads the time from: `now()` and `at()`.
  *
  * `now()` returns the current instant as a FRESH `Date` on every call: mutating a returned `Date`
  * changes nothing else.
@@ -29,8 +29,9 @@ export interface Clock {
 }
 
 /**
- * #715 (b) (04 §A.4, B5′, D6-32): the five classes of a clock read — what a run store's clock governs
- * (`write`, `read`, `event`) and what it does not (`outside`, `duration`). The clock census test
+ * The five classes of a clock read: what a run store's clock governs (`write`, `read`, `event`) and
+ * what it does not (`outside`, `duration`).
+ * The clock census test
  * classes every read in the source by them, and the docs table of what the clock governs is generated
  * from them (`docs/reference/core-library.md`).
  * @public
@@ -67,8 +68,9 @@ export const MAX_HOP_MS = 60_000;
 let processSink: ((err: unknown) => void) | undefined;
 
 /**
- * #715 (b) (03 §A.1, D-22): sets the process's waiter-error sink — the channel the shared
- * {@link systemClock} (and a test location's clock) passes a failing waiter's error to. A host calls
+ * Sets the process's waiter-error sink: where the shared `systemClock`, and a test location's
+ * clock, pass a failing waiter's error.
+ * A host calls
  * it once, at its start. The sink must not throw; a throw from it is swallowed.
  * @public
  */
@@ -77,7 +79,8 @@ export function setClockErrorSink(sink: (err: unknown) => void): void {
 }
 
 /**
- * #715 (b) (03 §A.1): the process's waiter-error sink, or `undefined` when no host set one. For tests.
+ * The process's waiter-error sink, or `undefined` when no host set one.
+ * For tests.
  * @public
  */
 export function clockErrorSink(): ((err: unknown) => void) | undefined {
@@ -155,8 +158,9 @@ function systemClockReportingTo(report: (err: unknown) => void): Clock {
 }
 
 /**
- * Builds a system clock (D6-6, D6-7) with its OWN waiter-error sink: `now()` is `new Date()`; `at()`
- * arms an `unref`'d timer of at most {@link MAX_HOP_MS} and re-checks `now()` each time it fires. A
+ * Builds a system clock with its own waiter-error sink: `now()` is `new Date()`; `at()` arms an
+ * `unref`'d timer of at most `MAX_HOP_MS` and re-checks `now()` each time it fires.
+ * A
  * waiter's synchronous throw or rejection is caught and passed to `options.onWaiterError` — never an
  * unhandled rejection. The sink must not throw; if it does, that throw is swallowed. Core never
  * writes to `console` here: the sink is the only channel. For a host or a test that wants its own

@@ -11,8 +11,9 @@ import type { LeaseFacts } from './lease-facts.js';
 import type { OutboundLedger } from './outbound-ledger.js';
 
 /**
- * The load-bearing `RunRecord` fields the engine treats specially enough that a store must
- * DECLARE which it round-trips (issue #188). This is a CLOSED set — a field qualifies via EITHER
+ * The `RunRecord` fields the engine relies on enough that a store must declare which of them it
+ * round-trips (`RunStore.persistedRunRecordFields`).
+ * This is a CLOSED set — a field qualifies via EITHER
  * (a) a real, verified READ-SITE consumer whose absence corrupts control flow (see
  * `RunStore.persistedRunRecordFields`'s own doc for the consumer list) — the first four below —
  * OR (b) a WRITE-SITE disclosure-integrity advisory, whose non-durability is surfaced LOUDLY
@@ -104,8 +105,9 @@ export interface CreateRunOptions {
 }
 
 /**
- * What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics (the shape `list` returned
- * until #616 c4): every record with the reading it is judged at, and the listing's own reading.
+ * What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics: every record with the
+ * reading it is judged at, and the listing's own reading. It is the shape `list` returned until
+ * #616 c4.
  *
  * - `read_at` is the RAW reading, taken ONCE before the first record was read (D6-16).
  * - each snapshot's `at` is `read_at` floored by that record's own `updated_at` (`floorAtRecord`):
@@ -122,17 +124,19 @@ export interface Listing {
 }
 
 /**
- * What a run store's `create` returns (#715 (b), D-15): the record with the reading the create
- * used, and whether it was written. A keyed create that returns an existing run (`created: false`)
+ * What a run store's `create` returns: the record with the reading the create used, and whether it
+ * was written.
+ * A keyed create that returns an existing run (`created: false`)
  * has spent its reading too, and returns it.
  * @public
  */
 export type CreateResult = Snapshot & { created: boolean };
 
 /**
- * What a run store's `settleStep` returns (#715 (b), D-19): the transform's result plus the write's
- * one reading `at` — returned on an applied write AND on a predicate refusal (both took it, after the
- * lock). A throw before the lock (a missing run) spends none.
+ * What a run store's `settleStep` returns: the transform's result plus the write's one reading
+ * `at`. It is returned on an applied write and on a predicate refusal (both took the reading, after
+ * the lock).
+ * A throw before the lock (a missing run) spends none.
  *
  * #729 CW-1b: `lease_facts`, as on a {@link Snapshot}: what the store's lease port found about the
  * leases of `run`'s in-progress claims after the write (applied or refused). Present only when a
@@ -438,7 +442,8 @@ export interface RunStore {
 }
 
 /**
- * Issue #367 (part 3): the outcome of a {@link RunStore.stampSeal} attempt. Both refusal reasons
+ * The outcome of a `RunStore.stampSeal` attempt.
+ * Both refusal reasons
  * are PREDICATE outcomes, returned rather than thrown, and both carry the record as it stands so
  * the caller can report on it without a second read.
  * @public
@@ -455,8 +460,8 @@ export type StampSealResult =
 export const SCAN_MAX_PAGE_SIZE = 1000;
 
 /**
- * The filters of a store's scan (design §6, spelled as §6's filter list spells them; §6 writes
- * `includePurged` once for the same filter). Every filter given must hold. `key` needs `workflow`: a
+ * The filters of a store's scan.
+ * Every filter given must hold. `key` needs `workflow`: a
  * key is a key of one workflow. `created_since` and `updated_since` are stamps in the store's one
  * shape (`YYYY-MM-DDTHH:MM:SS.sssZ`), compared as text and inclusive.
  * @public
@@ -472,10 +477,10 @@ export interface ScanFilter {
 }
 
 /**
- * How a scan pages: `pageSize` is required, a whole number from 1 to {@link SCAN_MAX_PAGE_SIZE};
- * `projection` is `'record'` (the default: each run as `get()` returns it) or `'row'` (each run as a
- * {@link RunRow}); `after` starts the scan after that id (the last id of the page before, §6's
- * `--after` cursor).
+ * How a scan pages: its page size, its projection, and the id it starts after. `pageSize` is
+ * required, a whole number from 1 to `SCAN_MAX_PAGE_SIZE`; `projection` is `'record'` (the default:
+ * each run as `get()` returns it) or `'row'` (each run as a `RunRow`); `after` starts the scan
+ * after that id (the last id of the page before, the `--after` cursor).
  * @public
  */
 export interface ScanOptions {
@@ -485,9 +490,10 @@ export interface ScanOptions {
 }
 
 /**
- * One run as a scan's `'row'` projection gives it (design §6's facts row): the record's own fields, but
- * `run_phase` is the derived phase, `terminal_state` is the column's 0/1 as a boolean, `run_version` is
- * the record's `version` (M6's name) and `pending_gate` is the gate's id or `null`. No params, no
+ * One run as a scan's `'row'` projection gives it: the record's own fields, with four derived or
+ * renamed. `run_phase` is the derived phase, `terminal_state` is the column's 0/1 as a boolean,
+ * `run_version` is the record's `version` and `pending_gate` is the gate's id or `null`.
+ * No params, no
  * evidence.
  * @public
  */
@@ -509,9 +515,9 @@ export interface RunRow {
 }
 
 /**
- * A deleted run's tombstone as a scan with `include_purged` gives it (design §6): its id, its workflow,
- * when it was purged, its seal's arm, and the phase and derivation stamp it had when purged (its
- * record is gone, so its phase cannot be derived again).
+ * A deleted run's tombstone, as a scan with `include_purged` gives it. It holds the run's id, its
+ * workflow, when it was purged, its seal's arm, and the phase and derivation stamp it had when
+ * purged (its record is gone, so its phase cannot be derived again).
  * @public
  */
 export interface PurgedItem {
@@ -532,11 +538,11 @@ export type ScanItem<P extends 'record' | 'row'> =
   { kind: 'run'; run: P extends 'record' ? Snapshot : RunRow } | PurgedItem;
 
 /**
- * One page of a store's scan: its items in id order, the page's one reading (`read_at`), the flag
- * that the page was read in ONE read transaction (`consistent_snapshot`: one transaction per page
- * under WAL), how many rows read for the page carried a phase stamped by another derivation
- * (`derived_at_read`: each was derived at read; 0 when none), and, when the page is full, the cursor
- * the next page starts after (`next_after`, the page's last id).
+ * One page of a store's scan: its items in id order, its one reading, and the cursor for the next
+ * page. `read_at` is the page's one reading; `consistent_snapshot` says the page was read in one
+ * read transaction (one per page under WAL); `derived_at_read` counts the rows whose phase was
+ * stamped by another derivation (each was derived at read; 0 when none); `next_after`, when the
+ * page is full, is the cursor the next page starts after (the page's last id).
  * @public
  */
 export interface ScanPage<P extends 'record' | 'row'> {
@@ -551,9 +557,10 @@ export interface ScanPage<P extends 'record' | 'row'> {
 }
 
 /**
- * Who holds an idempotency key, read in one snapshot (design §3, axis 7): `held` names the run that
- * holds it; `purged` lists the deleted runs that carried it, when no run does; `unseen` says no run
- * carries it and no kept tombstone records one. `since` is the tombstone horizon: a run purged at or
+ * Who holds an idempotency key, read in one snapshot: the run that holds it, the deleted runs that
+ * carried it, or no run. `held` names the run that holds it; `purged` lists the deleted runs that
+ * carried it, when no run does; `unseen` says no run carries it and no kept tombstone records one.
+ * `since` is the tombstone horizon: a run purged at or
  * before it may have left no tombstone.
  * @public
  */

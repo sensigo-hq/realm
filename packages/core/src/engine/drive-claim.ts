@@ -82,8 +82,8 @@ export interface ReleaseDriveClaimOptions {
 }
 
 /**
- * What {@link releaseDriveClaim} answers, keyed by `kind`, each with the snapshot it was judged on or
- * the one the store's settle returned:
+ * What {@link releaseDriveClaim} answers: `released`, `not_released` or `not_ours` (`kind`).
+ * Each comes with the snapshot it was judged on or the one the store's settle returned:
  * - `released`: the claim is gone and the step can run again;
  * - `not_released`: the store refused the release, with its own reason;
  * - `not_ours`: the step is not in progress, or its claim names no lease or another; nothing was
@@ -144,7 +144,8 @@ function answerOf(refusal: Unavailable, snap: Snapshot, step: string): DriveClai
 
 /**
  * Takes step `stepName`'s claim for this program, under a lease it holds, before the step's work
- * starts (#729, the claim window, CW-2a). In order: the store keeps no leases ⇒ `unleased_store`
+ * starts.
+ * In order: the store keeps no leases ⇒ `unleased_store`
  * (nothing held, read or written); the store's `leases.hold()` cannot make one ⇒ `lease_unavailable`;
  * the run is loaded and the step judged by `admitWay('run_step')` as this program; then the store's
  * `claimStep` writes the claim under the hold ⇒ `claimed`. When the store refuses the claim
@@ -221,7 +222,8 @@ export async function claimStepForDrive(
 
 /**
  * Gives back step `stepName`'s claim without settling the step, when that claim names `hold`'s
- * lease (#729, the claim window, CW-2a). The run is read; the step in progress with its claim naming
+ * lease.
+ * The run is read; the step in progress with its claim naming
  * `hold.id` ⇒ a `release_step` settle under the claim's own token, with `evidence` appended ⇒
  * `released`, or `not_released` with the store's reason; otherwise ⇒ `not_ours`, nothing written. A
  * read or settle that throws is thrown unchanged. It never closes the hold: the caller does, with the

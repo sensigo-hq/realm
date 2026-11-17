@@ -50,8 +50,9 @@ export interface FailedAttemptReadResult {
 }
 
 /**
- * #616 B1: a store of failed agent-attempt records, kept per run — the interface the core owns, so
- * a store in another package (SQLite, a cloud store) implements it. `append` is best-effort and
+ * A store of failed agent-attempt records, kept per run. The core owns the interface, so a store in
+ * another package (SQLite, a cloud store) implements it.
+ * `append` is best-effort and
  * never throws; `read` returns the run's records in append order (the engine's ranking reads that
  * order); the per-run artifact methods delete or measure what the store holds for a run.
  * `JsonFileFailedAttemptStore` is Realm's file store; a holder that also needs `listOrphans` takes

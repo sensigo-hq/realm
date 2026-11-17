@@ -64,10 +64,10 @@ export interface GateInfo {
 }
 
 /**
- * issue #729 PR-0 (PR0-CONTRACT §2, A-16, P-3, Amendment 6): what an answer that was NOT recorded
- * met — the choice that was recorded instead and how (`answer` by a person, `timeout` by the
- * question's expiry), or the gate cancelled when a step ended the run (`engine`, no choice: a
- * cancelled gate chose nothing). `at` is the winning entry's `completed_at`; `by.name` comes from
+ * What an answer that was not recorded met: the choice recorded instead and how, or the gate
+ * cancelled when a step ended the run. `answer` by a person, `timeout` by the question's expiry;
+ * `engine`, with no choice, when a step ended the run (a cancelled gate chose nothing).
+ * `at` is the winning entry's `completed_at`; `by.name` comes from
  * `responded_by`, always `basis: 'stated'` — realm never claims who was on the other end. `step` and
  * `expiry` are the question's, from the call's snapshot taken before any wait; `attempted` says
  * whether THIS call tried to answer. Data in PR-0; W's `renderOutcome` renders it.
@@ -127,7 +127,7 @@ export type OutcomeDoorWords = { readonly [R in AnswerRoute]: string } & {
 };
 
 /**
- * issue #729 PR-0 (T-3): one race a loop met — the step, the T-1 kind, whether this call's code ran.
+ * One race a loop met: the step, the kind, and whether this call's code ran (`EngineReply.races`).
  * @public
  */
 export interface RaceEntry {
@@ -137,9 +137,9 @@ export interface RaceEntry {
 }
 
 /**
- * issue #729 PR-0 (T-2; A.3 #5 "names the enactor and the lag"): an expired question's declared
- * `on_expiry`, carried out by the call whose reply carries it (#715 (b), Amendment 3: no
- * `by_this_call` — it could no longer be false). `overdue` is read through `readInstant`:
+ * An expired question's declared `on_expiry`, carried out by the call whose reply carries it
+ * (`EngineReply.expiry`).
+ * `overdue` is read through `readInstant`:
  * the lag, or `{ absent: 'unparseable_stamp' }`; a question not yet due never reaches a receipt.
  * @public
  */
@@ -154,9 +154,10 @@ export interface ExpiryReceipt {
 }
 
 /**
- * issue #729 PR-0 (PR0-CONTRACT §2): the typed part of an error reply — the ways that lead on from
- * it (`remedy`, every one judged), the step a stop is about when it is not the call's own (`about`,
- * T-1), and the typed facts of its code (`facts`, Amendment 7). The untyped remainder stays in
+ * The typed part of an error reply: the ways that lead on from it, the step a stop is about when it
+ * is not the call's own, and the typed facts of its code. They are `remedy` (every one judged),
+ * `about` and `facts`.
+ * The untyped remainder stays in
  * `error_details` until its code's unit types it (Amendment 11).
  * @public
  */
@@ -167,10 +168,11 @@ export interface ReplyError {
 }
 
 /**
- * issue #729 PR-0: the reply of every engine entry (PR0-CONTRACT §2) — today's envelope minus the
- * door's words (`next_actions`, `agent_action`, `blocked_reason.suggestion`, the way clause,
- * `gate.claim_token`), plus the ways as data: what can be done next (`ways`), what cannot and why
- * (`unavailable`), what they were judged on (`basis`), and the typed receipts. Ways are never stored:
+ * The reply of every engine entry: its status and data, the ways as data, and the typed receipts.
+ * It is the envelope without the door's words (`next_actions`, `agent_action`,
+ * `blocked_reason.suggestion`, the way clause, `gate.claim_token`), plus what can be done next
+ * (`ways`), what cannot and why (`unavailable`), and what they were judged on (`basis`).
+ * Ways are never stored:
  * a replayed request returns its first verdict with fresh ways. Each door renders it — MCP's
  * `renderReply`, the CLI's `CLI_COMMANDS`; the library carries it as it is.
  * @public

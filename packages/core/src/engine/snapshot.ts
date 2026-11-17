@@ -13,7 +13,8 @@ import { NO_LEASE_FACTS, type LeaseFacts } from '../store/lease-facts.js';
 import type { DefinitionAbsence, LoadErrorCode } from './ways.js';
 
 /**
- * One record and the reading it is judged at (#715 D6-17). Built only by this module.
+ * One record and the reading it is judged at.
+ * Built only by this module.
  * @public
  */
 export interface Snapshot {
@@ -39,8 +40,8 @@ export async function loadSnapshot(store: Pick<RunStore, 'get'>, runId: string):
 }
 
 /**
- * The ONE constructor of a `Snapshot` (PR0-CONTRACT §2; #715 (b), D-15): a record and the reading it
- * is judged at — no clock is read here. A store builds every snapshot it returns through it (the
+ * The one constructor of a `Snapshot`: a record and the reading it is judged at; it reads no clock.
+ * A store builds every snapshot it returns through it (the
  * reading its read or write took); the engine builds one from a write's returned `{ record, at }`.
  * A reply's ways speak of the record as written, never of a record read again.
  *
@@ -107,8 +108,9 @@ export function attachJudged<T extends object>(reply: T): T {
 }
 
 /**
- * The snapshot — the run record and the reading — an engine reply was judged on (#715 (b), D6-17):
- * what a host that composes after the call judges, instead of reading the run again. FOR JUDGING,
+ * The run record and the reading an engine reply was judged on, for a host that judges after the
+ * call instead of reading the run again.
+ * FOR JUDGING,
  * NEVER FOR PRINTING: the record is raw (undisclosed); a sentence about it is composed through the
  * door's disclosed view. Carried privately: a copy of the reply (`{ ...reply }`, `structuredClone`,
  * JSON) does not carry it, and a reply from another loaded copy of core is not known here.
@@ -120,7 +122,7 @@ export function judgedSnapshotOf(reply: object): Snapshot | undefined {
 }
 
 /**
- * A reply's stamp about one record (#715 D6-18, D6-59).
+ * A reply's stamp about one record: the time it is judged at and the run's version.
  * @public
  */
 export interface Stamp {
@@ -147,9 +149,10 @@ export function stampOf(snapshot: Snapshot, basis?: 'test_clock'): Stamp {
 }
 
 /**
- * The program that judges the ways (D2 D-9): this program with its registry, an observer that passed
- * none (C33: a read surface never executes project code), or a program whose project code failed to
- * load. A renderer sees the kind and the error code only — never the registry or an `Error` (A-9).
+ * The program that judges the ways: this program with its registry, an observer that passed none,
+ * or a program whose project code failed to load. An observer passes no registry because a read
+ * surface never executes project code.
+ * A renderer sees the kind and the error code only — never the registry or an `Error` (A-9).
  * @public
  */
 export type EnactorBasis =
@@ -158,17 +161,17 @@ export type EnactorBasis =
   | { kind: 'load_failed'; error_code: LoadErrorCode };
 
 /**
- * The definition the ways were judged against (D4 P-7; Amendment 13, Q8): the run's workflow by id,
- * or why it is absent — in the ONE vocabulary of `definition_absent`'s facts (A-5's arms), never a
- * second list. Not the author's `version:` (P-7: not identity). #493's content hash enters with
+ * The definition the ways were judged against: the run's workflow by id, or why it is absent. The
+ * absence is in the one vocabulary of `definition_absent`'s facts, never a second list.
+ * Not the author's `version:` (P-7: not identity). #493's content hash enters with
  * #493, its producer (the membership rule) — no run records one today.
  * @public
  */
 export type DefinitionBasis = { workflow_id: string } | { absent: DefinitionAbsence };
 
 /**
- * What a reply's ways were judged on (D2 D-9, D3 A-9): the record's stamp, the enactor's kind, whether
- * the store persists claims (absent ⇒ false, fail closed) and the definition.
+ * What a reply's ways were judged on: the record's stamp, the enactor's kind, whether the store
+ * persists claims, and the definition. An absent claims fact reads as false (fail closed).
  * @public
  */
 export interface Basis extends Stamp {

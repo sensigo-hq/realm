@@ -16,9 +16,10 @@ import type { EvidenceSnapshot, PendingGate, SealArm } from './run-record.js';
 import type { ExtensionIdentityEntry } from './extension-identity.js';
 import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
 
-/** The three outcomes a `settle_step` delta's caller can report for the step being settled —
- *  mirrors the THREE seal call sites (:2560 complete, :2220 fail, :1784 handler-abort) this
- *  increment's transform is bound to by line (design record §3).
+/**
+ * The outcomes a `settle_step` delta's caller can report for the step being settled: `complete`,
+ * `fail` or `abort`. They mirror the three places the engine seals a step: complete, fail, and a
+ * handler's abort.
  * @public
  */
 export type SettleStepOutcome = 'complete' | 'fail' | 'abort';
@@ -60,17 +61,19 @@ export interface SettleStepDelta {
   };
 }
 
-/** Result a `mark_finalizer` delta reports for one finalizer's handler outcome — mirrors
- *  `finalizer_ledger[name].status`'s two live-outcome values (`pending`/`voided` are never a
- *  mark-delta's OWN result; they are prior/other-path states the predicate reads, never writes
- *  via this delta).
+/**
+ * The result a `mark_finalizer` delta reports for one finalizer's handler: `completed` or `failed`.
+ * They are the two live outcomes of `finalizer_ledger[name].status`; `pending` and `voided` are
+ * never a mark delta's own result: they are prior or other-path states the predicate reads, and
+ * this delta never writes them.
  * @public
  */
 export type MarkFinalizerResult = 'completed' | 'failed';
 
 /**
- * Acquire (or re-acquire, same-token) the lease on one PENDING finalizer ledger entry — the
- * drain loop's mint-before-execute step. `leaseToken` is CALLER-MINTED (uuid; design record §3's
+ * Acquire, or re-acquire with the same token, the lease on one pending finalizer ledger entry: the
+ * drain loop's mint-before-execute step.
+ * `leaseToken` is CALLER-MINTED (uuid; design record §3's
  * lens-1 F3a note: unlike every other fence in the system, this one is acquirer-minted by
  * necessity — there is no prior claim record to read a token off of for a finalizer).
  * @public
@@ -100,17 +103,16 @@ export interface MarkFinalizerDelta {
 }
 
 /**
- * The gate an `open_gate` delta opens, WITHOUT its instants (#715 (b), D-20; D5 §2.4, D6-12): the
- * caller builds everything a {@link PendingGate} holds (gate_id, choices, preview, the frozen
- * enforce/notify fields) except `opened_at` and `expires_at`, which the transform mints from the
- * write's one reading `at` — so no gate is ever born expired.
+ * The gate an `open_gate` delta opens, without its instants: everything a `PendingGate` holds but
+ * `opened_at` and `expires_at`. The transform mints those two from the write's one reading `at`, so
+ * no gate is ever born expired.
  * @public
  */
 export type OpeningGate = Omit<PendingGate, 'opened_at' | 'expires_at'>;
 
 /**
- * Opens a human gate on a claimed step (issue #279, increment 2, PR-C; design record
- * `design-d5-increment2.md` §2/§3 `openGateArms`). #715 (b) (D-20, D6-12): the delta carries
+ * Opens a human gate on a claimed step.
+ * #715 (b) (D-20, D6-12): the delta carries
  * DURATIONS, never instants — `pendingGate` is the gate without `opened_at`/`expires_at`, and
  * `timeoutSeconds` its declared timeout; the transform writes `opened_at = at` and, when
  * `timeoutSeconds` is given, `expires_at = at + timeoutSeconds`. Everything else in `pendingGate` is
@@ -130,8 +132,8 @@ export interface OpenGateDelta {
 }
 
 /**
- * Resolves an open gate with a human's choice (issue #279, increment 2, PR-C; design record §2/§3
- * `settleGateArms`). Fenced by `gateId` ONLY — zero claim arms (§3's own note: "fence = gateId
+ * Resolves an open gate with a person's choice.
+ * Fenced by `gateId` ONLY — zero claim arms (§3's own note: "fence = gateId
  * ONLY (L20)"), since a gate's authority is bearer-gateId-credentialed (D-5: RECORDED, not
  * enforced — `respondedBy` below is an evidence passthrough, read by no arm).
  * @public
@@ -165,8 +167,8 @@ export interface SettleGateDelta {
 }
 
 /**
- * Records a guard step's evaluated outcome (issue #279, increment 2, PR-C; design record §2/§3
- * `settleGuardArms`). Guards are never claimed (`eligibility.ts:418` — `findEligibleGuardSteps`
+ * Records a guard step's evaluated outcome.
+ * Guards are never claimed (`eligibility.ts:418` — `findEligibleGuardSteps`
  * has no claim concept), so this delta carries no `claimToken` at all — fence = ⊥. `evidence` is
  * SINGULAR (the `MarkFinalizerDelta` precedent — one guard evaluation, one evidence snapshot),
  * unlike `SettleStepDelta.evidence`'s array.
@@ -204,8 +206,8 @@ export interface SettleGuardDelta {
 }
 
 /**
- * Enacts a gate's frozen enforce-clock disposition once it has expired unresolved (issue #291;
- * design record `plans/issue-291/design-d2.md` [F1]/[F2]/[F3] `applyExpireGate`). Fenced by
+ * Carries out a gate's frozen timeout disposition once the gate has expired unanswered.
+ * Fenced by
  * `gateId` ONLY — same fencing shape as {@link SettleGateDelta} (a gate's authority is
  * bearer-gateId-credentialed) — so a stale/duplicate expire attempt for a gate that has since
  * been superseded (resolved by a human, or already expired by a racing enactment point) NOOPs or
@@ -222,9 +224,8 @@ export interface ExpireGateDelta {
 }
 
 /**
- * Releases a claim without settling the step (issue #279, increment 2, PR-C; design record §2/§3
- * `releaseStepArms`) — the shared shape behind BOTH the capability-block release
- * (execution-loop.ts:2453-2529) and the compensating un-claim (execution-loop.ts:1607-1635).
+ * Releases a step's claim without settling the step. It is the shared shape behind both the
+ * capability-block release and the compensating un-claim.
  * NEVER terminal, writes NO `settled` entry — the step returns to eligible.
  * @public
  */
@@ -241,8 +242,9 @@ export interface ReleaseStepDelta {
 }
 
 /**
- * Seals a run at the RUN level (#715 (b), D-21; D6-46, D6-56, D6-65, D6-66, D6-67): abandon, cleanup,
- * a webhook spawn failure, an extension load failure. The transform seals through `sealRunLevel` with
+ * Seals a run at the run level: an abandon, a cleanup, a webhook spawn failure or an extension load
+ * failure.
+ * The transform seals through `sealRunLevel` with
  * the write's one reading as every seal-tier instant (`abandoned_at`).
  *
  * - `expected_version` is the version the writer judged the run at: a stored record whose version
@@ -264,7 +266,8 @@ export interface SealRunDelta {
 }
 
 /**
- * The delta kinds `RunStore.settleStep` accepts (design record §1/§2). A concrete discriminated
+ * The delta kinds `RunStore.settleStep` accepts.
+ * A concrete discriminated
  * union — no structural intersections, no duck-typing.
  *
  * **Union-openness contract (issue #279, increment 2, PR-C — design record §2, angles fold 1):**
@@ -289,10 +292,9 @@ export type SettlementDelta =
   | SealRunDelta;
 
 /**
- * Every refusal/noop literal `applySettlement`/`settleStep` can RETURN as `SettlementResult.reason`
- * (design record §7, the full table MINUS `drain_pending`) — `drain_pending` is the PR-B purge
- * guard's own THROWN `STATE_RUN_BUSY` builder reason, never a `settleStep` return value, so it is
- * deliberately excluded from this type (a `settleStep` implementation must never construct it).
+ * Every refusal or no-op reason `settleStep` can return as `SettlementResult.reason`.
+ * `drain_pending` is left out: it is the purge guard's own thrown `STATE_RUN_BUSY` reason, never a
+ * `settleStep` return value, so a `settleStep` implementation must never construct it.
  * @public
  */
 export type SettlementRefusalReason =
@@ -354,8 +356,7 @@ export type SettlementNoopReason =
   'already_settled' | 'already_leased' | 'already_marked' | 'already_released' | 'already_open';
 
 /**
- * Result of applying one {@link SettlementDelta} against fresh state (design record §2, normative
- * — final-gate F5).
+ * The result of applying one `SettlementDelta` against fresh state.
  *
  * `run` on `applied: true` is the AS-APPLIED TRANSFORM OUTPUT — pre-serialization, pre-fidelity-
  * filtering — and must NEVER be a re-read of what the store persisted. This is the #220 disclosure
