@@ -54,24 +54,27 @@ These refusals have the code [`STATE_STORE_BACKUP_REFUSED`](../error-codes.md). 
 
 ## `migrate`
 
-`realm db migrate --backup <path>` or `realm db migrate --no-backup`
+`realm db migrate`, `realm db migrate --backup <path>` or `realm db migrate --no-backup`
 
-Upgrades the store file to the schema version this Realm writes. Stop every Realm process that uses the home first: each schema step takes the store's write lock.
+Upgrades the store file to the schema version this Realm writes. Stop every Realm process that uses the home first: the command refuses to run a schema step while any other process has the store file open.
 
-One of the two flags is required:
+The copy made first:
 
-- `--backup <path>`: a copy of the store file, made by [`realm db backup`](#backup) before anything changes, with all of its rules: outside the home, and where nothing exists yet.
+- no flag: when a schema step is pending, a copy in the backups folder beside the home, `~/.realm-backups/` for the home `~/.realm` (made owner-only when it is missing), named from the file's schema versions before and after and the UTC time, such as `realm-v1-to-v2-20261117T020531Z.db`. It is made by [`realm db backup`](#backup), with all of its rules.
+- `--backup <path>`: the copy at that path instead, outside the home and where nothing exists yet.
 - `--no-backup`: no copy. Use it when you already have one, or when you accept the risk.
 
 The command works in this order:
 
-1. With `--backup <path>`, it makes the copy and prints `realm db backup`'s line. When the copy cannot be made, or fails SQLite's quick check, the command stops there: nothing is migrated.
-2. It runs each pending schema step in its own transaction. A step checks that the file's schema is then exactly that version's, and that every evidence entry still matches its stored hash, before it moves the file's version. It prints one line per step.
-3. It stops at the first step that fails. The file is then at the last version it completed, and the line says which version that is. Run the command again once the cause is fixed: it continues from there.
-4. It re-stamps the phase index. Each run's phase is stored beside it, with a stamp of the code that worked it out. When an upgrade changes that code, the command works out each such run's phase again from its record and stores it with the current stamp, so that listings by phase use the index again. It changes no run record.
+1. When a schema step is pending, it makes sure that no other process has the store file open, and keeps it so until it is done: no other process can open the file meanwhile. When one has it open, even an idle one, the command refuses and changes nothing: no copy, no record, no backups folder. A Realm command started while the migrate runs waits about 5 seconds, then fails as busy; run it again afterwards. A second `realm db migrate` started meanwhile fails the same way at its open. If two are started at the same instant, both may be refused; nothing is changed, so run it again. With no step pending, the command takes no such hold.
+2. Unless `--no-backup` is given, it makes the copy and prints `realm db backup`'s line. When the copy cannot be made, or fails SQLite's quick check, the command stops there: nothing is migrated. With no step pending, it makes no copy unless `--backup <path>` names one.
+3. It runs each pending schema step in its own transaction. A step checks that the file's schema is then exactly that version's, and that every evidence entry still matches its stored hash, before it moves the file's version. It prints one line per step.
+4. It stops at the first step that fails. The file is then at the last version it completed, and the line says which version that is. Run the command again once the cause is fixed: it continues from there.
+5. It records the migrate: one line in `migrations.jsonl` in the backups folder, with the time, the home, the schema versions before and after, the copy's path (`null` with `--no-backup`) and the Realm version that ran it. The record stays beside the backups, never in the home, and goes there with `--backup <path>` or `--no-backup` too. A migrate that ran no step records nothing; one whose later step failed records the steps that were committed.
+6. It re-stamps the phase index. Each run's phase is stored beside it, with a stamp of the code that worked it out. When an upgrade changes that code, the command works out each such run's phase again from its record and stores it with the current stamp, so that listings by phase use the index again. It changes no run record.
 
 ```bash
-realm db migrate --backup ./realm-before-upgrade.db
+realm db migrate
 ```
 
 It prints one line per step:
@@ -82,15 +85,19 @@ or, when the file is already at this Realm's version:
 
 `<home>/realm.db is already at schema version <n>; no schema step to run.`
 
-and then:
+then, after the step lines, `Recorded this migrate in <backups folder>/migrations.jsonl.`, and then:
 
 `Re-stamped the phase index of <k> run(s) with the current derivation.`
 
-**Exit code:** 0 when every step ran, or none was pending, and the re-stamp finished. 1 when the command refuses or a step fails, with one line on standard error — the two flag refusals as written below, every other refusal as an `Error:` line:
+When the record cannot be written, the command prints `Could not record this migrate in <path>: <the system's reason>. The file is migrated; the record is only a note for going back.` on standard error instead of the `Recorded` line, and its exit code is unchanged.
 
-- neither flag: `Provide --backup <path> (a copy of the store file, made before anything changes) or --no-backup.`; both: `Cannot combine --backup with --no-backup. Use one or the other.` Nothing is opened.
+**Exit code:** 0 when every step ran, or none was pending, and the re-stamp finished. 1 when the command refuses or a step fails, with one line on standard error — the flag refusal as written below, every other refusal as an `Error:` line:
+
+- both flags: `Cannot combine --backup with --no-backup. Use one or the other.` Nothing is opened.
 - the home has no store file: `There is no store file at <home>/realm.db to migrate.`; an empty one: `<home>/realm.db holds no store yet: there is nothing to migrate.` These have the code [`STATE_STORE_MIGRATE_REFUSED`](../error-codes.md); nothing is created or copied.
 - the store file cannot be opened (not a Realm store, damaged, written by a newer Realm, or older than any version this Realm can upgrade): the store's own message. Nothing is copied or migrated.
+- another process has the store file open while a step is pending, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open (a Realm agent, server, MCP server or command, or another program such as a SQLite browser). Stop it and run this again. Nothing was changed.`
+- with no flag, the backups folder cannot be made or written, [`STATE_STORE_MIGRATE_REFUSED`](../error-codes.md): `Cannot make the backups folder <folder>: <the system's reason>. Nothing was changed. Use --backup <path> to name another place, or --no-backup.`
 - the copy cannot be made, or fails the quick check: `realm db backup`'s refusals, above.
 - a step fails, [`STATE_STORE_MIGRATE_FAILED`](../error-codes.md): `The step from schema version <v> to <v+1> failed: <the reason>. <home>/realm.db is at schema version <v>; nothing of the step is in it. Run the command again once the cause is fixed.` When the file is found at a higher version after the failure, the step is in it: `The step from schema version <v> to <v+1> failed: <the reason>. <home>/realm.db is at schema version <n>: the step is in it. Run the command again to continue from there.` Either line ends, when a copy was made, with ` The backup made before the step is at <path>.`
 - another writer holds the store for longer than its wait during the re-stamp: the re-stamp line with the number of runs re-stamped so far, then `The store was busy for <s> s: another writer held it. Nothing was written. Try again.`

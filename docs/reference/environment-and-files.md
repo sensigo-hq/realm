@@ -69,6 +69,15 @@ Every `realm` command and the `realm-mcp` server keep their data in one SQLite f
 
 Never delete, move or replace `realm.db` or its side files while a Realm process is running. `realm db backup <path>` writes its copy outside the home; a backup that was killed may leave files whose names begin `<path>.part-` beside its target, which you can delete.
 
+### Beside `~/.realm`
+
+`realm db migrate` keeps its copies and its record in a folder beside the Realm home, never in it: `~/.realm-backups/` for the home `~/.realm` (the folder that holds the home, then `.realm-backups`).
+
+| Path                                | Holds                                                                                                                                                                                                                                                                      |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.realm-backups/`                 | The copies `realm db migrate` makes before a schema step when no `--backup <path>` or `--no-backup` is given, named `realm-v<from>-to-v<to>-<UTC time>.db`. Made owner-only (0700) when it is missing. Realm never deletes a copy.                                         |
+| `~/.realm-backups/migrations.jsonl` | One JSON line per `realm db migrate` that ran a schema step: `at`, `home`, `from_format`, `to_format`, `backup` (the copy's path, or `null` with `--no-backup`) and `migrated_by` (the Realm version). Written with every flag. Made owner-only (0600) when it is missing. |
+
 ### The clock a run's times come from
 
 The store stamps the times it writes, such as a run's `created_at` and `updated_at`, with this computer's clock. A Realm home on a folder that several computers share is not supported: each computer would stamp with its own clock.

@@ -26,6 +26,8 @@ const EXPECTED_CODES: ReadonlySet<string> = new Set([
   'STATE_STORE_MIGRATE_REFUSED',
   // `realm db migrate`: a schema step failed; the line names the version the file is at.
   'STATE_STORE_MIGRATE_FAILED',
+  // `realm db migrate` (R1): a step is pending and another process has the store file open.
+  'STATE_STORE_IN_USE',
   // `realm db check`: a home with no store file, or an empty one; with `--project`, a folder with no
   // realm.yaml, a realm.yaml that cannot be read or is invalid, or a secret it names that cannot be
   // resolved (the resolver's message, which names each `${secret:NAME}` and no value).
