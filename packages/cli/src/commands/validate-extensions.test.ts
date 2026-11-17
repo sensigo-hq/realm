@@ -57,6 +57,8 @@ describe('realm workflow validate — golden (extension-free byte-identical)', (
     expect(stderr).toBe('');
     expect(stdout).toBe(
       'Valid: ticket-classifier v1 (4 steps)\n' +
+        // Fix 1, piece 3a-ii-b: identify_ticket's prompt reads read_ticket's handler output.
+        'Not checked: 1 template reference(s) on data the workflow declares no shape for, or a context entry only a file adds: identify_ticket.prompt: context.resources.read_ticket.content\n' +
         "ℹ 2 steps ready for structured_output: strict (2 with caveats) — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).\n" +
         // issue #600 caching PR 5: the two agent steps' cache lines and the once-lines (add-only);
         // its correction 1 (C-1): no sharing clause — the two steps share only Realm's own text.
