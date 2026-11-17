@@ -842,10 +842,10 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 113 codes defined — 98 raised, 15 that nothing raises', () => {
+  it('error-codes.md: 114 codes defined — 99 raised, 15 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
-      'This page lists all 113 codes that Realm defines: the 98 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
+      'This page lists all 114 codes that Realm defines: the 99 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
     );
     // #616 unit 3: the "nothing raises" block's own header, whose count the units that first raise
     // these codes change (the list's length is checked below, as `unraised`). (1) red when the
@@ -904,9 +904,9 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       unraisedWritten: listedUnraised.filter(written),
       raisedNowhere: listedRaised.filter((c) => !written(c)),
     }).toEqual({
-      // #603 A3a: STATE_ANSWERER_MISMATCH, defined and raised.
-      defined: 113,
-      raised: 98,
+      // #603 A3a: STATE_ANSWERER_MISMATCH, defined and raised. #616 R1: STATE_STORE_IN_USE, the same.
+      defined: 114,
+      raised: 99,
       unraised: 15,
       cover: [...defined].sort(),
       unraisedWritten: [],

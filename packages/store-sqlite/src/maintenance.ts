@@ -38,10 +38,17 @@
 // of its own to `realm.db`; SQLite may first replay a write-ahead log a crashed Realm left beside
 // it, as any open does. Restoring is a documented procedure, never a command.
 //
-// `migrate(options)` (c7; §2 "Schema evolution", §3 "The re-stamp", §8) upgrades the file, in order:
+// `migrate(options)` (c7; §2 "Schema evolution", §3 "The re-stamp", §8; R1) upgrades the file, in order:
+//   0. (R1) when a schema step is pending, the hold (`holdStoreFile`): no other process may have the
+//      file open, and none can open it until the verb is done; refused `STATE_STORE_IN_USE`, changing
+//      nothing. The version is read again under it (another migrate may have finished). With no step
+//      pending there is no hold, no default copy and no record: only the re-stamp, as before;
 //   1. `backup(target)` first, every refusal of it included (a copy that fails the quick check
 //      ends the verb: a store that may be damaged is not migrated), unless the operator stated
-//      `backup: false` (`--no-backup`);
+//      `backup: false` (`--no-backup`); with no target named, the copy goes to the backups folder
+//      beside the home (`backupsFolderOf`: `<dirname of the home>/.realm-backups`, made 0700),
+//      named `realm-v<from>-to-v<to>-<UTC stamp>.db`; a folder that cannot be made or written is
+//      refused `STATE_STORE_MIGRATE_REFUSED` before anything changes;
 //   2. the schema ladder (`migrateSchema`, unit 6c) ONE VERSION AT A TIME, each version its own
 //      `autocommit` body: the step's own `BEGIN IMMEDIATE`, its statements, the compare with its
 //      version's schema, the evidence re-check, `user_version` moved, COMMIT. Each step is reported
@@ -49,6 +56,11 @@
 //      The first step that fails ends the verb `STATE_STORE_MIGRATE_FAILED`, with the version READ
 //      after the failure, never assumed (the ladder's COMMIT is raw: an error it reports may come
 //      after the step landed);
+//   2b. (R1) the record, after the last committed step (after a failure too, when the file moved):
+//      one JSON line appended to `migrations.jsonl` in the backups folder (0600): `at`, `home` (its
+//      real path), `from_format`, `to_format`, `backup` (the copy's path or `null`) and `migrated_by`
+//      (this Realm's version). A record that cannot be written is a warning (`unrecorded`), never a
+//      refusal: the file is migrated;
 //   3. the re-stamp, after the ladder (it is this Realm's SQL, so it meets this Realm's schema):
 //      every run whose `phase_version` is not the running derivation's fingerprint gets the phase
 //      its stored record derives and that fingerprint. The stale stamps are found by the read API's
@@ -67,16 +79,21 @@
 // included. `check()` returns the published report (`store-check.ts`).
 import { randomBytes } from 'node:crypto';
 import {
+  accessSync,
+  appendFileSync,
   closeSync,
+  constants,
   fsyncSync,
   linkSync,
   lstatSync,
+  mkdirSync,
   openSync,
   realpathSync,
   renameSync,
   statSync,
   unlinkSync,
 } from 'node:fs';
+import { constants as osConstants } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import {
   deriveRunPhase,
@@ -85,11 +102,12 @@ import {
   runPhaseDerivationFingerprint,
   SCAN_MAX_PAGE_SIZE,
   systemClock,
+  VERSION,
   WorkflowError,
   type RunPhase,
   type RunRecord,
 } from '@sensigo/realm';
-import type { RealmDb, Verify } from './connection.js';
+import { BUSY_SLICE_MS, isBusy, type RealmDb, type Verify } from './connection.js';
 import { loadSqlite, openDatabase, type DatabaseLike } from './driver.js';
 import { assertLocalFilesystem, SYSTEM_PROBE } from './filesystem-gate.js';
 import { DATABASE_FILE, systemErrorText } from './home.js';
@@ -126,8 +144,10 @@ export interface MaintenanceHome {
   backup(target: string): Promise<BackupReport>;
   /**
    * Upgrades the store file (see the module comment): `backup` first unless `backup: false`, then
-   * each pending schema step in its own transaction, then the re-stamp. Refused with `backup`'s
-   * refusals, `STATE_STORE_MIGRATE_FAILED` at the first step that fails, and the store's own
+   * each pending schema step in its own transaction, then the re-stamp. Refused with
+   * `STATE_STORE_IN_USE` (R1: a step is pending and another process has the file open; nothing
+   * changed), `STATE_STORE_MIGRATE_REFUSED` (the default backups folder cannot be made or written),
+   * `backup`'s refusals, `STATE_STORE_MIGRATE_FAILED` at the first step that fails, and the store's own
    * (`STATE_RUN_BUSY` during the re-stamp, after the batches already committed). After `close()`,
    * it rejects.
    */
@@ -167,12 +187,20 @@ export type MigrateProgress =
   /** No step was pending: the file is at this Realm's version. */
   | { readonly kind: 'current'; readonly schemaVersion: number }
   /** The re-stamp's count: when it finished, or the count so far before a busy refusal. */
-  | { readonly kind: 'restamped'; readonly runs: number };
+  | { readonly kind: 'restamped'; readonly runs: number }
+  /** R1: this migrate's line, appended to `path` (`migrations.jsonl` beside the backups). */
+  | { readonly kind: 'recorded'; readonly path: string }
+  /** R1: the line could not be appended to `path`, for `reason` (the system's): a warning only. */
+  | { readonly kind: 'unrecorded'; readonly path: string; readonly reason: string };
 
 /** What `migrate` is asked to do. */
 export interface MigrateOptions {
-  /** Where `backup` puts its copy before anything changes; `false` makes none (`--no-backup`). */
-  readonly backup: string | false;
+  /**
+   * Where `backup` puts its copy before anything changes; `false` makes none (`--no-backup`). Left
+   * out (R1), the copy goes to the backups folder beside the home ({@link backupsFolderOf}), named
+   * `realm-v<from>-to-v<to>-<UTC stamp>.db`, when a schema step is pending.
+   */
+  readonly backup?: string | false;
   /** Called with each line's event, in order, as it happens. */
   readonly progress?: (event: MigrateProgress) => void;
 }
@@ -627,6 +655,150 @@ function isBusyRefusal(err: unknown): boolean {
   return err instanceof WorkflowError && err.code === 'STATE_RUN_BUSY';
 }
 
+// ─── R1: the backups folder, the record and the hold ─────────────────────────────────────────────
+
+/** The backups folder's name, beside the Realm home (never in it). */
+const BACKUPS_FOLDER = '.realm-backups';
+
+/** The record's file in the backups folder: one JSON line per migrate that ran a step. */
+const MIGRATIONS_FILE = 'migrations.jsonl';
+
+/** How long the hold waits for another process to let go of the store file: about a second. */
+const HOLD_WAIT_MS = 1000;
+
+/** The backups folder of the Realm home `home`: `<dirname of the home>/.realm-backups`. */
+export function backupsFolderOf(home: string): string {
+  return join(dirname(home), BACKUPS_FOLDER);
+}
+
+/** A default backup's name: the schema versions before and after, and the UTC second it was made. */
+function backupName(from: number, to: number, at: Date): string {
+  const stamp = at
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d+Z$/, 'Z');
+  return `realm-v${from}-to-v${to}-${stamp}.db`;
+}
+
+/**
+ * Makes `folder` owner-only (0700) when it is missing, and checks that a file can be written in it;
+ * the system's reason when either fails (a file where the folder should be: "not a directory").
+ */
+function makeFolder(folder: string): string | undefined {
+  try {
+    mkdirSync(folder, { mode: 0o700 });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+      return isSystemError(err) ? systemErrorText(err.errno) : causeText(err);
+    }
+  }
+  try {
+    if (!statSync(folder).isDirectory()) return systemErrorText(-osConstants.errno.ENOTDIR);
+    accessSync(folder, constants.W_OK);
+  } catch (err) {
+    return isSystemError(err) ? systemErrorText(err.errno) : causeText(err);
+  }
+  return undefined;
+}
+
+/** The default backup's folder cannot be made or written: `realm db migrate` changes nothing. */
+function backupsFolderRefused(folder: string, reason: string): WorkflowError {
+  return migrateRefused(
+    `Cannot make the backups folder ${folder}: ${clause(reason)}. Nothing was changed. Use ` +
+      '--backup <path> to name another place, or --no-backup.',
+    folder,
+    reason,
+  );
+}
+
+/** What one record line says of a migrate (R1): its fields, in the order they are written. */
+interface MigrateRecord {
+  readonly at: string;
+  readonly home: string;
+  readonly from_format: number;
+  readonly to_format: number;
+  readonly backup: string | null;
+  readonly migrated_by: string;
+}
+
+/**
+ * Appends `record` as one line to `migrations.jsonl` in `folder` (the folder made 0700 and the file
+ * 0600 when missing). A single line per append, so several processes' lines stay whole. The progress
+ * event says whether it landed: a failure is a warning, never a refusal (the file is migrated).
+ */
+function appendRecord(folder: string, record: MigrateRecord): MigrateProgress {
+  const path = join(folder, MIGRATIONS_FILE);
+  const unmade = makeFolder(folder);
+  if (unmade !== undefined) return { kind: 'unrecorded', path, reason: unmade };
+  try {
+    appendFileSync(path, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+  } catch (err) {
+    return { kind: 'unrecorded', path, reason: causeText(err) };
+  }
+  return { kind: 'recorded', path };
+}
+
+/** Another process has the store file open: a schema step is not run under it (R1). */
+function storeInUse(source: string): WorkflowError {
+  return new WorkflowError(
+    `Another process has ${source} open (a Realm agent, server, MCP server or command, or another ` +
+      'program such as a SQLite browser). Stop it and run this again. Nothing was changed.',
+    {
+      code: 'STATE_STORE_IN_USE',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { path: source },
+    },
+  );
+}
+
+/** The hold on a store file (R1): kept until `release()`; closing the connection releases it too. */
+export interface StoreHold {
+  /** Lets go of the file: other processes may open it again. A second call does nothing. */
+  release(): Promise<void>;
+}
+
+/**
+ * Proves that no other process has the store file open, and keeps it so (R1, reused by `realm db
+ * restore`): on the connection `db` that has ALREADY read the file and will change it — a hold on a
+ * second connection of this process would block the first — SQLite's exclusive lock is taken
+ * (`locking_mode = EXCLUSIVE`, then `BEGIN EXCLUSIVE` and `COMMIT`: the lock stays held after the
+ * transaction). SQLite refuses it while any other process has the file open, even an idle one, and
+ * grants it when none has (executed, CB-K-32/33, CB-AU-R1-01). The attempt waits about a second
+ * (`busy_timeout`), then the busy answer is refused here as `STATE_STORE_IN_USE`: a busy error left
+ * to the primitive would be waited on for its whole budget and refused `STATE_RUN_BUSY` (CB-AU-R1-03).
+ * The connection's own busy slice is set back either way.
+ */
+export async function holdStoreFile(db: RealmDb, source: string): Promise<StoreHold> {
+  await db.autocommit((c) => {
+    c.exec(`PRAGMA busy_timeout = ${HOLD_WAIT_MS}`);
+    try {
+      c.exec('PRAGMA locking_mode = EXCLUSIVE');
+      c.exec('BEGIN EXCLUSIVE');
+      c.exec('COMMIT');
+    } catch (err) {
+      c.exec('PRAGMA locking_mode = NORMAL');
+      if (isBusy(err)) throw storeInUse(source);
+      throw err;
+    } finally {
+      c.exec(`PRAGMA busy_timeout = ${BUSY_SLICE_MS}`);
+    }
+  });
+  let released = false;
+  return {
+    async release(): Promise<void> {
+      if (released) return;
+      released = true;
+      // Back to normal locking: SQLite lets go of the lock at the connection's next read.
+      await db.autocommit((c) => {
+        c.exec('PRAGMA locking_mode = NORMAL');
+        c.prepare('SELECT count(*) FROM sqlite_master').get();
+      });
+    },
+  };
+}
+
 /**
  * Opens the Realm home for maintenance (see the module comment). `home` is an absolute path;
  * `~/.realm` (core's resolver) when left out. `verb` is the verb it is opened for: its two
@@ -809,55 +981,100 @@ export async function openMaintenance(
     async migrate(options: MigrateOptions): Promise<MigrateReport> {
       if (closed) throw new Error(`The maintenance handle on ${source} is closed.`);
       const progress = options.progress ?? ((): void => undefined);
-      // 1. The backup first: its refusals, and a copy that fails the quick check, end the verb here.
-      const copy = options.backup === false ? undefined : await handle.backup(options.backup);
-      if (copy !== undefined) progress({ kind: 'backup', report: copy });
-      // 2. The ladder, one version per autocommit body (the ladder opens each step's transaction).
       const target = db.schemaVersion;
-      const steps: SchemaStepReport[] = [];
+      // 1. Is a schema step pending? The open read the file; the hold is taken only then (R1).
       let at = await fileVersion(db);
-      while (at < target) {
-        const to = at + 1;
-        let reports: SchemaStepReport[];
-        try {
-          reports = await db.autocommit((c) => migrateSchema(c, to, versions));
-        } catch (err) {
-          throw migrateFailed(source, to - 1, to, err, await fileVersion(db), copy?.path);
+      let hold: StoreHold | undefined;
+      if (at < target) {
+        hold = await holdStoreFile(db, source);
+        // Read again under the hold: another migrate may have finished meanwhile.
+        at = await fileVersion(db);
+        if (at >= target) {
+          await hold.release();
+          hold = undefined;
         }
-        for (const report of reports) {
-          steps.push(report);
-          progress({ kind: 'step', report });
-        }
-        at = to;
       }
-      if (steps.length === 0) progress({ kind: 'current', schemaVersion: at });
-      // 3. The re-stamp: each stale stamp's rows, a batch per write transaction, no reading taken.
-      const running = runPhaseDerivationFingerprint();
-      let restamped = 0;
       try {
-        const stamps = await db.snapshot((c) => staleStampsOf(c, running), {
-          takesReading: false,
-        });
-        for (const stamp of stamps) {
-          let after = '';
-          for (;;) {
-            const from = after;
-            const batch = await db.immediate(
-              (c) => restampBatch(c, stamp, from, running),
-              restampLanded(running),
-              { takesReading: false },
-            );
-            restamped += batch.stamped.length;
-            if (!batch.full) break;
-            after = batch.last;
-          }
+        // 2. The backup first: its refusals, and a copy that fails the quick check, end the verb
+        // here. With a step pending and no flag, it goes to the backups folder beside the home;
+        // with none pending, only a path the operator named is copied, as before.
+        // The copy's path, as `backup` resolves it: what the record names.
+        let copyPath: string | undefined;
+        if (hold !== undefined && options.backup === undefined) {
+          const folder = backupsFolderOf(home);
+          const unmade = makeFolder(folder);
+          if (unmade !== undefined) throw backupsFolderRefused(folder, unmade);
+          copyPath = join(folder, backupName(at, target, systemClock.now()));
+        } else if (typeof options.backup === 'string') {
+          copyPath = resolve(options.backup);
         }
-      } catch (err) {
-        if (isBusyRefusal(err)) progress({ kind: 'restamped', runs: restamped });
-        throw err;
+        const copy = copyPath === undefined ? undefined : await handle.backup(copyPath);
+        if (copy !== undefined) progress({ kind: 'backup', report: copy });
+        // 3. The ladder, one version per autocommit body (the ladder opens each step's transaction).
+        const from = at;
+        const record = (to: number): void =>
+          progress(
+            appendRecord(backupsFolderOf(home), {
+              at: systemClock.now().toISOString(),
+              home: realPathOf(home),
+              from_format: from,
+              to_format: to,
+              backup: copyPath ?? null,
+              migrated_by: VERSION,
+            }),
+          );
+        const steps: SchemaStepReport[] = [];
+        while (at < target) {
+          const to = at + 1;
+          let reports: SchemaStepReport[];
+          try {
+            reports = await db.autocommit((c) => migrateSchema(c, to, versions));
+          } catch (err) {
+            const now = await fileVersion(db);
+            // The file moved before the failure: the record covers what was committed.
+            if (now > from) record(now);
+            throw migrateFailed(source, to - 1, to, err, now, copy?.path);
+          }
+          for (const report of reports) {
+            steps.push(report);
+            progress({ kind: 'step', report });
+          }
+          at = to;
+        }
+        if (steps.length === 0) progress({ kind: 'current', schemaVersion: at });
+        else record(at);
+        // 4. The re-stamp: each stale stamp's rows, a batch per write transaction, no reading taken.
+        const running = runPhaseDerivationFingerprint();
+        let restamped = 0;
+        try {
+          const stamps = await db.snapshot((c) => staleStampsOf(c, running), {
+            takesReading: false,
+          });
+          for (const stamp of stamps) {
+            let after = '';
+            for (;;) {
+              const start = after;
+              const batch = await db.immediate(
+                (c) => restampBatch(c, stamp, start, running),
+                restampLanded(running),
+                { takesReading: false },
+              );
+              restamped += batch.stamped.length;
+              if (!batch.full) break;
+              after = batch.last;
+            }
+          }
+        } catch (err) {
+          if (isBusyRefusal(err)) progress({ kind: 'restamped', runs: restamped });
+          throw err;
+        }
+        progress({ kind: 'restamped', runs: restamped });
+        return { backup: copy, steps, schemaVersion: at, restamped };
+      } finally {
+        // Kept until the steps and the re-stamp are done. A release that fails is left to `close()`,
+        // which lets go of the file too: the error that ended the verb is the one reported.
+        await hold?.release().catch(() => undefined);
       }
-      progress({ kind: 'restamped', runs: restamped });
-      return { backup: copy, steps, schemaVersion: at, restamped };
     },
     close(): void {
       if (closed) return;

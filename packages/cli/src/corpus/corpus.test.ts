@@ -23,7 +23,15 @@
 // artifact fails as stale; any other file under `runs/` or `examples/<name>/` fails, naming the files
 // allowed there; and corpus-guard.test.ts requires each exception file to be named in CHANGELOG.md.
 // A missing or unreadable artifact fails; nothing is skipped.
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -275,7 +283,9 @@ function equalVersionRefusal(version: string, err: unknown): Error | undefined {
  * migrated file to be clean.
  */
 async function openReleaseStore(version: string): Promise<RealmHome> {
-  const dir = freshFolder();
+  // #616 R1: the home nests in its own folder, so the migrate's record (beside the home) stays in it.
+  const dir = join(freshFolder(), '.realm');
+  mkdirSync(dir);
   writeFileSync(
     join(dir, 'realm.db'),
     gunzipSync(readFileSync(join(HERE, version, 'realm.db.gz'))),
