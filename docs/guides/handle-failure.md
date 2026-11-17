@@ -84,7 +84,7 @@ retry:
 **Realm retries only errors that are marked as worth retrying.** The built-in adapters mark the ones that are: a timeout on the network, a rate limit. An ordinary error thrown by your own handler is not marked, so it fails the step on the first attempt, whatever `retry` says:
 
 ```text
-Step 'fetch' failed. Run is terminated.
+Run 'e2f4a6b8-1c3d-4e5f-8a7b-9c0d1e2f3a4b' created for workflow 'sync'. Step 'fetch' failed. Run is terminated.
 ENGINE_HANDLER_FAILED: Handler 'fetch_record' threw: upstream returned 503 (attempt 1)
 ```
 
@@ -116,7 +116,7 @@ With that change, a fetch that failed twice and then worked was retried, and the
 When every attempt fails, the step fails with its own code, and the run ends:
 
 ```text
-Step 'fetch' failed. Run is terminated.
+Run '7a9c1e3f-5b7d-4f0a-a2c4-6e8f0a1b2c3d' created for workflow 'sync'. Step 'fetch' failed. Run is terminated.
 STEP_RETRY_EXHAUSTED: Step 'fetch' failed after 3 attempts
 ```
 
@@ -127,7 +127,7 @@ Mark an error as retryable only when trying again can help. A wrong password wil
 `timeout_seconds` on an `auto` step is the longest one attempt may run. A fetch that took 2.5 seconds against a limit of 1 was stopped:
 
 ```text
-Step 'fetch' failed. Run is terminated.
+Run 'c4d6e8f0-2a4b-4c6d-9e8f-0a1b2c3d4e5f' created for workflow 'sync'. Step 'fetch' failed. Run is terminated.
 STEP_TIMEOUT: Step 'fetch' timed out after 1000ms
 ```
 

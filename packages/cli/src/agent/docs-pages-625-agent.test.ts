@@ -416,7 +416,14 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         // (a) red when the agent step is not said as completed before the step is named, the step is
         //     named twice, the ready agent step does not run, or the stop names the agent step;
         //     (b) prints the screen after the agent step.
-        expect(d.lines.slice(at + 2, at + 4)).toEqual(['log:   ✓ → running', NAMED]);
+        // #625 A1a: a step the chain attempts (the capability block) gets its own line as it
+        // starts, between the ✓ and its naming; a step refused for its input is never attempted by
+        // the chain (the reply is the agent step's own `ok`), so its screen is as before.
+        expect(d.lines.slice(at + 2, at + (kind === 'input_schema' ? 4 : 5))).toEqual([
+          'log:   ✓ → running',
+          ...(kind === 'input_schema' ? [] : ['log: → [auto] file']),
+          NAMED,
+        ]);
         expect(d.lines.filter((l) => l === NAMED)).toHaveLength(1);
         expect(d.lines.indexOf('log: \n→ [agent] ask2')).toBeGreaterThan(d.lines.indexOf(NAMED));
         expect({ result: d.result, stop: d.lines.at(-1) }).toEqual({
@@ -459,7 +466,12 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
     // (a) red when the agent step is not said as completed, the blocked step is named other than
     //     once, the ready agent step does not run, or the stop differs from the page's line (run id
     //     put in place); (b) prints the screen after the agent step and the stop.
-    expect(d.lines.slice(at + 2, at + 4)).toEqual(['log:   ✓ → running', NAMED]);
+    // #625 A1a: the blocked step's own line as it starts, between the ✓ and its naming.
+    expect(d.lines.slice(at + 2, at + 5)).toEqual([
+      'log:   ✓ → running',
+      'log: → [auto] publish',
+      NAMED,
+    ]);
     expect(d.lines.filter((l) => l === NAMED)).toHaveLength(1);
     expect(d.lines.indexOf('log: \n→ [agent] ask2')).toBeGreaterThan(d.lines.indexOf(NAMED));
     expect(bare(d.lines.at(-1))).toBe(

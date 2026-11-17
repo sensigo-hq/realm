@@ -411,7 +411,8 @@ describe('#729 Q3, Part C — the dispatch-time capability block names no door w
       advance: advanced['context_hint'],
     }).toEqual({
       status: ['error', 'nope'],
-      hint: `Step 'nope' is blocked: its handler 'nope' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it. ${CAPABILITY}`,
+      // #625 A1a: the chained reply opens with the called step's own act.
+      hint: `Step 'first' completed. Step 'nope' is blocked: its handler 'nope' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it. ${CAPABILITY}`,
       advance: `Run '${run.id}': nothing ran. ${CAPABILITY}`,
     });
   });
@@ -707,7 +708,8 @@ describe('#872 (a) correction 1 (C5) — the attempt’s error reply counts ever
     expect({ status: r['status'], stopped: r['stopped_step'], hint: r['context_hint'] }).toEqual({
       status: 'error',
       stopped: 'k1',
-      hint: `${blockedLine('k1', 'missing')} 2 steps cannot run here (capability): handler 'missing' ('k1', 'k2') — load the missing extension, or run these steps on a runner that has it.${POINTER}`,
+      // #625 A1a: the chained reply opens with the called step's own act.
+      hint: `Step 'first' completed. ${blockedLine('k1', 'missing')} 2 steps cannot run here (capability): handler 'missing' ('k1', 'k2') — load the missing extension, or run these steps on a runner that has it.${POINTER}`,
     });
   });
 });
