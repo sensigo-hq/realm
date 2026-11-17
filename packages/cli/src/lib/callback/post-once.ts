@@ -40,7 +40,7 @@ export interface PostOnceOptions {
 
 const MAX_TIMER_MS = 2_147_483_647;
 /** The error code the lookup refuses an answer with, so the request's `error` names it. */
-const REFUSED_CODE = 'REALM_CALLBACK_REFUSED_ADDRESS';
+const REFUSED_CODE = 'ERR_CALLBACK_REFUSED_ADDRESS';
 
 const defaultResolve: Resolve = (host) =>
   new Promise((resolve, reject) => {
