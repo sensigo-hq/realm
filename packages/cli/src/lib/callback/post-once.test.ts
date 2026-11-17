@@ -109,26 +109,36 @@ describe('R1.3 C1 — the address the connection goes to', () => {
     });
   });
 
-  it('refuse the whole: a mixed answer is `refused_address`; an empty answer is `connection`, and nothing crashes', async () => {
+  it('refuse the whole: an allowed address beside a metadata address is `refused_address`; an empty answer is `connection`, and nothing crashes', async () => {
     const server = await serve(plain);
-    const l = lists([`http://mixed.test:${server.port}`], [`http://empty.test:${server.port}`]);
+    const l = lists([], [`http://mixed.test:${server.port}`, `http://empty.test:${server.port}`]);
     const mixed = await post({
       url: `http://mixed.test:${server.port}/`,
       lists: l,
-      seams: { resolve: resolver(() => [...at('8.8.8.8'), ...at('169.254.169.254')]).resolve },
+      seams: { resolve: resolver(() => [...at('127.0.0.1'), ...at('169.254.169.254')]).resolve },
     });
     const empty = await post({
       url: `http://empty.test:${server.port}/`,
       lists: l,
       seams: { resolve: resolver(() => []).resolve },
     });
-    // (a) red when a partial answer is allowed, or `cb(null, [])` throws inside node:net (an
-    //     uncaught TypeError fails the run); (b) prints both outcomes.
+    // (a) red when a partial answer is allowed (the server is reached), or `cb(null, [])` throws
+    //     inside node:net (an uncaught TypeError fails the run); (b) prints both outcomes.
     expect({ mixed, empty, reached: server.seen.count }).toEqual({
       mixed: { kind: 'failed', word: 'refused_address' },
       empty: { kind: 'failed', word: 'connection' },
       reached: 0,
     });
+  });
+
+  it('refuse the whole, a public entry: a public address beside a metadata address is `refused_address`', async () => {
+    const out = await post({
+      url: 'https://mixed-public.test/',
+      lists: lists(['mixed-public.test']),
+      seams: { resolve: resolver(() => [...at('8.8.8.8'), ...at('169.254.169.254')]).resolve },
+    });
+    // (a) red when the refused address of the answer is dropped and the rest allowed; (b) prints it.
+    expect(out).toEqual({ kind: 'failed', word: 'refused_address' });
   });
 
   it('the lookup call forms: with autoSelectFamily off in the process, a try still connects', async () => {
@@ -196,6 +206,8 @@ describe('R1.3 C1 — the address the connection goes to', () => {
       metadata: await post({
         url: 'http://169.254.169.254/latest/meta-data/',
         lists: lists(['http://169.254.169.254'], ['http://169.254.169.254']),
+        // Refused before any connect; bounded anyway, should a break let it through.
+        deadlineMs: 300,
         seams,
       }),
       unlisted: await post({
