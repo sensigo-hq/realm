@@ -126,6 +126,18 @@ function runsOf(file: string): Record<string, string> {
   }
 }
 
+/** Whether a store file records `id` as purged (its tombstone in `purged_runs`). */
+function purged(file: string, id: string): boolean {
+  const db = openDatabase(file);
+  try {
+    return (
+      Number(db.prepare('SELECT count(*) AS n FROM purged_runs WHERE id = ?').get(id)?.['n']) === 1
+    );
+  } finally {
+    db.close();
+  }
+}
+
 /** The sha-256 of a file's bytes, so any change to it shows. */
 function hashOf(file: string): string {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
@@ -279,6 +291,8 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
     const kept = report.replaced.kind === 'store' ? report.replaced.kept.path : 'none';
     // The side files, looked at before anything reads the files again.
     const left = { kept: sideFiles(kept), backup: sideFiles(backup), file: sideFiles(file) };
+    // The run deleted after the backup is back, and the record of its purge is gone with it.
+    const purge = { restored: purged(file, ids[1]!), kept: purged(kept, ids[1]!) };
     const check = await openMaintenance({ home, verb: 'check' }, {});
     let findings: unknown;
     try {
@@ -299,6 +313,7 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
       events: outcome.events.map((e) => e.kind),
       keptName: kept.startsWith(`${folder}/realm-before-restore-`) && kept.endsWith('Z.db'),
       created: created in before,
+      purge,
     }).toEqual({
       difference: { onlyReplaced: 1, changed: 1, onlyRestored: 1 },
       restored: inBackup,
@@ -309,6 +324,7 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
       events: ['kept'],
       keptName: true,
       created: true,
+      purge: { restored: false, kept: true },
     });
   });
 
@@ -348,6 +364,30 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
       difference: { onlyReplaced: 0, changed: 1, onlyRestored: 0 },
       runs: beforeRestore,
       versions: [v1.version + 1, v1.version + 1],
+    });
+  });
+
+  it('two restores in the same second: the second is refused by backup`s never-replace rule, and changes nothing', async () => {
+    const { root, home, file, folder } = nestedHome();
+    await makeStore(home, 1);
+    const backup = join(root, 'b.db');
+    await backupTo(home, backup);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-17T08:30:00Z'));
+    reported(await restore(home, backup));
+    const before = hashOf(file);
+    const second = await restore(home, backup);
+    const kept = join(folder, 'realm-before-restore-20261117T083000Z.db');
+    // (1) red when the second kept copy replaces the first, or its refusal loses its sentence; (2)
+    //     prints the refusal and whether the file changed.
+    expect({ refused: second.refused, unchanged: hashOf(file) === before }).toEqual({
+      refused: {
+        code: 'STATE_STORE_BACKUP_REFUSED',
+        message:
+          `Cannot back up the store to ${kept}: a file already exists there. Realm never replaces a ` +
+          'file; name a path where nothing exists. Nothing was replaced.',
+      },
+      unchanged: true,
     });
   });
 
@@ -612,12 +652,25 @@ describe(
       await backupTo(home, backup);
       const written = killedWriter(home);
       const signal = killedRestore(home, backup);
+      // The killed restore's copy beside the store file: a full copy of the backup, owner-only.
+      const left = names(home).filter((n) => n.startsWith('.realm-restore-'));
+      const copy = join(home, left[0] ?? 'none');
       // (1) red without the checkpoint (the unlink then drops the writer's rows, which were only in the
-      //     log); (2) prints the signal, whether the run is there and the side files.
-      expect({ signal, has: written in runsOf(file), sides: sideFiles(file) }).toEqual({
+      //     log); (2) prints the signal, whether the run is there, the side files and the copy left.
+      expect({
+        signal,
+        has: written in runsOf(file),
+        sides: sideFiles(file),
+        left: left.length,
+        mode: existsSync(copy) ? (statSync(copy).mode & 0o777).toString(8) : 'none',
+        copy: existsSync(copy) ? runsOf(copy) : 'none',
+      }).toEqual({
         signal: 'SIGKILL',
         has: true,
         sides: [],
+        left: 1,
+        mode: '600',
+        copy: runsOf(backup),
       });
     });
 

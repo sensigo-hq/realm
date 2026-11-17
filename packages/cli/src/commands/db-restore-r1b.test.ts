@@ -355,6 +355,94 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
   });
 });
 
+// The page's other sentences about `restore`, each quoted word for word with the cell that executes it.
+const ENV_PAGE = 'docs/reference/environment-and-files.md';
+const CODES = 'docs/reference/error-codes.md';
+describe('#616 R1b — the page, the files page and the codes page say what realm db restore does', () => {
+  it.each([
+    [
+      'step 1',
+      "It copies the backup into a private folder of its own in the system's temporary folder, readable by your account only, and checks the copy there: that it is a Realm store, that SQLite's quick check passes, and that this Realm reads its schema version. The backup itself is only read: a backup in a read-only folder can be restored, and nothing is created beside it.",
+      `${STORE_CELLS}: the cells of a non-store, damaged or newer backup and of a backup in DELETE journal mode, 0644 or a read-only folder`,
+    ],
+    [
+      'step 2',
+      'It puts a second copy of the checked backup in the home, as `.realm-restore-<pid>-<random>.db`, readable and writable by your account only (mode 600). A restore that was killed may leave one: it is a full copy of the backup, which you can delete when no restore is running.',
+      `${STORE_CELLS}: the crash window cell (the copy a killed restore leaves: mode 600, the backup's runs)`,
+    ],
+    [
+      'step 3',
+      'It makes sure that no other process has the store file open, and keeps it so until it is done. When one has it open, even an idle one, the command refuses and changes nothing.',
+      `cell 6; ${STORE_CELLS}: the idle process cell`,
+    ],
+    [
+      'step 4',
+      'It keeps the file it replaces: [`realm db backup`](#backup) copies it into the backups folder beside the home, `~/.realm-backups/` for the home `~/.realm` (made owner-only when it is missing), as `realm-before-restore-<UTC time>.db`, and prints its line.',
+      `cell 1; ${STORE_CELLS}: the first cell (the kept file's name and runs)`,
+    ],
+    [
+      'step 6',
+      "It writes the store's write-ahead log into the store file, removes `realm.db-wal` and `realm.db-shm`, and renames the copy over `realm.db` in one step. A stale write-ahead log is never applied to the restored file.",
+      `${STORE_CELLS}: the stale log and crash window cells`,
+    ],
+    [
+      'the purged run',
+      'A run purged after the backup was made comes back, and the record of its purge is gone.',
+      `${STORE_CELLS}: the first cell (purge)`,
+    ],
+    [
+      'the same second',
+      "The kept file's name holds the second it was made, so a second restore in the same second is refused by `realm db backup`'s rule, and changes nothing.",
+      `${STORE_CELLS}: the same-second cell`,
+    ],
+    [
+      'the side file backup',
+      "one of its side files: `Cannot restore from <backup>: it is the store file's -wal file. Nothing was changed.` (or `-shm`).",
+      `${STORE_CELLS}: the backup argument cell`,
+    ],
+    [
+      'the in-use refusal',
+      'another process has the store file open, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open (a Realm agent, server, MCP server or command, or another program such as a SQLite browser). Stop it and run this again. Nothing was changed.`',
+      'cell 6',
+    ],
+    [
+      'the kept copy refused',
+      "the kept copy cannot be made, or fails SQLite's quick check (the store file may then be damaged): `realm db backup`'s refusal, with its code, then ` Nothing was replaced.`",
+      `${STORE_CELLS}: the damaged page and same-second cells`,
+    ],
+    [
+      'a failure before or after the rename',
+      'another failure before the rename: `Cannot restore from <backup>: <the reason>. <home>/realm.db was not replaced.`, then ` A copy of it is at <kept file>.` when the kept copy was made. After the rename, when the folder cannot be flushed: `Cannot restore from <backup>: <the reason>. <home>/realm.db was replaced.`',
+      `${STORE_CELLS}: the failure-before-the-swap and failure-after-the-rename cells`,
+    ],
+    [
+      'the backup refused in the check words',
+      'the backup is not a Realm store, is damaged, or was written by a newer Realm: `Cannot restore from <backup>:` and the words of [`realm db check`](#check), then `Nothing was changed.`',
+      `cell 5; ${STORE_CELLS}: the non-store, damaged or newer backup cell`,
+    ],
+  ])('%s', (_name, sentence, provedBy) => {
+    claim(PAGE, sentence, provedBy);
+  });
+
+  it('the files page and the codes page', () => {
+    claim(
+      ENV_PAGE,
+      '| `.realm-restore-<pid>-<random>.db` | The checked copy of a backup that `realm db restore` renames over `realm.db`, owner-only (mode 0600). One left behind by a restore that was killed is a full copy of the backup, which can be deleted when no restore is running. | `realm db restore` |',
+      `${STORE_CELLS}: the crash window cell`,
+    );
+    claim(
+      ENV_PAGE,
+      '| `~/.realm-backups/realm-before-restore-<UTC time>.db` | The store file that `realm db restore` replaced, copied and checked by `realm db backup` before the restore. Realm never deletes them. |',
+      `cell 1; ${STORE_CELLS}: the first cell`,
+    );
+    claim(
+      CODES,
+      '| `STATE_STORE_RESTORE_REFUSED` | `realm db restore` refused: the backup is not a file, is the store file or a side file of it, is not a Realm store, is damaged or is newer; the home has no store file, or an empty one; or the restore failed, and the message says whether the store file was replaced. Added after version 0.49.0. | `report_to_user` | No |',
+      `cells 4 and 5; ${STORE_CELLS}: the refusal cells`,
+    );
+  });
+});
+
 // The guide's and the changelog's sentences about going back, each held to the cell that executes it.
 describe('#616 R1b — the guide and the changelog say how to go back', () => {
   it('restore first with this Realm, then install the older one; the newer writes are in the kept copy', () => {
