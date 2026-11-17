@@ -22,6 +22,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -628,10 +629,11 @@ describe(
       let written = '';
       const report = reported(
         await restore(home, backup, {
-          // The home's flush runs right after the rename, before the hold is let go (the kept copy's
-          // flush of the backups folder comes before, under the hold).
-          syncFolder: (path) => {
-            if (path === home && written === '') written = killedWriter(home);
+          // The rename itself, then at once a process that opens the NEW file, writes and is killed:
+          // the window between the rename and anything the restore would still do on the old names.
+          rename: (from, to) => {
+            renameSync(from, to);
+            written = killedWriter(home);
           },
         }),
       );
