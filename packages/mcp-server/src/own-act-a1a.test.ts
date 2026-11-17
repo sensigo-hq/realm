@@ -251,6 +251,39 @@ describe('#625 A1a — over MCP: the act recorded, then the chain', () => {
     });
   });
 
+  it('correction 1 (RD-06) — a rerun whose head step fails again: the reply opens with the plain creation sentence and says the supersede once', async () => {
+    const c = await connect([SECOND_FAILS]);
+    const first = await c.call('start_run', {
+      workflow_id: SECOND_FAILS.id,
+      params: {},
+      idempotency_key: 'again',
+    });
+    const rerun = await c.call('start_run', {
+      workflow_id: SECOND_FAILS.id,
+      params: {},
+      idempotency_key: 'again',
+      on_terminal_match: 'rerun_if_failed',
+    });
+    const supersede = `This run supersedes run '${String(first['run_id'])}' under the same idempotency key (on_terminal_match).`;
+    // (a) red when the opening is the rerun arm of the creation sentence (the supersede then said
+    //     twice); (b) prints the hint's start, the count and its end.
+    expect({
+      first: first['status'],
+      rerun: [rerun['status'], rerun['rerun_of'], rerun['own_act']],
+      opens: String(rerun['context_hint']).startsWith(
+        `Run '${String(rerun['run_id'])}' created for workflow '${SECOND_FAILS.id}'. Step 'boom' failed.`,
+      ),
+      supersedes: occurrences(rerun['context_hint'], 'supersedes run'),
+      ends: String(rerun['context_hint']).endsWith(supersede),
+    }).toEqual({
+      first: 'error',
+      rerun: ['error', first['run_id'], { command: 'start_run', recorded: true }],
+      opens: true,
+      supersedes: 1,
+      ends: true,
+    });
+  });
+
   it('check 7 controls — a de-duplicated repeat, the C52 creation reply, an ok ran reply and advance_run carry no own_act, their hints as today', async () => {
     const c = await connect([SECOND_FAILS, HEAD_THEN_AGENT, HEAD_BLOCKED]);
 

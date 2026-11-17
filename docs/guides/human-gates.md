@@ -99,7 +99,7 @@ run_phase: gate_waiting
 Step 'draft' completed. Run is paused at gate '39792a3a-f9c3-470a-b94c-c314fb254234'.
 ```
 
-The choices are the gate's (`send`, `discard`); the line named them up to version 0.47.0.
+The choices are the gate's (`send`, `discard`); the line named them up to version 0.47.0. The line opens with `Step 'draft' completed.`, the step the call answered, after version 0.49.0.
 
 An agent that tries to run `send` at this point is refused:
 
