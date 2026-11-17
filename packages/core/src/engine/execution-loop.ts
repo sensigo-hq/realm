@@ -27,6 +27,8 @@ import {
   classifyStop,
   composeWaysOn,
   heldFacts,
+  heldStateOf,
+  HELD_WORDS,
   isHeldUnder,
   waysStoreOf,
   isRaceStop,
@@ -1024,7 +1026,8 @@ export function notCallableWords(refusal: Unavailable): string {
     case 'question_open':
       return `it waits on ${openQuestionWords({ step: refusal.facts.question_step, gate_id: refusal.facts.gate_id, choices: [...refusal.facts.choices] })}`;
     case 'held_elsewhere':
-      return 'it is in flight (claimed by another call)';
+      // #922 P2-1 (R13): the held step's state, from the one held-words table.
+      return HELD_WORDS.reason(heldStateOf(refusal));
     case 'upstream_cannot_run':
       return `a step it depends on cannot run (${refusal.facts.upstream.map((s) => `'${s}'`).join(', ')})`;
     case 'deps_unsettled':
@@ -4920,8 +4923,13 @@ async function executeStepBody(
   const migratedPending = describePending(definition, finalSnap, options.registry);
   // #729 PR-0 (Table rows 20–26, 32): the hint says what happened; the way on — the `inspect` way
   // on an ended run, the run's next ways otherwise — is the door's sentence after it.
+  // #922 P2-1 (walk WK-07): a run that still has a held step names it after the step's line — the
+  // door's held words — never "Waiting for other steps to complete.".
   const migratedNamesNext =
-    finalRun.terminal_state || hasProgressWay(migratedWays) || hasCannotRun(migratedPending);
+    finalRun.terminal_state ||
+    hasProgressWay(migratedWays) ||
+    hasCannotRun(migratedPending) ||
+    migratedWays.unavailable.some((u) => u.code === 'held_elsewhere' && u.verb === 'run_step');
   const migratedOrientation = finalRun.terminal_state
     ? `Run completed (phase: '${finalRun.run_phase}').`
     : migratedNamesNext

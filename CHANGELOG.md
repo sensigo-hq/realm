@@ -12,6 +12,7 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **On MCP, a reply says each held step's state.** A step whose deadline is ahead is waited on, and freeing it comes with the warning that it may run twice. One whose deadline passed is reported to the user, with a person able to free it. One whose claim has no deadline or cannot be read is waited on, with a person able to free it if its program has stopped. `execute_step` on a held step says the same, the library's `executeStep` replies say it in `context_hint`, and the protocol's `report_to_user` and `await` texts name the case.
 - **Each held step carries a `reclaim` way for a person, with its conditions.** In the library, `WAY_VERBS` gains `reclaim`, and `WayOn` the new `ReclaimWay`; `Cond` gains the conditions `claim_deadline_ahead`, `override_claim_unknown_age` and `rerun_not_idempotent`; `UNAVAILABLE_CODES` and `FactsByCode` gain the codes `not_held`, `store_keeps_no_claims`, `fence_required` and `claim_changed`, and `held_elsewhere`'s facts gain the claim's stamp (`claimed_at`) and, for a deadline that cannot be read, `{ absent: 'unparseable_stamp' }`. `WayRenderer` and `LIBRARY_WORDS` gain `reclaim` with the list: a program that writes the full `WayRenderer` itself adds a `reclaim` function, and one built with `withLibraryWords` renders it in Realm's words.
 
 ## [0.50.0] — 2026-11-17

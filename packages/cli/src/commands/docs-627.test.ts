@@ -726,7 +726,7 @@ describe('#627 W correction 1 — the claims F asks for', () => {
   it('F4: tools.md :46 and :105 — advance_run at a question under withheld: ok, agent_action await, the await entry; with the answer tool, the answer', async () => {
     claim(
       'docs/reference/mcp/tools.md',
-      'as `await` (a step in flight elsewhere, or a question handed to the person)',
+      'as `await` (a held step that can still finish, or a question handed to the person)',
     );
     claim(
       'docs/reference/mcp/tools.md',

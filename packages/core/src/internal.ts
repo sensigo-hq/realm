@@ -275,6 +275,11 @@ export {
   heldStateAt,
   heldStateOf,
   reclaimConditionWords,
+  // #922 P2-1 (R13): the one table of a held step's words, by its state, and its readers.
+  HELD_WORDS,
+  heldWordsStateOf,
+  heldRerunOf,
+  heldAgentWords,
 } from './engine/ways.js';
 export type {
   Party,
@@ -292,6 +297,7 @@ export type {
   PresentWay,
   ReclaimWay,
   HeldState,
+  HeldWordsState,
   WayOn,
   WayOf,
   CodeTag,

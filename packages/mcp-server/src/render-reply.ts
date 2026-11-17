@@ -24,6 +24,11 @@ import {
   quotedNames,
   raceClausesOf,
   reclaimConditionWords,
+  heldAgentWords,
+  heldRerunOf,
+  heldStateOf,
+  heldWordsStateOf,
+  HELD_WORDS,
   withFullStop,
   answersRowOf,
   endsWithCutSentence,
@@ -679,16 +684,33 @@ function renderWay(way: WayOn, basis: Basis | undefined, host: McpHost): McpNext
   return render(way, basis, host);
 }
 
+/** A held step's entry in a reply's `unavailable` (code `held_elsewhere`, verb `run_step`). */
+type HeldEntry = Unavailable & { code: 'held_elsewhere' };
+
+/** #922 P2-1: a narrowed reply's held steps — the entries the held words are read from. */
+function heldOf(narrowed: Narrowed | undefined): HeldEntry[] {
+  return (narrowed?.unavailable ?? []).filter(
+    (u): u is HeldEntry => u.verb === 'run_step' && u.code === 'held_elsewhere',
+  );
+}
+
 /** The words of an elsewhere entry: the operator's way and why this door cannot enact it. */
-function elsewhereWords(entry: Unavailable, host: McpHost): string {
+function elsewhereWords(entry: Unavailable, host: McpHost, held: readonly HeldEntry[]): string {
   const way = entry.remedy[0];
   if (way?.verb === 'register') return registerWords(way, host);
   if (way?.verb === 'reclaim') {
     // #922 (B, b7f72a42): the conditions' words come before any command that frees the step.
     const words = way.conditions.flatMap((c) => reclaimConditionWords(c) ?? []);
-    return [`An operator can free step '${way.step}', outside this conversation.`, ...words].join(
-      ' ',
-    );
+    // #922 P2-1 (walk O1): a step whose deadline passed says so first — its entry has no deadline of
+    // its own (`door_cannot_enact`), so the state is read off the reply's held entry for the step.
+    const heldEntry = held.find((u) => u.step === way.step);
+    const state = heldEntry !== undefined ? heldStateOf(heldEntry) : undefined;
+    const past = state?.state === 'past' ? [HELD_WORDS.pastLine(state.deadline)] : [];
+    return [
+      `An operator can free step '${way.step}', outside this conversation.`,
+      ...past,
+      ...words,
+    ].join(' ');
   }
   if (way?.verb === 'run_step') {
     // PR0-CONTRACT Amendment 14 (Q12): a fact, never a schedule.
@@ -720,7 +742,11 @@ function boundedElsewhere(entries: readonly Unavailable[]): {
 const moreHeld = (n: number): string => `${n} more held step${n === 1 ? '' : 's'}`;
 
 /** #922: a reply's `elsewhere` — the bounded entries, then the line naming how many more. */
-function elsewhereOf(entries: readonly Unavailable[], host: McpHost): McpElsewhereEntry[] {
+function elsewhereOf(
+  entries: readonly Unavailable[],
+  host: McpHost,
+  held: readonly HeldEntry[],
+): McpElsewhereEntry[] {
   const { shown, more } = boundedElsewhere(entries);
   const listed: McpElsewhereEntry[] = shown.map((u) => ({
     verb: u.verb,
@@ -728,7 +754,7 @@ function elsewhereOf(entries: readonly Unavailable[], host: McpHost): McpElsewhe
     instruction: null,
     for: 'operator',
     reason: 'door_cannot_enact',
-    human_readable: elsewhereWords(u, host),
+    human_readable: elsewhereWords(u, host, held),
   }));
   if (more === undefined) return listed;
   const tool = MCP_WAYS.inspect(more.inspect, undefined, host)!.instruction!.tool;
@@ -1077,12 +1103,11 @@ function nextSentence(narrowed: Narrowed | undefined, ended: boolean): string {
     sentence += ` ${wayOutWords(narrowed)}`;
   }
   if (sentence.length > 0) return sentence;
-  const held = (narrowed?.unavailable ?? [])
-    .filter((u) => u.verb === 'run_step' && u.code === 'held_elsewhere')
-    .map((u) => u.step!);
-  if (held.length > 0) {
-    const one = held.length === 1;
-    return ` No step is ready: ${quoteList(held)} ${one ? 'is' : 'are'} in flight elsewhere — wait for ${one ? 'it' : 'them'}, then call get_run_state.`;
+  // #922 P2-1 (R13): each held step's state, grouped, from the one held-words table — an agent is
+  // told to wait only for a step that can still finish.
+  const held = heldOf(narrowed);
+  if (held.length > 0 && narrowed !== undefined) {
+    return ` No step is ready: ${heldAgentWords(held, narrowed.basis.store.persists_claims)}`;
   }
   return ' No step is ready.';
 }
@@ -1097,6 +1122,7 @@ function withRefusalWayClause(
   refusal: Unavailable,
   narrowed: Narrowed | undefined,
 ): string {
+  if (refusal.code === 'held_elsewhere') return withHeldClause(hint, refusal, narrowed);
   // Amendment 16: a clause names the chain's END only when the agent can call it — never a way the
   // reply lists as unavailable (guardrail 7: the claim never exceeds its guard).
   const clause =
@@ -1107,6 +1133,26 @@ function withRefusalWayClause(
         ? ' — call advance_run to carry it out'
         : '';
   return clause !== '' && hint.endsWith('.') ? `${hint.slice(0, -1)}${clause}.` : hint;
+}
+
+/**
+ * #922 P2-1: a by-name refusal of a held step — core's reason (its state), then the state's clause,
+ * joined inside its sentence: freeing a live claim always carries the "runs twice" warning (B,
+ * b7f72a42). A step with no reclaim way (the call's own claim) gets no clause; on a store that keeps
+ * no claims, that store's words. A past step whose rerun may not be safe adds the condition's sentence.
+ */
+function withHeldClause(
+  hint: string,
+  refusal: Unavailable & { code: 'held_elsewhere' },
+  narrowed: Narrowed | undefined,
+): string {
+  if (narrowed === undefined || !hint.endsWith('.')) return hint;
+  const persists = narrowed.basis.store.persists_claims;
+  if (persists && !refusal.remedy.some((w) => w.verb === 'reclaim')) return hint;
+  const state = heldWordsStateOf(refusal, persists);
+  const rerun = state === 'past' ? heldRerunOf(refusal) : undefined;
+  const after = rerun !== undefined ? ` ${HELD_WORDS.rerun(rerun, false)}` : '';
+  return `${hint.slice(0, -1)}${HELD_WORDS.clause(state)}.${after}`;
 }
 
 /** Whether the door rendered a way of this verb callable by the agent. */
@@ -1305,7 +1351,7 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
   const elsewhereEntries = (narrowed?.unavailable ?? []).filter(
     (u) => u.code === 'door_cannot_enact',
   );
-  const elsewhere = elsewhereOf(elsewhereEntries, host);
+  const elsewhere = elsewhereOf(elsewhereEntries, host, heldOf(narrowed));
   const ended = reply.run_phase !== undefined && TERMINAL_PHASES.has(reply.run_phase);
   const rendered = renderedListOf(reply, narrowed, progress);
   const agentAction = agentActionOf(reply.intrinsic_action, reply.reply_kind, rendered);
@@ -1356,7 +1402,10 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
     ...(gate !== undefined ? { gate: withAuthorLabel(gate) } : {}),
   };
   if (tokenStrayed(envelope, narrowed)) return heldBackReply(reply, host);
-  const person = [personBlockOf(elsewhereEntries, reply.basis, host), cutWayOf(reply, host)]
+  const person = [
+    personBlockOf(elsewhereEntries, reply.basis, host, heldOf(narrowed)),
+    cutWayOf(reply, host),
+  ]
     .filter((part): part is string => part !== undefined)
     .join('\n');
   return { envelope, ...(person !== '' ? { person } : {}) };
@@ -1441,6 +1490,7 @@ function personBlockOf(
   entries: readonly Unavailable[],
   basis: Basis | undefined,
   host: McpHost,
+  held: readonly HeldEntry[],
 ): string | undefined {
   const route = host.operatorRoute;
   if (route === undefined) return undefined;
@@ -1452,7 +1502,7 @@ function personBlockOf(
       const command = route.render(way, basis);
       return command === null
         ? undefined
-        : `${elsewhereWords(u, host)} The operator's command: ${command}`;
+        : `${elsewhereWords(u, host, held)} The operator's command: ${command}`;
     })
     .filter((line): line is string => line !== undefined);
   const inspect = more !== undefined ? route.render(more.inspect, basis) : null;
@@ -1535,9 +1585,9 @@ export function renderWaysOf(
   const elsewhereEntries = (narrowed?.unavailable ?? []).filter(
     (u) => u.code === 'door_cannot_enact',
   );
-  const elsewhere = elsewhereOf(elsewhereEntries, host);
+  const elsewhere = elsewhereOf(elsewhereEntries, host, heldOf(narrowed));
   const rendered = renderedListOf(reply, narrowed, progress);
-  const person = personBlockOf(elsewhereEntries, composed.basis, host);
+  const person = personBlockOf(elsewhereEntries, composed.basis, host, heldOf(narrowed));
   return {
     narrowed,
     next_actions,

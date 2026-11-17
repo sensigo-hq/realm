@@ -239,7 +239,7 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
     );
   });
 
-  it('C205: with nothing ready but steps in flight elsewhere, the sentence names them and the wait — one, and several (`are`, `them`)', async () => {
+  it('C205: with nothing ready but held steps, the sentence names them and their state — several (`are`, `them`); #922 P2-1: on a store that keeps no claims, its words', async () => {
     const d = def({
       a: { description: 'A', execution: 'auto', depends_on: [] },
       b: { description: 'B', execution: 'auto', depends_on: [] },
@@ -258,7 +258,7 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
       await store.claimStep(run.id, 'a', d, other);
       await store.claimStep(run.id, 'b', d, other);
       expect(nextSentenceOf((await store.get(run.id)).record, d)).toBe(
-        " No step is ready: 'a', 'b' are in flight elsewhere — wait for them, then call get_run_state.",
+        " No step is ready: 'a', 'b' are held; this store keeps no claim records, so a person cannot free them with reclaim. Wait for them.",
       );
     });
   });
@@ -444,8 +444,9 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
       expect(reply.next_actions).toEqual([]);
       // #729 PR-0 (Table row 36): what happened is core's (the race also as `races`); the wait is the
       // door's, said before the race clause, as before PR-0 (358d3c83, pending-625.test.ts:943).
+      const deadline = (await store.get(run.id)).record.claims?.['x']?.deadline;
       expect(reply.context_hint).toBe(
-        `Run '${run.id}': nothing ran. No step is ready: 'x' is in flight elsewhere — wait for it, then call get_run_state. 'x' was claimed by another process, so it did not run here.`,
+        `Run '${run.id}': nothing ran. No step is ready: 'x' is held; its deadline is ahead (${deadline}). Wait for it. A person can free it, but if its program is still running, the step runs twice. 'x' was claimed by another process, so it did not run here.`,
       );
       expect(reply.races).toEqual([{ step: 'x', kind: 'held_elsewhere', ran_here: false }]);
       // T-22: a step in flight elsewhere is a wait — `await`, with the pace (P-2). #715 (b) (03 §C,
