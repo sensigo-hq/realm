@@ -17,8 +17,8 @@ import { withFullStop } from '../engine/pending.js';
 import { quotedCommand } from '../utils/shell-word.js';
 
 /**
- * What a damaged stored JSON file is (issue #719, R7) — the shipped vocabulary of the registrar's
- * listing, plus the run-only classes:
+ * The kinds of fault a damaged stored JSON file can have (`UnreadableFileFacts.class`). They are the
+ * registrar's listing's words, plus the run-only classes:
  *  - `empty`: zero bytes, or whitespace only;
  *  - `parse`: not JSON, or JSON that is not an object (`shape` says what it is);
  *  - `not_a_run`: an object that is not a run record (`fields` names what is missing or mistyped);
@@ -58,8 +58,9 @@ export const TRACE_FILE_SUFFIX = '.jsonl';
  */
 export const RUN_ID_LENGTH = 36;
 
-/** issue #719 (F4): the kinds of side file a run keeps beside its file, in its runs folder —
- *  exported by name as one const and its type (#729 PR-0, PR0-CONTRACT Amendment 7d).
+/**
+ * The kinds of side file a run keeps beside its file in its runs folder: failed attempts, a trace
+ * buffer, and sealed traces.
  * @public
  */
 export const SIDE_FILE_KINDS = ['attempts', 'trace_buffer', 'sealed_trace'] as const;
@@ -69,8 +70,9 @@ export const SIDE_FILE_KINDS = ['attempts', 'trace_buffer', 'sealed_trace'] as c
  */
 export type SideFileKind = (typeof SIDE_FILE_KINDS)[number];
 
-/** What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2; #819
- *  U2 `no_steps`, U3 `not_legacy_shape`).
+/**
+ * What a registered copy that is a JSON object lacks to be a workflow: a numeric `schema_version`,
+ * an `id`, `steps`, or the legacy shape.
  * @public
  */
 export type WorkflowCopyFault =
@@ -85,8 +87,8 @@ const COPY_FAULT_WORDS: Record<WorkflowCopyFault, string> = {
 };
 
 /**
- * The facts of one damaged stored file (issue #719, R7; #729 PR-0 Amendments 7, 7e): names, classes
- * and type words — never its content. Written as the typed `facts` of every such error
+ * The facts of one damaged stored file: names, classes and type words, never its content.
+ * Written as the typed `facts` of every such error
  * (`{ scope: 'file', …facts }`), on run files, on the runs folder and on the registrar's `empty` and
  * `parse` failures; read them through {@link unreadableFactsOf}. {@link renderUnreadableStoredFile}
  * builds every message from them alone.
@@ -125,8 +127,9 @@ export interface UnreadableFileFacts {
   refused?: 'every_new_key' | 'this_key';
 }
 
-/** The facts a damaged-file error carries, or `undefined` for any other error — the ONE reader
- *  (#729 PR-0: it keys on the facts' `scope`, Amendment 7e).
+/**
+ * The facts a damaged-file error carries, or `undefined` for any other error. It is the one reader,
+ * keyed on the facts' `scope`.
  * @public
  */
 export function unreadableFactsOf(err: unknown): UnreadableFileFacts | undefined {
@@ -147,8 +150,9 @@ export interface UnreadableRunFilesFacts {
   files: UnreadableFileFacts[];
 }
 
-/** The facts of a decision that failed closed over damaged run files, or `undefined` for any other
- *  error — the ONE reader of {@link unreadableRunFilesError}'s facts (#729 PR-0: keyed on `scope`).
+/**
+ * The facts of a decision that failed closed over damaged run files, or `undefined` for any other
+ * error. It is the one reader of `unreadableRunFilesError`'s facts, keyed on `scope`.
  * @public
  */
 export function unreadableRunFilesOf(err: unknown): UnreadableRunFilesFacts | undefined {
@@ -159,9 +163,10 @@ export function unreadableRunFilesOf(err: unknown): UnreadableRunFilesFacts | un
   return facts;
 }
 
-/** An id a file holds, as text may show it (issue #719, C6): one made of letters, digits, `.`,
- *  `_` and `-`, at most 64 characters, as it is; any other as `another run id (not shown)` — a
- *  file's content can hold anything, a newline or a terminal escape included.
+/**
+ * An id a file holds, as text may show it: as it is when made of letters, digits, `.`, `_` and `-`
+ * and at most 64 characters, else `another run id (not shown)`. A file's content can hold anything,
+ * a newline or a terminal escape included.
  * @public
  */
 export function displayId(id: string): string {
@@ -185,8 +190,8 @@ export function jsonShapeOf(value: unknown): string {
 const NAMED_FIELDS = 3;
 
 /**
- * What is wrong with the file, as a clause after its subject (issue #719, R8): no parser text and
- * no position, ever. A registered copy keeps its shipped nouns ("not a workflow object", "empty
+ * What is wrong with the file, as a clause after its subject: no parser text and no position, ever.
+ * A registered copy keeps its shipped nouns ("not a workflow object", "empty
  * (0 bytes) — not a workflow").
  * @public
  */
@@ -360,9 +365,9 @@ function keyedCreateSentence(
 }
 
 /**
- * issue #719 — the ONE composer for a damaged stored file's message, from its facts alone (no error
- * object, no record, no parser text, no options), so every surface — and #729 PR-0's renderers —
- * says the same words. A run file or the runs folder: its fault sentence, the keyed-create
+ * The one composer of a damaged stored file's message, from its facts alone, so every surface says
+ * the same words. It takes no error object, no record, no parser text and no options.
+ * A run file or the runs folder: its fault sentence, the keyed-create
  * sentence when the facts carry `refused`, and the way out. A registered workflow copy: the
  * registrar's subject and the fault clause (its repair act is the registrar's own, `repairActFor`).
  * @public
@@ -433,8 +438,9 @@ export function runsFolderUnreadableError(folder: string, err: unknown): Workflo
 }
 
 /**
- * issue #719 (R10, B3, C3) — a decision over EVERY run fails closed when any run file cannot be
- * read: ONE error naming every such file, and nothing is written. Its remaining caller is
+ * The error a decision over every run fails closed with when a run file cannot be read: one error
+ * naming every such file, with nothing written.
+ * Its remaining caller is
  * `JsonFileStore.reconcileKeys` (PR-3's); purge and `realm run migrate` read past an unreadable
  * file and report it. `RESOURCE_FORMAT_INVALID` when every file's fault is in its bytes, else
  * `ENGINE_STORE_FAILED`. `command` is the exact command the operator ran, flags included, as its
@@ -480,8 +486,9 @@ export type RunFileReading =
     };
 
 /**
- * issue #719 (C1): whether a damaged run file can concern a workflow — the ONE scope predicate of
- * the keyed fallback scan and of every workflow-scoped read. False when the file is JSON that is
+ * Whether a damaged run file can concern a workflow: the one scope test of the keyed fallback scan
+ * and of every workflow-scoped read.
+ * False when the file is JSON that is
  * not an object (it names no workflow and holds no key), when it is a folder named like a run file
  * (`unreadable` with `EISDIR`: it holds no run and no key, F6.3), and when its object names ANOTHER
  * workflow by a string `workflow_id`; true otherwise — a file whose content cannot be read
@@ -501,8 +508,9 @@ export function damagedFileConcerns(
 }
 
 /**
- * issue #719 (F5): whether a damaged run file is a copy of a run whose own file reads — a file
- * holding another run (`mismatched`) whose held run's file reads as that run. Such a file is not a
+ * Whether a damaged run file is a copy of a run whose own file reads: a file holding another run
+ * (`mismatched`) whose held run's file reads as that run.
+ * Such a file is not a
  * damaged run: every listing puts it with the copies (`RunListing.copies`), and no decision over
  * the runs, no keyed create and no scoped read counts or refuses over it.
  * @public

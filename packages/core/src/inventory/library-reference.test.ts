@@ -250,6 +250,10 @@ describe('CP-1 — the library reference', { timeout: BUDGET }, () => {
         'CHANGELOG.md',
         '- The library reference: six pages under `docs/reference/library/`, one per job Realm supports, generated from the `@public`/`@beta` tags with each declaration and its description; a promised name without a description, or missing from its page, fails a test.',
       ],
+      [
+        'CHANGELOG.md',
+        "- The library reference's index: the first sentence of every promised name now says what it is for, in a reader's words; a first sentence that carries an issue number, a design label, a date or a shouted word, or runs over 200 characters, fails the reference's test.",
+      ],
     ];
     const found = words.map(([page, sentence]) => [
       page,

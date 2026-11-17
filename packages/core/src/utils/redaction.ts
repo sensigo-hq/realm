@@ -232,7 +232,7 @@ export function inboundMarkerWarning(markers: readonly string[]): string {
 export const DISCLOSURE_FLOORS = { environment: 8, declared: 4 } as const;
 
 /**
- * Who reads a surface (RECORD 01 #12; 05 "audiences").
+ * Who reads a surface (`DisclosureSet.audience`).
  * @public
  */
 export type DisclosureAudience = 'agent' | 'broadcast' | 'log' | 'private' | 'file';
@@ -257,7 +257,8 @@ export type DeclaredCause = 'no_manifest' | 'load_failed' | 'embedder_none' | 'm
  */
 export type EnvironmentState = 'swept' | 'not_swept';
 /**
- * Why not (D1 §3.7): the host set the members itself and passed no environment.
+ * Why the environment was not swept: the host set the members itself and passed no environment
+ * (`DisclosureSet.environmentCause`).
  * @public
  */
 export type EnvironmentCause = 'host_set';
@@ -269,7 +270,7 @@ export interface DisclosureEntry {
 }
 
 /**
- * Kind codes: the higher wins where marks overlap (RECORD 01 #3).
+ * The kind codes of a disclosure set's marks: where marks overlap, the higher code wins.
  * @public
  */
 export const KIND = { pattern: 1, environment: 2, declared: 3 } as const;
@@ -588,7 +589,8 @@ export function notSecretIntersection(lists: readonly (readonly string[] | undef
 }
 
 /**
- * THE set builder (RECORD 05 "the matcher moves into core": the set builder exists once). Every
+ * The one builder of a disclosure set: every surface builds its set here.
+ * Every
  * surface builds its set here: the environment's members through {@link environmentEntries} (or
  * none, with `environment: 'not_swept'` and cause `host_set`, when the caller passes no
  * environment), the declared values by name, then {@link compileDisclosure}.
@@ -815,7 +817,7 @@ function emitRuns(
 }
 
 /**
- * Caching 3-B (C2, A4): a text disclosed in two pieces, cut where a provider's cache head ends.
+ * A text disclosed in two pieces, cut where a provider's cache head ends.
  * @public
  */
 export interface DisclosedSplit {
@@ -833,8 +835,9 @@ export interface DisclosedSplit {
 }
 
 /**
- * Caching 3-B (C2, M5, D4.6-5; MA 1's condition (d)): {@link disclose} cut in two at `cut` (input
- * coordinates, clamped to `[0, text.length]`), from the ONE marking pass `disclose` uses. A marked run
+ * `disclose` cut in two at `cut`, from the one marking pass `disclose` uses. `cut` is in input
+ * coordinates, clamped to `[0, text.length]`.
+ * A marked run
  * that crosses the cut (`marks[cut-1] ≠ 0 ∧ marks[cut] ≠ 0`) moves the cut back to the run's start —
  * across two adjacent runs, to the first one's start, since adjacent marks are one run — so no head
  * ever holds part of a hidden value, and `head + tail` is exactly `disclose`'s text (the law cell
@@ -868,9 +871,10 @@ export function discloseSplit(
 }
 
 /**
- * Caching 3-B (MA1-3B-01, MA 2's F2 ruling): the sizes of {@link discloseSplit}'s pieces, and NOTHING
- * of their text — numbers only, so a caller that must never hold a disclosed head (PR 5's describer:
- * `validate`, `register`, `watch`) imports this, never `discloseSplit`. `headAsciiChars` counts the
+ * The sizes of `discloseSplit`'s pieces and nothing of their text, for a caller that must never
+ * hold a disclosed head. Numbers only: the describer of `validate`, `register` and `watch` imports
+ * this, never `discloseSplit`.
+ * `headAsciiChars` counts the
  * head's UTF-16 code units below 0x80, so the describer's token interval is the one its text gives.
  * @public
  */

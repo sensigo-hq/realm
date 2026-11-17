@@ -176,7 +176,8 @@ export type StepDispatcher = (
 ) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
 /**
- * What the DRIVER observed about this step's attempt, threaded into every evidence-capture site.
+ * What the driver observed about this step's attempt, passed to every place that captures evidence
+ * (`ExecuteStepOptions.stepMeta`).
  *
  * `toolCalls` — produced by callStepWithTools. Absent on the callStep path (no tools configured).
  * Present (possibly []) when tools were declared.
@@ -1865,11 +1866,11 @@ async function buildAlreadySettledEnvelope(
 export type { AdvanceCaller, AnswerCaller, ChainCaller, EngineStepCaller, StepCaller };
 
 /**
- * The vocabulary of `enacted_via` (decisions C95, C105, C122, C124, C151): the call that carried out
- * an expired question's declared `on_expiry`, the word its line ends with — the caller of the entry
- * that carried it out (`advanceRun`, `executeStep`, `executeChain`, `submitHumanResponse`, or the
- * name the host passed: an MCP tool, a CLI command), or `timer`, the waiting process's own timer
- * (`realm agent`, `realm workflow run`), which writes a line of its own.
+ * The call that carried out an expired question's declared `on_expiry`, as `enacted_via` names it.
+ * It is the word the expiry's line ends with: the caller of the entry that carried it out
+ * (`advanceRun`, `executeStep`, `executeChain`, `submitHumanResponse`, or the name the host passed:
+ * an MCP tool, a CLI command), or `timer`, the waiting process's own timer (`realm agent`, `realm
+ * workflow run`), which writes a line of its own.
  * @public
  */
 export type EnactedVia =
@@ -5717,8 +5718,10 @@ async function composeExpiryReply(
 }
 
 /**
- * #715 (b) (Amendment 4): `submitHumanResponseBody`, with the reply carrying, privately, the snapshot it was
- * judged on (`judgedSnapshotOf`). Its contract is the body's, documented below.
+ * Records a person's choice for a run's open question (`options.gateId`, `options.choice`) and
+ * returns the engine's reply. The reply carries, privately, the snapshot it was judged on
+ * (`judgedSnapshotOf`).
+ * Its contract is the body's, documented below.
  * @public
  */
 export async function submitHumanResponse(
@@ -6438,7 +6441,9 @@ function pendingByRank(run: RunRecord): string[] {
 const DRAIN_MARK_BUSY_RETRIES = 3;
 
 /**
- * Post-commit finalizer drain (design record §6, D2, issue #279 increment 1 PR-B). Drains the
+ * Drains a run's pending finalizers, the lowest-ranked first, re-reading the record after every
+ * settle, lease or mark.
+ * Drains the
  * LOWEST-ranked pending finalizer, re-reading the record returned by the LAST settle/lease/mark at
  * every step — NEVER a pass-start snapshot (the DRAIN_REREADS_LEDGER pin: a snapshot taken once at
  * the top of this function would go stale the instant the first lease/mark commits, silently
@@ -6737,7 +6742,7 @@ export function bareStepOutput(
 }
 
 /**
- * The options of {@link executeEngineStep} (issue #625 PR-2a).
+ * The options of `executeEngineStep`.
  * @public
  */
 export interface ExecuteEngineStepOptions {
@@ -6761,9 +6766,9 @@ export interface ExecuteEngineStepOptions {
 }
 
 /**
- * issue #625 PR-2a: the ONE way the engine runs an `auto` step it owns — `executeStep` with the
- * engine's own input (`engineStepInput`, decision C2) and, for a bare step, the core bare-step rule
- * (decision C3). The advance loop runs every step it picks through this; `realm agent`'s exit for
+ * The one way the engine runs an `auto` step it owns: `executeStep` with the engine's own input.
+ * For a bare step it applies the core bare-step rule.
+ * The advance loop runs every step it picks through this; `realm agent`'s exit for
  * an engine step that cannot run here (decision C23) makes its one attempt through it too, so no
  * host composes an engine step's input itself.
  *
@@ -7620,7 +7625,8 @@ function nothingRanHint(
 }
 
 /**
- * The options of {@link advanceRun} (issue #625 PR-2a). No dispatcher: the engine runs only its own steps.
+ * The options of `advanceRun`.
+ * No dispatcher: the engine runs only its own steps.
  * @public
  */
 export interface AdvanceRunOptions {
@@ -7684,8 +7690,10 @@ export interface AdvanceRunOptions {
 }
 
 /**
- * #715 (b) (Amendment 4): `advanceRunBody`, with the reply carrying, privately, the snapshot it was
- * judged on (`judgedSnapshotOf`). Its contract is the body's, documented below.
+ * Runs what the engine owes on a run, its eligible guards and then its eligible `auto` steps, from
+ * the stored record. The reply carries, privately, the snapshot it was judged on
+ * (`judgedSnapshotOf`).
+ * Its contract is the body's, documented below.
  * @public
  */
 export async function advanceRun(
@@ -7842,8 +7850,10 @@ async function advanceRunBody(
 }
 
 /**
- * #715 (b) (Amendment 4): `executeChainBody`, with the reply carrying, privately, the snapshot it was
- * judged on (`judgedSnapshotOf`). Its contract is the body's, documented below.
+ * Runs the step `options.command` names, then the `auto` steps after it, stopping at an agent step,
+ * a gate, an error or the run's end. The reply carries, privately, the snapshot it was judged on
+ * (`judgedSnapshotOf`).
+ * Its contract is the body's, documented below.
  * @public
  */
 export async function executeChain(

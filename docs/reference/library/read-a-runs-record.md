@@ -11,46 +11,46 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | Name | Kind | What it is |
 | --- | --- | --- |
 | [`armToOutcome`](#armtooutcome) | function | `arm -> outcome class`. |
-| [`classifyLegacySeal`](#classifylegacyseal) | function | Classify a LEGACY terminal record (one written before `sealed_by` existed) into the arm it would have carried. |
-| [`outputSourceOf`](#outputsourceof) | function | Where an evidence entry's output came from (F4): `{ source }` when the entry carries `output_source`; otherwise `{ absent_cause }`, the first `OUTPUT_SOURCE_ABSENT_CAUSES` member that holds. |
-| [`readSupplier`](#readsupplier) | function | The supplier of an evidence entry's input or output (#729 PR-0, T-17 (ii); §5 E1 (ii)): its recorded role, or why it names none — `engine_input` for an entry whose input the engine built (any step that is not an agent step), `not_recorded` for an agent step's entry written before the field. |
-| [`AnswerFacts`](#answerfacts) | interface | #627 W: a recorded answer's route as its door declared it, and what showed a form. |
+| [`classifyLegacySeal`](#classifylegacyseal) | function | Classify a terminal record written before `sealed_by` existed into the arm it would have carried. |
+| [`outputSourceOf`](#outputsourceof) | function | Where an evidence entry's output came from: `{ source }` when the entry carries `output_source`, else `{ absent_cause }`, the first `OUTPUT_SOURCE_ABSENT_CAUSES` member that holds. |
+| [`readSupplier`](#readsupplier) | function | The supplier of an evidence entry's input or output: its recorded role, or why it names none. |
+| [`AnswerFacts`](#answerfacts) | interface | A recorded answer's route as its door declared it, and what showed a form (`EvidenceSnapshot.answer`). |
 | [`Attributed`](#attributed) | interface | A program's name, how that name is known, and the host's channel. |
-| [`CacheAuto`](#cacheauto) | interface | Issue #600 (the lifetime unit), #898 — the record's `cache_auto`: the basis of the choice, the gaps it read, and (#898) where its prices came from — absent when no price was needed (no kept gap). |
-| [`CacheControlsRejected`](#cachecontrolsrejected) | interface | Caching 3-B (A6, E3, HB7): a custom endpoint answered 400 naming a cache field Realm added, and a retry without the cache fields worked. |
-| [`CacheMissReason`](#cachemissreason) | interface | Caching 3-M (piece B3a): Anthropic's reason for a miss, with its approximate token count if given. |
-| [`CapabilityBlock`](#capabilityblock) | interface | A recoverable-incapability marker (issue #134), keyed by step name in `RunRecord.capability_blocks`. |
-| [`ChannelEvidence`](#channelevidence) | interface | #603 A3a: the account a channel's door says sent an answer, as the channel reports it. |
-| [`ClaimRecord`](#claimrecord) | interface | Per-claim liveness record (issue #101). |
-| [`DriveFailureRecord`](#drivefailurerecord) | interface | ONE failed drive attempt (issue #401). |
-| [`DriveFailuresField`](#drivefailuresfield) | interface | The drive-failure field on a run (issue #401): a small ring of the most recent failures, plus two counters that do NOT reset when the ring rolls. |
+| [`CacheAuto`](#cacheauto) | interface | A request's `cache_auto`: the basis of the `auto` choice, the gaps it read, and where its prices came from. |
+| [`CacheControlsRejected`](#cachecontrolsrejected) | interface | A custom endpoint answered 400 naming a cache field Realm added, and a retry without the cache fields worked (`UsageRecord.cache_controls_rejected`). |
+| [`CacheMissReason`](#cachemissreason) | interface | Anthropic's reason for a cache miss, with its approximate token count when given. |
+| [`CapabilityBlock`](#capabilityblock) | interface | A step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`). |
+| [`ChannelEvidence`](#channelevidence) | interface | The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`). |
+| [`ClaimRecord`](#claimrecord) | interface | A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`). |
+| [`DriveFailureRecord`](#drivefailurerecord) | interface | One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`). |
+| [`DriveFailuresField`](#drivefailuresfield) | interface | A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`). |
 | [`EvidenceSnapshot`](#evidencesnapshot) | interface | One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered question recorded, with its times, its input and output, its status and its hash. |
 | [`PendingGate`](#pendinggate) | interface | The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and choices shown to the person, when it opened, and its owner and time limit when set. |
-| [`PrefixParts`](#prefixparts) | interface | Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent (64 lowercase hex): `system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request, even when it went out whole; else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker. |
+| [`PrefixParts`](#prefixparts) | interface | A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and `format` where it had them (`UsageRecord.prefix_parts`). |
 | [`RunRecord`](#runrecord) | interface | A run as its store keeps it: its workflow and version, its phase, its params, its evidence entries, the question it waits on and how it ended; a store's `get` returns it inside a `Snapshot`. |
-| [`SealedBy`](#sealedby) | interface | Issue #367: who sealed this run — the recorded FACT `deriveRunPhase` prefers over every marker and over the terminal-reason prose. |
-| [`StepCacheDetail`](#stepcachedetail) | interface | Issue #600 — the per-step roll-up plus the per-request detail. |
+| [`SealedBy`](#sealedby) | interface | Who sealed a run: the recorded fact `deriveRunPhase` reads before every marker and the terminal reason's text (`RunRecord.sealed_by`). |
+| [`StepCacheDetail`](#stepcachedetail) | interface | A step's cache facts: its state, how they are known, and each request's detail (`EvidenceSnapshot.cache`). |
 | [`StepDiagnostics`](#stepdiagnostics) | interface | Diagnostic metadata captured during step execution. |
-| [`StructuredOutputMeta`](#structuredoutputmeta) | interface | Issue #236 (L0 prevention layer) — the observables-only disclosure vocabulary for a `structured_output: 'strict'`-declared step's attempt. |
+| [`StructuredOutputMeta`](#structuredoutputmeta) | interface | What a step's attempt under `structured_output: 'strict'` records about strict mode: only what Realm can observe, never whether the provider enforced it (`EvidenceSnapshot.structured_output`). |
 | [`ToolCallRecord`](#toolcallrecord) | interface | One call an agent step made to an MCP server's tool, as the record keeps it: the server, the tool, its arguments, its result or error, and how long it took (`EvidenceSnapshot.tool_calls`). |
 | [`TraceEntry`](#traceentry) | interface | A single stored trace entry after canonicalization. |
 | [`TraceNormalizationSummary`](#tracenormalizationsummary) | interface | Discard and truncation accounting produced by the trace normalizer. |
 | [`UsageRecord`](#usagerecord) | interface | One request a step sent to a model provider, as the record keeps it: its index and start, its token counts and its cache facts (`StepCacheDetail.requests`, `DriveFailureRecord.usage`). |
 | [`WorkflowContextSnapshot`](#workflowcontextsnapshot) | interface | Snapshot of a single workflow context entry taken at run start. |
-| [`AdmittedBy`](#admittedby) | type | #603 A3a: how an answer's sender was let through, or why it was not compared. |
-| [`AnswerOnRecord`](#answeronrecord) | type | #627 W: what an answer's entry holds about its route — the facts, or a library caller's absence. |
+| [`AdmittedBy`](#admittedby) | type | How an answer's sender was let through, or why it was not compared (`EvidenceSnapshot.admitted_by`). |
+| [`AnswerOnRecord`](#answeronrecord) | type | What an answer's entry holds about its route: the facts, or the absence a library caller leaves (`EvidenceSnapshot.answer`). |
 | [`BySourceClass`](#bysourceclass) | type | How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or `derived` from the OS user and host name (`Attributed.by_source`). |
 | [`CacheAutoBasis`](#cacheautobasis) | type | One of the words in `CACHE_AUTO_BASES`: what `--prompt-cache auto` based a request's chosen cache lifetime on (`CacheAuto.basis`). |
 | [`CacheAutoPriceCause`](#cacheautopricecause) | type | One of the words in `CACHE_AUTO_PRICE_CAUSES`: why `--prompt-cache auto` chose without prices (`CacheAutoPrices`'s `cause` when `from` is `none`). |
-| [`CacheAutoPrices`](#cacheautoprices) | type | Issue #898 — where `auto`'s choice took its prices: from the runner's price file (`economics`, with the one lifetime it could not cost excluded), or from none (the owner's fallback, by its cause). |
+| [`CacheAutoPrices`](#cacheautoprices) | type | Where the `auto` choice took its prices: the runner's price file (`economics`), or none, with the cause (`CacheAuto.prices`). |
 | [`CacheAutoRate`](#cacheautorate) | type | One of the words in `CACHE_AUTO_RATES`: a price-file rate the `auto` choice reads, as a `missing` list in `CacheAutoPrices` names it. |
 | [`CacheBasis`](#cachebasis) | type | One of the words in `CACHE_BASES`: how a step's cache numbers are known, reported by the provider or not observable (`StepCacheDetail.basis`). |
 | [`CacheControlField`](#cachecontrolfield) | type | One of the words in `CACHE_CONTROL_FIELDS`: a cache field Realm itself adds to a request, as `CacheControlsRejected.fields` names the ones a custom endpoint refused. |
-| [`CacheDiagnostics`](#cachediagnostics) | type | Caching 3-M (piece B3a): a request's question to Anthropic about a cache miss, in one of three shapes: it did not ask because Anthropic refused the question in this drive; it asked with no earlier message (a call's first request); or it named an earlier answer, with what came back. |
+| [`CacheDiagnostics`](#cachediagnostics) | type | A request's question to Anthropic about a cache miss, and its answer (`UsageRecord.cache_diagnostics`). |
 | [`CacheDiagnosticsWord`](#cachediagnosticsword) | type | One of the words in `CACHE_DIAGNOSTICS_WORDS`: what Anthropic said in words about a cache miss, for a request that named an earlier answer. |
 | [`CacheMarkedPart`](#cachemarkedpart) | type | One of the words in `CACHE_MARKED_PARTS`: a part of a request that carried a cache marker, or OpenAI's key (`UsageRecord.cache_marked`). |
 | [`CacheMissType`](#cachemisstype) | type | One of the words in `CACHE_MISS_TYPES`: Anthropic's reason a request's cache read fell short (`CacheMissReason.type`). |
-| [`CacheReference`](#cachereference) | type | Caching 3-M (piece A-1): a copy of a request's predecessor — the same step's previous request — made where the predecessor is not an earlier entry of the same stored list: the first request of the step's last call on the run's record (piece A-1b), or the same step's first request in another run (`earlier_run`, piece C2). |
+| [`CacheReference`](#cachereference) | type | A copy of a request's predecessor, the same step's previous request, kept when it is not an earlier entry of the same stored list (`UsageRecord.reference`). |
 | [`CacheReferenceSource`](#cachereferencesource) | type | One of the words in `CACHE_REFERENCE_SOURCES`: where the copy of a request's predecessor was found, in this run or an earlier one (`CacheReference.from`). |
 | [`CacheRequest`](#cacherequest) | type | One of the words in `CACHE_REQUESTS`: what Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`). |
 | [`CacheRequestSource`](#cacherequestsource) | type | One of the words in `CACHE_REQUEST_SOURCES`: whether a request's cache setting was stated with `--prompt-cache` or was the runner's default (`UsageRecord.cache_requested_source`). |
@@ -59,34 +59,34 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`GateClaimVerdict`](#gateclaimverdict) | type | A verdict with a cause that does not belong to it does not compile. |
 | [`OutputSource`](#outputsource) | type | One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`). |
 | [`OutputSourceAbsentCause`](#outputsourceabsentcause) | type | Why an evidence entry says nothing about where its output came from (`outputSourceOf`'s `absent_cause`). |
-| [`Principal`](#principal) | type | #627 W (F29): what a door's transport authenticated — an API key by its id (realm-cloud), the one shared token of `realm serve` (no id: it names no one), or the door's typed absence. |
+| [`Principal`](#principal) | type | What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`). |
 | [`PrincipalAbsence`](#principalabsence) | type | One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer (`Principal`'s `absent`). |
 | [`RequestEndpoint`](#requestendpoint) | type | One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`). |
 | [`RunPhase`](#runphase) | type | Derived phase of a workflow run. |
-| [`SealArm`](#sealarm) | type | Issue #367: the MECHANICAL identity of the code edge that sealed a run. |
-| [`SkipDetail`](#skipdetail) | type | Reason a step landed in `skipped_steps` (issue #111), keyed by step name in `RunRecord.skip_details`. |
+| [`SealArm`](#sealarm) | type | Which code path sealed a run, named as a fact about the code, never a verdict on the run (`SealedBy.arm`). |
+| [`SkipDetail`](#skipdetail) | type | Why a step was skipped, keyed by step name (`RunRecord.skip_details`). |
 | [`SupplierAbsentCause`](#supplierabsentcause) | type | One of the words in `SUPPLIER_ABSENT_CAUSES`: why an evidence entry names no supplier (`readSupplier`'s `absent`). |
 | [`SupplierRole`](#supplierrole) | type | One of the words in `SUPPLIER_ROLES`: who supplied a step's input or output, as an evidence entry records it (`EvidenceSnapshot.supplied_by`). |
 | [`BY_SOURCE_CLASSES`](#by_source_classes) | const | How a program's name is known. |
-| [`CACHE_AUTO_BASES`](#cache_auto_bases) | const | Issue #600 (the lifetime unit) — on what `--prompt-cache auto` chose a request's lifetime (`UsageRecord.cache_auto.basis`): - `no_measurement` — produced by the CLI's `resolvePromptCache` for the setting `auto`, which the adapter writes on a request that carries no choice of its own (a host that passes none): no gaps were measured, so the runner's prior is asked for (caching 3-M D-3: older records too); Caching 3-M (D-2): the other three are produced by the CLI's `chooseStepCaches`, one choice per agent step, which `realm agent` passes on each of the step's calls: - `step_gaps` — a step without tools, chosen by the provider's rule over the gaps between the step's requests in the workflow's earlier runs (`stepCacheGaps`; possibly none — the runner's prior is then asked for); - `step_gaps_unreadable` — the read of the earlier runs failed; the runner's prior is asked for and the drive goes on; - `tool_step` — a step that calls tools, on Anthropic: its own turns reuse the entry, so the short lifetime is asked for whatever its gaps. |
-| [`CACHE_AUTO_PRICE_CAUSES`](#cache_auto_price_causes) | const | Issue #898 — why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, `from: 'none'`). |
-| [`CACHE_AUTO_RATES`](#cache_auto_rates) | const | Issue #898 — the price-file rates `auto`'s choice reads, in the order a `missing` list names them (the price file's own order). |
-| [`CACHE_BASES`](#cache_bases) | const | Issue #600 — how a cache number is known. |
-| [`CACHE_CONTROL_FIELDS`](#cache_control_fields) | const | Caching 3-B (A6, C5): the cache field names Realm itself adds to a request — Anthropic's `cache_control` markers and OpenAI's `prompt_cache_key` — the closed set a recorded refusal names. |
-| [`CACHE_DIAGNOSTICS_WORDS`](#cache_diagnostics_words) | const | Caching 3-M (piece B3a): what Anthropic said in words, for a request that named an earlier answer: `no_divergence` (it found none), `pending` (it has not worked it out yet), `not_returned` (the answer carried nothing Realm can read). |
-| [`CACHE_MARKED_PARTS`](#cache_marked_parts) | const | Caching 3-B (A6): what carried a cache marker, or OpenAI's key, on one request: the `system` text and the prompt's head block (Anthropic's markers, and #896 OpenAI's marks on GPT-5.6 and later), or OpenAI's `key`. |
-| [`CACHE_MISS_TYPES`](#cache_miss_types) | const | Caching 3-M (piece B3a): Anthropic's reasons a request's cache read fell short, and `unknown` for a reason Realm does not know (recorded so, never verbatim). |
-| [`CACHE_REFERENCE_SOURCES`](#cache_reference_sources) | const | Caching 3-M (piece A-1): where a request's copied predecessor (`UsageRecord.reference`) came from: `run`, the run's own record — the first request of the same step's last call there, from an earlier drive (piece A-1b); `earlier_run`, another run's record — the same step's first request there (piece C2 writes it). |
-| [`CACHE_REQUEST_SOURCES`](#cache_request_sources) | const | Issue #600 PR 2 — where a request's cache setting came from (`UsageRecord.cache_requested_source`): `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default). |
-| [`CACHE_REQUESTS`](#cache_requests) | const | Issue #600 PR 2 — what realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`): `off` (asked for nothing; the Anthropic adapter with `--prompt-cache off`, or `auto` choosing off), `lifetime` (asked for a cache lifetime; the Anthropic adapter with `short`, `long`, or `auto` choosing one), `provider_rules` (realm asks for nothing and the provider's own caching rules apply; the OpenAI and o1 adapters; with `cache_key_sent`, realm also sent a cache key — caching 3-B). |
-| [`CACHE_STATES`](#cache_states) | const | Issue #600 — the closed set of per-step cache states. |
-| [`OUTPUT_SOURCE_ABSENT_CAUSES`](#output_source_absent_causes) | const | Why an evidence entry carries no `output_source`, the first that holds, in this order (whether a step is bare needs its definition, so the definition's absence is asked before bareness): - `not_an_output_entry`: the entry records no step output — a `gate_response` entry (the answer, or the expiry that settled the question) or the reclaim audit entry (`output_summary.reclaimed`); - `definition_unavailable`: the workflow given has no step by the entry's name (or none was given), so whether the step is bare cannot be said; - `not_a_bare_step`: the step has a handler or a service, or is not an `auto` step — its output is its own, and the field is never written for it; - `predates_output_source`: a bare `auto` step's entry written before the field existed. |
-| [`OUTPUT_SOURCES`](#output_sources) | const | Issue #625 PR-2a (decision C3; the last prompt's F4, framework §5 E1): where a BARE `auto` step's recorded output came from — the one closed vocabulary of `EvidenceSnapshot.output_source`. |
-| [`PRINCIPAL_ABSENCES`](#principal_absences) | const | #627 W (§5.8's table): why a door names no principal. |
-| [`REQUEST_ENDPOINTS`](#request_endpoints) | const | Issue #600 PR 2 — which kind of endpoint a request went to (`UsageRecord.endpoint`): the provider SDK's own default address (`default`) or another one (`custom`: `--base-url`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`). |
-| [`SEAL_ARMS`](#seal_arms) | const | Issue #367: the closed, runtime-visible seal-arm vocabulary — the source of truth for `SealArm` (the `VALID_PHASES` pattern: the const array is the runtime enumeration, the type derives from it). |
-| [`SUPPLIER_ABSENT_CAUSES`](#supplier_absent_causes) | const | Why an entry names no supplier (#729 PR-0, §5 E1 (ii)). |
-| [`SUPPLIER_ROLES`](#supplier_roles) | const | issue #729 PR-0 (T-17 (ii)): the parties that supply a step's input or output, as an evidence entry records them (`supplied_by`). |
+| [`CACHE_AUTO_BASES`](#cache_auto_bases) | const | On what `--prompt-cache auto` chose a request's cache lifetime (`UsageRecord.cache_auto.basis`). |
+| [`CACHE_AUTO_PRICE_CAUSES`](#cache_auto_price_causes) | const | Why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, with `from: 'none'`). |
+| [`CACHE_AUTO_RATES`](#cache_auto_rates) | const | The price-file rates the `auto` choice reads, in the order a `missing` list names them (the price file's own order). |
+| [`CACHE_BASES`](#cache_bases) | const | How a cache number is known: reported by the provider, or not observable (`StepCacheDetail.basis`). |
+| [`CACHE_CONTROL_FIELDS`](#cache_control_fields) | const | The cache fields Realm itself adds to a request: Anthropic's `cache_control` markers and OpenAI's `prompt_cache_key`; the closed set a recorded refusal names. |
+| [`CACHE_DIAGNOSTICS_WORDS`](#cache_diagnostics_words) | const | What Anthropic said in words for a request that named an earlier answer: `no_divergence`, `pending` or `not_returned`. |
+| [`CACHE_MARKED_PARTS`](#cache_marked_parts) | const | What carried a cache marker, or OpenAI's key, on one request (`UsageRecord.cache_marked`). |
+| [`CACHE_MISS_TYPES`](#cache_miss_types) | const | Anthropic's reasons a request's cache read fell short, and `unknown` for a reason Realm does not know, recorded as such and never verbatim (`CacheMissReason.type`). |
+| [`CACHE_REFERENCE_SOURCES`](#cache_reference_sources) | const | Where a request's copied predecessor came from: `run` (this run's record) or `earlier_run` (another run's) (`CacheReference.from`). |
+| [`CACHE_REQUEST_SOURCES`](#cache_request_sources) | const | Where a request's cache setting came from: `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default) (`UsageRecord.cache_requested_source`). |
+| [`CACHE_REQUESTS`](#cache_requests) | const | What Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`). |
+| [`CACHE_STATES`](#cache_states) | const | The words a step's cache state takes (`StepCacheDetail.state`). |
+| [`OUTPUT_SOURCE_ABSENT_CAUSES`](#output_source_absent_causes) | const | Why an evidence entry carries no `output_source` (`outputSourceOf`'s `absent_cause`). |
+| [`OUTPUT_SOURCES`](#output_sources) | const | Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`). |
+| [`PRINCIPAL_ABSENCES`](#principal_absences) | const | Why a door names no principal (`Principal`'s `absent`). |
+| [`REQUEST_ENDPOINTS`](#request_endpoints) | const | Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`). |
+| [`SEAL_ARMS`](#seal_arms) | const | Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`). |
+| [`SUPPLIER_ABSENT_CAUSES`](#supplier_absent_causes) | const | Why an evidence entry names no supplier. |
+| [`SUPPLIER_ROLES`](#supplier_roles) | const | The parties that supply a step's input or output, as an evidence entry records them (`EvidenceSnapshot.supplied_by`). |
 
 ## Functions
 
@@ -106,8 +106,8 @@ function armToOutcome(arm: SealArm): 'complete' | 'fail' | 'abort' | 'abandon';
 
 function · public
 
-Classify a LEGACY terminal record (one written before `sealed_by` existed) into the arm it would
-have carried. Returns `undefined` when the record cannot be placed — callers must then refuse to
+Classify a terminal record written before `sealed_by` existed into the arm it would have carried.
+Returns `undefined` when the record cannot be placed — callers must then refuse to
 fabricate (`deriveRunPhase` falls back to the pre-#367 ladder; the future migrate vehicle buckets
 it `unclassifiable` and exits 1).
 
@@ -130,9 +130,9 @@ function classifyLegacySeal(run: ClassifiableRun): SealArm | undefined;
 
 function · public
 
-Where an evidence entry's output came from (F4): `{ source }` when the entry carries
-`output_source`; otherwise `{ absent_cause }`, the first `OUTPUT_SOURCE_ABSENT_CAUSES` member
-that holds. `definition` is the run's workflow, when the reader has it. `realm run inspect` renders
+Where an evidence entry's output came from: `{ source }` when the entry carries `output_source`,
+else `{ absent_cause }`, the first `OUTPUT_SOURCE_ABSENT_CAUSES` member that holds.
+`definition` is the run's workflow, when the reader has it. `realm run inspect` renders
 it; a reader of an export, which writes the record as stored, derives the absence with it too.
 
 ```ts
@@ -147,10 +147,9 @@ function outputSourceOf(entry: Pick<EvidenceSnapshot, 'step_id' | 'kind' | 'outp
 
 function · public
 
-The supplier of an evidence entry's input or output (#729 PR-0, T-17 (ii); §5 E1 (ii)): its
-recorded role, or why it names none — `engine_input` for an entry whose input the engine built
-(any step that is not an agent step), `not_recorded` for an agent step's entry written before the
-field.
+The supplier of an evidence entry's input or output: its recorded role, or why it names none.
+`engine_input` for an entry whose input the engine built (any step that is not an agent step),
+`not_recorded` for an agent step's entry written before the field.
 
 ```ts
 function readSupplier(entry: Pick<EvidenceSnapshot, 'supplied_by' | 'step_id' | 'kind'>, definition: Pick<WorkflowDefinition, 'steps'> | undefined): {
@@ -166,7 +165,8 @@ function readSupplier(entry: Pick<EvidenceSnapshot, 'supplied_by' | 'step_id' | 
 
 interface · public
 
-#627 W: a recorded answer's route as its door declared it, and what showed a form.
+A recorded answer's route as its door declared it, and what showed a form
+(`EvidenceSnapshot.answer`).
 
 ```ts
 interface AnswerFacts {
@@ -196,9 +196,9 @@ interface Attributed {
 
 interface · public
 
-Issue #600 (the lifetime unit), #898 — the record's `cache_auto`: the basis of the choice, the
-gaps it read, and (#898) where its prices came from — absent when no price was needed (no kept
-gap). Normalised where it enters the record (`normalizeCacheAuto`).
+A request's `cache_auto`: the basis of the `auto` choice, the gaps it read, and where its prices
+came from. `prices` is absent when no price was needed (no kept gap).
+Normalised where it enters the record (`normalizeCacheAuto`).
 
 ```ts
 interface CacheAuto {
@@ -212,8 +212,9 @@ interface CacheAuto {
 
 interface · public
 
-Caching 3-B (A6, E3, HB7): a custom endpoint answered 400 naming a cache field Realm added, and a
-retry without the cache fields worked. `proven` is `cache_fields` when the request that worked
+A custom endpoint answered 400 naming a cache field Realm added, and a retry without the cache
+fields worked (`UsageRecord.cache_controls_rejected`).
+`proven` is `cache_fields` when the request that worked
 dropped only the cache fields, `none` when it also dropped strict (#311's ladder ran on the retry's
 400). What the provider said stays in the verbatim error facts (`api_param`, `api_code`, #313).
 
@@ -230,7 +231,7 @@ interface CacheControlsRejected {
 
 interface · public
 
-Caching 3-M (piece B3a): Anthropic's reason for a miss, with its approximate token count if given.
+Anthropic's reason for a cache miss, with its approximate token count when given.
 
 ```ts
 interface CacheMissReason {
@@ -243,7 +244,8 @@ interface CacheMissReason {
 
 interface · public
 
-A recoverable-incapability marker (issue #134), keyed by step name in `RunRecord.capability_blocks`.
+A step that the program which last tried it could not run, because its handler or adapter was not
+registered there, keyed by step name (`RunRecord.capability_blocks`).
 Written when an auto step's handler/adapter is NOT REGISTERED in the executing runner's registry: the
 step settles RECOVERABLY (removed from `in_progress_steps`, claim omitted, NOT added to `failed_steps`,
 run NOT terminal-sealed) so a correctly-provisioned runner can reclaim it. Advisory metadata for
@@ -268,7 +270,8 @@ interface CapabilityBlock {
 
 interface · public
 
-#603 A3a: the account a channel's door says sent an answer, as the channel reports it.
+The account a channel's door says sent an answer, as the channel reports it
+(`AnswerFacts.channel_evidence`).
 
 ```ts
 interface ChannelEvidence {
@@ -283,7 +286,9 @@ interface ChannelEvidence {
 
 interface · public
 
-Per-claim liveness record (issue #101). Written atomically when a step is claimed.
+A step's claim, as the run keeps it while the step is being run: its deadline, its token and the
+program that holds it (`RunRecord.claims`).
+Written atomically when a step is claimed.
 
 ```ts
 interface ClaimRecord {
@@ -301,7 +306,9 @@ interface ClaimRecord {
 
 interface · public
 
-ONE failed drive attempt (issue #401). A "drive attempt" is realm trying to advance a step —
+One failed attempt to drive a step: when, which step and provider, what kind of failure, and its
+message (`DriveFailuresField.entries`).
+A "drive attempt" is realm trying to advance a step —
 not only a provider call: an auto step whose validation rejects the submission wedges the run
 identically and is recorded here too.
 
@@ -332,8 +339,8 @@ interface DriveFailureRecord {
 
 interface · public
 
-The drive-failure field on a run (issue #401): a small ring of the most recent failures, plus
-two counters that do NOT reset when the ring rolls.
+A run's recent drive failures: the last few, plus the total and the time of the first, which do
+not reset when the oldest is dropped (`RunRecord.drive_failures`).
 
 `entries` holds at most 5, MOST-RECENT-LAST. `total` and `first_failed_at` live OUTSIDE the ring
 deliberately — a run that failed forty times must not read as though it failed five, and the
@@ -424,10 +431,10 @@ interface PendingGate {
 
 interface · public
 
-Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent (64 lowercase hex):
-`system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request,
-even when it went out whole; else the prompt as that request sent it) and `format` where it had
-them; `cache_marked` says which parts carried a marker.
+A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and
+`format` where it had them (`UsageRecord.prefix_parts`). `prompt` is the first characters Realm
+cut as the head on a split request, even when it went out whole; else the prompt as that request
+sent it. `cache_marked` says which parts carried a marker.
 
 ```ts
 interface PrefixParts {
@@ -507,8 +514,8 @@ interface RunRecord {
 
 interface · public
 
-Issue #367: who sealed this run — the recorded FACT `deriveRunPhase` prefers over every marker
-and over the terminal-reason prose.
+Who sealed a run: the recorded fact `deriveRunPhase` reads before every marker and the terminal
+reason's text (`RunRecord.sealed_by`).
 
 ```ts
 interface SealedBy {
@@ -528,7 +535,8 @@ interface SealedBy {
 
 interface · public
 
-Issue #600 — the per-step roll-up plus the per-request detail.
+A step's cache facts: its state, how they are known, and each request's detail
+(`EvidenceSnapshot.cache`).
 
 ```ts
 interface StepCacheDetail {
@@ -568,8 +576,9 @@ interface StepDiagnostics {
 
 interface · public
 
-Issue #236 (L0 prevention layer) — the observables-only disclosure vocabulary for a
-`structured_output: 'strict'`-declared step's attempt. Deliberately carries NO `applied`
+What a step's attempt under `structured_output: 'strict'` records about strict mode: only what
+Realm can observe, never whether the provider enforced it (`EvidenceSnapshot.structured_output`).
+Deliberately carries NO `applied`
 field (unwitnessable — a silently-stripping proxy could accept `strict` on the wire and never
 honor it; `sent` only ever claims "realm placed strict on the request handed to the SDK", never
 that the API enforced it). Per-attempt: a retry-configured step's evidence array can carry a
@@ -741,7 +750,8 @@ interface WorkflowContextSnapshot {
 
 type · public
 
-#603 A3a: how an answer's sender was let through, or why it was not compared.
+How an answer's sender was let through, or why it was not compared
+(`EvidenceSnapshot.admitted_by`).
 
 ```ts
 type AdmittedBy = 'owner' | 'answerers' | 'project_answerers' | 'no_named_answerer' | 'owner_not_checked_on_route';
@@ -751,7 +761,8 @@ type AdmittedBy = 'owner' | 'answerers' | 'project_answerers' | 'no_named_answer
 
 type · public
 
-#627 W: what an answer's entry holds about its route — the facts, or a library caller's absence.
+What an answer's entry holds about its route: the facts, or the absence a library caller leaves
+(`EvidenceSnapshot.answer`).
 
 ```ts
 type AnswerOnRecord = AnswerFacts | {
@@ -796,9 +807,9 @@ type CacheAutoPriceCause = (typeof CACHE_AUTO_PRICE_CAUSES)[number];
 
 type · public
 
-Issue #898 — where `auto`'s choice took its prices: from the runner's price file (`economics`,
-with the one lifetime it could not cost excluded), or from none (the owner's fallback, by its
-cause). Closed-set words only: no model id, no path.
+Where the `auto` choice took its prices: the runner's price file (`economics`), or none, with the
+cause (`CacheAuto.prices`). From the price file, the one lifetime it could not cost is excluded.
+Closed-set words only: no model id, no path.
 
 ```ts
 type CacheAutoPrices = {
@@ -855,9 +866,10 @@ type CacheControlField = (typeof CACHE_CONTROL_FIELDS)[number];
 
 type · public
 
-Caching 3-M (piece B3a): a request's question to Anthropic about a cache miss, in one of three
-shapes: it did not ask because Anthropic refused the question in this drive; it asked with no
-earlier message (a call's first request); or it named an earlier answer, with what came back.
+A request's question to Anthropic about a cache miss, and its answer
+(`UsageRecord.cache_diagnostics`). One of three shapes: it did not ask because Anthropic refused
+the question in this drive; it asked with no earlier message (a call's first request); or it
+named an earlier answer, with what came back.
 
 ```ts
 type CacheDiagnostics = {
@@ -910,10 +922,11 @@ type CacheMissType = (typeof CACHE_MISS_TYPES)[number];
 
 type · public
 
-Caching 3-M (piece A-1): a copy of a request's predecessor — the same step's previous request —
-made where the predecessor is not an earlier entry of the same stored list: the first request of
-the step's last call on the run's record (piece A-1b), or the same step's first request in another
-run (`earlier_run`, piece C2). `from` says where it was found,
+A copy of a request's predecessor, the same step's previous request, kept when it is not an
+earlier entry of the same stored list (`UsageRecord.reference`). It is the first request of the
+step's last call on the run's record, or the same step's first request in another run
+(`earlier_run`).
+`from` says where it was found,
 `request_start` is required, and each other field but one is the predecessor's own, copied when it
 had one; `cache_requested` says whether it asked the provider to cache (piece A-1b). The one
 exception is `agent_profile_changed` (piece C3), which is no field of the predecessor: `true` when
@@ -1029,8 +1042,10 @@ type OutputSourceAbsentCause = (typeof OUTPUT_SOURCE_ABSENT_CAUSES)[number];
 
 type · public
 
-#627 W (F29): what a door's transport authenticated — an API key by its id (realm-cloud), the one
-shared token of `realm serve` (no id: it names no one), or the door's typed absence. Never a secret.
+What a door's transport authenticated: an API key by its id, the one shared token of `realm
+serve`, or the door's typed absence (`EvidenceSnapshot.principal`). The shared token has no id:
+it names no one.
+Never a secret.
 
 ```ts
 type Principal = {
@@ -1080,7 +1095,9 @@ type RunPhase = 'running' | 'gate_waiting' | 'completed' | 'failed' | 'abandoned
 
 type · public
 
-Issue #367: the MECHANICAL identity of the code edge that sealed a run. Never a judgement about
+Which code path sealed a run, named as a fact about the code, never a verdict on the run
+(`SealedBy.arm`).
+Never a judgement about
 whether the run was good or bad: `arm -> RunPhase` and `arm -> outcome` are engine-owned total
 functions over this value (`eligibility.ts`) — changing either changes a JUDGEMENT; it never
 moves a stored record.
@@ -1093,8 +1110,8 @@ type SealArm = (typeof SEAL_ARMS)[number];
 
 type · public
 
-Reason a step landed in `skipped_steps` (issue #111), keyed by step name in
-`RunRecord.skip_details`. Additive-optional, definition-free surfacing metadata —
+Why a step was skipped, keyed by step name (`RunRecord.skip_details`).
+Additive-optional, definition-free surfacing metadata —
 `skipped_steps` stays the authoritative set; this only explains *why*.
 
 ```ts
@@ -1171,8 +1188,8 @@ const BY_SOURCE_CLASSES: readonly [
 
 const · public
 
-Issue #600 (the lifetime unit) — on what `--prompt-cache auto` chose a request's lifetime
-(`UsageRecord.cache_auto.basis`):
+On what `--prompt-cache auto` chose a request's cache lifetime (`UsageRecord.cache_auto.basis`).
+The bases:
 - `no_measurement` — produced by the CLI's `resolvePromptCache` for the setting `auto`, which the
   adapter writes on a request that carries no choice of its own (a host that passes none): no gaps
   were measured, so the runner's prior is asked for (caching 3-M D-3: older records too);
@@ -1199,8 +1216,8 @@ const CACHE_AUTO_BASES: readonly [
 
 const · public
 
-Issue #898 — why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, `from:
-'none'`). Each member's producer:
+Why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, with `from: 'none'`).
+Each member's producer:
 - `no_file` — `runner.cache.economics` is not set (the CLI's `readAutoPrices`);
 - `economics_unreachable` — the file could not be read (`readCacheEconomics`);
 - `economics_unreadable` — the file is not a valid price file (`readCacheEconomics`);
@@ -1226,8 +1243,9 @@ const CACHE_AUTO_PRICE_CAUSES: readonly [
 
 const · public
 
-Issue #898 — the price-file rates `auto`'s choice reads, in the order a `missing` list names them
-(the price file's own order). #896 unit B: `cache_write`, the one write rate of a provider with one
+The price-file rates the `auto` choice reads, in the order a `missing` list names them (the price
+file's own order).
+#896 unit B: `cache_write`, the one write rate of a provider with one
 lifetime (OpenAI). Anthropic's `missing` names only `cache_read`, `cache_write_5m` and
 `cache_write_1h`; OpenAI's only `cache_read` and `cache_write`.
 
@@ -1244,7 +1262,9 @@ const CACHE_AUTO_RATES: readonly [
 
 const · public
 
-Issue #600 — how a cache number is known. Never a zero standing in for an absence.
+How a cache number is known: reported by the provider, or not observable
+(`StepCacheDetail.basis`).
+Never a zero standing in for an absence.
 
 PR 1a ships exactly TWO members: `'provider_reported'` and `'unobservable'`. Nothing in this PR
 DERIVES a cache number (it reads what the provider reported, or records that it could not see) —
@@ -1263,8 +1283,8 @@ const CACHE_BASES: readonly [
 
 const · public
 
-Caching 3-B (A6, C5): the cache field names Realm itself adds to a request — Anthropic's
-`cache_control` markers and OpenAI's `prompt_cache_key` — the closed set a recorded refusal names.
+The cache fields Realm itself adds to a request: Anthropic's `cache_control` markers and OpenAI's
+`prompt_cache_key`; the closed set a recorded refusal names.
 Normalised at the write: any other name drops the fact.
 
 ```ts
@@ -1278,9 +1298,9 @@ const CACHE_CONTROL_FIELDS: readonly [
 
 const · public
 
-Caching 3-M (piece B3a): what Anthropic said in words, for a request that named an earlier answer:
-`no_divergence` (it found none), `pending` (it has not worked it out yet), `not_returned` (the
-answer carried nothing Realm can read).
+What Anthropic said in words for a request that named an earlier answer: `no_divergence`,
+`pending` or `not_returned`. `no_divergence`: it found none; `pending`: it has not worked it out
+yet; `not_returned`: the answer carried nothing Realm can read.
 
 ```ts
 const CACHE_DIAGNOSTICS_WORDS: readonly [
@@ -1294,9 +1314,10 @@ const CACHE_DIAGNOSTICS_WORDS: readonly [
 
 const · public
 
-Caching 3-B (A6): what carried a cache marker, or OpenAI's key, on one request: the `system` text
-and the prompt's head block (Anthropic's markers, and #896 OpenAI's marks on GPT-5.6 and later),
-or OpenAI's `key`. Caching 3-M (A-0): or the `conversation` so far — the marker Anthropic's tool
+What carried a cache marker, or OpenAI's key, on one request (`UsageRecord.cache_marked`). The
+parts: the `system` text and the prompt's head block (Anthropic's markers, and OpenAI's marks on
+GPT-5.6 and later), or OpenAI's `key`.
+Caching 3-M (A-0): or the `conversation` so far — the marker Anthropic's tool
 main turns put on a copy of the last message (#899).
 
 ```ts
@@ -1312,8 +1333,8 @@ const CACHE_MARKED_PARTS: readonly [
 
 const · public
 
-Caching 3-M (piece B3a): Anthropic's reasons a request's cache read fell short, and `unknown` for a
-reason Realm does not know (recorded so, never verbatim).
+Anthropic's reasons a request's cache read fell short, and `unknown` for a reason Realm does not
+know, recorded as such and never verbatim (`CacheMissReason.type`).
 
 ```ts
 const CACHE_MISS_TYPES: readonly [
@@ -1331,10 +1352,10 @@ const CACHE_MISS_TYPES: readonly [
 
 const · public
 
-Caching 3-M (piece A-1): where a request's copied predecessor (`UsageRecord.reference`) came from:
-`run`, the run's own record — the first request of the same step's last call there, from an
-earlier drive (piece A-1b); `earlier_run`, another run's record — the same step's first request
-there (piece C2 writes it). Normalised at the write: any other word drops the reference.
+Where a request's copied predecessor came from: `run` (this run's record) or `earlier_run`
+(another run's) (`CacheReference.from`). `run`: the first request of the same step's last call
+there, from an earlier drive; `earlier_run`: the same step's first request there.
+Normalised at the write: any other word drops the reference.
 
 ```ts
 const CACHE_REFERENCE_SOURCES: readonly [
@@ -1347,8 +1368,9 @@ const CACHE_REFERENCE_SOURCES: readonly [
 
 const · public
 
-Issue #600 PR 2 — where a request's cache setting came from (`UsageRecord.cache_requested_source`):
-`stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default). Produced by
+Where a request's cache setting came from: `stated` (`--prompt-cache` was given) or
+`runner_default` (the runner's own default) (`UsageRecord.cache_requested_source`).
+Produced by
 the CLI's `resolvePromptCache` and written by the Anthropic adapter it is handed to.
 
 ```ts
@@ -1362,11 +1384,12 @@ const CACHE_REQUEST_SOURCES: readonly [
 
 const · public
 
-Issue #600 PR 2 — what realm asked a provider to cache on a request, as stored
-(`UsageRecord.cache_requested`): `off` (asked for nothing; the Anthropic adapter with
-`--prompt-cache off`, or `auto` choosing off), `lifetime` (asked for a cache lifetime; the Anthropic
-adapter with `short`, `long`, or `auto` choosing one), `provider_rules` (realm asks for nothing and the provider's own caching rules apply;
-the OpenAI and o1 adapters; with `cache_key_sent`, realm also sent a cache key — caching 3-B).
+What Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`). The
+words: `off` (asked for nothing; the Anthropic adapter with `--prompt-cache off`, or `auto`
+choosing off), `lifetime` (asked for a cache lifetime; the Anthropic adapter with `short`,
+`long`, or `auto` choosing one), `provider_rules` (realm asks for nothing and the provider's own
+caching rules apply; the OpenAI and o1 adapters; with `cache_key_sent`, realm also sent a cache
+key).
 #896: the OpenAI adapter on GPT-5.6 and later at OpenAI's own address records `lifetime` (30
 minutes) or `off` for a single-shot request, and `off` for a tool step's requests under `off`.
 
@@ -1382,7 +1405,7 @@ const CACHE_REQUESTS: readonly [
 
 const · public
 
-Issue #600 — the closed set of per-step cache states.
+The words a step's cache state takes (`StepCacheDetail.state`).
 
 Observation is per DIRECTION (read, write), never per object. `'never_engaged'` and
 `'write_only'` each make a claim about BOTH directions, so each is mintable only when both were
@@ -1404,8 +1427,9 @@ const CACHE_STATES: readonly [
 
 const · public
 
-Why an evidence entry carries no `output_source`, the first that holds, in this order (whether a
-step is bare needs its definition, so the definition's absence is asked before bareness):
+Why an evidence entry carries no `output_source` (`outputSourceOf`'s `absent_cause`). The first
+that holds, in this order (whether a step is bare needs its definition, so the definition's absence
+is asked before bareness):
  - `not_an_output_entry`: the entry records no step output — a `gate_response` entry (the answer,
    or the expiry that settled the question) or the reclaim audit entry (`output_summary.reclaimed`);
  - `definition_unavailable`: the workflow given has no step by the entry's name (or none was given),
@@ -1427,8 +1451,7 @@ const OUTPUT_SOURCE_ABSENT_CAUSES: readonly [
 
 const · public
 
-Issue #625 PR-2a (decision C3; the last prompt's F4, framework §5 E1): where a BARE `auto` step's
-recorded output came from — the one closed vocabulary of `EvidenceSnapshot.output_source`.
+Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 A bare `auto` step has no handler and no service.
  - `driven_step`: what the caller that named the step returned through its dispatcher;
  - `dependency`: its single `depends_on` step's recorded output (the engine ran it);
@@ -1450,7 +1473,7 @@ const OUTPUT_SOURCES: readonly [
 
 const · public
 
-#627 W (§5.8's table): why a door names no principal.
+Why a door names no principal (`Principal`'s `absent`).
 
 ```ts
 const PRINCIPAL_ABSENCES: readonly [
@@ -1465,9 +1488,10 @@ const PRINCIPAL_ABSENCES: readonly [
 
 const · public
 
-Issue #600 PR 2 — which kind of endpoint a request went to (`UsageRecord.endpoint`): the
-provider SDK's own default address (`default`) or another one (`custom`: `--base-url`,
-`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`). Produced by each adapter from its SDK client's
+Which kind of address a request went to: the provider SDK's default (`default`) or another one
+(`custom`) (`UsageRecord.endpoint`). `custom` is set by `--base-url`, `ANTHROPIC_BASE_URL` or
+`OPENAI_BASE_URL`.
+Produced by each adapter from its SDK client's
 `baseURL`; the address itself is never stored.
 
 ```ts
@@ -1481,9 +1505,9 @@ const REQUEST_ENDPOINTS: readonly [
 
 const · public
 
-Issue #367: the closed, runtime-visible seal-arm vocabulary — the source of truth for
-`SealArm` (the `VALID_PHASES` pattern: the const array is the runtime enumeration, the
-type derives from it). One value per terminal seal-site function-branch in the 21-path census.
+Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`). The type
+`SealArm` derives from it (the `VALID_PHASES` pattern: the const array is the runtime
+enumeration). One value per terminal seal-site function-branch in the 21-path census.
 
 APPEND-ONLY (the Tekton lesson, design rev 3 §3): an arm's meaning never changes; changed seal
 behaviour mints a NEW arm. That rule is what keeps every stored `sealed_by.arm` decodable
@@ -1512,7 +1536,7 @@ const SEAL_ARMS: readonly [
 
 const · public
 
-Why an entry names no supplier (#729 PR-0, §5 E1 (ii)).
+Why an evidence entry names no supplier.
 
 ```ts
 const SUPPLIER_ABSENT_CAUSES: readonly [
@@ -1525,8 +1549,9 @@ const SUPPLIER_ABSENT_CAUSES: readonly [
 
 const · public
 
-issue #729 PR-0 (T-17 (ii)): the parties that supply a step's input or output, as an evidence
-entry records them (`supplied_by`). PR-0's producer is the agent's answer to an agent step; a door
+The parties that supply a step's input or output, as an evidence entry records them
+(`EvidenceSnapshot.supplied_by`).
+PR-0's producer is the agent's answer to an agent step; a door
 through which an operator supplies an engine step's input adds `operator` with it (the membership
 rule — no member is reserved).
 
@@ -1545,7 +1570,7 @@ Names this job reaches whose entry is on another page.
 - [`AuthNone`](define-and-load-a-workflow.md#authnone): Documented, discouraged escape hatch — accept without verification (trusted network / localhost only).
 - [`AuthSharedSecret`](define-and-load-a-workflow.md#authsharedsecret): Header-token auth — the request carries a user-configured header equal to a shared secret.
 - [`AuthStripe`](define-and-load-a-workflow.md#authstripe): Stripe timestamped HMAC body signature (header 'Stripe-Signature').
-- [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): Wrapper format applied to {{ workflow.context.NAME }} template references.
+- [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
 - [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the run_phase from the run record fields.
 - [`ExecutionMode`](define-and-load-a-workflow.md#executionmode): The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer` (`StepDefinition.execution`).
@@ -1555,7 +1580,7 @@ Names this job reaches whose entry is on another page.
 - [`ExtensionIdentityTree`](write-a-handler.md#extensionidentitytree): Versioned deterministic directory-tree fingerprint over the module roots.
 - [`FilterCondition`](define-and-load-a-workflow.md#filtercondition): One condition of a webhook trigger's filter: a header or a dot-path into the payload, and the value it must equal or the values one of which it must equal; a request that fails a condition is ignored.
 - [`FinalizerTrigger`](define-and-load-a-workflow.md#finalizertrigger): Terminal outcome(s) a finalizer step matches.
-- [`GateConfig`](define-and-load-a-workflow.md#gateconfig): Gate configuration — choices available to the human reviewer, plus (issue #291) the authored enforce clock (`timeout_seconds`/`on_expiry`/`default_choice`) and the authored notify clock (`reminder_seconds`/`reminder_max`).
+- [`GateConfig`](define-and-load-a-workflow.md#gateconfig): A gate's settings: its choices, who may answer, its messages, its timeout and what happens when it expires, and its reminders.
 - [`InputMapNode`](define-and-load-a-workflow.md#inputmapnode): One node of a step's `input_map`: a dot-path string, a `$literal` value, or an object of further nodes (`StepDefinition.input_map`).
 - [`JsonSchema`](define-and-load-a-workflow.md#jsonschema): The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`).
 - [`LiteralNode`](define-and-load-a-workflow.md#literalnode): A node in an input_map tree.

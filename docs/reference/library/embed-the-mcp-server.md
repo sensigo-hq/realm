@@ -14,37 +14,37 @@ Where the docs teach it: [Core library: serve MCP from your own program](../core
 | [`createRealmMcpServerOnHome`](#createrealmmcpserveronhome) | function | Opens the Realm home and builds the MCP server over its store. |
 | [`loadPriceSource`](#loadpricesource) | function | Loads a host's prices: the economics file at `economicsPath` (when given) and the installed price list. |
 | [`JsonTraceBufferStore`](#jsontracebufferstore) | class | File-based TraceBufferStore that persists WAL entries to JSONL files on disk. |
-| [`Basis`](#basis) | interface | What a reply's ways were judged on (D2 D-9, D3 A-9): the record's stamp, the enactor's kind, whether the store persists claims (absent ⇒ false, fail closed) and the definition. |
+| [`Basis`](#basis) | interface | What a reply's ways were judged on: the record's stamp, the enactor's kind, whether the store persists claims, and the definition. |
 | [`DisclosureSet`](#disclosureset) | interface | A compiled set: opaque to callers; built once per (entries, options). |
-| [`OperatorRoute`](#operatorroute) | interface | An operator route a launching program injects (D2 §5, P-6): `realm mcp` and `realm serve` hand the CLI's renderer, so the person block can name the command an operator runs; the standalone `realm-mcp` bin injects none. |
+| [`OperatorRoute`](#operatorroute) | interface | An operator route a launching program gives the MCP server, so a reply's person block can name the command an operator runs (`RealmMcpServerOptions.operatorRoute`). |
 | [`PricedBy`](#pricedby) | interface | What priced a request: every figure names its source and its date basis. |
 | [`PriceInput`](#priceinput) | interface | One request as a price source is asked to price it: the model, the request's start, the provider and endpoint, and its token counts (`PriceSource.price`). |
 | [`PriceSource`](#pricesource) | interface | The port: a host's prices. |
-| [`PriceUsage`](#priceusage) | interface | One request's counters as a source prices them: the prompt is the WHOLE input (reads and writes inside it); a cache counter the request did not report is 0; the 5-minute and 1-hour write counters are present only when the request recorded the split, and then add up to the write. |
+| [`PriceUsage`](#priceusage) | interface | One request's token counts as a price source prices them (`PriceInput.usage`). |
 | [`RealmMcpServerOptions`](#realmmcpserveroptions) | interface | What `createRealmMcpServer` is given: the four stores, which it requires, and the registry, prices and other settings it may take. |
-| [`Stamp`](#stamp) | interface | A reply's stamp about one record (#715 D6-18, D6-59). |
-| [`TraceBufferLockProfile`](#tracebufferlockprofile) | interface | Lock-acquisition profile shared by every `lockWal` call in this file (issue #207). |
-| [`AnswersRow`](#answersrow) | type | #627 W: which row of §5.2's table a door's answers setting puts it on — `permitted`; `asked` with a client that shows forms; `withheld`. |
+| [`Stamp`](#stamp) | interface | A reply's stamp about one record: the time it is judged at and the run's version. |
+| [`TraceBufferLockProfile`](#tracebufferlockprofile) | interface | The lock-acquisition profile every `lockWal` call of the file trace buffer store uses. |
+| [`AnswersRow`](#answersrow) | type | The row a door's gate-answers setting puts it on: `permitted`, `asked` with a client that shows forms, or `withheld` (`answersRowOf`). |
 | [`DeclaredCause`](#declaredcause) | type | Why they are not (or `resolved` with zero members because there is no manifest). |
 | [`DeclaredState`](#declaredstate) | type | Whether the declared values are known. |
 | [`DefinitionAbsence`](#definitionabsence) | type | Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read. |
-| [`DefinitionBasis`](#definitionbasis) | type | The definition the ways were judged against (D4 P-7; Amendment 13, Q8): the run's workflow by id, or why it is absent — in the ONE vocabulary of `definition_absent`'s facts (A-5's arms), never a second list. |
-| [`DisclosureAudience`](#disclosureaudience) | type | Who reads a surface (RECORD 01 #12; 05 "audiences"). |
-| [`EnactorBasis`](#enactorbasis) | type | The program that judges the ways (D2 D-9): this program with its registry, an observer that passed none (C33: a read surface never executes project code), or a program whose project code failed to load. |
-| [`EnvironmentCause`](#environmentcause) | type | Why not (D1 §3.7): the host set the members itself and passed no environment. |
+| [`DefinitionBasis`](#definitionbasis) | type | The definition the ways were judged against: the run's workflow by id, or why it is absent. |
+| [`DisclosureAudience`](#disclosureaudience) | type | Who reads a surface (`DisclosureSet.audience`). |
+| [`EnactorBasis`](#enactorbasis) | type | The program that judges the ways: this program with its registry, an observer that passed none, or a program whose project code failed to load. |
+| [`EnvironmentCause`](#environmentcause) | type | Why the environment was not swept: the host set the members itself and passed no environment (`DisclosureSet.environmentCause`). |
 | [`EnvironmentState`](#environmentstate) | type | Whether the environment was swept. |
-| [`FailedAttemptStoreLike`](#failedattemptstorelike) | type | Structural (not nominal) shape of `JsonFileFailedAttemptStore`'s public surface, derived via `Pick` so a duck-typed cloud-backed object can satisfy it too — the concrete `JsonFileFailedAttemptStore` class has a private `runsDir` field, so a plain object literal implementing these methods could never be assignable to the class type itself (issue #188, PR-1: the co-location injection seam). |
+| [`FailedAttemptStoreLike`](#failedattemptstorelike) | type | The shape of the failed-attempt store the MCP server takes, so an object that is not a `JsonFileFailedAttemptStore` can satisfy it (`RealmMcpServerOptions.failedAttemptStore`). |
 | [`GateAnswers`](#gateanswers) | type | How the MCP door handles a gate's answer: `asked` (the default, a person answers), `permitted` (the agent may answer too) or `withheld` (no way to answer). |
 | [`HomeServerOptions`](#homeserveroptions) | type | What `createRealmMcpServerOnHome` takes: the home, and every option of the server but its stores. |
-| [`LoadErrorCode`](#loaderrorcode) | type | The code a failed load of a program's project code carries (A-5; Amendment 16, Q19): the error's catalogue code, or `uncoded` — the loader throws plain errors too, and no catalogue code is minted for them (a reader is never sent to the catalogue for a code that is not there). |
+| [`LoadErrorCode`](#loaderrorcode) | type | The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`. |
 | [`LockRetries`](#lockretries) | type | A `proper-lockfile` retry policy: either a bare retry count (its own simple default backoff) or an explicit `retry`-module-compatible options object. |
 | [`MemberKind`](#memberkind) | type | Where a value a disclosure set hides came from: the environment, or the values declared to it; the declared kind wins where two overlap (`DisclosureSet.forms`). |
 | [`NotPricedCause`](#notpricedcause) | type | Why a request has no price, one member per producer (`PriceResult`'s `not_priced`). |
 | [`PriceResult`](#priceresult) | type | A price source's answer: the price, with what the same request would cost with no caching and what priced it, or why it has no price. |
-| [`Source`](#source) | type | Where a door setting came from (P-10). |
-| [`DEFINITION_ABSENCES`](#definition_absences) | const | How a `definition_absent` arose (A-5, T-21: `getWorkflowForRun`'s arms). |
-| [`GATE_ANSWERS_VALUES`](#gate_answers_values) | const | #627 W (§5.1, F21) and the gate-answers default (2026-11-14): how the MCP door handles gate answers. |
-| [`KIND`](#kind) | const | Kind codes: the higher wins where marks overlap (RECORD 01 #3). |
+| [`Source`](#source) | type | Where a door setting came from: a flag, the environment, an option, the configuration, the default, or negotiated with the client (`DoorAnswers.source`). |
+| [`DEFINITION_ABSENCES`](#definition_absences) | const | How a `definition_absent` code arose: one per arm of `getWorkflowForRun`. |
+| [`GATE_ANSWERS_VALUES`](#gate_answers_values) | const | How the MCP door handles gate answers (`DoorAnswers.value`). |
+| [`KIND`](#kind) | const | The kind codes of a disclosure set's marks: where marks overlap, the higher code wins. |
 | [`NOT_PRICED_CAUSES`](#not_priced_causes) | const | Why a request has no price. |
 
 ## Functions
@@ -165,8 +165,8 @@ class JsonTraceBufferStore implements TraceBufferStore, PerRunArtifactStore, Orp
 
 interface · public
 
-What a reply's ways were judged on (D2 D-9, D3 A-9): the record's stamp, the enactor's kind, whether
-the store persists claims (absent ⇒ false, fail closed) and the definition.
+What a reply's ways were judged on: the record's stamp, the enactor's kind, whether the store
+persists claims, and the definition. An absent claims fact reads as false (fail closed).
 
 ```ts
 interface Basis extends Stamp {
@@ -206,9 +206,9 @@ interface DisclosureSet {
 
 interface · public · from `@sensigo/realm-mcp`
 
-An operator route a launching program injects (D2 §5, P-6): `realm mcp` and `realm serve` hand the
-CLI's renderer, so the person block can name the command an operator runs; the standalone
-`realm-mcp` bin injects none.
+An operator route a launching program gives the MCP server, so a reply's person block can name
+the command an operator runs (`RealmMcpServerOptions.operatorRoute`). `realm mcp` and `realm
+serve` hand the CLI's renderer; the standalone `realm-mcp` bin gives none.
 
 ```ts
 interface OperatorRoute {
@@ -270,9 +270,10 @@ interface PriceSource {
 
 interface · public
 
-One request's counters as a source prices them: the prompt is the WHOLE input (reads and writes
-inside it); a cache counter the request did not report is 0; the 5-minute and 1-hour write
-counters are present only when the request recorded the split, and then add up to the write.
+One request's token counts as a price source prices them (`PriceInput.usage`). The prompt is the
+whole input (reads and writes inside it); a cache counter the request did not report is 0; the
+5-minute and 1-hour write counters are present only when the request recorded the split, and then
+add up to the write.
 
 ```ts
 interface PriceUsage {
@@ -323,7 +324,7 @@ interface RealmMcpServerOptions {
 
 interface · public
 
-A reply's stamp about one record (#715 D6-18, D6-59).
+A reply's stamp about one record: the time it is judged at and the run's version.
 
 ```ts
 interface Stamp {
@@ -337,10 +338,10 @@ interface Stamp {
 
 interface · public · from `@sensigo/realm-mcp`
 
-Lock-acquisition profile shared by every `lockWal` call in this file (issue #207).
-Constructor-injectable so a conformance suite can inflate the retry budget (e.g. to make a
-deliberately slow/parked fence read's lock contention observable instead of exhausting the retry
-budget too quickly and masking the scenario under test).
+The lock-acquisition profile every `lockWal` call of the file trace buffer store uses.
+ Constructor-injectable so a conformance suite can inflate the retry budget (e.g. to make a
+ deliberately slow/parked fence read's lock contention observable instead of exhausting the retry
+ budget too quickly and masking the scenario under test).
 
 ```ts
 interface TraceBufferLockProfile {
@@ -356,8 +357,9 @@ interface TraceBufferLockProfile {
 
 type · public
 
-#627 W: which row of §5.2's table a door's answers setting puts it on — `permitted`; `asked` with a
-client that shows forms; `withheld`. `undefined` for a door with no answers setting (the CLI, the
+The row a door's gate-answers setting puts it on: `permitted`, `asked` with a client that shows
+forms, or `withheld` (`answersRowOf`).
+`undefined` for a door with no answers setting (the CLI, the
 library): it narrows as PR-0 did. The gate-answers default (2026-11-14): `asked` in a session whose
 client shows no forms (and on a door that sends none) is on the `withheld` row — the same tools,
 replies and protocol rules; F30's fallback row, which kept the agent's answer tool there, is gone.
@@ -402,9 +404,9 @@ type DefinitionAbsence = (typeof DEFINITION_ABSENCES)[number];
 
 type · public
 
-The definition the ways were judged against (D4 P-7; Amendment 13, Q8): the run's workflow by id,
-or why it is absent — in the ONE vocabulary of `definition_absent`'s facts (A-5's arms), never a
-second list. Not the author's `version:` (P-7: not identity). #493's content hash enters with
+The definition the ways were judged against: the run's workflow by id, or why it is absent. The
+absence is in the one vocabulary of `definition_absent`'s facts, never a second list.
+Not the author's `version:` (P-7: not identity). #493's content hash enters with
 #493, its producer (the membership rule) — no run records one today.
 
 ```ts
@@ -419,7 +421,7 @@ type DefinitionBasis = {
 
 type · public
 
-Who reads a surface (RECORD 01 #12; 05 "audiences").
+Who reads a surface (`DisclosureSet.audience`).
 
 ```ts
 type DisclosureAudience = 'agent' | 'broadcast' | 'log' | 'private' | 'file';
@@ -429,9 +431,10 @@ type DisclosureAudience = 'agent' | 'broadcast' | 'log' | 'private' | 'file';
 
 type · public
 
-The program that judges the ways (D2 D-9): this program with its registry, an observer that passed
-none (C33: a read surface never executes project code), or a program whose project code failed to
-load. A renderer sees the kind and the error code only — never the registry or an `Error` (A-9).
+The program that judges the ways: this program with its registry, an observer that passed none,
+or a program whose project code failed to load. An observer passes no registry because a read
+surface never executes project code.
+A renderer sees the kind and the error code only — never the registry or an `Error` (A-9).
 
 ```ts
 type EnactorBasis = {
@@ -448,7 +451,8 @@ type EnactorBasis = {
 
 type · public
 
-Why not (D1 §3.7): the host set the members itself and passed no environment.
+Why the environment was not swept: the host set the members itself and passed no environment
+(`DisclosureSet.environmentCause`).
 
 ```ts
 type EnvironmentCause = 'host_set';
@@ -468,10 +472,11 @@ type EnvironmentState = 'swept' | 'not_swept';
 
 type · public · from `@sensigo/realm-mcp`
 
-Structural (not nominal) shape of `JsonFileFailedAttemptStore`'s public surface, derived via `Pick`
-so a duck-typed cloud-backed object can satisfy it too — the concrete `JsonFileFailedAttemptStore`
-class has a private `runsDir` field, so a plain object literal implementing these methods could
-never be assignable to the class type itself (issue #188, PR-1: the co-location injection seam).
+The shape of the failed-attempt store the MCP server takes, so an object that is not a
+`JsonFileFailedAttemptStore` can satisfy it (`RealmMcpServerOptions.failedAttemptStore`). It is
+`JsonFileFailedAttemptStore`'s public surface, derived by `Pick`: that class has a private
+`runsDir` field, so a plain object implementing its methods could never be assigned to the class
+type itself.
 Used anywhere a `JsonFileFailedAttemptStore`-like store is threaded through as an injectable
 option. #616 PR-2a (ii-b): no longer `listOrphans` — nothing the library or its tools run calls
 it, and a store without it (SQLite's) can be handed.
@@ -507,9 +512,9 @@ type HomeServerOptions = {
 
 type · public
 
-The code a failed load of a program's project code carries (A-5; Amendment 16, Q19): the error's
-catalogue code, or `uncoded` — the loader throws plain errors too, and no catalogue code is minted
-for them (a reader is never sent to the catalogue for a code that is not there).
+The code a failed load of a program's project code carries: the error's catalogue code, or
+`uncoded`. The loader throws plain errors too, and no catalogue code is minted for them (a reader
+is never sent to the catalogue for a code that is not there).
 
 ```ts
 type LoadErrorCode = ErrorCode | 'uncoded';
@@ -578,7 +583,9 @@ type PriceResult = {
 
 type · public
 
-Where a door setting came from (P-10). PR-0's kinds, and #627 W's `negotiated` (Amendment 10): its
+Where a door setting came from: a flag, the environment, an option, the configuration, the
+default, or negotiated with the client (`DoorAnswers.source`).
+PR-0's kinds, and #627 W's `negotiated` (Amendment 10): its
 only producer is `answers.forms.source`, with `ref` naming the client's `initialize` capability.
 
 ```ts
@@ -594,7 +601,7 @@ type Source = {
 
 const · public
 
-How a `definition_absent` arose (A-5, T-21: `getWorkflowForRun`'s arms).
+How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
 
 ```ts
 const DEFINITION_ABSENCES: readonly [
@@ -612,7 +619,7 @@ const DEFINITION_ABSENCES: readonly [
 
 const · public
 
-#627 W (§5.1, F21) and the gate-answers default (2026-11-14): how the MCP door handles gate answers.
+How the MCP door handles gate answers (`DoorAnswers.value`).
 `asked` (the default): no agent gets a tool that records an answer, in any app — the question goes
 to the person in the chat app's own form where the app shows forms, and elsewhere a person answers
 outside the conversation; `permitted` (opt-in): the answer tool for any client, the agent included;
@@ -632,7 +639,7 @@ const GATE_ANSWERS_VALUES: readonly [
 
 const · public
 
-Kind codes: the higher wins where marks overlap (RECORD 01 #3).
+The kind codes of a disclosure set's marks: where marks overlap, the higher code wins.
 
 ```ts
 const KIND: {
@@ -684,14 +691,14 @@ const NOT_PRICED_CAUSES: readonly [
 Names this job reaches whose entry is on another page.
 
 - [`AbandonWay`](write-a-handler.md#abandonway): End the run.
-- [`AdmittedBy`](read-a-runs-record.md#admittedby): #603 A3a: how an answer's sender was let through, or why it was not compared.
-- [`AdvanceWay`](write-a-handler.md#advanceway): Have the engine carry out what it owes (#625 PR-2a's act): a due expiry first, then steps.
+- [`AdmittedBy`](read-a-runs-record.md#admittedby): How an answer's sender was let through, or why it was not compared (`EvidenceSnapshot.admitted_by`).
+- [`AdvanceWay`](write-a-handler.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
 - [`AgentTraceEntry`](implement-a-store.md#agenttraceentry): A single trace entry submitted by the agent.
-- [`AnswerFacts`](read-a-runs-record.md#answerfacts): #627 W: a recorded answer's route as its door declared it, and what showed a form.
-- [`AnswerOnRecord`](read-a-runs-record.md#answeronrecord): #627 W: what an answer's entry holds about its route — the facts, or a library caller's absence.
-- [`AppendOptions`](implement-a-store.md#appendoptions): Optional trailing options bag for `append`/`appendFenced` (issue #197 PR-1, the `writer_nonce_carriage` rung).
+- [`AnswerFacts`](read-a-runs-record.md#answerfacts): A recorded answer's route as its door declared it, and what showed a form (`EvidenceSnapshot.answer`).
+- [`AnswerOnRecord`](read-a-runs-record.md#answeronrecord): What an answer's entry holds about its route: the facts, or the absence a library caller leaves (`EvidenceSnapshot.answer`).
+- [`AppendOptions`](implement-a-store.md#appendoptions): The optional last argument of `append` and `appendFenced`: the writer's nonce.
 - [`AppendResult`](implement-a-store.md#appendresult): What a trace buffer reports after an append: how many entries and bytes this writer holds against its limits, and the whole file's when the store keeps them (`TraceBufferStore.append`).
-- [`ArtifactDeletionReport`](implement-a-store.md#artifactdeletionreport): What a store reports about the artifacts it just deleted (issue #189).
+- [`ArtifactDeletionReport`](implement-a-store.md#artifactdeletionreport): What a store reports about the artifacts it just deleted: the bytes it deleted.
 - [`Attributed`](read-a-runs-record.md#attributed): A program's name, how that name is known, and the host's channel.
 - [`AuthGithub`](define-and-load-a-workflow.md#authgithub): GitHub HMAC-SHA256 hex body signature (header 'X-Hub-Signature-256').
 - [`AuthHmac`](define-and-load-a-workflow.md#authhmac): Generic HMAC body signature with a configurable header / algorithm / encoding.
@@ -699,59 +706,59 @@ Names this job reaches whose entry is on another page.
 - [`AuthSharedSecret`](define-and-load-a-workflow.md#authsharedsecret): Header-token auth — the request carries a user-configured header equal to a shared secret.
 - [`AuthStripe`](define-and-load-a-workflow.md#authstripe): Stripe timestamped HMAC body signature (header 'Stripe-Signature').
 - [`Base`](write-a-handler.md#base): What every way carries: its verb and the conditions it is offered with; each way type adds its own fields to it.
-- [`BufferedEntry`](implement-a-store.md#bufferedentry): An AgentTraceEntry extended with engine-assigned ordering timestamp (milliseconds), and (issue #197 PR-1) the writer nonce that carried it, if any — re-attached from the line the entry was originally appended in.
-- [`buildDisclosureSet`](run-and-drive-a-run.md#builddisclosureset): THE set builder (RECORD 05 "the matcher moves into core": the set builder exists once).
+- [`BufferedEntry`](implement-a-store.md#bufferedentry): An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce that carried it, if any.
+- [`buildDisclosureSet`](run-and-drive-a-run.md#builddisclosureset): The one builder of a disclosure set: every surface builds its set here.
 - [`BY_SOURCE_CLASSES`](read-a-runs-record.md#by_source_classes): How a program's name is known.
 - [`BySourceClass`](read-a-runs-record.md#bysourceclass): How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or `derived` from the OS user and host name (`Attributed.by_source`).
-- [`CACHE_AUTO_BASES`](read-a-runs-record.md#cache_auto_bases): Issue #600 (the lifetime unit) — on what `--prompt-cache auto` chose a request's lifetime (`UsageRecord.cache_auto.basis`): - `no_measurement` — produced by the CLI's `resolvePromptCache` for the setting `auto`, which the adapter writes on a request that carries no choice of its own (a host that passes none): no gaps were measured, so the runner's prior is asked for (caching 3-M D-3: older records too); Caching 3-M (D-2): the other three are produced by the CLI's `chooseStepCaches`, one choice per agent step, which `realm agent` passes on each of the step's calls: - `step_gaps` — a step without tools, chosen by the provider's rule over the gaps between the step's requests in the workflow's earlier runs (`stepCacheGaps`; possibly none — the runner's prior is then asked for); - `step_gaps_unreadable` — the read of the earlier runs failed; the runner's prior is asked for and the drive goes on; - `tool_step` — a step that calls tools, on Anthropic: its own turns reuse the entry, so the short lifetime is asked for whatever its gaps.
-- [`CACHE_AUTO_PRICE_CAUSES`](read-a-runs-record.md#cache_auto_price_causes): Issue #898 — why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, `from: 'none'`).
-- [`CACHE_AUTO_RATES`](read-a-runs-record.md#cache_auto_rates): Issue #898 — the price-file rates `auto`'s choice reads, in the order a `missing` list names them (the price file's own order).
-- [`CACHE_BASES`](read-a-runs-record.md#cache_bases): Issue #600 — how a cache number is known.
-- [`CACHE_CONTROL_FIELDS`](read-a-runs-record.md#cache_control_fields): Caching 3-B (A6, C5): the cache field names Realm itself adds to a request — Anthropic's `cache_control` markers and OpenAI's `prompt_cache_key` — the closed set a recorded refusal names.
-- [`CACHE_DIAGNOSTICS_WORDS`](read-a-runs-record.md#cache_diagnostics_words): Caching 3-M (piece B3a): what Anthropic said in words, for a request that named an earlier answer: `no_divergence` (it found none), `pending` (it has not worked it out yet), `not_returned` (the answer carried nothing Realm can read).
-- [`CACHE_MARKED_PARTS`](read-a-runs-record.md#cache_marked_parts): Caching 3-B (A6): what carried a cache marker, or OpenAI's key, on one request: the `system` text and the prompt's head block (Anthropic's markers, and #896 OpenAI's marks on GPT-5.6 and later), or OpenAI's `key`.
-- [`CACHE_MISS_TYPES`](read-a-runs-record.md#cache_miss_types): Caching 3-M (piece B3a): Anthropic's reasons a request's cache read fell short, and `unknown` for a reason Realm does not know (recorded so, never verbatim).
-- [`CACHE_REFERENCE_SOURCES`](read-a-runs-record.md#cache_reference_sources): Caching 3-M (piece A-1): where a request's copied predecessor (`UsageRecord.reference`) came from: `run`, the run's own record — the first request of the same step's last call there, from an earlier drive (piece A-1b); `earlier_run`, another run's record — the same step's first request there (piece C2 writes it).
-- [`CACHE_REQUEST_SOURCES`](read-a-runs-record.md#cache_request_sources): Issue #600 PR 2 — where a request's cache setting came from (`UsageRecord.cache_requested_source`): `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default).
-- [`CACHE_REQUESTS`](read-a-runs-record.md#cache_requests): Issue #600 PR 2 — what realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`): `off` (asked for nothing; the Anthropic adapter with `--prompt-cache off`, or `auto` choosing off), `lifetime` (asked for a cache lifetime; the Anthropic adapter with `short`, `long`, or `auto` choosing one), `provider_rules` (realm asks for nothing and the provider's own caching rules apply; the OpenAI and o1 adapters; with `cache_key_sent`, realm also sent a cache key — caching 3-B).
-- [`CACHE_STATES`](read-a-runs-record.md#cache_states): Issue #600 — the closed set of per-step cache states.
-- [`CacheAuto`](read-a-runs-record.md#cacheauto): Issue #600 (the lifetime unit), #898 — the record's `cache_auto`: the basis of the choice, the gaps it read, and (#898) where its prices came from — absent when no price was needed (no kept gap).
+- [`CACHE_AUTO_BASES`](read-a-runs-record.md#cache_auto_bases): On what `--prompt-cache auto` chose a request's cache lifetime (`UsageRecord.cache_auto.basis`).
+- [`CACHE_AUTO_PRICE_CAUSES`](read-a-runs-record.md#cache_auto_price_causes): Why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, with `from: 'none'`).
+- [`CACHE_AUTO_RATES`](read-a-runs-record.md#cache_auto_rates): The price-file rates the `auto` choice reads, in the order a `missing` list names them (the price file's own order).
+- [`CACHE_BASES`](read-a-runs-record.md#cache_bases): How a cache number is known: reported by the provider, or not observable (`StepCacheDetail.basis`).
+- [`CACHE_CONTROL_FIELDS`](read-a-runs-record.md#cache_control_fields): The cache fields Realm itself adds to a request: Anthropic's `cache_control` markers and OpenAI's `prompt_cache_key`; the closed set a recorded refusal names.
+- [`CACHE_DIAGNOSTICS_WORDS`](read-a-runs-record.md#cache_diagnostics_words): What Anthropic said in words for a request that named an earlier answer: `no_divergence`, `pending` or `not_returned`.
+- [`CACHE_MARKED_PARTS`](read-a-runs-record.md#cache_marked_parts): What carried a cache marker, or OpenAI's key, on one request (`UsageRecord.cache_marked`).
+- [`CACHE_MISS_TYPES`](read-a-runs-record.md#cache_miss_types): Anthropic's reasons a request's cache read fell short, and `unknown` for a reason Realm does not know, recorded as such and never verbatim (`CacheMissReason.type`).
+- [`CACHE_REFERENCE_SOURCES`](read-a-runs-record.md#cache_reference_sources): Where a request's copied predecessor came from: `run` (this run's record) or `earlier_run` (another run's) (`CacheReference.from`).
+- [`CACHE_REQUEST_SOURCES`](read-a-runs-record.md#cache_request_sources): Where a request's cache setting came from: `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default) (`UsageRecord.cache_requested_source`).
+- [`CACHE_REQUESTS`](read-a-runs-record.md#cache_requests): What Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`).
+- [`CACHE_STATES`](read-a-runs-record.md#cache_states): The words a step's cache state takes (`StepCacheDetail.state`).
+- [`CacheAuto`](read-a-runs-record.md#cacheauto): A request's `cache_auto`: the basis of the `auto` choice, the gaps it read, and where its prices came from.
 - [`CacheAutoBasis`](read-a-runs-record.md#cacheautobasis): One of the words in `CACHE_AUTO_BASES`: what `--prompt-cache auto` based a request's chosen cache lifetime on (`CacheAuto.basis`).
 - [`CacheAutoPriceCause`](read-a-runs-record.md#cacheautopricecause): One of the words in `CACHE_AUTO_PRICE_CAUSES`: why `--prompt-cache auto` chose without prices (`CacheAutoPrices`'s `cause` when `from` is `none`).
-- [`CacheAutoPrices`](read-a-runs-record.md#cacheautoprices): Issue #898 — where `auto`'s choice took its prices: from the runner's price file (`economics`, with the one lifetime it could not cost excluded), or from none (the owner's fallback, by its cause).
+- [`CacheAutoPrices`](read-a-runs-record.md#cacheautoprices): Where the `auto` choice took its prices: the runner's price file (`economics`), or none, with the cause (`CacheAuto.prices`).
 - [`CacheAutoRate`](read-a-runs-record.md#cacheautorate): One of the words in `CACHE_AUTO_RATES`: a price-file rate the `auto` choice reads, as a `missing` list in `CacheAutoPrices` names it.
 - [`CacheBasis`](read-a-runs-record.md#cachebasis): One of the words in `CACHE_BASES`: how a step's cache numbers are known, reported by the provider or not observable (`StepCacheDetail.basis`).
 - [`CacheControlField`](read-a-runs-record.md#cachecontrolfield): One of the words in `CACHE_CONTROL_FIELDS`: a cache field Realm itself adds to a request, as `CacheControlsRejected.fields` names the ones a custom endpoint refused.
-- [`CacheControlsRejected`](read-a-runs-record.md#cachecontrolsrejected): Caching 3-B (A6, E3, HB7): a custom endpoint answered 400 naming a cache field Realm added, and a retry without the cache fields worked.
-- [`CacheDiagnostics`](read-a-runs-record.md#cachediagnostics): Caching 3-M (piece B3a): a request's question to Anthropic about a cache miss, in one of three shapes: it did not ask because Anthropic refused the question in this drive; it asked with no earlier message (a call's first request); or it named an earlier answer, with what came back.
+- [`CacheControlsRejected`](read-a-runs-record.md#cachecontrolsrejected): A custom endpoint answered 400 naming a cache field Realm added, and a retry without the cache fields worked (`UsageRecord.cache_controls_rejected`).
+- [`CacheDiagnostics`](read-a-runs-record.md#cachediagnostics): A request's question to Anthropic about a cache miss, and its answer (`UsageRecord.cache_diagnostics`).
 - [`CacheDiagnosticsWord`](read-a-runs-record.md#cachediagnosticsword): One of the words in `CACHE_DIAGNOSTICS_WORDS`: what Anthropic said in words about a cache miss, for a request that named an earlier answer.
 - [`CacheMarkedPart`](read-a-runs-record.md#cachemarkedpart): One of the words in `CACHE_MARKED_PARTS`: a part of a request that carried a cache marker, or OpenAI's key (`UsageRecord.cache_marked`).
-- [`CacheMissReason`](read-a-runs-record.md#cachemissreason): Caching 3-M (piece B3a): Anthropic's reason for a miss, with its approximate token count if given.
+- [`CacheMissReason`](read-a-runs-record.md#cachemissreason): Anthropic's reason for a cache miss, with its approximate token count when given.
 - [`CacheMissType`](read-a-runs-record.md#cachemisstype): One of the words in `CACHE_MISS_TYPES`: Anthropic's reason a request's cache read fell short (`CacheMissReason.type`).
-- [`CacheReference`](read-a-runs-record.md#cachereference): Caching 3-M (piece A-1): a copy of a request's predecessor — the same step's previous request — made where the predecessor is not an earlier entry of the same stored list: the first request of the step's last call on the run's record (piece A-1b), or the same step's first request in another run (`earlier_run`, piece C2).
+- [`CacheReference`](read-a-runs-record.md#cachereference): A copy of a request's predecessor, the same step's previous request, kept when it is not an earlier entry of the same stored list (`UsageRecord.reference`).
 - [`CacheReferenceSource`](read-a-runs-record.md#cachereferencesource): One of the words in `CACHE_REFERENCE_SOURCES`: where the copy of a request's predecessor was found, in this run or an earlier one (`CacheReference.from`).
 - [`CacheRequest`](read-a-runs-record.md#cacherequest): One of the words in `CACHE_REQUESTS`: what Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`).
 - [`CacheRequestSource`](read-a-runs-record.md#cacherequestsource): One of the words in `CACHE_REQUEST_SOURCES`: whether a request's cache setting was stated with `--prompt-cache` or was the runner's default (`UsageRecord.cache_requested_source`).
 - [`CacheState`](read-a-runs-record.md#cachestate): One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the provider reported (`StepCacheDetail.state`).
-- [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): A recoverable-incapability marker (issue #134), keyed by step name in `RunRecord.capability_blocks`.
-- [`CappedRead`](implement-a-store.md#cappedread): #616 PR-2c c5b: what `WorkflowRegistrar.getCapped` resolves to.
-- [`ChannelEvidence`](read-a-runs-record.md#channelevidence): #603 A3a: the account a channel's door says sent an answer, as the channel reports it.
-- [`ClaimRecord`](read-a-runs-record.md#claimrecord): Per-claim liveness record (issue #101).
-- [`Clock`](implement-a-store.md#clock): The time a run store holds (D5 §1.1).
-- [`Cond`](write-a-handler.md#cond): A condition a way is offered with (PR0-CONTRACT §1, D2 D-4): offered with condition c, it is admitted only when c is met (D3 A-4).
-- [`COND_TAGS`](write-a-handler.md#cond_tags): #627 W: who discharges a condition outside Realm (`client`: the MCP client's own approval prompt).
+- [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): A step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
+- [`CappedRead`](implement-a-store.md#cappedread): What `WorkflowRegistrar.getCapped` resolves to.
+- [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).
+- [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).
+- [`Clock`](implement-a-store.md#clock): The clock a run store reads the time from: `now()` and `at()`.
+- [`Cond`](write-a-handler.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
+- [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
 - [`CondTag`](write-a-handler.md#condtag): Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member).
-- [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): Wrapper format applied to {{ workflow.context.NAME }} template references.
-- [`CreateResult`](implement-a-store.md#createresult): What a run store's `create` returns (#715 (b), D-15): the record with the reading the create used, and whether it was written.
+- [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
+- [`CreateResult`](implement-a-store.md#createresult): What a run store's `create` returns: the record with the reading the create used, and whether it was written.
 - [`CreateRunOptions`](implement-a-store.md#createrunoptions): What a run store is given to create a run: the workflow and its version, the params, and an idempotency key with the rule for a key already used (`RunStore.create`).
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
-- [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): ONE failed drive attempt (issue #401).
-- [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): The drive-failure field on a run (issue #401): a small ring of the most recent failures, plus two counters that do NOT reset when the ring rolls.
-- [`DueExpiry`](write-a-handler.md#dueexpiry): An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95).
+- [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`).
+- [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`).
+- [`DueExpiry`](write-a-handler.md#dueexpiry): An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`).
 - [`ErrorCode`](define-and-load-a-workflow.md#errorcode): Every code a `WorkflowError` can carry, grouped by its category; a reply's error and the error catalogue name it (`WorkflowError.code`).
 - [`EvidenceSnapshot`](read-a-runs-record.md#evidencesnapshot): One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered question recorded, with its times, its input and output, its status and its hash.
 - [`ExecutionMode`](define-and-load-a-workflow.md#executionmode): The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer` (`StepDefinition.execution`).
-- [`ExpireGateDelta`](implement-a-store.md#expiregatedelta): Enacts a gate's frozen enforce-clock disposition once it has expired unresolved (issue #291; design record `plans/issue-291/design-d2.md` [F1]/[F2]/[F3] `applyExpireGate`).
+- [`ExpireGateDelta`](implement-a-store.md#expiregatedelta): Carries out a gate's frozen timeout disposition once the gate has expired unanswered.
 - [`ExtensionIdentityEntry`](write-a-handler.md#extensionidentityentry): One point-in-time identity of the extension code executing a run.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.
 - [`ExtensionIdentitySignals`](write-a-handler.md#extensionidentitysignals): Labeled advisory signals — each independently fail-soft; never part of the comparison.
@@ -759,109 +766,109 @@ Names this job reaches whose entry is on another page.
 - [`ExtensionRegistry`](run-and-drive-a-run.md#extensionregistry): The handlers, service adapters and processors a program registers by name; the engine looks a step's handler or adapter up in it.
 - [`FailedAttemptReadResult`](implement-a-store.md#failedattemptreadresult): What a failed-attempt store returns for a run: its records in the order they were written, and whether later ones were dropped at the size limit (`FailedAttemptStore.read`).
 - [`FailedAttemptRecord`](implement-a-store.md#failedattemptrecord): Metadata-only record describing a failed agent-step validation attempt.
-- [`FailedAttemptStore`](implement-a-store.md#failedattemptstore): #616 B1: a store of failed agent-attempt records, kept per run — the interface the core owns, so a store in another package (SQLite, a cloud store) implements it.
+- [`FailedAttemptStore`](implement-a-store.md#failedattemptstore): A store of failed agent-attempt records, kept per run.
 - [`FENCE_TARGETS_STEP`](implement-a-store.md#fence_targets_step): Whether a member conditions one step — evaluated against the fenced method's own `stepId`.
-- [`FencePredicate`](implement-a-store.md#fencepredicate): The four facts a fenced trace-buffer operation can be conditioned on (issue #616 PR-0).
+- [`FencePredicate`](implement-a-store.md#fencepredicate): The four facts a fenced trace-buffer operation can be conditioned on.
 - [`FencePredicateKind`](implement-a-store.md#fencepredicatekind): The names of the conditions a fenced trace-buffer write checks before it writes (`FencePredicate.kind`).
-- [`FenceRunReader`](implement-a-store.md#fencerunreader): The read a fence is evaluated against: the lock-free `RunStore.get` the former guards used (#132's atomic-rename-safe read).
-- [`FileUnreadableClass`](implement-a-store.md#fileunreadableclass): #616 PR-2c c5a: the classes a registry of files (the JSON registry) gives a registered copy it cannot read — the FILE arm's eight: what the probe finds before any byte is read (`missing`: the file went between the directory read and the probe; `unreadable`: an OS error reading it; `not_a_file`: a directory where the file belongs; `empty`; `registry_broken`: the registry directory itself) and what the read finds (`parse`: not JSON, or JSON that fails the checker; `newer`: a later version of Realm registered it; `legacy`: an older one did).
+- [`FenceRunReader`](implement-a-store.md#fencerunreader): The read a fence is evaluated against: the lock-free `RunStore.get`.
+- [`FileUnreadableClass`](implement-a-store.md#fileunreadableclass): The classes a registry of files (the JSON registry) gives a registered copy it cannot read: eight in all.
 - [`FilterCondition`](define-and-load-a-workflow.md#filtercondition): One condition of a webhook trigger's filter: a header or a dot-path into the payload, and the value it must equal or the values one of which it must equal; a request that fails a condition is ignored.
 - [`FinalizerTrigger`](define-and-load-a-workflow.md#finalizertrigger): Terminal outcome(s) a finalizer step matches.
 - [`GateClaimVerdict`](read-a-runs-record.md#gateclaimverdict): A verdict with a cause that does not belong to it does not compile.
-- [`GateConfig`](define-and-load-a-workflow.md#gateconfig): Gate configuration — choices available to the human reviewer, plus (issue #291) the authored enforce clock (`timeout_seconds`/`on_expiry`/`default_choice`) and the authored notify clock (`reminder_seconds`/`reminder_max`).
-- [`IdUnreadableClass`](implement-a-store.md#idunreadableclass): #616 PR-2c c5a: the classes a registry with no files (the SQLite registry) gives — the ID arm's three: `legacy` (an older version of Realm registered it), `newer` (a later one did) and `parse`: a copy that is not JSON or fails the checker, or a damaged pointer row (no copy under the pointer, or one that is not JSON text), whose entry has no `repair` because its reason names the remedy.
+- [`GateConfig`](define-and-load-a-workflow.md#gateconfig): A gate's settings: its choices, who may answer, its messages, its timeout and what happens when it expires, and its reminders.
+- [`IdUnreadableClass`](implement-a-store.md#idunreadableclass): The classes a registry with no files (the SQLite registry) gives a registered copy it cannot read: `legacy`, `newer` and `parse`.
 - [`InputMapNode`](define-and-load-a-workflow.md#inputmapnode): One node of a step's `input_map`: a dot-path string, a `$literal` value, or an object of further nodes (`StepDefinition.input_map`).
 - [`InspectWay`](write-a-handler.md#inspectway): Read the run's record.
 - [`JsonFileFailedAttemptStore`](implement-a-store.md#jsonfilefailedattemptstore): File-backed store for failed agent-attempt sidecars.
 - [`JsonSchema`](define-and-load-a-workflow.md#jsonschema): The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`).
 - [`JsonWorkflowStore`](implement-a-store.md#jsonworkflowstore): Stores WorkflowDefinition objects as JSON files at ~/.realm/workflows/{id}.json.
-- [`KeyAnswer`](implement-a-store.md#keyanswer): Who holds an idempotency key, read in one snapshot (design §3, axis 7): `held` names the run that holds it; `purged` lists the deleted runs that carried it, when no run does; `unseen` says no run carries it and no kept tombstone records one.
+- [`KeyAnswer`](implement-a-store.md#keyanswer): Who holds an idempotency key, read in one snapshot: the run that holds it, the deleted runs that carried it, or no run.
 - [`LEASE_PROBE_REASONS`](implement-a-store.md#lease_probe_reasons): Why a probe could not say whether a lease is held: a closed list.
 - [`LEASE_UNAVAILABLE_REASONS`](implement-a-store.md#lease_unavailable_reasons): Why a store could not make a lease: a closed list, from the error the operating system or SQLite gave.
 - [`LeaseFact`](implement-a-store.md#leasefact): What a probe found.
 - [`LeaseFacts`](implement-a-store.md#leasefacts): The facts about the leases of a run's in-progress claims, by lease id.
-- [`LeaseFinalizerDelta`](implement-a-store.md#leasefinalizerdelta): Acquire (or re-acquire, same-token) the lease on one PENDING finalizer ledger entry — the drain loop's mint-before-execute step.
+- [`LeaseFinalizerDelta`](implement-a-store.md#leasefinalizerdelta): Acquire, or re-acquire with the same token, the lease on one pending finalizer ledger entry: the drain loop's mint-before-execute step.
 - [`LeaseHold`](implement-a-store.md#leasehold): A lease this program holds.
 - [`LeaseHoldResult`](implement-a-store.md#leaseholdresult): What `hold()` answers: the lease, or why there is none.
 - [`LeasePort`](implement-a-store.md#leaseport): A store's claim leases.
 - [`LeaseProbeReason`](implement-a-store.md#leaseprobereason): Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
 - [`LeaseUnavailableReason`](implement-a-store.md#leaseunavailablereason): Why a store could not make a claim lease, from the error the operating system or SQLite gave (`LeaseHoldResult`'s `unavailable`).
 - [`LiteralNode`](define-and-load-a-workflow.md#literalnode): A node in an input_map tree.
-- [`LoadBearingRunRecordField`](implement-a-store.md#loadbearingrunrecordfield): The load-bearing `RunRecord` fields the engine treats specially enough that a store must DECLARE which it round-trips (issue #188).
+- [`LoadBearingRunRecordField`](implement-a-store.md#loadbearingrunrecordfield): The `RunRecord` fields the engine relies on enough that a store must declare which of them it round-trips (`RunStore.persistedRunRecordFields`).
 - [`MarkFinalizerDelta`](implement-a-store.md#markfinalizerdelta): Record a finalizer handler's outcome against the lease that authorized running it.
-- [`MarkFinalizerResult`](implement-a-store.md#markfinalizerresult): Result a `mark_finalizer` delta reports for one finalizer's handler outcome — mirrors `finalizer_ledger[name].status`'s two live-outcome values (`pending`/`voided` are never a mark-delta's OWN result; they are prior/other-path states the predicate reads, never writes via this delta).
+- [`MarkFinalizerResult`](implement-a-store.md#markfinalizerresult): The result a `mark_finalizer` delta reports for one finalizer's handler: `completed` or `failed`.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
-- [`OpenGateDelta`](implement-a-store.md#opengatedelta): Opens a human gate on a claimed step (issue #279, increment 2, PR-C; design record `design-d5-increment2.md` §2/§3 `openGateArms`).
-- [`OpeningGate`](implement-a-store.md#openinggate): The gate an `open_gate` delta opens, WITHOUT its instants (#715 (b), D-20; D5 §2.4, D6-12): the caller builds everything a `PendingGate` holds (gate_id, choices, preview, the frozen enforce/notify fields) except `opened_at` and `expires_at`, which the transform mints from the write's one reading `at` — so no gate is ever born expired.
+- [`OpenGateDelta`](implement-a-store.md#opengatedelta): Opens a human gate on a claimed step.
+- [`OpeningGate`](implement-a-store.md#openinggate): The gate an `open_gate` delta opens, without its instants: everything a `PendingGate` holds but `opened_at` and `expires_at`.
 - [`OrphanArtifact`](implement-a-store.md#orphanartifact): One candidate orphan artifact — an absolute path this store owns, plus enough metadata for the caller to apply its own age floor.
 - [`OrphanSweepableStore`](implement-a-store.md#orphansweepablestore): A store whose files for a run can outlive the run's own file, and that lists those left behind; it deletes nothing (`listOrphans`).
-- [`OutboundEntry`](implement-a-store.md#outboundentry): One row of a run's ledger, AS A STORE KEEPS IT — for store implementers only: it carries the lease token, the holder's proof, so it is never rendered and never returned by the port (every entry the port returns is an `OutboundEntryView`).
+- [`OutboundEntry`](implement-a-store.md#outboundentry): One row of a run's outbound ledger as a store keeps it, for store implementers only.
 - [`OutboundEntryView`](implement-a-store.md#outboundentryview): A ledger row as the port returns it: the row without its lease token.
 - [`OutboundLeaseRequest`](implement-a-store.md#outboundleaserequest): A lease of one reminder or of the escalation of a run's open question.
 - [`OutboundLedger`](implement-a-store.md#outboundledger): A store's outbound ledger (`RunStore.outbound`).
 - [`OutboundMarkRequest`](implement-a-store.md#outboundmarkrequest): The mark of a leased reminder or escalation: `sent` with the outcome `ok`, or `failed` with `refused:<code>`, the code 1–64 characters of `a`–`z`, `0`–`9` and `_`.
 - [`OutboundResult`](implement-a-store.md#outboundresult): What a lease or a mark answers.
-- [`OUTPUT_SOURCES`](read-a-runs-record.md#output_sources): Issue #625 PR-2a (decision C3; the last prompt's F4, framework §5 E1): where a BARE `auto` step's recorded output came from — the one closed vocabulary of `EvidenceSnapshot.output_source`.
+- [`OUTPUT_SOURCES`](read-a-runs-record.md#output_sources): Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`OutputSource`](read-a-runs-record.md#outputsource): One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`PendingGate`](read-a-runs-record.md#pendinggate): The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and choices shown to the person, when it opened, and its owner and time limit when set.
 - [`PerRunArtifactStore`](implement-a-store.md#perrunartifactstore): A store that keeps files of its own for each run and deletes them all for a run when asked, as `realm run purge` does.
-- [`PrefixParts`](read-a-runs-record.md#prefixparts): Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent (64 lowercase hex): `system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request, even when it went out whole; else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker.
-- [`PresentWay`](write-a-handler.md#presentway): #627 W (Amendment 2): show the open question again, as a form in the agent's own call — the MCP door's `present_question`.
-- [`Principal`](read-a-runs-record.md#principal): #627 W (F29): what a door's transport authenticated — an API key by its id (realm-cloud), the one shared token of `realm serve` (no id: it names no one), or the door's typed absence.
-- [`PRINCIPAL_ABSENCES`](read-a-runs-record.md#principal_absences): #627 W (§5.8's table): why a door names no principal.
+- [`PrefixParts`](read-a-runs-record.md#prefixparts): A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and `format` where it had them (`UsageRecord.prefix_parts`).
+- [`PresentWay`](write-a-handler.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
+- [`Principal`](read-a-runs-record.md#principal): What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`).
+- [`PRINCIPAL_ABSENCES`](read-a-runs-record.md#principal_absences): Why a door names no principal (`Principal`'s `absent`).
 - [`PrincipalAbsence`](read-a-runs-record.md#principalabsence): One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer (`Principal`'s `absent`).
-- [`ProbeFailureClass`](implement-a-store.md#probefailureclass): issue #558 PR-T — what a registry read can fail as, before any bytes are parsed.
+- [`ProbeFailureClass`](implement-a-store.md#probefailureclass): What a registry read can fail as, before any bytes are parsed (`ProbeResult`).
 - [`ProbeResult`](implement-a-store.md#proberesult): What a registry's probe found for a workflow id before any bytes are parsed: the file's size, or the class of failure and its path (`probe`).
 - [`Processor`](write-a-handler.md#processor): A program's step that changes content, registered under its `id` and run in order by `runPipeline`.
 - [`ProcessorInput`](write-a-handler.md#processorinput): The text and metadata a processor is given (`Processor.process`).
 - [`ProcessorOutput`](write-a-handler.md#processoroutput): The text and metadata a processor returns; the next processor in the pipeline is given it.
 - [`ProtocolConfig`](define-and-load-a-workflow.md#protocolconfig): A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
-- [`PurgedItem`](implement-a-store.md#purgeditem): A deleted run's tombstone as a scan with `include_purged` gives it (design §6): its id, its workflow, when it was purged, its seal's arm, and the phase and derivation stamp it had when purged (its record is gone, so its phase cannot be derived again).
+- [`PurgedItem`](implement-a-store.md#purgeditem): A deleted run's tombstone, as a scan with `include_purged` gives it.
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`RateLimiter`](write-a-handler.md#ratelimiter): Controls the rate at which requests are sent to an external service.
-- [`RealmWorkflowRegistrar`](implement-a-store.md#realmworkflowregistrar): #616 PR-2c c5b: a registrar with every optional member (c5a's `listWithDiagnostics` and `getCapped`), as Realm's own registries — the JSON registry and the SQLite registry — are.
-- [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again (D3 A-10): no JUDGE — on MCP an elsewhere entry.
-- [`RegistryListing`](implement-a-store.md#registrylisting): #616 PR-2c c5a: what a registrar's diagnostic listing returns.
-- [`ReleaseStepDelta`](implement-a-store.md#releasestepdelta): Releases a claim without settling the step (issue #279, increment 2, PR-C; design record §2/§3 `releaseStepArms`) — the shared shape behind BOTH the capability-block release (execution-loop.ts:2453-2529) and the compensating un-claim (execution-loop.ts:1607-1635).
-- [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Issue #600 PR 2 — which kind of endpoint a request went to (`UsageRecord.endpoint`): the provider SDK's own default address (`default`) or another one (`custom`: `--base-url`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`).
+- [`RealmWorkflowRegistrar`](implement-a-store.md#realmworkflowregistrar): A registrar with every optional member, `listWithDiagnostics` and `getCapped`, as Realm's own JSON and SQLite registries are.
+- [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
+- [`RegistryListing`](implement-a-store.md#registrylisting): What a registrar's diagnostic listing returns (`WorkflowRegistrar.listWithDiagnostics`).
+- [`ReleaseStepDelta`](implement-a-store.md#releasestepdelta): Releases a step's claim without settling the step.
+- [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`).
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).
-- [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question (PR0-CONTRACT §1).
+- [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question.
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).
 - [`RunPhase`](read-a-runs-record.md#runphase): Derived phase of a workflow run.
 - [`RunRecord`](read-a-runs-record.md#runrecord): A run as its store keeps it: its workflow and version, its phase, its params, its evidence entries, the question it waits on and how it ended; a store's `get` returns it inside a `Snapshot`.
-- [`RunRow`](implement-a-store.md#runrow): One run as a scan's `'row'` projection gives it (design §6's facts row): the record's own fields, but `run_phase` is the derived phase, `terminal_state` is the column's 0/1 as a boolean, `run_version` is the record's `version` (M6's name) and `pending_gate` is the gate's id or `null`.
+- [`RunRow`](implement-a-store.md#runrow): One run as a scan's `'row'` projection gives it: the record's own fields, with four derived or renamed.
 - [`RunScopedFencePredicate`](implement-a-store.md#runscopedfencepredicate): The members that condition only the run — the only ones the run-wide `deleteAllForRunFenced` accepts.
-- [`RunStepWay`](write-a-handler.md#runstepway): Run one step: an agent step's answer, or (the operator's lever, T-17) an engine step's input.
+- [`RunStepWay`](write-a-handler.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
 - [`RunStore`](implement-a-store.md#runstore): Where a program keeps its runs: it creates, reads, updates, lists, claims and settles them, reading the time from its own clock.
-- [`ScanFilter`](implement-a-store.md#scanfilter): The filters of a store's scan (design §6, spelled as §6's filter list spells them; §6 writes `includePurged` once for the same filter).
+- [`ScanFilter`](implement-a-store.md#scanfilter): The filters of a store's scan.
 - [`ScanItem`](implement-a-store.md#scanitem): One item of a scan's page: a run in the scan's projection, or a tombstone.
-- [`ScanOptions`](implement-a-store.md#scanoptions): How a scan pages: `pageSize` is required, a whole number from 1 to `SCAN_MAX_PAGE_SIZE`; `projection` is `'record'` (the default: each run as `get()` returns it) or `'row'` (each run as a `RunRow`); `after` starts the scan after that id (the last id of the page before, §6's `--after` cursor).
-- [`ScanPage`](implement-a-store.md#scanpage): One page of a store's scan: its items in id order, the page's one reading (`read_at`), the flag that the page was read in ONE read transaction (`consistent_snapshot`: one transaction per page under WAL), how many rows read for the page carried a phase stamped by another derivation (`derived_at_read`: each was derived at read; 0 when none), and, when the page is full, the cursor the next page starts after (`next_after`, the page's last id).
-- [`SEAL_ARMS`](read-a-runs-record.md#seal_arms): Issue #367: the closed, runtime-visible seal-arm vocabulary — the source of truth for `SealArm` (the `VALID_PHASES` pattern: the const array is the runtime enumeration, the type derives from it).
-- [`SealArm`](read-a-runs-record.md#sealarm): Issue #367: the MECHANICAL identity of the code edge that sealed a run.
-- [`SealedArtifact`](implement-a-store.md#sealedartifact): One sealed artifact for a single (runId, stepId) key — issue #197 PR-1, part of the `seal` rung.
-- [`SealedBy`](read-a-runs-record.md#sealedby): Issue #367: who sealed this run — the recorded FACT `deriveRunPhase` prefers over every marker and over the terminal-reason prose.
-- [`SealedWalLine`](implement-a-store.md#sealedwalline): One line of a WAL, as read back — live or sealed (issue #197 PR-1).
-- [`SealResult`](implement-a-store.md#sealresult): Outcome of `sealFenced` (issue #197 PR-1, the `seal` rung — see `TraceBufferStore.sealFenced` for the full contract).
-- [`SealRunDelta`](implement-a-store.md#sealrundelta): Seals a run at the RUN level (#715 (b), D-21; D6-46, D6-56, D6-65, D6-66, D6-67): abandon, cleanup, a webhook spawn failure, an extension load failure.
+- [`ScanOptions`](implement-a-store.md#scanoptions): How a scan pages: its page size, its projection, and the id it starts after.
+- [`ScanPage`](implement-a-store.md#scanpage): One page of a store's scan: its items in id order, its one reading, and the cursor for the next page.
+- [`SEAL_ARMS`](read-a-runs-record.md#seal_arms): Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`).
+- [`SealArm`](read-a-runs-record.md#sealarm): Which code path sealed a run, named as a fact about the code, never a verdict on the run (`SealedBy.arm`).
+- [`SealedArtifact`](implement-a-store.md#sealedartifact): One sealed artifact for a single run and step.
+- [`SealedBy`](read-a-runs-record.md#sealedby): Who sealed a run: the recorded fact `deriveRunPhase` reads before every marker and the terminal reason's text (`RunRecord.sealed_by`).
+- [`SealedWalLine`](implement-a-store.md#sealedwalline): One line of a WAL as read back, live or sealed.
+- [`SealResult`](implement-a-store.md#sealresult): The outcome of `sealFenced`; `TraceBufferStore.sealFenced` holds the full contract.
+- [`SealRunDelta`](implement-a-store.md#sealrundelta): Seals a run at the run level: an abandon, a cleanup, a webhook spawn failure or an extension load failure.
 - [`ServiceAdapter`](write-a-handler.md#serviceadapter): Service adapter — handles communication with a specific external API.
 - [`ServiceDefinition`](define-and-load-a-workflow.md#servicedefinition): A service a workflow declares under `services`: the adapter that calls it, its trust, and its rate limit (`WorkflowDefinition.services`).
 - [`ServiceResponse`](write-a-handler.md#serviceresponse): What a service adapter's call returns: the HTTP status and the data (`ServiceAdapter`'s methods).
 - [`ServiceTrust`](define-and-load-a-workflow.md#servicetrust): The words a workflow's `services: <name>: trust:` takes (`ServiceDefinition.trust`).
-- [`SettleGateDelta`](implement-a-store.md#settlegatedelta): Resolves an open gate with a human's choice (issue #279, increment 2, PR-C; design record §2/§3 `settleGateArms`).
-- [`SettleGuardDelta`](implement-a-store.md#settleguarddelta): Records a guard step's evaluated outcome (issue #279, increment 2, PR-C; design record §2/§3 `settleGuardArms`).
-- [`SettlementDelta`](implement-a-store.md#settlementdelta): The delta kinds `RunStore.settleStep` accepts (design record §1/§2).
-- [`SettlementRefusalReason`](implement-a-store.md#settlementrefusalreason): Every refusal/noop literal `applySettlement`/`settleStep` can RETURN as `SettlementResult.reason` (design record §7, the full table MINUS `drain_pending`) — `drain_pending` is the PR-B purge guard's own THROWN `STATE_RUN_BUSY` builder reason, never a `settleStep` return value, so it is deliberately excluded from this type (a `settleStep` implementation must never construct it).
-- [`SettlementResult`](implement-a-store.md#settlementresult): Result of applying one `SettlementDelta` against fresh state (design record §2, normative — final-gate F5).
+- [`SettleGateDelta`](implement-a-store.md#settlegatedelta): Resolves an open gate with a person's choice.
+- [`SettleGuardDelta`](implement-a-store.md#settleguarddelta): Records a guard step's evaluated outcome.
+- [`SettlementDelta`](implement-a-store.md#settlementdelta): The delta kinds `RunStore.settleStep` accepts.
+- [`SettlementRefusalReason`](implement-a-store.md#settlementrefusalreason): Every refusal or no-op reason `settleStep` can return as `SettlementResult.reason`.
+- [`SettlementResult`](implement-a-store.md#settlementresult): The result of applying one `SettlementDelta` against fresh state.
 - [`SettleStepDelta`](implement-a-store.md#settlestepdelta): A step settlement intent — the caller reports what a claimed step's dispatcher/handler produced; `applySettlement` (settlement.ts, the pure transform) decides whether it applies against fresh state.
-- [`SettleStepOutcome`](implement-a-store.md#settlestepoutcome): The three outcomes a `settle_step` delta's caller can report for the step being settled — mirrors the THREE seal call sites (:2560 complete, :2220 fail, :1784 handler-abort) this increment's transform is bound to by line (design record §3).
-- [`SkipDetail`](read-a-runs-record.md#skipdetail): Reason a step landed in `skipped_steps` (issue #111), keyed by step name in `RunRecord.skip_details`.
-- [`Slot`](write-a-handler.md#slot): A value the caller picks from a closed set (D1 spine 1): printed by each door's own rule (T-7).
-- [`Snapshot`](implement-a-store.md#snapshot): One record and the reading it is judged at (#715 D6-17).
-- [`StableBoundary`](write-a-handler.md#stableboundary): Caching 3-B (C1): where a rendered text stops repeating between runs, in UTF-16 code units.
-- [`StampSealResult`](implement-a-store.md#stampsealresult): Issue #367 (part 3): the outcome of a `RunStore.stampSeal` attempt.
-- [`StepBrief`](write-a-handler.md#stepbrief): What a `run_step` way says about its step (D1 spine 3, 4): the step's kind, its description, the prompt the agent reads (template-resolved), the input schema an agent step's answer must fit, and — a fact kept as data until #516 decides its meaning — the step's handler.
-- [`StepCacheDetail`](read-a-runs-record.md#stepcachedetail): Issue #600 — the per-step roll-up plus the per-request detail.
+- [`SettleStepOutcome`](implement-a-store.md#settlestepoutcome): The outcomes a `settle_step` delta's caller can report for the step being settled: `complete`, `fail` or `abort`.
+- [`SkipDetail`](read-a-runs-record.md#skipdetail): Why a step was skipped, keyed by step name (`RunRecord.skip_details`).
+- [`Slot`](write-a-handler.md#slot): A value the caller picks from a closed set, printed by each door's own rule (`RespondWay.choice`).
+- [`Snapshot`](implement-a-store.md#snapshot): One record and the reading it is judged at.
+- [`StableBoundary`](write-a-handler.md#stableboundary): Where a rendered text stops repeating between runs, in UTF-16 code units.
+- [`StampSealResult`](implement-a-store.md#stampsealresult): The outcome of a `RunStore.stampSeal` attempt.
+- [`StepBrief`](write-a-handler.md#stepbrief): What a `run_step` way says about its step: its kind, its description, the prompt the agent reads, the input schema an agent's answer must fit, and its handler.
+- [`StepCacheDetail`](read-a-runs-record.md#stepcachedetail): A step's cache facts: its state, how they are known, and each request's detail (`EvidenceSnapshot.cache`).
 - [`StepContext`](write-a-handler.md#stepcontext): What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs in `resources`, keyed by step id (`StepHandler.execute`'s second argument).
 - [`StepDefinition`](define-and-load-a-workflow.md#stepdefinition): One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does, how it runs, the steps it waits for, and its input and settings.
 - [`StepDiagnostics`](read-a-runs-record.md#stepdiagnostics): Diagnostic metadata captured during step execution.
@@ -870,28 +877,28 @@ Names this job reaches whose entry is on another page.
 - [`StepHandlerResult`](write-a-handler.md#stephandlerresult): What a handler returns: the step's output, and optionally a state update, a clean abort or a warning (`StepHandler.execute`'s result).
 - [`StepScopedFencePredicate`](implement-a-store.md#stepscopedfencepredicate): The members that condition one step — evaluated against the fenced method's own `stepId`.
 - [`StepScopedKind`](implement-a-store.md#stepscopedkind): The fence conditions that are about one step; only the per-step fenced methods accept them.
-- [`StoreSettlement`](implement-a-store.md#storesettlement): What a run store's `settleStep` returns (#715 (b), D-19): the transform's result plus the write's one reading `at` — returned on an applied write AND on a predicate refusal (both took it, after the lock).
-- [`StructuredOutputMeta`](read-a-runs-record.md#structuredoutputmeta): Issue #236 (L0 prevention layer) — the observables-only disclosure vocabulary for a `structured_output: 'strict'`-declared step's attempt.
-- [`SUPPLIER_ROLES`](read-a-runs-record.md#supplier_roles): issue #729 PR-0 (T-17 (ii)): the parties that supply a step's input or output, as an evidence entry records them (`supplied_by`).
+- [`StoreSettlement`](implement-a-store.md#storesettlement): What a run store's `settleStep` returns: the transform's result plus the write's one reading `at`.
+- [`StructuredOutputMeta`](read-a-runs-record.md#structuredoutputmeta): What a step's attempt under `structured_output: 'strict'` records about strict mode: only what Realm can observe, never whether the provider enforced it (`EvidenceSnapshot.structured_output`).
+- [`SUPPLIER_ROLES`](read-a-runs-record.md#supplier_roles): The parties that supply a step's input or output, as an evidence entry records them (`EvidenceSnapshot.supplied_by`).
 - [`SupplierRole`](read-a-runs-record.md#supplierrole): One of the words in `SUPPLIER_ROLES`: who supplied a step's input or output, as an evidence entry records it (`EvidenceSnapshot.supplied_by`).
 - [`TemplateDefinition`](define-and-load-a-workflow.md#templatedefinition): A named reusable step group with parameter placeholders.
 - [`TemplateParam`](define-and-load-a-workflow.md#templateparam): A single parameter declaration in a template.
 - [`ToolCallRecord`](read-a-runs-record.md#toolcallrecord): One call an agent step made to an MCP server's tool, as the record keeps it: the server, the tool, its arguments, its result or error, and how long it took (`EvidenceSnapshot.tool_calls`).
 - [`TraceBufferStore`](implement-a-store.md#tracebufferstore): Where an agent step's trace entries wait, per run and step, while the agent works; the engine reads them when it records the step's result.
-- [`TraceCapability`](implement-a-store.md#tracecapability): The store-layer capability ladder (issue #197 PR-1, design record `plans/issue-197-design.md` §3).
+- [`TraceCapability`](implement-a-store.md#tracecapability): The optional rungs a trace buffer store can declare, `seal` and `writer_nonce_carriage` (`TraceBufferStore.traceCapabilities`).
 - [`TraceEntry`](read-a-runs-record.md#traceentry): A single stored trace entry after canonicalization.
 - [`TraceNormalizationSummary`](read-a-runs-record.md#tracenormalizationsummary): Discard and truncation accounting produced by the trace normalizer.
 - [`TriggerDefinition`](define-and-load-a-workflow.md#triggerdefinition): What starts a workflow's runs from outside; today a webhook is the only kind (`WorkflowDefinition.trigger`).
 - [`TriggerFilter`](define-and-load-a-workflow.md#triggerfilter): Post-normalisation form (loader converts shorthand → { all: [...] }).
 - [`TriggerRule`](define-and-load-a-workflow.md#triggerrule): Controls when a step becomes eligible based on its dependencies' outcomes.
 - [`TrustLevel`](define-and-load-a-workflow.md#trustlevel): The words a step's `trust` takes: `auto`, or `human_confirmed` and `human_reviewed`, which open a gate a person answers (`StepDefinition.trust`).
-- [`UnreadableFileEntry`](implement-a-store.md#unreadablefileentry): #616 PR-2c c5a: a registered copy a registry of files could not read, named by its file.
-- [`UnreadableIdEntry`](implement-a-store.md#unreadableidentry): #616 PR-2c c5a: a registered copy a registry with no files (the SQLite registry) could not read, named by its workflow's id.
-- [`UnreadableRegistryEntry`](implement-a-store.md#unreadableregistryentry): #616 PR-2c c5a: a registered copy a listing could not read.
+- [`UnreadableFileEntry`](implement-a-store.md#unreadablefileentry): A registered copy a registry of files could not read, named by its file.
+- [`UnreadableIdEntry`](implement-a-store.md#unreadableidentry): A registered copy a registry with no files (the SQLite registry) could not read, named by its workflow's id.
+- [`UnreadableRegistryEntry`](implement-a-store.md#unreadableregistryentry): A registered copy a listing could not read (`RegistryListing.unreadable`).
 - [`UsageRecord`](read-a-runs-record.md#usagerecord): One request a step sent to a model provider, as the record keeps it: its index and start, its token counts and its cache facts (`StepCacheDetail.requests`, `DriveFailureRecord.usage`).
 - [`ValidationErrorSummaryEntry`](implement-a-store.md#validationerrorsummaryentry): A single whitelisted Ajv error — value echoes (`params`/`data`) are intentionally excluded.
-- [`WAY_VERBS`](write-a-handler.md#way_verbs): PR-0's verbs (option B) and #627 W's `present` (Amendment 2): PR-1 adds resume/drain/purge, PR-2 reclaim/validate/export, PR-7 start.
-- [`WayOn`](write-a-handler.md#wayon): One way on, discriminated on `verb` (PR0-CONTRACT §1).
+- [`WAY_VERBS`](write-a-handler.md#way_verbs): Every verb a way can name, as a closed list (`WayVerb`).
+- [`WayOn`](write-a-handler.md#wayon): One act a party can take on a run, told apart by its `verb`.
 - [`WayVerb`](write-a-handler.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).
 - [`WebhookAuth`](define-and-load-a-workflow.md#webhookauth): How a webhook trigger checks that a request is genuine: a shared secret, GitHub's or Stripe's signature, an HMAC, or none (`WebhookTrigger.auth`).
 - [`WebhookTrigger`](define-and-load-a-workflow.md#webhooktrigger): A workflow's webhook trigger: the path it answers, how it checks requests, which requests it takes, how it drops repeats, and how it maps a payload to run params.

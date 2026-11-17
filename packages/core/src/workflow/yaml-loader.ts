@@ -955,8 +955,9 @@ export function loadWorkflowFromFile(
 }
 
 /**
- * Same as `loadWorkflowFromFile`, but prints nothing and returns every collected LoaderWarning
- * alongside the definition (issue #169). Opt-in for callers that want to surface warnings
+ * Same as `loadWorkflowFromFile`, but prints nothing and returns every collected `LoaderWarning`
+ * alongside the definition.
+ * Opt-in for callers that want to surface warnings
  * themselves (validate/register/watch/`--strict`) instead of the default console.warn behavior.
  * `notChecked` (fix 1, unit 1) lists the `input_map` paths into data the workflow declares no
  * shape for, which `validate` reports.
@@ -994,8 +995,8 @@ export function loadWorkflowFromString(
 }
 
 /**
- * Same as `loadWorkflowFromString`, but prints nothing and returns every collected LoaderWarning
- * alongside the definition (issue #169), and the `input_map` paths not checked (fix 1, unit 1).
+ * Same as `loadWorkflowFromString`, but prints nothing and returns every collected `LoaderWarning`
+ * alongside the definition, and the `input_map` paths not checked.
  * @public
  */
 export function loadWorkflowFromStringWithDiagnostics(

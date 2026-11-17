@@ -56,9 +56,10 @@ export const AGENT_PRE_CLAIM_REFUSALS = ['trust', 'precondition'] as const;
 export type AgentPreClaimRefusal = (typeof AGENT_PRE_CLAIM_REFUSALS)[number];
 
 /**
- * What a capability refusal was judged from (decision C41): `registry` — the caller's own registry
- * lacks the handler or adapter; `marker` — the caller passed no registry, so the run's own
- * `capability_blocks` marker (what the runner that last attempted the step lacked) is the fact.
+ * What a capability refusal was judged from: the caller's own registry, or the run's marker when
+ * the caller passed no registry. `registry`: the caller's own registry lacks the handler or
+ * adapter; `marker`: the caller passed no registry, so the run's own `capability_blocks` marker
+ * (what the runner that last attempted the step lacked) is the fact.
  * @public
  */
 export const CAPABILITY_BASES = ['registry', 'marker'] as const;
@@ -92,7 +93,8 @@ export interface PreClaimRefused {
 }
 
 /**
- * issue #729 PR-0 (E1 (b)): a failed precondition — its expression and the value read, escaped and bounded.
+ * A failed precondition: its expression and the value read, escaped and bounded
+ * (`PreClaimRefused.precondition`).
  * @public
  */
 export interface PreconditionFacts {
@@ -384,7 +386,7 @@ export interface PendingView {
 }
 
 /**
- * An open question (decision C103): the step that asks it, its gate, and the choices it takes.
+ * An open question: the step that asks it, its gate, and the choices it takes.
  * @public
  */
 export interface OpenQuestion {
@@ -417,7 +419,7 @@ export function openQuestionWords(question: OpenQuestion): string {
 }
 
 /**
- * An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95).
+ * An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`).
  * @public
  */
 export interface DueExpiry {

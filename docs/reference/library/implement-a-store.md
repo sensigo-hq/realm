@@ -10,113 +10,113 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 
 | Name | Kind | What it is |
 | --- | --- | --- |
-| [`applySettlement`](#applysettlement) | function | Applies one `SettlementDelta` against `fresh` — pure, synchronous, no I/O, no registry (design record §7 CS-purity: `options` carries VALUES only). |
-| [`assertSealIntegrity`](#assertsealintegrity) | function | The four seal-integrity clauses plus the `SEAL_COHERENT` check (issue #367, design rev 3 §6-L2). |
-| [`clockErrorSink`](#clockerrorsink) | function | #715 (b) (03 §A.1): the process's waiter-error sink, or `undefined` when no host set one. |
+| [`applySettlement`](#applysettlement) | function | Applies one `SettlementDelta` against `fresh`: pure, synchronous, with no I/O and no registry. |
+| [`assertSealIntegrity`](#assertsealintegrity) | function | Checks a store write against the four seal-integrity clauses and `SEAL_COHERENT`, throwing on a violation. |
+| [`clockErrorSink`](#clockerrorsink) | function | The process's waiter-error sink, or `undefined` when no host set one. |
 | [`computeClaimDeadline`](#computeclaimdeadline) | function | Computes the claim deadline for `stepName` at claim time. |
-| [`createSystemClock`](#createsystemclock) | function | Builds a system clock (D6-6, D6-7) with its OWN waiter-error sink: `now()` is `new Date()`; `at()` arms an `unref`'d timer of at most `MAX_HOP_MS` and re-checks `now()` each time it fires. |
+| [`createSystemClock`](#createsystemclock) | function | Builds a system clock with its own waiter-error sink: `now()` is `new Date()`; `at()` arms an `unref`'d timer of at most `MAX_HOP_MS` and re-checks `now()` each time it fires. |
 | [`decideIdempotencyPolicy`](#decideidempotencypolicy) | function | Decide what to do when an idempotency key matches an existing run, per the caller's policy. |
-| [`floorAtHolder`](#flooratholder) | function | The per-key floor (D6-14, D6-35, D6-60, D6-68). |
-| [`floorAtRecord`](#flooratrecord) | function | Floors a reading by a record's own stamp (#715 (b), D-17; D5 §2.1, D6-3): when the record's `updated_at` parses (`u`), returns `max(r, min(u, r + ε))` — MONOTONE, capped: a record stamped far ahead lifts the reading by at most ε (`CLOCK_SKEW_EPSILON_MS`), so no deadline is minted more than ε late. |
-| [`leaseFactOf`](#leasefactof) | function | The ONE reader of a claim's lease fact, on the snapshot the claim was read from: - a claim that names no lease (no claim, or no `lease`) ⇒ `{ absent: 'unleased' }`; - a claim whose stored `lease` is malformed (`null`, not an object, no string `id`) ⇒ `unknown('not_a_lease')`; - a lease the snapshot carries a fact for ⇒ that fact; - a lease it carries none for (a store without leases holding a record saved by one with leases, a snapshot built without facts, a copy of one, or facts another release made) ⇒ `unknown('not_checked')`. |
+| [`floorAtHolder`](#flooratholder) | function | The per-key floor of a keyed create's reading, by the `created_at` of the run it supersedes or the newest of the key's runs. |
+| [`floorAtRecord`](#flooratrecord) | function | Floors a reading by a record's own stamp, lifting it by at most `CLOCK_SKEW_EPSILON_MS`. |
+| [`leaseFactOf`](#leasefactof) | function | The one reader of a claim's lease fact, on the snapshot the claim was read from. |
 | [`leaseFactsOf`](#leasefactsof) | function | What the lease port `port` finds about the leases of `record`'s in-progress claims: one probe per distinct lease id, and nothing else. |
-| [`releaseLineOf`](#releaselineof) | function | The release line an object carries: realm's own classes through PR-B's mark, a host's class or object through `declareReleaseLine`. |
-| [`setClockErrorSink`](#setclockerrorsink) | function | #715 (b) (03 §A.1, D-22): sets the process's waiter-error sink — the channel the shared `systemClock` (and a test location's clock) passes a failing waiter's error to. |
-| [`takeRawReading`](#takerawreading) | function | Takes the RAW reading of `clock` (#715 (b), D-17): exactly ONE `clock.now()` call, validated, as a fresh `Date`. |
-| [`takeReading`](#takereading) | function | Takes a write's reading (D5 §2.1, D6-3, D6-4): `takeRawReading` — exactly ONE `clock.now()` call, no other time source — floored by `record` when it is given (`floorAtRecord`). |
-| [`writtenSnapshot`](#writtensnapshot) | function | The ONE constructor of a `Snapshot` (PR0-CONTRACT §2; #715 (b), D-15): a record and the reading it is judged at — no clock is read here. |
+| [`releaseLineOf`](#releaselineof) | function | The release line an object carries: Realm's own classes through their release mark, a host's class or object through `declareReleaseLine`. |
+| [`setClockErrorSink`](#setclockerrorsink) | function | Sets the process's waiter-error sink: where the shared `systemClock`, and a test location's clock, pass a failing waiter's error. |
+| [`takeRawReading`](#takerawreading) | function | Takes the raw reading of `clock`: exactly one `clock.now()` call, validated, as a fresh `Date`. |
+| [`takeReading`](#takereading) | function | Takes a write's reading: one `clock.now()` call and no other time source, floored by `record` when it is given (`floorAtRecord`). |
+| [`writtenSnapshot`](#writtensnapshot) | function | The one constructor of a `Snapshot`: a record and the reading it is judged at; it reads no clock. |
 | [`InMemoryTraceBufferStore`](#inmemorytracebufferstore) | class | In-memory TraceBufferStore for use in tests and non-persistent environments. |
 | [`JsonFileFailedAttemptStore`](#jsonfilefailedattemptstore) | class | File-backed store for failed agent-attempt sidecars. |
 | [`JsonWorkflowStore`](#jsonworkflowstore) | class | Stores WorkflowDefinition objects as JSON files at ~/.realm/workflows/{id}.json. |
 | [`AgentTraceEntry`](#agenttraceentry) | interface | A single trace entry submitted by the agent. |
-| [`AppendOptions`](#appendoptions) | interface | Optional trailing options bag for `append`/`appendFenced` (issue #197 PR-1, the `writer_nonce_carriage` rung). |
+| [`AppendOptions`](#appendoptions) | interface | The optional last argument of `append` and `appendFenced`: the writer's nonce. |
 | [`AppendResult`](#appendresult) | interface | What a trace buffer reports after an append: how many entries and bytes this writer holds against its limits, and the whole file's when the store keeps them (`TraceBufferStore.append`). |
-| [`ArtifactDeletionReport`](#artifactdeletionreport) | interface | What a store reports about the artifacts it just deleted (issue #189). |
-| [`BufferedEntry`](#bufferedentry) | interface | An AgentTraceEntry extended with engine-assigned ordering timestamp (milliseconds), and (issue #197 PR-1) the writer nonce that carried it, if any — re-attached from the line the entry was originally appended in. |
-| [`Clock`](#clock) | interface | The time a run store holds (D5 §1.1). |
+| [`ArtifactDeletionReport`](#artifactdeletionreport) | interface | What a store reports about the artifacts it just deleted: the bytes it deleted. |
+| [`BufferedEntry`](#bufferedentry) | interface | An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce that carried it, if any. |
+| [`Clock`](#clock) | interface | The clock a run store reads the time from: `now()` and `at()`. |
 | [`CreateRunOptions`](#createrunoptions) | interface | What a run store is given to create a run: the workflow and its version, the params, and an idempotency key with the rule for a key already used (`RunStore.create`). |
 | [`DedupStore`](#dedupstore) | interface | Where `realm listen` remembers the webhook events it has seen, so an event delivered twice starts one run. |
-| [`ExpireGateDelta`](#expiregatedelta) | interface | Enacts a gate's frozen enforce-clock disposition once it has expired unresolved (issue #291; design record `plans/issue-291/design-d2.md` [F1]/[F2]/[F3] `applyExpireGate`). |
+| [`ExpireGateDelta`](#expiregatedelta) | interface | Carries out a gate's frozen timeout disposition once the gate has expired unanswered. |
 | [`FailedAttemptReadResult`](#failedattemptreadresult) | interface | What a failed-attempt store returns for a run: its records in the order they were written, and whether later ones were dropped at the size limit (`FailedAttemptStore.read`). |
 | [`FailedAttemptRecord`](#failedattemptrecord) | interface | Metadata-only record describing a failed agent-step validation attempt. |
-| [`FailedAttemptStore`](#failedattemptstore) | interface | #616 B1: a store of failed agent-attempt records, kept per run — the interface the core owns, so a store in another package (SQLite, a cloud store) implements it. |
-| [`LeaseFinalizerDelta`](#leasefinalizerdelta) | interface | Acquire (or re-acquire, same-token) the lease on one PENDING finalizer ledger entry — the drain loop's mint-before-execute step. |
+| [`FailedAttemptStore`](#failedattemptstore) | interface | A store of failed agent-attempt records, kept per run. |
+| [`LeaseFinalizerDelta`](#leasefinalizerdelta) | interface | Acquire, or re-acquire with the same token, the lease on one pending finalizer ledger entry: the drain loop's mint-before-execute step. |
 | [`LeaseHold`](#leasehold) | interface | A lease this program holds. |
 | [`LeasePort`](#leaseport) | interface | A store's claim leases. |
-| [`Listing`](#listing) | interface | What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics (the shape `list` returned until #616 c4): every record with the reading it is judged at, and the listing's own reading. |
+| [`Listing`](#listing) | interface | What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics: every record with the reading it is judged at, and the listing's own reading. |
 | [`MarkFinalizerDelta`](#markfinalizerdelta) | interface | Record a finalizer handler's outcome against the lease that authorized running it. |
-| [`OpenGateDelta`](#opengatedelta) | interface | Opens a human gate on a claimed step (issue #279, increment 2, PR-C; design record `design-d5-increment2.md` §2/§3 `openGateArms`). |
+| [`OpenGateDelta`](#opengatedelta) | interface | Opens a human gate on a claimed step. |
 | [`OrphanArtifact`](#orphanartifact) | interface | One candidate orphan artifact — an absolute path this store owns, plus enough metadata for the caller to apply its own age floor. |
 | [`OrphanSweepableStore`](#orphansweepablestore) | interface | A store whose files for a run can outlive the run's own file, and that lists those left behind; it deletes nothing (`listOrphans`). |
-| [`OutboundEntry`](#outboundentry) | interface | One row of a run's ledger, AS A STORE KEEPS IT — for store implementers only: it carries the lease token, the holder's proof, so it is never rendered and never returned by the port (every entry the port returns is an `OutboundEntryView`). |
+| [`OutboundEntry`](#outboundentry) | interface | One row of a run's outbound ledger as a store keeps it, for store implementers only. |
 | [`OutboundLeaseRequest`](#outboundleaserequest) | interface | A lease of one reminder or of the escalation of a run's open question. |
 | [`OutboundLedger`](#outboundledger) | interface | A store's outbound ledger (`RunStore.outbound`). |
 | [`OutboundMarkRequest`](#outboundmarkrequest) | interface | The mark of a leased reminder or escalation: `sent` with the outcome `ok`, or `failed` with `refused:<code>`, the code 1–64 characters of `a`–`z`, `0`–`9` and `_`. |
 | [`PerRunArtifactStore`](#perrunartifactstore) | interface | A store that keeps files of its own for each run and deletes them all for a run when asked, as `realm run purge` does. |
-| [`PurgedItem`](#purgeditem) | interface | A deleted run's tombstone as a scan with `include_purged` gives it (design §6): its id, its workflow, when it was purged, its seal's arm, and the phase and derivation stamp it had when purged (its record is gone, so its phase cannot be derived again). |
+| [`PurgedItem`](#purgeditem) | interface | A deleted run's tombstone, as a scan with `include_purged` gives it. |
 | [`RealmBrand`](#realmbrand) | interface | What one copy of one package says about itself, on the prototype of each class it defines. |
 | [`ReconcileSummary`](#reconcilesummary) | interface | Summary returned by `JsonFileStore.reconcileKeys`. |
-| [`RegistryListing`](#registrylisting) | interface | #616 PR-2c c5a: what a registrar's diagnostic listing returns. |
-| [`ReleaseStepDelta`](#releasestepdelta) | interface | Releases a claim without settling the step (issue #279, increment 2, PR-C; design record §2/§3 `releaseStepArms`) — the shared shape behind BOTH the capability-block release (execution-loop.ts:2453-2529) and the compensating un-claim (execution-loop.ts:1607-1635). |
+| [`RegistryListing`](#registrylisting) | interface | What a registrar's diagnostic listing returns (`WorkflowRegistrar.listWithDiagnostics`). |
+| [`ReleaseStepDelta`](#releasestepdelta) | interface | Releases a step's claim without settling the step. |
 | [`ReplayRecord`](#replayrecord) | interface | A persisted replay snapshot: the result of replayRun() + the metadata that produced it. |
 | [`ReplayStepResult`](#replaystepresult) | interface | One step of a replay: whether its preconditions held in the run, and with the overrides. |
 | [`ReplayStore`](#replaystore) | interface | Where replays of a run are kept: each saved with its overrides and results, and read back by id. |
-| [`RunListing`](#runlisting) | interface | issue #719 (B3): what `JsonFileStore.listWithDiagnostics` returns — #715 (b) (D-28): the same `Listing` `list` returns (`snapshots`, `read_at`, `consistent_snapshot`), beside the diagnostics. |
-| [`RunRow`](#runrow) | interface | One run as a scan's `'row'` projection gives it (design §6's facts row): the record's own fields, but `run_phase` is the derived phase, `terminal_state` is the column's 0/1 as a boolean, `run_version` is the record's `version` (M6's name) and `pending_gate` is the gate's id or `null`. |
+| [`RunListing`](#runlisting) | interface | What `JsonFileStore.listWithDiagnostics` returns: the same `Listing` `list` returns, beside the diagnostics. |
+| [`RunRow`](#runrow) | interface | One run as a scan's `'row'` projection gives it: the record's own fields, with four derived or renamed. |
 | [`RunStore`](#runstore) | interface | Where a program keeps its runs: it creates, reads, updates, lists, claims and settles them, reading the time from its own clock. |
-| [`ScanFilter`](#scanfilter) | interface | The filters of a store's scan (design §6, spelled as §6's filter list spells them; §6 writes `includePurged` once for the same filter). |
-| [`ScanOptions`](#scanoptions) | interface | How a scan pages: `pageSize` is required, a whole number from 1 to `SCAN_MAX_PAGE_SIZE`; `projection` is `'record'` (the default: each run as `get()` returns it) or `'row'` (each run as a `RunRow`); `after` starts the scan after that id (the last id of the page before, §6's `--after` cursor). |
-| [`ScanPage`](#scanpage) | interface | One page of a store's scan: its items in id order, the page's one reading (`read_at`), the flag that the page was read in ONE read transaction (`consistent_snapshot`: one transaction per page under WAL), how many rows read for the page carried a phase stamped by another derivation (`derived_at_read`: each was derived at read; 0 when none), and, when the page is full, the cursor the next page starts after (`next_after`, the page's last id). |
-| [`SealedArtifact`](#sealedartifact) | interface | One sealed artifact for a single (runId, stepId) key — issue #197 PR-1, part of the `seal` rung. |
-| [`SealedWalLine`](#sealedwalline) | interface | One line of a WAL, as read back — live or sealed (issue #197 PR-1). |
-| [`SealRunDelta`](#sealrundelta) | interface | Seals a run at the RUN level (#715 (b), D-21; D6-46, D6-56, D6-65, D6-66, D6-67): abandon, cleanup, a webhook spawn failure, an extension load failure. |
-| [`SettleGateDelta`](#settlegatedelta) | interface | Resolves an open gate with a human's choice (issue #279, increment 2, PR-C; design record §2/§3 `settleGateArms`). |
-| [`SettleGuardDelta`](#settleguarddelta) | interface | Records a guard step's evaluated outcome (issue #279, increment 2, PR-C; design record §2/§3 `settleGuardArms`). |
+| [`ScanFilter`](#scanfilter) | interface | The filters of a store's scan. |
+| [`ScanOptions`](#scanoptions) | interface | How a scan pages: its page size, its projection, and the id it starts after. |
+| [`ScanPage`](#scanpage) | interface | One page of a store's scan: its items in id order, its one reading, and the cursor for the next page. |
+| [`SealedArtifact`](#sealedartifact) | interface | One sealed artifact for a single run and step. |
+| [`SealedWalLine`](#sealedwalline) | interface | One line of a WAL as read back, live or sealed. |
+| [`SealRunDelta`](#sealrundelta) | interface | Seals a run at the run level: an abandon, a cleanup, a webhook spawn failure or an extension load failure. |
+| [`SettleGateDelta`](#settlegatedelta) | interface | Resolves an open gate with a person's choice. |
+| [`SettleGuardDelta`](#settleguarddelta) | interface | Records a guard step's evaluated outcome. |
 | [`SettleStepDelta`](#settlestepdelta) | interface | A step settlement intent — the caller reports what a claimed step's dispatcher/handler produced; `applySettlement` (settlement.ts, the pure transform) decides whether it applies against fresh state. |
-| [`Snapshot`](#snapshot) | interface | One record and the reading it is judged at (#715 D6-17). |
+| [`Snapshot`](#snapshot) | interface | One record and the reading it is judged at. |
 | [`TraceBufferStore`](#tracebufferstore) | interface | Where an agent step's trace entries wait, per run and step, while the agent works; the engine reads them when it records the step's result. |
-| [`UnreadableFileEntry`](#unreadablefileentry) | interface | #616 PR-2c c5a: a registered copy a registry of files could not read, named by its file. |
-| [`UnreadableIdEntry`](#unreadableidentry) | interface | #616 PR-2c c5a: a registered copy a registry with no files (the SQLite registry) could not read, named by its workflow's id. |
-| [`UnreadableRunFileEntry`](#unreadablerunfileentry) | interface | issue #719 (B3): one run file the JSON store could not read as a run, as a listing reports it. |
+| [`UnreadableFileEntry`](#unreadablefileentry) | interface | A registered copy a registry of files could not read, named by its file. |
+| [`UnreadableIdEntry`](#unreadableidentry) | interface | A registered copy a registry with no files (the SQLite registry) could not read, named by its workflow's id. |
+| [`UnreadableRunFileEntry`](#unreadablerunfileentry) | interface | One run file the JSON store could not read as a run, as a listing reports it (`RunListing.unreadable`). |
 | [`ValidationErrorSummaryEntry`](#validationerrorsummaryentry) | interface | A single whitelisted Ajv error — value echoes (`params`/`data`) are intentionally excluded. |
 | [`WorkflowRegistrar`](#workflowregistrar) | interface | Where a program registers its workflows and reads them back by id. |
-| [`CappedRead`](#cappedread) | type | #616 PR-2c c5b: what `WorkflowRegistrar.getCapped` resolves to. |
-| [`CreateResult`](#createresult) | type | What a run store's `create` returns (#715 (b), D-15): the record with the reading the create used, and whether it was written. |
-| [`FencePredicate`](#fencepredicate) | type | The four facts a fenced trace-buffer operation can be conditioned on (issue #616 PR-0). |
+| [`CappedRead`](#cappedread) | type | What `WorkflowRegistrar.getCapped` resolves to. |
+| [`CreateResult`](#createresult) | type | What a run store's `create` returns: the record with the reading the create used, and whether it was written. |
+| [`FencePredicate`](#fencepredicate) | type | The four facts a fenced trace-buffer operation can be conditioned on. |
 | [`FencePredicateKind`](#fencepredicatekind) | type | The names of the conditions a fenced trace-buffer write checks before it writes (`FencePredicate.kind`). |
-| [`FenceRunReader`](#fencerunreader) | type | The read a fence is evaluated against: the lock-free `RunStore.get` the former guards used (#132's atomic-rename-safe read). |
-| [`FileUnreadableClass`](#fileunreadableclass) | type | #616 PR-2c c5a: the classes a registry of files (the JSON registry) gives a registered copy it cannot read — the FILE arm's eight: what the probe finds before any byte is read (`missing`: the file went between the directory read and the probe; `unreadable`: an OS error reading it; `not_a_file`: a directory where the file belongs; `empty`; `registry_broken`: the registry directory itself) and what the read finds (`parse`: not JSON, or JSON that fails the checker; `newer`: a later version of Realm registered it; `legacy`: an older one did). |
+| [`FenceRunReader`](#fencerunreader) | type | The read a fence is evaluated against: the lock-free `RunStore.get`. |
+| [`FileUnreadableClass`](#fileunreadableclass) | type | The classes a registry of files (the JSON registry) gives a registered copy it cannot read: eight in all. |
 | [`IdempotencyDecision`](#idempotencydecision) | type | The action a store should take for a matched run. |
-| [`IdUnreadableClass`](#idunreadableclass) | type | #616 PR-2c c5a: the classes a registry with no files (the SQLite registry) gives — the ID arm's three: `legacy` (an older version of Realm registered it), `newer` (a later one did) and `parse`: a copy that is not JSON or fails the checker, or a damaged pointer row (no copy under the pointer, or one that is not JSON text), whose entry has no `repair` because its reason names the remedy. |
-| [`KeyAnswer`](#keyanswer) | type | Who holds an idempotency key, read in one snapshot (design §3, axis 7): `held` names the run that holds it; `purged` lists the deleted runs that carried it, when no run does; `unseen` says no run carries it and no kept tombstone records one. |
+| [`IdUnreadableClass`](#idunreadableclass) | type | The classes a registry with no files (the SQLite registry) gives a registered copy it cannot read: `legacy`, `newer` and `parse`. |
+| [`KeyAnswer`](#keyanswer) | type | Who holds an idempotency key, read in one snapshot: the run that holds it, the deleted runs that carried it, or no run. |
 | [`LeaseFact`](#leasefact) | type | What a probe found. |
 | [`LeaseFacts`](#leasefacts) | type | The facts about the leases of a run's in-progress claims, by lease id. |
 | [`LeaseHoldResult`](#leaseholdresult) | type | What `hold()` answers: the lease, or why there is none. |
 | [`LeaseProbeReason`](#leaseprobereason) | type | Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state). |
 | [`LeaseUnavailableReason`](#leaseunavailablereason) | type | Why a store could not make a claim lease, from the error the operating system or SQLite gave (`LeaseHoldResult`'s `unavailable`). |
-| [`LoadBearingRunRecordField`](#loadbearingrunrecordfield) | type | The load-bearing `RunRecord` fields the engine treats specially enough that a store must DECLARE which it round-trips (issue #188). |
-| [`MarkFinalizerResult`](#markfinalizerresult) | type | Result a `mark_finalizer` delta reports for one finalizer's handler outcome — mirrors `finalizer_ledger[name].status`'s two live-outcome values (`pending`/`voided` are never a mark-delta's OWN result; they are prior/other-path states the predicate reads, never writes via this delta). |
-| [`OpeningGate`](#openinggate) | type | The gate an `open_gate` delta opens, WITHOUT its instants (#715 (b), D-20; D5 §2.4, D6-12): the caller builds everything a `PendingGate` holds (gate_id, choices, preview, the frozen enforce/notify fields) except `opened_at` and `expires_at`, which the transform mints from the write's one reading `at` — so no gate is ever born expired. |
+| [`LoadBearingRunRecordField`](#loadbearingrunrecordfield) | type | The `RunRecord` fields the engine relies on enough that a store must declare which of them it round-trips (`RunStore.persistedRunRecordFields`). |
+| [`MarkFinalizerResult`](#markfinalizerresult) | type | The result a `mark_finalizer` delta reports for one finalizer's handler: `completed` or `failed`. |
+| [`OpeningGate`](#openinggate) | type | The gate an `open_gate` delta opens, without its instants: everything a `PendingGate` holds but `opened_at` and `expires_at`. |
 | [`OutboundEntryView`](#outboundentryview) | type | A ledger row as the port returns it: the row without its lease token. |
 | [`OutboundResult`](#outboundresult) | type | What a lease or a mark answers. |
-| [`ProbeFailureClass`](#probefailureclass) | type | issue #558 PR-T — what a registry read can fail as, before any bytes are parsed. |
+| [`ProbeFailureClass`](#probefailureclass) | type | What a registry read can fail as, before any bytes are parsed (`ProbeResult`). |
 | [`ProbeResult`](#proberesult) | type | What a registry's probe found for a workflow id before any bytes are parsed: the file's size, or the class of failure and its path (`probe`). |
-| [`RealmWorkflowRegistrar`](#realmworkflowregistrar) | type | #616 PR-2c c5b: a registrar with every optional member (c5a's `listWithDiagnostics` and `getCapped`), as Realm's own registries — the JSON registry and the SQLite registry — are. |
+| [`RealmWorkflowRegistrar`](#realmworkflowregistrar) | type | A registrar with every optional member, `listWithDiagnostics` and `getCapped`, as Realm's own JSON and SQLite registries are. |
 | [`RunScopedFencePredicate`](#runscopedfencepredicate) | type | The members that condition only the run — the only ones the run-wide `deleteAllForRunFenced` accepts. |
 | [`ScanItem`](#scanitem) | type | One item of a scan's page: a run in the scan's projection, or a tombstone. |
-| [`SealResult`](#sealresult) | type | Outcome of `sealFenced` (issue #197 PR-1, the `seal` rung — see `TraceBufferStore.sealFenced` for the full contract). |
-| [`SettlementDelta`](#settlementdelta) | type | The delta kinds `RunStore.settleStep` accepts (design record §1/§2). |
-| [`SettlementRefusalReason`](#settlementrefusalreason) | type | Every refusal/noop literal `applySettlement`/`settleStep` can RETURN as `SettlementResult.reason` (design record §7, the full table MINUS `drain_pending`) — `drain_pending` is the PR-B purge guard's own THROWN `STATE_RUN_BUSY` builder reason, never a `settleStep` return value, so it is deliberately excluded from this type (a `settleStep` implementation must never construct it). |
-| [`SettlementResult`](#settlementresult) | type | Result of applying one `SettlementDelta` against fresh state (design record §2, normative — final-gate F5). |
-| [`SettleStepOutcome`](#settlestepoutcome) | type | The three outcomes a `settle_step` delta's caller can report for the step being settled — mirrors the THREE seal call sites (:2560 complete, :2220 fail, :1784 handler-abort) this increment's transform is bound to by line (design record §3). |
-| [`StampSealResult`](#stampsealresult) | type | Issue #367 (part 3): the outcome of a `RunStore.stampSeal` attempt. |
+| [`SealResult`](#sealresult) | type | The outcome of `sealFenced`; `TraceBufferStore.sealFenced` holds the full contract. |
+| [`SettlementDelta`](#settlementdelta) | type | The delta kinds `RunStore.settleStep` accepts. |
+| [`SettlementRefusalReason`](#settlementrefusalreason) | type | Every refusal or no-op reason `settleStep` can return as `SettlementResult.reason`. |
+| [`SettlementResult`](#settlementresult) | type | The result of applying one `SettlementDelta` against fresh state. |
+| [`SettleStepOutcome`](#settlestepoutcome) | type | The outcomes a `settle_step` delta's caller can report for the step being settled: `complete`, `fail` or `abort`. |
+| [`StampSealResult`](#stampsealresult) | type | The outcome of a `RunStore.stampSeal` attempt. |
 | [`StepScopedFencePredicate`](#stepscopedfencepredicate) | type | The members that condition one step — evaluated against the fenced method's own `stepId`. |
 | [`StepScopedKind`](#stepscopedkind) | type | The fence conditions that are about one step; only the per-step fenced methods accept them. |
-| [`StoreSettlement`](#storesettlement) | type | What a run store's `settleStep` returns (#715 (b), D-19): the transform's result plus the write's one reading `at` — returned on an applied write AND on a predicate refusal (both took it, after the lock). |
-| [`TraceCapability`](#tracecapability) | type | The store-layer capability ladder (issue #197 PR-1, design record `plans/issue-197-design.md` §3). |
+| [`StoreSettlement`](#storesettlement) | type | What a run store's `settleStep` returns: the transform's result plus the write's one reading `at`. |
+| [`TraceCapability`](#tracecapability) | type | The optional rungs a trace buffer store can declare, `seal` and `writer_nonce_carriage` (`TraceBufferStore.traceCapabilities`). |
 | [`Unleased`](#unleased) | type | What `leaseFactOf` answers for a claim that names no lease. |
-| [`UnreadableRegistryEntry`](#unreadableregistryentry) | type | #616 PR-2c c5a: a registered copy a listing could not read. |
-| [`CLOCK_READ_CLASSES`](#clock_read_classes) | const | #715 (b) (04 §A.4, B5′, D6-32): the five classes of a clock read — what a run store's clock governs (`write`, `read`, `event`) and what it does not (`outside`, `duration`). |
+| [`UnreadableRegistryEntry`](#unreadableregistryentry) | type | A registered copy a listing could not read (`RegistryListing.unreadable`). |
+| [`CLOCK_READ_CLASSES`](#clock_read_classes) | const | The five classes of a clock read: what a run store's clock governs (`write`, `read`, `event`) and what it does not (`outside`, `duration`). |
 | [`FENCE_TARGETS_STEP`](#fence_targets_step) | const | Whether a member conditions one step — evaluated against the fenced method's own `stepId`. |
 | [`LEASE_PROBE_REASONS`](#lease_probe_reasons) | const | Why a probe could not say whether a lease is held: a closed list. |
 | [`LEASE_UNAVAILABLE_REASONS`](#lease_unavailable_reasons) | const | Why a store could not make a lease: a closed list, from the error the operating system or SQLite gave. |
@@ -128,8 +128,9 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 
 function · public
 
-Applies one `SettlementDelta` against `fresh` — pure, synchronous, no I/O, no registry
-(design record §7 CS-purity: `options` carries VALUES only). `definition` is passed per call
+Applies one `SettlementDelta` against `fresh`: pure, synchronous, with no I/O and no registry.
+`options` carries values only.
+`definition` is passed per call
 (never cached) — `lease_finalizer`/`mark_finalizer` deltas do not use it (their arms never
 reference the workflow definition; only `settle_step`'s terminal-edge `mintFresh` does).
 
@@ -156,7 +157,8 @@ function applySettlement(fresh: RunRecord, delta: SettlementDelta, definition: W
 
 function · public
 
-The four seal-integrity clauses plus the `SEAL_COHERENT` check (issue #367, design rev 3 §6-L2).
+Checks a store write against the four seal-integrity clauses and `SEAL_COHERENT`, throwing on a
+violation.
 Call from every store write tail that persists `next` over `stored`. Throws on violation;
 returns on every honest write — including the entire pre-#367 legacy population within a
 single-version fleet (the mixed-fleet caveat is a named residual, not a solved case).
@@ -169,7 +171,8 @@ function assertSealIntegrity(stored: RunRecord, next: RunRecord): void;
 
 function · public
 
-#715 (b) (03 §A.1): the process's waiter-error sink, or `undefined` when no host set one. For tests.
+The process's waiter-error sink, or `undefined` when no host set one.
+For tests.
 
 ```ts
 function clockErrorSink(): ((err: unknown) => void) | undefined;
@@ -220,8 +223,9 @@ function computeClaimDeadline(definition: WorkflowDefinition, stepName: string, 
 
 function · public
 
-Builds a system clock (D6-6, D6-7) with its OWN waiter-error sink: `now()` is `new Date()`; `at()`
-arms an `unref`'d timer of at most `MAX_HOP_MS` and re-checks `now()` each time it fires. A
+Builds a system clock with its own waiter-error sink: `now()` is `new Date()`; `at()` arms an
+`unref`'d timer of at most `MAX_HOP_MS` and re-checks `now()` each time it fires.
+A
 waiter's synchronous throw or rejection is caught and passed to `options.onWaiterError` — never an
 unhandled rejection. The sink must not throw; if it does, that throw is swallowed. Core never
 writes to `console` here: the sink is the only channel. For a host or a test that wants its own
@@ -259,7 +263,9 @@ function decideIdempotencyPolicy(matched: Pick<RunRecord, 'id' | 'workflow_id' |
 
 function · public
 
-The per-key floor (D6-14, D6-35, D6-60, D6-68). PURE: the reading was already taken, once, by
+The per-key floor of a keyed create's reading, by the `created_at` of the run it supersedes or
+the newest of the key's runs.
+PURE: the reading was already taken, once, by
 `takeReading`. When `holderCreatedAt` (the `created_at` of the run a keyed create supersedes,
 or the newest among the key's runs) parses to `h`, returns `max(reading, min(h + 1 ms, reading + ε))`;
 otherwise the reading. So a successor under a key is stamped strictly after the run it supersedes
@@ -276,10 +282,11 @@ function floorAtHolder(reading: Date, holderCreatedAt?: string): Date;
 
 function · public
 
-Floors a reading by a record's own stamp (#715 (b), D-17; D5 §2.1, D6-3): when the record's
-`updated_at` parses (`u`), returns `max(r, min(u, r + ε))` — MONOTONE, capped: a record stamped far
-ahead lifts the reading by at most ε (`CLOCK_SKEW_EPSILON_MS`), so no deadline is minted more
-than ε late. An `updated_at` that does not parse is ignored (D6-68), never `NaN`. PURE: reads no
+Floors a reading by a record's own stamp, lifting it by at most `CLOCK_SKEW_EPSILON_MS`. When the
+record's `updated_at` parses (`u`), it returns `max(r, min(u, r + ε))`: monotone and capped, so a
+record stamped far ahead lifts the reading by at most ε and no deadline is minted more than ε
+late.
+An `updated_at` that does not parse is ignored (D6-68), never `NaN`. PURE: reads no
 clock. Returns a fresh `Date`.
 
 ```ts
@@ -292,7 +299,7 @@ function floorAtRecord(r: Date, record: {
 
 function · public
 
-The ONE reader of a claim's lease fact, on the snapshot the claim was read from:
+The one reader of a claim's lease fact, on the snapshot the claim was read from. It answers:
 
 - a claim that names no lease (no claim, or no `lease`) ⇒ `{ absent: 'unleased' }`;
 - a claim whose stored `lease` is malformed (`null`, not an object, no string `id`) ⇒
@@ -334,8 +341,9 @@ function leaseFactsOf(port: LeasePort | null | undefined, record: RunRecord): Pr
 
 function · public
 
-The release line an object carries: realm's own classes through PR-B's mark, a host's class or
-object through `declareReleaseLine`. `undefined` when it carries none. One property read,
+The release line an object carries: Realm's own classes through their release mark, a host's
+class or object through `declareReleaseLine`.
+`undefined` when it carries none. One property read,
 inside a `try`; total.
 
 ```ts
@@ -346,8 +354,9 @@ function releaseLineOf(value: unknown): RealmBrand | undefined;
 
 function · public
 
-#715 (b) (03 §A.1, D-22): sets the process's waiter-error sink — the channel the shared
-`systemClock` (and a test location's clock) passes a failing waiter's error to. A host calls
+Sets the process's waiter-error sink: where the shared `systemClock`, and a test location's
+clock, pass a failing waiter's error.
+A host calls
 it once, at its start. The sink must not throw; a throw from it is swallowed.
 
 ```ts
@@ -358,8 +367,8 @@ function setClockErrorSink(sink: (err: unknown) => void): void;
 
 function · public
 
-Takes the RAW reading of `clock` (#715 (b), D-17): exactly ONE `clock.now()` call, validated, as a
-fresh `Date`. A throw from `clock.now()` propagates unchanged, having spent the one reading (D6-4).
+Takes the raw reading of `clock`: exactly one `clock.now()` call, validated, as a fresh `Date`.
+A throw from `clock.now()` propagates unchanged, having spent the one reading (D6-4).
 A `clock.now()` that returns an invalid `Date` fails here, loud, instead of as a `RangeError` from
 `toISOString()` later. A READ takes it BEFORE it loads (D6-16): every statement about what it then
 loads holds at the reading; a listing's `read_at` is this raw value.
@@ -372,8 +381,9 @@ function takeRawReading(clock: Clock): Date;
 
 function · public
 
-Takes a write's reading (D5 §2.1, D6-3, D6-4): `takeRawReading` — exactly ONE `clock.now()`
-call, no other time source — floored by `record` when it is given (`floorAtRecord`). When
+Takes a write's reading: one `clock.now()` call and no other time source, floored by `record`
+when it is given (`floorAtRecord`).
+When
 `delta` is given (a `settleStep`), the delta's EVENT instants — the `started_at` / `completed_at`
 of the evidence it carries (`eventInstantsOf`) — are folded in: `at = max(floored reading,
 ...events)`. Event instants are NOT capped by ε. Most are this process's own readings, taken when
@@ -392,8 +402,8 @@ function takeReading(clock: Clock, record?: {
 
 function · public
 
-The ONE constructor of a `Snapshot` (PR0-CONTRACT §2; #715 (b), D-15): a record and the reading it
-is judged at — no clock is read here. A store builds every snapshot it returns through it (the
+The one constructor of a `Snapshot`: a record and the reading it is judged at; it reads no clock.
+A store builds every snapshot it returns through it (the
 reading its read or write took); the engine builds one from a write's returned `{ record, at }`.
 A reply's ways speak of the record as written, never of a record read again.
 
@@ -521,8 +531,8 @@ interface AgentTraceEntry {
 
 interface · public
 
-Optional trailing options bag for `append`/`appendFenced` (issue #197 PR-1, the
-`writer_nonce_carriage` rung). Declaration-only: adding this parameter is NOT a separate
+The optional last argument of `append` and `appendFenced`: the writer's nonce.
+Declaration-only: adding this parameter is NOT a separate
 method-presence check in `storeDeclaresNonceCarriage` (there is no way to detect "did this
 store implementation read the options bag" other than declared capability + behavior) — a
 non-declaring implementation is contractually required to IGNORE it, never throw or otherwise
@@ -561,7 +571,7 @@ interface AppendResult {
 
 interface · public
 
-What a store reports about the artifacts it just deleted (issue #189).
+What a store reports about the artifacts it just deleted: the bytes it deleted.
 
 Bytes are a STORE-DEFINED, internally-consistent measure — exact on-disk bytes for the
 filesystem stores, a documented approximation elsewhere (a Postgres store uses the same
@@ -579,9 +589,10 @@ interface ArtifactDeletionReport {
 
 interface · public
 
-An AgentTraceEntry extended with engine-assigned ordering timestamp (milliseconds), and
-(issue #197 PR-1) the writer nonce that carried it, if any — re-attached from the line the
-entry was originally appended in. NEVER fabricated for a genuinely bare line.
+An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce
+that carried it, if any. The nonce is re-attached from the line the entry was originally appended
+in.
+NEVER fabricated for a genuinely bare line.
 
 ```ts
 interface BufferedEntry extends AgentTraceEntry {
@@ -594,7 +605,7 @@ interface BufferedEntry extends AgentTraceEntry {
 
 interface · public
 
-The time a run store holds (D5 §1.1).
+The clock a run store reads the time from: `now()` and `at()`.
 
 `now()` returns the current instant as a FRESH `Date` on every call: mutating a returned `Date`
 changes nothing else.
@@ -655,8 +666,8 @@ interface DedupStore {
 
 interface · public
 
-Enacts a gate's frozen enforce-clock disposition once it has expired unresolved (issue #291;
-design record `plans/issue-291/design-d2.md` [F1]/[F2]/[F3] `applyExpireGate`). Fenced by
+Carries out a gate's frozen timeout disposition once the gate has expired unanswered.
+Fenced by
 `gateId` ONLY — same fencing shape as `SettleGateDelta` (a gate's authority is
 bearer-gateId-credentialed) — so a stale/duplicate expire attempt for a gate that has since
 been superseded (resolved by a human, or already expired by a racing enactment point) NOOPs or
@@ -714,8 +725,9 @@ interface FailedAttemptRecord {
 
 interface · public
 
-#616 B1: a store of failed agent-attempt records, kept per run — the interface the core owns, so
-a store in another package (SQLite, a cloud store) implements it. `append` is best-effort and
+A store of failed agent-attempt records, kept per run. The core owns the interface, so a store in
+another package (SQLite, a cloud store) implements it.
+`append` is best-effort and
 never throws; `read` returns the run's records in append order (the engine's ranking reads that
 order); the per-run artifact methods delete or measure what the store holds for a run.
 `JsonFileFailedAttemptStore` is Realm's file store; a holder that also needs `listOrphans` takes
@@ -732,8 +744,9 @@ interface FailedAttemptStore extends PerRunArtifactStore {
 
 interface · public
 
-Acquire (or re-acquire, same-token) the lease on one PENDING finalizer ledger entry — the
-drain loop's mint-before-execute step. `leaseToken` is CALLER-MINTED (uuid; design record §3's
+Acquire, or re-acquire with the same token, the lease on one pending finalizer ledger entry: the
+drain loop's mint-before-execute step.
+`leaseToken` is CALLER-MINTED (uuid; design record §3's
 lens-1 F3a note: unlike every other fence in the system, this one is acquirer-minted by
 necessity — there is no prior claim record to read a token off of for a finalizer).
 
@@ -776,8 +789,9 @@ interface LeasePort {
 
 interface · public
 
-What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics (the shape `list` returned
-until #616 c4): every record with the reading it is judged at, and the listing's own reading.
+What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics: every record with the
+reading it is judged at, and the listing's own reading. It is the shape `list` returned until
+#616 c4.
 
 - `read_at` is the RAW reading, taken ONCE before the first record was read (D6-16).
 - each snapshot's `at` is `read_at` floored by that record's own `updated_at` (`floorAtRecord`):
@@ -817,8 +831,8 @@ interface MarkFinalizerDelta {
 
 interface · public
 
-Opens a human gate on a claimed step (issue #279, increment 2, PR-C; design record
-`design-d5-increment2.md` §2/§3 `openGateArms`). #715 (b) (D-20, D6-12): the delta carries
+Opens a human gate on a claimed step.
+#715 (b) (D-20, D6-12): the delta carries
 DURATIONS, never instants — `pendingGate` is the gate without `opened_at`/`expires_at`, and
 `timeoutSeconds` its declared timeout; the transform writes `opened_at = at` and, when
 `timeoutSeconds` is given, `expires_at = at + timeoutSeconds`. Everything else in `pendingGate` is
@@ -869,9 +883,10 @@ interface OrphanSweepableStore {
 
 interface · beta: may change in a minor release until it settles
 
-One row of a run's ledger, AS A STORE KEEPS IT — for store implementers only: it carries the lease
-token, the holder's proof, so it is never rendered and never returned by the port (every entry the
-port returns is an `OutboundEntryView`). An unset field is omitted, never `null`.
+One row of a run's outbound ledger as a store keeps it, for store implementers only. It carries
+the lease token, the holder's proof, so it is never rendered and never returned by the port:
+every entry the port returns is an `OutboundEntryView`.
+An unset field is omitted, never `null`.
 
 ```ts
 interface OutboundEntry {
@@ -968,9 +983,9 @@ interface PerRunArtifactStore {
 
 interface · public
 
-A deleted run's tombstone as a scan with `include_purged` gives it (design §6): its id, its workflow,
-when it was purged, its seal's arm, and the phase and derivation stamp it had when purged (its
-record is gone, so its phase cannot be derived again).
+A deleted run's tombstone, as a scan with `include_purged` gives it. It holds the run's id, its
+workflow, when it was purged, its seal's arm, and the phase and derivation stamp it had when
+purged (its record is gone, so its phase cannot be derived again).
 
 ```ts
 interface PurgedItem {
@@ -1030,7 +1045,7 @@ interface ReconcileSummary {
 
 interface · public
 
-#616 PR-2c c5a: what a registrar's diagnostic listing returns.
+What a registrar's diagnostic listing returns (`WorkflowRegistrar.listWithDiagnostics`).
 
 ```ts
 interface RegistryListing {
@@ -1047,9 +1062,8 @@ interface RegistryListing {
 
 interface · public
 
-Releases a claim without settling the step (issue #279, increment 2, PR-C; design record §2/§3
-`releaseStepArms`) — the shared shape behind BOTH the capability-block release
-(execution-loop.ts:2453-2529) and the compensating un-claim (execution-loop.ts:1607-1635).
+Releases a step's claim without settling the step. It is the shared shape behind both the
+capability-block release and the compensating un-claim.
 NEVER terminal, writes NO `settled` entry — the step returns to eligible.
 
 ```ts
@@ -1118,9 +1132,8 @@ interface ReplayStore {
 
 interface · public
 
-issue #719 (B3): what `JsonFileStore.listWithDiagnostics` returns — #715 (b) (D-28): the
-same `Listing` `list` returns (`snapshots`, `read_at`, `consistent_snapshot`), beside the
-diagnostics.
+What `JsonFileStore.listWithDiagnostics` returns: the same `Listing` `list` returns, beside the
+diagnostics. The `Listing` is `snapshots`, `read_at` and `consistent_snapshot`.
 
 ```ts
 interface RunListing extends Listing {
@@ -1133,9 +1146,10 @@ interface RunListing extends Listing {
 
 interface · public
 
-One run as a scan's `'row'` projection gives it (design §6's facts row): the record's own fields, but
-`run_phase` is the derived phase, `terminal_state` is the column's 0/1 as a boolean, `run_version` is
-the record's `version` (M6's name) and `pending_gate` is the gate's id or `null`. No params, no
+One run as a scan's `'row'` projection gives it: the record's own fields, with four derived or
+renamed. `run_phase` is the derived phase, `terminal_state` is the column's 0/1 as a boolean,
+`run_version` is the record's `version` and `pending_gate` is the gate's id or `null`.
+No params, no
 evidence.
 
 ```ts
@@ -1195,8 +1209,8 @@ interface RunStore {
 
 interface · public
 
-The filters of a store's scan (design §6, spelled as §6's filter list spells them; §6 writes
-`includePurged` once for the same filter). Every filter given must hold. `key` needs `workflow`: a
+The filters of a store's scan.
+Every filter given must hold. `key` needs `workflow`: a
 key is a key of one workflow. `created_since` and `updated_since` are stamps in the store's one
 shape (`YYYY-MM-DDTHH:MM:SS.sssZ`), compared as text and inclusive.
 
@@ -1216,10 +1230,10 @@ interface ScanFilter {
 
 interface · public
 
-How a scan pages: `pageSize` is required, a whole number from 1 to `SCAN_MAX_PAGE_SIZE`;
-`projection` is `'record'` (the default: each run as `get()` returns it) or `'row'` (each run as a
-`RunRow`); `after` starts the scan after that id (the last id of the page before, §6's
-`--after` cursor).
+How a scan pages: its page size, its projection, and the id it starts after. `pageSize` is
+required, a whole number from 1 to `SCAN_MAX_PAGE_SIZE`; `projection` is `'record'` (the default:
+each run as `get()` returns it) or `'row'` (each run as a `RunRow`); `after` starts the scan
+after that id (the last id of the page before, the `--after` cursor).
 
 ```ts
 interface ScanOptions {
@@ -1233,11 +1247,11 @@ interface ScanOptions {
 
 interface · public
 
-One page of a store's scan: its items in id order, the page's one reading (`read_at`), the flag
-that the page was read in ONE read transaction (`consistent_snapshot`: one transaction per page
-under WAL), how many rows read for the page carried a phase stamped by another derivation
-(`derived_at_read`: each was derived at read; 0 when none), and, when the page is full, the cursor
-the next page starts after (`next_after`, the page's last id).
+One page of a store's scan: its items in id order, its one reading, and the cursor for the next
+page. `read_at` is the page's one reading; `consistent_snapshot` says the page was read in one
+read transaction (one per page under WAL); `derived_at_read` counts the rows whose phase was
+stamped by another derivation (each was derived at read; 0 when none); `next_after`, when the
+page is full, is the cursor the next page starts after (the page's last id).
 
 ```ts
 interface ScanPage<P extends 'record' | 'row'> {
@@ -1253,9 +1267,9 @@ interface ScanPage<P extends 'record' | 'row'> {
 
 interface · public
 
-One sealed artifact for a single (runId, stepId) key — issue #197 PR-1, part of the `seal`
-rung. A key may accumulate several sealed artifacts (repeated reclaim/settle-time seals),
-distinguished by ascending `seq`.
+One sealed artifact for a single run and step.
+A key may accumulate several sealed artifacts (repeated reclaim/settle-time seals),
+ distinguished by ascending `seq`.
 
 ```ts
 interface SealedArtifact {
@@ -1269,7 +1283,8 @@ interface SealedArtifact {
 
 interface · public
 
-One line of a WAL, as read back — live or sealed (issue #197 PR-1). Defined in CORE, not
+One line of a WAL as read back, live or sealed.
+Defined in CORE, not
 mcp-server (where the fs store's own file-local `WalLine` type lives), because
 `listSealedForRun`'s return type must be usable without any core-adjacent caller importing an
 mcp-server-local type. The fs store's `WalLine` gains the identical optional `nonce` field and
@@ -1287,8 +1302,9 @@ interface SealedWalLine {
 
 interface · public
 
-Seals a run at the RUN level (#715 (b), D-21; D6-46, D6-56, D6-65, D6-66, D6-67): abandon, cleanup,
-a webhook spawn failure, an extension load failure. The transform seals through `sealRunLevel` with
+Seals a run at the run level: an abandon, a cleanup, a webhook spawn failure or an extension load
+failure.
+The transform seals through `sealRunLevel` with
 the write's one reading as every seal-tier instant (`abandoned_at`).
 
 - `expected_version` is the version the writer judged the run at: a stored record whose version
@@ -1314,8 +1330,8 @@ interface SealRunDelta {
 
 interface · public
 
-Resolves an open gate with a human's choice (issue #279, increment 2, PR-C; design record §2/§3
-`settleGateArms`). Fenced by `gateId` ONLY — zero claim arms (§3's own note: "fence = gateId
+Resolves an open gate with a person's choice.
+Fenced by `gateId` ONLY — zero claim arms (§3's own note: "fence = gateId
 ONLY (L20)"), since a gate's authority is bearer-gateId-credentialed (D-5: RECORDED, not
 enforced — `respondedBy` below is an evidence passthrough, read by no arm).
 
@@ -1339,8 +1355,8 @@ interface SettleGateDelta {
 
 interface · public
 
-Records a guard step's evaluated outcome (issue #279, increment 2, PR-C; design record §2/§3
-`settleGuardArms`). Guards are never claimed (`eligibility.ts:418` — `findEligibleGuardSteps`
+Records a guard step's evaluated outcome.
+Guards are never claimed (`eligibility.ts:418` — `findEligibleGuardSteps`
 has no claim concept), so this delta carries no `claimToken` at all — fence = ⊥. `evidence` is
 SINGULAR (the `MarkFinalizerDelta` precedent — one guard evaluation, one evidence snapshot),
 unlike `SettleStepDelta.evidence`'s array.
@@ -1409,7 +1425,8 @@ interface SettleStepDelta {
 
 interface · public
 
-One record and the reading it is judged at (#715 D6-17). Built only by this module.
+One record and the reading it is judged at.
+Built only by this module.
 
 ```ts
 interface Snapshot {
@@ -1449,7 +1466,7 @@ interface TraceBufferStore {
 
 interface · public
 
-#616 PR-2c c5a: a registered copy a registry of files could not read, named by its file.
+A registered copy a registry of files could not read, named by its file.
 
 ```ts
 interface UnreadableFileEntry {
@@ -1466,9 +1483,10 @@ interface UnreadableFileEntry {
 
 interface · public
 
-#616 PR-2c c5a: a registered copy a registry with no files (the SQLite registry) could not read,
-named by its workflow's id. Never carries `file` or `errno`: no file holds it, and no class on this
-arm is an OS error.
+A registered copy a registry with no files (the SQLite registry) could not read, named by its
+workflow's id.
+Never carries `file` or `errno`: no file holds it, and no class on this
+ arm is an OS error.
 
 ```ts
 interface UnreadableIdEntry {
@@ -1485,7 +1503,8 @@ interface UnreadableIdEntry {
 
 interface · public
 
-issue #719 (B3): one run file the JSON store could not read as a run, as a listing reports it.
+One run file the JSON store could not read as a run, as a listing reports it
+(`RunListing.unreadable`).
 `reason` is the fault sentence and `repair` the way out (`realm run list` prints both); `facts`
 are the damaged file's facts (no content), which a decision over every run names when it fails
 closed.
@@ -1541,7 +1560,7 @@ interface WorkflowRegistrar {
 
 type · public
 
-#616 PR-2c c5b: what `WorkflowRegistrar.getCapped` resolves to.
+What `WorkflowRegistrar.getCapped` resolves to.
 
 ```ts
 type CappedRead = {
@@ -1557,8 +1576,9 @@ type CappedRead = {
 
 type · public
 
-What a run store's `create` returns (#715 (b), D-15): the record with the reading the create
-used, and whether it was written. A keyed create that returns an existing run (`created: false`)
+What a run store's `create` returns: the record with the reading the create used, and whether it
+was written.
+A keyed create that returns an existing run (`created: false`)
 has spent its reading too, and returns it.
 
 ```ts
@@ -1571,7 +1591,8 @@ type CreateResult = Snapshot & {
 
 type · public
 
-The four facts a fenced trace-buffer operation can be conditioned on (issue #616 PR-0). Derived
+The four facts a fenced trace-buffer operation can be conditioned on.
+Derived
 from every fenced call site on `60a21eb` — one member per former guard; the fifth, `gc`'s
 `run_absent`, left with that command (#616 PR-2c).
 
@@ -1628,8 +1649,8 @@ type FencePredicateKind = FencePredicate['kind'];
 
 type · public
 
-The read a fence is evaluated against: the lock-free `RunStore.get` the former guards used
-(#132's atomic-rename-safe read).
+The read a fence is evaluated against: the lock-free `RunStore.get`. It is the read the former
+guards used, safe against an atomic rename.
 
 ```ts
 type FenceRunReader = Pick<RunStore, 'get'>;
@@ -1639,12 +1660,12 @@ type FenceRunReader = Pick<RunStore, 'get'>;
 
 type · public
 
-#616 PR-2c c5a: the classes a registry of files (the JSON registry) gives a registered copy it
-cannot read — the FILE arm's eight: what the probe finds before any byte is read (`missing`: the
-file went between the directory read and the probe; `unreadable`: an OS error reading it;
-`not_a_file`: a directory where the file belongs; `empty`; `registry_broken`: the registry directory
-itself) and what the read finds (`parse`: not JSON, or JSON that fails the checker; `newer`: a later
-version of Realm registered it; `legacy`: an older one did).
+The classes a registry of files (the JSON registry) gives a registered copy it cannot read: eight
+in all. What the probe finds before any byte is read (`missing`: the file went between the
+directory read and the probe; `unreadable`: an OS error reading it; `not_a_file`: a directory
+where the file belongs; `empty`; `registry_broken`: the registry directory itself) and what the
+read finds (`parse`: not JSON, or JSON that fails the checker; `newer`: a later version of Realm
+registered it; `legacy`: an older one did).
 
 ```ts
 type FileUnreadableClass = ProbeFailureClass | 'parse' | 'newer' | 'legacy';
@@ -1664,10 +1685,11 @@ type IdempotencyDecision = 'reuse' | 'supersede';
 
 type · public
 
-#616 PR-2c c5a: the classes a registry with no files (the SQLite registry) gives — the ID arm's
-three: `legacy` (an older version of Realm registered it), `newer` (a later one did) and `parse`: a
-copy that is not JSON or fails the checker, or a damaged pointer row (no copy under the pointer, or
-one that is not JSON text), whose entry has no `repair` because its reason names the remedy.
+The classes a registry with no files (the SQLite registry) gives a registered copy it cannot
+read: `legacy`, `newer` and `parse`. `legacy`: an older version of Realm registered it; `newer`:
+a later one did; `parse`: a copy that is not JSON or fails the checker, or a damaged pointer row
+(no copy under the pointer, or one that is not JSON text), whose entry has no `repair` because
+its reason names the remedy.
 
 ```ts
 type IdUnreadableClass = 'legacy' | 'newer' | 'parse';
@@ -1677,9 +1699,10 @@ type IdUnreadableClass = 'legacy' | 'newer' | 'parse';
 
 type · public
 
-Who holds an idempotency key, read in one snapshot (design §3, axis 7): `held` names the run that
-holds it; `purged` lists the deleted runs that carried it, when no run does; `unseen` says no run
-carries it and no kept tombstone records one. `since` is the tombstone horizon: a run purged at or
+Who holds an idempotency key, read in one snapshot: the run that holds it, the deleted runs that
+carried it, or no run. `held` names the run that holds it; `purged` lists the deleted runs that
+carried it, when no run does; `unseen` says no run carries it and no kept tombstone records one.
+`since` is the tombstone horizon: a run purged at or
 before it may have left no tombstone.
 
 ```ts
@@ -1777,8 +1800,9 @@ type LeaseUnavailableReason = (typeof LEASE_UNAVAILABLE_REASONS)[number];
 
 type · public
 
-The load-bearing `RunRecord` fields the engine treats specially enough that a store must
-DECLARE which it round-trips (issue #188). This is a CLOSED set — a field qualifies via EITHER
+The `RunRecord` fields the engine relies on enough that a store must declare which of them it
+round-trips (`RunStore.persistedRunRecordFields`).
+This is a CLOSED set — a field qualifies via EITHER
 (a) a real, verified READ-SITE consumer whose absence corrupts control flow (see
 `RunStore.persistedRunRecordFields`'s own doc for the consumer list) — the first four below —
 OR (b) a WRITE-SITE disclosure-integrity advisory, whose non-durability is surfaced LOUDLY
@@ -1826,10 +1850,10 @@ type LoadBearingRunRecordField = 'capability_blocks' | 'workflow_context_snapsho
 
 type · public
 
-Result a `mark_finalizer` delta reports for one finalizer's handler outcome — mirrors
-`finalizer_ledger[name].status`'s two live-outcome values (`pending`/`voided` are never a
-mark-delta's OWN result; they are prior/other-path states the predicate reads, never writes
-via this delta).
+The result a `mark_finalizer` delta reports for one finalizer's handler: `completed` or `failed`.
+They are the two live outcomes of `finalizer_ledger[name].status`; `pending` and `voided` are
+never a mark delta's own result: they are prior or other-path states the predicate reads, and
+this delta never writes them.
 
 ```ts
 type MarkFinalizerResult = 'completed' | 'failed';
@@ -1839,10 +1863,9 @@ type MarkFinalizerResult = 'completed' | 'failed';
 
 type · public
 
-The gate an `open_gate` delta opens, WITHOUT its instants (#715 (b), D-20; D5 §2.4, D6-12): the
-caller builds everything a `PendingGate` holds (gate_id, choices, preview, the frozen
-enforce/notify fields) except `opened_at` and `expires_at`, which the transform mints from the
-write's one reading `at` — so no gate is ever born expired.
+The gate an `open_gate` delta opens, without its instants: everything a `PendingGate` holds but
+`opened_at` and `expires_at`. The transform mints those two from the write's one reading `at`, so
+no gate is ever born expired.
 
 ```ts
 type OpeningGate = Omit<PendingGate, 'opened_at' | 'expires_at'>;
@@ -1881,7 +1904,7 @@ type OutboundResult = {
 
 type · public
 
-issue #558 PR-T — what a registry read can fail as, before any bytes are parsed.
+What a registry read can fail as, before any bytes are parsed (`ProbeResult`).
 
 ```ts
 type ProbeFailureClass = 'missing' | 'unreadable' | 'not_a_file' | 'empty' | 'registry_broken';
@@ -1910,8 +1933,9 @@ type ProbeResult = {
 
 type · public
 
-#616 PR-2c c5b: a registrar with every optional member (c5a's `listWithDiagnostics` and
-`getCapped`), as Realm's own registries — the JSON registry and the SQLite registry — are. Realm's
+A registrar with every optional member, `listWithDiagnostics` and `getCapped`, as Realm's own
+JSON and SQLite registries are.
+Realm's
 homes carry this type, so a command that needs a member never meets a registrar without it.
 
 ```ts
@@ -1947,8 +1971,7 @@ type ScanItem<P extends 'record' | 'row'> = {
 
 type · public
 
-Outcome of `sealFenced` (issue #197 PR-1, the `seal` rung — see `TraceBufferStore.sealFenced`
-for the full contract).
+The outcome of `sealFenced`; `TraceBufferStore.sealFenced` holds the full contract.
 
 ```ts
 type SealResult = {
@@ -1963,7 +1986,8 @@ type SealResult = {
 
 type · public
 
-The delta kinds `RunStore.settleStep` accepts (design record §1/§2). A concrete discriminated
+The delta kinds `RunStore.settleStep` accepts.
+A concrete discriminated
 union — no structural intersections, no duck-typing.
 
 **Union-openness contract (issue #279, increment 2, PR-C — design record §2, angles fold 1):**
@@ -1983,10 +2007,9 @@ type SettlementDelta = SettleStepDelta | LeaseFinalizerDelta | MarkFinalizerDelt
 
 type · public
 
-Every refusal/noop literal `applySettlement`/`settleStep` can RETURN as `SettlementResult.reason`
-(design record §7, the full table MINUS `drain_pending`) — `drain_pending` is the PR-B purge
-guard's own THROWN `STATE_RUN_BUSY` builder reason, never a `settleStep` return value, so it is
-deliberately excluded from this type (a `settleStep` implementation must never construct it).
+Every refusal or no-op reason `settleStep` can return as `SettlementResult.reason`.
+`drain_pending` is left out: it is the purge guard's own thrown `STATE_RUN_BUSY` reason, never a
+`settleStep` return value, so a `settleStep` implementation must never construct it.
 
 ```ts
 type SettlementRefusalReason = 'already_settled' | 'already_leased' | 'already_marked' | 'already_released' | 'already_open' | 'already_settled_by_other' | 'settled_outcome_divergence' | 'run_terminal' | 'claim_lost' | 'gate_mismatch' | 'run_not_terminal' | 'ledger_not_pending' | 'lease_held' | 'lease_lost' | 'rank_blocked' | 'not_eligible' | 'gate_choice_conflict' | 'choice_not_eligible' | 'gate_open_wait' | 'answerer_mismatch' | 'not_expired' | 'no_disposition' | 'moved' | 'already_terminal';
@@ -1996,8 +2019,7 @@ type SettlementRefusalReason = 'already_settled' | 'already_leased' | 'already_m
 
 type · public
 
-Result of applying one `SettlementDelta` against fresh state (design record §2, normative
-— final-gate F5).
+The result of applying one `SettlementDelta` against fresh state.
 
 `run` on `applied: true` is the AS-APPLIED TRANSFORM OUTPUT — pre-serialization, pre-fidelity-
 filtering — and must NEVER be a re-read of what the store persisted. This is the #220 disclosure
@@ -2062,9 +2084,9 @@ type SettlementResult = {
 
 type · public
 
-The three outcomes a `settle_step` delta's caller can report for the step being settled —
-mirrors the THREE seal call sites (:2560 complete, :2220 fail, :1784 handler-abort) this
-increment's transform is bound to by line (design record §3).
+The outcomes a `settle_step` delta's caller can report for the step being settled: `complete`,
+`fail` or `abort`. They mirror the three places the engine seals a step: complete, fail, and a
+handler's abort.
 
 ```ts
 type SettleStepOutcome = 'complete' | 'fail' | 'abort';
@@ -2074,7 +2096,8 @@ type SettleStepOutcome = 'complete' | 'fail' | 'abort';
 
 type · public
 
-Issue #367 (part 3): the outcome of a `RunStore.stampSeal` attempt. Both refusal reasons
+The outcome of a `RunStore.stampSeal` attempt.
+Both refusal reasons
 are PREDICATE outcomes, returned rather than thrown, and both carry the record as it stands so
 the caller can report on it without a second read.
 
@@ -2118,9 +2141,10 @@ type StepScopedKind = {
 
 type · public
 
-What a run store's `settleStep` returns (#715 (b), D-19): the transform's result plus the write's
-one reading `at` — returned on an applied write AND on a predicate refusal (both took it, after the
-lock). A throw before the lock (a missing run) spends none.
+What a run store's `settleStep` returns: the transform's result plus the write's one reading
+`at`. It is returned on an applied write and on a predicate refusal (both took the reading, after
+the lock).
+A throw before the lock (a missing run) spends none.
 
 #729 CW-1b: `lease_facts`, as on a `Snapshot`: what the store's lease port found about the
 leases of `run`'s in-progress claims after the write (applied or refused). Present only when a
@@ -2137,8 +2161,9 @@ type StoreSettlement = SettlementResult & {
 
 type · public
 
-The store-layer capability ladder (issue #197 PR-1, design record `plans/issue-197-design.md`
-§3). Implication runs **upward-requires-downward ONLY**: `writer_nonce_carriage` requires
+The optional rungs a trace buffer store can declare, `seal` and `writer_nonce_carriage`
+(`TraceBufferStore.traceCapabilities`).
+Implication runs **upward-requires-downward ONLY**: `writer_nonce_carriage` requires
 `seal`; `seal` requires the fenced trio (issue #207). **The fenced trio ALONE stays fully
 legal** — a store declaring neither rung is still a fully conforming implementation (the
 shipped realm-cloud Postgres state; non-seal trio stores keep the #207 destructive-drain
@@ -2167,8 +2192,9 @@ type Unleased = {
 
 type · public
 
-#616 PR-2c c5a: a registered copy a listing could not read. Each entry carries exactly one of
-`file` (the file arm) and `workflow_id` (the id arm); all of one registrar's entries are of one arm.
+A registered copy a listing could not read (`RegistryListing.unreadable`).
+Each entry carries exactly one of
+ `file` (the file arm) and `workflow_id` (the id arm); all of one registrar's entries are of one arm.
 
 ```ts
 type UnreadableRegistryEntry = UnreadableFileEntry | UnreadableIdEntry;
@@ -2180,8 +2206,9 @@ type UnreadableRegistryEntry = UnreadableFileEntry | UnreadableIdEntry;
 
 const · public
 
-#715 (b) (04 §A.4, B5′, D6-32): the five classes of a clock read — what a run store's clock governs
-(`write`, `read`, `event`) and what it does not (`outside`, `duration`). The clock census test
+The five classes of a clock read: what a run store's clock governs (`write`, `read`, `event`) and
+what it does not (`outside`, `duration`).
+The clock census test
 classes every read in the source by them, and the docs table of what the clock governs is generated
 from them (`docs/reference/core-library.md`).
 
@@ -2263,12 +2290,12 @@ const systemClock: Clock;
 Names this job reaches whose entry is on another page.
 
 - [`AbandonWay`](write-a-handler.md#abandonway): End the run.
-- [`AdmittedBy`](read-a-runs-record.md#admittedby): #603 A3a: how an answer's sender was let through, or why it was not compared.
-- [`AdvanceWay`](write-a-handler.md#advanceway): Have the engine carry out what it owes (#625 PR-2a's act): a due expiry first, then steps.
-- [`AgentAction`](write-a-handler.md#agentaction): What an agent does next (engine-owned, R3).
-- [`AnswererMismatchFacts`](write-a-handler.md#answerermismatchfacts): #603 A3a: an answer refused because its sender is not one the question lets answer — the names that may (as written: the question's `owner` and `answerers`, or the project's list), and the account the channel reported for the sender.
-- [`AnswerFacts`](read-a-runs-record.md#answerfacts): #627 W: a recorded answer's route as its door declared it, and what showed a form.
-- [`AnswerOnRecord`](read-a-runs-record.md#answeronrecord): #627 W: what an answer's entry holds about its route — the facts, or a library caller's absence.
+- [`AdmittedBy`](read-a-runs-record.md#admittedby): How an answer's sender was let through, or why it was not compared (`EvidenceSnapshot.admitted_by`).
+- [`AdvanceWay`](write-a-handler.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
+- [`AgentAction`](write-a-handler.md#agentaction): What an agent does next, decided by the engine (`WorkflowError.agentAction`).
+- [`AnswererMismatchFacts`](write-a-handler.md#answerermismatchfacts): The facts of an answer refused because its sender may not answer the question: the names that may, and the account the channel reported.
+- [`AnswerFacts`](read-a-runs-record.md#answerfacts): A recorded answer's route as its door declared it, and what showed a form (`EvidenceSnapshot.answer`).
+- [`AnswerOnRecord`](read-a-runs-record.md#answeronrecord): What an answer's entry holds about its route: the facts, or the absence a library caller leaves (`EvidenceSnapshot.answer`).
 - [`Attributed`](read-a-runs-record.md#attributed): A program's name, how that name is known, and the host's channel.
 - [`AuthGithub`](define-and-load-a-workflow.md#authgithub): GitHub HMAC-SHA256 hex body signature (header 'X-Hub-Signature-256').
 - [`AuthHmac`](define-and-load-a-workflow.md#authhmac): Generic HMAC body signature with a configurable header / algorithm / encoding.
@@ -2278,54 +2305,54 @@ Names this job reaches whose entry is on another page.
 - [`Base`](write-a-handler.md#base): What every way carries: its verb and the conditions it is offered with; each way type adds its own fields to it.
 - [`BY_SOURCE_CLASSES`](read-a-runs-record.md#by_source_classes): How a program's name is known.
 - [`BySourceClass`](read-a-runs-record.md#bysourceclass): How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or `derived` from the OS user and host name (`Attributed.by_source`).
-- [`CACHE_AUTO_BASES`](read-a-runs-record.md#cache_auto_bases): Issue #600 (the lifetime unit) — on what `--prompt-cache auto` chose a request's lifetime (`UsageRecord.cache_auto.basis`): - `no_measurement` — produced by the CLI's `resolvePromptCache` for the setting `auto`, which the adapter writes on a request that carries no choice of its own (a host that passes none): no gaps were measured, so the runner's prior is asked for (caching 3-M D-3: older records too); Caching 3-M (D-2): the other three are produced by the CLI's `chooseStepCaches`, one choice per agent step, which `realm agent` passes on each of the step's calls: - `step_gaps` — a step without tools, chosen by the provider's rule over the gaps between the step's requests in the workflow's earlier runs (`stepCacheGaps`; possibly none — the runner's prior is then asked for); - `step_gaps_unreadable` — the read of the earlier runs failed; the runner's prior is asked for and the drive goes on; - `tool_step` — a step that calls tools, on Anthropic: its own turns reuse the entry, so the short lifetime is asked for whatever its gaps.
-- [`CACHE_AUTO_PRICE_CAUSES`](read-a-runs-record.md#cache_auto_price_causes): Issue #898 — why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, `from: 'none'`).
-- [`CACHE_AUTO_RATES`](read-a-runs-record.md#cache_auto_rates): Issue #898 — the price-file rates `auto`'s choice reads, in the order a `missing` list names them (the price file's own order).
-- [`CACHE_BASES`](read-a-runs-record.md#cache_bases): Issue #600 — how a cache number is known.
-- [`CACHE_CONTROL_FIELDS`](read-a-runs-record.md#cache_control_fields): Caching 3-B (A6, C5): the cache field names Realm itself adds to a request — Anthropic's `cache_control` markers and OpenAI's `prompt_cache_key` — the closed set a recorded refusal names.
-- [`CACHE_DIAGNOSTICS_WORDS`](read-a-runs-record.md#cache_diagnostics_words): Caching 3-M (piece B3a): what Anthropic said in words, for a request that named an earlier answer: `no_divergence` (it found none), `pending` (it has not worked it out yet), `not_returned` (the answer carried nothing Realm can read).
-- [`CACHE_MARKED_PARTS`](read-a-runs-record.md#cache_marked_parts): Caching 3-B (A6): what carried a cache marker, or OpenAI's key, on one request: the `system` text and the prompt's head block (Anthropic's markers, and #896 OpenAI's marks on GPT-5.6 and later), or OpenAI's `key`.
-- [`CACHE_MISS_TYPES`](read-a-runs-record.md#cache_miss_types): Caching 3-M (piece B3a): Anthropic's reasons a request's cache read fell short, and `unknown` for a reason Realm does not know (recorded so, never verbatim).
-- [`CACHE_REFERENCE_SOURCES`](read-a-runs-record.md#cache_reference_sources): Caching 3-M (piece A-1): where a request's copied predecessor (`UsageRecord.reference`) came from: `run`, the run's own record — the first request of the same step's last call there, from an earlier drive (piece A-1b); `earlier_run`, another run's record — the same step's first request there (piece C2 writes it).
-- [`CACHE_REQUEST_SOURCES`](read-a-runs-record.md#cache_request_sources): Issue #600 PR 2 — where a request's cache setting came from (`UsageRecord.cache_requested_source`): `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default).
-- [`CACHE_REQUESTS`](read-a-runs-record.md#cache_requests): Issue #600 PR 2 — what realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`): `off` (asked for nothing; the Anthropic adapter with `--prompt-cache off`, or `auto` choosing off), `lifetime` (asked for a cache lifetime; the Anthropic adapter with `short`, `long`, or `auto` choosing one), `provider_rules` (realm asks for nothing and the provider's own caching rules apply; the OpenAI and o1 adapters; with `cache_key_sent`, realm also sent a cache key — caching 3-B).
-- [`CACHE_STATES`](read-a-runs-record.md#cache_states): Issue #600 — the closed set of per-step cache states.
-- [`CacheAuto`](read-a-runs-record.md#cacheauto): Issue #600 (the lifetime unit), #898 — the record's `cache_auto`: the basis of the choice, the gaps it read, and (#898) where its prices came from — absent when no price was needed (no kept gap).
+- [`CACHE_AUTO_BASES`](read-a-runs-record.md#cache_auto_bases): On what `--prompt-cache auto` chose a request's cache lifetime (`UsageRecord.cache_auto.basis`).
+- [`CACHE_AUTO_PRICE_CAUSES`](read-a-runs-record.md#cache_auto_price_causes): Why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, with `from: 'none'`).
+- [`CACHE_AUTO_RATES`](read-a-runs-record.md#cache_auto_rates): The price-file rates the `auto` choice reads, in the order a `missing` list names them (the price file's own order).
+- [`CACHE_BASES`](read-a-runs-record.md#cache_bases): How a cache number is known: reported by the provider, or not observable (`StepCacheDetail.basis`).
+- [`CACHE_CONTROL_FIELDS`](read-a-runs-record.md#cache_control_fields): The cache fields Realm itself adds to a request: Anthropic's `cache_control` markers and OpenAI's `prompt_cache_key`; the closed set a recorded refusal names.
+- [`CACHE_DIAGNOSTICS_WORDS`](read-a-runs-record.md#cache_diagnostics_words): What Anthropic said in words for a request that named an earlier answer: `no_divergence`, `pending` or `not_returned`.
+- [`CACHE_MARKED_PARTS`](read-a-runs-record.md#cache_marked_parts): What carried a cache marker, or OpenAI's key, on one request (`UsageRecord.cache_marked`).
+- [`CACHE_MISS_TYPES`](read-a-runs-record.md#cache_miss_types): Anthropic's reasons a request's cache read fell short, and `unknown` for a reason Realm does not know, recorded as such and never verbatim (`CacheMissReason.type`).
+- [`CACHE_REFERENCE_SOURCES`](read-a-runs-record.md#cache_reference_sources): Where a request's copied predecessor came from: `run` (this run's record) or `earlier_run` (another run's) (`CacheReference.from`).
+- [`CACHE_REQUEST_SOURCES`](read-a-runs-record.md#cache_request_sources): Where a request's cache setting came from: `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default) (`UsageRecord.cache_requested_source`).
+- [`CACHE_REQUESTS`](read-a-runs-record.md#cache_requests): What Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`).
+- [`CACHE_STATES`](read-a-runs-record.md#cache_states): The words a step's cache state takes (`StepCacheDetail.state`).
+- [`CacheAuto`](read-a-runs-record.md#cacheauto): A request's `cache_auto`: the basis of the `auto` choice, the gaps it read, and where its prices came from.
 - [`CacheAutoBasis`](read-a-runs-record.md#cacheautobasis): One of the words in `CACHE_AUTO_BASES`: what `--prompt-cache auto` based a request's chosen cache lifetime on (`CacheAuto.basis`).
 - [`CacheAutoPriceCause`](read-a-runs-record.md#cacheautopricecause): One of the words in `CACHE_AUTO_PRICE_CAUSES`: why `--prompt-cache auto` chose without prices (`CacheAutoPrices`'s `cause` when `from` is `none`).
-- [`CacheAutoPrices`](read-a-runs-record.md#cacheautoprices): Issue #898 — where `auto`'s choice took its prices: from the runner's price file (`economics`, with the one lifetime it could not cost excluded), or from none (the owner's fallback, by its cause).
+- [`CacheAutoPrices`](read-a-runs-record.md#cacheautoprices): Where the `auto` choice took its prices: the runner's price file (`economics`), or none, with the cause (`CacheAuto.prices`).
 - [`CacheAutoRate`](read-a-runs-record.md#cacheautorate): One of the words in `CACHE_AUTO_RATES`: a price-file rate the `auto` choice reads, as a `missing` list in `CacheAutoPrices` names it.
 - [`CacheBasis`](read-a-runs-record.md#cachebasis): One of the words in `CACHE_BASES`: how a step's cache numbers are known, reported by the provider or not observable (`StepCacheDetail.basis`).
 - [`CacheControlField`](read-a-runs-record.md#cachecontrolfield): One of the words in `CACHE_CONTROL_FIELDS`: a cache field Realm itself adds to a request, as `CacheControlsRejected.fields` names the ones a custom endpoint refused.
-- [`CacheControlsRejected`](read-a-runs-record.md#cachecontrolsrejected): Caching 3-B (A6, E3, HB7): a custom endpoint answered 400 naming a cache field Realm added, and a retry without the cache fields worked.
-- [`CacheDiagnostics`](read-a-runs-record.md#cachediagnostics): Caching 3-M (piece B3a): a request's question to Anthropic about a cache miss, in one of three shapes: it did not ask because Anthropic refused the question in this drive; it asked with no earlier message (a call's first request); or it named an earlier answer, with what came back.
+- [`CacheControlsRejected`](read-a-runs-record.md#cachecontrolsrejected): A custom endpoint answered 400 naming a cache field Realm added, and a retry without the cache fields worked (`UsageRecord.cache_controls_rejected`).
+- [`CacheDiagnostics`](read-a-runs-record.md#cachediagnostics): A request's question to Anthropic about a cache miss, and its answer (`UsageRecord.cache_diagnostics`).
 - [`CacheDiagnosticsWord`](read-a-runs-record.md#cachediagnosticsword): One of the words in `CACHE_DIAGNOSTICS_WORDS`: what Anthropic said in words about a cache miss, for a request that named an earlier answer.
 - [`CacheMarkedPart`](read-a-runs-record.md#cachemarkedpart): One of the words in `CACHE_MARKED_PARTS`: a part of a request that carried a cache marker, or OpenAI's key (`UsageRecord.cache_marked`).
-- [`CacheMissReason`](read-a-runs-record.md#cachemissreason): Caching 3-M (piece B3a): Anthropic's reason for a miss, with its approximate token count if given.
+- [`CacheMissReason`](read-a-runs-record.md#cachemissreason): Anthropic's reason for a cache miss, with its approximate token count when given.
 - [`CacheMissType`](read-a-runs-record.md#cachemisstype): One of the words in `CACHE_MISS_TYPES`: Anthropic's reason a request's cache read fell short (`CacheMissReason.type`).
-- [`CacheReference`](read-a-runs-record.md#cachereference): Caching 3-M (piece A-1): a copy of a request's predecessor — the same step's previous request — made where the predecessor is not an earlier entry of the same stored list: the first request of the step's last call on the run's record (piece A-1b), or the same step's first request in another run (`earlier_run`, piece C2).
+- [`CacheReference`](read-a-runs-record.md#cachereference): A copy of a request's predecessor, the same step's previous request, kept when it is not an earlier entry of the same stored list (`UsageRecord.reference`).
 - [`CacheReferenceSource`](read-a-runs-record.md#cachereferencesource): One of the words in `CACHE_REFERENCE_SOURCES`: where the copy of a request's predecessor was found, in this run or an earlier one (`CacheReference.from`).
 - [`CacheRequest`](read-a-runs-record.md#cacherequest): One of the words in `CACHE_REQUESTS`: what Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`).
 - [`CacheRequestSource`](read-a-runs-record.md#cacherequestsource): One of the words in `CACHE_REQUEST_SOURCES`: whether a request's cache setting was stated with `--prompt-cache` or was the runner's default (`UsageRecord.cache_requested_source`).
 - [`CacheState`](read-a-runs-record.md#cachestate): One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the provider reported (`StepCacheDetail.state`).
-- [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): A recoverable-incapability marker (issue #134), keyed by step name in `RunRecord.capability_blocks`.
-- [`ChannelEvidence`](read-a-runs-record.md#channelevidence): #603 A3a: the account a channel's door says sent an answer, as the channel reports it.
-- [`ClaimRecord`](read-a-runs-record.md#claimrecord): Per-claim liveness record (issue #101).
-- [`Cond`](write-a-handler.md#cond): A condition a way is offered with (PR0-CONTRACT §1, D2 D-4): offered with condition c, it is admitted only when c is met (D3 A-4).
-- [`COND_TAGS`](write-a-handler.md#cond_tags): #627 W: who discharges a condition outside Realm (`client`: the MCP client's own approval prompt).
+- [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): A step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
+- [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).
+- [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).
+- [`Cond`](write-a-handler.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
+- [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
 - [`CondTag`](write-a-handler.md#condtag): Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member).
-- [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): Wrapper format applied to {{ workflow.context.NAME }} template references.
-- [`damagedFileConcerns`](run-and-drive-a-run.md#damagedfileconcerns): issue #719 (C1): whether a damaged run file can concern a workflow — the ONE scope predicate of the keyed fallback scan and of every workflow-scoped read.
+- [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
+- [`damagedFileConcerns`](run-and-drive-a-run.md#damagedfileconcerns): Whether a damaged run file can concern a workflow: the one scope test of the keyed fallback scan and of every workflow-scoped read.
 - [`declareReleaseLine`](write-a-handler.md#declarereleaseline): Declares that a host's store class (or plain-object store) belongs to this copy of realm.
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
 - [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the run_phase from the run record fields.
-- [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): ONE failed drive attempt (issue #401).
-- [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): The drive-failure field on a run (issue #401): a small ring of the most recent failures, plus two counters that do NOT reset when the ring rolls.
-- [`DueExpiry`](write-a-handler.md#dueexpiry): An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95).
+- [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`).
+- [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`).
+- [`DueExpiry`](write-a-handler.md#dueexpiry): An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`).
 - [`ErrorCategory`](write-a-handler.md#errorcategory): The broad kind of failure a `WorkflowError` reports: network, an outside service, the run's state, invalid input, the engine itself, or a resource (`WorkflowError.category`).
 - [`ErrorCode`](define-and-load-a-workflow.md#errorcode): Every code a `WorkflowError` can carry, grouped by its category; a reply's error and the error catalogue name it (`WorkflowError.code`).
 - [`ErrorFacts`](write-a-handler.md#errorfacts): Any typed error facts.
-- [`ErrorFactsByCode`](write-a-handler.md#errorfactsbycode): The error codes whose facts are typed (PR0-CONTRACT Amendments 7, 11): ONE facts type per code, entering with the unit that types it.
+- [`ErrorFactsByCode`](write-a-handler.md#errorfactsbycode): The error codes whose facts are typed: one facts type per code, entering with the unit that types it.
 - [`EvidenceSnapshot`](read-a-runs-record.md#evidencesnapshot): One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered question recorded, with its times, its input and output, its status and its hash.
 - [`ExecutionMode`](define-and-load-a-workflow.md#executionmode): The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer` (`StepDefinition.execution`).
 - [`ExtensionIdentityEntry`](write-a-handler.md#extensionidentityentry): One point-in-time identity of the extension code executing a run.
@@ -2336,54 +2363,54 @@ Names this job reaches whose entry is on another page.
 - [`FinalizerTrigger`](define-and-load-a-workflow.md#finalizertrigger): Terminal outcome(s) a finalizer step matches.
 - [`findEligibleSteps`](run-and-drive-a-run.md#findeligiblesteps): Returns the names of all steps currently eligible for execution.
 - [`GateClaimVerdict`](read-a-runs-record.md#gateclaimverdict): A verdict with a cause that does not belong to it does not compile.
-- [`GateConfig`](define-and-load-a-workflow.md#gateconfig): Gate configuration — choices available to the human reviewer, plus (issue #291) the authored enforce clock (`timeout_seconds`/`on_expiry`/`default_choice`) and the authored notify clock (`reminder_seconds`/`reminder_max`).
+- [`GateConfig`](define-and-load-a-workflow.md#gateconfig): A gate's settings: its choices, who may answer, its messages, its timeout and what happens when it expires, and its reminders.
 - [`InputMapNode`](define-and-load-a-workflow.md#inputmapnode): One node of a step's `input_map`: a dot-path string, a `$literal` value, or an object of further nodes (`StepDefinition.input_map`).
 - [`InspectWay`](write-a-handler.md#inspectway): Read the run's record.
-- [`isCopyOfReadableRun`](run-and-drive-a-run.md#iscopyofreadablerun): issue #719 (F5): whether a damaged run file is a copy of a run whose own file reads — a file holding another run (`mismatched`) whose held run's file reads as that run.
-- [`JsonFileStore`](run-and-drive-a-run.md#jsonfilestore): GLOBAL LOCK ORDER (issue #184): run-file lock BEFORE key lock, never the reverse.
+- [`isCopyOfReadableRun`](run-and-drive-a-run.md#iscopyofreadablerun): Whether a damaged run file is a copy of a run whose own file reads: a file holding another run (`mismatched`) whose held run's file reads as that run.
+- [`JsonFileStore`](run-and-drive-a-run.md#jsonfilestore): The run store that keeps each run as a JSON file, `<runId>.json`, in its runs folder.
 - [`JsonSchema`](define-and-load-a-workflow.md#jsonschema): The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`).
 - [`LiteralNode`](define-and-load-a-workflow.md#literalnode): A node in an input_map tree.
 - [`LoaderWarning`](write-a-handler.md#loaderwarning): A single structured diagnostic.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
-- [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): #627 W (W-r2; MA 3's decision 2026-10-16, Amendment 11's rule — a code's facts enter with its owner): a registered workflow's copy written by a LATER Realm — the copy's path, the definition format it states, and the latest this version reads.
-- [`OUTPUT_SOURCES`](read-a-runs-record.md#output_sources): Issue #625 PR-2a (decision C3; the last prompt's F4, framework §5 E1): where a BARE `auto` step's recorded output came from — the one closed vocabulary of `EvidenceSnapshot.output_source`.
+- [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads.
+- [`OUTPUT_SOURCES`](read-a-runs-record.md#output_sources): Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`OutputSource`](read-a-runs-record.md#outputsource): One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`PendingGate`](read-a-runs-record.md#pendinggate): The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and choices shown to the person, when it opened, and its owner and time limit when set.
-- [`PrefixParts`](read-a-runs-record.md#prefixparts): Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent (64 lowercase hex): `system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request, even when it went out whole; else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker.
-- [`PresentWay`](write-a-handler.md#presentway): #627 W (Amendment 2): show the open question again, as a form in the agent's own call — the MCP door's `present_question`.
-- [`Principal`](read-a-runs-record.md#principal): #627 W (F29): what a door's transport authenticated — an API key by its id (realm-cloud), the one shared token of `realm serve` (no id: it names no one), or the door's typed absence.
-- [`PRINCIPAL_ABSENCES`](read-a-runs-record.md#principal_absences): #627 W (§5.8's table): why a door names no principal.
+- [`PrefixParts`](read-a-runs-record.md#prefixparts): A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and `format` where it had them (`UsageRecord.prefix_parts`).
+- [`PresentWay`](write-a-handler.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
+- [`Principal`](read-a-runs-record.md#principal): What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`).
+- [`PRINCIPAL_ABSENCES`](read-a-runs-record.md#principal_absences): Why a door names no principal (`Principal`'s `absent`).
 - [`PrincipalAbsence`](read-a-runs-record.md#principalabsence): One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer (`Principal`'s `absent`).
 - [`ProtocolConfig`](define-and-load-a-workflow.md#protocolconfig): A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
-- [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again (D3 A-10): no JUDGE — on MCP an elsewhere entry.
-- [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Issue #600 PR 2 — which kind of endpoint a request went to (`UsageRecord.endpoint`): the provider SDK's own default address (`default`) or another one (`custom`: `--base-url`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`).
+- [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
+- [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`).
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).
-- [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question (PR0-CONTRACT §1).
+- [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question.
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).
 - [`RunPhase`](read-a-runs-record.md#runphase): Derived phase of a workflow run.
 - [`RunRecord`](read-a-runs-record.md#runrecord): A run as its store keeps it: its workflow and version, its phase, its params, its evidence entries, the question it waits on and how it ended; a store's `get` returns it inside a `Snapshot`.
 - [`RunRecordFieldProblem`](write-a-handler.md#runrecordfieldproblem): One field a value lacks, or holds with the wrong type.
-- [`RunStepWay`](write-a-handler.md#runstepway): Run one step: an agent step's answer, or (the operator's lever, T-17) an engine step's input.
-- [`SEAL_ARMS`](read-a-runs-record.md#seal_arms): Issue #367: the closed, runtime-visible seal-arm vocabulary — the source of truth for `SealArm` (the `VALID_PHASES` pattern: the const array is the runtime enumeration, the type derives from it).
-- [`SealArm`](read-a-runs-record.md#sealarm): Issue #367: the MECHANICAL identity of the code edge that sealed a run.
-- [`SealedBy`](read-a-runs-record.md#sealedby): Issue #367: who sealed this run — the recorded FACT `deriveRunPhase` prefers over every marker and over the terminal-reason prose.
+- [`RunStepWay`](write-a-handler.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
+- [`SEAL_ARMS`](read-a-runs-record.md#seal_arms): Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`).
+- [`SealArm`](read-a-runs-record.md#sealarm): Which code path sealed a run, named as a fact about the code, never a verdict on the run (`SealedBy.arm`).
+- [`SealedBy`](read-a-runs-record.md#sealedby): Who sealed a run: the recorded fact `deriveRunPhase` reads before every marker and the terminal reason's text (`RunRecord.sealed_by`).
 - [`ServiceDefinition`](define-and-load-a-workflow.md#servicedefinition): A service a workflow declares under `services`: the adapter that calls it, its trust, and its rate limit (`WorkflowDefinition.services`).
 - [`ServiceTrust`](define-and-load-a-workflow.md#servicetrust): The words a workflow's `services: <name>: trust:` takes (`ServiceDefinition.trust`).
-- [`SIDE_FILE_KINDS`](write-a-handler.md#side_file_kinds): issue #719 (F4): the kinds of side file a run keeps beside its file, in its runs folder — exported by name as one const and its type (#729 PR-0, PR0-CONTRACT Amendment 7d).
+- [`SIDE_FILE_KINDS`](write-a-handler.md#side_file_kinds): The kinds of side file a run keeps beside its file in its runs folder: failed attempts, a trace buffer, and sealed traces.
 - [`SideFileKind`](write-a-handler.md#sidefilekind): One of `SIDE_FILE_KINDS`.
-- [`SkipDetail`](read-a-runs-record.md#skipdetail): Reason a step landed in `skipped_steps` (issue #111), keyed by step name in `RunRecord.skip_details`.
-- [`Slot`](write-a-handler.md#slot): A value the caller picks from a closed set (D1 spine 1): printed by each door's own rule (T-7).
-- [`StableBoundary`](write-a-handler.md#stableboundary): Caching 3-B (C1): where a rendered text stops repeating between runs, in UTF-16 code units.
-- [`StepBrief`](write-a-handler.md#stepbrief): What a `run_step` way says about its step (D1 spine 3, 4): the step's kind, its description, the prompt the agent reads (template-resolved), the input schema an agent step's answer must fit, and — a fact kept as data until #516 decides its meaning — the step's handler.
-- [`StepCacheDetail`](read-a-runs-record.md#stepcachedetail): Issue #600 — the per-step roll-up plus the per-request detail.
+- [`SkipDetail`](read-a-runs-record.md#skipdetail): Why a step was skipped, keyed by step name (`RunRecord.skip_details`).
+- [`Slot`](write-a-handler.md#slot): A value the caller picks from a closed set, printed by each door's own rule (`RespondWay.choice`).
+- [`StableBoundary`](write-a-handler.md#stableboundary): Where a rendered text stops repeating between runs, in UTF-16 code units.
+- [`StepBrief`](write-a-handler.md#stepbrief): What a `run_step` way says about its step: its kind, its description, the prompt the agent reads, the input schema an agent's answer must fit, and its handler.
+- [`StepCacheDetail`](read-a-runs-record.md#stepcachedetail): A step's cache facts: its state, how they are known, and each request's detail (`EvidenceSnapshot.cache`).
 - [`StepDefinition`](define-and-load-a-workflow.md#stepdefinition): One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does, how it runs, the steps it waits for, and its input and settings.
 - [`StepDiagnostics`](read-a-runs-record.md#stepdiagnostics): Diagnostic metadata captured during step execution.
-- [`STORED_FILE_CLASSES`](write-a-handler.md#stored_file_classes): What a damaged stored JSON file is (issue #719, R7) — the shipped vocabulary of the registrar's listing, plus the run-only classes: - `empty`: zero bytes, or whitespace only; - `parse`: not JSON, or JSON that is not an object (`shape` says what it is); - `not_a_run`: an object that is not a run record (`fields` names what is missing or mistyped); - `mismatched`: a run record whose `id` is not the file's name (`held_id`, `held_file`); - `legacy`: written by an earlier Realm (`state` without `completed_steps`); - `unreadable`: the file (or the runs folder) cannot be read (`errno`).
+- [`STORED_FILE_CLASSES`](write-a-handler.md#stored_file_classes): The kinds of fault a damaged stored JSON file can have (`UnreadableFileFacts.class`).
 - [`StoredFileClass`](write-a-handler.md#storedfileclass): What is wrong with a damaged stored file: empty, not JSON, not a run, filed under another id, from an earlier Realm, or unreadable (`UnreadableFileFacts.class`).
-- [`StoredFileErrorFacts`](write-a-handler.md#storedfileerrorfacts): The typed facts of a damaged stored file's error (issue #729 PR-0, PR0-CONTRACT Amendments 7, 7b, 7e): one file (`scope: 'file'`, #719's `UnreadableFileFacts`) or a decision over every run that failed closed (`scope: 'files'`, `UnreadableRunFilesFacts`).
-- [`StructuredOutputMeta`](read-a-runs-record.md#structuredoutputmeta): Issue #236 (L0 prevention layer) — the observables-only disclosure vocabulary for a `structured_output: 'strict'`-declared step's attempt.
-- [`SUPPLIER_ROLES`](read-a-runs-record.md#supplier_roles): issue #729 PR-0 (T-17 (ii)): the parties that supply a step's input or output, as an evidence entry records them (`supplied_by`).
+- [`StoredFileErrorFacts`](write-a-handler.md#storedfileerrorfacts): The typed facts of a damaged stored file's error: one file (`scope: 'file'`) or a decision over every run that failed closed (`scope: 'files'`).
+- [`StructuredOutputMeta`](read-a-runs-record.md#structuredoutputmeta): What a step's attempt under `structured_output: 'strict'` records about strict mode: only what Realm can observe, never whether the provider enforced it (`EvidenceSnapshot.structured_output`).
+- [`SUPPLIER_ROLES`](read-a-runs-record.md#supplier_roles): The parties that supply a step's input or output, as an evidence entry records them (`EvidenceSnapshot.supplied_by`).
 - [`SupplierRole`](read-a-runs-record.md#supplierrole): One of the words in `SUPPLIER_ROLES`: who supplied a step's input or output, as an evidence entry records it (`EvidenceSnapshot.supplied_by`).
 - [`TemplateDefinition`](define-and-load-a-workflow.md#templatedefinition): A named reusable step group with parameter placeholders.
 - [`TemplateParam`](define-and-load-a-workflow.md#templateparam): A single parameter declaration in a template.
@@ -2394,19 +2421,19 @@ Names this job reaches whose entry is on another page.
 - [`TriggerFilter`](define-and-load-a-workflow.md#triggerfilter): Post-normalisation form (loader converts shorthand → { all: [...] }).
 - [`TriggerRule`](define-and-load-a-workflow.md#triggerrule): Controls when a step becomes eligible based on its dependencies' outcomes.
 - [`TrustLevel`](define-and-load-a-workflow.md#trustlevel): The words a step's `trust` takes: `auto`, or `human_confirmed` and `human_reviewed`, which open a gate a person answers (`StepDefinition.trust`).
-- [`UnreadableFileFacts`](run-and-drive-a-run.md#unreadablefilefacts): The facts of one damaged stored file (issue #719, R7; #729 PR-0 Amendments 7, 7e): names, classes and type words — never its content.
+- [`UnreadableFileFacts`](run-and-drive-a-run.md#unreadablefilefacts): The facts of one damaged stored file: names, classes and type words, never its content.
 - [`UnreadableRunFilesFacts`](write-a-handler.md#unreadablerunfilesfacts): What `unreadableRunFilesError` carries: the command that did not run, the runs folder, and every run file it could not read.
 - [`UsageRecord`](read-a-runs-record.md#usagerecord): One request a step sent to a model provider, as the record keeps it: its index and start, its token counts and its cache facts (`StepCacheDetail.requests`, `DriveFailureRecord.usage`).
-- [`ValidationErrorFacts`](write-a-handler.md#validationerrorfacts): issue #759 (PR0-CONTRACT Amendment 11 — its first owner of the validation codes): the typed facts of a refused answer — the validator's rows (`errors`, Ajv's own order, capped at `VALIDATION_PROBLEMS_SHOWN`, never re-sorted or de-duplicated), the total before the cap (`error_count`, counted once at the validator and carried — never recounted by a renderer), and, for an agent step's counted rejection, the countdown (`rejections`, `threshold`).
+- [`ValidationErrorFacts`](write-a-handler.md#validationerrorfacts): The typed facts of a refused answer: the validator's rows, their total before the cap, and, for an agent step's counted rejection, the countdown.
 - [`WarningCode`](write-a-handler.md#warningcode): Every warning code the workflow loader can give (`LoaderWarning.code`).
-- [`WAY_VERBS`](write-a-handler.md#way_verbs): PR-0's verbs (option B) and #627 W's `present` (Amendment 2): PR-1 adds resume/drain/purge, PR-2 reclaim/validate/export, PR-7 start.
-- [`WayOn`](write-a-handler.md#wayon): One way on, discriminated on `verb` (PR0-CONTRACT §1).
+- [`WAY_VERBS`](write-a-handler.md#way_verbs): Every verb a way can name, as a closed list (`WayVerb`).
+- [`WayOn`](write-a-handler.md#wayon): One act a party can take on a run, told apart by its `verb`.
 - [`WayVerb`](write-a-handler.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).
 - [`WebhookAuth`](define-and-load-a-workflow.md#webhookauth): How a webhook trigger checks that a request is genuine: a shared secret, GitHub's or Stripe's signature, an HMAC, or none (`WebhookTrigger.auth`).
 - [`WebhookTrigger`](define-and-load-a-workflow.md#webhooktrigger): A workflow's webhook trigger: the path it answers, how it checks requests, which requests it takes, how it drops repeats, and how it maps a payload to run params.
 - [`WorkflowContextEntry`](define-and-load-a-workflow.md#workflowcontextentry): A single named entry in the workflow_context section.
 - [`WorkflowContextSnapshot`](read-a-runs-record.md#workflowcontextsnapshot): Snapshot of a single workflow context entry taken at run start.
-- [`WorkflowCopyFault`](write-a-handler.md#workflowcopyfault): What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2; #819 U2 `no_steps`, U3 `not_legacy_shape`).
+- [`WorkflowCopyFault`](write-a-handler.md#workflowcopyfault): What a registered copy that is a JSON object lacks to be a workflow: a numeric `schema_version`, an `id`, `steps`, or the legacy shape.
 - [`WorkflowDefinition`](define-and-load-a-workflow.md#workflowdefinition): A workflow as the loaders return it: its id, name and version, its params schema, its steps, and its services, protocol and trigger when it has them.
-- [`WorkflowError`](write-a-handler.md#workflowerror): The error Realm throws and records, carrying a code, a category and what the agent does next; a handler throws one with `retryable: true` to have its step tried again when the step has a `retry` block.
+- [`WorkflowError`](write-a-handler.md#workflowerror): The error Realm throws and records, carrying a code, a category and what the agent does next.
 - [`WorkflowErrorOptions`](write-a-handler.md#workflowerroroptions): What a `WorkflowError` is built with: its code and category, what the agent does next, whether it may be tried again, and the optional facts, step and ways on.

@@ -139,8 +139,8 @@ function classifyByAbortedMarker(run: ClassifiableRun): SealArm | undefined {
 }
 
 /**
- * Classify a LEGACY terminal record (one written before `sealed_by` existed) into the arm it would
- * have carried. Returns `undefined` when the record cannot be placed — callers must then refuse to
+ * Classify a terminal record written before `sealed_by` existed into the arm it would have carried.
+ * Returns `undefined` when the record cannot be placed — callers must then refuse to
  * fabricate (`deriveRunPhase` falls back to the pre-#367 ladder; the future migrate vehicle buckets
  * it `unclassifiable` and exits 1).
  *

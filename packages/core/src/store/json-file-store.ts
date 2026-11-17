@@ -145,7 +145,8 @@ export interface ReconcileSummary {
 }
 
 /**
- * issue #719 (B3): one run file the JSON store could not read as a run, as a listing reports it.
+ * One run file the JSON store could not read as a run, as a listing reports it
+ * (`RunListing.unreadable`).
  * `reason` is the fault sentence and `repair` the way out (`realm run list` prints both); `facts`
  * are the damaged file's facts (no content), which a decision over every run names when it fails
  * closed.
@@ -161,9 +162,9 @@ export interface UnreadableRunFileEntry {
   facts: UnreadableFileFacts;
 }
 
-/** issue #719 (B3): what {@link JsonFileStore.listWithDiagnostics} returns — #715 (b) (D-28): the
- *  same {@link Listing} `list` returns (`snapshots`, `read_at`, `consistent_snapshot`), beside the
- *  diagnostics.
+/**
+ * What `JsonFileStore.listWithDiagnostics` returns: the same `Listing` `list` returns, beside the
+ * diagnostics. The `Listing` is `snapshots`, `read_at` and `consistent_snapshot`.
  * @public
  */
 export interface RunListing extends Listing {
@@ -177,6 +178,8 @@ export interface RunListing extends Listing {
 }
 
 /**
+ * The run store that keeps each run as a JSON file, `<runId>.json`, in its runs folder.
+ *
  * GLOBAL LOCK ORDER (issue #184): run-file lock BEFORE key lock, never the reverse.
  * `deleteAllForRun` is the only site that nests them (run-file lock held, key lock acquired
  * inside it, key lock released, then the run file is deleted and the run-file lock released).
