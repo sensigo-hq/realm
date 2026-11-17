@@ -79,14 +79,19 @@ line = lambda o: (json.dumps(o, separators=(',', ':')) + '\\n').encode()
 res = {'sent': count, 'received': 0, 'timedOut': False, 'requestBytes': 0, 'replyBytes': 0}
 buf = b''
 start = time.monotonic()
-signal.alarm(10)
 try:
+    # The alarm is armed after the first reply: the server's start (Node, the stores, the manifest)
+    # is not what this client measures, and on a loaded machine it alone can pass 10 s (2026-11-17:
+    # "0 of 1000 replies, 10 s" twice under concurrent suites, green alone). A start that never
+    # answers is the cell's own 60 s timeout. The batch gets 20 s: the deadlock the cell is for
+    # (the server blocked in its first full write) still fires it.
     os.write(inp, line({'jsonrpc': '2.0', 'id': 'init', 'method': 'initialize', 'params': {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 'c947', 'version': '1'}}}))
     while b'\\n' not in buf:
         chunk = os.read(out, 65536)
         if not chunk: break
         buf += chunk
     buf = buf.split(b'\\n', 1)[1] if b'\\n' in buf else b''
+    signal.alarm(20)
     os.write(inp, line({'jsonrpc': '2.0', 'method': 'notifications/initialized'}))
     batch = b''.join(line({'jsonrpc': '2.0', 'id': 'r%05d-%s' % (i, 'p' * pad), 'method': 'tools/list', 'params': {}}) for i in range(count))
     res['requestBytes'] = len(batch)
@@ -338,8 +343,9 @@ describe('#947 — a piped output reaches a reader that falls behind', () => {
 
   it('(7) `realm mcp` is not changed: a client that writes several pipe buffers of requests before it reads gets every reply', () => {
     // (a) red when mode `mcp` is set blocking too: the server blocks in its first full write, stops
-    // reading, the client blocks in its own write, and the 10 s timeout fires. (b) prints replies
-    // received against requests sent, the request bytes and the elapsed time.
+    // reading, the client blocks in its own write, and the client's 20 s alarm fires (armed after the
+    // first reply, so the server's start under load is not counted). (b) prints replies received
+    // against requests sent, the request bytes and the elapsed time.
     const r = spawnSync('python3', ['-I', mcpBatch, '1000', '200', process.execPath, CLI, 'mcp'], {
       cwd: root,
       env: env(),
