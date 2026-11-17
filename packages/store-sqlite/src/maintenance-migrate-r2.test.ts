@@ -238,7 +238,7 @@ async function writable(home: string): Promise<boolean> {
 }
 
 const SENT_1 =
-  'The outbound table was dropped: the record of 1 reminder(s) and escalation(s) sent is gone.';
+  'The outbound table was dropped: the record of 1 reminder(s) and escalation(s) sent is no longer in the file.';
 const SENT_NONE =
   'The outbound table was dropped; it held no record of a reminder or escalation sent.';
 

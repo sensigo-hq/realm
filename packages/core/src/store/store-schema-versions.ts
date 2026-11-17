@@ -81,7 +81,7 @@ export const REALM_STORE_VERSIONS: StoreSchemaVersions = new Map([
       downgrade: ['DROP TABLE outbound'],
       loses: {
         words:
-          'The outbound table was dropped: the record of {count} reminder(s) and escalation(s) sent is gone.',
+          'The outbound table was dropped: the record of {count} reminder(s) and escalation(s) sent is no longer in the file.',
         count: "SELECT COUNT(*) FROM outbound WHERE status = 'sent'",
         none: 'The outbound table was dropped; it held no record of a reminder or escalation sent.',
       },

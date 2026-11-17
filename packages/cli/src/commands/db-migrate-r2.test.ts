@@ -193,14 +193,15 @@ const STEPPED = (from: number, to: number, loses: string): string =>
   `Stepped ${shown(file)} back from schema version ${from} to ${to}: 1 statement(s) ran, the ` +
   `schema matches version ${to}'s. ${loses}`;
 const SENT = (k: number): string =>
-  `The outbound table was dropped: the record of ${k} reminder(s) and escalation(s) sent is gone.`;
+  `The outbound table was dropped: the record of ${k} reminder(s) and escalation(s) sent is no longer in the file.`;
 const NONE = 'The outbound table was dropped; it held no record of a reminder or escalation sent.';
 const INSTALL = (n: number, r: number, range: string): string =>
-  'Every command of this Realm that uses the store now refuses the file, because it is at schema ' +
+  'Every command of this Realm that uses the store, except `realm db check`, `realm db backup`, ' +
+  '`realm db migrate` and `realm db restore`, now refuses the file, because it is at schema ' +
   `version ${n} and this Realm writes version ${r}. To use it, install a Realm that writes schema ` +
   `version ${n}: npm install -g "@sensigo/realm-cli@${range}" (in a project that lists Realm ` +
-  `packages, give every one of them the same version, one in ${range}: the guide says all Realm ` +
-  'packages must be the same exact version).';
+  `packages, give every one of them the same exact version within ${range}; see "Upgrade every ` +
+  'package together" in the upgrade guide).';
 const UNKNOWN = (value: string): string =>
   `Error: Cannot step back to ${value}: give a whole number that is a schema version this Realm ` +
   'knows (1 to 2).';
@@ -359,9 +360,9 @@ describe('#616 R2 — realm db migrate --to, on the built CLI', { timeout: 120_0
     // Each line a run prints is held to these by the cells above (built from the same templates).
     for (const sentence of [
       "`Stepped <home>/realm.db back from schema version <v> to <v-1>: <s> statement(s) ran, the schema matches version <v-1>'s. <what the step dropped>`",
-      '`The outbound table was dropped: the record of <k> reminder(s) and escalation(s) sent is gone.`',
+      '`The outbound table was dropped: the record of <k> reminder(s) and escalation(s) sent is no longer in the file.`',
       '`The outbound table was dropped; it held no record of a reminder or escalation sent.`',
-      '`Every command of this Realm that uses the store now refuses the file, because it is at schema version <n> and this Realm writes version <r>. To use it, install a Realm that writes schema version <n>: npm install -g "@sensigo/realm-cli@<range>" (in a project that lists Realm packages, give every one of them the same version, one in <range>: the guide says all Realm packages must be the same exact version).`',
+      '``Every command of this Realm that uses the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, now refuses the file, because it is at schema version <n> and this Realm writes version <r>. To use it, install a Realm that writes schema version <n>: npm install -g "@sensigo/realm-cli@<range>" (in a project that lists Realm packages, give every one of them the same exact version within <range>; see "Upgrade every package together" in the upgrade guide).``',
       '`<range>` is `0.49` for schema version 1.',
       '`<home>/realm.db is already at schema version <n>; no step to undo.`',
       '`Cannot step back to <value>: give a whole number that is a schema version this Realm knows (<lowest> to <highest>).`',
@@ -378,6 +379,17 @@ describe('#616 R2 — realm db migrate --to, on the built CLI', { timeout: 120_0
     claim(
       'CHANGELOG.md',
       '- **`realm db migrate --to` steps the store file back to an older schema version and keeps every run** (#616)',
+    );
+    // Each older "to go back, restore" pointer also names the way that keeps the runs.
+    for (const page of [PAGE, GUIDE, 'CHANGELOG.md']) {
+      claim(
+        page,
+        'A file that is already migrated can instead be stepped back without losing a run: `realm db migrate --to 1` (see [Going back without losing runs](',
+      );
+    }
+    claim(
+      'docs/reference/environment-and-files.md',
+      'a step back (`--to`) has `from_format` above `to_format`.',
     );
   });
 });

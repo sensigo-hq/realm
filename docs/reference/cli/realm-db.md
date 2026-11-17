@@ -123,11 +123,11 @@ Each step prints:
 
 `Stepped <home>/realm.db back from schema version <v> to <v-1>: <s> statement(s) ran, the schema matches version <v-1>'s. <what the step dropped>`
 
-Version 2's step back drops the `outbound` table, where `realm agent` records the Slack reminders and escalations it sends: `The outbound table was dropped: the record of <k> reminder(s) and escalation(s) sent is gone.`, where `<k>` counts those recorded as sent, or, when it held none, `The outbound table was dropped; it held no record of a reminder or escalation sent.` Every run is kept.
+Version 2's step back drops the `outbound` table, where `realm agent` and `realm listen --send-reminders` record the Slack reminders and escalations they send: `The outbound table was dropped: the record of <k> reminder(s) and escalation(s) sent is no longer in the file.`, where `<k>` counts those recorded as sent, or, when it held none, `The outbound table was dropped; it held no record of a reminder or escalation sent.` Every run is kept.
 
 After the last step:
 
-`Every command of this Realm that uses the store now refuses the file, because it is at schema version <n> and this Realm writes version <r>. To use it, install a Realm that writes schema version <n>: npm install -g "@sensigo/realm-cli@<range>" (in a project that lists Realm packages, give every one of them the same version, one in <range>: the guide says all Realm packages must be the same exact version).`
+``Every command of this Realm that uses the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, now refuses the file, because it is at schema version <n> and this Realm writes version <r>. To use it, install a Realm that writes schema version <n>: npm install -g "@sensigo/realm-cli@<range>" (in a project that lists Realm packages, give every one of them the same exact version within <range>; see "Upgrade every package together" in the upgrade guide).``
 
 `<range>` is `0.49` for schema version 1.
 
@@ -227,7 +227,7 @@ and then either `The file it replaced and the backup hold the same runs.` or `Th
 
 The counts cover runs only. Not counted: the Slack reminders and escalations already sent, which are not restored and are sent again; `realm listen`'s duplicate-webhook marks; saved replays; refused answers. A run purged after the backup was made comes back, and the record of its purge is gone.
 
-When the backup is at an older schema version than this Realm writes, a last line says what comes next: ``This backup is at schema version <m> and this Realm writes version <r>. To use it with this Realm, run `realm db migrate`; to use it with an older Realm, install that Realm now.`` To go back to an older Realm, restore first with this Realm, then install the older one.
+When the backup is at an older schema version than this Realm writes, a last line says what comes next: ``This backup is at schema version <m> and this Realm writes version <r>. To use it with this Realm, run `realm db migrate`; to use it with an older Realm, install that Realm now.`` To go back to an older Realm, restore first with this Realm, then install the older one. A file that is already migrated can instead be stepped back without losing a run: `realm db migrate --to 1` (see [Going back without losing runs](../guides/upgrade.md#going-back-without-losing-runs)).
 
 A backup made by copying a live `realm.db` without its `realm.db-wal` lacks the newest writes: make backups with `realm db backup`. To undo a restore, restore the kept file: `realm db restore ~/.realm-backups/realm-before-restore-<UTC time>.db`. The kept file's name holds the second it was made, so a second restore in the same second is refused by `realm db backup`'s rule, and changes nothing.
 

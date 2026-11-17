@@ -62,12 +62,14 @@ export function lineOf(file: string, event: MigrateProgress): string {
       return `${file} is already at schema version ${event.schemaVersion}; no step to undo.`;
     case 'install':
       return (
-        'Every command of this Realm that uses the store now refuses the file, because it is at ' +
-        `schema version ${event.schemaVersion} and this Realm writes version ${event.realm}. To use ` +
-        `it, install a Realm that writes schema version ${event.schemaVersion}: npm install -g ` +
+        'Every command of this Realm that uses the store, except `realm db check`, ' +
+        '`realm db backup`, `realm db migrate` and `realm db restore`, now refuses the file, ' +
+        `because it is at schema version ${event.schemaVersion} and this Realm writes version ` +
+        `${event.realm}. To use it, install a Realm that writes schema version ` +
+        `${event.schemaVersion}: npm install -g ` +
         `"@sensigo/realm-cli@${event.range}" (in a project that lists Realm packages, give every one ` +
-        `of them the same version, one in ${event.range}: the guide says all Realm packages must be ` +
-        'the same exact version).'
+        `of them the same exact version within ${event.range}; see "Upgrade every package together" ` +
+        'in the upgrade guide).'
       );
   }
 }
