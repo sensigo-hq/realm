@@ -519,7 +519,8 @@ describe('#616 c8a2 — check 6: the page says what the command does', { timeout
       'Never delete, move or replace `realm.db` or its side files while a Realm process is running.',
       `${THIS}, check 1 (the line the command prints)`,
     ],
-    ['the opening', 'It has three subcommands.', 'commands-registry.ts: dbCommands'],
+    // #616 R1b: four, with `restore` (db-restore-r1b.test.ts runs it).
+    ['the opening', 'It has four subcommands.', 'commands-registry.ts: dbCommands'],
     [
       'the table row',
       '| [`check`](#check) | Reports on the store file without writing it. |',
@@ -530,10 +531,8 @@ describe('#616 c8a2 — check 6: the page says what the command does', { timeout
   });
 
   it("the page's description names the command", () => {
-    claim(
-      'and realm db check, which reports on the store file without writing it',
-      `${THIS}, check 1`,
-    );
+    // #616 R1b: the description names `restore` after it, so the pin no longer starts at "and".
+    claim('realm db check, which reports on the store file without writing it', `${THIS}, check 1`);
   });
 
   it("the page's code table holds the store's code list, and nothing else", () => {

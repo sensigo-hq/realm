@@ -36,7 +36,7 @@
 // A copy that fails the quick check is still published, and refused `STATE_STORE_BACKUP_UNVERIFIED`
 // (DELTAS 31: the source is named as possibly damaged and the copy is kept). Realm writes nothing
 // of its own to `realm.db`; SQLite may first replay a write-ahead log a crashed Realm left beside
-// it, as any open does. Restoring is a documented procedure, never a command.
+// it, as any open does. Restoring is the `'restore'` verb's (#616 R1b, `restore.ts`).
 //
 // `migrate(options)` (c7; §2 "Schema evolution", §3 "The re-stamp", §8; R1) upgrades the file, in order:
 //   0. (R1) when a schema step is pending, the hold (`holdStoreFile`): no other process may have the
@@ -77,6 +77,10 @@
 // the home (no fence, no set-up, no checkpoint). It keeps refusing what makes reading impossible or
 // wrong; every other refusal of the open is an outcome the report gives as a finding, an older file
 // included. `check()` returns the published report (`store-check.ts`).
+//
+// Opened for `'restore'` (#616 R1b), the entry runs the pre-check above (a home with no store file,
+// or an empty one, is refused in the verb's own words) and opens nothing more: the restore proves the
+// backup before it opens the store file. It returns `restore.ts`'s handle, `{ path, restore(), close() }`.
 import { randomBytes } from 'node:crypto';
 import {
   accessSync,
@@ -112,6 +116,7 @@ import { loadSqlite, openDatabase, type DatabaseLike } from './driver.js';
 import { assertLocalFilesystem, SYSTEM_PROBE } from './filesystem-gate.js';
 import { DATABASE_FILE, systemErrorText } from './home.js';
 import { openForCheck, openRealmDb, type OpenSeams } from './open-file.js';
+import { openRestore, type MaintenanceRestoreHome } from './restore.js';
 import { runCheck, type CheckOptions, type CheckReport } from './store-check.js';
 import { staleStampsOf } from './run-scan.js';
 import { migrateSchema, type SchemaStepReport } from './schema-ladder.js';
@@ -176,7 +181,7 @@ export interface MaintenanceCheckHome {
 }
 
 /** The verb a maintenance entry is opened for: its two pre-check refusals carry its code and words. */
-export type MaintenanceVerb = 'backup' | 'migrate' | 'check';
+export type MaintenanceVerb = 'backup' | 'migrate' | 'check' | 'restore';
 
 /** One line `realm db migrate` prints, as `migrate` reaches it. */
 export type MigrateProgress =
@@ -232,6 +237,9 @@ export type MaintenanceSeams = OpenSeams & {
    * window in which another writer can move the file (the cell that holds the version's re-read).
    */
   readonly beforeHold?: () => Promise<void>;
+  /** #616 R1b: renames the restore's copy over `realm.db` (the crash cells sit before it); `renameSync`
+   *  by default. */
+  readonly rename?: (from: string, to: string) => void;
 };
 
 /** A refusal to back up, with the path it is about and the reason. */
@@ -260,6 +268,17 @@ function migrateRefused(message: string, path: string, reason: string): Workflow
 function checkRefused(message: string, path: string, reason: string): WorkflowError {
   return new WorkflowError(message, {
     code: 'STATE_STORE_CHECK_REFUSED',
+    category: 'STATE',
+    agentAction: 'report_to_user',
+    retryable: false,
+    details: { path, reason },
+  });
+}
+
+/** #616 R1b: a refusal of `realm db restore`, with the path it is about and the reason. */
+export function restoreRefused(message: string, path: string, reason: string): WorkflowError {
+  return new WorkflowError(message, {
+    code: 'STATE_STORE_RESTORE_REFUSED',
     category: 'STATE',
     agentAction: 'report_to_user',
     retryable: false,
@@ -308,6 +327,18 @@ function sourceRefused(verb: MaintenanceVerb, source: string, missing: boolean):
           )
         : checkRefused(
             `${source} holds no store yet: there is nothing to check.`,
+            source,
+            `${source} holds no store yet`,
+          );
+    case 'restore':
+      return missing
+        ? restoreRefused(
+            `There is no store file at ${source} to restore over.`,
+            source,
+            `there is no store file at ${source} to restore over`,
+          )
+        : restoreRefused(
+            `${source} holds no store yet: there is nothing to restore over.`,
             source,
             `${source} holds no store yet`,
           );
@@ -378,7 +409,7 @@ function alreadyThere(target: string): WorkflowError {
 }
 
 /** An error the operating system gave a filesystem call (`errno`, `code`). */
-function isSystemError(err: unknown): err is NodeJS.ErrnoException & { errno: number } {
+export function isSystemError(err: unknown): err is NodeJS.ErrnoException & { errno: number } {
   return (
     err instanceof Error &&
     typeof (err as NodeJS.ErrnoException).errno === 'number' &&
@@ -399,14 +430,14 @@ function isRawSqliteError(err: unknown): err is Error & { errcode: number } {
  * The cause's own text: the system's words for a system error; SQLite's message with its code for
  * a SQLite error (the primitive's plain errors already end `(SQLite error N)`); else the message.
  */
-function causeText(err: unknown): string {
+export function causeText(err: unknown): string {
   if (isSystemError(err)) return systemErrorText(err.errno);
   if (isRawSqliteError(err)) return `${err.message} (SQLite error ${err.errcode})`;
   return err instanceof Error ? err.message : String(err);
 }
 
 /** A sentence part that ends where the next sentence starts: one trailing period dropped. */
-function clause(text: string): string {
+export function clause(text: string): string {
   return text.endsWith('.') ? text.slice(0, -1) : text;
 }
 
@@ -511,12 +542,12 @@ function removeTemporary(path: string): void {
  * Removes what a failed run made beside the target: the temporary file and the three files SQLite
  * names from it by appending `-wal`, `-shm` and `-journal`, each as `removeTemporary` does.
  */
-function removeCopy(temporary: string): void {
+export function removeCopy(temporary: string): void {
   for (const suffix of ['', '-wal', '-shm', '-journal']) removeTemporary(`${temporary}${suffix}`);
 }
 
 /** The real `syncFile`: opened, flushed, closed. */
-function syncFileOnDisk(path: string): void {
+export function syncFileOnDisk(path: string): void {
   const fd = openSync(path, 'r+');
   try {
     fsyncSync(fd);
@@ -526,7 +557,7 @@ function syncFileOnDisk(path: string): void {
 }
 
 /** The real `syncFolder`: opened read-only, flushed, closed. */
-function syncFolderOnDisk(path: string): void {
+export function syncFolderOnDisk(path: string): void {
   const fd = openSync(path, 'r');
   try {
     fsyncSync(fd);
@@ -536,7 +567,7 @@ function syncFolderOnDisk(path: string): void {
 }
 
 /** A folder flush the platform does not offer (Windows refuses to open a folder): skipped. */
-const FOLDER_FLUSH_SKIPPED = new Set(['EISDIR', 'EPERM', 'EACCES']);
+export const FOLDER_FLUSH_SKIPPED = new Set(['EISDIR', 'EPERM', 'EACCES']);
 
 /** The copy fails SQLite's quick check: the file it was copied from may be damaged (DELTAS 31). */
 function backupUnverified(copy: string, source: string, firstLine: string): WorkflowError {
@@ -573,7 +604,7 @@ function realPathOf(path: string): string {
 }
 
 /** SQLite's quick check, each row's text. */
-function quickCheckRows(db: DatabaseLike): string[] {
+export function quickCheckRows(db: DatabaseLike): string[] {
   return db
     .prepare('PRAGMA quick_check')
     .all()
@@ -581,7 +612,7 @@ function quickCheckRows(db: DatabaseLike): string[] {
 }
 
 /** A pragma's first column on the copy. */
-function copyPragma(db: DatabaseLike, sql: string): unknown {
+export function copyPragma(db: DatabaseLike, sql: string): unknown {
   const row = db.prepare(sql).get();
   return row === undefined ? undefined : Object.values(row)[0];
 }
@@ -676,20 +707,27 @@ export function backupsFolderOf(home: string): string {
   return join(dirname(home), BACKUPS_FOLDER);
 }
 
-/** A default backup's name: the schema versions before and after, and the UTC second it was made. */
-function backupName(from: number, to: number, at: Date): string {
-  const stamp = at
+/**
+ * The UTC second `at` in a kept file's name, `YYYYMMDDTHHMMSSZ`: the one home of the format, for
+ * migrate's default backup and the restore's kept files (#616 R1b).
+ */
+export function backupStamp(at: Date): string {
+  return at
     .toISOString()
     .replace(/[-:]/g, '')
     .replace(/\.\d+Z$/, 'Z');
-  return `realm-v${from}-to-v${to}-${stamp}.db`;
+}
+
+/** A default backup's name: the schema versions before and after, and the UTC second it was made. */
+function backupName(from: number, to: number, at: Date): string {
+  return `realm-v${from}-to-v${to}-${backupStamp(at)}.db`;
 }
 
 /**
  * Makes `folder` owner-only (0700) when it is missing, and checks that a file can be written in it;
  * the system's reason when either fails (a file where the folder should be: "not a directory").
  */
-function makeFolder(folder: string): string | undefined {
+export function makeFolder(folder: string): string | undefined {
   try {
     mkdirSync(folder, { mode: 0o700 });
   } catch (err) {
@@ -744,7 +782,7 @@ function appendRecord(folder: string, record: MigrateRecord): MigrateProgress {
 }
 
 /** Another process has the store file open: a schema step is not run under it (R1). */
-function storeInUse(source: string): WorkflowError {
+export function storeInUse(source: string): WorkflowError {
   return new WorkflowError(
     `Another process has ${source} open (a Realm agent, server, MCP server or command, or another ` +
       'program such as a SQLite browser). Stop it and run this again. Nothing was changed.',
@@ -814,6 +852,10 @@ export function openRealmHomeForMaintenance(options: {
   readonly home?: string;
   readonly verb: 'check';
 }): Promise<MaintenanceCheckHome>;
+export function openRealmHomeForMaintenance(options: {
+  readonly home?: string;
+  readonly verb: 'restore';
+}): Promise<MaintenanceRestoreHome>;
 export function openRealmHomeForMaintenance(options?: {
   readonly home?: string;
   readonly verb?: 'backup' | 'migrate';
@@ -821,10 +863,10 @@ export function openRealmHomeForMaintenance(options?: {
 export function openRealmHomeForMaintenance(options: {
   readonly home?: string;
   readonly verb?: MaintenanceVerb;
-}): Promise<MaintenanceHome | MaintenanceCheckHome>;
+}): Promise<MaintenanceHome | MaintenanceCheckHome | MaintenanceRestoreHome>;
 export function openRealmHomeForMaintenance(
   options: { readonly home?: string; readonly verb?: MaintenanceVerb } = {},
-): Promise<MaintenanceHome | MaintenanceCheckHome> {
+): Promise<MaintenanceHome | MaintenanceCheckHome | MaintenanceRestoreHome> {
   return openMaintenance(options, {});
 }
 
@@ -834,17 +876,21 @@ export function openMaintenance(
   seams: MaintenanceSeams,
 ): Promise<MaintenanceCheckHome>;
 export function openMaintenance(
+  options: { readonly home?: string; readonly verb: 'restore' },
+  seams: MaintenanceSeams,
+): Promise<MaintenanceRestoreHome>;
+export function openMaintenance(
   options: { readonly home?: string; readonly verb?: 'backup' | 'migrate' },
   seams: MaintenanceSeams,
 ): Promise<MaintenanceHome>;
 export function openMaintenance(
   options: { readonly home?: string; readonly verb?: MaintenanceVerb },
   seams: MaintenanceSeams,
-): Promise<MaintenanceHome | MaintenanceCheckHome>;
+): Promise<MaintenanceHome | MaintenanceCheckHome | MaintenanceRestoreHome>;
 export async function openMaintenance(
   options: { readonly home?: string; readonly verb?: MaintenanceVerb },
   seams: MaintenanceSeams,
-): Promise<MaintenanceHome | MaintenanceCheckHome> {
+): Promise<MaintenanceHome | MaintenanceCheckHome | MaintenanceRestoreHome> {
   const verb = options.verb ?? 'backup';
   const home = realmHomePath(options.home);
   const source = join(home, DATABASE_FILE);
@@ -857,6 +903,25 @@ export async function openMaintenance(
   }
   if (size === 0) throw sourceRefused(verb, source, false);
   if (verb === 'check') return openCheck(home, source, seams);
+  if (verb === 'restore') return openRestore(home, source, seams);
+  return (await openStore(home, source, seams)).handle;
+}
+
+/** The store file opened for `backup` and `migrate`: its connection and the handle on it. */
+export interface OpenedStore {
+  readonly db: RealmDb;
+  readonly handle: MaintenanceHome;
+}
+
+/**
+ * The open of the store file for `backup` and `migrate`, and for the restore of a store the open reads
+ * (#616 R1b), which needs the connection itself: R1's hold and the counts run on it.
+ */
+export async function openStore(
+  home: string,
+  source: string,
+  seams: MaintenanceSeams,
+): Promise<OpenedStore> {
   const db = await openRealmDb(home, { clock: systemClock, acceptOlderSchema: true }, seams);
   let schemaVersion: number;
   try {
@@ -1088,7 +1153,7 @@ export async function openMaintenance(
       db.close();
     },
   };
-  return handle;
+  return { db, handle };
 }
 
 /**

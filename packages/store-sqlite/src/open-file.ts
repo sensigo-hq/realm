@@ -691,6 +691,16 @@ function openFileThroughTheLoader(
   return openDatabase(path, options);
 }
 
+/**
+ * #616 R1b: a connection on `path` through the one loader, with none of the open's checks, for
+ * `realm db restore` (`restore.ts`) alone: the scratch copy of a backup it checks before the store's
+ * own check runs on it. Only the open's own error is mapped; SQLite's errors on the connection stay
+ * raw, so the restore reads their codes.
+ */
+export function openRawConnection(path: string, seams: OpenSeams = {}): DatabaseLike {
+  return connect(path, seams.openFile ?? openFileThroughTheLoader, false);
+}
+
 /** Steps 1 and 2 of the open and of the check: the loader's floor and the filesystem gate. */
 function gate(home: string, seams: OpenSeams): FilesystemProbe {
   (seams.loadSqlite ?? loadSqlite)();

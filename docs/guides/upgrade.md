@@ -82,7 +82,7 @@ Do this, in this order:
 
 If the migrate stops with an error, the file is still at version 1 with nothing of the step in it, and the backup it made first is where its first line says. Run the command again once the cause is fixed: each copy in the backups folder is named by the second it was made. With `--backup <path>`, the command never replaces a file, so give a new path when you run it again. The error names the cause: an evidence entry that no longer matches its stored hash means a stored run was changed outside Realm, and the step cannot run until that is fixed (restore the file from an earlier backup of your own), then run the command again.
 
-A home the new version creates, or that `realm run import` fills, is created at version 2 and needs no migrate. An older Realm refuses a version-2 file with the line quoted in step 1, exits with code 1 and changes nothing. To go back, restore the backup in place of `realm.db`, delete `realm.db-wal` and `realm.db-shm` in the home and reinstall the older Realm; writes made after the backup are lost.
+A home the new version creates, or that `realm run import` fills, is created at version 2 and needs no migrate. An older Realm refuses a version-2 file with the line quoted in step 1, exits with code 1 and changes nothing. To go back, run `realm db restore <backup>` with this Realm first, then reinstall the older Realm: writes made after the backup are not in the restored file, but are in the copy the command keeps of the file it replaced. See [`realm db restore`](../reference/cli/realm-db.md#restore).
 
 ## The agent no longer answers gates by default
 
