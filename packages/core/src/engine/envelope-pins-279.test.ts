@@ -154,7 +154,8 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
     // #625 PR-2a, decision C170: the way out is true for the kind of ending — this record is
     // completed, so nothing is owed and `realm run resume` (which refuses it) is not offered.
     expect(result.errors[0]).toBe(
-      `Run '${zombie.id}' is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.`,
+      // #625 A1b-1: how it ended, once, then the way out alone.
+      `Run '${zombie.id}' is terminal (completed); cannot submit a gate response — It completed. Nothing is owed.`,
     );
   });
 });

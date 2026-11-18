@@ -127,8 +127,11 @@ describe('#625 PR-2a — the realm agent loop', () => {
     expect(out).toContain(
       ', taken by other@host (from the OS user, via agent); the record has not changed',
     );
+    // #922 P2-2: the agent step's claim has no deadline — its state, its conditions, then the
+    // command with the claim's stamp.
+    const since = (await store.get(run.id)).record.claims?.['review']?.since;
     expect(out).toContain(
-      `If the program that took it is gone: realm run reclaim ${run.id} --step review --force`,
+      `the record has not changed for 0s. 'review' is held since ${since}; wait for it, or free it if its program has stopped. Its claim has no deadline, so whether its program still runs is not known; if it does, the step runs twice. It is not declared idempotent, so running it again may repeat its effects. To free it, run: realm run reclaim ${run.id} --step review --claimed-at ${since} --force`,
     );
     expect(out).not.toContain('likely died');
     // decision C179 (round 23): the run did not end — the in-flight line is the drive's last, and no

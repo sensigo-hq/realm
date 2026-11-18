@@ -23,7 +23,7 @@ const workflowStore = (def: WorkflowDefinition) => ({
 });
 
 describe('#625 PR-2a — realm agent loop words', () => {
-  it('a claim past its deadline: "its runner likely died" is said, with the reclaim command', async () => {
+  it('a claim past its deadline: its deadline passed and no result is recorded, then the reclaim command (#922 P2-2)', async () => {
     const def: WorkflowDefinition = {
       id: 'stale-wf',
       name: 'stale',
@@ -66,7 +66,12 @@ describe('#625 PR-2a — realm agent loop words', () => {
     const out = logSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
     expect(out).toContain(
-      `• Step 'review' has been in flight since 1999-12-31T23:59:00.000Z, taken by a program whose name was not recorded; the record has not changed for 0s. Its claim is past its deadline (its runner likely died). If the program that took it is gone: realm run reclaim ${run.id} --step review --force`,
+      `• Step 'review' has been in flight since 1999-12-31T23:59:00.000Z, taken by a program whose name was not recorded; the record has not changed for 0s. 'review' was claimed and its deadline passed at 2000-01-01T00:00:00.000Z; no result is recorded for it. It is not declared idempotent, so running it again may repeat its effects. To free it, run: realm run reclaim ${run.id} --step review --claimed-at 1999-12-31T23:59:00.000Z --force`,
+    );
+    // #922 P2-2 (item 4): the hand-back says a step past its deadline is to be freed, never waited
+    // for. (a) red when it says "no longer in flight" for it; (b) prints the drive's lines.
+    expect(out).toContain(
+      `  Go on:     once 'review' is freed (realm run reclaim ${run.id} prints its command), realm agent --run-id ${run.id} --provider <provider> --model <model>`,
     );
   });
 

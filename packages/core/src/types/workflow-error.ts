@@ -1,7 +1,7 @@
 // Structured, categorized error class used throughout the engine.
 import type { LoaderWarning } from '../workflow/diagnostics.js';
 import type { UnreadableFileFacts, UnreadableRunFilesFacts } from '../store/run-file.js';
-import type { WayOn } from '../engine/ways.js';
+import type { Unavailable, WayOn } from '../engine/ways.js';
 import type { ErrorObject } from 'ajv';
 import { brandClass, REALM_BRAND } from '../brand.js';
 
@@ -391,6 +391,12 @@ export interface WorkflowErrorOptions {
    * them (they replace the remedy clause a message or untyped `details` carried).
    */
   remedy?: readonly WayOn[];
+  /**
+   * #922: the judged refusal this error carries, as `EngineReply.refusal` carries one — its code,
+   * typed facts and remedies. Set by `reclaimStep`'s judge (a call that passed `force: true`).
+   * @beta
+   */
+  refusal?: Unavailable;
   stepId?: string;
   attempt?: number;
   retry_after?: number; // seconds; set only for SERVICE_RATE_LIMITED errors
@@ -431,6 +437,11 @@ export class WorkflowError extends Error {
   readonly about?: string;
   /** issue #729 PR-0: the ways that lead on from this error (a reply's `error.remedy`). */
   readonly remedy?: readonly WayOn[];
+  /**
+   * #922: the judged refusal this error carries (its code, typed facts and remedies).
+   * @beta
+   */
+  readonly refusal?: Unavailable;
   readonly stepId?: string;
   readonly attempt: number;
   readonly retry_after?: number;
@@ -456,8 +467,10 @@ export class WorkflowError extends Error {
    * itself contain a semicolon (the #413 four-clause text does), so splitting the joined string
    * back apart is not a recoverable operation. Kept here instead, and the render walks the array.
    *
-   * ABSENT rather than `[]` on a single-error throw, so a caller can tell "there was one" from
-   * "there was a list" without counting.
+   * Absent when the throw was not a collector's (a plain `new WorkflowError(message)`); a
+   * collector attaches its list even when it holds one problem (`if (errors.length > 0)` in the
+   * loader), so a caller tells a collected throw from a plain one by the field's presence, never
+   * by its length (#495 §2: this said "absent on a single-error throw").
    */
   errors?: readonly string[];
 
@@ -472,6 +485,7 @@ export class WorkflowError extends Error {
     if (options.facts !== undefined) this.facts = options.facts;
     if (options.about !== undefined) this.about = options.about;
     if (options.remedy !== undefined) this.remedy = options.remedy;
+    if (options.refusal !== undefined) this.refusal = options.refusal;
     if (options.stepId !== undefined) this.stepId = options.stepId;
     this.attempt = options.attempt ?? 1;
     if (options.retry_after !== undefined) this.retry_after = options.retry_after;

@@ -8,16 +8,11 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as core from '../index.js';
-import {
-  submitHumanResponse,
-  terminalAnswerRefusalMessage,
-  withEndedRunWays,
-} from './execution-loop.js';
+import { submitHumanResponse, terminalAnswerRefusalMessage } from './execution-loop.js';
 import { abandonRun } from './abandon-run.js';
 import { resumeWay } from './pending.js';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import type { RunRecord } from '../types/run-record.js';
-import type { EngineReply } from '../types/response-envelope.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import * as redaction from '../utils/redaction.js';
 
@@ -37,7 +32,6 @@ const TWO: WorkflowDefinition = {
 const REASON = 'wrong run\nPhase: completed\u001b[31m RED';
 /** The reason as the one renderer writes it: JSON, its controls escaped, on one line. */
 const SHOWN = '"wrong run\\nPhase: completed\\u001b[31m RED"';
-const SENTENCE = `An operator ended this run, with the reason ${SHOWN}; to run the work again, start a new run.`;
 
 /** The core exports F2 adds, read without a named import so the cells can run before they exist. */
 const F2 = core as unknown as {
@@ -122,39 +116,11 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
     // (a) red when the refusal offers `realm run resume`, drops the reason, or prints it raw;
     //     (b) prints the refusal.
     expect({ error: reply.errors[0], code: reply.error_code }).toEqual({
-      error: `Run '${run.id}' is terminal (abandoned); cannot submit a gate response — an operator ended this run, with the reason ${SHOWN}; to run the work again, start a new run; 'realm run purge ${run.id}' previews what it would remove.`,
+      // #625 A1b-1: how it ended (the reason as given, never who), then the way out.
+      error: `Run '${run.id}' is terminal (abandoned); cannot submit a gate response — It was abandoned, with the reason ${SHOWN}. To run the work again, start a new run; 'realm run purge ${run.id}' previews what it would remove.`,
       code: 'STATE_RUN_TERMINAL',
     });
     expect(terminalAnswerRefusalMessage(run, TWO, new Date())).not.toContain('realm run resume');
-  });
-
-  it('an ended-run reply (execute_step, advance_run, start_run) on a run an operator ended ends with the ending; a failed one with the offer (preservation)', async () => {
-    const reply = (hint: string): EngineReply => ({
-      command: 'x',
-      run_id: 'r',
-      run_version: 1,
-      status: 'ok',
-      data: {},
-      evidence: [],
-      warnings: [],
-      errors: [],
-      context_hint: hint,
-      run_phase: 'abandoned',
-      reply_kind: 'ok',
-      ways: [],
-      unavailable: [],
-    });
-    const abandoned = await ended('abandoned');
-    const failed = await ended('failed');
-    // (a) red when the abandoned reply offers the undo or drops the ending, or the failed one stops
-    //     offering it; (b) prints both hints.
-    expect({
-      abandoned: withEndedRunWays(reply('Ended.'), abandoned, TWO, new Date()).context_hint,
-      failed: withEndedRunWays(reply('Ended.'), failed, TWO, new Date()).context_hint,
-    }).toEqual({
-      abandoned: `Ended. ${SENTENCE}`,
-      failed: `Ended. To make the failed step runnable again: realm run resume ${failed.id} --from a`,
-    });
   });
 
   it('a legacy abandoned record (no sealed_by) is an operator’s ending too: no offer, the sentence', () => {
@@ -176,8 +142,10 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
       sentence: F2.operatorEndingSentence?.(legacy),
     }).toEqual({
       offer: '<none>',
+      // #625 A1b-1 (correction 1): an abandoned record with no seal keeps its reason, and says how
+      // it is known.
       sentence:
-        'An operator ended this run, with the reason "stopped by hand"; to run the work again, start a new run.',
+        'It was abandoned, with the reason "stopped by hand" (worked out from its record; no seal was written). To run the work again, start a new run.',
     });
   });
 });

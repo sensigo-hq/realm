@@ -624,11 +624,18 @@ describe('#715 (b) 04 §E — the CHANGELOG', () => {
     );
     const parameterNames = /as a parameter `now`: (.*?); and /.exec(line)?.[1] ?? '';
     const fieldNames = /; and (.*?) take it as a field `now`/.exec(line)?.[1] ?? '';
+    // The line is a released entry and stays as it is: the names a later release deleted are taken
+    // out of it here (a rename still shows: one name gone, one new).
+    // #625 A1b-1 deleted them (their callers moved to `endedRunWaysSentence`).
+    const REMOVED_SINCE = new Set(['withEndedRunWays', 'withPendingCleanup']);
     expect({
       byParameter: [...new Set(byParameter)].sort(),
       byField: [...new Set(byField)].sort(),
     }).toEqual({
-      byParameter: [...parameterNames.matchAll(/`(\w+)`/g)].map((m) => m[1]).sort(),
+      byParameter: [...parameterNames.matchAll(/`(\w+)`/g)]
+        .map((m) => m[1])
+        .filter((name) => !REMOVED_SINCE.has(name!))
+        .sort(),
       byField: [...fieldNames.matchAll(/`(\w+)` \(/g)].map((m) => m[1]).sort(),
     });
   });

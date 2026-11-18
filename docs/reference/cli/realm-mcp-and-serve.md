@@ -140,7 +140,7 @@ realm serve: --shutdown-grace 1 ran out. Requests cut: 1.
 
 After a second signal the line is `realm serve: a second signal arrived. Requests cut: 1.`
 
-A request cut while it ran an `auto` step leaves that step taken by `realm serve`: `realm run inspect <run>` shows it in progress, and `realm run list --stuck` does not list the run while that claim is healthy (`realm run reclaim <run>` shows it healthy, with its deadline). `realm run reclaim <run> --step <step> --force` frees it and warns that the step's side effects may repeat; `realm run inspect` then shows the step owed, with the `realm run advance <run>` that runs it again.
+A request cut while it ran an `auto` step leaves that step taken by `realm serve`: `realm run inspect <run>` shows it in progress, and `realm run list --stuck` does not list the run while that claim is healthy (`realm run reclaim <run>` shows it healthy, with its deadline and the command that frees it). That command, run as printed, frees it, after saying that its deadline is ahead and the step runs twice if its program is still running (changed after version 0.50.0: the command carries the claim's time, `--claimed-at <time>`, and `realm run reclaim <run> --step <step> --force` without it is refused inside the claim's window); `realm run inspect` then shows the step owed, with the `realm run advance <run>` that runs it again.
 
 Every paragraph above in this section was added or changed after version 0.49.0.
 

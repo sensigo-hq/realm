@@ -194,8 +194,8 @@ export function omitClaim(
 /**
  * How alive a single in-progress claim is: `healthy`, `claim_stale` or `claim_unknown_age`. The
  * states:
- * - `healthy` — a concrete deadline that has not yet passed (a live runner is presumed on it).
- * - `claim_stale` — a concrete deadline that has passed (the runner is presumed dead).
+ * - `healthy` — a concrete deadline that has not yet passed.
+ * - `claim_stale` — a concrete deadline that has passed.
  * - `claim_unknown_age` — no claim record, or a `null` deadline (agent / finalizer-bearing /
  *   legacy run). Detect-only, human-judged, NEVER auto-reclaimed.
  *

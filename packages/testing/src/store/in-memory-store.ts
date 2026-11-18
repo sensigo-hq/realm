@@ -53,6 +53,22 @@ import {
   type OutboundMarkRequest,
   type OutboundResult,
   type PendingGate,
+  type CallbackClaimRequest,
+  type CallbackClaimResult,
+  type CallbackFreezeResult,
+  type CallbackItem,
+  type CallbackMarkRequest,
+  type CallbackMarkResult,
+  type CallbackRow,
+  type CallbackStore,
+  type CallbackView,
+  callbackRowOf,
+  callbackViewOf,
+  checkCallbackRequest,
+  claimCallback,
+  dueCallbacks,
+  freezeCallbackBody,
+  markCallback,
 } from '@sensigo/realm';
 import { REALM_TESTING_BRAND } from '../brand.js';
 
@@ -203,6 +219,95 @@ export class InMemoryOutboundLedger implements OutboundLedger {
   }
 }
 
+/** R1.3 callback A1b: the run facts `due` and a claim need: finished, and when it last changed. */
+type CallbackRunFacts = { readonly finished: boolean; readonly updatedAt: string };
+
+/** A callback row's bytes: the UTF-8 length of the address and body it holds. */
+function callbackBytes(row: CallbackRow | undefined): number {
+  if (row === undefined) return 0;
+  return Buffer.byteLength(row.url ?? '', 'utf8') + Buffer.byteLength(row.body ?? '', 'utf8');
+}
+
+/**
+ * R1.3 callback A1a and A1b: the in-memory callback store (an `InMemoryStore`'s `callbacks` member).
+ * `create` writes a new run's row through `register`, in the same synchronous stretch as the run.
+ * The sender's methods check the request, take their reading when they take one, read the row and
+ * the run and write the row core returns, all in one synchronous stretch. Exported from this module
+ * only, not from the package.
+ */
+export class InMemoryCallbackStore implements CallbackStore {
+  private readonly rows = new Map<string, CallbackRow>();
+
+  constructor(
+    private readonly clock: Clock,
+    private readonly runOf: (runId: string) => CallbackRunFacts | undefined,
+  ) {}
+
+  /** Whether any row holds `webhookId`. */
+  holds(webhookId: string): boolean {
+    return [...this.rows.values()].some((row) => row.webhook_id === webhookId);
+  }
+
+  /** Writes a new run's row: called inside `create`'s step only. */
+  register(row: CallbackRow): void {
+    this.rows.set(row.run_id, row);
+  }
+
+  async read(runId: string): Promise<CallbackView | undefined> {
+    const row = this.rows.get(runId);
+    return row === undefined ? undefined : callbackViewOf(row);
+  }
+
+  async countPending(): Promise<number> {
+    return [...this.rows.values()].filter((row) => row.status === 'pending').length;
+  }
+
+  async due(limit: number): Promise<CallbackItem[]> {
+    checkCallbackRequest({ kind: 'due', limit });
+    const at = takeRawReading(this.clock);
+    const finished = (runId: string): boolean => this.runOf(runId)?.finished === true;
+    return dueCallbacks([...this.rows.values()], finished, at, limit);
+  }
+
+  async claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult> {
+    checkCallbackRequest({ kind: 'claim', token: request.token });
+    const at = takeRawReading(this.clock);
+    const { result, write } = claimCallback(this.rows.get(runId), this.runOf(runId), request, at);
+    if (write !== undefined) this.rows.set(runId, write);
+    return result;
+  }
+
+  async freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult> {
+    checkCallbackRequest({ kind: 'freeze', token, body });
+    const { result, write } = freezeCallbackBody(this.rows.get(runId), token, body);
+    if (write !== undefined) this.rows.set(runId, write);
+    return result;
+  }
+
+  async mark(
+    runId: string,
+    token: string,
+    result: CallbackMarkRequest,
+  ): Promise<CallbackMarkResult> {
+    checkCallbackRequest({ kind: 'mark', token, result });
+    const at = result.kind === 'retry' ? takeRawReading(this.clock) : undefined;
+    const marked = markCallback(this.rows.get(runId), token, result, at);
+    if (marked.write !== undefined) this.rows.set(runId, marked.write);
+    return marked.result;
+  }
+
+  async statAllForRun(runId: string): Promise<{ bytes: number }> {
+    return { bytes: callbackBytes(this.rows.get(runId)) };
+  }
+
+  /** Deletes the run's row; a run without one is zero, never an error. */
+  async deleteAllForRun(runId: string): Promise<ArtifactDeletionReport> {
+    const bytes = callbackBytes(this.rows.get(runId));
+    this.rows.delete(runId);
+    return { bytes_deleted: bytes };
+  }
+}
+
 /** In-memory implementation of RunStore. Uses a Map keyed by run ID. No I/O, no locking. */
 export class InMemoryStore implements RunStore {
   private readonly runs = new Map<string, RunRecord>();
@@ -254,6 +359,9 @@ export class InMemoryStore implements RunStore {
    */
   readonly outbound: OutboundLedger | null;
 
+  /** R1.3 callback A1a: the callback store this store keeps, or `null` when built with `callbacks: null`. */
+  readonly callbacks: InMemoryCallbackStore | null;
+
   /**
    * @param options.clock The store's clock (#715 (a), D-3); defaults to core's shared
    *   `systemClock`. This is a defaulted AUTHORITY — it reads nothing at construction — not a
@@ -263,8 +371,15 @@ export class InMemoryStore implements RunStore {
    *   `null`, the store keeps no claim leases.
    * @param options.outbound #597 D1a: `null` builds the store without an outbound ledger; unset, it
    *   keeps one.
+   * @param options.callbacks R1.3 callback A1a: `null` builds the store without a callback store; unset, it
+   *   keeps one.
    */
-  constructor(options?: { clock?: Clock; leases?: LeasePort | null; outbound?: null }) {
+  constructor(options?: {
+    clock?: Clock;
+    leases?: LeasePort | null;
+    outbound?: null;
+    callbacks?: null;
+  }) {
     this.clock = options?.clock ?? systemClock;
     if (options?.leases !== undefined) this.leases = options.leases;
     this.outbound =
@@ -276,6 +391,15 @@ export class InMemoryStore implements RunStore {
             return run !== undefined && openQuestionOf(run) !== undefined
               ? run.pending_gate
               : undefined;
+          });
+    this.callbacks =
+      options?.callbacks === null
+        ? null
+        : new InMemoryCallbackStore(this.clock, (runId) => {
+            const run = this.runs.get(runId);
+            return run === undefined
+              ? undefined
+              : { finished: run.terminal_state === true, updatedAt: run.updated_at };
           });
   }
 
@@ -323,6 +447,20 @@ export class InMemoryStore implements RunStore {
   }
 
   async create(options: CreateRunOptions): Promise<CreateResult> {
+    // R1.3 callback A1a: a malformed `callback` throws before any reading; a store without a callback store
+    // refuses one; an idempotent match ignores it (below).
+    const callback = options.callback;
+    if (callback !== undefined) {
+      checkCallbackRequest({ kind: 'register', callback });
+      if (this.callbacks === null) {
+        throw new WorkflowError('This store keeps no callback store: `callback` cannot be given.', {
+          code: 'VALIDATION_OPTION_INVALID',
+          category: 'VALIDATION',
+          agentAction: 'report_to_user',
+          retryable: false,
+        });
+      }
+    }
     // Idempotency: a key match applies the re-encounter policy, like JsonFileStore.
     // issue #558 PR-C: the id of the run this create SUPERSEDES, when it supersedes one — the
     // in-memory twin of JsonFileStore's `supersede()` parameter. Stays undefined when the mapped
@@ -398,7 +536,21 @@ export class InMemoryStore implements RunStore {
       updated_at: now,
       terminal_state: false,
     };
+    // R1.3 callback A1a: the row in the same step as the run, both or neither; a held webhook id writes neither.
+    if (callback !== undefined && this.callbacks!.holds(callback.webhook_id)) {
+      throw new WorkflowError(
+        'This `callback.webhook_id` is already registered; no run was created.',
+        {
+          code: 'VALIDATION_OPTION_INVALID',
+          category: 'VALIDATION',
+          agentAction: 'report_to_user',
+          retryable: false,
+        },
+      );
+    }
     this.runs.set(record.id, record);
+    if (callback !== undefined)
+      this.callbacks!.register(callbackRowOf(record.id, record.workflow_id, callback, at));
     if (options.idempotencyKey !== undefined) {
       this.keyIndex.set(`${options.workflowId}\0${options.idempotencyKey}`, record.id);
     }

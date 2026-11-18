@@ -1274,7 +1274,7 @@ export interface WorkflowContextSnapshot {
  */
 export interface ClaimRecord {
   /**
-   * ISO-8601 timestamp after which the claim is presumed stale (a likely-dead runner), or
+   * ISO-8601 timestamp after which the claim's deadline has passed (no result is recorded), or
    * `null` when the claim has no reliable wall-clock bound — an `execution: agent` step (its
    * dispatcher returns instantly; `timeout_seconds` is advisory), or ANY step in a
    * finalizer-bearing workflow (its claim can legitimately span the terminal finalizer drain).

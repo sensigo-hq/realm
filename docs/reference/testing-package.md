@@ -2,7 +2,7 @@
 
 <!-- description: Reference for @sensigo/realm-testing, the package for testing workflows, handlers, adapters and stores: every value and type it exports. -->
 
-`@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 46 values and 50 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
+`@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 48 values and 53 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
 
 ```bash
 npm install --save-dev @sensigo/realm-testing
@@ -26,9 +26,10 @@ To test a workflow from the command line, with no test file, see [Test a workflo
 | [Clocks and test locations](#clocks-and-test-locations)  | `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`, `createTestHome`                                                                                                                                                                                                                                                                                                                                                                                                             |
 | [Store contracts](#store-contracts)                      | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS`, `storeClockContract`, `STORE_CLOCK_LAWS`, `leasePortContract`, `LEASE_PORT_LAWS`, `createLeaseDouble`, `leaseFactsContract`, `LEASE_FACTS_LAWS`, `leasedClaimContract`, `LEASED_CLAIM_LAWS` |
 | [Store contracts](#store-contracts): the outbound ledger | `outboundLedgerContract`, `OUTBOUND_LEDGER_LAWS`                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| [Store contracts](#store-contracts): the callback store  | `callbackStoreContract`, `CALLBACK_STORE_LAWS`                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Version                                                  | `VERSION`, the package's version as a string, for example `"0.46.0"`.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
-The 50 types are named in the group that uses them.
+The 53 types are named in the group that uses them.
 
 ## Fixtures
 
@@ -218,7 +219,7 @@ new InMemoryStore();
 new InMemoryStore({ clock });
 ```
 
-A run store that keeps runs in memory. It has the 10 functions of a run store: `create`, `get`, `update`, `claimStep`, `settleStep`, `stampSeal`, `scan`, `scanListed`, `resolveKey` and `tombstonesSince`, and it purges nothing: `purgesRuns` is `false`, so `resolveKey` answers `held` or `unseen`, never `purged`. It keeps every field of a run's record. It keeps no claim leases unless it is given a lease port, `new InMemoryStore({ leases })` (the lease double, for example); then a run it returns carries `lease_facts` for each in-progress claim that names a lease. It keeps an outbound ledger, `store.outbound`, unless it is built with `new InMemoryStore({ outbound: null })` (added after version 0.49.0). See [Core library](core-library.md) for what each function does.
+A run store that keeps runs in memory. It has the 10 functions of a run store: `create`, `get`, `update`, `claimStep`, `settleStep`, `stampSeal`, `scan`, `scanListed`, `resolveKey` and `tombstonesSince`, and it purges nothing: `purgesRuns` is `false`, so `resolveKey` answers `held` or `unseen`, never `purged`. It keeps every field of a run's record. It keeps no claim leases unless it is given a lease port, `new InMemoryStore({ leases })` (the lease double, for example); then a run it returns carries `lease_facts` for each in-progress claim that names a lease. It keeps an outbound ledger, `store.outbound`, unless it is built with `new InMemoryStore({ outbound: null })` (added after version 0.49.0). It keeps a callback store, `store.callbacks`, unless it is built with `new InMemoryStore({ callbacks: null })` (added after version 0.50.0). See [Core library](core-library.md) for what each function does.
 
 Given a `clock`, it stamps its writes with that clock; without one, with this computer's (added after version 0.48.0). See [A store's clock](core-library.md#a-stores-clock).
 
@@ -393,7 +394,7 @@ Types: `SettableClock`, `SettableClockOptions`, `TestLocation`, `TestHome`.
 
 ## Store contracts
 
-A store contract is a set of tests for a store you wrote. Each of the 9 contract functions takes an adapter that describes your store and returns a list of cases. A case has a `law`, a `name`, and a `run` function that throws if your store breaks the law.
+A store contract is a set of tests for a store you wrote. Each of the 10 contract functions takes an adapter that describes your store and returns a list of cases. A case has a `law`, a `name`, and a `run` function that throws if your store breaks the law.
 
 ```js
 import { it } from 'vitest';
@@ -422,6 +423,7 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 | `leaseFactsContract`          | `RunStore` with `leases`: the lease facts on the runs it returns | 8    | 8, with `InMemoryStore` and the lease double   |
 | `leasedClaimContract`         | `RunStore` with `leases`: a claim taken under a lease            | 5    | 5, with `InMemoryStore` and the lease double   |
 | `outboundLedgerContract`      | `RunStore` with `outbound`: its outbound ledger                  | 29   | 29, with `InMemoryStore` and the SQLite store  |
+| `callbackStoreContract`       | `RunStore` with `callbacks`: its callback store                  | 14   | 13, with `InMemoryStore` (below)               |
 
 Every case in the last column passed, except the 2 it reports as skipped for `InMemoryTraceBufferStore` (it supplies neither byte hook), the 1 the settlement contract reports as skipped for `InMemoryStore` (it keeps claims, so the no-claims case does not apply), and the 3 the fidelity contract reports as skipped for `InMemoryStore` (it never deletes a run, so the purge laws' cases are skipped). The store interfaces are in [Core library](core-library.md).
 
@@ -692,6 +694,31 @@ The laws of a store's outbound ledger, `RunStore.outbound` (added after version 
 The ledger's purge pair is a `PerRunArtifactStore` too. `OL_PURGE` holds it to what that interface promises: `statAllForRun` reports what `deleteAllForRun` then reports, a run that does not exist reports zero, and a second delete reports zero. `InMemoryStore` runs every outbound law. `@sensigo/realm-store-sqlite`'s store runs every one too, and its ledger passes the 7 laws of `perRunArtifactStoreContract`.
 
 Types: `OutboundLedgerContractAdapter`, `OutboundLedgerContractCase`, `OutboundLedgerLaw`.
+
+### `callbackStoreContract(adapter)`
+
+The laws of a store's callback store, `RunStore.callbacks` (added after version 0.50.0): one row per run created with a `callback`, kept beside the run record. Each case builds its own store through the adapter's `makeStore({ clock })`, on a clock the case moves and counts. `makeStoreWithoutPort({ clock })`, when the adapter has it, builds a store without a callback store; a store that always keeps one leaves it out and does not run `CB_NO_PORT_REFUSES`. `makeStore` also returns `seedRun(record)`, which writes a run as given, past the store's checks: a case un-finishes a run with it. `removeRun(store, runId)`, when the adapter has it, removes a run and leaves its row, for `CB_DUE_RUN_GONE`. `InMemoryStore` cannot remove a run, so it runs the other 13 laws.
+
+| Law                         | What it checks                                                                                                                                                                                                                                                                |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CB_CREATE_BOTH_OR_NEITHER` | A create with a `callback` leaves the run and its `pending` row, stamped with the run's `created_at`; a `webhook_id` another row holds throws and leaves no run; an idempotent match writes no row.                                                                           |
+| `CB_NO_PORT_REFUSES`        | A store without a callback store refuses a `callback` with `VALIDATION_OPTION_INVALID` and leaves no run; a malformed `callback` throws its own error first.                                                                                                                  |
+| `CB_MALFORMED_THROWS`       | A `callback` whose `url`, `host` or `webhook_id` is empty, too long or not a uuid throws, reads no clock and leaves nothing. So does a bad token, `limit`, body, `afterSeconds` or `lastStatus` given to `due`, `claim`, `freezeBody` or `mark`, and the row stays as it was. |
+| `CB_DUE_CONJUNCTS`          | A row is due only when it is `pending`, its `next_attempt_at` is at or before the clock, and its run has finished; each of the three alone keeps it out.                                                                                                                      |
+| `CB_DUE_RUN_GONE`           | A row whose run is gone is not due, and a claim of it answers `run_not_finished`.                                                                                                                                                                                             |
+| `CB_DUE_FAIRNESS_AND_ORDER` | `due` takes one row per host per round, the oldest first, so a host with many rows does not hold back another; ties go by `host`, then by run id.                                                                                                                             |
+| `CB_CLAIM_ONE_WINNER`       | Of two claims at once, one applies and the other is `stale`. The claim counts the try, sets `next_attempt_at` 60 seconds on, and returns the address.                                                                                                                         |
+| `CB_CLAIM_NEEDS_TERMINAL`   | A claim on a run that is no longer finished answers `run_not_finished` and leaves the row as it was.                                                                                                                                                                          |
+| `CB_FREEZE_ONCE`            | `freezeBody` sets the body once, with the claim's token; a second freeze is `body_set`, and `due` returns the first body.                                                                                                                                                     |
+| `CB_MARK_CONDITIONAL`       | A mark with another token is `lost_claim` and changes nothing; once a row is `delivered` or `failed`, every mark is `not_pending`.                                                                                                                                            |
+| `CB_NULLING_ONE_WRITE`      | `retry` keeps the address and the body; `delivered` and `failed` clear both in the same write, so a `due` beside the mark sees the row with its address or not at all.                                                                                                        |
+| `CB_VIEW_HIDES`             | `read` never returns the address, the body, the `claim_token`, the `webhook_id` or the run id, in any state of the row.                                                                                                                                                       |
+| `CB_PURGE_PAIR`             | `statAllForRun` equals what `deleteAllForRun` then reports; the run then has no row, and another run's row stays.                                                                                                                                                             |
+| `CB_CLOCK_READINGS`         | A `callback` adds no reading to a create; `read`, `countPending` and the purge pair read none; `due`, `claim` and a `retry` mark read one each, and `freezeBody` and the other marks none.                                                                                    |
+
+The callback store's purge pair is a `PerRunArtifactStore` too: run `perRunArtifactStoreContract` on `store.callbacks` as well.
+
+Types: `CallbackStoreContractAdapter`, `CallbackStoreContractCase`, `CallbackStoreLaw`.
 
 ### `createFenceRunSource()`
 

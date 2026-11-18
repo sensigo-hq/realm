@@ -320,7 +320,7 @@ describe(
           "log: • Step 'write' was not run: the run ended (abandoned) before this drive's answer reached it; the answer was not recorded.",
           'error: \nRun ended in phase: abandoned',
           // F2: the drive stops on a run an operator ended — the ending and its reason, never the undo.
-          'error:   Ended:     An operator ended this run, with the reason "ended elsewhere"; to run the work again, start a new run.',
+          'error:   Ended:     It was abandoned, with the reason "ended elsewhere". To run the work again, start a new run.',
         ],
       });
     });
@@ -328,7 +328,7 @@ describe(
     it('a step still held when the watch ends: the in-flight line, the drive stops (failed) — and no `Run ended in phase` line: the run did not end', async () => {
       claim(
         AGENT_PAGE,
-        "after 60 seconds with no change it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force`, then the way on once that program is done with the step, `  Go on:     once '<step>' is no longer in flight, realm agent --run-id <run> <flags>` (with the flags this drive was started with, as the re-attach command in [When it stops](#when-it-stops) repeats them), and stops with exit code 1, the run still open.",
+        "after 60 seconds with no change it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s.` followed by the step's held line, the one [`realm run advance`](realm-run-acting.md#advance) prints: its claim's state, each condition, then the command that frees it (added after version 0.50.0, which ended `If the program that took it is gone: realm run reclaim <run> --step <step> --force`). Then the way on once that program is done with the step, `  Go on:     once '<step>' is no longer in flight, realm agent --run-id <run> <flags>` (with the flags this drive was started with, as the re-attach command in [When it stops](#when-it-stops) repeats them), or, for a step whose deadline has passed, `  Go on:     once '<step>' is freed (realm run reclaim <run> prints its command), realm agent --run-id <run> <flags>` (added after version 0.50.0), and stops with exit code 1, the run still open.",
       );
       claim(
         AGENT_PAGE,
@@ -342,13 +342,15 @@ describe(
         },
         watchMs: 50,
       });
+      // #922 P2-2: the claim's stamp, in the command (the line's ` since <t>` is written as <t>).
+      const stamp = (await d.store.get(d.runId)).record.claims?.['write']?.since;
       // (a) red when the drive asks the model, or says the run ended; (b) prints the screen.
       expect({ calls: d.calls, result: d.result, lines: d.lines.slice(4) }).toEqual({
         calls: 0,
         result: 'failed',
         lines: [
           `log: • Step 'write' is in flight, taken by ${PROMPT_WORDS} since <t>: waiting up to 0s for the run's record to change.`,
-          `log: • Step 'write' has been in flight since <t>, taken by ${PROMPT_WORDS}; the record has not changed for 0s. If the program that took it is gone: realm run reclaim <run> --step write --force`,
+          `log: • Step 'write' has been in flight since <t>, taken by ${PROMPT_WORDS}; the record has not changed for 0s. 'write' is held since <t>; wait for it, or free it if its program has stopped. Its claim has no deadline, so whether its program still runs is not known; if it does, the step runs twice. It is not declared idempotent, so running it again may repeat its effects. To free it, run: realm run reclaim <run> --step write --claimed-at ${stamp} --force`,
           // decision C195: the way on; a host that gave no flags gets the placeholders.
           "log:   Go on:     once 'write' is no longer in flight, realm agent --run-id <run> --provider <provider> --model <model>",
         ],

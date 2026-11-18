@@ -1,0 +1,185 @@
+{
+  "version": "0.50.0",
+  "integrity": {
+    "@sensigo/realm-cli": "sha512-2UT6UvU0FQXj1YzS2b/xyLw175Lb5izNtWNY8b3TLLeILDPvD8jwBbk63dfAfHcO6Yi36YO3FpDAlQd0QP43Ig==",
+    "@sensigo/realm-testing": "sha512-K9A+T0Fmqgblq0WtzDlN1+YYn3nhD2Z5ywJDh+7yOsvzpg3+tywHkQSE+uQUvL5FOZKgEIeXVN0WapC/eHwpFg==",
+    "@sensigo/realm": "sha512-O+cMMOxQcye1ia97eSGTMAzCOeGt7iI/EGuYinqpSrn1EUPGoH6xbgjIpEAnniKPc5I9m0I92aUYY67XqNaezw==",
+    "@sensigo/realm-store-sqlite": "sha512-2Wpy4EwgqKHEJAQB1mNJ4pK3ZzbyCC6oL2JHwJsEr9qZgenn6mNZ/249DCHY8+2ZJqYh8OEY7038EZmKLXM0Ew=="
+  },
+  "recorder_version": 1,
+  "work": "/tmp/realm-corpus/work",
+  "work_realpath": "/tmp/realm-corpus/work",
+  "start": "2026-01-01T09:00:00.000Z",
+  "github_port": 47490,
+  "cli_environment": [
+    "PATH",
+    "HOME"
+  ],
+  "drive_environment": [
+    "PATH",
+    "HOME",
+    "REALM_OPERATOR"
+  ],
+  "operator": "corpus",
+  "runs": {
+    "08-pr-review": "workflow.yaml",
+    "one-step": "one-step.yaml"
+  },
+  "examples": [
+    "01-code-reviewer",
+    "02-ticket-classifier",
+    "03-incident-response",
+    "04-content-pipeline",
+    "05-parallel-code-review",
+    "06-ticket-router",
+    "07-issue-triage",
+    "08-pr-review",
+    "09-webhook-pr-review"
+  ],
+  "rules": "packages/cli/src/corpus/corpus-rules.json",
+  "rules_applied": {
+    "about": "CP-7: what the corpus recorder (scripts/corpus/record.mjs) and the corpus cells (packages/cli/src/corpus/corpus.test.ts) both read. The recorder applies it to what the published release wrote; the cells apply it to what the current store, importer, composer and loader produce, and to the recorded side, before comparing. A change here changes both sides at once.",
+    "work_placeholder": {
+      "about": "The recorder's WORK folder (and its realpath), wherever it appears in a recorded file's text, becomes this path; the cells replace the manifest's WORK the same way on the current side (the stored copy in realm.db keeps the raw path).",
+      "value": "/realm-corpus/work"
+    },
+    "uuid": {
+      "about": "Every id minted by randomUUID: the run's id, gate ids, lease tokens, request_id, the WAL and sealed lines' nonce. Each distinct v4 UUID in an artifact's text becomes a fixed v4 UUID numbered by first appearance in that text (key order kept), so two places that held the same id still hold the same placeholder.",
+      "pattern": "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+      "placeholder_prefix": "00000000-0000-4000-8000-"
+    },
+    "keys": {
+      "about": "Values replaced wherever the key appears: placeholders of the same shape the readers check (an integer for a process id, an ISO instant for a stamp, an absolute path for a path).",
+      "values": {
+        "agent_pid": 4242,
+        "exported_at": "2026-01-01T09:00:00.000Z",
+        "source_dir": "/realm-corpus/host/source-dir",
+        "trust_root": "/realm-corpus/host/trust-root",
+        "source_path": "/realm-corpus/host/source-path"
+      },
+      "nested": {
+        "about": "A value that is volatile only under its parent key: a schema entry's source.path (a host path); an extension identity entry's captured_at (the host's clock, not the test clock) and pid.",
+        "values": {
+          "source.path": "/realm-corpus/host/source-path",
+          "extension_identity.captured_at": "2026-01-01T09:00:00.000Z",
+          "extension_identity.pid": 4242
+        }
+      }
+    },
+    "runtime_only_workflow_keys": {
+      "about": "The keys the loader stamps on a definition that are not the workflow file's: left out of a recorded definition and of the current one. The names of core's RUNTIME_ONLY_WORKFLOW_KEYS (packages/core/src/types/workflow-definition.ts), which @sensigo/realm does not export.",
+      "values": [
+        "source_dir",
+        "trust_root",
+        "resolved_profiles",
+        "schema_version",
+        "origin",
+        "model",
+        "agent"
+      ]
+    }
+  },
+  "transcript": [
+    {
+      "argv": [
+        "realm",
+        "workflow",
+        "register",
+        "WORK/project/workflow.yaml"
+      ],
+      "exit": 0
+    },
+    {
+      "argv": [
+        "realm",
+        "agent",
+        "--workflow",
+        "WORK/project/workflow.yaml",
+        "--params",
+        "{\"repo\":\"acme/payments-api\",\"pr_number\":42}",
+        "--provider-module",
+        "NM/corpus-provider-module.mjs"
+      ],
+      "exit": "started"
+    },
+    {
+      "argv": [
+        "realm",
+        "run",
+        "respond",
+        "RUN_08",
+        "--gate",
+        "GATE_08",
+        "--choice",
+        "approve"
+      ],
+      "exit": 0
+    },
+    {
+      "argv": [
+        "realm",
+        "agent",
+        "--workflow",
+        "WORK/project/workflow.yaml",
+        "--params",
+        "{\"repo\":\"acme/payments-api\",\"pr_number\":42}",
+        "--provider-module",
+        "NM/corpus-provider-module.mjs"
+      ],
+      "exit": 0
+    },
+    {
+      "argv": [
+        "realm",
+        "run",
+        "export",
+        "RUN_08",
+        "--out",
+        "WORK/08.realm.json"
+      ],
+      "exit": 0
+    },
+    {
+      "argv": [
+        "realm",
+        "workflow",
+        "register",
+        "WORK/project/one-step.yaml"
+      ],
+      "exit": 0
+    },
+    {
+      "argv": [
+        "realm",
+        "agent",
+        "--workflow",
+        "WORK/project/one-step.yaml",
+        "--params",
+        "{\"note\":\"The corpus recorder drives the published CLI.\"}",
+        "--provider-module",
+        "NM/corpus-provider-module.mjs"
+      ],
+      "exit": 0
+    },
+    {
+      "argv": [
+        "realm",
+        "run",
+        "export",
+        "RUN_ONE_STEP",
+        "--out",
+        "WORK/one-step.realm.json"
+      ],
+      "exit": 0
+    },
+    {
+      "argv": [
+        "realm",
+        "db",
+        "backup",
+        "WORK/realm.db"
+      ],
+      "exit": 0
+    }
+  ]
+}
