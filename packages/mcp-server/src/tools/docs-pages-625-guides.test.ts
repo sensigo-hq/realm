@@ -621,7 +621,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     //     or the run is failed; (b) prints what each said.
     expect({
       start: [s['status'], ((s['warnings'] as string[]) ?? []).some((w) => w.startsWith(sentence))],
-      execute: String(e['context_hint']).startsWith(sentence),
+      // #625 A1a: execute_step's chained reply opens with the called step's own act, then the block.
+      execute: String(e['context_hint']).startsWith(`Step 'ask' completed. ${sentence}`),
       advance: String(a['context_hint']).startsWith(sentence),
       phase: [record.run_phase, record.failed_steps],
     }).toEqual({

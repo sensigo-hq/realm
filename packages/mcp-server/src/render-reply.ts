@@ -219,7 +219,10 @@ export type McpEnvelope = Omit<
   | 'names_next'
   | 'blocked_reason'
   | 'gate'
+  | 'own_act'
 > & {
+  /** #625 A1a: the called step's (or start_run's) own act was recorded; its evidence is left out. */
+  own_act?: { command: string; recorded: true };
   next_actions: McpNextAction[];
   /** #872 (b1): how many `next_actions` entries the reply ceiling left out (an exact count). */
   next_actions_more?: number;
@@ -1369,6 +1372,7 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
     blocked_reason,
     error_details: _details,
     gate,
+    own_act,
     ...rest
   } = reply;
   const envelope: McpEnvelope = {
@@ -1387,6 +1391,8 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
         }
       : {}),
     ...(error?.about !== undefined ? { error: { about: error.about } } : {}),
+    // #625 A1a: the act's own evidence stays with library callers, as `data` and `evidence` do.
+    ...(own_act !== undefined ? { own_act: { command: own_act.command, recorded: true } } : {}),
     ...(blocked_reason !== undefined
       ? {
           // #872 (b1) correction 1 (H6): at most ten eligible steps, then the exact count left out.
@@ -1756,6 +1762,11 @@ export const MCP_ENVELOPE_ROWS = {
   chained_auto_steps_more: { class: 'fact' },
   ended_by: { class: { nested: { arm: 'fact', step: 'fact', reason: 'bounded' } } },
   stopped_step: { class: 'fact' },
+  // #625 A1a: the called step's name (an author's) and realm's own `true`.
+  own_act: {
+    class: { nested: { command: 'fact', recorded: 'fact' } },
+    route: { mcp: 'published' },
+  },
   answer_recorded: { class: 'fact' },
   gate_claim: { class: 'fact' },
   next_actions: { class: { nested: NEXT_ACTION_TABLE } },
@@ -2611,6 +2622,10 @@ export const DOOR_FACTS = {
   stable_prefix: { unit: 'enum', sha256: 'hash' } satisfies FactProducers<
     typeof STABLE_PREFIX_TABLE,
     McpStablePrefix
+  >,
+  own_act: { command: 'author_literal' } satisfies FactProducers<
+    (typeof MCP_ENVELOPE_ROWS)['own_act']['class']['nested'],
+    NonNullable<McpEnvelope['own_act']>
   >,
   ended_by: { arm: 'enum', step: 'author_literal' } satisfies FactProducers<
     (typeof MCP_ENVELOPE_ROWS)['ended_by']['class']['nested'],

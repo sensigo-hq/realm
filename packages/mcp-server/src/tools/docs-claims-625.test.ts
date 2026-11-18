@@ -3447,10 +3447,11 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
       viaChain['context_hint'],
       viaOwn['context_hint'],
     ]).toEqual([
-      `Step 's' failed. Run is terminated.${offer(sid, 's')}`,
+      // #625 A1a: start_run's and the chain's replies open with the caller's own act.
+      `Run '${sid}' created for workflow 'c211-start'. Step 's' failed. Run is terminated.${offer(sid, 's')}`,
       `Run '${sid}' is already terminal (failed); no steps executed.${offer(sid, 's')}`,
       `Matched existing run '${sid}' (idempotent) in phase 'failed'; no new run created.${offer(sid, 's')}`,
-      `Step 's' failed. Run is terminated.${offer(chained.id, 's')}`,
+      `Step 'a' completed. Step 's' failed. Run is terminated.${offer(chained.id, 's')}`,
       `Step 's' failed. Run is terminated.${offer(own.id, 's')}`,
     ]);
   });

@@ -437,7 +437,8 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
       const reply = await drive(store, def, run.id, { ok: false });
 
       // (a) red when the step's own "Run completed (phase: …)" sentence is kept; (b) prints it.
-      expect(reply.context_hint).toBe("Guard step 'check' aborted the run.");
+      // #625 A1a: the step's own write ended the run, so the reply opens with the step's own act.
+      expect(reply.context_hint).toBe("Step 'work' completed. Guard step 'check' aborted the run.");
       // (a) red when the reply rule is not applied on the step path; (b) prints the values.
       expect(reply.guards).toEqual([{ step: 'check', outcome: 'abort' }]);
       expect(reply.ended_by).toEqual({
@@ -476,8 +477,9 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
       const reply = await drive(store, def, run.id, { ok: true });
 
       // (a) red when the sentence is replaced or reworded; (b) prints the sentence.
+      // #625 A1a: opened with the step's own act.
       expect(reply.context_hint).toBe(
-        "Guard step 'check' failed with a resolution error. Run is terminated.",
+        "Step 'work' completed. Guard step 'check' failed with a resolution error. Run is terminated.",
       );
       // (a) red when `reason` is dropped or is not the guard's recorded error; (b) prints it.
       expect(reply.ended_by).toEqual({
@@ -504,7 +506,10 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
       const reply = await drive(store, def, run.id, { ok: true });
 
       // (a) red when the sentence is replaced or reworded; (b) prints the sentence.
-      expect(reply.context_hint).toBe("Guard step 'check' passed and completed the run.");
+      // #625 A1a: opened with the step's own act.
+      expect(reply.context_hint).toBe(
+        "Step 'work' completed. Guard step 'check' passed and completed the run.",
+      );
       // (a) red when a reason is invented for a completing pass; (b) prints the object.
       expect(reply.ended_by).toEqual({ arm: 'guard_pass_complete', step: 'check' });
       expect(reply.guards).toEqual([{ step: 'check', outcome: 'pass' }]);

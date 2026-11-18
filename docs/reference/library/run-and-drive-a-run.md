@@ -963,7 +963,7 @@ interface DisclosedSplitSize {
 
 ### EngineReply
 
-interface · public
+interface · public (beta: own_act): those members may change in a minor release until they settle
 
 The reply of every engine entry: its status and data, the ways as data, and the typed receipts.
 It is the envelope without the door's words (`next_actions`, `agent_action`,
@@ -1022,6 +1022,11 @@ interface EngineReply {
         reason?: string;
     };
     stopped_step?: string;
+    own_act?: {
+        command: string;
+        recorded: true;
+        evidence?: EvidenceSnapshot;
+    };
     answer_recorded?: false;
     gate_claim?: {
         proof: GateClaimVerdict['proof'];
@@ -1078,6 +1083,10 @@ interface ExecuteChainOptions {
     heldClaim?: {
         hold: LeaseHold;
     };
+    onStep?: AdvanceRunOptions['onStep'];
+    onTaken?: AdvanceRunOptions['onTaken'];
+    onNotRecorded?: AdvanceRunOptions['onNotRecorded'];
+    onGuard?: AdvanceRunOptions['onGuard'];
 }
 ```
 
