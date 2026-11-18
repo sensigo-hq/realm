@@ -627,8 +627,8 @@ interface CallbackRegistration {
 interface · beta: may change in a minor release until it settles
 
 One callback row as a store keeps it, for store implementers only.
-It carries the address, the frozen body and the claim token, so it is never rendered: the port
-returns a `CallbackView`, and an address only from `due` and `claim`. An unset field is
+It carries the address, the frozen body and the token, so it is never rendered: the port's `read`
+returns a `CallbackView`, and no method of this port returns the address. An unset field is
 omitted, never `null`.
 
 ```ts
@@ -1640,7 +1640,7 @@ type · beta: may change in a minor release until it settles
 A callback row as the port's `read` returns it: no address, body, token or webhook id.
 
 ```ts
-type CallbackView = Pick<CallbackRow, 'workflow_id' | 'host' | 'status' | 'attempts' | 'last_status' | 'next_attempt_at' | 'first_attempt_at' | 'last_attempt_at' | 'created_at' | 'finished_at'>;
+type CallbackView = Omit<CallbackRow, 'run_id' | 'webhook_id' | 'url' | 'body' | 'claim_token'>;
 ```
 
 ### CappedRead

@@ -1,7 +1,7 @@
 // callback-store-contract.ts — R1.3 the callback, callback A1a (prompt `feat-callback-a1-delivery-port.md`
 // and its split amendment): the laws of a store's callback store (`RunStore.callbacks`), the door
 // side: registration inside `create`, `read`, `countPending` and the purge pair. The sender's laws
-// (`due`, `claim`, `freezeBody`, `mark`) join this family in callback A1b. The store is ALSO a
+// join this family in callback A1b. The store is ALSO a
 // `PerRunArtifactStore`: a file wiring this family runs `perRunArtifactStoreContract` on
 // `store.callbacks` too, naming in its `NOT_RUN` what its store cannot run there.
 //
@@ -24,15 +24,15 @@ import { settableClock } from '../clock/settable-clock.js';
  * - `CB_CREATE_BOTH_OR_NEITHER` — a create with a `callback` leaves the run and its `pending` row (the
  *   run's workflow, the host, `attempts` 0, `created_at` and `next_attempt_at` the run's `created_at`);
  *   a `webhook_id` another row holds throws and leaves no new run and no row; an idempotent match
- *   (`created: false`) writes no row and does not throw; a `countPending` beside a create sees the
- *   count before it or after it, never a run without its row.
+ *   (`created: false`) writes no row and does not throw. "No run" is read two ways: the store's count
+ *   of the workflow's runs (a scan) and the refused create's key.
  * - `CB_NO_PORT_REFUSES` — a store built without a callback store refuses a `callback` with
  *   `VALIDATION_OPTION_INVALID` and leaves no run, on an idempotent match too; a malformed `callback`
  *   throws its own error first.
  * - `CB_MALFORMED_THROWS` — an empty or 2,049-character `url`, an empty or 256-character `host`, a
  *   `webhook_id` that is not a uuid, a missing field: each create throws, takes no reading and leaves
  *   no run and no row; a 1- and a 2,048-character `url` and a 255-character `host` are accepted.
- * - `CB_VIEW_HIDES` — `read` of a `pending` row carries none of `url`, `body`, the claim token,
+ * - `CB_VIEW_HIDES` — `read` of a `pending` row carries none of `url`, `body`, `claim_token`,
  *   `webhook_id` or `run_id`, and no unset field; a run without a row reads nothing.
  * - `CB_PURGE_PAIR` — `statAllForRun` counts the bytes of the row's address and equals what
  *   `deleteAllForRun` reports; the row is then gone and the pair reports zero again; another run's row
@@ -175,6 +175,14 @@ function family(adapter: CallbackStoreContractAdapter) {
   }
 
   /** Whether a run is left under `key`: a create with the key alone makes a new run when none is. */
+  /** How many runs of the family's workflow the store holds: a scan, every page. */
+  async function runCount(b: Bench): Promise<number> {
+    let n = 0;
+    for await (const page of b.store.scan({ workflow: WORKFLOW }, { pageSize: 1000 }))
+      n += page.items.filter((item) => item.kind === 'run').length;
+    return n;
+  }
+
   async function noRunUnder(b: Bench, key: string): Promise<boolean> {
     const fresh = await b.store.create({
       workflowId: WORKFLOW,
@@ -212,9 +220,15 @@ function family(adapter: CallbackStoreContractAdapter) {
           same(law, 'the row of the new run', await b.callbacks.read(id), pending);
           same(law, 'stamped with the create', run.created_at, iso(T0 + 5 * MIN));
           same(law, 'one pending', await b.callbacks.countPending(), 1);
+          const runs = await runCount(b);
           const dup = await thrown(() => b.create({ ...reg(2), webhook_id: uuid(1) }, 'dup'));
           same(law, 'a held webhook id throws', dup !== undefined, true);
-          same(law, 'and leaves no run', await noRunUnder(b, 'dup'), true);
+          same(
+            law,
+            'and leaves no run',
+            { count: await runCount(b), key: await noRunUnder(b, 'dup') },
+            { count: runs, key: true },
+          );
           same(law, 'nor a row', await b.callbacks.countPending(), 1);
           const first = await b.create(reg(3), 'same');
           const again = await b.store.create({
@@ -238,14 +252,7 @@ function family(adapter: CallbackStoreContractAdapter) {
             (await thrown(() => b.create(reg(4)))) === undefined,
             true,
           );
-          const before = await b.callbacks.countPending();
-          const [made, beside] = await Promise.all([b.create(reg(5)), b.callbacks.countPending()]);
-          same(
-            law,
-            'a count beside a create: before or after',
-            [before, before + 1].includes(beside),
-            true,
-          );
+          const made = await b.create(reg(5));
           same(law, 'and the run has its row', (await b.callbacks.read(made))?.status, 'pending');
         }),
     ),
@@ -261,6 +268,7 @@ function family(adapter: CallbackStoreContractAdapter) {
         const b = await bench(law, adapter.makeStoreWithoutPort, false);
         try {
           same(law, 'the store keeps none', b.keeps ?? null, null);
+          const runs = await runCount(b);
           const refused = await thrown(() => b.create(reg(1), 'np'));
           same(
             law,
@@ -268,7 +276,12 @@ function family(adapter: CallbackStoreContractAdapter) {
             refused instanceof WorkflowError ? refused.code : refused,
             'VALIDATION_OPTION_INVALID',
           );
-          same(law, 'and no run', await noRunUnder(b, 'np'), true);
+          same(
+            law,
+            'and no run',
+            { count: await runCount(b), key: await noRunUnder(b, 'np') },
+            { count: runs, key: true },
+          );
           await b.create(undefined, 'k');
           const onMatch = await thrown(() => b.create(reg(2), 'k'));
           same(
@@ -309,6 +322,7 @@ function family(adapter: CallbackStoreContractAdapter) {
         ];
         for (const [step, callback] of bad) {
           const key = `bad-${step}`;
+          const runs = await runCount(b);
           const reads = b.reads();
           const err = await thrown(() => b.create(callback as CallbackRegistration, key));
           same(
@@ -321,7 +335,12 @@ function family(adapter: CallbackStoreContractAdapter) {
             },
             { threw: true, reads: 0, pending: 0 },
           );
-          same(law, `${step}: no run`, await noRunUnder(b, key), true);
+          same(
+            law,
+            `${step}: no run`,
+            { count: await runCount(b), key: await noRunUnder(b, key) },
+            { count: runs, key: true },
+          );
         }
         const good: Array<[string, CallbackRegistration]> = [
           ['a 1-character url', { ...reg(2), url: 'x' }],

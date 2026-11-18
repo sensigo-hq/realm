@@ -105,8 +105,9 @@ export interface CreateRunOptions {
   extensionIdentity?: ExtensionIdentityEntry[];
   /**
    * Where to tell the caller this run finished (R1.3, callback A1a). A store with a callback store writes its
-   * row in the same step as the run; a store built without one refuses it, `VALIDATION_OPTION_INVALID`;
-   * an idempotent match (`created: false`) ignores it.
+   * row in the same step as the run; `InMemoryStore` built without one refuses it,
+   * `VALIDATION_OPTION_INVALID`, and a store that keeps none ignores it; an idempotent match
+   * (`created: false`) ignores it.
    * @beta
    */
   callback?: CallbackRegistration;

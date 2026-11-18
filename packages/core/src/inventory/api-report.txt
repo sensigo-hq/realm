@@ -531,7 +531,7 @@ CallbackStore · type · beta
   }
 
 CallbackView · type · beta
-  type CallbackView = Pick<CallbackRow, 'workflow_id' | 'host' | 'status' | 'attempts' | 'last_status' | 'next_attempt_at' | 'first_attempt_at' | 'last_attempt_at' | 'created_at' | 'finished_at'>;
+  type CallbackView = Omit<CallbackRow, 'run_id' | 'webhook_id' | 'url' | 'body' | 'claim_token'>;
 
 CapabilityBasis · type · public
   type CapabilityBasis = (typeof CAPABILITY_BASES)[number];

@@ -30,8 +30,8 @@ export type CallbackLastStatus =
 
 /**
  * One callback row as a store keeps it, for store implementers only.
- * It carries the address, the frozen body and the claim token, so it is never rendered: the port
- * returns a {@link CallbackView}, and an address only from `due` and `claim`. An unset field is
+ * It carries the address, the frozen body and the token, so it is never rendered: the port's `read`
+ * returns a {@link CallbackView}, and no method of this port returns the address. An unset field is
  * omitted, never `null`.
  * @beta
  */
@@ -42,24 +42,24 @@ export interface CallbackRow {
   readonly host: string;
   readonly webhook_id: string;
   readonly status: 'pending' | 'delivered' | 'failed';
-  /** How many claims were applied. */
+  /** How many tries began. */
   readonly attempts: number;
   /** The registration's reading: the run's own `created_at` (ISO 8601). */
   readonly created_at: string;
   /** When the row may next be tried (ISO 8601). */
   readonly next_attempt_at: string;
-  /** The first claim's reading, never changed after: where the 1-hour end counts from. */
+  /** When the first try began, never changed after: where the 1-hour end counts from. */
   readonly first_attempt_at?: string;
-  /** The run's `updated_at`, read at the first claim: where the 3-day end counts from. */
+  /** The run's `updated_at`, read when the first try began: where the 3-day end counts from. */
   readonly finished_at?: string;
-  /** The latest claim's reading. */
+  /** When the latest try began. */
   readonly last_attempt_at?: string;
   readonly last_status?: CallbackLastStatus;
   /** The address; present only while the row is `pending`. */
   readonly url?: string;
-  /** The frozen body; present only while the row is `pending`, once a claimant wrote it. */
+  /** The body the tries send; present only while the row is `pending`, once it is set. */
   readonly body?: string;
-  /** The latest claim's token (1–200 characters). */
+  /** The token of the latest try (1–200 characters); never returned by the port. */
   readonly claim_token?: string;
 }
 
@@ -67,18 +67,9 @@ export interface CallbackRow {
  * A callback row as the port's `read` returns it: no address, body, token or webhook id.
  * @beta
  */
-export type CallbackView = Pick<
+export type CallbackView = Omit<
   CallbackRow,
-  | 'workflow_id'
-  | 'host'
-  | 'status'
-  | 'attempts'
-  | 'last_status'
-  | 'next_attempt_at'
-  | 'first_attempt_at'
-  | 'last_attempt_at'
-  | 'created_at'
-  | 'finished_at'
+  'run_id' | 'webhook_id' | 'url' | 'body' | 'claim_token'
 >;
 
 /**
