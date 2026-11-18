@@ -21,7 +21,8 @@ const DIST_CLI = join(HERE, '..', '..', 'dist', 'index.js');
 const WF = 'wf-disclose';
 const HOST = 'hooks.example:443';
 const KEY = '5e'.repeat(32);
-const URL = 'https://hooks.example/callback/b1b-address-marker';
+const MARKER = 'b1b-address-marker';
+const URL = `https://hooks.example/callback/${MARKER}`;
 
 /** A sealer for the cell: each byte of the text XOR 0x5a after a header naming the slot. */
 const sealer: CallbackKeySealer = {
@@ -67,7 +68,7 @@ function shows(text: string): { key: boolean; raw: boolean; address: boolean } {
   return {
     key: text.toLowerCase().includes(KEY),
     raw: Buffer.from(text, 'utf8').includes(Buffer.from(KEY, 'hex')),
-    address: text.includes(URL),
+    address: text.includes(MARKER),
   };
 }
 
