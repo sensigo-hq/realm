@@ -362,3 +362,11 @@ export const OTHER_TOOLS = {
     },
   ],
 };
+// A ONE_LINE phrase that no "Other tools" text holds keeps nothing on one line: stop the build.
+for (const phrase of ONE_LINE) {
+  if (!OTHER_TOOLS.items.some((item) => item.text.includes(phrase))) {
+    throw new Error(
+      `compare-text.mjs: ONE_LINE names "${phrase}", but no "Other tools" text holds it, so that entry keeps nothing on one line. Name the phrase as the text writes it, or remove it from ONE_LINE.`,
+    );
+  }
+}
