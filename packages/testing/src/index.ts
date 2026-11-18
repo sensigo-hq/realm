@@ -95,7 +95,8 @@ export type {
   OutboundLedgerContractAdapter,
   OutboundLedgerContractCase,
 } from './store/outbound-ledger-contract.js';
-// R1.3 callback A1a: the laws of a store's callback store (`RunStore.callbacks`), the door side.
+// R1.3 callback A1a and A1b: the laws of a store's callback store (`RunStore.callbacks`), the door
+// side and the sender side.
 export { callbackStoreContract, CALLBACK_STORE_LAWS } from './store/callback-store-contract.js';
 export type {
   CallbackStoreLaw,
