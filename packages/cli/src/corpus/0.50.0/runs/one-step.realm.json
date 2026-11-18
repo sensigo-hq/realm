@@ -1,0 +1,134 @@
+{
+  "realm_export_version": 5,
+  "exported_at": "2026-01-01T09:00:00.000Z",
+  "run": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "workflow_id": "corpus-one-step",
+    "workflow_version": 1,
+    "extension_identity": [
+      {
+        "captured_at": "2026-01-01T09:00:00.000Z",
+        "pid": 4242,
+        "modules": [],
+        "tree": {
+          "roots": [],
+          "rules": "dir_tree_v1: include .js,.mjs,.cjs,.ts,.mts,.cts,.json; exclude dirs node_modules,.git; skip symlinks; sort by relpath; sha256(relpath\\0filehash); caps 2000 files/50MB",
+          "file_count": 0,
+          "total_bytes": 0,
+          "tree_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "truncated": false
+        },
+        "coverage": "dir_tree_v1",
+        "manifest": {
+          "path": "/realm-corpus/work/project/realm.yaml",
+          "content_hash": "b9709f2c47cbd59abe5ad7cfd4ed4d977d1cb22bdd550baf41f4f48e5072ec38",
+          "secrets_block_hash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "secret_names": [
+          "GITHUB_TOKEN"
+        ],
+        "origin": "start"
+      },
+      {
+        "captured_at": "2026-01-01T09:00:00.000Z",
+        "pid": 4242,
+        "modules": [],
+        "tree": {
+          "roots": [],
+          "rules": "dir_tree_v1: include .js,.mjs,.cjs,.ts,.mts,.cts,.json; exclude dirs node_modules,.git; skip symlinks; sort by relpath; sha256(relpath\\0filehash); caps 2000 files/50MB",
+          "file_count": 0,
+          "total_bytes": 0,
+          "tree_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "truncated": false
+        },
+        "coverage": "dir_tree_v1",
+        "manifest": {
+          "path": "/realm-corpus/work/project/realm.yaml",
+          "content_hash": "b9709f2c47cbd59abe5ad7cfd4ed4d977d1cb22bdd550baf41f4f48e5072ec38",
+          "secrets_block_hash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "secret_names": [
+          "GITHUB_TOKEN"
+        ]
+      }
+    ],
+    "completed_steps": [
+      "summarise"
+    ],
+    "in_progress_steps": [],
+    "failed_steps": [],
+    "skipped_steps": [],
+    "run_phase": "completed",
+    "version": 3,
+    "params": {
+      "note": "The corpus recorder drives the published CLI."
+    },
+    "evidence": [
+      {
+        "step_id": "summarise",
+        "started_at": "2026-01-01T09:00:00.000Z",
+        "completed_at": "2026-01-01T09:00:00.000Z",
+        "duration_ms": 0,
+        "input_summary": {
+          "summary": "A note about the corpus recorder.",
+          "word_count": 6
+        },
+        "output_summary": {
+          "summary": "A note about the corpus recorder.",
+          "word_count": 6
+        },
+        "status": "success",
+        "evidence_hash": "540e2bd4aa39b850049490e2e25c9833c53179bbff02b9a781bce9a199a84c62",
+        "diagnostics": {
+          "input_token_estimate": 16,
+          "precondition_trace": [],
+          "cache": {
+            "state": "unobservable",
+            "basis": "unobservable",
+            "requests": []
+          }
+        },
+        "driven_by": {
+          "by": "corpus",
+          "by_source": "ambient",
+          "channel": "agent"
+        },
+        "supplied_by": "agent"
+      }
+    ],
+    "created_at": "2026-01-01T09:00:00.000Z",
+    "updated_at": "2026-01-01T09:00:00.000Z",
+    "terminal_state": true,
+    "claims": {},
+    "settled": {
+      "summarise": {
+        "token": "00000000-0000-4000-8000-000000000002",
+        "outcome": "complete"
+      }
+    },
+    "skip_details": {},
+    "terminal_reason": "Workflow completed.",
+    "sealed_by": {
+      "arm": "complete",
+      "step": "summarise"
+    }
+  },
+  "attempts": [],
+  "attempts_capped": false,
+  "wal": {},
+  "sealed": {},
+  "complete": true,
+  "artifact_errors": [],
+  "disclosure": {
+    "declared": "resolved",
+    "environment": "swept",
+    "hidden": {
+      "declared": 0,
+      "environment": 0,
+      "pattern": 0
+    },
+    "unchecked": 0,
+    "unmaskable": 0,
+    "too_deep": 0
+  }
+}

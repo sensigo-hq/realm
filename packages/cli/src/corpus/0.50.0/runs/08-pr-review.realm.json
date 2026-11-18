@@ -1,0 +1,305 @@
+{
+  "realm_export_version": 5,
+  "exported_at": "2026-01-01T09:00:00.000Z",
+  "run": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "workflow_id": "pr-review",
+    "workflow_version": 1,
+    "extension_identity": [
+      {
+        "captured_at": "2026-01-01T09:00:00.000Z",
+        "pid": 4242,
+        "modules": [],
+        "tree": {
+          "roots": [],
+          "rules": "dir_tree_v1: include .js,.mjs,.cjs,.ts,.mts,.cts,.json; exclude dirs node_modules,.git; skip symlinks; sort by relpath; sha256(relpath\\0filehash); caps 2000 files/50MB",
+          "file_count": 0,
+          "total_bytes": 0,
+          "tree_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "truncated": false
+        },
+        "coverage": "dir_tree_v1",
+        "manifest": {
+          "path": "/realm-corpus/work/project/realm.yaml",
+          "content_hash": "b9709f2c47cbd59abe5ad7cfd4ed4d977d1cb22bdd550baf41f4f48e5072ec38",
+          "secrets_block_hash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "secret_names": [
+          "GITHUB_TOKEN"
+        ],
+        "origin": "start"
+      },
+      {
+        "captured_at": "2026-01-01T09:00:00.000Z",
+        "pid": 4242,
+        "modules": [],
+        "tree": {
+          "roots": [],
+          "rules": "dir_tree_v1: include .js,.mjs,.cjs,.ts,.mts,.cts,.json; exclude dirs node_modules,.git; skip symlinks; sort by relpath; sha256(relpath\\0filehash); caps 2000 files/50MB",
+          "file_count": 0,
+          "total_bytes": 0,
+          "tree_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "truncated": false
+        },
+        "coverage": "dir_tree_v1",
+        "manifest": {
+          "path": "/realm-corpus/work/project/realm.yaml",
+          "content_hash": "b9709f2c47cbd59abe5ad7cfd4ed4d977d1cb22bdd550baf41f4f48e5072ec38",
+          "secrets_block_hash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+        },
+        "secret_names": [
+          "GITHUB_TOKEN"
+        ]
+      }
+    ],
+    "completed_steps": [
+      "fetch_pr",
+      "write_review",
+      "confirm_review",
+      "post_approval"
+    ],
+    "in_progress_steps": [],
+    "failed_steps": [],
+    "skipped_steps": [
+      "post_changes_request"
+    ],
+    "run_phase": "completed",
+    "version": 10,
+    "params": {
+      "repo": "acme/payments-api",
+      "pr_number": 42
+    },
+    "evidence": [
+      {
+        "step_id": "fetch_pr",
+        "started_at": "2026-01-01T09:00:00.000Z",
+        "completed_at": "2026-01-01T09:00:00.000Z",
+        "duration_ms": 0,
+        "input_summary": {
+          "repo": "acme/payments-api",
+          "pr_number": 42
+        },
+        "output_summary": {
+          "diff_text": "--- src/webhooks/retry.ts\n@@ -12,14 +12,22 @@ export async function deliverWebhook(event: ChargeEvent): Promise<void> {\n-  await post(event.endpoint, event.payload);\n+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {\n+    try {\n+      await post(event.endpoint, event.payload);\n+      return;\n+    } catch (err) {\n+      await sleep(1000);\n+    }\n+  }\n }\n\n--- src/webhooks/config.ts\n@@ -3,3 +3,4 @@\n export const WEBHOOK_TIMEOUT_MS = 5000;\n+export const MAX_RETRIES = 5;\n\n--- test/webhooks/retry.test.ts\n@@ -0,0 +1,11 @@\n+import { deliverWebhook } from '../../src/webhooks/retry';\n+\n+it('retries a failed delivery', async () => {\n+  post.mockRejectedValueOnce(new Error('timeout'));\n+  post.mockResolvedValueOnce(undefined);\n+  await deliverWebhook(event);\n+  expect(post).toHaveBeenCalledTimes(2);\n+});",
+          "pr_title": "Retry failed charge webhooks",
+          "base_branch": "main",
+          "head_sha": "9f2c1ab7d4e86c03b5a1f0e2d7c4498a6b3e5d10",
+          "files_changed": [
+            "src/webhooks/retry.ts",
+            "src/webhooks/config.ts",
+            "test/webhooks/retry.test.ts"
+          ],
+          "repo": "acme/payments-api"
+        },
+        "status": "success",
+        "evidence_hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
+        "diagnostics": {
+          "input_token_estimate": 11,
+          "precondition_trace": []
+        },
+        "resolved_params": {
+          "repo": "acme/payments-api",
+          "pr_number": 42
+        },
+        "effective_timeout_seconds": 3600,
+        "driven_by": {
+          "by": "corpus",
+          "by_source": "ambient",
+          "channel": "agent"
+        }
+      },
+      {
+        "step_id": "write_review",
+        "started_at": "2026-01-01T09:00:00.000Z",
+        "completed_at": "2026-01-01T09:00:00.000Z",
+        "duration_ms": 0,
+        "input_summary": {
+          "risk": "high",
+          "key_changes": [
+            "deliverWebhook retries a failed POST up to 5 times"
+          ],
+          "recommendation": "approve",
+          "review_comment": "Approve. The retry loop is bounded by MAX_RETRIES and the new test covers one failed delivery."
+        },
+        "output_summary": {
+          "risk": "high",
+          "key_changes": [
+            "deliverWebhook retries a failed POST up to 5 times"
+          ],
+          "recommendation": "approve",
+          "review_comment": "Approve. The retry loop is bounded by MAX_RETRIES and the new test covers one failed delivery."
+        },
+        "status": "success",
+        "evidence_hash": "920f6d01bc0b89f61d24e439b826370d1cb8e727727a7a32c17b9d80b71e4456",
+        "diagnostics": {
+          "input_token_estimate": 57,
+          "precondition_trace": [],
+          "cache": {
+            "state": "unobservable",
+            "basis": "unobservable",
+            "requests": []
+          }
+        },
+        "driven_by": {
+          "by": "corpus",
+          "by_source": "ambient",
+          "channel": "agent"
+        },
+        "supplied_by": "agent"
+      },
+      {
+        "step_id": "confirm_review",
+        "started_at": "2026-01-01T09:00:00.000Z",
+        "completed_at": "2026-01-01T09:00:00.000Z",
+        "duration_ms": 0,
+        "input_summary": {},
+        "output_summary": {
+          "risk": "high",
+          "key_changes": [
+            "deliverWebhook retries a failed POST up to 5 times"
+          ],
+          "recommendation": "approve",
+          "review_comment": "Approve. The retry loop is bounded by MAX_RETRIES and the new test covers one failed delivery."
+        },
+        "status": "success",
+        "evidence_hash": "920f6d01bc0b89f61d24e439b826370d1cb8e727727a7a32c17b9d80b71e4456",
+        "diagnostics": {
+          "input_token_estimate": 1,
+          "precondition_trace": []
+        },
+        "effective_timeout_seconds": 3600,
+        "driven_by": {
+          "by": "corpus",
+          "by_source": "ambient",
+          "channel": "agent"
+        },
+        "output_source": "dependency"
+      },
+      {
+        "step_id": "confirm_review",
+        "started_at": "2026-01-01T09:00:00.000Z",
+        "completed_at": "2026-01-01T09:00:00.000Z",
+        "duration_ms": 0,
+        "input_summary": {
+          "choice": "approve"
+        },
+        "output_summary": {
+          "risk": "high",
+          "key_changes": [
+            "deliverWebhook retries a failed POST up to 5 times"
+          ],
+          "recommendation": "approve",
+          "review_comment": "Approve. The retry loop is bounded by MAX_RETRIES and the new test covers one failed delivery.",
+          "choice": "approve"
+        },
+        "status": "success",
+        "evidence_hash": "c6ea3e5f5b0966f1da05231cb143af08817107fda976c8d58123a494c9400717",
+        "kind": "gate_response",
+        "gate_message": "PR #42 — acme/payments-api\n\nRisk: HIGH\nAI recommendation: approve\n\nKey changes:\n• deliverWebhook retries a failed POST up to 5 times\n\nReview comment to post:\nApprove. The retry loop is bounded by MAX_RETRIES and the new test covers one failed delivery.\n",
+        "answer": {
+          "route": "cli"
+        },
+        "driven_by": {
+          "by": "corpus",
+          "by_source": "ambient",
+          "channel": "respond"
+        },
+        "principal": {
+          "absent": "not_a_server_door"
+        },
+        "claim_proof": {
+          "proof": "absent"
+        },
+        "admitted_by": "no_named_answerer"
+      },
+      {
+        "step_id": "post_approval",
+        "started_at": "2026-01-01T09:00:00.000Z",
+        "completed_at": "2026-01-01T09:00:00.000Z",
+        "duration_ms": 0,
+        "input_summary": {},
+        "output_summary": {
+          "body": "Approve. The retry loop is bounded by MAX_RETRIES and the new test covers one failed delivery."
+        },
+        "status": "success",
+        "evidence_hash": "85d5fca2386c3608ed4615a8ce50e81c38b7693b12c16c22bcd9c61a808efefb",
+        "diagnostics": {
+          "input_token_estimate": 37,
+          "precondition_trace": []
+        },
+        "resolved_params": {
+          "repo": "acme/payments-api",
+          "pr_number": 42,
+          "body": "Approve. The retry loop is bounded by MAX_RETRIES and the new test covers one failed delivery."
+        },
+        "effective_timeout_seconds": 3600,
+        "driven_by": {
+          "by": "corpus",
+          "by_source": "ambient",
+          "channel": "agent"
+        }
+      }
+    ],
+    "created_at": "2026-01-01T09:00:00.000Z",
+    "updated_at": "2026-01-01T09:00:00.000Z",
+    "terminal_state": true,
+    "claims": {},
+    "settled": {
+      "fetch_pr": {
+        "token": "00000000-0000-4000-8000-000000000002",
+        "outcome": "complete"
+      },
+      "write_review": {
+        "token": "00000000-0000-4000-8000-000000000003",
+        "outcome": "complete"
+      },
+      "confirm_review": {
+        "token": "00000000-0000-4000-8000-000000000004",
+        "outcome": "gate",
+        "choice": "approve"
+      },
+      "post_approval": {
+        "token": "00000000-0000-4000-8000-000000000005",
+        "outcome": "complete"
+      }
+    },
+    "skip_details": {
+      "post_changes_request": {
+        "kind": "when_false",
+        "expression": "confirm_review.choice == 'request_changes'",
+        "leaves": [
+          {
+            "leaf": "confirm_review.choice == 'request_changes'",
+            "lhs_present": true,
+            "resolved_value": "approve",
+            "passed": false
+          }
+        ]
+      }
+    },
+    "terminal_reason": "Workflow completed.",
+    "sealed_by": {
+      "arm": "complete",
+      "step": "post_approval"
+    }
+  },
+  "attempts": [],
+  "attempts_capped": false,
+  "wal": {},
+  "sealed": {},
+  "complete": true,
+  "artifact_errors": [],
+  "disclosure": {
+    "declared": "resolved",
+    "environment": "swept",
+    "hidden": {
+      "declared": 0,
+      "environment": 0,
+      "pattern": 0
+    },
+    "unchecked": 0,
+    "unmaskable": 0,
+    "too_deep": 0,
+    "question": "declared_only"
+  }
+}

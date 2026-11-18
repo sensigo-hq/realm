@@ -1,0 +1,5 @@
+version: 1
+adapters:
+  github:
+    use: github
+    config: { base_url: 'http://localhost:47490', auth: { token: '${secret:GITHUB_TOKEN}' } }
