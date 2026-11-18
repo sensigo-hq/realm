@@ -1473,6 +1473,8 @@ describe(
           code: 1,
           map: [
             "Prompt cancelled — detached from run '<id>' at step 'g' (phase: failed). The run is saved.",
+            // #625 A1b-2: another program failed the run, and nothing this command printed said so.
+            "  Ended:     Step 's' failed.",
             '  Resume:    realm run resume <id> --from s',
             '  Inspect:   realm run inspect <id>',
           ],

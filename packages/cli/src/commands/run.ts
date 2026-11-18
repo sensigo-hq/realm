@@ -52,6 +52,7 @@ import {
   ranElsewherePhrase,
   goOnLine,
   resumeLine,
+  answerLinesSayEnding,
   outcomeNotRecordedLine,
   cutWayLine,
   viewSetFor,
@@ -193,6 +194,11 @@ export function renderDetachMap(
      * because a dev run is never driven by a model.
      */
     driveFlags?: string;
+    /**
+     * #625 A1b-2 (the one-note rule): this command already printed a line that says how the run
+     * ended, so the map's `Ended:` line does not say it again.
+     */
+    endingSaid?: boolean;
   },
   // #729 CW-1b part 2: the snapshot `record` came from, so the ways read its claims' lease facts.
   snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
@@ -216,7 +222,7 @@ export function renderDetachMap(
 
   if (record.terminal_state) {
     // decisions C202, C205: the way on from a failed step `realm run resume` takes.
-    const resume = resumeLine(record, ways.workflow, writerCtx());
+    const resume = resumeLine(record, ways.workflow, writerCtx(), opts?.endingSaid === true);
     if (resume !== undefined) lines.push(resume);
     // decision C211: cleanup steps the ending left pending — the command that runs them.
     const cleanup = pendingCleanupLine(record, recordAt);
@@ -894,6 +900,11 @@ export const runCommand = new Command('run')
         runSnap = next;
         ({ record: run, at: runAt } = next);
       };
+      // #625 A1b-2 (the owner's one-note rule): "have I already printed how this run ended?" — set by
+      // every line this command prints that says it (the `✗` line of the step that ended the run, an
+      // answer's guard-ending lines, the ⏰ line of the timer whose write ended it, an answer's refusal
+      // on an ended run). The last line's `Ended:` says the ending only while it is unset.
+      let endingSaid = false;
 
       // issue #447: which step the operator was answering for, assigned immediately before each
       // question. The block-scoped names below are not visible from the catch, and the catch is
@@ -947,6 +958,9 @@ export const runCommand = new Command('run')
               definition,
               registry,
               ...(driver !== undefined ? { driver } : {}),
+              onEndingSaid: () => {
+                endingSaid = true;
+              },
               onApplied: () => settledElsewhere.abort(),
             });
             const stopWatching = watchQuestion(store, runId, g.gate_id, () =>
@@ -1020,6 +1034,7 @@ export const runCommand = new Command('run')
               })) {
                 console.log(`  ${line}`);
               }
+              if (answerLinesSayEnding(respondResult)) endingSaid = true;
               const late = lateAnswerOutcome(respondResult, run);
               const beatenOk = respondResult.outcome;
               if (late !== undefined) {
@@ -1054,6 +1069,7 @@ export const runCommand = new Command('run')
                 })) {
                   console.error(`  ${line}`);
                 }
+                if (answerLinesSayEnding(respondResult)) endingSaid = true;
                 console.error(
                   late !== undefined
                     ? `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${writerCtx().word(late.phase, RUN_PHASE_WORDS)}\n`
@@ -1064,6 +1080,8 @@ export const runCommand = new Command('run')
                 console.error(`  ✗ ${renderOutcome(respondResult.outcome, PEOPLE_DOOR_WORDS)}\n`);
               } else {
                 console.error(`  ✗ ${respondResult.errors.join(', ')}\n`);
+                // #625 A1b-2: the refusal of an answer to a run that has ended says how it ended.
+                if (respondResult.error_code === 'STATE_RUN_TERMINAL') endingSaid = true;
               }
             }
             continue;
@@ -1203,7 +1221,11 @@ export const runCommand = new Command('run')
                 recordAt,
                 promptStep,
                 { pending, workflow: definition, persistsClaims: store.persistsClaims === true },
-                { headline: owed ? 'Engine work owed' : 'Workflow stalled', driveFlags },
+                {
+                  headline: owed ? 'Engine work owed' : 'Workflow stalled',
+                  driveFlags,
+                  endingSaid,
+                },
                 read,
               ),
             );
@@ -1432,6 +1454,8 @@ export const runCommand = new Command('run')
             );
           } else {
             console.error(`${renderStepFailureLine(result, stepName)}\n`);
+            // #625 A1b-2: the `✗` line of the step whose failure ended the run says how it ended.
+            if (judged.record.terminal_state) endingSaid = true;
             // issue #468 — a FRESH read, not a break: below the validation-exhaustion threshold
             // the step is still eligible and this re-prompts it honestly; AT the threshold the
             // run just terminalized in the store, and only a fresh read lets the while condition
@@ -1514,7 +1538,7 @@ export const runCommand = new Command('run')
                 workflow: definition,
                 persistsClaims: store.persistsClaims === true,
               },
-              { driveFlags },
+              { driveFlags, endingSaid },
               read,
             ),
           );
@@ -1552,7 +1576,7 @@ export const runCommand = new Command('run')
       console.log(`Run complete. Phase: ${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}`);
       // decision C205 (round 27 finding 3): a run that ended with a failed step `realm run resume`
       // takes gets the way back in, as the detach map gives it.
-      const resume = resumeLine(run, definition, writerCtx());
+      const resume = resumeLine(run, definition, writerCtx(), endingSaid);
       if (resume !== undefined) console.log(resume);
       if (cleanup !== undefined) console.log(cleanup);
       exitProcess(1);

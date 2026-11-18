@@ -22,7 +22,9 @@ import {
   finalizerOutcomeLines,
   resumeWay,
   offeredResumeWay,
-  operatorEndingSentence,
+  runEndingOf,
+  NEW_RUN_SENTENCE,
+  saysHowItEnded,
   getWorkflowForRun,
   deriveRunPhase,
   describeEndedBy,
@@ -193,41 +195,64 @@ export function attendingLine(commands: number): string {
 }
 
 /**
- * decisions C202, C204: the reasons, the ended reason of a run that ended with a failed step `realm
- * run resume` takes (core's `offeredResumeWay`, F2) given with the way back in, or a run an operator
- * ended with that ending ({@link endedResumeReason}).
- * Every other reason unchanged.
+ * decisions C202, C204; #625 A1b-2: the reasons, with the ended reason of a run that has ended said by
+ * {@link endedResumeReason}. Every other reason unchanged.
  */
 function withResumeWay(
   reasons: string[],
   run: Parameters<typeof resumeWay>[0],
   workflow: Parameters<typeof resumeWay>[1],
+  sayEnding: boolean,
 ): string[] {
-  const resumable = endedResumeReason(run, workflow);
+  const resumable = endedResumeReason(run, workflow, sayEnding);
   if (resumable === undefined) return reasons;
   const ended = `the run has ended (${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)})`;
   return reasons.map((reason) => (reason === ended ? resumable : reason));
 }
 
 /**
- * decisions C202, C205: a run that ended with a failed step `realm run resume` takes, said with the
- * way back in — `the run has ended (<phase>) — to make '<step>' runnable again: realm run resume <id>
- * --from <step>` (`a failed step` and `<one of: …>` for several) — only for a run an engine failure
- * ended (core's `offeredResumeWay`, F2). A run an operator ended says that ending instead: `the run
- * has ended (abandoned). An operator ended this run, with the reason "<reason>"; to run the work
- * again, start a new run.` (core's `operatorEndingSentence`). `undefined` for any other run.
+ * decisions C202, C205; #625 A1b-2: the ended reason of a run that has ended. With `sayEnding` — the
+ * run had ended before this command's read, or another program ended it during the call
+ * (`saysHowItEnded`) — and always for an abandoned run: `the run has ended (<phase>). <how it ended>`,
+ * the one ending composer's sentence (`runEndingOf`, its stored values through `ctx.escaped`), then
+ * ` To run the work again, start a new run.` for an abandoned run, or ` To make '<step>' runnable
+ * again: realm run resume <id> --from <step>` (`a failed step` and `<one of: …>` for several) when the
+ * run offers the resume way (core's `offeredResumeWay`, F2). A run whose seal is the plain `complete`
+ * arm, not classified, gets no sentence. Without `sayEnding` (this call's own act ended the run, and
+ * its own lines said how): `the run has ended (<phase>) — to make '<step>' runnable again: <command>`
+ * when it offers the resume way. `undefined` for any other run.
  */
 function endedResumeReason(
   run: Parameters<typeof resumeWay>[0],
   workflow: Parameters<typeof resumeWay>[1],
+  sayEnding: boolean,
 ): string | undefined {
-  const operator = operatorEndingSentence(run);
-  if (operator !== undefined)
-    return `the run has ended (${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}). ${operator}`;
+  const ctx = writerCtx();
+  const phase = deriveRunPhase(run);
+  const opening = `the run has ended (${ctx.word(phase, RUN_PHASE_WORDS)})`;
   const resume = offeredResumeWay(run, workflow);
+  const which =
+    resume === undefined
+      ? undefined
+      : resume.steps.length === 1
+        ? `'${resume.steps[0]}'`
+        : 'a failed step';
+  const plainComplete = run.sealed_by?.arm === 'complete' && run.sealed_by.classified !== true;
+  const ending =
+    (sayEnding || phase === 'abandoned') && !plainComplete
+      ? runEndingOf(run, workflow, { quote: (escaped) => ctx.escaped(escaped) })
+      : undefined;
+  if (ending !== undefined) {
+    const way =
+      ending.wayOut.kind === 'new_run'
+        ? ` ${NEW_RUN_SENTENCE}`
+        : resume !== undefined
+          ? ` To make ${which} runnable again: ${ctx.cmd(resume.command)}`
+          : '';
+    return `${opening}. ${ending.sentence}${way}`;
+  }
   if (resume === undefined) return undefined;
-  const which = resume.steps.length === 1 ? `'${resume.steps[0]}'` : 'a failed step';
-  return `the run has ended (${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}) — to make ${which} runnable again: ${writerCtx().cmd(resume.command)}`;
+  return `${opening} — to make ${which} runnable again: ${ctx.cmd(resume.command)}`;
 }
 
 /**
@@ -467,10 +492,12 @@ export async function advanceRunFromShell(
     // decision C103, F7 (a): at an open question the line renders the question's `respond` way,
     // composed by core from the record this command read — never by a call of the writer
     // `advanceRun`, which would run any step that became ready since that read.
+    // #625 A1b-2: a run that had ended before this read says how it ended.
     const reasons = withResumeWay(
       stopReasons(ways, runId, deriveRunPhase(run), writerCtx()),
       run,
       workflow,
+      run.terminal_state === true,
     );
     // decision C212: a reason that ends with a command ends without a full stop; several reasons
     // are each a line of their own, so none is joined to a command.
@@ -702,11 +729,15 @@ export async function advanceRunFromShell(
           ),
         }
       : composedAfter;
+  // #625 A1b-2: said once — how the run ended only when another program ended it during the call
+  // (core's `saysHowItEnded`); a run this call ended said it in its own lines above.
+  const sayEnding = saysHowItEnded(result, after);
   reasons.push(
     ...withResumeWay(
       stopReasons(afterWays, runId, deriveRunPhase(after), writerCtx()),
       after,
       workflow,
+      sayEnding,
     ),
   );
   if (reasons.length > 1) {
@@ -717,7 +748,17 @@ export async function advanceRunFromShell(
   // gets no `Stopped:` line (any other reason that holds still does).
   // #729 PR-3 correction 5 (J-2): the reason carries the phase as a word span, so the ending is
   // built the same way in this process — equal by construction.
-  const completedEnding = `the run has ended (${writerCtx().word('completed', RUN_PHASE_WORDS)})`;
+  // #625 A1b-2: by the phase, not the string — the ended reason of a completed run may now carry how
+  // it completed.
+  const completedEnding =
+    deriveRunPhase(after) === 'completed'
+      ? withResumeWay(
+          [`the run has ended (${writerCtx().word('completed', RUN_PHASE_WORDS)})`],
+          after,
+          workflow,
+          sayEnding,
+        )[0]
+      : undefined;
   // decision C181: right after the ready line for an agent step, the line `realm run respond` prints
   // after its commands.
   const ready = agentReadyReason(runId, afterView.agent_steps);

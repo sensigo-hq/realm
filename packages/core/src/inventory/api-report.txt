@@ -2024,6 +2024,7 @@ NAMES_SHOWN · value · internal
 NAME_CAP_MARKER · value · internal
 NAME_MAX_LENGTH · value · internal
 NAME_REFUSAL_REASONS · value · internal
+NEW_RUN_SENTENCE · value · internal
 NEXT_ACTIONS_STATUS · value · internal
 NOT_CHECKED_MARKER · value · internal
 NOT_PRICED_CAUSES · value · public
@@ -4560,7 +4561,6 @@ oneOf · value · internal
 openQuestionOf · value · internal
 openQuestionWords · value · internal
 openWithOwnAct · value · internal
-operatorEndingSentence · value · internal
 outcomeOf · value · internal
 outputSourceOf · value · public
   function outputSourceOf(entry: Pick<EvidenceSnapshot, 'step_id' | 'kind' | 'output_summary' | 'output_source'>, definition: Pick<WorkflowDefinition, 'steps'> | undefined): {

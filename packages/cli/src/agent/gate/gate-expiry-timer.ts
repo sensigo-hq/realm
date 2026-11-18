@@ -42,6 +42,12 @@ export interface GateExpiryTimerDeps {
    * so a host waiting on the question (`realm workflow run`'s prompt) closes it (decision C158).
    */
   onApplied?: () => void;
+  /**
+   * #625 A1b-2 (the one-note rule): called the moment this timer's line prints, when its write ended
+   * the run — the line said how, so the host's `Ended:` line does not say it again. Before the
+   * cleanup steps run: a host that sees the question close during them must already know.
+   */
+  onEndingSaid?: () => void;
 }
 
 /**
@@ -101,6 +107,7 @@ export function scheduleGateExpiryTimer(
           `⏰ ${receipt !== undefined ? expiryReceiptLine(receipt) : expiryCarriedOutLine(gate.gate_id, gate.step_name, carried, TIMER_VIA, undefined)}` +
             (guardLines.length > 0 ? ` ${guardLines.join(' ')}` : ''),
         );
+        if (outcome.run.terminal_state === true) deps.onEndingSaid?.();
         if (outcome.transitioned) {
           const drainOutcome = await drainFinalizers(
             deps.store,
