@@ -682,9 +682,11 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     async () => {
       claim(
         PAGE,
-        '`ok` with an empty `next_actions` on an open run means one of two things, and `agent_action` says which (added after version 0.47.0).',
+        '`ok` with an empty `next_actions` on an open run means one of three things, and `agent_action` says which (added after version 0.47.0).',
       );
-      claim(PAGE, 'A step is in flight elsewhere: wait for it (`await`).');
+      // #922 P2-1: the held step that can still finish is this cell's; the past one is
+      // held-words-922-p21.test.ts's ("the bug's words").
+      claim(PAGE, 'A held step can still finish: wait for it (`await`).');
       claim(
         PAGE,
         'Or every step that could run next cannot (`report_to_user`): an `auto` step for an invalid `trust`, a failed precondition or an input its schema refuses — `engine_runnable` names each with `refused_by` and `refusal` — or an agent step for an invalid `trust` or a failed precondition — `agent_refused` names it the same way, and it is never offered in `next_actions` (agent steps added after version 0.46.0).',
