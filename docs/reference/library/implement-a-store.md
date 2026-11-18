@@ -33,6 +33,7 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`AppendResult`](#appendresult) | interface | What a trace buffer reports after an append: how many entries and bytes this writer holds against its limits, and the whole file's when the store keeps them (`TraceBufferStore.append`). |
 | [`ArtifactDeletionReport`](#artifactdeletionreport) | interface | What a store reports about the artifacts it just deleted: the bytes it deleted. |
 | [`BufferedEntry`](#bufferedentry) | interface | An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce that carried it, if any. |
+| [`CallbackClaimRequest`](#callbackclaimrequest) | interface | A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters). |
 | [`CallbackRegistration`](#callbackregistration) | interface | Where a run's caller asked to be told the run finished (`CreateRunOptions.callback`). |
 | [`CallbackRow`](#callbackrow) | interface | One callback row as a store keeps it, for store implementers only. |
 | [`CallbackStore`](#callbackstore) | interface | A store's callback store (`RunStore.callbacks`): one row per run, written by `create`. |
@@ -83,7 +84,14 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`UnreadableRunFileEntry`](#unreadablerunfileentry) | interface | One run file the JSON store could not read as a run, as a listing reports it (`RunListing.unreadable`). |
 | [`ValidationErrorSummaryEntry`](#validationerrorsummaryentry) | interface | A single whitelisted Ajv error — value echoes (`params`/`data`) are intentionally excluded. |
 | [`WorkflowRegistrar`](#workflowregistrar) | interface | Where a program registers its workflows and reads them back by id. |
+| [`CallbackClaimedItem`](#callbackclaimeditem) | type | A claimed row: the item with the instants a sender judges its ends from. |
+| [`CallbackClaimResult`](#callbackclaimresult) | type | What a claim answers: the claimed item and the claim's one reading, or why it did not apply. |
+| [`CallbackFreezeResult`](#callbackfreezeresult) | type | What freezing the body answers. |
+| [`CallbackItem`](#callbackitem) | type | A row ready to send, as `due` returns it: for the sender only, never rendered. |
 | [`CallbackLastStatus`](#callbacklaststatus) | type | The last answer a try got: an HTTP status (100–599), or a word for a try that got none. |
+| [`CallbackMarkRequest`](#callbackmarkrequest) | type | A try's outcome: delivered (a 2xx status), another try after a wait in seconds, or failed. |
+| [`CallbackMarkResult`](#callbackmarkresult) | type | What a mark answers. |
+| [`CallbackStatus`](#callbackstatus) | type | The state of a callback row: `pending` while it may be tried, then `delivered` or `failed`. |
 | [`CallbackView`](#callbackview) | type | A callback row as the port's `read` returns it: no address, body, token or webhook id. |
 | [`CappedRead`](#cappedread) | type | What `WorkflowRegistrar.getCapped` resolves to. |
 | [`CreateResult`](#createresult) | type | What a run store's `create` returns: the record with the reading the create used, and whether it was written. |
@@ -121,6 +129,8 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`TraceCapability`](#tracecapability) | type | The optional rungs a trace buffer store can declare, `seal` and `writer_nonce_carriage` (`TraceBufferStore.traceCapabilities`). |
 | [`Unleased`](#unleased) | type | What `leaseFactOf` answers for a claim that names no lease. |
 | [`UnreadableRegistryEntry`](#unreadableregistryentry) | type | A registered copy a listing could not read (`RegistryListing.unreadable`). |
+| [`CALLBACK_LAST_STATUS_WORDS`](#callback_last_status_words) | const | The words a try's last answer can be when it got no HTTP status. |
+| [`CALLBACK_STATUSES`](#callback_statuses) | const | The states a callback row can be in, one list for every use of the word. |
 | [`CLOCK_READ_CLASSES`](#clock_read_classes) | const | The five classes of a clock read: what a run store's clock governs (`write`, `read`, `event`) and what it does not (`outside`, `duration`). |
 | [`FENCE_TARGETS_STEP`](#fence_targets_step) | const | Whether a member conditions one step — evaluated against the fenced method's own `stepId`. |
 | [`LEASE_PROBE_REASONS`](#lease_probe_reasons) | const | Why a probe could not say whether a lease is held: a closed list. |
@@ -606,6 +616,19 @@ interface BufferedEntry extends AgentTraceEntry {
 }
 ```
 
+### CallbackClaimRequest
+
+interface · beta: may change in a minor release until it settles
+
+A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters).
+
+```ts
+interface CallbackClaimRequest {
+    readonly expectedNextAttemptAt: string;
+    readonly token: string;
+}
+```
+
 ### CallbackRegistration
 
 interface · beta: may change in a minor release until it settles
@@ -627,9 +650,9 @@ interface CallbackRegistration {
 interface · beta: may change in a minor release until it settles
 
 One callback row as a store keeps it, for store implementers only.
-It carries the address, the frozen body and the token, so it is never rendered: the port's `read`
-returns a `CallbackView`, and no method of this port returns the address. An unset field is
-omitted, never `null`.
+It carries the address, the frozen body and the claim token, so it is never rendered: the port's
+`read` returns a `CallbackView`, and the address comes only from `due` and `claim`. An unset
+field is omitted, never `null`.
 
 ```ts
 interface CallbackRow {
@@ -637,7 +660,7 @@ interface CallbackRow {
     readonly workflow_id: string;
     readonly host: string;
     readonly webhook_id: string;
-    readonly status: 'pending' | 'delivered' | 'failed';
+    readonly status: CallbackStatus;
     readonly attempts: number;
     readonly created_at: string;
     readonly next_attempt_at: string;
@@ -656,13 +679,18 @@ interface CallbackRow {
 interface · beta: may change in a minor release until it settles
 
 A store's callback store (`RunStore.callbacks`): one row per run, written by `create`.
-`read`, `countPending` and the purge pair take no reading of the store's clock; the row is written
-at the create's own reading. A run without a row is no error.
+`due`, `claim` and a `retry` mark each take ONE raw reading of the store's clock, refused or
+applied; `read`, `countPending`, `freezeBody`, the other marks and the purge pair take none; a
+malformed request throws before any reading. A run without a row is no error.
 
 ```ts
 interface CallbackStore extends PerRunArtifactStore {
     read(runId: string): Promise<CallbackView | undefined>;
     countPending(): Promise<number>;
+    due(limit: number): Promise<CallbackItem[]>;
+    claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
+    freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
+    mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
 }
 ```
 
@@ -1623,6 +1651,63 @@ interface WorkflowRegistrar {
 
 ## Types
 
+### CallbackClaimedItem
+
+type · beta: may change in a minor release until it settles
+
+A claimed row: the item with the instants a sender judges its ends from.
+
+```ts
+type CallbackClaimedItem = CallbackItem & Pick<CallbackRow, 'last_status'> & {
+    readonly finished_at: string;
+    readonly first_attempt_at: string;
+};
+```
+
+### CallbackClaimResult
+
+type · beta: may change in a minor release until it settles
+
+What a claim answers: the claimed item and the claim's one reading, or why it did not apply.
+
+```ts
+type CallbackClaimResult = {
+    readonly applied: true;
+    readonly item: CallbackClaimedItem;
+    readonly at: string;
+} | {
+    readonly applied: false;
+    readonly reason: 'no_row' | 'not_pending' | 'stale' | 'run_not_finished';
+};
+```
+
+### CallbackFreezeResult
+
+type · beta: may change in a minor release until it settles
+
+What freezing the body answers.
+
+```ts
+type CallbackFreezeResult = {
+    readonly applied: true;
+} | {
+    readonly applied: false;
+    readonly reason: 'no_row' | 'not_pending' | 'lost_claim' | 'body_set';
+};
+```
+
+### CallbackItem
+
+type · beta: may change in a minor release until it settles
+
+A row ready to send, as `due` returns it: for the sender only, never rendered.
+
+```ts
+type CallbackItem = Pick<CallbackRow, 'run_id' | 'workflow_id' | 'host' | 'webhook_id' | 'attempts' | 'next_attempt_at' | 'body'> & {
+    readonly url: string;
+};
+```
+
 ### CallbackLastStatus
 
 type · beta: may change in a minor release until it settles
@@ -1630,7 +1715,52 @@ type · beta: may change in a minor release until it settles
 The last answer a try got: an HTTP status (100–599), or a word for a try that got none.
 
 ```ts
-type CallbackLastStatus = number | 'timeout' | 'connection' | 'redirect' | 'refused_address' | 'not_allowed' | 'expired';
+type CallbackLastStatus = number | (typeof CALLBACK_LAST_STATUS_WORDS)[number];
+```
+
+### CallbackMarkRequest
+
+type · beta: may change in a minor release until it settles
+
+A try's outcome: delivered (a 2xx status), another try after a wait in seconds, or failed.
+
+```ts
+type CallbackMarkRequest = {
+    readonly kind: 'delivered';
+    readonly lastStatus: number;
+} | {
+    readonly kind: 'retry';
+    readonly afterSeconds: number;
+    readonly lastStatus: CallbackLastStatus;
+} | {
+    readonly kind: 'failed';
+    readonly lastStatus: CallbackLastStatus;
+};
+```
+
+### CallbackMarkResult
+
+type · beta: may change in a minor release until it settles
+
+What a mark answers.
+
+```ts
+type CallbackMarkResult = {
+    readonly applied: true;
+} | {
+    readonly applied: false;
+    readonly reason: 'no_row' | 'not_pending' | 'lost_claim';
+};
+```
+
+### CallbackStatus
+
+type · beta: may change in a minor release until it settles
+
+The state of a callback row: `pending` while it may be tried, then `delivered` or `failed`.
+
+```ts
+type CallbackStatus = (typeof CALLBACK_STATUSES)[number];
 ```
 
 ### CallbackView
@@ -2288,6 +2418,37 @@ type UnreadableRegistryEntry = UnreadableFileEntry | UnreadableIdEntry;
 ```
 
 ## Constants
+
+### CALLBACK_LAST_STATUS_WORDS
+
+const · beta: may change in a minor release until it settles
+
+The words a try's last answer can be when it got no HTTP status.
+
+```ts
+const CALLBACK_LAST_STATUS_WORDS: readonly [
+    "timeout",
+    "connection",
+    "redirect",
+    "refused_address",
+    "not_allowed",
+    "expired"
+];
+```
+
+### CALLBACK_STATUSES
+
+const · beta: may change in a minor release until it settles
+
+The states a callback row can be in, one list for every use of the word.
+
+```ts
+const CALLBACK_STATUSES: readonly [
+    "pending",
+    "delivered",
+    "failed"
+];
+```
 
 ### CLOCK_READ_CLASSES
 

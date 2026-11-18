@@ -1,13 +1,17 @@
-// callback-store.ts — R1.3 the callback, callback A1a (prompt `feat-callback-a1-delivery-port.md` and
-// its split amendment; design `DESIGN-CALLBACK-rev4.md` over rev 3 §2.5): the callback store's door
-// side. One row per run, BESIDE the run record and never in it: where to tell the caller the run
-// finished, and the state of telling. The sender's methods (callback A1b), the signing keys (A2), the
-// SQLite table (B), the door (C2) and the sender (C3) come later.
+// callback-store.ts — R1.3 the callback, callback A1a and callback A1b (prompt
+// `feat-callback-a1-delivery-port.md` and its split amendment; design `DESIGN-CALLBACK-rev4.md` over
+// rev 3 §2.5): the callback store. One row per run, BESIDE the run record and never in it: where to
+// tell the caller the run finished, and the state of telling. Callback A1a is the door side (the row,
+// registration, `read`, `countPending`, the purge pair); callback A1b the sender side (`due`, `claim`,
+// `freezeBody`, `mark`). The signing keys (A2), the SQLite table (B), the door (C2) and the sender (C3)
+// come later.
 //
-// Core declares the port, its request check and its pure parts; a store does the I/O around them, as
-// `outbound-ledger.ts`: it checks the request (`checkCallbackRequest`) before any reading, and writes
-// a new run's row (`callbackRowOf`) in the same step as the run.
+// Core declares the port, its request check and its pure state machine; a store does the I/O around
+// it, as `outbound-ledger.ts`: it checks the request (`checkCallbackRequest`), takes its ONE raw reading
+// when the method takes one, reads the row and the run, calls the pure function and writes what it
+// returns, with nothing that yields between the read and the write.
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
+import { isPastDeadline } from '../engine/instants.js';
 
 /**
  * Where a run's caller asked to be told the run finished (`CreateRunOptions.callback`).
@@ -22,17 +26,41 @@ export interface CallbackRegistration {
 }
 
 /**
+ * The states a callback row can be in, one list for every use of the word.
+ * @beta
+ */
+export const CALLBACK_STATUSES = ['pending', 'delivered', 'failed'] as const;
+
+/**
+ * The words a try's last answer can be when it got no HTTP status.
+ * @beta
+ */
+export const CALLBACK_LAST_STATUS_WORDS = [
+  'timeout',
+  'connection',
+  'redirect',
+  'refused_address',
+  'not_allowed',
+  'expired',
+] as const;
+
+/**
+ * The state of a callback row: `pending` while it may be tried, then `delivered` or `failed`.
+ * @beta
+ */
+export type CallbackStatus = (typeof CALLBACK_STATUSES)[number];
+
+/**
  * The last answer a try got: an HTTP status (100–599), or a word for a try that got none.
  * @beta
  */
-export type CallbackLastStatus =
-  number | 'timeout' | 'connection' | 'redirect' | 'refused_address' | 'not_allowed' | 'expired';
+export type CallbackLastStatus = number | (typeof CALLBACK_LAST_STATUS_WORDS)[number];
 
 /**
  * One callback row as a store keeps it, for store implementers only.
- * It carries the address, the frozen body and the token, so it is never rendered: the port's `read`
- * returns a {@link CallbackView}, and no method of this port returns the address. An unset field is
- * omitted, never `null`.
+ * It carries the address, the frozen body and the claim token, so it is never rendered: the port's
+ * `read` returns a {@link CallbackView}, and the address comes only from `due` and `claim`. An unset
+ * field is omitted, never `null`.
  * @beta
  */
 export interface CallbackRow {
@@ -41,7 +69,7 @@ export interface CallbackRow {
   readonly workflow_id: string;
   readonly host: string;
   readonly webhook_id: string;
-  readonly status: 'pending' | 'delivered' | 'failed';
+  readonly status: CallbackStatus;
   /** How many tries began. */
   readonly attempts: number;
   /** The registration's reading: the run's own `created_at` (ISO 8601). */
@@ -73,16 +101,99 @@ export type CallbackView = Omit<
 >;
 
 /**
+ * A row ready to send, as `due` returns it: for the sender only, never rendered.
+ * @beta
+ */
+export type CallbackItem = Pick<
+  CallbackRow,
+  'run_id' | 'workflow_id' | 'host' | 'webhook_id' | 'attempts' | 'next_attempt_at' | 'body'
+> & { readonly url: string };
+
+/**
+ * A claimed row: the item with the instants a sender judges its ends from.
+ * @beta
+ */
+export type CallbackClaimedItem = CallbackItem &
+  Pick<CallbackRow, 'last_status'> & {
+    readonly finished_at: string;
+    readonly first_attempt_at: string;
+  };
+
+/**
+ * A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters).
+ * @beta
+ */
+export interface CallbackClaimRequest {
+  readonly expectedNextAttemptAt: string;
+  readonly token: string;
+}
+
+/**
+ * What a claim answers: the claimed item and the claim's one reading, or why it did not apply.
+ * @beta
+ */
+export type CallbackClaimResult =
+  | { readonly applied: true; readonly item: CallbackClaimedItem; readonly at: string }
+  | {
+      readonly applied: false;
+      readonly reason: 'no_row' | 'not_pending' | 'stale' | 'run_not_finished';
+    };
+
+/**
+ * What freezing the body answers.
+ * @beta
+ */
+export type CallbackFreezeResult =
+  | { readonly applied: true }
+  | {
+      readonly applied: false;
+      readonly reason: 'no_row' | 'not_pending' | 'lost_claim' | 'body_set';
+    };
+
+/**
+ * A try's outcome: delivered (a 2xx status), another try after a wait in seconds, or failed.
+ * @beta
+ */
+export type CallbackMarkRequest =
+  | { readonly kind: 'delivered'; readonly lastStatus: number }
+  | {
+      readonly kind: 'retry';
+      readonly afterSeconds: number;
+      readonly lastStatus: CallbackLastStatus;
+    }
+  | { readonly kind: 'failed'; readonly lastStatus: CallbackLastStatus };
+
+/**
+ * What a mark answers.
+ * @beta
+ */
+export type CallbackMarkResult =
+  | { readonly applied: true }
+  | { readonly applied: false; readonly reason: 'no_row' | 'not_pending' | 'lost_claim' };
+
+/**
  * A store's callback store (`RunStore.callbacks`): one row per run, written by `create`.
- * `read`, `countPending` and the purge pair take no reading of the store's clock; the row is written
- * at the create's own reading. A run without a row is no error.
+ * `due`, `claim` and a `retry` mark each take ONE raw reading of the store's clock, refused or
+ * applied; `read`, `countPending`, `freezeBody`, the other marks and the purge pair take none; a
+ * malformed request throws before any reading. A run without a row is no error.
  * @beta
  */
 export interface CallbackStore extends PerRunArtifactStore {
   read(runId: string): Promise<CallbackView | undefined>;
   countPending(): Promise<number>;
+  /** At most `limit` (1–1,000) rows to send now, one per host per round. */
+  due(limit: number): Promise<CallbackItem[]>;
+  claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
+  freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
+  mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
 }
 
+/** How long a claim holds a row before it is due again, in seconds. */
+export const CALLBACK_CLAIM_SECONDS = 60;
+/** The longest wait a `retry` may ask for, in seconds. */
+export const CALLBACK_RETRY_MAX_SECONDS = 86_400;
+
+const WORDS = new Set<string>(CALLBACK_LAST_STATUS_WORDS);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function malformed(what: string): never {
@@ -91,9 +202,16 @@ function malformed(what: string): never {
 
 const text = (v: unknown, max: number): boolean =>
   typeof v === 'string' && v.length >= 1 && v.length <= max;
+const status = (v: unknown, low: number, high: number): boolean =>
+  Number.isInteger(v) && (v as number) >= low && (v as number) <= high;
 
 /** A request to check, by the method that takes it. */
-export type CallbackCheck = { readonly kind: 'register'; readonly callback: CallbackRegistration };
+export type CallbackCheck =
+  | { readonly kind: 'register'; readonly callback: CallbackRegistration }
+  | { readonly kind: 'due'; readonly limit: number }
+  | { readonly kind: 'claim'; readonly token: string }
+  | { readonly kind: 'freeze'; readonly token: string; readonly body: string }
+  | { readonly kind: 'mark'; readonly token: string; readonly result: CallbackMarkRequest };
 
 /**
  * Checks a request, and throws on a malformed one: a store calls it BEFORE it takes its reading, so a
@@ -106,7 +224,34 @@ export function checkCallbackRequest(check: CallbackCheck): void {
     if (!text(c?.host, 255)) malformed('`callback.host` must be 1 to 255 characters');
     if (typeof c?.webhook_id !== 'string' || !UUID.test(c.webhook_id))
       malformed('`callback.webhook_id` must be a uuid');
+    return;
   }
+  if (check.kind === 'due') {
+    if (!status(check.limit, 1, 1000)) malformed('`limit` must be a whole number from 1 to 1,000');
+    return;
+  }
+  if (!text(check.token, 200)) malformed('the claim token must be 1 to 200 characters');
+  if (check.kind === 'freeze' && !text(check.body, Number.POSITIVE_INFINITY))
+    malformed('the body must be a non-empty string');
+  if (check.kind !== 'mark') return;
+  const r = check.result;
+  if (r.kind === 'delivered') {
+    if (!status(r.lastStatus, 200, 299)) malformed('a delivered mark carries a status 200 to 299');
+    return;
+  }
+  if (r.kind !== 'retry' && r.kind !== 'failed') malformed('a mark is delivered, retry or failed');
+  if (!(status(r.lastStatus, 100, 599) || WORDS.has(r.lastStatus as string)))
+    malformed('`lastStatus` must be a status 100 to 599 or one of the closed words');
+  if (
+    r.kind === 'retry' &&
+    !(
+      typeof r.afterSeconds === 'number' &&
+      Number.isFinite(r.afterSeconds) &&
+      r.afterSeconds > 0 &&
+      r.afterSeconds <= CALLBACK_RETRY_MAX_SECONDS
+    )
+  )
+    malformed('`afterSeconds` must be a positive number up to 86,400');
 }
 
 /** The row `create` writes for a run registered with `callback`, at the create's own reading. */
@@ -141,4 +286,134 @@ export function callbackViewOf(row: CallbackRow): CallbackView {
     ...view
   } = row;
   return view;
+}
+
+function itemOf(row: CallbackRow): CallbackItem {
+  return {
+    run_id: row.run_id,
+    workflow_id: row.workflow_id,
+    host: row.host,
+    url: row.url ?? '',
+    webhook_id: row.webhook_id,
+    attempts: row.attempts,
+    next_attempt_at: row.next_attempt_at,
+    ...(row.body !== undefined ? { body: row.body } : {}),
+  };
+}
+
+/** Code-unit order (SQLite's BINARY). */
+const binary = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * What is due at `at`, pure: `pending` rows whose `next_attempt_at` is at or before `at` and whose run
+ * is finished (`finished(runId)`: a missing run reads as not finished). Rounds go one row per host;
+ * within a host by (`next_attempt_at`, `run_id`); within a round by (that row's `next_attempt_at`,
+ * `host`); until `limit` rows or none is left.
+ */
+export function dueCallbacks(
+  rows: readonly CallbackRow[],
+  finished: (runId: string) => boolean,
+  at: Date,
+  limit: number,
+): CallbackItem[] {
+  const byHost = new Map<string, CallbackRow[]>();
+  for (const row of rows) {
+    if (row.status !== 'pending' || !isPastDeadline(row.next_attempt_at, at)) continue;
+    if (!finished(row.run_id)) continue;
+    const list = byHost.get(row.host) ?? [];
+    list.push(row);
+    byHost.set(row.host, list);
+  }
+  for (const list of byHost.values())
+    list.sort((a, b) => binary(a.next_attempt_at, b.next_attempt_at) || binary(a.run_id, b.run_id));
+  const out: CallbackItem[] = [];
+  for (let round = 0; out.length < limit; round++) {
+    const take = [...byHost.values()]
+      .filter((list) => list.length > round)
+      .map((list) => list[round]!)
+      .sort((a, b) => binary(a.next_attempt_at, b.next_attempt_at) || binary(a.host, b.host));
+    if (take.length === 0) break;
+    for (const row of take.slice(0, limit - out.length)) out.push(itemOf(row));
+  }
+  return out;
+}
+
+/**
+ * The claim, pure: `run` is the row's run as the store read it (`undefined` when it does not exist).
+ * First match wins: `no_row` · `not_pending` · `stale` (another `next_attempt_at`) ·
+ * `run_not_finished` · otherwise it applies: the token stored, `attempts` + 1, the reading as
+ * `last_attempt_at` (and `first_attempt_at` when unset), `next_attempt_at` 60 s later, and the run's
+ * `updated_at` as `finished_at` when unset.
+ */
+export function claimCallback(
+  row: CallbackRow | undefined,
+  run: { readonly finished: boolean; readonly updatedAt: string } | undefined,
+  request: CallbackClaimRequest,
+  at: Date,
+): { result: CallbackClaimResult; write?: CallbackRow } {
+  if (row === undefined) return { result: { applied: false, reason: 'no_row' } };
+  if (row.status !== 'pending') return { result: { applied: false, reason: 'not_pending' } };
+  if (row.next_attempt_at !== request.expectedNextAttemptAt)
+    return { result: { applied: false, reason: 'stale' } };
+  if (run === undefined || !run.finished)
+    return { result: { applied: false, reason: 'run_not_finished' } };
+  const stamp = at.toISOString();
+  const write: CallbackRow = {
+    ...row,
+    claim_token: request.token,
+    attempts: row.attempts + 1,
+    last_attempt_at: stamp,
+    next_attempt_at: new Date(at.getTime() + CALLBACK_CLAIM_SECONDS * 1000).toISOString(),
+    first_attempt_at: row.first_attempt_at ?? stamp,
+    finished_at: row.finished_at ?? run.updatedAt,
+  };
+  const item: CallbackClaimedItem = {
+    ...itemOf(write),
+    finished_at: write.finished_at!,
+    first_attempt_at: write.first_attempt_at!,
+    ...(write.last_status !== undefined ? { last_status: write.last_status } : {}),
+  };
+  return { result: { applied: true, item, at: stamp }, write };
+}
+
+/** The body, frozen once, pure. First match wins: `no_row` · `not_pending` · `lost_claim` · `body_set`. */
+export function freezeCallbackBody(
+  row: CallbackRow | undefined,
+  token: string,
+  body: string,
+): { result: CallbackFreezeResult; write?: CallbackRow } {
+  if (row === undefined) return { result: { applied: false, reason: 'no_row' } };
+  if (row.status !== 'pending') return { result: { applied: false, reason: 'not_pending' } };
+  if (row.claim_token !== token) return { result: { applied: false, reason: 'lost_claim' } };
+  if (row.body !== undefined) return { result: { applied: false, reason: 'body_set' } };
+  return { result: { applied: true }, write: { ...row, body } };
+}
+
+/**
+ * A mark, pure: `at` is the store's reading, taken for `retry` only. First match wins: `no_row` ·
+ * `not_pending` (a finished row never moves back) · `lost_claim` · otherwise it applies: `retry`
+ * moves `next_attempt_at` and keeps the address and body; `delivered` and `failed` set the status and
+ * clear the address and body in the same write.
+ */
+export function markCallback(
+  row: CallbackRow | undefined,
+  token: string,
+  result: CallbackMarkRequest,
+  at: Date | undefined,
+): { result: CallbackMarkResult; write?: CallbackRow } {
+  if (row === undefined) return { result: { applied: false, reason: 'no_row' } };
+  if (row.status !== 'pending') return { result: { applied: false, reason: 'not_pending' } };
+  if (row.claim_token !== token) return { result: { applied: false, reason: 'lost_claim' } };
+  if (result.kind === 'retry') {
+    const next = new Date(at!.getTime() + result.afterSeconds * 1000).toISOString();
+    return {
+      result: { applied: true },
+      write: { ...row, next_attempt_at: next, last_status: result.lastStatus },
+    };
+  }
+  const { url: _url, body: _body, ...kept } = row;
+  return {
+    result: { applied: true },
+    write: { ...kept, status: result.kind, last_status: result.lastStatus },
+  };
 }

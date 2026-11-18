@@ -740,9 +740,19 @@ Names this job reaches whose entry is on another page.
 - [`CacheRequest`](read-a-runs-record.md#cacherequest): One of the words in `CACHE_REQUESTS`: what Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`).
 - [`CacheRequestSource`](read-a-runs-record.md#cacherequestsource): One of the words in `CACHE_REQUEST_SOURCES`: whether a request's cache setting was stated with `--prompt-cache` or was the runner's default (`UsageRecord.cache_requested_source`).
 - [`CacheState`](read-a-runs-record.md#cachestate): One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the provider reported (`StepCacheDetail.state`).
+- [`CALLBACK_LAST_STATUS_WORDS`](implement-a-store.md#callback_last_status_words): The words a try's last answer can be when it got no HTTP status.
+- [`CALLBACK_STATUSES`](implement-a-store.md#callback_statuses): The states a callback row can be in, one list for every use of the word.
+- [`CallbackClaimedItem`](implement-a-store.md#callbackclaimeditem): A claimed row: the item with the instants a sender judges its ends from.
+- [`CallbackClaimRequest`](implement-a-store.md#callbackclaimrequest): A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters).
+- [`CallbackClaimResult`](implement-a-store.md#callbackclaimresult): What a claim answers: the claimed item and the claim's one reading, or why it did not apply.
+- [`CallbackFreezeResult`](implement-a-store.md#callbackfreezeresult): What freezing the body answers.
+- [`CallbackItem`](implement-a-store.md#callbackitem): A row ready to send, as `due` returns it: for the sender only, never rendered.
 - [`CallbackLastStatus`](implement-a-store.md#callbacklaststatus): The last answer a try got: an HTTP status (100–599), or a word for a try that got none.
+- [`CallbackMarkRequest`](implement-a-store.md#callbackmarkrequest): A try's outcome: delivered (a 2xx status), another try after a wait in seconds, or failed.
+- [`CallbackMarkResult`](implement-a-store.md#callbackmarkresult): What a mark answers.
 - [`CallbackRegistration`](implement-a-store.md#callbackregistration): Where a run's caller asked to be told the run finished (`CreateRunOptions.callback`).
 - [`CallbackRow`](implement-a-store.md#callbackrow): One callback row as a store keeps it, for store implementers only.
+- [`CallbackStatus`](implement-a-store.md#callbackstatus): The state of a callback row: `pending` while it may be tried, then `delivered` or `failed`.
 - [`CallbackStore`](implement-a-store.md#callbackstore): A store's callback store (`RunStore.callbacks`): one row per run, written by `create`.
 - [`CallbackView`](implement-a-store.md#callbackview): A callback row as the port's `read` returns it: no address, body, token or webhook id.
 - [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): The marker on a step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).

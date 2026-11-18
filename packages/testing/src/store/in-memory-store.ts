@@ -51,12 +51,22 @@ import {
   type OutboundMarkRequest,
   type OutboundResult,
   type PendingGate,
+  type CallbackClaimRequest,
+  type CallbackClaimResult,
+  type CallbackFreezeResult,
+  type CallbackItem,
+  type CallbackMarkRequest,
+  type CallbackMarkResult,
   type CallbackRow,
   type CallbackStore,
   type CallbackView,
   callbackRowOf,
   callbackViewOf,
   checkCallbackRequest,
+  claimCallback,
+  dueCallbacks,
+  freezeCallbackBody,
+  markCallback,
 } from '@sensigo/realm';
 import { REALM_TESTING_BRAND } from '../brand.js';
 
@@ -207,6 +217,9 @@ export class InMemoryOutboundLedger implements OutboundLedger {
   }
 }
 
+/** R1.3 callback A1b: the run facts `due` and a claim need: finished, and when it last changed. */
+type CallbackRunFacts = { readonly finished: boolean; readonly updatedAt: string };
+
 /** A callback row's bytes: the UTF-8 length of the address and body it holds. */
 function callbackBytes(row: CallbackRow | undefined): number {
   if (row === undefined) return 0;
@@ -214,12 +227,19 @@ function callbackBytes(row: CallbackRow | undefined): number {
 }
 
 /**
- * R1.3 callback A1a: the in-memory callback store (an `InMemoryStore`'s `callbacks` member). `create`
- * writes a new run's row through `register`, in the same synchronous stretch as the run; no method
- * takes a reading. Exported from this module only, not from the package.
+ * R1.3 callback A1a and A1b: the in-memory callback store (an `InMemoryStore`'s `callbacks` member).
+ * `create` writes a new run's row through `register`, in the same synchronous stretch as the run.
+ * The sender's methods check the request, take their reading when they take one, read the row and
+ * the run and write the row core returns, all in one synchronous stretch. Exported from this module
+ * only, not from the package.
  */
 export class InMemoryCallbackStore implements CallbackStore {
   private readonly rows = new Map<string, CallbackRow>();
+
+  constructor(
+    private readonly clock: Clock,
+    private readonly runOf: (runId: string) => CallbackRunFacts | undefined,
+  ) {}
 
   /** Whether any row holds `webhookId`. */
   holds(webhookId: string): boolean {
@@ -238,6 +258,40 @@ export class InMemoryCallbackStore implements CallbackStore {
 
   async countPending(): Promise<number> {
     return [...this.rows.values()].filter((row) => row.status === 'pending').length;
+  }
+
+  async due(limit: number): Promise<CallbackItem[]> {
+    checkCallbackRequest({ kind: 'due', limit });
+    const at = takeRawReading(this.clock);
+    const finished = (runId: string): boolean => this.runOf(runId)?.finished === true;
+    return dueCallbacks([...this.rows.values()], finished, at, limit);
+  }
+
+  async claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult> {
+    checkCallbackRequest({ kind: 'claim', token: request.token });
+    const at = takeRawReading(this.clock);
+    const { result, write } = claimCallback(this.rows.get(runId), this.runOf(runId), request, at);
+    if (write !== undefined) this.rows.set(runId, write);
+    return result;
+  }
+
+  async freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult> {
+    checkCallbackRequest({ kind: 'freeze', token, body });
+    const { result, write } = freezeCallbackBody(this.rows.get(runId), token, body);
+    if (write !== undefined) this.rows.set(runId, write);
+    return result;
+  }
+
+  async mark(
+    runId: string,
+    token: string,
+    result: CallbackMarkRequest,
+  ): Promise<CallbackMarkResult> {
+    checkCallbackRequest({ kind: 'mark', token, result });
+    const at = result.kind === 'retry' ? takeRawReading(this.clock) : undefined;
+    const marked = markCallback(this.rows.get(runId), token, result, at);
+    if (marked.write !== undefined) this.rows.set(runId, marked.write);
+    return marked.result;
   }
 
   async statAllForRun(runId: string): Promise<{ bytes: number }> {
@@ -336,7 +390,15 @@ export class InMemoryStore implements RunStore {
               ? run.pending_gate
               : undefined;
           });
-    this.callbacks = options?.callbacks === null ? null : new InMemoryCallbackStore();
+    this.callbacks =
+      options?.callbacks === null
+        ? null
+        : new InMemoryCallbackStore(this.clock, (runId) => {
+            const run = this.runs.get(runId);
+            return run === undefined
+              ? undefined
+              : { finished: run.terminal_state === true, updatedAt: run.updated_at };
+          });
   }
 
   /**
