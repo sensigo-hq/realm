@@ -198,9 +198,9 @@ export {
   // #729 PR-6a (B5): the way out of an ended run, the sentence a refusal on it ends with.
   endedRunWayOutOf,
   withResumeOffer,
-  withPendingCleanup,
-  withEndedRunWays,
   endedRunWaysSentence,
+  // #625 A1b-1: the one "said once" rule — whether a reply about an ended run says how it ended.
+  saysHowItEnded,
   pendingGateQuestion,
 } from './engine/execution-loop.js';
 export type {
@@ -395,6 +395,8 @@ export {
   // the offer's place for a run an operator ended.
   offeredResumeWay,
   operatorEndingSentence,
+  // #625 A1b-1: the one ending composer — how an ended run ended, from its record only.
+  runEndingOf,
   oneOf,
   waitingOnAnswer,
   pendingCleanupWay,
@@ -428,6 +430,7 @@ export type {
   ProgramFit,
   DueExpiry,
   OpenQuestion,
+  RunEnding,
 } from './engine/pending.js';
 export {
   findEligibleSteps,

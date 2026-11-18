@@ -199,15 +199,15 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
   it('lines 116–123, the table "A run that has ended": each tool’s row, on a completed run', async () => {
     const ROWS = {
       execute_step:
-        '| `execute_step` | `ok` with `agent_action: "stop"`: `Run \'<id>\' is already terminal (<phase>); no steps executed.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place |',
+        '| `execute_step` | `ok` with `agent_action: "stop"`: `Run \'<id>\' is already terminal (<phase>); no steps executed.`, then how the run ended (added after version 0.50.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for an abandoned run, `To run the work again, start a new run.` in its place |',
       advance_run:
-        '| `advance_run` | `ok` without `agent_action`: `Run \'<id>\' is already terminal (<phase>); nothing ran.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place |',
+        '| `advance_run` | `ok` with `agent_action: "stop"` (added after version 0.50.0, which gave none): `Run \'<id>\' is already terminal (<phase>); nothing ran.`, then how the run ended (added after version 0.50.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for an abandoned run, `To run the work again, start a new run.` in its place |',
       submit_human_response:
         '| `submit_human_response` | `ok` without `agent_action` when it repeats the choice its gate recorded: `Not recorded: the question on step \'<step>\' already had this answer — <c>, by "<name>" (as stated), through <door>, at <time>.`',
       append_trace:
         "| `append_trace` | Refused with `STATE_STEP_NOT_ELIGIBLE` and `report_to_user`: `Run '<id>' is terminal (phase: '<phase>') — trace entries can no longer be adopted by any step.` |",
       get_run_state:
-        "| `get_run_state` | The run's state, as for a run that goes on, with `terminal_state: true` and empty `next_actions`. `resumable` names, for a run an engine failure ended, the failed steps `realm run resume` takes and its command (never for a run an operator ended: its `terminal_reason` and `sealed_by_arm` say who ended it and why), and `cleanup_pending` the cleanup steps left `pending` and the command that runs them (added after version 0.46.0). |",
+        "| `get_run_state` | The run's state, as for a run that goes on, with `terminal_state: true` and empty `next_actions`. `resumable` names, for a run an engine failure ended, the failed steps `realm run resume` takes and its command (never for an abandoned run: its `terminal_reason` and `sealed_by_arm` say how it ended), and `cleanup_pending` the cleanup steps left `pending` and the command that runs them (added after version 0.46.0). |",
     };
     for (const row of Object.values(ROWS)) claim(TOOLS, row);
     const { call, workflowStore } = await connect();
@@ -222,14 +222,16 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
     expect([exec['status'], exec['agent_action'], exec['context_hint']]).toEqual([
       'ok',
       'stop',
-      `Run '${runId}' is already terminal (completed); no steps executed.`,
+      // #625 A1b-1: then how the run ended.
+      `Run '${runId}' is already terminal (completed); no steps executed. It completed.`,
     ]);
     const adv = await call('advance_run', { run_id: runId });
-    // (a) red when advance_run on an ended run carries agent_action or another sentence; (b) prints it.
-    expect([adv['status'], 'agent_action' in adv, adv['context_hint']]).toEqual([
+    // (a) red when advance_run on an ended run carries no `stop` (#625 A1b-1, D5) or another sentence;
+    //     (b) prints it.
+    expect([adv['status'], adv['agent_action'], adv['context_hint']]).toEqual([
       'ok',
-      false,
-      `Run '${runId}' is already terminal (completed); nothing ran.`,
+      'stop',
+      `Run '${runId}' is already terminal (completed); nothing ran. It completed.`,
     ]);
     const same = await call('submit_human_response', {
       run_id: runId,
@@ -243,7 +245,8 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
     expect([same['status'], 'agent_action' in same, same['context_hint']]).toEqual([
       'ok',
       false,
-      `Not recorded: the question on step 'draft' already had this answer — send, through Realm's MCP answer tool, at ${instantText(Date.parse(String(sameAt)))}.`,
+      // #625 A1b-1 (correction 1): on the ended run, then how it ended.
+      `Not recorded: the question on step 'draft' already had this answer — send, through Realm's MCP answer tool, at ${instantText(Date.parse(String(sameAt)))}. It completed.`,
     ]);
     const trace = await call('append_trace', {
       run_id: runId,
