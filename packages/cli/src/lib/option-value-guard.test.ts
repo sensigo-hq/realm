@@ -692,7 +692,11 @@ describe('#920 C-2 — the pages name every guarded option', () => {
     claim(ACTING, two('--project', '--extensions-module'));
     claim(ACTING, two('--by', '--project'));
     claim(ACTING, one('--reason'));
-    claim(ACTING, two('--step', '--workflow'));
+    // #922 P1b: reclaim's sentence names `--claimed-at` too.
+    claim(
+      ACTING,
+      '`--step`, `--claimed-at` and `--workflow` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
+    );
     claim(MCP, two('--project', '--extensions-module'));
     // `realm mcp` and `realm serve` each hold the two-option sentence (`serve --port` left the
     // guard: issues #944, #949).

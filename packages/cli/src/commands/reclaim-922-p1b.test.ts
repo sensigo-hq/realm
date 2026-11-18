@@ -95,7 +95,8 @@ async function held(
 const printedArgs = (err: string[]): string[] =>
   (/To reclaim this claim, run: (.+)$/.exec(err.join(' '))?.[1] ?? '').split(' ').slice(1);
 
-describe('#922 P1b — check 9: the old form, and the fence', () => {
+// each cell starts the built CLI up to three times: 30 s a cold start, the budget on the block
+describe('#922 P1b — check 9: the old form, and the fence', { timeout: 120_000 }, () => {
   it('a claim past its deadline: the old form frees it, says its condition, then that it is done', async () => {
     const run = await held({ b: { deadline: plus(-90_000), token: 't', since: SINCE } });
     const r = realm(['run', 'reclaim', run.id, '--step', 'b', '--force']);
@@ -178,7 +179,8 @@ describe('#922 P1b — check 9: the old form, and the fence', () => {
   });
 });
 
-describe('#922 P1b — the refusals and the words, exit codes included', () => {
+// each cell starts the built CLI up to three times: 30 s a cold start, the budget on the block
+describe('#922 P1b — the refusals and the words, exit codes included', { timeout: 120_000 }, () => {
   it('not_a_step exits 1; not_held exits 0 and says so; a step a newer definition renamed is freed and says so', async () => {
     const notAStep = await held({ a: { deadline: AHEAD, token: 't', since: SINCE } });
     const notHeld = await held({});
@@ -231,7 +233,8 @@ describe('#922 P1b — the refusals and the words, exit codes included', () => {
   });
 });
 
-describe('#922 P1b — check 11: a step named `-x`', () => {
+// each cell starts the built CLI up to three times: 30 s a cold start, the budget on the block
+describe('#922 P1b — check 11: a step named `-x`', { timeout: 120_000 }, () => {
   it('the printed command names it `--step=-x`, and run as printed from another folder frees it', async () => {
     const run = await held({ '-x': { deadline: AHEAD, token: 't', since: SINCE } });
     const refused = realm(['run', 'reclaim', run.id, '--step=-x', '--force']);
@@ -247,23 +250,28 @@ describe('#922 P1b — check 11: a step named `-x`', () => {
   });
 });
 
-describe('#922 P1b — check 12 (the CLI): a definition the CLI cannot read', () => {
-  it('a run of a workflow this home does not hold: judged without its definition, its rerun not known, never an exit on it', async () => {
-    const run = await held(
-      { a: { deadline: plus(-90_000), token: 't', since: SINCE } },
-      'not-registered-922',
-    );
-    const r = realm(['run', 'reclaim', run.id, '--step', 'a', '--force']);
-    // (a) red when reclaim exits on the definition's absence, or frees the step without saying its
-    //     rerun is not known; (b) prints the run.
-    expect({ ...r, left: await run.inProgress() }).toEqual({
-      code: 0,
-      out: [
-        'Its workflow definition is not available here, so whether running it again is safe is not known.',
-        `Reclaimed step 'a' of run ${run.id}: it can run again.`,
-      ],
-      err: [],
-      left: [],
+// each cell starts the built CLI up to three times: 30 s a cold start, the budget on the block
+describe(
+  '#922 P1b — check 12 (the CLI): a definition the CLI cannot read',
+  { timeout: 120_000 },
+  () => {
+    it('a run of a workflow this home does not hold: judged without its definition, its rerun not known, never an exit on it', async () => {
+      const run = await held(
+        { a: { deadline: plus(-90_000), token: 't', since: SINCE } },
+        'not-registered-922',
+      );
+      const r = realm(['run', 'reclaim', run.id, '--step', 'a', '--force']);
+      // (a) red when reclaim exits on the definition's absence, or frees the step without saying its
+      //     rerun is not known; (b) prints the run.
+      expect({ ...r, left: await run.inProgress() }).toEqual({
+        code: 0,
+        out: [
+          'Its workflow definition is not available here, so whether running it again is safe is not known.',
+          `Reclaimed step 'a' of run ${run.id}: it can run again.`,
+        ],
+        err: [],
+        left: [],
+      });
     });
-  });
-});
+  },
+);
