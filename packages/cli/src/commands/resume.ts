@@ -185,7 +185,23 @@ export async function resumeRun(
   for (const step of run.in_progress_steps) {
     const claim = run.claims?.[step];
     if (claim === undefined) continue; // absent — released inside applyResume
-    const state = classifyClaim(claim, now, leaseFactOf(read, claim));
+    const lease = leaseFactOf(read, claim);
+    const state = classifyClaim(claim, now, lease);
+    // #729 CW-3a (§4.4): a claim under a lease whose state is not known is never released, with or
+    // without --force (a held lease keeps the HEALTHY refusal below; a not-held one is stale).
+    if (!('absent' in lease) && (lease.state === 'absent' || lease.state === 'unknown')) {
+      throw new WorkflowError(
+        `Step '${step}' is claimed under a lease, and whether its program still holds it is not ` +
+          `known; resume does not release it, with or without --force.`,
+        {
+          code: 'STATE_TRANSITION_DENIED',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+          details: { runId, step },
+        },
+      );
+    }
     if (state === 'healthy') {
       throw new WorkflowError(
         `Step '${step}' has a HEALTHY claim (deadline ${claim.deadline}) — a live runner is ` +
@@ -227,7 +243,7 @@ export const resumeCommand = new Command('resume')
   .requiredOption('--from <step>', 'Name of the failed step to re-enable')
   .option(
     '--force',
-    'Override the claim_unknown_age refusal ONLY (never a healthy claim or an unexpired drain lease)',
+    'Override the claim_unknown_age refusal ONLY (never a healthy claim, a claim under a lease whose state is not known, or an unexpired drain lease)',
   )
   .action(async (runId: string, opts: { from: string; force?: boolean }) => {
     // #616 PR-2a (iii): the one door, opened once.

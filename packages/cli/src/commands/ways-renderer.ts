@@ -16,6 +16,8 @@ import {
   cannotGoOnUntilCorrected,
   cannotRunParts,
   capText,
+  heldIsAhead,
+  heldIsPast,
   heldStateOf,
   heldWordsStateOf,
   libraryCannotRunWords,
@@ -416,16 +418,6 @@ export function heldEntriesOf(composed: Pick<ComposedWays, 'unavailable'>): Held
   );
 }
 
-/**
- * #922 P2-2 (MA 2, WO922-P22-MA2-03) — TEMPORARY, until CW-3 folds the lease into the held state for
- * every door and removes this branch: a held step whose claim names a lease the store reports held
- * is still running (CW-1b) — the CLI says to wait for it, with no command. Read from the entry's own
- * lease fact.
- */
-export function leaseHeld(entry: HeldEntry): boolean {
-  return entry.facts.lease?.state === 'held';
-}
-
 /** A held entry's reclaim way; `undefined` on a store that keeps no claims (its entry offers none). */
 function reclaimWayIn(entry: HeldEntry): WayOf<'reclaim'> | undefined {
   return entry.remedy.find((w): w is WayOf<'reclaim'> => w.verb === 'reclaim');
@@ -434,10 +426,11 @@ function reclaimWayIn(entry: HeldEntry): WayOf<'reclaim'> | undefined {
 /**
  * #922 P2-2 (the owner's B): what frees a held step — each condition's words, said before the
  * command (core's one table, `reclaimConditionWords`), then `To free it, run: <command>` (`To free it
- * anyway, run:` while its deadline is ahead), the claim's stamp in the command when it carries one.
+ * anyway, run:` while its deadline is ahead or its program held its lease, #729 CW-3a), the claim's
+ * stamp in the command when it carries one.
  */
 function freeingParts(entry: HeldEntry, way: WayOf<'reclaim'>, ctx: RenderCtx): string[] {
-  const anyway = heldStateOf(entry).state === 'ahead' ? ' anyway' : '';
+  const anyway = heldIsAhead(heldStateOf(entry).state) ? ' anyway' : '';
   return [
     ...way.conditions.flatMap((c) => reclaimConditionWords(c) ?? []),
     `To free it${anyway}, run: ${CLI_COMMANDS.reclaim(way, undefined, hostOf(ctx))}`,
@@ -447,11 +440,9 @@ function freeingParts(entry: HeldEntry, way: WayOf<'reclaim'>, ctx: RenderCtx): 
 /**
  * #922 P2-2 (R13): the ONE CLI line for a held step, read by every CLI door that names one — its
  * state's opening (core's `HELD_WORDS.cli`), then what frees it ({@link freeingParts}); on a store
- * that keeps no claims, the opening alone; a claim whose lease is held, `'<s>' is held; wait for it.`
- * alone ({@link leaseHeld}). Facts and conditions only (rule 10).
+ * that keeps no claims, the opening alone. Facts and conditions only (rule 10).
  */
 export function heldLine(entry: HeldEntry, ctx: RenderCtx = PLAIN): string {
-  if (leaseHeld(entry)) return HELD_WORDS.cli('ahead', entry.facts.step, undefined);
   const way = reclaimWayIn(entry);
   const held = heldStateOf(entry);
   const at =
@@ -466,18 +457,15 @@ export function heldLine(entry: HeldEntry, ctx: RenderCtx = PLAIN): string {
 
 /**
  * #922 P2-2: the lines under a held step on the screens that list each one (`realm run reclaim
- * <id>`, `realm run inspect`) — for a step past its deadline, `HELD_WORDS.pastLine` first; then what
- * frees it ({@link freeingParts}), one line each. Empty on a store that keeps no claims, and for a
- * claim whose lease is held ({@link leaseHeld}).
+ * <id>`, `realm run inspect`) — the state's lead line first (`HELD_WORDS.leadLine`: a step past its
+ * deadline, or whose lease no program held, #729 CW-3a); then what frees it ({@link freeingParts}),
+ * one line each. Empty on a store that keeps no claims.
  */
 export function heldWayLines(entry: HeldEntry, ctx: RenderCtx = PLAIN): string[] {
   const way = reclaimWayIn(entry);
-  if (way === undefined || leaseHeld(entry)) return [];
-  const held = heldStateOf(entry);
-  return [
-    ...(held.state === 'past' ? [HELD_WORDS.pastLine(held.deadline)] : []),
-    ...freeingParts(entry, way, ctx),
-  ];
+  if (way === undefined) return [];
+  const lead = HELD_WORDS.leadLine(heldStateOf(entry));
+  return [...(lead !== undefined ? [lead] : []), ...freeingParts(entry, way, ctx)];
 }
 
 /**
@@ -490,7 +478,7 @@ export function heldWithoutDefinitionLine(runId: string, ctx: RenderCtx = PLAIN)
 
 /**
  * #922 P2-2 (ladder row 4): whether the only thing a run waits on is steps held past their deadline
- * — no progress way offered (no owed engine work, no ready agent step, no question to answer), and
+ * (or, #729 CW-3a, whose lease no program held) — no progress way offered (no owed engine work, no ready agent step, no question to answer), and
  * every progress-verb entry listed is a held step past its deadline (`advance`'s copy of one
  * included). `realm run advance` exits 1 then.
  */
@@ -500,7 +488,7 @@ export function waitsOnlyOnPastHeld(composed: Pick<ComposedWays, 'ways' | 'unava
   const blockers = composed.unavailable.filter((u) => progress(u.verb));
   return (
     blockers.length > 0 &&
-    blockers.every((u) => u.code === 'held_elsewhere' && heldStateOf(u).state === 'past')
+    blockers.every((u) => u.code === 'held_elsewhere' && heldIsPast(heldStateOf(u).state))
   );
 }
 

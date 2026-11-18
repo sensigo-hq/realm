@@ -19,6 +19,7 @@ import {
   buildDisclosureSet,
   respondWayOfGate,
   formatInstantWords,
+  heldIsPast,
   heldStateOf,
   instantText,
   parseStamp,
@@ -46,13 +47,7 @@ import type {
 } from '@sensigo/realm';
 import { accountLabelOf } from '@sensigo/realm-mcp';
 import { PLAIN, RUN_PHASE_WORDS, writerSetFor, type RenderCtx } from '../output/writer.js';
-import {
-  cliCommandOf,
-  heldLine,
-  leaseHeld,
-  respondLines,
-  type HeldEntry,
-} from '../commands/ways-renderer.js';
+import { cliCommandOf, heldLine, respondLines, type HeldEntry } from '../commands/ways-renderer.js';
 
 /** The one phrase for a recorded name that cannot be printed; defined in core (#729 PR-6a c1). */
 export { UNSHOWABLE_NAME };
@@ -207,8 +202,8 @@ export function goOnLine(
 ): string {
   const group = (entries: readonly HeldEntry[]): string =>
     `${entries.map((e) => `'${e.facts.step}'`).join(', ')} ${entries.length === 1 ? 'is' : 'are'}`;
-  // A claim whose lease is held is waited for, whatever its deadline (`leaseHeld`).
-  const isPast = (e: HeldEntry): boolean => heldStateOf(e).state === 'past' && !leaseHeld(e);
+  // #729 CW-3a: a claim whose lease no program held is freed, as a past one is (`heldIsPast`).
+  const isPast = (e: HeldEntry): boolean => heldIsPast(heldStateOf(e).state);
   const past = held.filter(isPast);
   const waiting = held.filter((e) => !isPast(e));
   const parts: string[] = [];
