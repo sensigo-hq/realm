@@ -30,6 +30,7 @@ import {
   pendingCleanupLine,
   pendingCleanupWay,
   endedRunWayOutOf,
+  runEndingOf,
 } from '@sensigo/realm';
 import { renderOutcome } from '@sensigo/realm-mcp';
 import {
@@ -230,6 +231,24 @@ function beatenSentence(result: EngineReply): string | undefined {
 }
 
 /**
+ * #625 A1b-2 (A1b-1's fix 2 on the MCP side): an answer another person's answer beat, on a run that
+ * has ended, says how it ended — once, after the sentence that says whose answer stands: the one
+ * ending composer's sentence, its stored values through `ctx.escaped`. The sentence alone otherwise.
+ */
+function beatenOnEndedRun(
+  beaten: string,
+  judged: Snapshot | undefined,
+  workflow: WorkflowDefinition,
+): string {
+  const ctx = writerCtx();
+  const ending =
+    judged === undefined
+      ? undefined
+      : runEndingOf(judged.record, workflow, { quote: (escaped) => ctx.escaped(escaped) });
+  return ending === undefined ? beaten : `${beaten} ${ending.sentence}`;
+}
+
+/**
  * #729 PR-6a (B2 (3), B5): an answer after an `on_expiry: abort` that ANOTHER call carried out —
  * the reply says what the question met (`outcome`: its expiry, no choice) and carries no `expiry`
  * receipt (this call carried nothing out).
@@ -351,11 +370,15 @@ export async function respondToGate(
     // refusal prints exactly what it printed before (plus the ending, should the reply carry one),
     // and an answer naming a gate that is not the open one its way on (#729 PR-0 correction, C5).
     // #729 PR-6a (B5): an answer another person's answer beat says whose answer stands.
-    const refusal = beatenSentence(result) ?? result.errors[0] ?? 'Gate response failed';
-    let lines = [refusal, ...gateMismatchLines(result), ...describeEndedBy(result)];
     // #715 (b) (D6-17, Amendment 4): the lines about the record after the answer are judged on the
     // snapshot the engine judged its reply on — never a second load; a reply with none gets none.
     const judged = judgedSnapshotOf(result);
+    const beatenRefusal = beatenSentence(result);
+    const refusal =
+      beatenRefusal !== undefined
+        ? beatenOnEndedRun(beatenRefusal, judged, workflow)
+        : (result.errors[0] ?? 'Gate response failed');
+    let lines = [refusal, ...gateMismatchLines(result), ...describeEndedBy(result)];
     if (abortedByOtherCall(result)) {
       // #729 PR-6a (B5): the question's time limit ended the run before this answer — said through
       // the one sentence-maker, then the way out of the ended run (today's wording, C170).
@@ -468,7 +491,7 @@ export async function respondToGate(
       recorded: false,
       lines,
       lastLine: [
-        beaten,
+        beatenOnEndedRun(beaten, judged, workflow),
         ...nextLines(
           runId,
           workflow,

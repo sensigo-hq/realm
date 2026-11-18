@@ -83,13 +83,15 @@ const completed = (run: RunRecord): void => {
 
 // (a) red when the refusal adds a stop to stored text or after a command, renders the stored phase,
 //     or a carrier's message differs from the other's; (b) prints the whole message.
+// #625 A1b-2: these records are written in place with no seal, so the sentence of how each ended is
+// the composer's "worked out from its record" one.
 describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
   it('E1 R1: a completed run, through the pre-attach check', async () => {
     const store = new InMemoryStore();
     const runId = await endedRun(store, completed);
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} has already ended (completed).`,
+      `Run ${runId} has already ended (completed). Its ending was worked out from its record (phase 'completed'); no seal was written.`,
     );
   });
 
@@ -98,7 +100,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     const runId = await endedRun(store, completed);
     await expect(agent(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} has already ended (completed).`,
+      `Run ${runId} has already ended (completed). Its ending was worked out from its record (phase 'completed'); no seal was written.`,
     );
   });
 
@@ -110,7 +112,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     });
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} has already ended (completed).\n1 cleanup step is not yet delivered — to deliver it: realm run drain ${runId}`,
+      `Run ${runId} has already ended (completed). Its ending was worked out from its record (phase 'completed'); no seal was written.\n1 cleanup step is not yet delivered — to deliver it: realm run drain ${runId}`,
     );
   });
 
@@ -122,7 +124,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     });
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} has already ended (failed).\nReason: "spawn_failed"`,
+      `Run ${runId} has already ended (failed). Its ending was worked out from its record (phase 'failed'); no seal was written.\nReason: "spawn_failed"`,
     );
   });
 
@@ -136,7 +138,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     });
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} has already ended (aborted).`,
+      `Run ${runId} has already ended (aborted). Its ending was worked out from its record (phase 'aborted'); no seal was written.`,
     );
   });
 
@@ -158,10 +160,12 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
       terminal_state: true,
       aborted_at: { step_id: 's1' },
     } as RunRecord;
-    expect(terminalRunRefusal('r1', rec).message).toBe('Run r1 has already ended (aborted).');
+    expect(terminalRunRefusal('r1', rec).message).toBe(
+      "Run r1 has already ended (aborted). Its ending was worked out from its record (phase 'aborted'); no seal was written.",
+    );
   });
 
-  it('E1 R6: a reason that ends with a question mark is printed as written — no stop added; who ended the run from the record', async () => {
+  it('E1 R6: a reason that ends with a question mark is printed as written — no stop added; how the run ended from the record', async () => {
     const store = new InMemoryStore();
     const runId = await endedRun(store, (run) => {
       run.terminal_state = true;
@@ -169,7 +173,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     });
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} has already ended (abandoned): an operator ended it.\nReason: "Held?"`,
+      `Run ${runId} has already ended (abandoned). It was abandoned, with the reason "Held?" (worked out from its record; no seal was written).`,
     );
   });
 });

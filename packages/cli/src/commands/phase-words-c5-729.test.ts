@@ -386,9 +386,15 @@ describe('#729 PR-3 correction 5 (J-2) — `realm run advance` prints the phase 
     const r = piped(['run', 'advance', id], {}, declaring('failed'));
     const line = lineWith(r.lines, 'Nothing is owed to the engine:') ?? '';
     // (a) red when the phase prints as plain text; (b) prints the line up to its command.
-    expect(line.slice(0, line.indexOf(': realm'))).toBe(
-      "Nothing is owed to the engine: the run has ended (failed) — to make 'a' runnable again",
-    );
+    // #625 A1b-2: the sentence of how it ended follows the phase — the variable holds `failed`, so
+    // the writer masks that word inside it; the phase and the way back in stay whole.
+    expect([
+      line.slice(0, line.indexOf('(failed).') + '(failed).'.length),
+      line.slice(line.indexOf(' To make '), line.indexOf(': realm')),
+    ]).toEqual([
+      'Nothing is owed to the engine: the run has ended (failed).',
+      " To make 'a' runnable again",
+    ]);
   }, 60_000);
 
   it("run-advance.ts — the cross cell: the failed run's reason gets its way back in (`reason === ended`, both spanned)", async () => {

@@ -412,12 +412,12 @@ export {
   owedWords,
   cannotGoOnHere,
   resumeWay,
-  // F2: what a surface may OFFER to `realm run resume` (an engine failure only), and what it says in
-  // the offer's place for a run an operator ended.
+  // F2: what a surface may OFFER to `realm run resume` (an engine failure only).
   offeredResumeWay,
-  operatorEndingSentence,
-  // #625 A1b-1: the one ending composer — how an ended run ended, from its record only.
+  // #625 A1b-1: the one ending composer — how an ended run ended, from its record only; A1b-2: the
+  // way out of an abandoned run, read by the CLI's surfaces from here.
   runEndingOf,
+  NEW_RUN_SENTENCE,
   oneOf,
   waitingOnAnswer,
   pendingCleanupWay,

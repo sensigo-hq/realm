@@ -69,7 +69,15 @@ const S = {
   skippedLabel: 'Skipped, with the reason on the record',
   recordTitle: 'What is left behind.',
   footerEnd: "Long text is shortened with “…”; Full reply shows Realm's reply whole.",
+  // the form path (0.50.0's default): stage 3's label, stage 4's answer box and the answer line
+  formLabel: 'Realm sent this question to the app as a form:',
+  answerLabel: "The reviewer answers Realm's form",
+  answerLine:
+    "The record says it was answered through a form in an assistant's app (answer.route: mcp_form).",
 };
+// The slow-reader cell (a visitor who reads for more than a minute before answering) runs in this
+// browser configuration only: it waits 65 s.
+const SLOW_READER = 'chromium:1280';
 // Stage 3's heading and Next's label at stage 3, per state.
 const GATE_HEAD = { A: S.gateA, B: S.gateB, C: S.gateCD, D: S.gateCD, E: S.failedBeforeGate };
 const NEXT_AT_3 = {
@@ -154,8 +162,19 @@ async function walk(which, width) {
     await go(i);
     return page.innerText(`.rp-stage[data-s="${i}"]`);
   };
+  // The page is ready for the visitor: Send works (no call in flight), or Realm's form is open (its
+  // choice buttons work, while Send stays off: the call that reached the gate holds the form open).
   const idle = () =>
-    page.waitForFunction(() => !document.querySelector('[data-act="send"]').disabled);
+    page.waitForFunction(
+      () =>
+        !document.querySelector('[data-act="send"]').disabled ||
+        [...document.querySelectorAll('[data-act="answer"]')].some((b) => !b.disabled),
+    );
+  const formOpen = () =>
+    page.waitForFunction(() =>
+      [...document.querySelectorAll('[data-act="answer"]')].some((b) => !b.disabled),
+    );
+  const enabled = (sel) => page.$$eval(sel, (bs) => bs.filter((b) => !b.disabled).length);
   const sendOut = () => page.innerText('[data-box="send"]');
   async function sendBox(step, text, dbl = false) {
     await go(1);
@@ -166,6 +185,13 @@ async function walk(which, width) {
     else await page.click('[data-act="send"]');
     await idle();
     return { txt: await sendOut(), ms: Date.now() - t0 };
+  }
+  // The same, without waiting: for a call that holds Realm's form open.
+  async function sendBoxNoWait(step, text) {
+    await go(1);
+    await page.selectOption('[data-l="step"]', step);
+    await page.fill('[data-l="box"]', text);
+    await page.click('[data-act="send"]');
   }
   const preset = async (label) => {
     await go(1);
@@ -296,6 +322,30 @@ async function walk(which, width) {
         `${name} stage 3: no "answer the gate itself" attempt`,
         !/answer the gate itself|answers the gate/i.test(t),
       );
+      const s3 = '.rp-stage[data-s="2"] ';
+      const formState = {
+        label: await page.textContent(s3 + '[data-say="formLabel"]'),
+        labelShown: await page.isVisible(s3 + '[data-say="formLabel"]'),
+        choicesOn: await enabled('[data-act="answer"]'),
+        skipsOn: await enabled('[data-act="skip"]'),
+        sendOn: await enabled('[data-act="send"]'),
+        hint: await page.isVisible(s3 + '[data-l="form-hint"]'),
+        ask: await page.isVisible(s3 + '[data-act="ask"]'),
+      };
+      ok(
+        `${name} stage 3: Realm's form is open: "${S.formLabel}", both choice buttons and both skip buttons work, Send is off, no hint, no ask-again`,
+        JSON.stringify(formState) ===
+          JSON.stringify({
+            label: S.formLabel,
+            labelShown: true,
+            choicesOn: 2,
+            skipsOn: 2,
+            sendOn: 0,
+            hint: false,
+            ask: false,
+          }),
+        JSON.stringify(formState),
+      );
     }
     if (L === 'C' || L === 'D')
       ok(
@@ -354,12 +404,16 @@ async function walk(which, width) {
       const ansT = (await page.isVisible(s4 + '[data-box="answer"]'))
         ? await page.innerText(s4 + '[data-box="answer"]')
         : '';
+      const lineEl = s4 + '[data-say="answerLine"]';
+      const line = (await page.isVisible(lineEl)) ? await page.textContent(lineEl) : null;
       ok(
-        `${name} stage 4: the reviewer's box (its call and reply), labelled by its actor`,
-        /^THE REVIEWER ANSWERS\n/i.test(ansT) &&
-          ansT.includes('submit_human_response') &&
-          /REALM ACCEPTS IT/i.test(ansT),
-        JSON.stringify(ansT.slice(0, 120)),
+        `${name} stage 4: the reviewer's box: "${S.answerLabel}", the form response the page sent, then the answer line from the record`,
+        ansT.toLowerCase().startsWith(S.answerLabel.toLowerCase() + '\n') &&
+          ansT.includes('"action": "accept"') &&
+          ansT.includes(`"choice": "${ending.choice}"`) &&
+          !ansT.includes('submit_human_response') &&
+          line === S.answerLine,
+        JSON.stringify({ box: ansT.slice(0, 120), line }),
       );
       const otherT = await page.innerText(s4 + '[data-box="other"]');
       ok(
@@ -683,16 +737,20 @@ async function walk(which, width) {
     JSON.stringify(await headings()) === JSON.stringify(h0) && (await letter()) === 'A',
   );
 
-  // ---- the valid review → state B
+  // ---- the valid review → state B: Realm sends its form inside the call, which stays open
   await preset('Submit a valid review');
   await page.click('[data-act="send"]');
-  await idle();
-  r = { txt: await sendOut() };
+  await formOpen();
   ok(
-    'valid → Realm accepts it + the :63 stop sentence',
-    /REALM ACCEPTS IT/i.test(r.txt) &&
-      (await page.textContent('.rp-stage[data-s="1"] [data-say="stop"]')) === S.stop,
-    r.txt.split('\n').slice(-4).join(' | '),
+    "valid → Realm's form opens: the page is on stage 3, focus on its heading, the :63 stop sentence on stage 2, whose Send box stays empty until the answer",
+    (await page.getAttribute('.rp', 'data-stage')) === '2' &&
+      (await focusIs('.rp-stage[data-s="2"] h3[data-say="gate"]')) &&
+      (await page.textContent('.rp-stage[data-s="1"] [data-say="stop"]')) === S.stop &&
+      (await sendOut()) === '',
+    JSON.stringify({
+      stage: await page.getAttribute('.rp', 'data-stage'),
+      box: (await sendOut()).slice(0, 80),
+    }),
   );
   await cells('B');
   const h1 = await headings();
@@ -713,6 +771,29 @@ async function walk(which, width) {
     'refused skip attempts change no heading and leave state B',
     JSON.stringify(await headings()) === JSON.stringify(h1) && (await letter()) === 'B',
   );
+  ok(
+    'while the form is open, a skip reply never turns Send back on; the choice buttons still work',
+    (await enabled('[data-act="send"]')) === 0 && (await enabled('[data-act="answer"]')) === 2,
+    JSON.stringify({
+      send: await enabled('[data-act="send"]'),
+      choices: await enabled('[data-act="answer"]'),
+    }),
+  );
+  // correction 1: while the form holds the Send call, stage 2's presets are off with Send, and an off
+  // button looks off (the page's own off style: opacity 0.45, cursor not-allowed)
+  const PRESETS = '.rp-stage[data-s="1"] [data-pick]';
+  const look = (sel) =>
+    page.$eval(sel, (b) => [getComputedStyle(b).opacity, getComputedStyle(b).cursor]);
+  ok(
+    'while the form is open, the five presets of stage 2 are off',
+    (await page.$$(PRESETS)).length === 5 && (await enabled(PRESETS)) === 0,
+    `${await enabled(PRESETS)} of ${(await page.$$(PRESETS)).length} on`,
+  );
+  ok(
+    'while the form is open, Send looks off: opacity 0.45, cursor not-allowed',
+    JSON.stringify(await look('[data-act="send"]')) === JSON.stringify(['0.45', 'not-allowed']),
+    JSON.stringify(await look('[data-act="send"]')),
+  );
   // ---- the answer → state C
   const ending1 = R.endings.request_changes;
   await page.click('[data-act="answer"][data-choice="request_changes"]');
@@ -722,6 +803,13 @@ async function walk(which, width) {
     'the answer lands on stage 4, focus on its heading',
     (await page.getAttribute('.rp', 'data-stage')) === '3' &&
       (await focusIs('.rp-stage[data-s="3"] h3[data-say="branch"]')),
+  );
+  ok(
+    'after the answer, the five presets work again, and Send works and looks on (opacity 1)',
+    (await enabled(PRESETS)) === 5 &&
+      (await enabled('[data-act="send"]')) === 1 &&
+      (await look('[data-act="send"]'))[0] === '1',
+    JSON.stringify({ presets: await enabled(PRESETS), send: await look('[data-act="send"]') }),
   );
   await cells('C', ending1);
   const h2 = await headings();
@@ -847,6 +935,45 @@ async function walk(which, width) {
     await cells('C', ending);
   }
 
+  // ---- Start a new run while Realm's form is open: the open form goes with the old engine. The
+  // review is sent with curly quotes, so the page notes their repair: the note is the old run's only.
+  await page.click('.rp-live-mark [data-act="new"]');
+  await page.waitForFunction(
+    (id) => !document.querySelector('.rp-live-mark p').textContent.endsWith(id),
+    runId,
+  );
+  await idle();
+  runId = (await marker()).slice(-8);
+  const curly = JSON.stringify(R.attempts.find((a) => a.id === 'valid').call.params).replace(
+    /"/g,
+    '“',
+  );
+  await sendBoxNoWait('write_review', curly);
+  await formOpen();
+  await page.click('.rp-live-mark [data-act="new"]');
+  await page.waitForFunction(
+    (id) => !document.querySelector('.rp-live-mark p').textContent.endsWith(id),
+    runId,
+  );
+  await idle();
+  m = await marker();
+  ok(
+    'Start a new run while the form is open: a new run, state A, Send works, no choice button works',
+    m.slice(-8) !== runId &&
+      (await letter()) === 'A' &&
+      (await enabled('[data-act="send"]')) === 1 &&
+      (await enabled('[data-act="answer"]')) === 0,
+    `state ${await letter()}`,
+  );
+  await page.waitForTimeout(5000);
+  const box5 = await sendOut();
+  ok(
+    "Start a new run while the form is open: the new run's Send box stays empty for 5 s (no note from the old run)",
+    box5 === '',
+    JSON.stringify(box5.slice(0, 120)),
+  );
+  runId = m.slice(-8);
+
   // ---- the failed run (state E): six counted refusals
   await page.click('.rp-live-mark [data-act="new"]');
   await page.waitForFunction(
@@ -934,6 +1061,48 @@ async function walk(which, width) {
   );
   ok('no page errors', errors.length === 0, errors.join(' | ').slice(0, 300));
   await page.context().close();
+
+  // ---- a slow reader: Send, read for 65 s, then answer. The page's MCP client must not give up on
+  // the call that holds Realm's form (the SDK's own limit is 60 s per call).
+  if (`${which}:${width}` === SLOW_READER) {
+    const { page: p, errors: pe } = await newPage();
+    await p.goto(BASE);
+    await p.click('.rp [data-go="1"]');
+    await p.waitForSelector('[data-live-try]:not([hidden])');
+    await p.click('[data-live-try]');
+    await p.waitForSelector('.rp[data-mode="live"]', { timeout: 30000 });
+    await p.click('.rp-stage[data-s="1"] [data-pick]:text-is("Submit a valid review")');
+    await p.click('[data-act="send"]');
+    const opened = () =>
+      p.evaluate(
+        () =>
+          [...document.querySelectorAll('[data-act="answer"]')].filter((b) => !b.disabled).length,
+      );
+    await p.waitForFunction(() =>
+      [...document.querySelectorAll('[data-act="answer"]')].some((b) => !b.disabled),
+    );
+    await p.waitForTimeout(65000);
+    const after65 = { choices: await opened(), box: await p.innerText('[data-box="send"]') };
+    await p.click('[data-act="answer"][data-choice="approve"]').catch(() => {});
+    await p
+      .waitForFunction(() => document.querySelector('.rp').dataset.liveState === 'C', null, {
+        timeout: 10000,
+      })
+      .catch(() => {});
+    ok(
+      'a slow reader: 65 s after Send the form is still open (both choice buttons work, no "No reply"), then Approve reaches state C',
+      after65.choices === 2 &&
+        !/NO REPLY/i.test(after65.box) &&
+        (await p.getAttribute('.rp', 'data-live-state')) === 'C' &&
+        pe.length === 0,
+      JSON.stringify({
+        ...after65,
+        state: await p.getAttribute('.rp', 'data-live-state'),
+        errors: pe,
+      }),
+    );
+    await p.context().close();
+  } else results.push(`SKIP  a slow reader (runs in ${SLOW_READER} only)`);
 
   // ---- loading: the bundle held 3 s, then 25 s
   {
