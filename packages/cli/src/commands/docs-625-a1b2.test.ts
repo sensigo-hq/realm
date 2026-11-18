@@ -86,7 +86,7 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
   {
     page: 'docs/reference/cli/realm-agent.md',
     words:
-      "For any other ending, one sentence of how it ended follows on the same line, from the record only (added after version 0.50.0). For a run that failed or was aborted, a `Reason:` line follows; for an abandoned run the reason is inside the sentence. Either way it is stored text, masked like the record's values, and shown as its type and size while",
+      "For any other ending, one sentence of how it ended follows on the same line, from the record only (added after version 0.50.0). A `Reason:` line follows when the sentence does not say the stored reason: a step's failure, a handler's abort, a guard's resolution error, or a failed or aborted record with no seal; for an abandoned run the reason is inside the sentence. Either way it is stored text, masked like the record's values, and shown as its type and size while",
     cells: [REFUSAL_ABANDON, REFUSAL_FAILED, REFUSAL_GUARD, I11],
   },
   {

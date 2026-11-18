@@ -96,8 +96,12 @@ function gated(guard: boolean, gate: Record<string, unknown> = {}): WorkflowDefi
 }
 
 const T = Date.parse('2030-01-01T00:00:00.000Z');
-/** A run of `def` at its question, opened at T with a 1 s time limit whose expiry aborts. */
-async function atExpiringQuestion(store: RunStore, def: WorkflowDefinition): Promise<string> {
+/** A run of `def` at its question, opened at T with a 1 s time limit whose expiry aborts (or as given). */
+async function atExpiringQuestion(
+  store: RunStore,
+  def: WorkflowDefinition,
+  expiry: Record<string, unknown> = { on_expiry: 'abort' },
+): Promise<string> {
   const { record: run } = await store.create({
     workflowId: def.id,
     workflowVersion: 1,
@@ -110,7 +114,7 @@ async function atExpiringQuestion(store: RunStore, def: WorkflowDefinition): Pro
     choices: ['approve', 'reject'],
     opened_at: new Date(T).toISOString(),
     expires_at: new Date(T + 1000).toISOString(),
-    on_expiry: 'abort',
+    ...expiry,
   } as PendingGate;
   await store.update({
     ...run,
@@ -220,6 +224,36 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
     ).toEqual({ warned: 1, ended: [] });
   });
 
+  it('correction 1, check 2 — realm agent --run-id: the ⚠ line of an expired default whose guard then aborts says the ending, then no Ended:', async () => {
+    const expiry = { on_expiry: 'settle_default', default_choice: 'reject' };
+    const def = gated(true, { timeout_seconds: 1, ...expiry });
+    const store = new InMemoryStore({ clock: settableClock(new Date(T + 5000)) });
+    const runId = await atExpiringQuestion(store, def, expiry);
+    await runAgent(
+      {
+        store,
+        workflowStore: workflowStore(def),
+        provider: provider(),
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, existingRunId: runId, params: {}, pollIntervalMs: 20 },
+    );
+    // (a) red when the ⚠ setter counts an `on_expiry: abort` only (the guard's ending said twice);
+    //     (b) prints every line.
+    expect(
+      {
+        warned: out.filter(
+          (l) =>
+            l.startsWith('⚠') &&
+            l.includes("the default choice 'reject' was recorded") &&
+            l.includes("Guard step 'check' aborted the run"),
+        ).length,
+        ended: endedLines(),
+      },
+      out.join('\n'),
+    ).toEqual({ warned: 1, ended: [] });
+  });
+
   it("check 3 — the terminal fallback's ⏰ line ends the run: no Ended:", async () => {
     const def = gated(false);
     const clock = settableClock(new Date(T));
@@ -260,6 +294,7 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
       def: WorkflowDefinition,
       text: string,
       before?: (store: RunStore, runId: string, gate: PendingGate) => Promise<void>,
+      registry: ExtensionRegistry = createDefaultRegistry(),
     ): Promise<boolean | undefined> {
       const store = new InMemoryStore();
       let resolved: boolean | undefined;
@@ -268,7 +303,7 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
           store,
           workflowStore: workflowStore(def),
           provider: provider(),
-          registry: createDefaultRegistry(),
+          registry,
           gateHandler: async (runId: string, gate: PendingGate) => {
             let onEvent: ((event: SlackGateEvent) => void) | undefined;
             vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
@@ -280,6 +315,7 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
               runId,
               definition: def,
               store,
+              registry,
               provider: provider(),
               slackBotToken: 'xoxb-test',
               slackChannelId: 'C123',
@@ -319,6 +355,70 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
         },
         out.join('\n'),
       ).toEqual({ resolved: true, guard: 1, ended: [] });
+    });
+
+    it('correction 1, check 4 — a Slack answer of its own ends the run and its cleanup step runs past the 2 s bound: its lines first, no Ended:', async () => {
+      const registry = createDefaultRegistry();
+      registry.register('handler', 'release_slow', {
+        id: 'release_slow',
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+          return { data: {} };
+        },
+      } as never);
+      const def = gated(true);
+      def.steps['release'] = {
+        description: 'Release.',
+        execution: 'finalizer',
+        handler: 'release_slow',
+        on_outcome: 'always',
+      } as never;
+      const resolved = await driveWithSlack(def, 'reject', undefined, registry);
+      const at = (text: string): number => out.findIndex((l) => l.includes(text));
+      // (a) red when the handler returns at the 2 s bound, before its answer's lines (the drive then
+      //     says the ending first, and the answer's lines come after its next line); (b) prints every
+      //     line.
+      expect(
+        {
+          resolved,
+          ended: endedLines(),
+          guardBeforeDrive: at("Guard step 'check' aborted the run") < at('Run ended in phase:'),
+          cleanupBeforeDrive: at("finalizer 'release': completed") < at('Run ended in phase:'),
+        },
+        out.join('\n'),
+      ).toEqual({ resolved: true, ended: [], guardBeforeDrive: true, cleanupBeforeDrive: true });
+    }, 20_000);
+
+    it("correction 1, check 3 — a Slack answer carries out an expired default, and the guard then aborts: the guard's lines once, no Ended:", async () => {
+      const def = gated(true, {
+        timeout_seconds: 3600,
+        on_expiry: 'settle_default',
+        default_choice: 'reject',
+      });
+      // The stored question's time is moved into the past once the post is up; the handler's timer
+      // keeps the gate's own deadline (an hour off), so the answer's own call carries the expiry out.
+      const resolved = await driveWithSlack(def, 'approve', async (store, runId) => {
+        const { record } = await store.get(runId);
+        await store.update({
+          ...record,
+          pending_gate: {
+            ...record.pending_gate!,
+            opened_at: '2020-01-01T00:00:00.000Z',
+            expires_at: '2020-01-01T01:00:00.000Z',
+          },
+        });
+      });
+      // (a) red when the answer's lines do not set the note (the guard's ending said twice); (b)
+      //     prints every line.
+      expect(
+        {
+          resolved,
+          carried: out.filter((l) => l.includes('this agent call first carried out')).length,
+          guard: out.filter((l) => l.includes("Guard step 'check' aborted the run")).length,
+          ended: endedLines(),
+        },
+        out.join('\n'),
+      ).toEqual({ resolved: true, carried: 1, guard: 1, ended: [] });
     });
 
     it('check 3 — a Slack answer refused because another answer settled the question and ended the run: Ended: says the ending once', async () => {

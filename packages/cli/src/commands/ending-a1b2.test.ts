@@ -21,6 +21,7 @@ import {
   executeChain,
   submitHumanResponse,
   type ExtensionRegistry,
+  type RunRecord,
   type RunStore,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -35,6 +36,7 @@ vi.mock('node:readline/promises', () => ({
 
 import { runCommand } from './run.js';
 import { advanceRunFromShell } from './run-advance.js';
+import { terminalRunRefusal } from '../agent/run-attach.js';
 import { writerTestSeams } from '../output/writer.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -260,6 +262,80 @@ describe('#625 A1b-2 — checks 1 and 2: realm agent --run-id refuses an ended r
   }, 60_000);
 });
 
+describe("#625 A1b-2 correction 1 — F4: realm agent --run-id's Reason: line follows exactly where the sentence does not say the stored reason", () => {
+  /** An ended record with `patch` applied. */
+  const ended = (patch: Partial<RunRecord>): RunRecord =>
+    ({
+      id: 'r1',
+      workflow_id: 'w',
+      workflow_version: 1,
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      run_phase: 'running',
+      version: 1,
+      params: {},
+      evidence: [],
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      terminal_state: true,
+      ...patch,
+    }) as RunRecord;
+  const reasonLines = (run: RunRecord): string[] =>
+    terminalRunRefusal('r1', run)
+      .message.split('\n')
+      .filter((l) => l.startsWith('Reason:'));
+
+  it("realm-agent.md's row: a handler's abort, a guard's resolution error, an aborted record with no seal keep it; a guard's abort, a time limit's abort and spawn_failure do not", () => {
+    // (a) red when the refusal's Reason: rule differs from the row the page states (keepsReasonLine);
+    //     (b) prints each ending's Reason: lines.
+    expect({
+      handler_abort: reasonLines(
+        ended({
+          sealed_by: { arm: 'handler_abort', step: 's' },
+          aborted_at: { step_id: 's' },
+          terminal_reason: 'the card was declined',
+        }),
+      ),
+      guard_resolution_error: reasonLines(
+        ended({
+          sealed_by: { arm: 'guard_resolution_error', step: 'g' },
+          failed_steps: ['g'],
+          terminal_reason: 'unknown step in the condition',
+        }),
+      ),
+      aborted_no_seal: reasonLines(
+        ended({ aborted_at: { step_id: 's' }, terminal_reason: 'held' }),
+      ),
+      guard_abort: reasonLines(
+        ended({
+          sealed_by: { arm: 'guard_abort', step: 'g' },
+          aborted_at: { step_id: 'g' },
+          terminal_reason: 'Not approved.',
+        }),
+      ),
+      gate_expiry_abort: reasonLines(
+        ended({
+          sealed_by: { arm: 'gate_expiry_abort', step: 'q' },
+          aborted_at: { step_id: 'q' },
+          terminal_reason: 'gate expired',
+        }),
+      ),
+      spawn_failure: reasonLines(
+        ended({ sealed_by: { arm: 'spawn_failure' }, terminal_reason: 'spawn_failed' }),
+      ),
+    }).toEqual({
+      handler_abort: ['Reason: "the card was declined"'],
+      guard_resolution_error: ['Reason: "unknown step in the condition"'],
+      aborted_no_seal: ['Reason: "held"'],
+      guard_abort: [],
+      gate_expiry_abort: [],
+      spawn_failure: [],
+    });
+  });
+});
+
 describe('#625 A1b-2 — check 3: realm workflow run says how the run ended exactly once (the one-note rule)', () => {
   let h: TempHome & { readonly root: string };
   let dir: string;
@@ -481,6 +557,103 @@ steps:
       timer: lines.filter((l) => l.startsWith('⏰') && l.includes('the run ended')).length,
       tail: tail(lines),
     }).toEqual({ timer: 1, tail: ['Run complete. Phase: aborted'] });
+  }, 20_000);
+
+  it("correction 1, check 1 — the ⏰ line ends the run and a cleanup step outlasts the prompt's watch: no Ended:", async () => {
+    // A cleanup step longer than the prompt's watch interval (QUESTION_WATCH_MS, 500 ms): the watch
+    // sees the question closed while the timer's cleanup step still runs.
+    writeFileSync(
+      join(dir, 'ext.mjs'),
+      'export default { handlers: { release_slow: { execute: async () => { await new Promise((r) => setTimeout(r, 1500)); return { data: {} }; } } } };\n',
+      'utf8',
+    );
+    mocks.question
+      .mockImplementationOnce(async () => '{}')
+      .mockImplementation((_q: string, opts?: { signal?: AbortSignal }) => waitClosed(opts));
+    const lines = await drive(`id: w-timer-cleanup
+name: w
+version: 1
+extensions: ./ext.mjs
+steps:
+  approve:
+    description: approve
+    execution: auto
+    trust: human_confirmed
+    gate:
+      choices: [approve, reject]
+      timeout_seconds: 1
+      on_expiry: abort
+  fin:
+    description: fin
+    execution: agent
+    depends_on: [approve]
+  release:
+    description: release
+    execution: finalizer
+    handler: release_slow
+    on_outcome: always
+`);
+    // The cleanup step this command leaves running ends before the cell's folders go.
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    // (a) red when the timer tells its host that its line said the ending only after its cleanup
+    //     steps (the expiry said twice); (b) prints every line.
+    expect(
+      {
+        timer: lines.filter((l) => l.startsWith('⏰') && l.includes('the run ended')).length,
+        ended: lines.filter((l) => l.startsWith('  Ended:')),
+      },
+      lines.join('\n'),
+    ).toEqual({ timer: 1, ended: [] });
+  }, 20_000);
+
+  it("correction 1, check 3 — this drive's answer carries out an expired default, and the guard then aborts: the guard's lines once, no Ended:", async () => {
+    mocks.question.mockImplementation(async (prompt: string) => {
+      if (!prompt.startsWith('  Choice ')) return '{}';
+      // The answer is handled after the question's time is up and before this process's own timer
+      // runs (run-prompt-625's C146 race): the loop is held past the deadline, then the answer's
+      // own call carries the expiry out.
+      const expiresAt = Date.parse(
+        (await h.home.runStore.get(await runId())).record.pending_gate!.expires_at!,
+      );
+      while (Date.now() <= expiresAt + 20) {
+        // hold the event loop past the deadline
+      }
+      return 'approve';
+    });
+    const lines = await drive(`id: w-answer-late
+name: w
+version: 1
+steps:
+  approve:
+    description: approve
+    execution: auto
+    trust: human_confirmed
+    gate:
+      choices: [approve, reject]
+      timeout_seconds: 1
+      on_expiry: settle_default
+      default_choice: reject
+  check:
+    description: check
+    execution: guard
+    depends_on: [approve]
+    abort_unless: ["approve.choice == 'approve'"]
+    abort_message: 'Not approved.'
+  fin:
+    description: fin
+    execution: agent
+    depends_on: [check]
+`);
+    // (a) red when the answer's lines do not set the note (the guard's ending said twice); (b)
+    //     prints every line.
+    expect(
+      {
+        carried: lines.filter((l) => l.includes('this run call first carried out')).length,
+        guard: lines.filter((l) => l.includes("Guard step 'check' aborted the run")).length,
+        ended: lines.filter((l) => l.startsWith('  Ended:')),
+      },
+      lines.join('\n'),
+    ).toEqual({ carried: 1, guard: 1, ended: [] });
   }, 20_000);
 
   it("check 3 — this drive's step fails and ends the run: its ✗ line, then Resume: only, no Ended:", async () => {

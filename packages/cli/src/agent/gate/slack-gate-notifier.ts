@@ -1140,6 +1140,11 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     inFlight.add(p);
     void p.finally(() => inFlight.delete(p));
   };
+  // #625 A1b-2 correction 1 (the one-note rule): each Slack answer's own terminal lines, settled once
+  // they are printed and before any Slack post. The finally waits for them with no bound — the
+  // answer's call runs the cleanup steps its ending made owed — so the drive's next line never
+  // comes before them; the Slack posts keep the drain's bound.
+  const answersPrinting = new Set<Promise<void>>();
 
   // #603 A3a: told privately, never in the thread's public lines; a failure is said here (W5).
   const tellPrivately = async (user: string, allowed: readonly string[]): Promise<void> => {
@@ -1172,6 +1177,12 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     const exactMatch = gate.choices.find((c) => c.toLowerCase() === normalised);
 
     if (exactMatch !== undefined) {
+      let printed!: () => void;
+      answersPrinting.add(
+        new Promise<void>((resolve) => {
+          printed = resolve;
+        }),
+      );
       // Surface a submit failure to the operator ONCE. Deliberately does NOT abort()/resolve — the
       // gate stays open so the poll loop keeps waiting and the operator can retry or use the terminal
       // fallback. Runs inside processCandidate → tracked + drained (§track), so it is guaranteed sent
@@ -1183,6 +1194,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         code: Extract<PersonNotice, { kind: 'answer_refused' }>['code'],
       ): Promise<void> => {
         console.warn(`Gate response submission failed: ${detail}`);
+        printed();
         if (gateThreadTs !== undefined && !submitErrorPosted) {
           submitErrorPosted = true;
           await tellThread(
@@ -1248,6 +1260,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           // words for what the question met (`answer_late`), naming no command.
           for (const line of lateLines) console.log(line);
           if (answerLinesSayEnding(result)) endingSaid = true;
+          printed();
           const after = judged?.record;
           const outcome =
             result.outcome ??
@@ -1277,6 +1290,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           const judged = judgedSnapshotOf(result);
           console.log(renderOutcome(result.outcome, PEOPLE_DOOR_WORDS));
           if (outcomeSaysEnding(result.outcome)) endingSaid = true;
+          printed();
           // Set before the post, as above: no closed line joins it when the poll ends.
           personTold = true;
           await tellThread(
@@ -1293,6 +1307,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         } else if (result.status === 'error' && result.error_code === 'STATE_ANSWERER_MISMATCH') {
           // #603 A3a: someone the question does not let answer — told privately, the question stays
           // open, and the public "Couldn't record" line keeps its one post.
+          printed();
           const facts = result.error?.facts;
           await tellPrivately(
             event.user,
@@ -1306,6 +1321,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           );
           // #625 A1b-2: the refusal of an answer to a run that has ended says how it ended.
           endingSaid = true;
+          printed();
           personTold = true;
           await tellThread(
             composePersonNotice({
@@ -1351,6 +1367,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
             for (const line of endingLines) console.log(line);
             endingSaid = true;
           }
+          printed();
           personTold = true;
           await tellThread(
             composePersonNotice({
@@ -1366,6 +1383,8 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         }
       } catch (err) {
         await postSubmitError(err instanceof Error ? err.message : String(err), 'ENGINE_INTERNAL');
+      } finally {
+        printed();
       }
     } else if ('refused' in judgeAnswerer(gate, forms, projectAnswerers)) {
       // #603 A3a: a message from someone who may not answer gets nothing, and uses no clarification.
@@ -1495,8 +1514,8 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     ...(registry !== undefined ? { registry } : {}),
     ...(driver !== undefined ? { driver } : {}),
     // #625 A1b-2: its ⏰ line said how the run ended when its write ended it.
-    onApplied: (endedRun) => {
-      if (endedRun) endingSaid = true;
+    onEndingSaid: () => {
+      endingSaid = true;
     },
   });
 
@@ -1592,6 +1611,8 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     // #729 PR-6b (A.3, A.6): the question post's edit is drained inside the same bound; past it,
     // its own line once and nothing more for it, the thread's line only for an unfinished thread
     // post, and the post's file deleted.
+    // #625 A1b-2 correction 1: first, with no bound, this handler's own answers' lines.
+    await Promise.allSettled(answersPrinting);
     let drainTimer: ReturnType<typeof setTimeout>;
     const bound = new Promise<'bound'>((resolve) => {
       drainTimer = setTimeout(() => resolve('bound'), DRAIN_TIMEOUT_MS);

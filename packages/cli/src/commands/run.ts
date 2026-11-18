@@ -958,10 +958,10 @@ export const runCommand = new Command('run')
               definition,
               registry,
               ...(driver !== undefined ? { driver } : {}),
-              onApplied: (endedRun) => {
-                if (endedRun) endingSaid = true;
-                settledElsewhere.abort();
+              onEndingSaid: () => {
+                endingSaid = true;
               },
+              onApplied: () => settledElsewhere.abort(),
             });
             const stopWatching = watchQuestion(store, runId, g.gate_id, () =>
               settledElsewhere.abort(),

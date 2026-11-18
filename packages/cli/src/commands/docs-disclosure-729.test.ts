@@ -2872,7 +2872,7 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
     // #625 A1b-2: an abandoned run's reason moved into the refusal's sentence.
     claim(
       AGENT_PAGE,
-      `For a run that failed or was aborted, a \`Reason:\` line follows; for an abandoned run the reason is inside the sentence. Either way it is stored text, masked like the record's values, and shown as its type and size while the run's declared secrets cannot all be read (\`realm run inspect <id> --accept-partial-disclosure\` reads it`,
+      `A \`Reason:\` line follows when the sentence does not say the stored reason: a step's failure, a handler's abort, a guard's resolution error, or a failed or aborted record with no seal; for an abandoned run the reason is inside the sentence. Either way it is stored text, masked like the record's values, and shown as its type and size while the run's declared secrets cannot all be read (\`realm run inspect <id> --accept-partial-disclosure\` reads it`,
     );
     const reason = `upstream refused key ${DECLARED}`;
     const intact = await c4Ended(base, 'intact', reason);

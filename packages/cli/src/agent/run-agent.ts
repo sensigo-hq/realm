@@ -943,8 +943,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               definition,
               registry: deps.registry,
               ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
-              onApplied: (endedRun) => {
-                if (endedRun) endingSaid = true;
+              onEndingSaid: () => {
+                endingSaid = true;
               },
             });
             try {
@@ -1027,8 +1027,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             );
           },
         });
-        // #625 A1b-2: the ⚠ line of an `on_expiry: abort` this call carried out said the run ended.
-        if (advanced.expiry?.on_expiry === 'abort') endingSaid = true;
+        // #625 A1b-2: the ⚠ line of an expiry this call carried out said the run ended when that
+        // expiry's write ended it — an `on_expiry: abort`, or a default whose guard then ended the
+        // run (its sentence is on that line). The call then ran no step after it.
+        if (
+          advanced.expiry !== undefined &&
+          engineStep === undefined &&
+          (advanced.chained_auto_steps ?? []).length === 0 &&
+          judgedSnapshotOf(advanced)?.record.terminal_state === true
+        )
+          endingSaid = true;
         if (advanced.status === 'confirm_required') {
           if (!holdJudged(advanced)) return stopOnEngineWords(advanced);
           continue;
