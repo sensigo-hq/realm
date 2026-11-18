@@ -35,7 +35,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WorkflowError, type CreateRunOptions } from '@sensigo/realm';
+import { REALM_STORE_SCHEMA_VERSION, WorkflowError, type CreateRunOptions } from '@sensigo/realm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase, type DatabaseLike } from './driver.js';
 import { backupStamp, openMaintenance, type MaintenanceSeams } from './maintenance.js';
@@ -374,7 +374,7 @@ describe('#616 R1b — realm db restore over a store', { timeout: 120_000 }, () 
       kept: before,
       left: { kept: [], backup: [], file: [] },
       findings: [],
-      schemaVersion: 2,
+      schemaVersion: REALM_STORE_SCHEMA_VERSION,
       events: ['kept'],
       keptName: true,
       created: true,
@@ -577,7 +577,7 @@ describe(
       damagePage13(damaged);
       const newer = join(root, 'newer.db');
       await backupTo(home, newer);
-      setVersion(newer, 3);
+      setVersion(newer, REALM_STORE_SCHEMA_VERSION + 1);
       const hashes = [empty, damaged, newer].map(hashOf);
       const before = hashOf(file);
       const homeNames = names(home);
@@ -614,7 +614,7 @@ describe(
           },
           newer: {
             code: 'STATE_STORE_RESTORE_REFUSED',
-            message: `Cannot restore from ${newer}: Written by a later version of Realm (schema version 3; this version reads up to 2). Nothing was changed.`,
+            message: `Cannot restore from ${newer}: Written by a later version of Realm (schema version ${REALM_STORE_SCHEMA_VERSION + 1}; this version reads up to ${REALM_STORE_SCHEMA_VERSION}). Nothing was changed.`,
           },
         },
         backups: hashes,
@@ -691,7 +691,11 @@ describe(
         versions: [report.schemaVersion, report.writes],
         runs: Object.keys(runsOf(file)).sort(),
         migrated,
-      }).toEqual({ versions: [1, 2], runs: [...ids].sort(), migrated: 2 });
+      }).toEqual({
+        versions: [1, REALM_STORE_SCHEMA_VERSION],
+        runs: [...ids].sort(),
+        migrated: REALM_STORE_SCHEMA_VERSION,
+      });
     });
   },
 );
@@ -1693,7 +1697,7 @@ describe('#616 R1b — the damaged-file rule', { timeout: 120_000 }, () => {
     await makeStore(home, 1);
     const backup = join(root, 'b.db');
     await backupTo(home, backup);
-    setVersion(file, 3);
+    setVersion(file, REALM_STORE_SCHEMA_VERSION + 1);
     const before = hashOf(file);
     const outcome = await restore(home, backup);
     // (1) red when a newer file is replaced instead of refused; (2) prints it.

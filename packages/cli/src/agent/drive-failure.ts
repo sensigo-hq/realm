@@ -12,6 +12,7 @@
 // `update()` bumps `version`/`updated_at`, it resets the idle clock — so the run stops looking
 // untouched at exactly the moment it stopped being driven.
 import {
+  ERROR_CLASSES,
   WorkflowError,
   boundRequestFacts,
   type DriveFailureRecord,
@@ -67,25 +68,6 @@ export function findDriveCall(err: unknown): DriveCallPayload | undefined {
   return undefined;
 }
 
-/**
- * Classifies a thrown error, in strict precedence order.
- *
- * 1. an attached payload — the producer knew more than the error's shape says, so it wins;
- * 2. the SDK's own error names — `APIConnectionTimeoutError` is a timeout even if a status is also
- *    somehow present, which is why the name is checked before the status;
- * 3. an HTTP status, which also carries the status VALUE forward as a discriminator;
- * 4. `other`.
- */
-const ERROR_CLASSES: ReadonlySet<string> = new Set([
-  'connection_timeout',
-  'connection_error',
-  'api_status',
-  'sdk_missing',
-  'validation_rejected',
-  'aborted_by_budget',
-  'other',
-]);
-
 const NUMERIC_PAYLOAD_FIELDS = [
   'attempts_sdk',
   'elapsed_ms',
@@ -113,7 +95,8 @@ function pickPayload(payload: DriveCallPayload): {
     if (typeof value === 'number' && Number.isFinite(value)) out[field] = value;
   }
   const cls = (payload as Record<string, unknown>)['error_class'];
-  if (typeof cls === 'string' && ERROR_CLASSES.has(cls)) out['error_class'] = cls;
+  if (typeof cls === 'string' && (ERROR_CLASSES as readonly string[]).includes(cls))
+    out['error_class'] = cls;
   // issue #600 PR 1a (D9): an ARRAY, not a number — picked separately from the numeric loop above.
   // Length-0 is kept, as exactly what it is: a payload that carried a `usage` key with no requests
   // (realm's own providers never attach one; a third-party provider module can). It does NOT say a
@@ -124,6 +107,15 @@ function pickPayload(payload: DriveCallPayload): {
   return out as { error_class?: DriveFailureRecord['error_class'] };
 }
 
+/**
+ * Classifies a thrown error, in strict precedence order.
+ *
+ * 1. an attached payload — the producer knew more than the error's shape says, so it wins;
+ * 2. the SDK's own error names — `APIConnectionTimeoutError` is a timeout even if a status is also
+ *    somehow present, which is why the name is checked before the status;
+ * 3. an HTTP status, which also carries the status VALUE forward as a discriminator;
+ * 4. `other`.
+ */
 export function classifyDriveError(err: unknown): DriveCallPayload & {
   error_class: DriveFailureRecord['error_class'];
 } {

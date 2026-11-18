@@ -988,6 +988,51 @@ export const OUTPUT_SOURCES = ['driven_step', 'dependency', 'run_params', 'none'
 export type OutputSource = (typeof OUTPUT_SOURCES)[number];
 
 /**
+ * The text of each model call made for a step, on its evidence entry
+ * (`EvidenceSnapshot.model_text`). `realm agent` and `realm listen` write it; a program that embeds
+ * the engine can pass its own in `StepMeta.modelText`.
+ *
+ * `recorded: true` holds the texts. `messages` holds each distinct message once, and `tools` each
+ * distinct tool list (the request's tools as JSON). `realm agent` and `realm listen` mask each text
+ * for known secret values (`hidden` counts what that mask hid), then cut it at 64 KB of UTF-8 on a
+ * code-point boundary (`cut` gives the bytes kept and the text's full size). The engine stores a
+ * `StepMeta.modelText` as it is given: it neither masks nor cuts it. Each of `requests` names what
+ * one request sent and what came back by their places in `messages`, its tool list by its place in
+ * `tools`, and carries its `request_id` (the id of its entry in `diagnostics.cache.requests`).
+ *
+ * A message's text is its parts in order with no separator: a text part as it is; any other part
+ * as compact JSON, of a tool part's `type`, `id`, `tool_use_id`, `tool_call_id`, `name`, `input`,
+ * `content` and `is_error`, of a thinking part's `type` and `thinking`, of any other part's `type`.
+ * Cache marks, signatures and the data of a redacted thinking part are not kept.
+ *
+ * `recorded: false` says why a step Realm drove has no texts: recording was switched off
+ * (`--no-record-model-text`), or the provider module reported none it could read.
+ * @public
+ */
+export type ModelText =
+  | {
+      recorded: true;
+      messages: Array<{
+        role: 'system' | 'user' | 'assistant' | 'tool';
+        text: string;
+        cut?: { kept_bytes: number; full_bytes: number };
+        hidden?: number;
+      }>;
+      tools: Array<{
+        json: string;
+        cut?: { kept_bytes: number; full_bytes: number };
+        hidden?: number;
+      }>;
+      requests: Array<{
+        request_id: string | null;
+        sent: number[];
+        tools?: number;
+        reply: number[] | null;
+      }>;
+    }
+  | { recorded: false; why: 'switched_off' | 'provider_did_not_report' };
+
+/**
  * One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered
  * question recorded, with its times, its input and output, its status and its hash.
  * @public
@@ -1105,6 +1150,15 @@ export interface EvidenceSnapshot {
   /** MCP tool calls made during this step, if any. */
   tool_calls?: ToolCallRecord[];
   /**
+   * Gap 1, unit A1: the text of each model call of this attempt ({@link ModelText}). Written once,
+   * with the attempt's `diagnostics`: by `realm agent` and `realm listen` on every entry of an
+   * attempt whose model calls they made (the texts, or a marker saying why there are none), or as a
+   * program that embeds the engine passes it in `StepMeta.modelText`. Absent on any other entry,
+   * and on entries written before this field. Never in `evidence_hash`, `get_run_state` or a
+   * prompt.
+   */
+  model_text?: ModelText;
+  /**
    * Present only when the step used input_map. Records the concrete params the engine
    * derived from run state and passed to the service adapter. Absent for all other step types.
    */
@@ -1180,6 +1234,55 @@ export interface EvidenceSnapshot {
   exhausted_by?: 'attempts' | 'total_timeout';
 }
 
+/** Every evidence entry status (`EvidenceSnapshot['status']`); compile-checked both ways. */
+export const EVIDENCE_STATUSES = [
+  'success',
+  'error',
+  'skipped',
+  'abandoned',
+] as const satisfies readonly EvidenceSnapshot['status'][];
+type MissingEvidenceStatus = Exclude<
+  EvidenceSnapshot['status'],
+  (typeof EVIDENCE_STATUSES)[number]
+>;
+const _everyEvidenceStatusListed: [MissingEvidenceStatus] extends [never]
+  ? true
+  : MissingEvidenceStatus = true;
+void _everyEvidenceStatusListed;
+
+/** The words of an evidence entry's `exhausted_by`: why a step stopped retrying, out of budget. */
+export type ExhaustedBy = NonNullable<EvidenceSnapshot['exhausted_by']>;
+
+/** Every {@link ExhaustedBy} word, in the field's order; compile-checked both ways. */
+export const EXHAUSTED_BY = ['attempts', 'total_timeout'] as const satisfies readonly ExhaustedBy[];
+type MissingExhaustedBy = Exclude<ExhaustedBy, (typeof EXHAUSTED_BY)[number]>;
+const _everyExhaustedByListed: [MissingExhaustedBy] extends [never] ? true : MissingExhaustedBy =
+  true;
+void _everyExhaustedByListed;
+
+/**
+ * Q1 (#592): why a step's retrying stopped — no retry policy, the total-time cap, an error that is
+ * not retried, or the attempts used up. Nothing writes or reads a stop reason yet: the record's
+ * field comes with a later unit; the words exist now so the docs and the schema can name them.
+ */
+export type StopReason = 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
+
+/** Every {@link StopReason}, in judging order; compile-checked both ways, ⊇ {@link ExhaustedBy}. */
+export const STOP_REASONS = [
+  'no_retry_policy',
+  'total_timeout',
+  'non_retryable',
+  'attempts',
+] as const satisfies readonly StopReason[];
+type MissingStopReason = Exclude<StopReason, (typeof STOP_REASONS)[number]>;
+const _everyStopReasonListed: [MissingStopReason] extends [never] ? true : MissingStopReason = true;
+void _everyStopReasonListed;
+type ExhaustedByNotStopReason = Exclude<ExhaustedBy, StopReason>;
+const _everyExhaustedByAStopReason: [ExhaustedByNotStopReason] extends [never]
+  ? true
+  : ExhaustedByNotStopReason = true;
+void _everyExhaustedByAStopReason;
+
 /**
  * The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and
  * choices shown to the person, when it opened, and its owner and time limit when set.
@@ -1250,6 +1353,19 @@ export interface PendingGate {
  */
 export type RunPhase =
   'running' | 'gate_waiting' | 'completed' | 'failed' | 'abandoned' | 'aborted';
+
+/** Every {@link RunPhase}, in the type's order; compile-checked both ways. */
+export const RUN_PHASES = [
+  'running',
+  'gate_waiting',
+  'completed',
+  'failed',
+  'abandoned',
+  'aborted',
+] as const satisfies readonly RunPhase[];
+type MissingRunPhase = Exclude<RunPhase, (typeof RUN_PHASES)[number]>;
+const _everyRunPhaseListed: [MissingRunPhase] extends [never] ? true : MissingRunPhase = true;
+void _everyRunPhaseListed;
 
 /**
  * Snapshot of a single workflow context entry taken at run start.
@@ -1407,9 +1523,22 @@ export type SkipDetail =
    */
   | { kind: 'gate_expired'; gate_id: string };
 
+/** Every {@link SkipDetail} `kind`, in the type's order; compile-checked both ways. */
+export const SKIP_KINDS = [
+  'when_false',
+  'trigger_rule_unsatisfiable',
+  'handler_abort',
+  'guard_abort',
+  'gate_cancelled_by_abort',
+  'gate_expired',
+] as const satisfies readonly SkipDetail['kind'][];
+type MissingSkipKind = Exclude<SkipDetail['kind'], (typeof SKIP_KINDS)[number]>;
+const _everySkipKindListed: [MissingSkipKind] extends [never] ? true : MissingSkipKind = true;
+void _everySkipKindListed;
+
 /**
  * Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`). The type
- * {@link SealArm} derives from it (the `VALID_PHASES` pattern: the const array is the runtime
+ * {@link SealArm} derives from it (the `STOP_KINDS` pattern: the const array is the runtime
  * enumeration). One value per terminal seal-site function-branch in the 21-path census.
  *
  * APPEND-ONLY (the Tekton lesson, design rev 3 §3): an arm's meaning never changes; changed seal
@@ -1610,6 +1739,20 @@ export interface DriveFailureRecord {
    */
   usage?: UsageRecord[];
 }
+
+/** Every {@link DriveFailureRecord} `error_class`, in the type's order; checked both ways. */
+export const ERROR_CLASSES = [
+  'connection_timeout',
+  'connection_error',
+  'api_status',
+  'sdk_missing',
+  'validation_rejected',
+  'aborted_by_budget',
+  'other',
+] as const satisfies readonly DriveFailureRecord['error_class'][];
+type MissingErrorClass = Exclude<DriveFailureRecord['error_class'], (typeof ERROR_CLASSES)[number]>;
+const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : MissingErrorClass = true;
+void _everyErrorClassListed;
 
 /**
  * A run's recent drive failures: the last few, plus the total and the time of the first, which do

@@ -89,6 +89,7 @@ import {
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
 import { VerifyInconclusive, type RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
+import { SqliteCallbackKeys } from './callback-keys.js';
 import { SqliteOutboundLedger } from './outbound-ledger.js';
 import {
   assertRunRecordWithinLimits,
@@ -550,6 +551,12 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
    */
   readonly outbound: SqliteOutboundLedger;
 
+  /**
+   * Callback B1a: the home's signing keys (`callback_keys`, store format 3), over the same primitive.
+   * Package-internal and not on `RunStore` yet: callback B1b puts them on the home's callback store.
+   */
+  readonly keys: SqliteCallbackKeys;
+
   readonly #db: RealmDb;
 
   /**
@@ -561,6 +568,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
     this.clock = db.clock;
     this.leases = leases;
     this.outbound = new SqliteOutboundLedger(db);
+    this.keys = new SqliteCallbackKeys(db);
   }
 
   /**

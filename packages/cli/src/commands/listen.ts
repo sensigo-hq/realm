@@ -1762,6 +1762,8 @@ export type AgentArgvOptions = {
   promptCache?: PromptCacheSetting;
   /** Caching 3-M (B2b): listen's `--cache-diagnostics`, only when the operator stated it. */
   cacheDiagnostics?: CacheDiagnosticsSetting;
+  /** Gap 1, unit A1: `false` when listen was given `--no-record-model-text`. */
+  recordModelText?: boolean;
 };
 
 /**
@@ -1797,6 +1799,8 @@ export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] 
   if (opts.cacheDiagnostics !== undefined) {
     argv.push('--cache-diagnostics', opts.cacheDiagnostics);
   }
+  // Gap 1, unit A1: each drive keeps no model text when listen was told so.
+  if (opts.recordModelText === false) argv.push('--no-record-model-text');
   argv.push('--spawned-by-listen');
   // issue #620 PR-C: listen tells the operator once at startup; a child per webhook would repeat it.
   argv.push('--no-release-line-advisory');
@@ -1883,6 +1887,7 @@ export function makeAgentSpawner(
     llmTimeout?: number;
     promptCache?: PromptCacheSetting;
     cacheDiagnostics?: CacheDiagnosticsSetting;
+    recordModelText?: boolean;
   },
   logger: Logger,
   spawnFn: typeof nodeSpawn = nodeSpawn,
@@ -1895,6 +1900,7 @@ export function makeAgentSpawner(
     ...(listenOpts.cacheDiagnostics !== undefined
       ? { cacheDiagnostics: listenOpts.cacheDiagnostics }
       : {}),
+    ...(listenOpts.recordModelText === false ? { recordModelText: false } : {}),
   };
   return (runId, cwd) =>
     defaultSpawnAgent(
@@ -2128,6 +2134,11 @@ export const listenCommand = new Command('listen')
     "Whether to ask Anthropic why a request missed the cache: on or off. On by default at Anthropic's own address, for a request marked for caching. Each request that asks leaves a short-lived fingerprint of what it sent at Anthropic. Passed to each `realm agent` it starts.",
     parseCacheDiagnostics,
   )
+  // Gap 1, unit A1: Commander's negated flag, passed to each `realm agent` it starts when given.
+  .option(
+    '--no-record-model-text',
+    "Do not keep the text of each model call on the run's record. The step notes that recording was off.",
+  )
   .option(
     '--sweep-expired-gates <seconds>',
     'OPT-IN (issue #291): store-wide sweep interval, a whole number of seconds from 1 to 2147483, ' +
@@ -2177,6 +2188,7 @@ export const listenCommand = new Command('listen')
         model?: string;
         promptCache?: PromptCacheSetting;
         cacheDiagnostics?: CacheDiagnosticsSetting;
+        recordModelText?: boolean;
       },
     ) => {
       // issue #676: first, before any workflow is loaded, registered or mounted. Every run listen

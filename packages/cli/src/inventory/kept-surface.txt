@@ -23,6 +23,7 @@ realm agent --llm-timeout — option, takes a value
 realm agent --log-mode — option, no value
 realm agent --mint-writer-nonce — option, no value, default false
 realm agent --model — option, takes a value
+realm agent --no-record-model-text — option, no value, negates
 realm agent --no-release-line-advisory — option, no value, negates, hidden
 realm agent --params — option, takes a value, default "{}"
 realm agent --project — option, takes a value
@@ -70,6 +71,7 @@ realm listen --max-concurrent — option, takes a value, default 20
 realm listen --max-wait — option, takes a value, default 25
 realm listen --max-waiting — option, takes a value
 realm listen --model — option, takes a value
+realm listen --no-record-model-text — option, no value, negates
 realm listen --port — option, takes a value, default 3000
 realm listen --prompt-cache — option, takes a value
 realm listen --provider — option, takes a value

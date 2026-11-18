@@ -46,14 +46,20 @@ export function parseInput(text) {
 }
 
 // The reply-class table, checked top to bottom; the first row that matches wins.
-// 1 page check · 2 MCP input error · 3 engine fault · 4 refused · 5 accepted · 6 no-op on a
-// finished run · 7 catch-all.
+// 1 page check · 2 no reply (the page's own MCP client gave up or lost the connection) · 3 MCP input
+// error · 4 engine fault · 5 refused · 6 accepted · 7 no-op on a finished run · 8 catch-all.
 export function classify(reply, before, after) {
   if (reply.kind === 'page')
     return {
       cls: 'page',
       label: 'The page could not send this',
       reason: '(The page’s own check.) ' + reply.message,
+    };
+  if (reply.kind === 'thrown' && reply.noReply)
+    return {
+      cls: 'noreply',
+      label: `No reply: this page stopped waiting for Realm (${reply.value}).`,
+      reason: '',
     };
   if ((reply.kind === 'text' || reply.kind === 'thrown') && /^MCP error/.test(reply.value))
     return { cls: 'mcp', label: 'Realm’s MCP layer refuses', reason: reply.value };
@@ -89,10 +95,11 @@ export function classify(reply, before, after) {
   };
 }
 
-// The counting line. A schema refusal carries error_details.rejections and .threshold (0.49.0
+// The counting line. A schema refusal carries error_details.rejections and .threshold (0.50.0
 // sends both; the threshold is never hard-coded). `blocked` and an MCP-layer refusal never reach
-// the counter: "Nothing was counted.".
+// the counter: "Nothing was counted.". A call with no reply says nothing: the page cannot know.
 export function countLine(reply) {
+  if (reply?.kind === 'thrown' && reply.noReply) return null;
   if ((reply?.kind === 'text' || reply?.kind === 'thrown') && /^MCP error/.test(reply.value))
     return 'Nothing was counted.';
   const v = reply?.kind === 'json' ? reply.value : null;
@@ -105,18 +112,29 @@ export function countLine(reply) {
   return null;
 }
 
-// The gate text comes only with the reply that opened the gate (get_run_state's pending_gate has
-// no display, P-8).
-export function gateText(openingReply) {
-  const v = openingReply?.kind === 'json' ? openingReply.value : openingReply;
-  const d = v?.gate?.display;
-  return typeof d === 'string' ? d.trim() : null;
+// The gate text is the message of the form Realm sent the page (engine.mjs's form), trimmed: on 0.50.0
+// the call that opens the gate holds it open with the form, and replies only after the answer.
+export function gateText(form) {
+  const m = form?.message;
+  return typeof m === 'string' ? m.trim() : null;
+}
+
+// What stage 03 shows while the gate waits, from the run's state and the form's status (engine.mjs):
+// open → the choice buttons work; answered → both stay off until the call returns; withdrawn → both
+// stay off, the hint is Realm's own reply word for word (`hint`: the context_hint of the call that
+// held the form), and the ask-again button shows. Outside state B nothing waits at the gate.
+export function gateView(state, form) {
+  const off = { choices: false, hint: null, askAgain: false };
+  if (stateLetter(state) !== 'B') return off;
+  if (form?.status === 'open') return { ...off, choices: true };
+  if (form?.status === 'withdrawn') return { ...off, hint: form.hint ?? null, askAgain: true };
+  return off;
 }
 
 // After the answer, the closed branch is the posting step the answer's `when` turned off
 // (skip_details kind when_false; a failed run skips both with another kind). The chosen posting
 // step is the other one; `send` names it while the run is running and that step is not completed.
-// On 0.49.0 the run then owes it to the engine: the agent calls advance_run and Realm runs it.
+// On 0.50.0 the run then owes it to the engine: the agent calls advance_run and Realm runs it.
 export function nextActions(state) {
   const sd = state?.skip_details ?? {};
   const other = POSTING.find((p) => sd[p]?.kind === 'when_false') ?? null;
@@ -159,8 +177,10 @@ export function skipLine(state) {
 }
 
 // The choice the gate answer recorded, from the run record's gate-response entry.
-export const answeredChoice = (run) =>
-  (run?.evidence ?? []).find((e) => e.kind === 'gate_response')?.input_summary?.choice ?? null;
+const gateResponse = (run) => (run?.evidence ?? []).find((e) => e.kind === 'gate_response');
+export const answeredChoice = (run) => gateResponse(run)?.input_summary?.choice ?? null;
+// How the answer reached Realm, as the record says (`answer.route`; `mcp_form` for a form answer).
+export const answeredRoute = (run) => gateResponse(run)?.answer?.route ?? null;
 
 const refusals = (n) => `${n} counted refusal${n === 1 ? '' : 's'}`;
 
@@ -211,7 +231,7 @@ export function recordedState(r, ending) {
   };
 }
 
-// THE CLAIM LEDGER (design rev 4 "Claim ledger", executed on 0.49.0; R = recorded, L = live).
+// THE CLAIM LEDGER (design rev 4 "Claim ledger", re-run on 0.50.0; R = recorded, L = live).
 // Every visitor sentence below is true on the pinned release for the reason given. At each version
 // bump: the guard (scripts/live/smoke.mjs) re-runs the rows marked "guard"; check the rows marked
 // "hand" by hand on the new release (pre-publication checklist Part B, step 11).
@@ -222,6 +242,7 @@ export function recordedState(r, ending) {
 // | :29 | The agent starts a run. Realm fetches the pull request itself. | fetch_pr is `execution: auto`; start_run's reply has it completed and the GitHub stand-in logged the GET | R, L | guard (start reply, stand-in log) |
 // | :45 | All four are required. Nothing else gets into the record. | missing_field and extra_field are refused; a refused call leaves no entry (#724: `__proto__` is accepted but is not in the record) | R, L | guard (attempt replies, after_refusals) |
 // | :59 | the reply's class label | classify(), from the reply and the state before and after | L | guard (reply classes) |
+// | :59 | No reply: this page stopped waiting for Realm (<message>). | classify(): a thrown reply the page's own MCP client raised itself (engine.mjs `noReply`: its time limit, a closed connection), so Realm sent no reply | L | guard (synthetic) + walk (slow reader) |
 // | :63 | The step is complete, and the run stops at the human gate. Go to the next stage. | the recorded valid reply is confirm_required, phase gate_waiting | R | guard (valid reply) |
 // | :63 | The step is complete and the run stops at the gate. | shown only while pending_gate is set (a failed run never sets it) | L | guard |
 // | :64 | After every refusal the run still read … No step completed. Refusals of a submission's content are counted toward the limit of six; a step sent out of order is not. | after_refusals is fetch_pr only; the write_review entry counts 3 for the 3 schema refusals; the skip-ahead is `blocked` | R | guard (after_refusals, :140 row) |
@@ -232,9 +253,14 @@ export function recordedState(r, ending) {
 // | stage 3 h3 | This run failed before reaching the gate. | the m-th schema refusal fails the run before confirm_review runs | L (E) | guard (failed run) |
 // | Next at stage 3 | Waiting for the agent / Waiting for a human | A: the run waits for write_review; B: pending_gate is set; C, D, E: nothing waits at the gate (Next free) | L (A, B) | guard (state letters) + walk |
 // | :73 | This is what the reviewer was shown. The run is in phase gate_waiting and neither posting step is available to the agent. | at the gate the phase is gate_waiting and both posting steps are refused (V-12) | R, L (B) | guard (state at gate, at-gate attempts) |
-// | stage 3 | The run reaches the gate once write_review is accepted. | the valid write_review reply opens the gate (confirm_review is auto) | L (A) | guard (valid reply carries the gate) |
+// | stage 3 | The run reaches the gate once write_review is accepted. | the valid write_review call opens the gate (confirm_review is auto), and Realm sends its form inside that call | L (A) | guard (the form opens during the valid call; state B) |
+// | stage 3 label | Realm sent this question to the app as a form: | the page declares form support and the gate is left at 0.50.0's default (`asked`): the server announces `realm/gate_answers` `asked`, lists no submit_human_response, and sends elicitation/create inside the call that reaches the gate; the page shows its message, trimmed (= the recording's gate.display), with one button per choice in its enum | L (B, C, D) | guard (announcement, tools, form message and enum) |
+// | stage 3 | Realm's reply after it withdrew the form, word for word | gateView(): withdrawn → the hint is the context_hint of the call that held the form ("Not recorded: Realm stopped waiting after N s and withdrew the form. … call present_question (n left in this session).") | L (B, withdrawn) | guard (30 s withdrawal) |
+// | stage 3 button | The agent calls present_question | the button calls present_question with the gate id; Realm sends a new form inside that call, and an accept answers it | L (B, withdrawn) | guard (30 s withdrawal: the new form, then state C) |
 // | :84 | Or let the agent try to skip the gate | the two attempts are refused | R, L | guard (at-gate attempts) |
 // | stage 3 | The reviewer chose X. | the record's gate-response entry | L (C, D) | guard (answer effect) |
+// | stage 4 label | The reviewer answers Realm's form | the box shows the form response the page sent back (engine.mjs formAnswer: accept with the pressed choice) | L (C, D) | guard (label, response) + walk |
+// | stage 4 | The record says it was answered through a form in an assistant's app (`answer.route`: `mcp_form`). | the record's gate-response entry carries answer.route mcp_form; "through a form in an assistant's app" is Realm's own phrase for that route (packages/cli/src/lib/holder-render.ts:442 at v0.50.0); shown only for that route | L (C, D) | guard (the route, the line, none for another route) |
 // | :101 | Answer the gate first. This stage opens once the gate is answered. | before the answer neither posting step can run | R, L | guard (at-gate attempts) |
 // | :104 | The reviewer chose `X`. Realm closes the other branch. | after the answer the other posting step is skipped (when_false) and refused | R, L | guard (answer effect, other-branch reply) |
 // | :104 | Realm runs the chosen step itself when the agent calls `advance_run`. | after the answer the chosen posting step is not completed, the phase is running and the run owes the step to the engine (next_actions_status advance_owed, next action advance_run); the agent's own execute_step of it is refused ("it is an automatic step"); shown only while that holds (L, C), always in R (the recorder ran the step with advance_run) | R, L (C) | guard (:104 condition, both modes; the editor in C) |
@@ -249,11 +275,12 @@ export function recordedState(r, ending) {
 // | stages 2–5 | This run failed after m counted refusals. / This run failed before reaching the gate. | the m-th schema refusal (m = error_details.threshold) fails the run before confirm_review runs | L (E) | guard (failed run) |
 // | stage 5 h3 | What is left behind. | heading only in E: the :134 paragraph is false there (no gate answer; the m-th refusal leaves the failed step's entry) | R; L (C, D, E) | guard (failed run) |
 // | :150 | Read it back any time with `realm run inspect <run-id>`, or take the whole record with `realm run export`. | the recorder read the runs back with the CLI | R | hand |
-// | :150 | This run lives only in this page. With Realm installed, `realm run inspect <run-id>` reads a run back. | runs are in an in-memory store; `realm run inspect` exists on 0.49.0 | L | hand |
+// | :150 | This run lives only in this page. With Realm installed, `realm run inspect <run-id>` reads a run back. | runs are in an in-memory store; `realm run inspect` exists on 0.50.0 | L | hand |
 // | :160 | … on Realm {v}, driven over MCP; the reviewer answered with the CLI. … | record.mjs drives the steps over MCP and answers with `realm run respond` | R | hand (record.mjs) |
 // | stage 4 (R) | the reviewer's box: `$ realm run respond <run-id> --gate <gate-id> --choice <choice>` and its output, word for word | copied from the recording by distill.mjs, which replaces the recorder's folder with the fixed name ~/pr-review (its header) | R | guard (no folder under a refused root; every "the project code under …" names ~/pr-review/project) |
 // | footer | Live · Realm {version} running in your browser … nothing is posted. Runs are kept in memory … Full reply shows Realm's reply whole. | the bundle's fetch is the stand-in (0 page fetches); InMemoryStore; the Full reply toggle shows Realm's reply, not the call | L | guard (page fetch, stand-in log) + walk (Full reply) |
 // | details | What is swapped (each line) | scripts/live/build.mjs, src/live/engine.mjs and src/live/shims/process.mjs; no package version is swapped (the bundle's SDK is realm-mcp's own pin) | L | guard (scan, stub calls) + build (one copy of realm and of the SDK) + hand |
+// | details | The assistant's app: this page plays it. It shows Realm's form for the gate and sends back the button you press. | engine.mjs's client declares form support and answers Realm's form with formAnswer(the pressed choice); stage 3 shows the form's message and its choices | L | guard (form path) + walk (answer click) |
 export function stageSentences(mode, state) {
   const live = mode === 'live';
   const letter = live ? stateLetter(state) : null;
@@ -299,8 +326,15 @@ export function stageSentences(mode, state) {
     beforeGate:
       live && letter === 'A' ? 'The run reaches the gate once write_review is accepted.' : null,
     skipLabel: 'Or let the agent try to skip the gate', // :84
+    formLabel: live ? 'Realm sent this question to the app as a form:' : null, // stage 3 label (L)
+    askLabel: 'The agent calls present_question', // stage 3 button (L, B withdrawn)
     chose:
       live && choice && (letter === 'C' || letter === 'D') ? `The reviewer chose ${choice}.` : null,
+    // stage 4 (L, C D): only for the route the record names
+    answerLine:
+      live && cd && state?.route === 'mcp_form'
+        ? "The record says it was answered through a form in an assistant's app (`answer.route`: `mcp_form`)."
+        : null,
     need4: 'Answer the gate first. This stage opens once the gate is answered.', // :101
     branch: choice ? `The reviewer chose \`${choice}\`. Realm closes the other branch.` : null, // :104
     agentSends: na.send
@@ -367,6 +401,7 @@ export function swappedLines() {
       'Every other Node built-in and the npm package proper-lockfile: stubs that throw.',
       'Runs: InMemoryStore (realm-testing). Workflows: a hand-made in-memory store holding this one workflow.',
       "Traces: InMemoryTraceBufferStore, Realm's own in-memory trace store. Failed attempts: not written to a file; refusals are still counted in the run.",
+      "The assistant's app: this page plays it. It shows Realm's form for the gate and sends back the button you press.",
     ],
   };
 }
@@ -413,11 +448,7 @@ export function replyView(call, reply, before, after) {
   const c = classify(reply, before, after);
   const json = reply.kind === 'json';
   return {
-    who: call
-      ? call.tool === 'submit_human_response'
-        ? 'The reviewer answers'
-        : 'Agent calls'
-      : null,
+    who: call ? 'Agent calls' : null,
     call: call ? showJson(call) : null,
     cls: c.cls,
     tone: c.cls === 'accepted' ? 'good' : c.cls === 'noop' || c.cls === 'other' ? '' : 'bad',
@@ -427,6 +458,11 @@ export function replyView(call, reply, before, after) {
     shown: json ? showJson(project(reply)) : null,
     full: json ? JSON.stringify(reply.value, null, 2) : null,
   };
+}
+
+// Stage 4's answer box (live): the form response the page sent back for the pressed choice.
+export function formAnswerView(response) {
+  return { who: "The reviewer answers Realm's form", call: JSON.stringify(response, null, 2) };
 }
 
 // Stage 1: what fetch_pr fetched, read from start_run's next action (as distill.mjs reads it).

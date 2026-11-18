@@ -61,7 +61,7 @@ Upgrades the store file to the schema version this Realm writes. Stop every Real
 
 The copy made first:
 
-- no flag: when a schema step is pending, a copy in the backups folder beside the home, `~/.realm-backups/` for the home `~/.realm` (made owner-only when it is missing), named from the file's schema versions before and after and the UTC time, such as `realm-v1-to-v2-20261117T020531Z.db`. It is made by [`realm db backup`](#backup), with all of its rules.
+- no flag: when a schema step is pending, a copy in the backups folder beside the home, `~/.realm-backups/` for the home `~/.realm` (made owner-only when it is missing), named from the file's schema versions before and after and the UTC time, such as `realm-v2-to-v3-20261118T165638Z.db`. It is made by [`realm db backup`](#backup), with all of its rules.
 - `--backup <path>`: the copy at that path instead, outside the home and where nothing exists yet.
 - `--no-backup`: no copy. Use it when you already have one, or when you accept the risk.
 
@@ -125,11 +125,13 @@ Each step prints:
 
 Version 2's step back drops the `outbound` table, where `realm agent` and `realm listen --send-reminders` record the Slack reminders and escalations they send: `The outbound table was dropped: the record of <k> reminder(s) and escalation(s) sent is no longer in the file.`, where `<k>` counts those recorded as sent, or, when it held none, `The outbound table was dropped; it held no record of a reminder or escalation sent.` Every run is kept.
 
+Version 3's step back drops the `callbacks` and `callback_keys` tables, which are for the callback a run asks for and the keys that sign callbacks: `The callbacks and callback_keys tables were dropped: <k> undelivered callback(s) and signing key(s), counted together, are no longer in the file.`, where `<k>` counts the callbacks not delivered (a failed one too) and the signing keys, or, when it held none, `The callbacks and callback_keys tables were dropped; they held no undelivered callback and no signing key.` Every run is kept, and the copy made first keeps the dropped rows.
+
 After the last step:
 
 ``Every command of this Realm that uses the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, now refuses the file, because it is at schema version <n> and this Realm writes version <r>. To use it, install a Realm that writes schema version <n>: npm install -g "@sensigo/realm-cli@<range>" (in a project that lists Realm packages, give every one of them the same exact version within <range>; see "Upgrade every package together" in the upgrade guide).``
 
-`<range>` is `0.49` for schema version 1.
+`<range>` is `0.49` for schema version 1. It is `>=0.50.0 <0.51.0` for schema version 2.
 
 **Exit code:** 0 when every step ran, or none was needed. 1 when the command refuses or a step fails, with one `Error:` line on standard error. Besides the refusals above (the store file cannot be opened, another process has it open, the backups folder or the copy):
 
@@ -277,7 +279,7 @@ It prints first:
 
 then the lines of `realm db migrate --to`, the install line last. It differs from `--to` mainly in three ways: Realm finds the version in the record, it undoes one migrate only, and it takes no flags. For another place for the copy, or none, run `realm db migrate --to <n>` with `--backup <path>` or `--no-backup`.
 
-A home that no migrate of Realm 0.50.0 or later has touched has no record: one created at version 2, or one whose record was deleted. Use `realm db migrate --to <n>` there.
+A home that no migrate of Realm 0.50.0 or later has touched has no record: one created at version 2 or 3, or one whose record was deleted. Use `realm db migrate --to <n>` there.
 
 **Exit code:** 0 when every step ran. 1 when the command refuses or a step fails, with one `Error:` line on standard error. "Nothing was changed" is about the store file, as for [`restore`](#restore)'s refusals. The refusals have the code [`STATE_STORE_MIGRATE_REFUSED`](../error-codes.md) unless another is named:
 

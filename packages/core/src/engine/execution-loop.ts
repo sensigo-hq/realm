@@ -12,6 +12,7 @@ import type {
   StructuredOutputMeta,
   StepDiagnostics,
   UsageRecord,
+  ModelText,
   StepCacheDetail,
   SealArm,
   OutputSource,
@@ -198,6 +199,12 @@ export interface StepMeta {
   toolCalls?: ToolCallRecord[];
   structuredOutput?: StructuredOutputMeta;
   usage?: UsageRecord[];
+  /**
+   * Gap 1, unit A1: the text of each model call of the attempt, or why there is none. Written on
+   * the attempt's entry as `model_text`, as given: the engine neither masks nor cuts it, so mask
+   * any secret value before passing it, as `realm agent` and `realm listen` do.
+   */
+  modelText?: ModelText;
 }
 
 /**
@@ -3815,6 +3822,10 @@ async function executeStepBody(
         ...(options.stepMeta?.toolCalls !== undefined
           ? { toolCalls: options.stepMeta.toolCalls }
           : {}),
+        // Gap 1, unit A1: the attempt's model call texts, with its usage.
+        ...(options.stepMeta?.modelText !== undefined
+          ? { modelText: options.stepMeta.modelText }
+          : {}),
         // issue #140: PER-ATTEMPT value (may be smaller than the outer effectiveTimeoutSeconds once
         // the cap starts clipping) — byte-identical to the pre-#140 outer value whenever capMs is
         // undefined or hasn't bitten yet.
@@ -3945,6 +3956,9 @@ async function executeStepBody(
       ...(options.stepMeta?.toolCalls !== undefined
         ? { toolCalls: options.stepMeta.toolCalls }
         : {}),
+      ...(options.stepMeta?.modelText !== undefined
+        ? { modelText: options.stepMeta.modelText }
+        : {}),
       ...(debugOutput !== undefined ? { debugOutput } : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps. Mirrors
       // the real dispatch-loop capture's own trace-spread conjunct exactly.
@@ -4010,6 +4024,9 @@ async function executeStepBody(
         : {}),
       ...(options.stepMeta?.toolCalls !== undefined
         ? { toolCalls: options.stepMeta.toolCalls }
+        : {}),
+      ...(options.stepMeta?.modelText !== undefined
+        ? { modelText: options.stepMeta.modelText }
         : {}),
       ...(debugOutput !== undefined ? { debugOutput } : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps. Mirrors

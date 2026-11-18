@@ -2878,6 +2878,7 @@ Names this job reaches whose entry is on another page.
 - [`LoadErrorCode`](embed-the-mcp-server.md#loaderrorcode): The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`.
 - [`LoaderWarning`](write-a-handler.md#loaderwarning): A single structured diagnostic.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
+- [`ModelText`](read-a-runs-record.md#modeltext): The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`).
 - [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads.
 - [`NoRemedy`](run-and-drive-a-run.md#noremedy): Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`).
 - [`OUTPUT_SOURCES`](read-a-runs-record.md#output_sources): Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).

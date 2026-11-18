@@ -382,6 +382,7 @@ CAPABILITY_BASES · value · public
   ];
 
 CLAIM_PROOF_ABSENT_CAUSES · value · internal
+CLAIM_STATES · value · internal
 CLOCK_READ_CLASSES · value · public
   const CLOCK_READ_CLASSES: {
       readonly write: "An instant a write records on the run (`updated_at`, a claim's deadline, an opened question's `opened_at`): the store's reading, taken once inside the write.";
@@ -1069,7 +1070,12 @@ ENTRY_CALLERS · value · public
       ];
   };
 
+ERROR_CATEGORIES · value · internal
+ERROR_CLASSES · value · internal
+ERROR_CODES · value · internal
+EVIDENCE_STATUSES · value · internal
 EVIDENCE_TABLE · value · internal
+EXHAUSTED_BY · value · internal
 EXTENSION_KEY_PREFIX · value · internal
 EnactedVia · type · public
   type EnactedVia = AdvanceCaller | StepCaller | EngineStepCaller | ChainCaller | AnswerCaller | 'timer';
@@ -1220,6 +1226,7 @@ EvidenceSnapshot · type · public
       agent_profile?: string;
       agent_profile_hash?: string;
       tool_calls?: ToolCallRecord[];
+      model_text?: ModelText;
       resolved_params?: Record<string, unknown>;
       warn?: string;
       debug_output?: unknown;
@@ -1288,6 +1295,7 @@ ExecuteStepOptions · type · public
 ExecutionMode · type · public
   type ExecutionMode = 'auto' | 'agent' | 'guard' | 'finalizer';
 
+ExhaustedBy · type · internal
 ExpireGateDelta · type · public
   interface ExpireGateDelta {
       kind: 'expire_gate';
@@ -2011,6 +2019,37 @@ MemberKind · type · public
   type MemberKind = typeof KIND.environment | typeof KIND.declared;
 
 MockAdapter · both · internal
+ModelText · type · public
+  type ModelText = {
+      recorded: true;
+      messages: Array<{
+          role: 'system' | 'user' | 'assistant' | 'tool';
+          text: string;
+          cut?: {
+              kept_bytes: number;
+              full_bytes: number;
+          };
+          hidden?: number;
+      }>;
+      tools: Array<{
+          json: string;
+          cut?: {
+              kept_bytes: number;
+              full_bytes: number;
+          };
+          hidden?: number;
+      }>;
+      requests: Array<{
+          request_id: string | null;
+          sent: number[];
+          tools?: number;
+          reply: number[] | null;
+      }>;
+  } | {
+      recorded: false;
+      why: 'switched_off' | 'provider_did_not_report';
+  };
+
 Money · type · internal
 MoneySource · type · internal
 MoneySourceTotal · type · internal
@@ -2019,6 +2058,7 @@ NAME_CAP_MARKER · value · internal
 NAME_MAX_LENGTH · value · internal
 NAME_REFUSAL_REASONS · value · internal
 NEW_RUN_SENTENCE · value · internal
+NEXT_ACTIONS_STATUS · value · internal
 NOT_CHECKED_MARKER · value · internal
 NOT_PRICED_CAUSES · value · public
   const NOT_PRICED_CAUSES: readonly [
@@ -2046,6 +2086,7 @@ NewerDefinitionFacts · type · public
       reads_up_to: number;
   }
 
+NextActionsStatus · type · internal
 NoRemedy · type · public
   type NoRemedy = {
       cause: 'operator_command_untyped';
@@ -2522,6 +2563,7 @@ RUNTIME_ONLY_WORKFLOW_KEYS · value · internal
 RUN_HEALTH_KINDS · value · internal
 RUN_HEALTH_STUCK_EXCLUDED · value · internal
 RUN_ID_LENGTH · value · internal
+RUN_PHASES · value · internal
 RUN_RECORD_TABLE · value · internal
 RaceEntry · type · public
   interface RaceEntry {
@@ -2914,6 +2956,7 @@ SIDE_FILE_KINDS · value · public
       "sealed_trace"
   ];
 
+SKIP_KINDS · value · internal
 STEP_DIAGNOSTICS_TABLE · value · internal
 STEP_KEY_REGISTRY · value · internal
 STOP_KINDS · value · public
@@ -2929,6 +2972,7 @@ STOP_KINDS · value · public
       "refused"
   ];
 
+STOP_REASONS · value · internal
 STORED_FILE_CLASSES · value · public
   const STORED_FILE_CLASSES: readonly [
       "empty",
@@ -3388,6 +3432,7 @@ StepMeta · type · public
       toolCalls?: ToolCallRecord[];
       structuredOutput?: StructuredOutputMeta;
       usage?: UsageRecord[];
+      modelText?: ModelText;
   }
 
 StepScopedFencePredicate · type · public
@@ -3407,6 +3452,7 @@ StopClassification · type · public
 StopKind · type · public
   type StopKind = (typeof STOP_KINDS)[number];
 
+StopReason · type · internal
 StopRecord · type · public
   interface StopRecord {
       terminal_state?: boolean;

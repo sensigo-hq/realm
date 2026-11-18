@@ -49,6 +49,7 @@ import {
   attachBilledUsage,
   passedSnippet,
 } from './agent-utils.js';
+import { openAiAnsweredText, pushAnswered, type ModelTextReport } from './model-text.js';
 
 /**
  * Short alias so every `rawCreate` fits on ONE line — the issue-#401 source rail greps providers
@@ -466,7 +467,11 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     callOpts?: { llmClock?: LlmClock; cachePrefixChars?: number; cacheChoice?: CallCacheChoice },
     // issue #600 PR 1a (D9): owned by the entry point so one `catch` there sees everything billed.
     billed?: UsageRecord[],
-  ): Promise<{ output: Record<string, unknown>; usage?: UsageRecord[] }> {
+  ): Promise<{
+    output: Record<string, unknown>;
+    usage?: UsageRecord[];
+    modelText?: ModelTextReport[];
+  }> {
     const clock = callOpts?.llmClock;
     // issue #401: per-invocation counters, minted beside the client they count for.
     const counters: WireCounters = { attempts: 0 };
@@ -524,6 +529,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // (the non-JSON retry is a second wire request), so a single usage object here would be a
     // false number by construction the moment the retry fires.
     const requests: UsageRecord[] = billed ?? [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests`.
+    const texts: ModelTextReport[] = [];
     const makeRequest = async (msgs: Message[]): Promise<string> => {
       const base: Record<string, unknown> = {
         model: this.model,
@@ -542,20 +549,24 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         if (explicit) opts = withExplicitCache(opts, plan, off);
         return bounded(opts);
       });
-      requests.push(
+      // Gap 1, unit A1: the request's text beside its record, in the same statement.
+      pushAnswered(
+        requests,
         toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
           ...openAiRequestFacts(response, client),
           ...(explicit ? this.explicitAskFacts(callOpts?.cacheChoice) : {}),
           ...openAiSplitFacts(opts, plan, systemPrompt, prompt),
           ...this.rejectedFact(),
         }),
+        texts,
+        openAiAnsweredText(opts, response),
       );
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
     };
 
     const content = await makeRequest(messages);
     const parsed = extractJsonObject(content);
-    if (parsed !== null) return { output: parsed, usage: requests };
+    if (parsed !== null) return { output: parsed, usage: requests, modelText: texts };
     // Retry once with an explicit reminder to return JSON.
     const retryMessages: Message[] = [
       ...messages,
@@ -567,7 +578,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     ];
     const retry = await makeRequest(retryMessages);
     const retryParsed = extractJsonObject(retry);
-    if (retryParsed !== null) return { output: retryParsed, usage: requests };
+    if (retryParsed !== null) return { output: retryParsed, usage: requests, modelText: texts };
     // issue #600 PR 1a (D9): two billed, completed requests (the first generation and this
     // retry) preceded this throw — attaching them here is the only way that money is ever
     // recorded; without it a drive that throws is indistinguishable from one that spent nothing.
@@ -638,6 +649,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     output: Record<string, unknown>;
     meta?: StructuredOutputMeta;
     usage?: UsageRecord[];
+    modelText?: ModelTextReport[];
   }> {
     const clock = opts?.llmClock;
     // issue #401: the clock MUST travel across this delegation. Every step that DECLARED strict
@@ -742,17 +754,23 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // comes back — a billed-but-unparseable response (readContent below can still throw on it)
     // must not lose the money that was already spent (D9: "money burned on a call that threw").
     const requests: UsageRecord[] = [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests`.
+    const texts: ModelTextReport[] = [];
     try {
       const timedCreate = async (o: Rec): Promise<Record<string, unknown>> => {
         const requestStart = new Date().toISOString();
         const response = await create(o);
-        requests.push(
+        // Gap 1, unit A1: the request's text beside its record, in the same statement.
+        pushAnswered(
+          requests,
           toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
             ...openAiRequestFacts(response, client),
             ...(explicit ? this.explicitAskFacts(opts.cacheChoice) : {}),
             ...openAiSplitFacts(o, plan, systemPrompt, prompt),
             ...this.rejectedFact(),
           }),
+          texts,
+          openAiAnsweredText(o, response),
         );
         return response as Record<string, unknown>;
       };
@@ -818,7 +836,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           }
         },
       );
-      return { output: readContent(response), meta, usage: requests };
+      return { output: readContent(response), meta, usage: requests, modelText: texts };
     } catch (err) {
       attachBilledUsage(err, requests);
       throw err;
@@ -850,6 +868,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // sees every request that got an answer, whatever throws below: a wire error on a later turn,
     // an unknown tool name, arguments that do not parse, or a final answer that does not parse.
     const requests: UsageRecord[] = [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests`.
+    const texts: ModelTextReport[] = [];
     try {
       const result = await this.callStepWithToolsInternal(
         prompt,
@@ -857,8 +877,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         executor,
         options,
         requests,
+        texts,
       );
-      return requests.length > 0 ? { ...result, usage: requests } : result;
+      return requests.length > 0 ? { ...result, usage: requests, modelText: texts } : result;
     } catch (err) {
       attachBilledUsage(err, requests);
       throw err;
@@ -872,6 +893,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     executor: ToolExecutor,
     options: Parameters<OpenAIProvider['callStepWithTools']>[3],
     requests: UsageRecord[],
+    texts: ModelTextReport[],
   ): Promise<StepWithToolsResult> {
     const clock = options.llmClock;
     // issue #401: per-invocation counters, minted beside the client below.
@@ -922,13 +944,17 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const bounded = async (body: Rec): Promise<any> => {
       const requestStart = new Date().toISOString();
       const response = await send(body);
-      requests.push(
+      // Gap 1, unit A1: the request's text beside its record, in the same statement.
+      pushAnswered(
+        requests,
         toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
           ...openAiRequestFacts(response, client),
           ...(explicitOff ? this.explicitAskFacts() : {}),
           ...openAiSplitFacts(body, plan, systemText, prompt),
           ...this.rejectedFact(),
         }),
+        texts,
+        openAiAnsweredText(body, response),
       );
       return response;
     };

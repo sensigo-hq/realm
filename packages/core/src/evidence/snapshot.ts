@@ -5,6 +5,7 @@ import type {
   StepDiagnostics,
   AgentTraceEntry,
   OutputSource,
+  ModelText,
 } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import type { Attributed } from '../engine/holder.js';
@@ -66,6 +67,9 @@ export interface CaptureEvidenceParams {
   drivenBy?: Attributed;
   /** Issue #625 PR-2a: a bare auto step's output source — written as `output_source`. */
   outputSource?: OutputSource;
+  /** Gap 1, unit A1: the attempt's model call texts, or why there are none — written as
+   *  `model_text`. Not hashed. */
+  modelText?: ModelText;
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.
@@ -115,6 +119,7 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
     ...(params.warn !== undefined ? { warn: params.warn } : {}),
     ...(params.debugOutput !== undefined ? { debug_output: params.debugOutput } : {}),
     ...(params.toolCalls !== undefined ? { tool_calls: params.toolCalls } : {}),
+    ...(params.modelText !== undefined ? { model_text: params.modelText } : {}),
     ...(params.effectiveTimeoutSeconds !== undefined
       ? { effective_timeout_seconds: params.effectiveTimeoutSeconds }
       : {}),

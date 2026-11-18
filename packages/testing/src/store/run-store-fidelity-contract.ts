@@ -28,6 +28,7 @@ import {
   type RunStore,
   type RunRecord,
   type LoadBearingRunRecordField,
+  type ModelText,
   type CacheDiagnostics,
   type CacheReference,
   type ScanFilter,
@@ -70,7 +71,9 @@ import {
  * `purge`); the three purge laws' cases are skipped for a store that never deletes a run. Gap 1, unit
  * A0, adds `LISTING_LEAVES_MODEL_TEXT`: a store's `scanListed` gives each run without its model
  * calls' texts, every other value as `get` reads it, and refuses the listed record written back; its
- * cases are skipped for a store with no `scanListed`, which Realm lists through `scan`.
+ * cases are skipped for a store with no `scanListed`, which Realm lists through `scan`. Gap 1, unit
+ * A1, adds `EVIDENCE_KEEPS_MODEL_TEXT`: an evidence entry's `model_text` (each model call's text)
+ * reads back exactly as written, its marker too, and an entry written without it reads back without.
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -92,6 +95,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'HORIZON_BELOW_TOMBSTONES',
   'PURGE_CAPABILITY_WIRED',
   'LISTING_LEAVES_MODEL_TEXT',
+  'EVIDENCE_KEEPS_MODEL_TEXT',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -454,6 +458,68 @@ function purgeCase(
       await run();
     },
   };
+}
+
+/**
+ * `EVIDENCE_KEEPS_MODEL_TEXT`'s recorded fixture. A text cut after a 4-byte character (its `cut`
+ * says so), a text holding U+0000 (a store that writes JSON to a column that refuses `\u0000` fails
+ * here), and a request with `request_id: null` and `reply: null` (a failed request's shape).
+ */
+const TCK_RECORDED_TEXT: ModelText = {
+  recorded: true,
+  messages: [
+    { role: 'system', text: 'The TCK system text.' },
+    { role: 'user', text: 'before\u0000after', hidden: 1 },
+    {
+      role: 'assistant',
+      text: 'cut after this: \u{1F600}',
+      cut: { kept_bytes: 20, full_bytes: 70000 },
+    },
+  ],
+  tools: [{ json: '[{"name":"tck_tool"}]' }],
+  requests: [
+    { request_id: 'tck-request-1', sent: [0, 1], tools: 0, reply: [2] },
+    { request_id: null, sent: [0, 1, 2], reply: null },
+  ],
+};
+
+/** Writes one entry carrying `modelText` (none when `undefined`) and reads it back with `get`. */
+async function modelTextRoundTrip(
+  adapter: RunStoreFidelityContractAdapter,
+  what: string,
+  modelText: ModelText | undefined,
+): Promise<{ entry: EvidenceSnapshot | undefined; got: unknown; wrote: ModelText | undefined }> {
+  const { record: run } = await adapter.store.create({
+    workflowId: `tck-model-text-${what}-${Math.random().toString(36).slice(2)}`,
+    workflowVersion: 1,
+    params: {},
+  });
+  const entry: EvidenceSnapshot = {
+    step_id: adapter.stepName,
+    started_at: '2026-01-01T00:00:00.000Z',
+    completed_at: '2026-01-01T00:00:01.000Z',
+    duration_ms: 1,
+    input_summary: {},
+    output_summary: {},
+    status: 'success',
+    evidence_hash: `tck-model-text-${what}`,
+    ...(modelText !== undefined ? { model_text: structuredClone(modelText) } : {}),
+  };
+  await adapter.store.update({ ...run, evidence: [entry] });
+  const { record: reread } = await adapter.store.get(run.id);
+  const read = reread.evidence[0];
+  return { entry: read, got: read?.model_text, wrote: modelText };
+}
+
+/** A model_text in a failure message: its counts and each text's length, then the value (the TCK's own
+ *  fake texts). */
+function describeModelText(value: unknown): string {
+  if (value === undefined) return 'no model_text';
+  if (typeof value !== 'object' || value === null) return JSON.stringify(value);
+  const v = value as { messages?: Array<{ text?: unknown }>; requests?: unknown[] };
+  if (!Array.isArray(v.messages)) return JSON.stringify(value);
+  const lengths = v.messages.map((m) => (typeof m.text === 'string' ? m.text.length : 'no text'));
+  return `${v.messages.length} messages (lengths ${lengths.join(', ')}), ${v.requests?.length ?? 0} requests: ${JSON.stringify(value)}`;
 }
 
 /**
@@ -1694,6 +1760,47 @@ export function runStoreFidelityContract(
         }
       },
     ),
+  );
+
+  // Gap 1, unit A1 — EVIDENCE_KEEPS_MODEL_TEXT. Always active: every store round-trips evidence.
+  cases.push(
+    {
+      law: 'EVIDENCE_KEEPS_MODEL_TEXT',
+      name: "an entry written with its model calls' texts reads back with them exactly: a text cut after a multi-byte character, a text holding U+0000, and a request with no id or reply",
+      run: async () => {
+        const { got, wrote } = await modelTextRoundTrip(adapter, 'texts', TCK_RECORDED_TEXT);
+        if (!isDeepStrictEqual(got, wrote)) {
+          throw new Error(
+            `EVIDENCE_KEEPS_MODEL_TEXT: an entry's model_text must read back exactly as written; ${describeModelText(got)} read back, ${describeModelText(wrote)} written`,
+          );
+        }
+      },
+    },
+    {
+      law: 'EVIDENCE_KEEPS_MODEL_TEXT',
+      name: 'an entry written with the marker that recording was off reads back with it',
+      run: async () => {
+        const marker: ModelText = { recorded: false, why: 'switched_off' };
+        const { got } = await modelTextRoundTrip(adapter, 'marker', marker);
+        if (!isDeepStrictEqual(got, marker)) {
+          throw new Error(
+            `EVIDENCE_KEEPS_MODEL_TEXT: an entry's model_text marker must read back as written; ${JSON.stringify(got)} read back, ${JSON.stringify(marker)} written`,
+          );
+        }
+      },
+    },
+    {
+      law: 'EVIDENCE_KEEPS_MODEL_TEXT',
+      name: 'an entry written without model_text reads back without it',
+      run: async () => {
+        const { entry } = await modelTextRoundTrip(adapter, 'absent', undefined);
+        if (entry === undefined || 'model_text' in entry) {
+          throw new Error(
+            `EVIDENCE_KEEPS_MODEL_TEXT: an entry written without model_text must read back without it; read back ${entry === undefined ? 'no entry' : JSON.stringify(entry.model_text)}`,
+          );
+        }
+      },
+    },
   );
 
   cases.push({
