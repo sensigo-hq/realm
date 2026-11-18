@@ -45,6 +45,13 @@ const MAP_UNITS: Cell = [
   'an ended run: `Resume:` names the failed steps',
 ];
 const RUN_FAIL_OWN: Cell = [CMD, "check 3 — this drive's step fails and ends the run"];
+// #625 A1b-2 correction 1: the cells of its four fixes.
+const REFUSAL_REASON_RULE: Cell = [CMD, "realm-agent.md's row: a handler's abort"];
+const RUN_TIMER_CLEANUP: Cell = [CMD, 'correction 1, check 1 — the ⏰ line ends the run'];
+const RUN_ANSWER_LATE: Cell = [CMD, "correction 1, check 3 — this drive's answer carries out"];
+const AGENT_EXPIRED_DEFAULT: Cell = [AGENT, 'correction 1, check 2 — realm agent --run-id'];
+const AGENT_SLACK_LATE: Cell = [AGENT, 'correction 1, check 3 — a Slack answer carries out'];
+const AGENT_SLACK_SLOW: Cell = [AGENT, 'correction 1, check 4 — a Slack answer of its own'];
 const AGENT_CHAIN: Cell = [AGENT, "check 3 — the engine's work"];
 const AGENT_A6: Cell = [AGENT, 'check 3 (A6)'];
 const AGENT_FAIL: Cell = [AGENT, 'check 3 — a step the chain runs after this drive’s step fails'];
@@ -87,17 +94,37 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
     page: 'docs/reference/cli/realm-agent.md',
     words:
       "For any other ending, one sentence of how it ended follows on the same line, from the record only (added after version 0.50.0). A `Reason:` line follows when the sentence does not say the stored reason: a step's failure, a handler's abort, a guard's resolution error, or a failed or aborted record with no seal; for an abandoned run the reason is inside the sentence. Either way it is stored text, masked like the record's values, and shown as its type and size while",
-    cells: [REFUSAL_ABANDON, REFUSAL_FAILED, REFUSAL_GUARD, I11],
+    cells: [REFUSAL_ABANDON, REFUSAL_FAILED, REFUSAL_GUARD, REFUSAL_REASON_RULE, I11],
   },
   {
     page: 'docs/reference/cli/realm-agent.md',
     words: ENDED,
-    cells: [AGENT_CHAIN, AGENT_FAIL, AGENT_A6, AGENT_TIMER, AGENT_SLACK_OWN, AGENT_SLACK_OTHER],
+    cells: [
+      AGENT_CHAIN,
+      AGENT_FAIL,
+      AGENT_A6,
+      AGENT_EXPIRED_DEFAULT,
+      AGENT_TIMER,
+      AGENT_SLACK_OWN,
+      AGENT_SLACK_SLOW,
+      AGENT_SLACK_LATE,
+      AGENT_SLACK_OTHER,
+    ],
   },
   {
     page: 'docs/reference/cli/realm-workflow.md',
     words: ENDED,
-    cells: [RUN_ABANDON, RUN_FAILED, RUN_CHAIN, RUN_ANSWER, RUN_TIMER, RUN_FAIL_OWN, RUN_DONE],
+    cells: [
+      RUN_ABANDON,
+      RUN_FAILED,
+      RUN_CHAIN,
+      RUN_ANSWER,
+      RUN_ANSWER_LATE,
+      RUN_TIMER,
+      RUN_TIMER_CLEANUP,
+      RUN_FAIL_OWN,
+      RUN_DONE,
+    ],
   },
   {
     page: 'docs/reference/cli/realm-workflow.md',
