@@ -16,6 +16,11 @@
 // EFFECT, never by reply text (the recorder answers through the CLI): run_phase after the answer vs the CLI's
 // "new state '…'", skipped_steps after the answer vs the ending's skipped_steps, completed_steps after the answer
 // vs the ending's completed_steps minus the posted step, and the gate_response evidence hash.
+// The form path (0.50.0's default, `asked`): the page answers Realm's form (engine.mjs's answer, the bytes the
+// page runs). The valid write_review call holds the form open and replies only after the answer, so that reply
+// is compared by its effect too; the gate is compared through the form (its message, trimmed, = the recording's
+// gate.display; its enum = the recording's choices). The at-gate replies and the evidence hashes stay compared
+// to the recording. A guard-only 30 s wait (the minimum) shows Realm withdrawing a form, alongside the endings.
 import vm from 'node:vm';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -202,6 +207,11 @@ const {
   replyView,
   fetched,
   project,
+  gateView,
+  formAnswer,
+  formAnswerView,
+  answeredRoute,
+  FORM_WAIT_SECONDS,
 } = ns;
 check(
   'timers in the vm return numbers',
@@ -278,6 +288,30 @@ const CUT_MARKS = ['Cut when this question opened', '[cut at mint'];
 const cutMarks = (t) => CUT_MARKS.filter((m) => String(t ?? '').includes(m));
 const POSTS = () => ns.diagnostics().fetches.filter((f) => f.startsWith('POST ')).length;
 const classes = [];
+// A wait that ends: `p`'s value, or TIMED_OUT after `ms` (a build that sends no form, or settles the
+// wrong one, fails its check instead of hanging the guard).
+const TIMED_OUT = 'timed out';
+const within = (p, ms) => {
+  let t;
+  return Promise.race([
+    p,
+    new Promise((res) => (t = setTimeout(() => res(TIMED_OUT), ms))),
+  ]).finally(() => clearTimeout(t));
+};
+// The next form of engine E with `status` (engine.mjs onForm), or TIMED_OUT.
+const nextForm = (E, status = 'open', ms = 10000) =>
+  within(
+    new Promise((res) => {
+      const off = E.onForm((f) => f.status === status && (off(), res(f)));
+    }),
+    ms,
+  );
+const ANSWER_LINE =
+  "The record says it was answered through a form in an assistant's app (`answer.route`: `mcp_form`).";
+const WITHDRAWN_HINT = (n) =>
+  new RegExp(
+    `^Not recorded: Realm stopped waiting after ${n} s and withdrew the form\\. The question on step 'confirm_review' is still waiting\\. To show it again, call present_question \\(3 left in this session\\)\\.$`,
+  );
 
 const replies = []; // every raw reply of the guard's runs (for the store-warning check)
 
@@ -401,53 +435,67 @@ async function runEnding(E, choice, withWrong) {
       pick(after, ['run_phase', 'completed_steps', 'evidence_count']),
     );
   }
+  // The valid review: Realm opens the gate inside this call and sends its form; the call stays open
+  // until the form comes back, so its reply (compared by effect, after the answer) is awaited later.
   const { tool, ...va } = recAttempt('valid').call;
-  const v = await send('valid', tool, va);
-  const validRaw = lastRaw;
-  check(prefix + 'view: gate text = recording gate.display', R.gate.display, gateText(validRaw));
+  const opened = nextForm(E);
+  const validDone = send('valid', tool, va);
+  const form = await opened;
+  check(
+    prefix + 'the valid review: Realm sends its form inside the call (form open)',
+    'open',
+    form?.status ?? form,
+  );
+  const atForm = await J('get_run_state', { run_id: ids.run }, 'state');
+  before = atForm;
+  ids.gate = atForm.pending_gate?.gate_id;
+  check(
+    prefix + 'view: gate text (the form message, trimmed) = recording gate.display',
+    R.gate.display,
+    gateText(form),
+  );
   check(
     prefix + 'the gate question with the prepared review is whole (no cut marker)',
     [],
-    cutMarks(gateText(validRaw)),
+    cutMarks(gateText(form)),
   );
   console.log(
-    `${prefix}gate question: ${v.gate?.display?.length} characters as Realm sent it, ${gateText(validRaw)?.length} as the page shows it (trimmed)`,
+    `${prefix}gate question: ${form?.message?.length} characters as Realm sent it in the form, ${gateText(form)?.length} as the page shows it (trimmed)`,
   );
-  check(prefix + 'state letter after the valid review', 'B', stateLetter(states.valid.after));
+  check(prefix + 'state letter while the form is open', 'B', stateLetter(atForm));
   check(
     prefix + 'ledger :63 (L): the stop sentence shows once the gate is pending',
     'The step is complete and the run stops at the gate.',
-    stageSentences('live', states.valid.after).stop,
+    stageSentences('live', atForm).stop,
   );
   check(
     prefix +
       'state sentences (L, B): stage 3 heading :72, Next waits for a human, no stage-4 lines',
     { gate: GATE_B, waitLabel: 'Waiting for a human', ...NONE },
-    byState(stageSentences('live', states.valid.after)),
+    byState(stageSentences('live', atForm)),
   );
   check(
     prefix + 'ledger :73 (L, B): the at-gate sentence names the live phase',
     'This is what the reviewer was shown. The run is in phase `gate_waiting` and neither posting step is available to the agent.',
-    stageSentences('live', states.valid.after).gateShown,
-  );
-  let st = await J('get_run_state', { run_id: ids.run }, 'state');
-  for (let i = 0; i < 3 && !st.pending_gate; i++) {
-    const n = st.next_actions?.[0];
-    if (!n) break;
-    await send('open_gate', 'execute_step', { command: n.instruction.params.command, params: {} });
-    st = await J('get_run_state', { run_id: ids.run }, 'state');
-  }
-  ids.gate = st.pending_gate?.gate_id;
-  check(
-    prefix + 'valid reply',
-    phRec(recAttempt('valid').response),
-    phLive(pick(v, ['status', 'context_hint', 'run_phase']), ids),
+    stageSentences('live', atForm).gateShown,
   );
   check(
-    prefix + 'gate',
+    prefix +
+      'stage 03 while the form is open (gateView): the choice buttons work, no hint, no ask-again',
+    { choices: true, hint: null, askAgain: false },
+    gateView(atForm, form),
+  );
+  check(
+    prefix + 'stage 03 label (L): "Realm sent this question to the app as a form:"',
+    'Realm sent this question to the app as a form:',
+    stageSentences('live', atForm).formLabel,
+  );
+  // The gate, compared through the form: its step, its message (trimmed) and its enum.
+  check(
+    prefix + 'gate (through the form)',
     phRec({ step: R.gate.step, display: R.gate.display, choices: R.gate.choices }),
     phLive(
-      { step: v.gate?.step_name, display: v.gate?.display?.trim(), choices: v.gate?.choices },
+      { step: atForm.pending_gate?.step_name, display: gateText(form), choices: form?.choices },
       ids,
     ),
   );
@@ -472,19 +520,31 @@ async function runEnding(E, choice, withWrong) {
       { gate: GATE_B, waitLabel: 'Waiting for a human', ...NONE },
       byState(stageSentences('live', atGate)),
     );
+    check(prefix + 'the at-gate attempts leave the form open', 'open', E.form()?.status);
   }
   const ending = R.endings[choice];
-  // the answer, through MCP (the page's path); compared by effect only
-  const ans = await send('answer', 'submit_human_response', { gate_id: ids.gate, choice });
+  // The answer: the page's press settles Realm's form (engine.mjs answer); the valid call then
+  // returns. Compared by effect only.
+  const pressed = E.answer(choice);
+  const ans = await within(validDone, 10000);
   check(
-    prefix + "view: the reviewer's box is labelled by its actor",
-    'The reviewer answers',
-    replyView(
-      { tool: 'submit_human_response', gate_id: ids.gate, choice },
-      lastRaw,
-      states.answer.before,
-      states.answer.after,
-    ).who,
+    prefix + 'the answer: the form is answered with the pressed choice, and the valid call returns',
+    [true, 'answered', formAnswer(choice), true],
+    [pressed, E.form()?.status, E.form()?.response, ans !== TIMED_OUT],
+  );
+  check(
+    prefix + 'the response the engine sends back: accept with the choice',
+    { action: 'accept', content: { choice } },
+    E.form()?.response,
+  );
+  check(
+    prefix +
+      'view: stage 4\'s answer box is labelled "The reviewer answers Realm\'s form" and shows the form response',
+    {
+      who: "The reviewer answers Realm's form",
+      call: JSON.stringify({ action: 'accept', content: { choice } }, null, 2),
+    },
+    formAnswerView(E.form()?.response),
   );
   const afterAns = await J('get_run_state', { run_id: ids.run }, 'state');
   const recPhase = /new state '([a-z_]+)'/.exec(ending.respond.stdout)?.[1];
@@ -496,8 +556,19 @@ async function runEnding(E, choice, withWrong) {
     afterAns.completed_steps,
   );
   const runAns = await E.run(ids.run);
-  const vsAns = { ...afterAns, choice: answeredChoice(runAns) };
+  const vsAns = { ...afterAns, choice: answeredChoice(runAns), route: answeredRoute(runAns) };
   check(prefix + 'state letter after the answer', 'C', stateLetter(vsAns));
+  // The answer line reads the record's answer.route: shown for mcp_form only.
+  check(
+    prefix +
+      'the record: the answer came through the form (answer.route mcp_form), and the answer line reads it',
+    ['mcp_form', ANSWER_LINE, null],
+    [
+      answeredRoute(runAns),
+      stageSentences('live', vsAns).answerLine,
+      stageSentences('live', { ...vsAns, route: 'mcp' }).answerLine,
+    ],
+  );
   // ledger :104: on 0.49.0 the answer leaves the chosen posting step owed to the engine, and the
   // agent's advance_run runs it. If a release runs it at the answer, or hands it back to the agent,
   // this check fails and the sentence must be re-worded.
@@ -560,7 +631,7 @@ async function runEnding(E, choice, withWrong) {
     nextActions(afterAns),
   );
   console.log(
-    `${prefix}live answer reply (not compared): ${JSON.stringify(pick(ans, ['status', 'context_hint', 'warnings']))}`.slice(
+    `${prefix}the valid call's reply after the answer (compared by effect): ${JSON.stringify(pick(ans, ['status', 'context_hint', 'warnings']))}`.slice(
       0,
       260,
     ),
@@ -788,13 +859,96 @@ check('the recorded gate question is whole (no cut marker)', [], cutMarks(R.gate
     named.filter(([, f]) => f !== '~/pr-review/project').map(([at, f]) => at + ': ' + f),
   );
 }
+// An engine start that throws (the SDK refuses a form handler without the form capability) fails the
+// guard with its message, not a stack.
+const startEngine = async (o) => {
+  try {
+    return await ns.start(o);
+  } catch (e) {
+    die(`start() threw ${e?.constructor?.name ?? 'Error'}: ${e?.message ?? e}`);
+  }
+};
+// Realm withdraws its form when its wait runs out: a guard-only 30 s (the minimum; the page waits
+// FORM_WAIT_SECONDS). Started before the two endings and finished after them, so the wait overlaps
+// them. Then stage 03 (gateView) after the withdrawal, and ask-again (present_question) with its new form.
+const valid = recAttempt('valid').call;
+const W = { E: await startEngine({ formWaitSeconds: 30 }) };
+{
+  const s = (
+    await W.E.call('start_run', {
+      workflow_id: R.start.call.workflow_id,
+      params: R.start.call.params,
+    })
+  ).value;
+  W.id = s.run_id;
+  const opened = nextForm(W.E);
+  W.held = W.E.call('execute_step', { run_id: W.id, command: valid.command, params: valid.params });
+  W.form = await opened;
+}
+check(
+  'the server announces gate answers `asked` (the default) and lists no submit_human_response',
+  [{ value: 'asked', source_kind: 'default' }, false],
+  [
+    W.E.capabilities()?.experimental?.['realm/gate_answers'],
+    (await W.E.tools()).includes('submit_human_response'),
+  ],
+);
+check('the page waits FORM_WAIT_SECONDS for a form: 3600 s', 3600, FORM_WAIT_SECONDS);
 const live = [];
 for (const [choice, wrong] of [
   ['request_changes', true],
   ['approve', false],
 ]) {
-  const E = await ns.start();
+  const E = await startEngine();
   live.push(await runEnding(E, choice, wrong));
+  await E.close();
+}
+{
+  const { E, id } = W;
+  check('withdrawn: the valid review opens a form (30 s wait)', 'open', W.form?.status ?? W.form);
+  const r = await within(W.held, 45000);
+  replies.push(['withdrawn/send', r]);
+  const st = (await E.call('get_run_state', { run_id: id })).value;
+  const hint = r?.value?.context_hint ?? null;
+  check(
+    'withdrawn: Realm withdrew the form after 30 s; the call returns its own words and offers present_question; the gate still waits (B)',
+    ['withdrawn', true, 'B'],
+    [E.form()?.status, WITHDRAWN_HINT(30).test(hint ?? ''), stateLetter(st)],
+  );
+  check(
+    "withdrawn: stage 03 (gateView): the choice buttons stay off, Realm's words word for word, the ask-again button",
+    { choices: false, hint, askAgain: true },
+    gateView(st, { ...E.form(), hint }),
+  );
+  check(
+    'withdrawn: the ask-again button names its call',
+    'The agent calls present_question',
+    stageSentences('live', st).askLabel,
+  );
+  const opened = nextForm(E);
+  const again = E.call('present_question', { run_id: id, gate_id: st.pending_gate?.gate_id });
+  const f2 = await opened;
+  const st2 = (await E.call('get_run_state', { run_id: id })).value;
+  check(
+    'ask again: present_question opens a new form; stage 03 (gateView): the choice buttons work, no hint, no ask-again',
+    ['open', { choices: true, hint: null, askAgain: false }],
+    [f2?.status ?? f2, gateView(st2, f2)],
+  );
+  const pressed = E.answer('approve');
+  const r2 = await within(again, 5000);
+  replies.push(['withdrawn/present_question', r2]);
+  const run = await E.run(id);
+  const st3 = (await E.call('get_run_state', { run_id: id })).value;
+  check(
+    'ask again: an accept on the new form answers the gate (state C, approve, through the form)',
+    [true, 'C', 'approve', 'mcp_form'],
+    [
+      pressed,
+      stateLetter({ ...st3, choice: answeredChoice(run) }),
+      answeredChoice(run),
+      answeredRoute(run),
+    ],
+  );
   await E.close();
 }
 // 6. live ran: run ids fresh, not the recording's
@@ -813,7 +967,7 @@ console.log(
 // The failed run (state E): the MCP-layer refusal is not counted; the m-th schema refusal fails
 // the run (m = error_details.threshold), before the gate.
 {
-  const E = await ns.start();
+  const E = await startEngine();
   const s = (await E.call('start_run', { workflow_id: 'pr-review', params: R.start.call.params }))
     .value;
   const st = async () => (await E.call('get_run_state', { run_id: s.run_id })).value;
@@ -911,7 +1065,51 @@ console.log(
   );
   await bad2.close();
 }
-// Synthetic cells for the classes no executed case reaches (engine fault; catch-all; page check)
+// A call that throws in the page's own client is never shown as Realm's refusal: the page closes the
+// connection while the valid call holds a form (what "Start a new run" does to the old engine).
+{
+  const E = await startEngine();
+  const s = (await E.call('start_run', { workflow_id: 'pr-review', params: R.start.call.params }))
+    .value;
+  const opened = nextForm(E);
+  const held = E.call('execute_step', {
+    run_id: s.run_id,
+    command: valid.command,
+    params: valid.params,
+  });
+  await opened;
+  await E.close();
+  const r = await within(held, 5000);
+  check(
+    'a call cut by the page (its connection closed): no reply, labelled so, nothing said about counting',
+    [
+      true,
+      'No reply: this page stopped waiting for Realm (MCP error -32000: Connection closed).',
+      null,
+    ],
+    [r?.noReply, classify(r, null, null).label, countLine(r)],
+  );
+}
+// Synthetic cells for the classes no executed case reaches (engine fault; catch-all; page check;
+// the page's own time limit)
+check(
+  'classify: synthetic time limit in the page (no reply), nothing said about counting',
+  ['No reply: this page stopped waiting for Realm (MCP error -32001: Request timed out).', null],
+  [
+    classify({
+      kind: 'thrown',
+      value: 'MCP error -32001: Request timed out',
+      isError: true,
+      noReply: true,
+    }).label,
+    countLine({
+      kind: 'thrown',
+      value: 'MCP error -32001: Request timed out',
+      isError: true,
+      noReply: true,
+    }),
+  ],
+);
 check(
   'classify: synthetic ENGINE_INTERNAL',
   'Realm hit an internal error',
@@ -947,17 +1145,16 @@ check(
     'request_changes: missing_field|Realm refuses',
     'request_changes: bad_enum|Realm refuses',
     'request_changes: extra_field|Realm refuses',
-    'request_changes: valid|Realm accepts it',
+    // the at-gate attempts are made while the valid call holds the form, which returns after the answer
     'request_changes: past_gate|Realm refuses',
     'request_changes: past_gate_other|Realm refuses',
-    'request_changes: answer|Realm accepts it',
+    'request_changes: valid|Realm accepts it',
     'request_changes: editor_in_C|Realm refuses',
     'request_changes: other_branch|Realm refuses',
     'request_changes: posted|Realm accepts it',
     'request_changes: second_press|The run has already ended',
     'request_changes: noop_on_finished|The run has already ended',
     'approve: valid|Realm accepts it',
-    'approve: answer|Realm accepts it',
     'approve: editor_in_C|Realm refuses',
     'approve: posted|Realm accepts it',
     'approve: second_press|The run has already ended',
@@ -991,8 +1188,8 @@ const perRun = [
   'POST https://api.github.com/repos/acme/payments-api/issues/42/comments',
 ];
 check(
-  'stand-in request log (2 runs, then 1 start)',
-  [...perRun, ...perRun, ...perRun.slice(0, 2)],
+  'stand-in request log (the withdrawal start, 2 runs, the failed run start, the cut call start)',
+  [...perRun.slice(0, 2), ...perRun, ...perRun, ...perRun.slice(0, 2), ...perRun.slice(0, 2)],
   d.fetches,
 );
 console.log(

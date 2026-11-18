@@ -1,7 +1,7 @@
 {
   "meta": {
-    "realm_version": "0.49.0",
-    "recorded_at": "2026-11-13T22:55:10.114Z",
+    "realm_version": "0.50.0",
+    "recorded_at": "2026-11-18T17:25:47.632Z",
     "workflow_id": "pr-review",
     "example": "examples/08-pr-review",
     "register": "Registered: pr-review v1 (5 steps)\ncache: write_review — anthropic 1,398 chars ≈ 500–1,089 tokens, with Anthropic's tool text · openai 755 chars ≈ 151–302 tokens (estimates: 2.5–5 chars/token, with margin)\nanthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently\nopenai: on OpenAI's own address realm sends a cache key and, for GPT-5.6 and later, marks the fixed instructions and the stable start of the prompt of each step without tools for 30 minutes, unless --prompt-cache turns it off; otherwise the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)\nanthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write"
@@ -35,7 +35,7 @@
     "evidence": {
       "step": "fetch_pr",
       "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
-      "duration_ms": 37
+      "duration_ms": 54
     }
   },
   "task": {
@@ -210,7 +210,7 @@
       },
       "response": {
         "status": "confirm_required",
-        "context_hint": "Run is paused at gate '06d0bd6a-57d0-432d-8281-1e7f9980b78e'.",
+        "context_hint": "Run is paused at gate '13428fae-b0f1-4ddb-98eb-ea7b815374f3'.",
         "run_phase": "gate_waiting"
       }
     }
@@ -241,8 +241,8 @@
         "response": {
           "status": "blocked",
           "errors": [],
-          "agent_action": "resolve_precondition",
-          "context_hint": "Step 'post_approval' cannot be called now: it waits on the question on step 'confirm_review' (choices: approve, request_changes) — answer it with submit_human_response.",
+          "agent_action": "await",
+          "context_hint": "Step 'post_approval' cannot be called now: it waits on the question on step 'confirm_review' (choices: approve, request_changes).",
           "run_phase": "gate_waiting",
           "blocked_reason": {
             "eligible_steps": []
@@ -261,8 +261,8 @@
         "response": {
           "status": "blocked",
           "errors": [],
-          "agent_action": "resolve_precondition",
-          "context_hint": "Step 'post_changes_request' cannot be called now: it waits on the question on step 'confirm_review' (choices: approve, request_changes) — answer it with submit_human_response.",
+          "agent_action": "await",
+          "context_hint": "Step 'post_changes_request' cannot be called now: it waits on the question on step 'confirm_review' (choices: approve, request_changes).",
           "run_phase": "gate_waiting",
           "blocked_reason": {
             "eligible_steps": []
@@ -273,11 +273,11 @@
   },
   "endings": {
     "request_changes": {
-      "run_id": "f0cd035a-c27c-47b1-9df4-5651f0672454",
+      "run_id": "f63a396f-5d75-4e1d-897d-718a083dd416",
       "choice": "request_changes",
       "respond": {
         "argv": "realm run respond <run-id> --gate <gate-id> --choice request_changes",
-        "stdout": "Responded: f0cd035a-c27c-47b1-9df4-5651f0672454 | choice 'request_changes' | new state 'running'\nOwed to the engine: 'post_changes_request' — realm run advance f0cd035a-c27c-47b1-9df4-5651f0672454 runs it, with the project code under ~/pr-review/project, in the environment of the shell it runs in.\nIf a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is."
+        "stdout": "Responded: f63a396f-5d75-4e1d-897d-718a083dd416 | choice 'request_changes' | new state 'running'\nOwed to the engine: 'post_changes_request' — realm run advance f63a396f-5d75-4e1d-897d-718a083dd416 runs it, with the project code under ~/pr-review/project, in the environment of the shell it runs in.\nIf a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is."
       },
       "other_branch": {
         "id": "other_branch",
@@ -304,7 +304,7 @@
         "response": {
           "status": "ok",
           "errors": [],
-          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id 'f0cd035a-c27c-47b1-9df4-5651f0672454' to retrieve the full evidence record.",
+          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id 'f63a396f-5d75-4e1d-897d-718a083dd416' to retrieve the full evidence record.",
           "run_phase": "completed"
         },
         "body": "Changes requested. After the last retry fails, rethrow the error instead of returning normally."
@@ -323,7 +323,7 @@
           "step": "fetch_pr",
           "kind": "step",
           "status": "success",
-          "duration_ms": 37,
+          "duration_ms": 54,
           "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
           "choice": null,
           "rejections": null
@@ -350,7 +350,7 @@
           "step": "confirm_review",
           "kind": "gate_response",
           "status": "success",
-          "duration_ms": 1516,
+          "duration_ms": 3500,
           "hash": "be4a5d307bce69725aa40b1b14056ac136fb3132ad03f078b727ec1f963789ee",
           "choice": "request_changes",
           "rejections": null
@@ -359,7 +359,7 @@
           "step": "post_changes_request",
           "kind": "step",
           "status": "success",
-          "duration_ms": 6,
+          "duration_ms": 8,
           "hash": "7c73a5dfe66e6ca7ec7da8179f40b7b0643cb1e5fbfcff3666ebb6634bbc45fa",
           "choice": null,
           "rejections": null
@@ -367,11 +367,11 @@
       ]
     },
     "approve": {
-      "run_id": "6868e380-02be-4fb1-96c3-2ba93777e245",
+      "run_id": "2ead3410-b992-4052-9952-a97da2e06bab",
       "choice": "approve",
       "respond": {
         "argv": "realm run respond <run-id> --gate <gate-id> --choice approve",
-        "stdout": "Responded: 6868e380-02be-4fb1-96c3-2ba93777e245 | choice 'approve' | new state 'running'\nOwed to the engine: 'post_approval' — realm run advance 6868e380-02be-4fb1-96c3-2ba93777e245 runs it, with the project code under ~/pr-review/project, in the environment of the shell it runs in.\nIf a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is."
+        "stdout": "Responded: 2ead3410-b992-4052-9952-a97da2e06bab | choice 'approve' | new state 'running'\nOwed to the engine: 'post_approval' — realm run advance 2ead3410-b992-4052-9952-a97da2e06bab runs it, with the project code under ~/pr-review/project, in the environment of the shell it runs in.\nIf a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is."
       },
       "other_branch": null,
       "posted": {
@@ -379,7 +379,7 @@
         "response": {
           "status": "ok",
           "errors": [],
-          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id '6868e380-02be-4fb1-96c3-2ba93777e245' to retrieve the full evidence record.",
+          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id '2ead3410-b992-4052-9952-a97da2e06bab' to retrieve the full evidence record.",
           "run_phase": "completed"
         },
         "body": "Changes requested. After the last retry fails, rethrow the error instead of returning normally."
@@ -398,7 +398,7 @@
           "step": "fetch_pr",
           "kind": "step",
           "status": "success",
-          "duration_ms": 4,
+          "duration_ms": 7,
           "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
           "choice": null,
           "rejections": null
@@ -425,7 +425,7 @@
           "step": "confirm_review",
           "kind": "gate_response",
           "status": "success",
-          "duration_ms": 1499,
+          "duration_ms": 4561,
           "hash": "2f20b1a7b35f600e0681bc2359aaffce33f2db7b8a32ec907a9eac6d8b0cc054",
           "choice": "approve",
           "rejections": null
@@ -434,7 +434,7 @@
           "step": "post_approval",
           "kind": "step",
           "status": "success",
-          "duration_ms": 7,
+          "duration_ms": 17,
           "hash": "7c73a5dfe66e6ca7ec7da8179f40b7b0643cb1e5fbfcff3666ebb6634bbc45fa",
           "choice": null,
           "rejections": null
