@@ -1,5 +1,5 @@
-// callback-store-in-memory-a1.test.ts — R1.3 the callback, callback A1a: the published callback-store
-// contract (`callbackStoreContract`) run against `InMemoryStore`'s callback store, every law, and the
+// callback-store-in-memory-a1.test.ts — R1.3 the callback, callback A1a and A1b: the published callback-store
+// contract (`callbackStoreContract`) run against `InMemoryStore`'s callback store, every law it can run, and the
 // store's own cells (built with `callbacks: null` it keeps none). The per-run artifact contract runs on
 // SQLite's callbacks in B, every law; in memory CB_PURGE_PAIR pins the purge pair (a store with no
 // release line cannot run STORE_RELEASE_LINE_TRUE).
@@ -15,15 +15,21 @@ import {
   type CallbackStoreLaw,
 } from './callback-store-contract.js';
 
-/** The callback laws this file does not run, each with its reason. None: the in-memory store runs every one. */
-const NOT_RUN: Partial<Record<CallbackStoreLaw, string>> = {};
+/** The callback laws this file does not run, each with its reason. */
+const NOT_RUN: Partial<Record<CallbackStoreLaw, string>> = {
+  CB_DUE_RUN_GONE:
+    'the in-memory store cannot remove a run (it has no purge): SQLite’s store runs it (B)',
+};
 
 /** Every exported law but those named above: a law added to the contract runs here untouched. */
 const LAWS: readonly CallbackStoreLaw[] = CALLBACK_STORE_LAWS.filter((law) => !(law in NOT_RUN));
 
 const ADAPTER: CallbackStoreContractAdapter = {
   storeName: 'InMemoryStore',
-  makeStore: async ({ clock }) => ({ store: new InMemoryStore({ clock }) }),
+  makeStore: async ({ clock }) => {
+    const store = new InMemoryStore({ clock });
+    return { store, seedRun: async (record) => store.seed(record) };
+  },
   makeStoreWithoutPort: async ({ clock }) => ({
     store: new InMemoryStore({ clock, callbacks: null }),
   }),
