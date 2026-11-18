@@ -49,12 +49,13 @@ export function printLoaderWarnings(warnings: readonly LoaderWarning[]): void {
 }
 
 /**
- * The dormant issue #170 boundary-reject hook, factored ONCE so validate/register/watch can't
- * drift from each other: resolves every warning against `policy` (default DEFAULT_POLICY — inert
- * today, since every entry is 'warn') and returns true if ANY resolves to 'error'. Inert today;
- * #170 flips DEFAULT_POLICY's UNKNOWN_WORKFLOW_KEY/UNKNOWN_STEP_KEY entries to make this live.
- * Never called from the execution loader (run/agent/listen/create_workflow) — those stay lenient
- * forever, grandfathering already-deployed workflows and keeping agents error-tolerant.
+ * The issue #170 boundary-reject hook, factored ONCE so validate/register/watch can't drift from
+ * each other: resolves every warning against `policy` (default DEFAULT_POLICY) and returns true
+ * if ANY resolves to 'error'. Live since #390 (7616de47): DEFAULT_POLICY marks some codes
+ * 'error' (core's diagnostics.ts is the one list), so this returns true for them (#495 §1: this
+ * comment said "inert today" long after that). Never called from the execution loader
+ * (run/agent/listen/create_workflow) — those stay lenient forever, grandfathering
+ * already-deployed workflows and keeping agents error-tolerant.
  */
 export function rejectOnErrorSeverity(
   warnings: LoaderWarning[],
