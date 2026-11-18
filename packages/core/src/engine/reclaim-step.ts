@@ -87,6 +87,12 @@ export interface ReclaimResult {
    * @beta
    */
   conditionsDischarged?: readonly Cond[];
+  /**
+   * #922: on a judged call that found the step not held, the judged entry (`not_held`): its facts
+   * and the run's ways on, which a door renders after the words.
+   * @beta
+   */
+  refusal?: Unavailable;
 }
 
 /**
@@ -149,7 +155,8 @@ function classifyNoActiveClaim(
 }
 
 /**
- * `reclaimStep`'s settings: the trace buffer store whose leftover trace for the step it clears.
+ * `reclaimStep`'s settings: the trace buffer store whose leftover trace for the step it clears, and
+ * a judged call's `force`, `definition` and `claimed_at`.
  * @public
  */
 export interface ReclaimStepOptions {
@@ -170,7 +177,9 @@ export interface ReclaimStepOptions {
   /**
    * #922: the judged call. JUDGE.reclaim runs on the record read, and on the re-read after a write
    * race; it admits the step's offered reclaim way with every condition discharged, and refuses
-   * anything else with a `WorkflowError` carrying `refusal`. Required with `definition` or
+   * anything else with a `WorkflowError` carrying `refusal`, except a step not held (returned, with
+   * `refusal` on the result) and, for a call that passed no stamp, a claim taken since
+   * (`taken_over`). Required with `definition` or
    * `claimed_at`. Without it a call behaves as before #922.
    * @beta
    */
@@ -423,8 +432,10 @@ function warnFencedSealOutcome(runId: string, stepName: string, result: FencedSe
 
 /**
  * Reclaims a single in-progress claim on a run. Guards (in order): store capability → terminal
- * run → the open-gate step → membership. Returns idempotent success when the step is already
- * settled. On a CAS mismatch it RE-EVALUATES the predicate (never a blind abandon-style re-remove).
+ * run → the open-gate step → membership. With `force: true` the call is judged after the load
+ * instead: the run ended → a step not in progress (`not_a_step`, else `not_held`) → the open-gate
+ * step → a store that keeps no claims → the stamp (`fence_required`, `claim_changed`). Returns
+ * idempotent success when the step is already settled. On a CAS mismatch it RE-EVALUATES the predicate (never a blind abandon-style re-remove).
  * @public
  */
 export async function reclaimStep(
@@ -768,6 +779,7 @@ function refuseReclaim(
       ...(detail !== undefined ? { detail } : {}),
       ...prior,
       ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
+      refusal,
     };
   }
   const carried = {

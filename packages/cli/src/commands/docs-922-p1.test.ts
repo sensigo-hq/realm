@@ -50,7 +50,7 @@ const UPGRADING_P1B =
 const ADDED_P1B =
   "**`realm run reclaim --claimed-at`** `<stamp>`: with `--step`, the time the step's claim was taken. The step is freed only while that is still its claim, and a reclaim refused for want of it prints the command to run.";
 const CHANGED_P1B =
-  "**`reclaimStep` takes optional `definition`, `force` and `claimed_at` (beta), and judges a reclaim as the reply offered it.** With `force: true` it frees a step only as its `reclaim` way was offered: a stamped claim whose deadline is ahead or unknown needs its `claimed_at`, a stamp that is not the claim's is refused and nothing is removed, and the reclaim record names the `conditions_discharged`. Every refusal but a step not held is thrown as a `WorkflowError` carrying `refusal` (beta, also on `WorkflowErrorOptions`); `ReclaimResult` gains `conditionsDischarged` (beta), and `ReclaimStepOptions` the three members. A call without them behaves as before.";
+  "**`reclaimStep` takes optional `definition`, `force` and `claimed_at` (beta), and judges a reclaim as the reply offered it.** With `force: true` it frees a step only as its `reclaim` way was offered: a stamped claim whose deadline is ahead or unknown needs its `claimed_at`, a stamp that is not the claim's is refused and nothing is removed, and the reclaim record names the `conditions_discharged`. Every refusal but a step not held is thrown as a `WorkflowError` carrying `refusal` (beta, also on `WorkflowErrorOptions`); `ReclaimResult` gains `conditionsDischarged` and `refusal` (beta), and `ReclaimStepOptions` the three members. A call without them behaves as before.";
 
 /** A cell, by its file and (part of) its title. */
 type Cell = readonly [file: string, title: string];
@@ -284,7 +284,7 @@ describe('#922 P1b — the CHANGELOG lines and realm-run-acting.md’s reclaim s
         [PAST, UNSTAMPED],
       ],
       [
-        "A step that is not in progress is not freed: `Step 'fetch' is not held; nothing to reclaim.` A name the run's workflow does not have is refused: `Step 'fecth' is not a step of workflow 'w'; nothing was reclaimed.`, followed by the run's ways on. A step the workflow no longer names, still in progress from an older version, is freed with `Reclaimed step 'fetch' of run <id>. The workflow definition read here has no step named 'fetch'.`",
+        "A step that is not in progress is not freed: `Step 'fetch' is not held; nothing to reclaim.`, followed by the run's ways on. A name the run's workflow does not have is refused: `Step 'fecth' is not a step of workflow 'w'; nothing was reclaimed.`, followed by the run's ways on. A step the workflow no longer names, still in progress from an older version, is freed with `Reclaimed step 'fetch' of run <id>. The workflow definition read here has no step named 'fetch'.`",
         [REFUSALS],
       ],
       [

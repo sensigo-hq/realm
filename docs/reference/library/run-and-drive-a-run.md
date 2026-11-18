@@ -60,16 +60,18 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`ExecuteEngineStepOptions`](#executeenginestepoptions) | interface | The options of `executeEngineStep`. |
 | [`ExecuteStepOptions`](#executestepoptions) | interface | What `executeStep` is given: the run, the step to run and its input, and the host's dispatcher, registry and other settings. |
 | [`ExpiryReceipt`](#expiryreceipt) | interface | An expired question's declared `on_expiry`, carried out by the call whose reply carries it (`EngineReply.expiry`). |
+| [`FactsByCode`](#factsbycode) | interface | The typed facts of each unavailable code (`FactsOf`). |
 | [`GateInfo`](#gateinfo) | interface | The question a reply opens: its id, step, preview and choices, what to show the person, and its deadline when it has one (`EngineReply.gate`). |
 | [`HaltStop`](#haltstop) | interface | A stop that ends the loop. |
 | [`HiddenCounts`](#hiddencounts) | interface | What `disclose` found, by kind (counts of hidden runs). |
 | [`OpenQuestion`](#openquestion) | interface | An open question: the step that asks it, its gate, and the choices it takes. |
 | [`Outcome`](#outcome) | interface | What an answer that was not recorded met: the choice recorded instead and how, or the gate cancelled when a step ended the run. |
 | [`PendingView`](#pendingview) | interface | What a run has left to do, as `describePending` returns it: the agent steps it offers, those it refuses, the guards waiting, the steps the engine can run, and every step that cannot run. |
+| [`PreconditionFacts`](#preconditionfacts) | interface | A failed precondition: its expression and the value read, escaped and bounded (`PreClaimRefused.precondition`). |
 | [`RaceEntry`](#raceentry) | interface | One race a loop met: the step, the kind, and whether this call's code ran (`EngineReply.races`). |
 | [`RaceStop`](#racestop) | interface | A race a loop met: its kind, and whether this call's handler ran without its outcome being recorded (`ran_here`). |
 | [`ReclaimResult`](#reclaimresult) | interface | What `reclaimStep` returns: the run, the step, the outcome, and the claim's state and deadline before the call. |
-| [`ReclaimStepOptions`](#reclaimstepoptions) | interface | `reclaimStep`'s settings: the trace buffer store whose leftover trace for the step it clears. |
+| [`ReclaimStepOptions`](#reclaimstepoptions) | interface | `reclaimStep`'s settings: the trace buffer store whose leftover trace for the step it clears, and a judged call's `force`, `definition` and `claimed_at`. |
 | [`ReleaseDriveClaimOptions`](#releasedriveclaimoptions) | interface | What `releaseDriveClaim` takes besides the store, the run and the step. |
 | [`ReplyError`](#replyerror) | interface | The typed part of an error reply: the ways that lead on from it, the step a stop is about when it is not the call's own, and the typed facts of its code. |
 | [`RunHealthFinding`](#runhealthfinding) | interface | A single, typed run-health observation: the shared vocabulary every surface renders from. |
@@ -78,33 +80,49 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`StopReply`](#stopreply) | interface | The parts of a reply the stop classifier reads; the stop's step is its typed `about`. |
 | [`SubmitGateOptions`](#submitgateoptions) | interface | What `submitHumanResponse` is given: the run, the question and the chosen answer, and who answered, through which channel. |
 | [`UnreadableFileFacts`](#unreadablefilefacts) | interface | The facts of one damaged stored file: names, classes and type words, never its content. |
+| [`AbandonWay`](#abandonway) | type | End the run. |
 | [`ActorAbsentCause`](#actorabsentcause) | type | Why the record names no program for an act, worked out when the record is read and never stored (`ActorAbsent.absent_cause`). |
 | [`AdvanceCaller`](#advancecaller) | type | The names a call to `advanceRun` can give for where it came from: the library call, the MCP tools `advance_run` and `start_run`, `realm run advance` or `realm agent` (`AdvanceRunOptions.caller`). |
+| [`AdvanceWay`](#advanceway) | type | Have the engine carry out what it owes: a due expiry first, then steps. |
 | [`AnswerCaller`](#answercaller) | type | The names a call to `submitHumanResponse` can give for where it came from (`SubmitGateOptions.caller`). |
 | [`CapabilityBasis`](#capabilitybasis) | type | What a capability refusal was judged from: the caller's own registry, or the run's marker when the caller passed none. |
 | [`ChainCaller`](#chaincaller) | type | The names a call to `executeChain` can give for where it came from (`ExecuteChainOptions.caller`). |
 | [`ClaimState`](#claimstate) | type | How alive a single in-progress claim is: `healthy`, `claim_stale` or `claim_unknown_age`. |
+| [`Cond`](#cond) | type | A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`). |
 | [`DisclosureTier`](#disclosuretier) | type | `declared` hides declared members only (question text, private terminals); `all` adds the environment members and the patterns. |
 | [`DriveClaim`](#driveclaim) | type | What `claimStepForDrive` answers, keyed by `kind`. |
 | [`DriveRelease`](#driverelease) | type | What `releaseDriveClaim` answers: `released`, `not_released` or `not_ours` (`kind`). |
 | [`EnactedVia`](#enactedvia) | type | The call that carried out an expired question's declared `on_expiry`, as `enacted_via` names it. |
 | [`EngineStepCaller`](#enginestepcaller) | type | The names a call to `executeEngineStep` can give: its own word and `realm agent`'s. |
+| [`FactsOf`](#factsof) | type | The typed facts an `Unavailable` entry carries for its code (`Unavailable.facts`). |
 | [`HaltStopKind`](#haltstopkind) | type | The three kinds that stop a loop: what is left does not run. |
+| [`InspectWay`](#inspectway) | type | Read the run's record. |
 | [`LibraryHost`](#libraryhost) | type | The library door's static settings: none yet — an embedder decides what to show. |
+| [`NoRemedy`](#noremedy) | type | Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`). |
 | [`NotRecordedKind`](#notrecordedkind) | type | The four kinds of a race in which this call's handler ran (`ran_here: true`). |
 | [`PartialWayRenderer`](#partialwayrenderer) | type | The renderer a program supplies when it words some of a reply's `ways` itself: any of `WayRenderer`'s functions, each one optional. |
 | [`Party`](#party) | type | Who can take a way on a run: the operator, the agent, or the person a question is asked of (`WAY_PARTIES`, `ForWay.for`). |
 | [`PreClaimRefusal`](#preclaimrefusal) | type | The checks that refuse a step before it is claimed: its trust, its precondition, its input schema, its capability. |
+| [`PresentWay`](#presentway) | type | Show the open question again, as a form in the agent's own call: the MCP door's `present_question`. |
 | [`RaceStopKind`](#racestopkind) | type | The six race kinds: another program got there first, and the loop goes on with what is left. |
 | [`ReclaimOutcome`](#reclaimoutcome) | type | What `reclaimStep` did: moved the claim out, so the step can run again; nothing, as the step was already settled or held no claim; or left a claim another program had just taken. |
+| [`ReclaimWay`](#reclaimway) | type | Free a held step so it can run again: a person's act, never an agent's. |
+| [`RefusedCheck`](#refusedcheck) | type | The checks other than capability that refuse a step before its claim (`checkPreClaim`). |
+| [`RegisterWay`](#registerway) | type | Register the run's workflow again. |
 | [`ReplyKind`](#replykind) | type | The kinds of reply `agentActionOf` tells apart: ok, confirm required, refusal, blocked, error. |
+| [`RespondWay`](#respondway) | type | Answer the run's open question. |
 | [`RunStatus`](#runstatus) | type | The status of an engine reply: `ok`, `error`, `blocked` (the wrong step for the run's state) or `confirm_required` (a question is open) (`EngineReply.status`). |
+| [`RunStepWay`](#runstepway) | type | Run one step: an agent step's answer, or an engine step's input given by the operator. |
 | [`StepCaller`](#stepcaller) | type | The names a call to `executeStep` can give for where it came from (`ExecuteStepOptions.caller`). |
 | [`StepDispatcher`](#stepdispatcher) | type | The host's dispatcher for a step. |
 | [`StopClassification`](#stopclassification) | type | What `classifyStop` returns. |
 | [`StopKind`](#stopkind) | type | Why a loop stopped on a step it picked or ran: six races, after which it goes on with what is left, and three kinds that stop it. |
+| [`Unavailable`](#unavailable) | type | A way that cannot be taken now, with its code, its facts and the remedies that lead on. |
+| [`UnavailableCode`](#unavailablecode) | type | The codes that say why a way cannot be taken now, one per reason (`Unavailable.code`). |
 | [`WayOf`](#wayof) | type | The way of one verb. |
+| [`WayOn`](#wayon) | type | One act a party can take on a run, told apart by its `verb`. |
 | [`WayRenderer`](#wayrenderer) | type | A door's renderer table, keyed by verb: it must cover every `WayVerb`, so a new verb is a compile-time decision in every table. |
+| [`WayVerb`](#wayverb) | type | The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`). |
 | [`ACTOR_ABSENT_CAUSES`](#actor_absent_causes) | const | Why a name is absent. |
 | [`CAPABILITY_BASES`](#capability_bases) | const | What a capability refusal was judged from: the caller's own registry, or the run's marker when the caller passed no registry. |
 | [`ENTRY_CALLERS`](#entry_callers) | const | The words the engine's entries name themselves by, one closed list per entry. |
@@ -113,6 +131,8 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`PRE_CLAIM_REFUSALS`](#pre_claim_refusals) | const | The checks that refuse a step before it is claimed, in the order `executeStep` runs them. |
 | [`REPLY_KINDS`](#reply_kinds) | const | The kinds of reply `agentActionOf` tells apart. |
 | [`STOP_KINDS`](#stop_kinds) | const | The kinds of stop a loop meets on a step it picked or ran (`StopKind`). |
+| [`UNAVAILABLE_CODES`](#unavailable_codes) | const | The codes that say why a way is unavailable, each with how it is judged and the verbs it applies to. |
+| [`WAY_VERBS`](#way_verbs) | const | Every verb a way can name, as a closed list (`WayVerb`). |
 
 ## Functions
 
@@ -625,8 +645,10 @@ function judgedSnapshotOf(reply: object): Snapshot | undefined;
 function · public
 
 Reclaims a single in-progress claim on a run. Guards (in order): store capability → terminal
-run → the open-gate step → membership. Returns idempotent success when the step is already
-settled. On a CAS mismatch it RE-EVALUATES the predicate (never a blind abandon-style re-remove).
+run → the open-gate step → membership. With `force: true` the call is judged after the load
+instead: the run ended → a step not in progress (`not_a_step`, else `not_held`) → the open-gate
+step → a store that keeps no claims → the stamp (`fence_required`, `claim_changed`). Returns
+idempotent success when the step is already settled. On a CAS mismatch it RE-EVALUATES the predicate (never a blind abandon-style re-remove).
 
 ```ts
 function reclaimStep(store: RunStore, runId: string, stepName: string, options?: ReclaimStepOptions): Promise<ReclaimResult>;
@@ -1152,6 +1174,156 @@ interface ExpiryReceipt {
 }
 ```
 
+### FactsByCode
+
+interface · public
+
+The typed facts of each unavailable code (`FactsOf`).
+
+```ts
+interface FactsByCode {
+    run_ended: {
+        phase: RunPhase;
+    };
+    question_settled: {
+        gate_id: string;
+    };
+    question_due: {
+        gate_id: string;
+        step: string;
+        expires_at: string;
+        on_expiry: 'settle_default' | 'abort';
+    };
+    question_past_deadline: {
+        gate_id: string;
+        step: string;
+        expires_at: string;
+    };
+    gate_not_open: {
+        gate_id: string;
+        open_gate?: {
+            gate_id: string;
+            step: string;
+        };
+    };
+    not_a_step: {
+        step: string;
+        workflow_id: string;
+    };
+    step_settled: {
+        step: string;
+        outcome: 'completed' | 'failed' | 'skipped';
+    };
+    question_open: {
+        step: string;
+        gate_id: string;
+        question_step: string;
+        choices: readonly string[];
+    };
+    gated_step: {
+        step: string;
+        gate_id: string;
+        choices: readonly string[];
+    };
+    held_elsewhere: {
+        step: string;
+        deadline: string | {
+            absent: 'unknown_age';
+        } | {
+            absent: 'unparseable_stamp';
+        };
+        claimed_at: string | {
+            absent: 'no_claim_record';
+        } | {
+            absent: 'not_stamped';
+        };
+        lease?: LeaseFact;
+    };
+    upstream_cannot_run: {
+        step: string;
+        upstream: readonly string[];
+    };
+    deps_unsettled: {
+        step: string;
+        deps: readonly string[];
+    };
+    not_eligible: {
+        step: string;
+    } | {
+        reason: 'nothing_owed';
+    };
+    claim_removed: {
+        step: string;
+    };
+    refused_before_claim: {
+        step: string;
+        check: RefusedCheck;
+        refusal: string;
+        param?: string;
+        precondition?: PreconditionFacts;
+    };
+    capability_missing: {
+        step: string;
+        requirement: {
+            kind: 'handler' | 'adapter';
+            name: string;
+        };
+        basis: 'registry' | 'marker';
+    };
+    step_engine_decided: {
+        step: string;
+        execution: 'guard' | 'finalizer' | 'auto';
+    };
+    enactor_load_failed: {
+        error_code: LoadErrorCode;
+    };
+    definition_absent: {
+        workflow_id: string;
+        cause: DefinitionAbsence;
+        path?: string;
+        format?: {
+            schema_version: number;
+            reads_up_to: number;
+        };
+    };
+    argument_out_of_contract: {
+        arg: string;
+    };
+    not_held: {
+        step: string;
+    };
+    store_keeps_no_claims: {
+        step: string;
+    };
+    fence_required: {
+        step: string;
+        current_claimed_at: string;
+    };
+    claim_changed: {
+        step: string;
+        offered_claimed_at: string;
+        current_claimed_at: FactsOf<'held_elsewhere'>['claimed_at'];
+    };
+    door_cannot_enact: {
+        door: string;
+        reason?: 'engine_step';
+    };
+    no_form_here: {
+        gate_id: string;
+    };
+    form_open: {
+        gate_id: string;
+    };
+    asks_exhausted: {
+        gate_id: string;
+        sent: number;
+    };
+    door_withholds_answers: {
+        party: 'agent';
+    };
+}
+```
+
 ### GateInfo
 
 interface · public
@@ -1287,6 +1459,20 @@ interface PendingView {
 }
 ```
 
+### PreconditionFacts
+
+interface · public
+
+A failed precondition: its expression and the value read, escaped and bounded
+(`PreClaimRefused.precondition`).
+
+```ts
+interface PreconditionFacts {
+    expression: string;
+    value: string;
+}
+```
+
 ### RaceEntry
 
 interface · public
@@ -1319,7 +1505,7 @@ interface RaceStop {
 
 ### ReclaimResult
 
-interface · public (beta: conditionsDischarged): those members may change in a minor release until they settle
+interface · public (beta: conditionsDischarged, refusal): those members may change in a minor release until they settle
 
 What `reclaimStep` returns: the run, the step, the outcome, and the claim's state and deadline
 before the call.
@@ -1334,6 +1520,7 @@ interface ReclaimResult {
     priorDeadline: string | null;
     gateAdvisory?: string;
     conditionsDischarged?: readonly Cond[];
+    refusal?: Unavailable;
 }
 ```
 
@@ -1341,7 +1528,8 @@ interface ReclaimResult {
 
 interface · public (beta: claimed_at, definition, force): those members may change in a minor release until they settle
 
-`reclaimStep`'s settings: the trace buffer store whose leftover trace for the step it clears.
+`reclaimStep`'s settings: the trace buffer store whose leftover trace for the step it clears, and
+a judged call's `force`, `definition` and `claimed_at`.
 
 ```ts
 interface ReclaimStepOptions {
@@ -1523,6 +1711,18 @@ interface UnreadableFileFacts {
 
 ## Types
 
+### AbandonWay
+
+type · public
+
+End the run.
+
+```ts
+type AbandonWay = Base<'abandon'> & {
+    run_id: string;
+};
+```
+
 ### ActorAbsentCause
 
 type · public
@@ -1543,6 +1743,23 @@ The names a call to `advanceRun` can give for where it came from: the library ca
 
 ```ts
 type AdvanceCaller = (typeof ENTRY_CALLERS.advanceRun)[number];
+```
+
+### AdvanceWay
+
+type · public
+
+Have the engine carry out what it owes: a due expiry first, then steps.
+
+```ts
+type AdvanceWay = Base<'advance'> & {
+    run_id: string;
+    owed: readonly ({
+        step: string;
+    } | {
+        expiry: DueExpiry;
+    })[];
+};
 ```
 
 ### AnswerCaller
@@ -1594,6 +1811,44 @@ states:
 
 ```ts
 type ClaimState = 'healthy' | 'claim_stale' | 'claim_unknown_age';
+```
+
+### Cond
+
+type · public
+
+A condition a way is offered with: a way offered with a condition is admitted only when the
+condition is met (`Base.conditions`).
+PR-0's one member: `enactor_has` — the step needs a handler or
+an adapter, and whether this program has it is judged from its `basis`: `marker` (the run's own
+`capability_blocks` record: the program that last attempted the step lacked it), `unjudged` (an
+observer passed no registry — C33: a read surface never executes project code), `load_failed` (this
+program's project code failed to load).
+
+W added `client_prompt`; PR-1 adds `confirm_after_preview`, `erases_operator_ending`,
+`override_claim_unknown_age` — each with its producer, never reserved here. The gate-answers default
+(2026-11-14) removed `client_prompt`'s one producer, the MCP door's fallback row; the member and its
+tag stay, as exported names, and nothing composes it now.
+
+```ts
+type Cond = {
+    code: 'enactor_has';
+    kind: 'handler' | 'adapter';
+    name: string;
+    basis: 'marker' | 'unjudged' | 'load_failed';
+} | {
+    code: 'client_prompt';
+    tag: CondTag;
+} | {
+    code: 'claim_deadline_ahead';
+    deadline: string;
+} | {
+    code: 'override_claim_unknown_age';
+    state: 'unknown_age' | 'unreadable' | 'no_claim_record';
+} | {
+    code: 'rerun_not_idempotent';
+    basis: 'not_declared' | 'definition_absent';
+};
 ```
 
 ### DisclosureTier
@@ -1695,6 +1950,16 @@ own call, so a refusal names `executeEngineStep`.
 type EngineStepCaller = (typeof ENTRY_CALLERS.executeEngineStep)[number];
 ```
 
+### FactsOf
+
+type · public
+
+The typed facts an `Unavailable` entry carries for its code (`Unavailable.facts`).
+
+```ts
+type FactsOf<C extends UnavailableCode> = FactsByCode[C];
+```
+
 ### HaltStopKind
 
 type · public
@@ -1705,6 +1970,18 @@ The three kinds that stop a loop: what is left does not run.
 type HaltStopKind = Extract<StopKind, 'capability_missing' | 'failed' | 'refused'>;
 ```
 
+### InspectWay
+
+type · public
+
+Read the run's record.
+
+```ts
+type InspectWay = Base<'inspect'> & {
+    run_id: string;
+};
+```
+
 ### LibraryHost
 
 type · public
@@ -1713,6 +1990,32 @@ The library door's static settings: none yet — an embedder decides what to sho
 
 ```ts
 type LibraryHost = Readonly<Record<string, never>>;
+```
+
+### NoRemedy
+
+type · public
+
+Why an `Unavailable` entry offers no way on, with the cause's own facts
+(`Unavailable.no_remedy`).
+
+```ts
+type NoRemedy = {
+    cause: 'operator_command_untyped';
+    command: 'resume' | 'drain' | 'purge' | 'start';
+} | {
+    cause: 'requires_other_program';
+    requirement: {
+        kind: 'handler' | 'adapter';
+        name: string;
+    };
+} | {
+    cause: 'another_program_holds_it';
+} | {
+    cause: 'already_settled';
+} | {
+    cause: 'engine_runs_it_when_owed';
+};
 ```
 
 ### NotRecordedKind
@@ -1761,6 +2064,22 @@ schema, its capability.
 type PreClaimRefusal = (typeof PRE_CLAIM_REFUSALS)[number];
 ```
 
+### PresentWay
+
+type · public
+
+Show the open question again, as a form in the agent's own call: the MCP door's
+`present_question`.
+The agent cannot answer through it: the person's accept records the
+answer. No `step`: a renderer reads the step from the reply it already holds.
+
+```ts
+type PresentWay = Base<'present'> & {
+    run_id: string;
+    gate_id: string;
+};
+```
+
 ### RaceStopKind
 
 type · public
@@ -1782,6 +2101,57 @@ already settled or held no claim; or left a claim another program had just taken
 type ReclaimOutcome = 'reclaimed' | 'already_settled' | 'taken_over' | 'no_active_claim';
 ```
 
+### ReclaimWay
+
+type · public
+
+Free a held step so it can run again: a person's act, never an agent's. Its conditions say what
+holds, each discharged by `force`; `claimed_at` is the claim's stamp, present exactly when the claim
+carries one, so the act applies only to the claim it was shown (#922).
+
+```ts
+type ReclaimWay = Base<'reclaim'> & {
+    run_id: string;
+    step: string;
+    claimed_at?: string;
+};
+```
+
+### RefusedCheck
+
+type · public
+
+The checks other than capability that refuse a step before its claim (`checkPreClaim`).
+
+```ts
+type RefusedCheck = 'trust' | 'precondition' | 'input_schema';
+```
+
+### RegisterWay
+
+type · public
+
+Register the run's workflow again. No judge admits it; on MCP it is the operator's, done outside
+the conversation (the door renders no instruction).
+`path` only
+when the registry knows the file (T-21: the unreadable, invalid, legacy and newer copies carry
+it): the registered COPY that cannot be used — never a file to register (correction 2, 3.2: each
+door words it as a copy to repair).
+
+`copy` (#616 PR-2c c10a-4c) says the registered copy EXISTS but cannot be used, whether or not it
+has a file: a copy in a database has none, so `path` alone cannot tell it from a copy that is not
+there. The doors read it; the library's own words (`LIBRARY_WORDS`) do not, because the library's
+repair is the same act either way.
+
+```ts
+type RegisterWay = Base<'register'> & {
+    workflow_id: string;
+    run_id?: string;
+    path?: string;
+    copy?: 'unusable';
+};
+```
+
 ### ReplyKind
 
 type · public
@@ -1790,6 +2160,30 @@ The kinds of reply `agentActionOf` tells apart: ok, confirm required, refusal, b
 
 ```ts
 type ReplyKind = (typeof REPLY_KINDS)[number];
+```
+
+### RespondWay
+
+type · public
+
+Answer the run's open question.
+
+```ts
+type RespondWay = Base<'respond'> & {
+    run_id: string;
+    gate_id: string;
+    step: string;
+    choice: Slot<string>;
+    expires_at?: string;
+    on_expiry?: 'settle_default' | 'abort';
+    holds: readonly string[];
+    presented: 'with_gate' | 'alone';
+    has_message?: true;
+    owner?: string;
+    proof?: {
+        claim_token: string;
+    };
+};
 ```
 
 ### RunStatus
@@ -1801,6 +2195,20 @@ The status of an engine reply: `ok`, `error`, `blocked` (the wrong step for the 
 
 ```ts
 type RunStatus = 'ok' | 'error' | 'blocked' | 'confirm_required';
+```
+
+### RunStepWay
+
+type · public
+
+Run one step: an agent step's answer, or an engine step's input given by the operator.
+
+```ts
+type RunStepWay = Base<'run_step'> & {
+    run_id: string;
+    step: string;
+    brief: StepBrief;
+};
 ```
 
 ### StepCaller
@@ -1845,6 +2253,36 @@ left, and three kinds that stop it.
 type StopKind = (typeof STOP_KINDS)[number];
 ```
 
+### Unavailable
+
+type · public
+
+A way that cannot be taken now, with its code, its facts and the remedies that lead on.
+
+```ts
+type Unavailable = {
+    [C in UnavailableCode]: {
+        verb: WayVerb;
+        step?: string;
+        code: C;
+        facts: FactsOf<C>;
+        clears_at?: string;
+        remedy: readonly WayOn[];
+        no_remedy?: NoRemedy;
+    };
+}[UnavailableCode];
+```
+
+### UnavailableCode
+
+type · public
+
+The codes that say why a way cannot be taken now, one per reason (`Unavailable.code`).
+
+```ts
+type UnavailableCode = keyof typeof UNAVAILABLE_CODES;
+```
+
 ### WayOf
 
 type · public
@@ -1855,6 +2293,16 @@ The way of one verb.
 type WayOf<V extends WayVerb> = Extract<WayOn, {
     verb: V;
 }>;
+```
+
+### WayOn
+
+type · public
+
+One act a party can take on a run, told apart by its `verb`.
+
+```ts
+type WayOn = RespondWay | RunStepWay | AdvanceWay | InspectWay | AbandonWay | RegisterWay | PresentWay | ReclaimWay;
 ```
 
 ### WayRenderer
@@ -1871,6 +2319,18 @@ A door that never renders a verb returns `null`, with its reason in a comment.
 type WayRenderer<Out, Host> = {
     readonly [V in WayVerb]: (way: WayOf<V>, basis: Basis | undefined, host: Host) => Out | null;
 };
+```
+
+### WayVerb
+
+type · public
+
+The acts a way names: answer a question, run a step, have the engine carry out what it owes, read
+the run, end it, register its workflow again, or send a question's form to the person
+(`Base.verb`).
+
+```ts
+type WayVerb = (typeof WAY_VERBS)[number];
 ```
 
 ## Constants
@@ -2046,13 +2506,256 @@ const STOP_KINDS: readonly [
 ];
 ```
 
+### UNAVAILABLE_CODES
+
+const · public
+
+The codes that say why a way is unavailable, each with how it is judged and the verbs it applies
+to.
+One S7 law per code (rule 19): its cell in `ways.test.ts`. No member is reserved (Amendment 8).
+
+```ts
+const UNAVAILABLE_CODES: {
+    readonly run_ended: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "respond",
+            "run_step",
+            "advance",
+            "abandon",
+            "present",
+            "reclaim"
+        ];
+    };
+    readonly question_settled: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "respond",
+            "present"
+        ];
+    };
+    readonly question_due: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "respond",
+            "run_step",
+            "advance",
+            "present"
+        ];
+    };
+    readonly question_past_deadline: {
+        readonly tag: "write";
+        readonly verbs: readonly [
+            "respond"
+        ];
+    };
+    readonly gate_not_open: {
+        readonly tag: "input";
+        readonly verbs: readonly [
+            "respond",
+            "present"
+        ];
+    };
+    readonly not_a_step: {
+        readonly tag: "input";
+        readonly verbs: readonly [
+            "run_step",
+            "reclaim"
+        ];
+    };
+    readonly step_settled: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step"
+        ];
+    };
+    readonly question_open: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance",
+            "abandon"
+        ];
+    };
+    readonly gated_step: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "reclaim"
+        ];
+    };
+    readonly held_elsewhere: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance"
+        ];
+    };
+    readonly upstream_cannot_run: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step"
+        ];
+    };
+    readonly deps_unsettled: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step"
+        ];
+    };
+    readonly not_eligible: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance"
+        ];
+    };
+    readonly claim_removed: {
+        readonly tag: "write";
+        readonly verbs: readonly [
+            "run_step"
+        ];
+    };
+    readonly refused_before_claim: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance"
+        ];
+    };
+    readonly capability_missing: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance"
+        ];
+    };
+    readonly step_engine_decided: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step"
+        ];
+    };
+    readonly enactor_load_failed: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "run_step",
+            "advance"
+        ];
+    };
+    readonly definition_absent: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "respond",
+            "run_step",
+            "advance",
+            "abandon",
+            "present"
+        ];
+    };
+    readonly argument_out_of_contract: {
+        readonly tag: "input";
+        readonly verbs: readonly [
+            "respond",
+            "run_step",
+            "advance",
+            "inspect",
+            "abandon",
+            "present",
+            "reclaim"
+        ];
+    };
+    readonly not_held: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly store_keeps_no_claims: {
+        readonly tag: "snapshot";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly fence_required: {
+        readonly tag: "input";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly claim_changed: {
+        readonly tag: "write";
+        readonly verbs: readonly [
+            "reclaim"
+        ];
+    };
+    readonly door_cannot_enact: {
+        readonly tag: "door";
+        readonly verbs: readonly [
+            "respond",
+            "run_step",
+            "advance",
+            "inspect",
+            "abandon",
+            "register",
+            "present",
+            "reclaim"
+        ];
+    };
+    readonly no_form_here: {
+        readonly tag: "door";
+        readonly verbs: readonly [
+            "present"
+        ];
+    };
+    readonly form_open: {
+        readonly tag: "door";
+        readonly verbs: readonly [
+            "present"
+        ];
+    };
+    readonly asks_exhausted: {
+        readonly tag: "door";
+        readonly verbs: readonly [
+            "present"
+        ];
+    };
+    readonly door_withholds_answers: {
+        readonly tag: "door";
+        readonly verbs: readonly [
+            "respond"
+        ];
+    };
+};
+```
+
+### WAY_VERBS
+
+const · public
+
+Every verb a way can name, as a closed list (`WayVerb`).
+
+PR-0's verbs (option B) and #627 W's `present` (Amendment 2): PR-1 adds resume/drain/purge, PR-2
+reclaim/validate/export, PR-7 start.
+
+```ts
+const WAY_VERBS: readonly [
+    "respond",
+    "run_step",
+    "advance",
+    "inspect",
+    "abandon",
+    "register",
+    "present",
+    "reclaim"
+];
+```
+
 ## Also used by this job
 
 Names this job reaches whose entry is on another page.
 
-- [`AbandonWay`](write-a-handler.md#abandonway): End the run.
 - [`AdmittedBy`](read-a-runs-record.md#admittedby): How an answer's sender was let through, or why it was not compared (`EvidenceSnapshot.admitted_by`).
-- [`AdvanceWay`](write-a-handler.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
 - [`AgentAction`](write-a-handler.md#agentaction): What an agent does next, decided by the engine (`WorkflowError.agentAction`).
 - [`AgentTraceEntry`](implement-a-store.md#agenttraceentry): A single trace entry submitted by the agent.
 - [`AnswererMismatchFacts`](write-a-handler.md#answerermismatchfacts): The facts of an answer refused because its sender may not answer the question: the names that may, and the account the channel reported.
@@ -2107,7 +2810,6 @@ Names this job reaches whose entry is on another page.
 - [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).
 - [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).
 - [`Clock`](implement-a-store.md#clock): The clock a run store reads the time from: `now()` and `at()`.
-- [`Cond`](write-a-handler.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
 - [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
 - [`CondTag`](write-a-handler.md#condtag): Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member).
 - [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
@@ -2117,8 +2819,8 @@ Names this job reaches whose entry is on another page.
 - [`DeclaredCause`](embed-the-mcp-server.md#declaredcause): Why they are not (or `resolved` with zero members because there is no manifest).
 - [`DeclaredState`](embed-the-mcp-server.md#declaredstate): Whether the declared values are known.
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
-- [`DEFINITION_ABSENCES`](write-a-handler.md#definition_absences): How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
-- [`DefinitionAbsence`](write-a-handler.md#definitionabsence): Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read.
+- [`DEFINITION_ABSENCES`](embed-the-mcp-server.md#definition_absences): How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
+- [`DefinitionAbsence`](embed-the-mcp-server.md#definitionabsence): Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read.
 - [`DefinitionBasis`](embed-the-mcp-server.md#definitionbasis): The definition the ways were judged against: the run's workflow by id, or why it is absent.
 - [`DisclosureAudience`](embed-the-mcp-server.md#disclosureaudience): Who reads a surface (`DisclosureSet.audience`).
 - [`DisclosureSet`](embed-the-mcp-server.md#disclosureset): A compiled set: opaque to callers; built once per (entries, options).
@@ -2139,8 +2841,6 @@ Names this job reaches whose entry is on another page.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.
 - [`ExtensionIdentitySignals`](write-a-handler.md#extensionidentitysignals): Labeled advisory signals — each independently fail-soft; never part of the comparison.
 - [`ExtensionIdentityTree`](write-a-handler.md#extensionidentitytree): Versioned deterministic directory-tree fingerprint over the module roots.
-- [`FactsByCode`](write-a-handler.md#factsbycode): The typed facts of each unavailable code (`FactsOf`).
-- [`FactsOf`](write-a-handler.md#factsof): The typed facts an `Unavailable` entry carries for its code (`Unavailable.facts`).
 - [`FENCE_TARGETS_STEP`](implement-a-store.md#fence_targets_step): Whether a member conditions one step — evaluated against the fenced method's own `stepId`.
 - [`FencePredicate`](implement-a-store.md#fencepredicate): The four facts a fenced trace-buffer operation can be conditioned on.
 - [`FencePredicateKind`](implement-a-store.md#fencepredicatekind): The names of the conditions a fenced trace-buffer write checks before it writes (`FencePredicate.kind`).
@@ -2151,31 +2851,29 @@ Names this job reaches whose entry is on another page.
 - [`GateConfig`](define-and-load-a-workflow.md#gateconfig): A gate's settings: its choices, who may answer, its messages, its timeout and what happens when it expires, and its reminders.
 - [`IdUnreadableClass`](implement-a-store.md#idunreadableclass): The classes a registry with no files (the SQLite registry) gives a registered copy it cannot read: `legacy`, `newer` and `parse`.
 - [`InputMapNode`](define-and-load-a-workflow.md#inputmapnode): One node of a step's `input_map`: a dot-path string, a `$literal` value, or an object of further nodes (`StepDefinition.input_map`).
-- [`InspectWay`](write-a-handler.md#inspectway): Read the run's record.
 - [`JsonSchema`](define-and-load-a-workflow.md#jsonschema): The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`).
 - [`KeyAnswer`](implement-a-store.md#keyanswer): Who holds an idempotency key, read in one snapshot: the run that holds it, the deleted runs that carried it, or no run.
 - [`KIND`](embed-the-mcp-server.md#kind): The kind codes of a disclosure set's marks: where marks overlap, the higher code wins.
-- [`LEASE_PROBE_REASONS`](write-a-handler.md#lease_probe_reasons): Why a probe could not say whether a lease is held: a closed list.
+- [`LEASE_PROBE_REASONS`](implement-a-store.md#lease_probe_reasons): Why a probe could not say whether a lease is held: a closed list.
 - [`LEASE_UNAVAILABLE_REASONS`](implement-a-store.md#lease_unavailable_reasons): Why a store could not make a lease: a closed list, from the error the operating system or SQLite gave.
-- [`LeaseFact`](write-a-handler.md#leasefact): What a probe found.
+- [`LeaseFact`](implement-a-store.md#leasefact): What a probe found.
 - [`LeaseFacts`](implement-a-store.md#leasefacts): The facts about the leases of a run's in-progress claims, by lease id.
 - [`LeaseFinalizerDelta`](implement-a-store.md#leasefinalizerdelta): Acquire, or re-acquire with the same token, the lease on one pending finalizer ledger entry: the drain loop's mint-before-execute step.
 - [`LeaseHold`](implement-a-store.md#leasehold): A lease this program holds.
 - [`LeaseHoldResult`](implement-a-store.md#leaseholdresult): What `hold()` answers: the lease, or why there is none.
 - [`LeasePort`](implement-a-store.md#leaseport): A store's claim leases.
-- [`LeaseProbeReason`](write-a-handler.md#leaseprobereason): Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
+- [`LeaseProbeReason`](implement-a-store.md#leaseprobereason): Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
 - [`LeaseUnavailableReason`](implement-a-store.md#leaseunavailablereason): Why a store could not make a claim lease, from the error the operating system or SQLite gave (`LeaseHoldResult`'s `unavailable`).
 - [`Listing`](implement-a-store.md#listing): What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics: every record with the reading it is judged at, and the listing's own reading.
 - [`LiteralNode`](define-and-load-a-workflow.md#literalnode): A node in an input_map tree.
 - [`LoadBearingRunRecordField`](implement-a-store.md#loadbearingrunrecordfield): The `RunRecord` fields the engine relies on enough that a store must declare which of them it round-trips (`RunStore.persistedRunRecordFields`).
-- [`LoadErrorCode`](write-a-handler.md#loaderrorcode): The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`.
+- [`LoadErrorCode`](embed-the-mcp-server.md#loaderrorcode): The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`.
 - [`LoaderWarning`](write-a-handler.md#loaderwarning): A single structured diagnostic.
 - [`MarkFinalizerDelta`](implement-a-store.md#markfinalizerdelta): Record a finalizer handler's outcome against the lease that authorized running it.
 - [`MarkFinalizerResult`](implement-a-store.md#markfinalizerresult): The result a `mark_finalizer` delta reports for one finalizer's handler: `completed` or `failed`.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
 - [`MemberKind`](embed-the-mcp-server.md#memberkind): Where a value a disclosure set hides came from: the environment, or the values declared to it; the declared kind wins where two overlap (`DisclosureSet.forms`).
 - [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads.
-- [`NoRemedy`](write-a-handler.md#noremedy): Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`).
 - [`OpenGateDelta`](implement-a-store.md#opengatedelta): Opens a human gate on a claimed step.
 - [`OpeningGate`](implement-a-store.md#openinggate): The gate an `open_gate` delta opens, without its instants: everything a `PendingGate` holds but `opened_at` and `expires_at`.
 - [`OutboundEntry`](implement-a-store.md#outboundentry): One row of a run's outbound ledger as a store keeps it, for store implementers only.
@@ -2188,9 +2886,7 @@ Names this job reaches whose entry is on another page.
 - [`OutputSource`](read-a-runs-record.md#outputsource): One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`PendingGate`](read-a-runs-record.md#pendinggate): The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and choices shown to the person, when it opened, and its owner and time limit when set.
 - [`PerRunArtifactStore`](implement-a-store.md#perrunartifactstore): A store that keeps files of its own for each run and deletes them all for a run when asked, as `realm run purge` does.
-- [`PreconditionFacts`](write-a-handler.md#preconditionfacts): A failed precondition: its expression and the value read, escaped and bounded (`PreClaimRefused.precondition`).
 - [`PrefixParts`](read-a-runs-record.md#prefixparts): A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and `format` where it had them (`UsageRecord.prefix_parts`).
-- [`PresentWay`](write-a-handler.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
 - [`Principal`](read-a-runs-record.md#principal): What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`).
 - [`PRINCIPAL_ABSENCES`](read-a-runs-record.md#principal_absences): Why a door names no principal (`Principal`'s `absent`).
 - [`PrincipalAbsence`](read-a-runs-record.md#principalabsence): One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer (`Principal`'s `absent`).
@@ -2202,23 +2898,18 @@ Names this job reaches whose entry is on another page.
 - [`PurgedItem`](implement-a-store.md#purgeditem): A deleted run's tombstone, as a scan with `include_purged` gives it.
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`RateLimiter`](write-a-handler.md#ratelimiter): Controls the rate at which requests are sent to an external service.
-- [`ReclaimWay`](write-a-handler.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
 - [`ReconcileSummary`](implement-a-store.md#reconcilesummary): Summary returned by `JsonFileStore.reconcileKeys`.
-- [`RefusedCheck`](write-a-handler.md#refusedcheck): The checks other than capability that refuse a step before its claim (`checkPreClaim`).
-- [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
 - [`RegistryListing`](implement-a-store.md#registrylisting): What a registrar's diagnostic listing returns (`WorkflowRegistrar.listWithDiagnostics`).
 - [`ReleaseStepDelta`](implement-a-store.md#releasestepdelta): Releases a step's claim without settling the step.
 - [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`).
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).
-- [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question.
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).
 - [`RunListing`](implement-a-store.md#runlisting): What `JsonFileStore.listWithDiagnostics` returns: the same `Listing` `list` returns, beside the diagnostics.
-- [`RunPhase`](write-a-handler.md#runphase): Derived phase of a workflow run.
+- [`RunPhase`](read-a-runs-record.md#runphase): Derived phase of a workflow run.
 - [`RunRecord`](read-a-runs-record.md#runrecord): A run as its store keeps it: its workflow and version, its phase, its params, its evidence entries, the question it waits on and how it ended; a store's `get` returns it inside a `Snapshot`.
 - [`RunRecordFieldProblem`](write-a-handler.md#runrecordfieldproblem): One field a value lacks, or holds with the wrong type.
 - [`RunRow`](implement-a-store.md#runrow): One run as a scan's `'row'` projection gives it: the record's own fields, with four derived or renamed.
 - [`RunScopedFencePredicate`](implement-a-store.md#runscopedfencepredicate): The members that condition only the run — the only ones the run-wide `deleteAllForRunFenced` accepts.
-- [`RunStepWay`](write-a-handler.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
 - [`RunStore`](implement-a-store.md#runstore): Where a program keeps its runs: it creates, reads, updates, lists, claims and settles them, reading the time from its own clock.
 - [`ScanFilter`](implement-a-store.md#scanfilter): The filters of a store's scan.
 - [`ScanItem`](implement-a-store.md#scanitem): One item of a scan's page: a run in the scan's projection, or a tombstone.
@@ -2278,9 +2969,6 @@ Names this job reaches whose entry is on another page.
 - [`TriggerFilter`](define-and-load-a-workflow.md#triggerfilter): Post-normalisation form (loader converts shorthand → { all: [...] }).
 - [`TriggerRule`](define-and-load-a-workflow.md#triggerrule): Controls when a step becomes eligible based on its dependencies' outcomes.
 - [`TrustLevel`](define-and-load-a-workflow.md#trustlevel): The words a step's `trust` takes: `auto`, or `human_confirmed` and `human_reviewed`, which open a gate a person answers (`StepDefinition.trust`).
-- [`Unavailable`](write-a-handler.md#unavailable): A way that cannot be taken now, with its code, its facts and the remedies that lead on.
-- [`UNAVAILABLE_CODES`](write-a-handler.md#unavailable_codes): The codes that say why a way is unavailable, each with how it is judged and the verbs it applies to.
-- [`UnavailableCode`](write-a-handler.md#unavailablecode): The codes that say why a way cannot be taken now, one per reason (`Unavailable.code`).
 - [`UnreadableFileEntry`](implement-a-store.md#unreadablefileentry): A registered copy a registry of files could not read, named by its file.
 - [`UnreadableIdEntry`](implement-a-store.md#unreadableidentry): A registered copy a registry with no files (the SQLite registry) could not read, named by its workflow's id.
 - [`UnreadableRegistryEntry`](implement-a-store.md#unreadableregistryentry): A registered copy a listing could not read (`RegistryListing.unreadable`).
@@ -2289,9 +2977,6 @@ Names this job reaches whose entry is on another page.
 - [`UsageRecord`](read-a-runs-record.md#usagerecord): One request a step sent to a model provider, as the record keeps it: its index and start, its token counts and its cache facts (`StepCacheDetail.requests`, `DriveFailureRecord.usage`).
 - [`ValidationErrorFacts`](write-a-handler.md#validationerrorfacts): The typed facts of a refused answer: the validator's rows, their total before the cap, and, for an agent step's counted rejection, the countdown.
 - [`WarningCode`](write-a-handler.md#warningcode): Every warning code the workflow loader can give (`LoaderWarning.code`).
-- [`WAY_VERBS`](write-a-handler.md#way_verbs): Every verb a way can name, as a closed list (`WayVerb`).
-- [`WayOn`](write-a-handler.md#wayon): One act a party can take on a run, told apart by its `verb`.
-- [`WayVerb`](write-a-handler.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).
 - [`WebhookAuth`](define-and-load-a-workflow.md#webhookauth): How a webhook trigger checks that a request is genuine: a shared secret, GitHub's or Stripe's signature, an HMAC, or none (`WebhookTrigger.auth`).
 - [`WebhookTrigger`](define-and-load-a-workflow.md#webhooktrigger): A workflow's webhook trigger: the path it answers, how it checks requests, which requests it takes, how it drops repeats, and how it maps a payload to run params.
 - [`WorkflowContextEntry`](define-and-load-a-workflow.md#workflowcontextentry): A single named entry in the workflow_context section.

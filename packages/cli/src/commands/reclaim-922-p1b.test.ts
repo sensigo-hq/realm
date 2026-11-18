@@ -188,16 +188,26 @@ describe('#922 P1b — the refusals and the words, exit codes included', { timeo
     const typo = realm(['run', 'reclaim', notAStep.id, '--step', 'zz', '--force']);
     const idle = realm(['run', 'reclaim', notHeld.id, '--step', 'a', '--force']);
     const old = realm(['run', 'reclaim', renamed.id, '--step', 'gone', '--force']);
-    // (a) red when a name the workflow lacks exits 0, a step not held is refused or reworded, or the
-    //     renamed step's words are lost; (b) prints the three runs.
-    expect({ typo: { code: typo.code, first: typo.err[0] }, idle, old }).toEqual({
+    // (a) red when a name the workflow lacks exits 0, a step not held is refused or reworded or
+    //     given no way on, a command repeats, or the renamed step's words are lost; (b) prints the
+    //     three runs.
+    // correction 1: the run's ways on follow both refusals' words, one line per command (its agent
+    // steps b and -x, or a, b and -x, render the same `realm agent` command)
+    const onAgent = (id: string): string =>
+      `To go on: realm agent --run-id ${id} --provider <provider> --model <model>`;
+    expect({ typo, idle, old }).toEqual({
       typo: {
         code: 1,
-        first: expect.stringMatching(
-          /^Step 'zz' is not a step of workflow 'reclaim-922-p1b'; nothing was reclaimed\. To go on: /,
-        ),
+        out: [],
+        err: [
+          `Step 'zz' is not a step of workflow 'reclaim-922-p1b'; nothing was reclaimed. ${onAgent(notAStep.id)}`,
+        ],
       },
-      idle: { code: 0, out: ["Step 'a' is not held; nothing to reclaim."], err: [] },
+      idle: {
+        code: 0,
+        out: [`Step 'a' is not held; nothing to reclaim. ${onAgent(notHeld.id)}`],
+        err: [],
+      },
       old: {
         code: 0,
         out: [

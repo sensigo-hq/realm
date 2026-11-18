@@ -2323,7 +2323,7 @@ RealmWorkflowRegistrar · type · public
 ReclaimOutcome · type · public
   type ReclaimOutcome = 'reclaimed' | 'already_settled' | 'taken_over' | 'no_active_claim';
 
-ReclaimResult · type · public (beta: conditionsDischarged)
+ReclaimResult · type · public (beta: conditionsDischarged, refusal)
   interface ReclaimResult {
       run: RunRecord;
       step: string;
@@ -2333,6 +2333,7 @@ ReclaimResult · type · public (beta: conditionsDischarged)
       priorDeadline: string | null;
       gateAdvisory?: string;
       conditionsDischarged?: readonly Cond[];
+      refusal?: Unavailable;
   }
 
 ReclaimStepOptions · type · public (beta: claimed_at, definition, force)

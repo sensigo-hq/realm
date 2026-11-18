@@ -69,12 +69,19 @@ export function renderReclaimOutcome(
  * (renamed by a newer definition) says so. A step not held says so (exit 0, as before).
  */
 export function reclaimResultLines(
-  result: Pick<ReclaimResult, 'step' | 'outcome' | 'priorState' | 'conditionsDischarged'>,
+  result: Pick<
+    ReclaimResult,
+    'step' | 'outcome' | 'priorState' | 'conditionsDischarged' | 'refusal'
+  >,
   runId: string,
   definition: Pick<WorkflowDefinition, 'steps'> | undefined,
 ): string[] {
   const step = result.step;
   if (result.outcome === 'already_settled' || result.outcome === 'no_active_claim') {
+    // correction 1: the words, then the run's ways on (the judged entry's remedy)
+    if (result.refusal !== undefined) {
+      return [reclaimRefusalText(reclaimRefusalWords(result.refusal)!, result.refusal)];
+    }
     return [
       reclaimRefusalWords({
         verb: 'reclaim',
@@ -113,7 +120,8 @@ export function reclaimRefusalText(message: string, refusal: Unavailable): strin
     if (way.verb === 'respond') return [`To go on, answer its question first: ${command}`];
     return [way.verb === 'inspect' ? `See: ${command}` : `To go on: ${command}`];
   });
-  return [message, ...lines].join(' ');
+  // correction 1: one line per command (two agent steps render the same `realm agent` command)
+  return [message, ...new Set(lines)].join(' ');
 }
 
 /**

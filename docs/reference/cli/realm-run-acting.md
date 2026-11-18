@@ -421,7 +421,7 @@ With `--claimed-at`, the step is freed only while that is still its claim. If an
 Step 'fetch' is claimed since 2026-10-01T23:20:02.114Z, not since 2026-10-01T23:00:36.957Z as the command says; nothing was removed. See: realm run inspect 70f9528e-4f45-4806-8690-c4e92a31760d
 ```
 
-A claim past its deadline, or one that records no time it was taken, is freed without `--claimed-at`. A step that is not in progress is not freed: `Step 'fetch' is not held; nothing to reclaim.` A name the run's workflow does not have is refused: `Step 'fecth' is not a step of workflow 'w'; nothing was reclaimed.`, followed by the run's ways on. A step the workflow no longer names, still in progress from an older version, is freed with `Reclaimed step 'fetch' of run <id>. The workflow definition read here has no step named 'fetch'.`
+A claim past its deadline, or one that records no time it was taken, is freed without `--claimed-at`. A step that is not in progress is not freed: `Step 'fetch' is not held; nothing to reclaim.`, followed by the run's ways on. A name the run's workflow does not have is refused: `Step 'fecth' is not a step of workflow 'w'; nothing was reclaimed.`, followed by the run's ways on. A step the workflow no longer names, still in progress from an older version, is freed with `Reclaimed step 'fetch' of run <id>. The workflow definition read here has no step named 'fetch'.`
 
 With `--all`:
 
