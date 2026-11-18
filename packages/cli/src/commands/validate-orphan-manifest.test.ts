@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workflowCommands, topLevelCommands } from '../commands-registry.js';
+import { storeTopLevelCommands, workflowCommands, topLevelCommands } from '../commands-registry.js';
 
 const CLI_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST_CLI = join(CLI_DIR, 'dist', 'index.js');
@@ -197,6 +197,8 @@ describe('every workflow-loading command rejects an orphaned manifest (behaviora
     init: 'scaffolds a new workflow; loads no existing definition',
     list: 'reads the registry store directly, never loads a workflow from a path (issue #427)',
     webhook: "removed alias (use 'realm listen'); loads no workflow",
+    rollback:
+      'steps the store file back from the record realm db migrate kept; loads no workflow (#616 R3)',
   };
   const GUARDED_VIA_CHOKEPOINT_NOT_SPAWN_TESTED: Record<string, string> = {
     watch: 'loads via register.ts (functionally guarded through register); not spawn-tested here',
@@ -213,7 +215,7 @@ describe('every workflow-loading command rejects an orphaned manifest (behaviora
     // COVERED is the subcommand encoded at args(...)[1] of each behavioral case — dummy
     // inputs are fine, we only read the subcommand slot (e.g. ['workflow','validate','x'][1]).
     const covered = new Set(cases.map((c) => c.args('x', 'y')[1]));
-    const unclassified = [...workflowCommands, ...topLevelCommands]
+    const unclassified = [...workflowCommands, ...storeTopLevelCommands, ...topLevelCommands]
       .map((c) => c.name())
       .filter(
         (n) =>

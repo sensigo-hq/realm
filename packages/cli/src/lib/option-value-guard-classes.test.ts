@@ -13,6 +13,7 @@ import {
   workflowCommands,
   runCommands,
   dbCommands,
+  storeTopLevelCommands,
   topLevelCommands,
 } from '../commands-registry.js';
 import { GUARDED_OPTIONS } from './option-value-guard.js';
@@ -106,7 +107,13 @@ function derived(): Map<Pair, Command[]> {
     }
     for (const sub of command.commands) visit(sub);
   };
-  for (const list of [workflowCommands, runCommands, dbCommands, topLevelCommands])
+  for (const list of [
+    workflowCommands,
+    runCommands,
+    dbCommands,
+    storeTopLevelCommands,
+    topLevelCommands,
+  ])
     for (const c of list) visit(c);
   return out;
 }

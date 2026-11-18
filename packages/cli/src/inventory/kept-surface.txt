@@ -84,6 +84,8 @@ realm mcp --form-wait-seconds — option, takes a value
 realm mcp --gate-answers — option, takes a value
 realm mcp --help — option, short -h, no value
 realm mcp --project — option, takes a value
+realm rollback — command
+realm rollback --help — option, short -h, no value
 realm run — command
 realm run --help — option, short -h, no value
 realm run abandon — command

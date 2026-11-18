@@ -229,6 +229,11 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     need('object', 'options', 'heldClaim', 'hold'),
     need('string', 'options', 'heldClaim', 'hold', 'id'),
     need('function', 'options', 'heldClaim', 'hold', 'close'),
+    // #625 A1a: the loop's callbacks, as `advanceRun` takes them.
+    typed('function', 'options', 'onStep'),
+    typed('function', 'options', 'onTaken'),
+    typed('function', 'options', 'onNotRecorded'),
+    typed('function', 'options', 'onGuard'),
   ],
   executeEngineStep: [
     ...DEFINITION,
@@ -364,6 +369,10 @@ const EXECUTE_CHAIN_MEMBERS = [
   'party',
   'disclosure',
   'heldClaim',
+  'onStep',
+  'onTaken',
+  'onNotRecorded',
+  'onGuard',
 ] as const satisfies readonly (keyof ExecuteChainOptions)[];
 const EXECUTE_ENGINE_STEP_MEMBERS = [
   'runId',

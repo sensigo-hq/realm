@@ -432,6 +432,17 @@ export interface ExecuteChainOptions {
    * @beta
    */
   heldClaim?: { hold: LeaseHold };
+  /** @see AdvanceRunOptions.onStep — called for each step this call runs after the named one. */
+  onStep?: AdvanceRunOptions['onStep'];
+  /** @see AdvanceRunOptions.onTaken — for each step this call finds another process holding. */
+  onTaken?: AdvanceRunOptions['onTaken'];
+  /** @see AdvanceRunOptions.onNotRecorded — for each step it ran whose outcome was not recorded. */
+  onNotRecorded?: AdvanceRunOptions['onNotRecorded'];
+  /**
+   * @see AdvanceRunOptions.onGuard — for each guard the call lists in `chained_auto_steps`: those
+   * the named step's own write decided, and those decided after it.
+   */
+  onGuard?: AdvanceRunOptions['onGuard'];
 }
 
 /** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
@@ -6977,6 +6988,12 @@ async function advanceLoop(
      * claim it (decision C25), and every other race kind core's classifier names.
      */
     races: LoopRace[];
+    /**
+     * #625 A1a: set when the reply stops being the named step's own — the loop attempted a step
+     * after it, or returned a reply it composed itself (a guard's). The rebuilds that only judge the
+     * named reply's ways again leave it as it is. `executeChain` reads it for `own_act`.
+     */
+    shaped: boolean;
   },
 ): Promise<EngineReply> {
   const { chainedSteps, depth0Warnings, races } = state;
@@ -7110,6 +7127,7 @@ async function advanceLoop(
         // Thrown infra errors — the persist-failure envelope (the shape the deleted legacy path's
         // store.update catch returned).
         const msg = storeErr instanceof Error ? storeErr.message : String(storeErr);
+        state.shaped = true;
         // #715 (b) (D6-17): the record this loop holds, at its reading — the write did not land.
         return judgedOn(
           {
@@ -7212,6 +7230,7 @@ async function advanceLoop(
               },
             },
           );
+          state.shaped = true;
           return judgedOn(
             {
               command: options.command,
@@ -7238,6 +7257,7 @@ async function advanceLoop(
           // Terminal by OTHER (a sibling settle raced this guard's own evaluation) — INLINE
           // construction, parity with the entry-terminal envelope (executeChain's own early
           // return).
+          state.shaped = true;
           return {
             command: options.command,
             run_id: options.runId,
@@ -7303,6 +7323,7 @@ async function advanceLoop(
         // step's write that ends the run says it (the one reply rule): `guards`, the guard this
         // write settled, and `ended_by`, its seal arm, step and reason, read off the record.
         const loopEnding = guardEndingOfRun(finalGuard.record);
+        state.shaped = true;
         return {
           command: options.command,
           run_id: options.runId,
@@ -7383,6 +7404,7 @@ async function advanceLoop(
     resultIsNamedStep = false;
 
     options.onStep?.(nextAutoStep);
+    state.shaped = true;
     executions += 1;
     const stepResult = stampStoppedStep(
       await engineStepAs(
@@ -7808,6 +7830,7 @@ async function advanceRunBody(
       chainedSteps: chained,
       depth0Warnings,
       races,
+      shaped: false,
     },
   );
   // When nothing ran (no step, no guard), the hint is composed from the record the loop ends on:
@@ -7847,6 +7870,34 @@ async function advanceRunBody(
       : {}),
   };
   return chained.length > 0 ? { ...envelope, chained_auto_steps: chained } : envelope;
+}
+
+/**
+ * #625 A1a: the words a step's own `ok` reply opens with, and that a reply which is another's opens
+ * with for the step the caller named (`own_act`).
+ */
+export function stepCompletedWords(step: string): string {
+  return `Step '${step}' completed.`;
+}
+
+/**
+ * #625 A1a: the one composer of `own_act`'s opening: `hint` opens with `opening` exactly once — a hint
+ * that already opens with it (a reply composed after a race on the named step) is left as it is.
+ */
+export function openWithOwnAct(hint: string, opening: string): string {
+  return hint.startsWith(opening) ? hint : `${opening} ${hint}`;
+}
+
+/**
+ * #625 A1a: `own_act` for the named step's `ok` reply. Its evidence is the step's own recorded entry,
+ * read from the snapshot that reply was built from — never the reply's `evidence` (a write that ended
+ * the run through a guard returns the guard's) — and is left out when the reply carries no snapshot.
+ */
+function ownActOf(named: EngineReply, command: string): NonNullable<EngineReply['own_act']> {
+  const entry = snapshotOfBasis(named)
+    ?.record.evidence.filter((e) => e.step_id === command && e.kind !== 'gate_response')
+    .at(-1);
+  return { command, recorded: true, ...(entry !== undefined ? { evidence: entry } : {}) };
 }
 
 /**
@@ -7940,7 +7991,16 @@ async function executeChainBody(
 
   // #729 CW-2b: `heldClaim` reaches the named step only, as the step body's own parameter — never as
   // an option the step takes, and never the steps the chain runs after it.
-  const { caller: _caller, heldClaim, ...stepOptions } = options;
+  // #625 A1a: the loop's callbacks are the chain's, never options of the named step's own call.
+  const {
+    caller: _caller,
+    heldClaim,
+    onStep,
+    onTaken,
+    onNotRecorded,
+    onGuard,
+    ...stepOptions
+  } = options;
   const effectiveOptions: ExecuteStepOptions = {
     ...stepOptions,
     registry: options.registry ?? createDefaultRegistry(),
@@ -7959,6 +8019,7 @@ async function executeChainBody(
     options.command,
   );
   let result: EngineReply = named;
+  let shaped = false;
   if (named.status === 'ok') {
     // #729 CW-1b part 2: the run re-read after the named step, its lease facts included.
     let snap: Snapshot | undefined;
@@ -7985,9 +8046,19 @@ async function executeChainBody(
           step: guard.step,
           run_phase: endedTheRun ? (named.run_phase ?? run!.run_phase) : 'running',
         });
+        // #625 A1a: told as `advanceRun` tells a guard a step's own write decided.
+        onGuard?.(guard.step);
       });
       // #600: the named step's `stepMeta` (its model usage, tool calls, structured-output mode)
       // belongs to it alone — the loop never passes it on.
+      const loopState = {
+        snapshot: snap,
+        result: named,
+        chainedSteps: chained,
+        depth0Warnings,
+        races,
+        shaped: false,
+      };
       result = await advanceLoop(
         store,
         definition,
@@ -8000,20 +8071,36 @@ async function executeChainBody(
             : {}),
           ...(options.driver !== undefined ? { driver: options.driver } : {}),
           ...(options.disclosure !== undefined ? { disclosure: options.disclosure } : {}),
+          ...(onStep !== undefined ? { onStep } : {}),
+          ...(onTaken !== undefined ? { onTaken } : {}),
+          ...(onNotRecorded !== undefined ? { onNotRecorded } : {}),
+          ...(onGuard !== undefined ? { onGuard } : {}),
           namedStep: options.command,
           via,
         },
-        { snapshot: snap, result: named, chainedSteps: chained, depth0Warnings, races },
+        loopState,
       );
+      shaped = loopState.shaped;
     }
   }
+  // #625 A1a: the reply is another's — the named step's own act was recorded, and says so.
+  const ownAct =
+    named.status === 'ok' && (shaped || races.length > 0 || named.ended_by !== undefined)
+      ? ownActOf(named, options.command)
+      : undefined;
   // decision C110: each line once — the named step's warnings (and a chained step's) are not listed
   // again when the final reply is that step's own.
   const chainWarnings = foldChainWarnings(result.warnings ?? [], depth0Warnings, chained);
   const envelope = {
     ...result,
-    context_hint: withRaceClauses(result.context_hint, races),
+    context_hint: withRaceClauses(
+      ownAct !== undefined
+        ? openWithOwnAct(result.context_hint, stepCompletedWords(options.command))
+        : result.context_hint,
+      races,
+    ),
     ...racesOf(races),
+    ...(ownAct !== undefined ? { own_act: ownAct } : {}),
     // #729 PR-0 (T-2): the receipt of an expiry the named step's call carried out rides the final
     // reply with its line — a later step's reply replacing the named one keeps it (as advanceRun's).
     ...(named.expiry !== undefined && result.expiry === undefined ? { expiry: named.expiry } : {}),

@@ -137,6 +137,8 @@ export type {
  * whole cli suite green.
  */
 export { deriveCacheDetail } from './engine/execution-loop.js';
+// #625 A1a: `own_act`'s opening — its words for a step, and the one composer the doors apply.
+export { stepCompletedWords, openWithOwnAct } from './engine/execution-loop.js';
 // issue #600 PR 2 (A3): the names a request record carries, bounded where the record is written.
 export { boundRequestFacts, normalizeResponseId } from './engine/request-facts.js';
 export { abandonRun, ABANDON_KILL_ADVISORY } from './engine/abandon-run.js';

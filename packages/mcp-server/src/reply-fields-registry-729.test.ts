@@ -74,6 +74,8 @@ const ROUTES = {
   races: MCP_ENVELOPE_ROWS.races.route,
   expiry: MCP_ENVELOPE_ROWS.expiry.route,
   error: MCP_ENVELOPE_ROWS.error.route,
+  // #625 A1a: published, its library-only `evidence` left out (the cells of docs-625-a1a).
+  own_act: MCP_ENVELOPE_ROWS.own_act.route,
   intrinsic_action: {
     mcp: 'withheld',
     reason: "the action table's input; its rendering is agent_action (D-8)",
@@ -172,6 +174,8 @@ async function replies(): Promise<EngineReply[]> {
     ...ok,
     races: [{ step: 'b', kind: 'held_elsewhere', ran_here: false }],
     error: { remedy: [], about: 'g' },
+    // #625 A1a: the called step's own act, as the door publishes it.
+    own_act: { command: 'a', recorded: true },
   } as EngineReply;
   return [ok, blocked, late, raced];
 }

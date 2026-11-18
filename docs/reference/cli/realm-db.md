@@ -1,6 +1,6 @@
 # `realm db`
 
-<!-- description: Reference for realm db backup, which copies the store file to a new file and checks the copy, realm db migrate, which upgrades the store file after a backup, realm db check, which reports on the store file without writing it, and realm db restore, which puts a backup in place of the store file and keeps the file it replaces: their arguments, output and exit codes. -->
+<!-- description: Reference for realm db backup, which copies the store file to a new file and checks the copy, realm db migrate, which upgrades the store file after a backup, realm db check, which reports on the store file without writing it, realm db restore, which puts a backup in place of the store file and keeps the file it replaces, and realm rollback, which undoes the last migrate of this home: their arguments, output and exit codes. -->
 
 `realm db` acts on the store file, `realm.db` in the Realm home (`~/.realm`), never on a run. It has four subcommands.
 
@@ -139,6 +139,8 @@ After the last step:
 - a file written by a newer Realm: the store's own message. Run `--to` with the Realm that wrote the file.
 - a step back fails, [`STATE_STORE_MIGRATE_FAILED`](../error-codes.md): `The step back from schema version <v> to <v-1> failed: <the reason>. <home>/realm.db is at schema version <v>; nothing of the step is in it. Run the command again once the cause is fixed.` When a copy was made, ` The backup made before the step is at <path>.` comes before `Run the command again`.
 
+To undo the last migrate without naming the version, run [`realm rollback`](#realm-rollback).
+
 ## `check`
 
 `realm db check [--json] [--project <dir>]`
@@ -257,6 +259,38 @@ A backup made by copying a live `realm.db` without its `realm.db-wal` lacks the 
 - another process has the store file open, [`STATE_STORE_IN_USE`](../error-codes.md): `Another process has <home>/realm.db open: a Realm agent, server or command, an MCP server that an assistant or editor keeps running, or another program such as a SQLite browser. Stop it and run this again. Nothing was changed.`
 - the kept copy cannot be made for another reason than a store file SQLite cannot read (a full disk, a backups folder that cannot be written): `realm db backup`'s refusal, with its code, then ` Nothing was replaced.` A kept copy that SQLite cannot read the store file for, or that fails SQLite's quick check, takes the damaged-file path above instead.
 - another failure before the rename: `Cannot restore from <backup>: <the reason>. <home>/realm.db was not replaced.`, then ` A copy of it is at <kept file>.` when the kept copy was made. After the rename, when the folder cannot be flushed: `Cannot restore from <backup>: <the reason>. <home>/realm.db was replaced.`
+
+## `realm rollback`
+
+`realm rollback` is a top-level command, not a `realm db` subcommand: it is described on this page because it acts on the store file. It undoes the last migrate of this home: it steps the store file back to the schema version before that migrate, and keeps every run. It takes no options. Run it with the Realm that migrated the file, since the step down needs that Realm's code: stop every Realm process that uses the home first, and install the older Realm after it. Nothing runs it for you.
+
+It works in this order:
+
+1. It reads `migrations.jsonl` in the backups folder, the record that `realm db migrate` keeps ([`migrate`](#migrate), step 5). Only the lines whose `home` is this home's real path count: two homes in one folder share the file. A line counts only when it is valid: JSON with its six fields of the right types, both formats schema versions this Realm knows, and different; a line may carry more fields. Any other line is ignored. The last valid line for this home decides.
+2. The store file's schema version must be that line's `to_format`. The file's version is compared, not its history: a file put back from a backup made at that version, after that migrate, rolls back too.
+3. That line must be a forward migrate. A step back, whose `from_format` is above its `to_format`, is not undone.
+4. It prints which migrate it undoes, then does what `realm db migrate --to <from_format>` does with no flag ([Stepping back](#stepping-back---to-n)): the copy in the backups folder, each step back, the record line and the install line. Once it holds the store file, it judges the plan again against the line: a file moved to another version meanwhile is refused.
+
+It prints first:
+
+`Rolling back the migrate recorded at <at> (schema version <from_format> to <to_format>, by Realm <migrated_by>): stepping the store file back to schema version <from_format>.`
+
+then the lines of `realm db migrate --to`, the install line last. It differs from `--to` mainly in three ways: Realm finds the version in the record, it undoes one migrate only, and it takes no flags. For another place for the copy, or none, run `realm db migrate --to <n>` with `--backup <path>` or `--no-backup`.
+
+A home that no migrate of Realm 0.50.0 or later has touched has no record: one created at version 2, or one whose record was deleted. Use `realm db migrate --to <n>` there.
+
+**Exit code:** 0 when every step ran. 1 when the command refuses or a step fails, with one `Error:` line on standard error. "Nothing was changed" is about the store file, as for [`restore`](#restore)'s refusals. The refusals have the code [`STATE_STORE_MIGRATE_REFUSED`](../error-codes.md) unless another is named:
+
+- the home has no store file: `There is no store file at <home>/realm.db to roll back.`
+- the store file is empty: `<home>/realm.db holds no store yet: there is nothing to roll back.`
+- the store file is not a store this Realm can use, or a newer Realm wrote it: the store's own message.
+- the record is there but cannot be read (a folder in its place, no permission, a file where the backups folder should be): `Cannot read <backups folder>/migrations.jsonl: <the system's reason>. Nothing was changed. Use realm db migrate --to <n> to choose the version yourself, or realm db restore <backup> to put a backup back.`
+- no valid line for this home (no record file, an empty one, only other homes' lines, only invalid lines): `No record of a migrate of <home> was found in <backups folder>/migrations.jsonl, so Realm does not know which version to go back to. Use realm db migrate --to <n> to choose the version yourself, or realm db restore <backup> to put a backup back. Nothing was changed.`
+- the file is not at the last line's `to_format`, before or after the command holds it (that migrate's own backup restored since, or a change nobody recorded): `The last record for <home> (<at>) took the store file from schema version <from_format> to <to_format>, but it is at schema version <v> now. Realm does not know what to roll back. Use realm db migrate --to <n> to choose the version yourself, or realm db restore <backup>. Nothing was changed.` When `<v>` is below the version this Realm writes and an older release writes it, ` If you want an older Realm, install one that writes schema version <v>: npm install -g "@sensigo/realm-cli@<range>".` comes before `Nothing was changed.`
+- the last line is a step back, and the file is at its version: `The last record for <home> is a step back to schema version <to_format> (<at>). There is nothing to roll back: to go back further, use realm db migrate --to <n>. Nothing was changed.` When `<to_format>` is below the version this Realm writes and an older release writes it, ` If you want that older Realm, install one that writes schema version <to_format>: npm install -g "@sensigo/realm-cli@<range>".` comes before `Nothing was changed.` `<range>` is `0.49` for schema version 1, as in the install line.
+- a step down cannot be undone, when that migrate made a backup: `The step from schema version <v> to <v-1> cannot be undone: <why>. Nothing was changed. To go back anyway, restore the backup that migrate made: realm db restore <path>.` When it made none (`--no-backup`): `The step from schema version <v> to <v-1> cannot be undone: <why>. Nothing was changed. That migrate made no backup: restore one of your own with realm db restore <backup> (the backups realm db migrate makes are in <backups folder>/).`
+- the backups folder is there but cannot be written (a file in its place is refused above, as a record that cannot be read): `Cannot make the backups folder <folder>: <the system's reason>. Nothing was changed. Use realm db migrate --to <from_format> with --backup <path> to name another place, or --no-backup.`
+- another process has the store file open ([`STATE_STORE_IN_USE`](../error-codes.md)), the copy cannot be made, or a step back fails ([`STATE_STORE_MIGRATE_FAILED`](../error-codes.md)): as for `realm db migrate --to`.
 
 ## See also
 
