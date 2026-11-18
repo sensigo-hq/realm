@@ -48,7 +48,7 @@ const RUN_FAIL_OWN: Cell = [CMD, "check 3 — this drive's step fails and ends t
 // #625 A1b-2 correction 1: the cells of its four fixes.
 const REFUSAL_REASON_RULE: Cell = [CMD, "realm-agent.md's row: a handler's abort"];
 const RUN_TIMER_CLEANUP: Cell = [CMD, 'correction 1, check 1 — the ⏰ line ends the run'];
-const RUN_ANSWER_LATE: Cell = [CMD, "correction 1, check 3 — this drive's answer carries out"];
+const RUN_ANSWER_LATE: Cell = [CMD, 'correction 1, check 3 — this drive’s answer carries out'];
 const AGENT_EXPIRED_DEFAULT: Cell = [AGENT, 'correction 1, check 2 — realm agent --run-id'];
 const AGENT_SLACK_LATE: Cell = [AGENT, 'correction 1, check 3 — a Slack answer carries out'];
 const AGENT_SLACK_SLOW: Cell = [AGENT, 'correction 1, check 4 — a Slack answer of its own'];

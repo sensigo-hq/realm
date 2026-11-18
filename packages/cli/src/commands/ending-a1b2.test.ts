@@ -606,7 +606,7 @@ steps:
     ).toEqual({ timer: 1, ended: [] });
   }, 20_000);
 
-  it("correction 1, check 3 — this drive's answer carries out an expired default, and the guard then aborts: the guard's lines once, no Ended:", async () => {
+  it('correction 1, check 3 — this drive’s answer carries out an expired default, and the guard then aborts: the guard’s lines once, no Ended:', async () => {
     mocks.question.mockImplementation(async (prompt: string) => {
       if (!prompt.startsWith('  Choice ')) return '{}';
       // The answer is handled after the question's time is up and before this process's own timer
