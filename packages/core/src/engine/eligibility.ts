@@ -15,7 +15,7 @@ import type {
   StepDiagnostics,
 } from '../types/run-record.js';
 import { SEAL_ARMS } from '../types/run-record.js';
-import type { RunPhase } from '../types/run-record.js';
+import type { ListedRecord, RunPhase } from '../types/run-record.js';
 import { resolvePath } from './render-template.js';
 import { splitComparison, type ComparisonOp } from './comparison-expr.js';
 import { boundResolvedValue } from '../utils/redaction.js';
@@ -500,7 +500,7 @@ export function runPhaseDerivationFingerprint(): string {
  * Empty or omitted depends_on means the step has no dependencies and is always eligible
  * at the trigger-rule level.
  */
-export function triggerRuleSatisfied(step: StepDefinition, run: RunRecord): boolean {
+export function triggerRuleSatisfied(step: StepDefinition, run: ListedRecord): boolean {
   const deps = step.depends_on ?? [];
   if (deps.length === 0) return true;
 
@@ -728,7 +728,7 @@ function traceWhenCondition(
  * Merges gate_response snapshots on top of execution snapshots so that
  * the human's choice is accessible via context.resources.<step>.choice in when expressions.
  */
-export function buildEvidenceByStep(run: RunRecord): Record<string, Record<string, unknown>> {
+export function buildEvidenceByStep(run: ListedRecord): Record<string, Record<string, unknown>> {
   const evidenceByStep: Record<string, Record<string, unknown>> = {};
   for (const snap of run.evidence) {
     if (snap.kind === 'gate_response') {
@@ -824,7 +824,7 @@ export function buildEvidenceByStep(run: RunRecord): Record<string, Record<strin
  * so the marker clears on resume rather than permanently branding a step that has since re-run.
  */
 export function buildSettlementNamespace(
-  run: RunRecord,
+  run: ListedRecord,
 ): Record<string, { settled_by_default: boolean; validation_rejections: number; failed: boolean }> {
   const lastDiag: Record<string, StepDiagnostics | undefined> = {};
   for (const snap of run.evidence) {
@@ -866,7 +866,7 @@ export function buildSettlementNamespace(
  * .claimStep`'s issue #188 no-await-between-check-and-mutate fix) can call this helper without
  * reintroducing a microtask-yield point.
  */
-export function isStepSettledOrInFlight(run: RunRecord, stepId: string): boolean {
+export function isStepSettledOrInFlight(run: ListedRecord, stepId: string): boolean {
   return (
     run.completed_steps.includes(stepId) ||
     run.failed_steps.includes(stepId) ||
@@ -884,7 +884,7 @@ export function isStepSettledOrInFlight(run: RunRecord, stepId: string): boolean
  *   - when-condition (if present) is truthy
  * @public
  */
-export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord): string[] {
+export function findEligibleSteps(definition: WorkflowDefinition, run: ListedRecord): string[] {
   // A terminal run has no eligible steps — never re-drive a completed/failed/aborted/abandoned run
   // (e.g. when re-encountered through an idempotency-key match on start_run/start_run_batch).
   if (run.terminal_state) return [];
@@ -925,7 +925,10 @@ export function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord
  * Guard steps are never returned by findEligibleSteps (they execute inside the engine,
  * not via agent execute_step calls).
  */
-export function findEligibleGuardSteps(definition: WorkflowDefinition, run: RunRecord): string[] {
+export function findEligibleGuardSteps(
+  definition: WorkflowDefinition,
+  run: ListedRecord,
+): string[] {
   // A terminal run has no eligible guard steps either — symmetric with findEligibleSteps so a
   // terminal run is never re-driven through the guard surface.
   if (run.terminal_state) return [];

@@ -1085,6 +1085,8 @@ function counted(store: RunStore): { runStore: RunStore; scans: () => number } {
   let scans = 0;
   const runStore = new Proxy(store, {
     get(target, prop, receiver) {
+      // Gap 1, unit A0: hides the store's `scanListed`, so the listing reads through this `scan` double.
+      if (prop === 'scanListed') return undefined;
       if (prop === 'scan') {
         return (...a: Parameters<RunStore['scan']>) => {
           scans += 1;

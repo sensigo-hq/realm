@@ -725,7 +725,7 @@ describe('#616 PR-2c c4 — the run store interface changes once: the words', ()
     expect(counts.list).toBe(false);
     claim(
       CORE,
-      `A run store implements \`RunStore\`. It has ${counts.properties} properties, ${counts.required} functions every store must have, and ${counts.optional} optional function.`,
+      `A run store implements \`RunStore\`. It has ${counts.properties} properties, ${counts.required} functions every store must have, and ${counts.optional} optional ${counts.optional === 1 ? 'function' : 'functions'}.`,
     );
     for (const sentence of [
       "| `scan(filter, { pageSize, projection?, after? })` | Yes | Read the clock once per page, then the records the filter selects, in id order, `pageSize` at a time (1 to 1,000), and return each page as `{ items, read_at, consistent_snapshot, derived_at_read, next_after? }`; with `include_purged` the deleted runs' tombstones come as `{ kind: 'purged', … }` items beside the `{ kind: 'run', run }` items. |",
@@ -741,7 +741,7 @@ describe('#616 PR-2c c4 — the run store interface changes once: the words', ()
     expect(read(CORE)).not.toContain('`list(workflowId?)`');
     claim(
       TESTING,
-      "A run store that keeps runs in memory. It has the 9 functions of a run store: `create`, `get`, `update`, `claimStep`, `settleStep`, `stampSeal`, `scan`, `resolveKey` and `tombstonesSince`, and it purges nothing: `purgesRuns` is `false`, so `resolveKey` answers `held` or `unseen`, never `purged`. It keeps every field of a run's record.",
+      "A run store that keeps runs in memory. It has the 10 functions of a run store: `create`, `get`, `update`, `claimStep`, `settleStep`, `stampSeal`, `scan`, `scanListed`, `resolveKey` and `tombstonesSince`, and it purges nothing: `purgesRuns` is `false`, so `resolveKey` answers `held` or `unseen`, never `purged`. It keeps every field of a run's record.",
     );
     claimChangelog(
       "**BREAKING — the run store interface changes once (issue #616).** `RunStore.list()` is gone: it read the whole store in one call. In its place every store has `scan(filter, { pageSize, projection, after })`, pages of at most 1,000 records in id order; `resolveKey(workflowId, key)`, which says whether a run holds an idempotency key, only deleted runs did, or none has; `tombstonesSince()`, the horizon those answers reach back to; and `purgesRuns`, `true` for a store that deletes runs and keeps tombstones. Every store outside this repository that implements `RunStore` must add the four members. `InMemoryStore` has all four (`purgesRuns: false`; its horizon is the start of time, since it never purges). `runStoreFidelityContract` holds every store to the laws of paging, of the key's three-way answer, of the tombstones and of the horizon — the purge laws run only against a store with `purgesRuns: true`, which supplies the contract's `purge` adapter hook; a store whose `purgesRuns` disagrees with that hook fails the contract. `JsonFileStore` no longer implements `RunStore`. `realm run list`, `realm run reclaim`, `realm run cleanup`, `realm run drain`, `realm run purge`, `realm run migrate` and `realm listen` print what they printed.",

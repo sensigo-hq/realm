@@ -13,10 +13,12 @@
 // It writes only through `RunStore.stampSeal`. It never rewrites a record it cannot classify, and
 // never auto-corrects one it finds incoherent — an operator adjudicates those.
 import { Command } from 'commander';
-import type { RunRecord, RunStore, SealArm } from '@sensigo/realm';
+import type { RunStore, SealArm } from '@sensigo/realm';
 import { classifyLegacySeal, armToPhase, FIXED_TERMINAL_REASONS } from '@sensigo/realm';
 import { RUN_PHASE_WORDS, escapePassCut, writerCtx } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
+// Gap 1, unit A0: the listing that reads no model call's text.
+import { scanListedRuns, type ListedRecord } from '@sensigo/realm';
 
 /** One record's disposition. Every reachable state has exactly one home here. */
 export interface MigrateBuckets {
@@ -71,7 +73,7 @@ function emptyBuckets(): MigrateBuckets {
  * avoid the terminal-writer census's own token: a printed diagnostic must never look like source
  * code that writes a seal.
  */
-function whyUnclassifiable(run: RunRecord): string {
+function whyUnclassifiable(run: ListedRecord): string {
   if (run.terminal_reason === undefined) {
     return 'no terminal reason recorded and no marker to read';
   }
@@ -135,8 +137,9 @@ export async function migrateStampSeals(
   }
   const buckets = emptyBuckets();
   // #616 PR-2c c4: every page of the store's scan.
-  const all: RunRecord[] = [];
-  for await (const page of runStore.scan({}, { pageSize: 1000, projection: 'record' })) {
+  // Gap 1, unit A0: listed, so no model call's text is read; each seal is stamped by run id.
+  const all: ListedRecord[] = [];
+  for await (const page of scanListedRuns(runStore, {}, { pageSize: 1000 })) {
     for (const item of page.items) if (item.kind === 'run') all.push(item.run.record);
   }
 
