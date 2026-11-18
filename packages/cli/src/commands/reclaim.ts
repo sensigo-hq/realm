@@ -6,13 +6,7 @@
 // default, `--force` to act — ONLY claims that are provably safe: author-declared `idempotent`,
 // carrying a concrete past-deadline (`claim_stale`), non-gated. Everything else stays per-step-only.
 import { Command } from 'commander';
-import {
-  cliCommandOf,
-  heldEntriesOf,
-  heldWayLines,
-  leaseHeld,
-  writerHost,
-} from './ways-renderer.js';
+import { cliCommandOf, heldEntriesOf, heldWayLines, writerHost } from './ways-renderer.js';
 import type {
   ClaimState,
   ComposedWays,
@@ -195,6 +189,9 @@ const CLAIM_STATE_OF: Record<HeldState['state'], ClaimState> = {
   unknown_age: 'claim_unknown_age',
   unreadable: 'claim_unknown_age',
   no_claim_record: 'claim_unknown_age',
+  // #729 CW-3a: as CW-1b's classifier words a leased claim
+  lease_held: 'healthy',
+  lease_not_held: 'claim_stale',
 };
 
 /**
@@ -245,13 +242,7 @@ export function reclaimDryRunLines(
   let listed = false;
   for (const c of infos) {
     const entry = held.get(c.step);
-    // MA 2 (WO922-P22-MA2-03): a claim whose lease is held reads healthy, as CW-1b's.
-    const state =
-      entry === undefined
-        ? c.state
-        : leaseHeld(entry)
-          ? 'healthy'
-          : CLAIM_STATE_OF[heldStateOf(entry).state];
+    const state = entry !== undefined ? CLAIM_STATE_OF[heldStateOf(entry).state] : c.state;
     lines.push(`  • ${c.step}: ${state}  (deadline: ${c.deadline ?? 'none (unknown age)'})`);
     const gate = run.pending_gate;
     if (gate !== undefined && gate.step_name === c.step) {

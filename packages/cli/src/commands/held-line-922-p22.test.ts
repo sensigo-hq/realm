@@ -259,42 +259,47 @@ describe('#922 P2-2 — item 4 (check 7): the hand-back', () => {
   });
 });
 
-describe('#922 P2-2 — the lease branch (MA 2, WO922-P22-MA2-03; temporary until CW-3)', () => {
-  it('a claim whose lease is held: "wait for it", no command, the dry run’s header healthy, the hand-back waits; not held: the composed state’s words', async () => {
+describe('#729 CW-3a — the lease states at the CLI’s renderer (P2-2’s temporary branch removed)', () => {
+  it('a claim whose lease is held: wait, lease_held’s words first, "To free it anyway", the header healthy, the hand-back waits; not held: freed as a past claim, led by the not-held line, the header claim_stale', async () => {
     const leased = { ...CLAIMS['past']!, lease: { id: 'L' } };
     const live = await heldOn({ y: leased }, true, ['x'], 'live');
     const dead = await heldOn({ y: leased }, true, ['x'], 'dead');
     const dryRun = (on: Awaited<ReturnType<typeof heldOn>>): string[] =>
       reclaimDryRunLines(on.record, [{ step: 'y', state: 'claim_stale', deadline: PAST }], on.ways);
-    const header = (on: Awaited<ReturnType<typeof heldOn>>): string => dryRun(on)[0]!;
-    // correction 1: whether the footer names a command above
-    const footerNames = (on: Awaited<ReturnType<typeof heldOn>>): boolean =>
-      dryRun(on).at(-1)!.includes("Run a step's command above to free it.");
-    // (a) red when a held lease is offered a command or read by its deadline, a lease not held is
-    //     waited for, or the dry run's footer names a command above that is not there (correction
-    //     1); (b) prints both.
+    const cmd = (on: Awaited<ReturnType<typeof heldOn>>): string =>
+      `realm run reclaim ${on.runId} --step y --claimed-at ${SINCE} --force`;
+    const held =
+      "Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.";
+    const notHeld =
+      "No program held the claim's lease when it was checked; no result is recorded for it.";
+    // (a) red when a leased claim is read by its deadline (past, here), a held lease is offered no
+    //     command or without its condition, or a lease no program held is waited for; (b) prints both.
     expect({
       live: {
         line: heldLine(live.entries[0]!),
         under: heldWayLines(live.entries[0]!),
-        header: header(live),
+        header: dryRun(live)[0],
         goOn: goOnLine(live.entries, live.runId, '<command>'),
-        footerNames: footerNames(live),
       },
       dead: {
-        line: heldLine(dead.entries[0]!).startsWith("'y' was claimed and its deadline passed"),
-        header: header(dead),
-        footerNames: footerNames(dead),
+        line: heldLine(dead.entries[0]!),
+        under: heldWayLines(dead.entries[0]!),
+        header: dryRun(dead)[0],
+        goOn: goOnLine(dead.entries, dead.runId, '<command>'),
       },
     }).toEqual({
       live: {
-        line: "'y' is held; wait for it.",
-        under: [],
+        line: `'y' is held; wait for it. ${held} ${NOT_IDEMPOTENT} To free it anyway, run: ${cmd(live)}`,
+        under: [held, NOT_IDEMPOTENT, `To free it anyway, run: ${cmd(live)}`],
         header: `  • y: healthy  (deadline: ${PAST})`,
         goOn: "  Go on:     once 'y' is no longer in flight, <command>",
-        footerNames: false,
       },
-      dead: { line: true, header: `  • y: claim_stale  (deadline: ${PAST})`, footerNames: true },
+      dead: {
+        line: `'y' was claimed, and no program held the claim's lease when it was checked; no result is recorded for it. ${NOT_IDEMPOTENT} To free it, run: ${cmd(dead)}`,
+        under: [notHeld, NOT_IDEMPOTENT, `To free it, run: ${cmd(dead)}`],
+        header: `  • y: claim_stale  (deadline: ${PAST})`,
+        goOn: `  Go on:     once 'y' is freed (realm run reclaim ${dead.runId} prints its command), <command>`,
+      },
     });
   });
 });
@@ -309,6 +314,9 @@ describe('#922 P2-2 — check 12 (rule 10): no held-step line says a program die
       'unreadable',
       'no_claim_record',
       'store_keeps_no_claims',
+      // #729 CW-3a: the two lease states
+      'lease_held',
+      'lease_not_held',
     ] as const) {
       texts.push(HELD_WORDS.cli(state, 's', SINCE));
     }
@@ -330,5 +338,32 @@ describe('#922 P2-2 — check 12 (rule 10): no held-step line says a program die
     //     presumed; (b) prints each text that does.
     expect(jsdoc).toContain('deadline has passed');
     expect(texts.filter((t) => /\b(died|dead|gone|presumed)\b/i.test(t))).toEqual([]);
+  });
+
+  it('#729 CW-3a: the CLI’s lines for the two lease states hold no word of the deny-list', async () => {
+    const DENY =
+      /\b(died|dead|alive|live runner|live driver|presumed|probably|likely|unknown age|deadline)\b/i;
+    const lines = async (lease: 'live' | 'dead'): Promise<string[]> => {
+      // a claim with no deadline, so the deny-list's "deadline" cannot come from the claim itself
+      const on = await heldOn(
+        { y: { ...CLAIMS['unknown_age']!, lease: { id: 'L' } } },
+        true,
+        ['x'],
+        lease,
+      );
+      return [
+        HELD_WORDS.cli(lease === 'live' ? 'lease_held' : 'lease_not_held', 'y', SINCE),
+        heldLine(on.entries[0]!),
+        ...heldWayLines(on.entries[0]!),
+      ];
+    };
+    const held = await lines('live');
+    const notHeld = await lines('dead');
+    // (a) red when a lease state's words say a program died, is alive, presumed or likely, name an
+    //     unknown age or a deadline, or a not-held one says "wait for it"; (b) prints each such text.
+    expect({
+      deny: [...held, ...notHeld].filter((t) => DENY.test(t)),
+      wait: notHeld.filter((t) => /wait for it/i.test(t)),
+    }).toEqual({ deny: [], wait: [] });
   });
 });

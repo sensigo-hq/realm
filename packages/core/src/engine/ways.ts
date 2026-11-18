@@ -110,6 +110,11 @@ export type Cond =
   | { code: 'claim_deadline_ahead'; deadline: string }
   /** #922 (A25): a reclaim of a claim whose age is unknown, unreadable, or not recorded. */
   | { code: 'override_claim_unknown_age'; state: 'unknown_age' | 'unreadable' | 'no_claim_record' }
+  /**
+   * #729 CW-3a (the design's D6, b7f72a42 extended): a reclaim of a claim whose lease its program held
+   * when it was checked — that program may still be running the step.
+   */
+  | { code: 'lease_held' }
   /** #922 (A27): running the step again may repeat its effects. */
   | { code: 'rerun_not_idempotent'; basis: 'not_declared' | 'definition_absent' };
 
@@ -705,7 +710,12 @@ export const ARGS: { readonly [V in WayVerb]: Readonly<Record<string, ArgSpec>> 
     force: {
       type: 'boolean',
       required: true,
-      discharges: ['claim_deadline_ahead', 'override_claim_unknown_age', 'rerun_not_idempotent'],
+      discharges: [
+        'claim_deadline_ahead',
+        'override_claim_unknown_age',
+        'lease_held',
+        'rerun_not_idempotent',
+      ],
     },
     claimed_at: { type: 'string', required: false, discharges: [] },
   },
@@ -1082,7 +1092,7 @@ export function agentRenderedList(
   // #922 (D3 §3): a held step waits only while it can still finish — its deadline ahead, or its
   // age unknown or unreadable; a held step past its deadline is no wait, and never one alone.
   const waitsOnOthers = (u: Unavailable): boolean => {
-    if (u.code === 'held_elsewhere') return heldStateOf(u).state !== 'past';
+    if (u.code === 'held_elsewhere') return !heldIsPast(heldStateOf(u).state);
     if (u.code === 'door_withholds_answers') return true;
     if (u.code === 'question_open' || u.code === 'gated_step') {
       return handedOff.has(u.facts.gate_id);
@@ -1090,7 +1100,7 @@ export function agentRenderedList(
     return false;
   };
   const pastHeld = (u: Unavailable): boolean =>
-    u.code === 'held_elsewhere' && heldStateOf(u).state === 'past';
+    u.code === 'held_elsewhere' && heldIsPast(heldStateOf(u).state);
   return {
     callable,
     run_ended: runEnded,
@@ -1680,19 +1690,48 @@ export function heldFacts(snap: Snapshot, step: string): FactsOf<'held_elsewhere
 
 /**
  * #922 (D4 decision 1): a held step's state at a reply's `as_of` — the one classification the reply
- * rule, the reclaim way's conditions, its judge and the bounded order switch on. A claim that names a
- * lease is classed by its deadline (CW-3 adds the lease states here). `no_claim_record` behaves as
- * `unknown_age` everywhere; only its words differ.
+ * rule, the reclaim way's conditions, its judge and the bounded order switch on. `no_claim_record`
+ * behaves as `unknown_age` everywhere; only its words differ.
+ *
+ * #729 CW-3a (design record C5 §4.4): a claim that names a lease is classed by its lease's fact
+ * first, as CW-1b's claim classifier is — `lease_held` (held when it was checked) behaves as
+ * `ahead`, `lease_not_held` as `past`, and a lease that is absent or whose state is unknown is
+ * `unknown_age`, whatever the claim's deadline. Neither lease state carries a deadline.
  */
 export type HeldState =
   | { state: 'ahead'; deadline: string }
   | { state: 'past'; deadline: string }
   | { state: 'unknown_age' }
   | { state: 'unreadable' }
-  | { state: 'no_claim_record' };
+  | { state: 'no_claim_record' }
+  | { state: 'lease_held' }
+  | { state: 'lease_not_held' };
+
+/** #729 CW-3a: a leased claim's state, from its lease fact alone. */
+function leaseState(lease: LeaseFact): HeldState {
+  if (lease.state === 'held') return { state: 'lease_held' };
+  return lease.state === 'not_held' ? { state: 'lease_not_held' } : { state: 'unknown_age' };
+}
+
+/**
+ * #729 CW-3a: whether a held state is read as a claim past its deadline by every door that singles
+ * one out — to be freed, never waited for: `past`, or a lease no program held.
+ */
+export function heldIsPast(state: HeldState['state'] | 'store_keeps_no_claims'): boolean {
+  return state === 'past' || state === 'lease_not_held';
+}
+
+/**
+ * #729 CW-3a: whether a held state is read as a claim inside its window (freed only "anyway", listed
+ * last): `ahead`, or a lease its program held.
+ */
+export function heldIsAhead(state: HeldState['state'] | 'store_keeps_no_claims'): boolean {
+  return state === 'ahead' || state === 'lease_held';
+}
 
 /** #922: a held step's state from its facts at `at` (past means `isPastDeadline`, ≥). */
 export function heldStateAt(facts: FactsOf<'held_elsewhere'>, at: Date): HeldState {
+  if (facts.lease !== undefined) return leaseState(facts.lease);
   if (typeof facts.deadline === 'string') {
     return isPastDeadline(facts.deadline, at)
       ? { state: 'past', deadline: facts.deadline }
@@ -1710,6 +1749,7 @@ export function heldStateOf(entry: {
   facts: FactsOf<'held_elsewhere'>;
   clears_at?: string;
 }): HeldState {
+  if (entry.facts.lease !== undefined) return leaseState(entry.facts.lease);
   const { deadline } = entry.facts;
   if (typeof deadline === 'string') {
     return entry.clears_at !== undefined
@@ -1739,7 +1779,14 @@ export function reclaimWayOf(
   const conditions: Cond[] = [];
   if (state.state === 'ahead') {
     conditions.push({ code: 'claim_deadline_ahead', deadline: state.deadline });
-  } else if (state.state !== 'past') {
+  } else if (state.state === 'lease_held') {
+    // #729 CW-3a: its program held the claim's lease when it was checked (b7f72a42, D6)
+    conditions.push({ code: 'lease_held' });
+  } else if (
+    state.state === 'unknown_age' ||
+    state.state === 'unreadable' ||
+    state.state === 'no_claim_record'
+  ) {
     conditions.push({ code: 'override_claim_unknown_age', state: state.state });
   }
   if (definition === undefined) {
@@ -1799,7 +1846,7 @@ function offerReclaims(
   const rank = (u: Unavailable): number => {
     if (u.code !== 'held_elsewhere') return 1;
     const state = heldStateOf(u).state;
-    return state === 'past' ? 0 : state === 'ahead' ? 2 : 1;
+    return heldIsPast(state) ? 0 : heldIsAhead(state) ? 2 : 1;
   };
   for (const entry of [...held].sort((a, b) => rank(a) - rank(b))) {
     const way = entry.remedy[0];
@@ -2796,7 +2843,8 @@ export function judgeReclaim(
   const way = reclaimWayOf(snap, facts, definition);
   if (claimedAt === undefined) {
     const state = heldStateAt(facts, snap.at).state;
-    if (typeof facts.claimed_at === 'string' && state !== 'past') {
+    // #729 CW-3a: a lease no program held is admitted without the stamp, as a past claim is.
+    if (typeof facts.claimed_at === 'string' && !heldIsPast(state)) {
       return {
         verb: 'reclaim',
         step,
@@ -3110,6 +3158,8 @@ export function reclaimConditionWords(cond: Cond): string | undefined {
         : cond.state === 'no_claim_record'
           ? `It is held with no claim record, ${unknown}`
           : `Its claim has no deadline, ${unknown}`;
+    case 'lease_held':
+      return "Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.";
     case 'rerun_not_idempotent':
       return cond.basis === 'not_declared'
         ? 'It is not declared idempotent, so running it again may repeat its effects.'
@@ -3176,6 +3226,15 @@ export const HELD_WORDS = {
         return many
           ? `${names} are held; this store keeps no claim records, so a person cannot free them with reclaim. Wait for them.`
           : `${names} is held; this store keeps no claim records, so a person cannot free it with reclaim. Wait for it.`;
+      // #729 CW-3a: `ahead`'s and `past`'s meaning, with the lease sentence in the deadline's place.
+      case 'lease_held':
+        return many
+          ? `${names} are held; their programs held the claims' leases when they were checked. Wait for them. A person can free them, but if a program is still running, its step runs twice.`
+          : `${names} is held; its program held the claim's lease when it was checked. Wait for it. A person can free it, but if that program is still running, the step runs twice.`;
+      case 'lease_not_held':
+        return many
+          ? `${names} were claimed, and no program held their claims' leases when they were checked; no result is recorded for them. Tell the user: a person can free them.`
+          : `${names} was claimed, and no program held the claim's lease when it was checked; no result is recorded for it. Tell the user: a person can free it.`;
     }
   },
   /** The sentence after a past group's clause when running its steps again may not be safe. */
@@ -3198,14 +3257,20 @@ export const HELD_WORDS = {
         return 'it is held by a claim whose deadline cannot be read';
       case 'no_claim_record':
         return 'it is held, with no claim record';
+      case 'lease_held':
+        return "it is held; its program held the claim's lease when it was checked";
+      case 'lease_not_held':
+        return "it was claimed, and no program held the claim's lease when it was checked; no result is recorded for it";
     }
   },
   /** The door's clause after a by-name reason, joined inside its sentence (` — …`). */
   clause(state: HeldWordsState): string {
     switch (state) {
       case 'ahead':
+      case 'lease_held':
         return ' — a person can free it, but if its program is still running, the step runs twice';
       case 'past':
+      case 'lease_not_held':
         return ' — a person can free it';
       case 'unknown_age':
       case 'unreadable':
@@ -3219,6 +3284,18 @@ export const HELD_WORDS = {
   pastLine(deadline: string): string {
     return `Its deadline passed at ${deadline}; no result is recorded for it.`;
   },
+  /** #729 CW-3a: the line an entry for a claim whose lease no program held leads with. */
+  notHeldLine:
+    "No program held the claim's lease when it was checked; no result is recorded for it.",
+  /**
+   * #729 CW-3a: the line an operator's entry for a held step leads its condition words with — the
+   * dry run's, inspect's and the MCP operator entry's: for `past` its deadline, for `lease_not_held`
+   * the not-held line; none for a state that can still finish.
+   */
+  leadLine(state: HeldState): string | undefined {
+    if (state.state === 'past') return HELD_WORDS.pastLine(state.deadline);
+    return state.state === 'lease_not_held' ? HELD_WORDS.notHeldLine : undefined;
+  },
   /**
    * #922 P2-2 (R13): the CLI's opening of one held step's line, before its condition words and its
    * command; `at` is the deadline (ahead, past) or the claim's `since`, left out when it has none.
@@ -3227,7 +3304,10 @@ export const HELD_WORDS = {
     switch (state) {
       case 'past':
         return `'${step}' was claimed and its deadline passed at ${at}; no result is recorded for it.`;
+      case 'lease_not_held':
+        return `'${step}' was claimed, and no program held the claim's lease when it was checked; no result is recorded for it.`;
       case 'ahead':
+      case 'lease_held':
         return `'${step}' is held; wait for it.`;
       case 'unknown_age':
       case 'unreadable':
@@ -3271,15 +3351,17 @@ export function heldAgentWords(
   const order: HeldWordsState[] = [
     'store_keeps_no_claims',
     'past',
+    'lease_not_held',
     'unknown_age',
     'unreadable',
     'no_claim_record',
     'ahead',
+    'lease_held',
   ];
   const groups = new Map<string, { state: HeldWordsState; rerun?: string; entries: typeof held }>();
   for (const entry of held) {
     const state = heldWordsStateOf(entry, persistsClaims);
-    const rerun = state === 'past' ? heldRerunOf(entry) : undefined;
+    const rerun = heldIsPast(state) ? heldRerunOf(entry) : undefined;
     const key = `${state}:${rerun ?? ''}`;
     const group = groups.get(key) ?? {
       state,

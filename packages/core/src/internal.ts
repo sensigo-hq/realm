@@ -280,6 +280,8 @@ export {
   // reclaim condition's words.
   heldStateAt,
   heldStateOf,
+  heldIsPast,
+  heldIsAhead,
   reclaimConditionWords,
   // #922 P2-1 (R13): the one table of a held step's words, by its state, and its readers.
   HELD_WORDS,

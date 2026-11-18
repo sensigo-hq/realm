@@ -806,6 +806,8 @@ Cond · type · public
       code: 'override_claim_unknown_age';
       state: 'unknown_age' | 'unreadable' | 'no_claim_record';
   } | {
+      code: 'lease_held';
+  } | {
       code: 'rerun_not_idempotent';
       basis: 'not_declared' | 'definition_absent';
   };
@@ -4426,6 +4428,8 @@ guardEndingOfRun · value · internal
 guardPassedLine · value · internal
 hashParams · value · internal
 heldAgentWords · value · internal
+heldIsAhead · value · internal
+heldIsPast · value · internal
 heldLeaseWords · value · internal
 heldRerunOf · value · internal
 heldStateAt · value · internal
