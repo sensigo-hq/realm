@@ -532,6 +532,19 @@ export function writeRunUpdate(
   return text;
 }
 
+/**
+ * Gap 1, unit A0: a run's core document as a listing reads it, each drive-failure entry's
+ * `model_text` removed: five fixed paths, because the ring keeps five entries (`RING_CAP`).
+ */
+const LISTED_CORE =
+  'SELECT json_remove(record, ' +
+  [0, 1, 2, 3, 4].map((i) => `'$.drive_failures.entries[${i}].model_text'`).join(', ') +
+  ') AS record FROM runs WHERE id = ?';
+
+/** Gap 1, unit A0: a run's evidence rows as a listing reads them, each entry's `model_text` removed. */
+const LISTED_EVIDENCE =
+  "SELECT seq, json_remove(entry, '$.model_text') AS entry FROM evidence WHERE run_id = ? ORDER BY seq";
+
 /** The stored run cannot be read back: its record and its rows disagree. */
 function disagreement(runId: string, what: string): Error {
   return new Error(`The stored run ${runId} cannot be read back: ${what}.`);
@@ -545,19 +558,30 @@ function disagreement(runId: string, what: string): Error {
  * naming the run when they disagree (a store whose guards a foreign writer dropped can hold that);
  * then puts each piece back where its placeholder is, so the key order is the written one, and sets
  * the phase to {@link deriveRunPhase}'s answer, never the stored column.
+ *
+ * Gap 1, unit A0: with `listed`, as a listing reads it: SQLite removes `model_text` from each
+ * evidence row and from each of the drive-failure ring's entries in the SELECTs, so the texts are
+ * never read (`json_remove` on a missing key changes nothing, and keeps every other value). The read
+ * checks no entry hash, so the removal is safe; `update` refuses such a record (it changes an entry).
  */
-export function readRunInTransaction(db: DatabaseLike, runId: string): RunRecord | null {
+export function readRunInTransaction(
+  db: DatabaseLike,
+  runId: string,
+  listed = false,
+): RunRecord | null {
   // Three reads outside a transaction are three snapshots: a write between them could pass unseen.
   if (!db.isTransaction) {
     throw new Error(
       'readRunInTransaction reads a run in one snapshot, so it needs a transaction open on its connection, and none is open.',
     );
   }
-  const row = db.prepare('SELECT record FROM runs WHERE id = ?').get(runId);
+  const row = db.prepare(listed ? LISTED_CORE : 'SELECT record FROM runs WHERE id = ?').get(runId);
   if (row === undefined) return null;
   const core = JSON.parse(String(row['record'])) as JsonObject;
   const entries = db
-    .prepare('SELECT seq, entry FROM evidence WHERE run_id = ? ORDER BY seq')
+    .prepare(
+      listed ? LISTED_EVIDENCE : 'SELECT seq, entry FROM evidence WHERE run_id = ? ORDER BY seq',
+    )
     .all(runId);
   const blobs = db.prepare('SELECT name, value FROM run_blobs WHERE run_id = ?').all(runId);
 

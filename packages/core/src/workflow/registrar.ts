@@ -3,7 +3,7 @@ import { readFileSync, mkdirSync, readdirSync, statSync, accessSync, constants }
 import { join } from 'node:path';
 import { realmHomePath } from '../store/realm-home.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
-import type { RunRecord } from '../types/run-record.js';
+import type { ListedRecord, RunRecord } from '../types/run-record.js';
 import {
   WorkflowError,
   newerDefinitionFactsOf,
@@ -1097,7 +1097,8 @@ export function definitionAbsenceOf(
  */
 export async function getWorkflowForRun(
   store: Pick<WorkflowRegistrar, 'get'>,
-  run: RunRecord,
+  // Gap 1, unit A0: a listing's record too (every `RunRecord` is one).
+  run: ListedRecord,
   opts: { retryVerb: string; verb: string; terminalOk?: boolean },
 ): Promise<WorkflowDefinition> {
   admitEntry('getWorkflowForRun', { store, storeKind: 'workflow store', parts: { run, opts } });

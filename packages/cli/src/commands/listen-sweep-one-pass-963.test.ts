@@ -125,6 +125,8 @@ function proxied(store: RunStore): { runStore: RunStore; seen: Seen } {
   }
   const runStore = new Proxy(store, {
     get(target, prop) {
+      // Gap 1, unit A0: hides the store's `scanListed`, so the listing reads through this `scan` double.
+      if (prop === 'scanListed') return undefined;
       if (prop === 'scan') return scan;
       if (prop === 'settleStep') {
         return (...args: Parameters<RunStore['settleStep']>) => {

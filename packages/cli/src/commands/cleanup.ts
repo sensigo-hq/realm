@@ -1,9 +1,11 @@
 // cleanup command — marks idle non-terminal runs as abandoned.
 import { Command } from 'commander';
-import type { RunStore, RunRecord, Snapshot } from '@sensigo/realm';
+import type { RunStore } from '@sensigo/realm';
 import { isIdleForCleanup } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { openCliHome } from '../lib/home.js';
+// Gap 1, unit A0: the listing that reads no model call's text.
+import { scanListedRuns, type ListedRecord, type ListedSnapshot } from '@sensigo/realm';
 
 /**
  * List all non-terminal runs idle for longer than `olderThan` and mark them abandoned.
@@ -14,16 +16,17 @@ import { openCliHome } from '../lib/home.js';
 export async function cleanupRuns(
   options: { olderThan: string; dryRun?: boolean },
   runStore: RunStore,
-): Promise<{ affected: RunRecord[] }> {
+): Promise<{ affected: ListedRecord[] }> {
   const threshold = parseDuration(options.olderThan);
   // #715 (b) (D-26, D6-41): each run is judged at its OWN snapshot's reading.
   // #616 PR-2c c4: every page of the store's scan.
-  const all: Snapshot[] = [];
-  for await (const page of runStore.scan({}, { pageSize: 1000, projection: 'record' })) {
+  // Gap 1, unit A0: listed, so no model call's text is read; the seal below writes by run id.
+  const all: ListedSnapshot[] = [];
+  for await (const page of scanListedRuns(runStore, {}, { pageSize: 1000 })) {
     for (const item of page.items) if (item.kind === 'run') all.push(item.run);
   }
 
-  const affected: RunRecord[] = [];
+  const affected: ListedRecord[] = [];
   for (const snapshot of all) {
     // #715 (b) (02 §B.3, D6-9, Amendment 11): selected by core's one cleanup judge, at this row's own
     // reading — not ended, no question open (issue #367: a gate is never swept, whatever the persisted

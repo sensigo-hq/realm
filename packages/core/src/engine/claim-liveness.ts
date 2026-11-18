@@ -12,7 +12,7 @@
 import type { ClaimRecord } from '../types/run-record.js';
 import type { LeaseFact } from '../store/lease-port.js';
 import { isLeaseFact, leaseFactOf, type Unleased } from '../store/lease-facts.js';
-import type { Snapshot } from './snapshot.js';
+import type { ListedSnapshot } from './snapshot.js';
 import type {
   WorkflowDefinition,
   StepDefinition,
@@ -245,7 +245,7 @@ export interface InProgressClaimInfo {
  * #729 CW-1b: a claim that names a lease is judged by its fact on this snapshot (`leaseFactOf`), and
  * its info carries it as `lease`; a claim that names none gives exactly the info it gave before.
  */
-export function classifyInProgressClaims(snapshot: Snapshot): InProgressClaimInfo[] {
+export function classifyInProgressClaims(snapshot: ListedSnapshot): InProgressClaimInfo[] {
   const { record: run, at: now } = snapshot;
   return run.in_progress_steps.map((step) => {
     const claim = run.claims?.[step];
@@ -269,7 +269,7 @@ export function classifyInProgressClaims(snapshot: Snapshot): InProgressClaimInf
  * #729 CW-3a (§4.4): a claim that names a lease is kept unless its lease was not held — a lease that
  * is absent or whose state is not known is never swept.
  */
-export function isIdleForCleanup(snapshot: Snapshot, thresholdMs: number): boolean {
+export function isIdleForCleanup(snapshot: ListedSnapshot, thresholdMs: number): boolean {
   const { record: run, at } = snapshot;
   if (run.terminal_state) return false;
   if (run.pending_gate !== undefined || WAITING_PHASES.has(deriveRunPhase(run))) return false;

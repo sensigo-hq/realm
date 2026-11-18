@@ -18,10 +18,12 @@ import {
   NO_LEASE_FACTS,
   parseStamp,
   writtenSnapshot,
+  listedSnapshotOf,
   SCAN_MAX_PAGE_SIZE,
   type Clock,
   type CreateResult,
   type KeyAnswer,
+  type ListedScanPage,
   type RunRow,
   type ScanFilter,
   type ScanOptions,
@@ -67,6 +69,23 @@ import {
   dueCallbacks,
   freezeCallbackBody,
   markCallback,
+  type CallbackKeyDecision,
+  type CallbackKeyDeleteResult,
+  type CallbackKeyEndResult,
+  type CallbackKeyMakeResult,
+  type CallbackKeyPair,
+  type CallbackKeyReplaceResult,
+  type CallbackKeyRotateRequest,
+  type CallbackKeyRotateResult,
+  type CallbackKeySlot,
+  type CallbackKeySlotName,
+  type CallbackKeyStore,
+  callbackKeyPairAt,
+  checkCallbackKeyRequest,
+  decideCallbackKeyEndPrevious,
+  decideCallbackKeyMake,
+  decideCallbackKeyReplace,
+  decideCallbackKeyRotate,
 } from '@sensigo/realm';
 import { REALM_TESTING_BRAND } from '../brand.js';
 
@@ -227,6 +246,116 @@ function callbackBytes(row: CallbackRow | undefined): number {
 }
 
 /**
+ * R1.3 callback A2: the in-memory signing keys (a callback store's `keys`). One map entry per slot, as
+ * a table keeps one row per slot: a decider's writes are applied one slot at a time, all inside the
+ * method's one synchronous stretch (check, reading, read the pair, decide, write). Kept in their own
+ * map, never in a callback row or a run. Exported from this module only, not from the package.
+ */
+export class InMemoryCallbackKeys implements CallbackKeyStore {
+  private readonly slots = new Map<string, CallbackKeySlot>();
+
+  constructor(private readonly clock: Clock) {}
+
+  /** The map key of one slot: the three parts, so no part can run into another. */
+  private static at(workflowId: string, host: string, slot: CallbackKeySlotName): string {
+    return JSON.stringify([workflowId, host, slot]);
+  }
+
+  private pairOf(workflowId: string, host: string): CallbackKeyPair {
+    const current = this.slots.get(InMemoryCallbackKeys.at(workflowId, host, 'current'));
+    const previous = this.slots.get(InMemoryCallbackKeys.at(workflowId, host, 'previous'));
+    return {
+      ...(current !== undefined ? { current } : {}),
+      ...(previous !== undefined ? { previous } : {}),
+    };
+  }
+
+  /** Applies a decision's writes in order, one slot each, and answers its result. */
+  private apply<R>(workflowId: string, host: string, decision: CallbackKeyDecision<R>): R {
+    for (const write of decision.writes) {
+      if ('set' in write)
+        this.slots.set(InMemoryCallbackKeys.at(workflowId, host, write.set.slot), write.set);
+      else this.slots.delete(InMemoryCallbackKeys.at(workflowId, host, write.drop));
+    }
+    return decision.result;
+  }
+
+  async read(workflowId: string, host: string): Promise<CallbackKeyPair> {
+    checkCallbackKeyRequest({ kind: 'pair', workflowId, host });
+    const at = takeRawReading(this.clock);
+    return callbackKeyPairAt(this.pairOf(workflowId, host), at);
+  }
+
+  async make(workflowId: string, host: string, candidate: string): Promise<CallbackKeyMakeResult> {
+    checkCallbackKeyRequest({ kind: 'candidate', workflowId, host, candidate });
+    const at = takeRawReading(this.clock);
+    const decision = decideCallbackKeyMake(this.pairOf(workflowId, host), candidate, at);
+    return this.apply(workflowId, host, decision);
+  }
+
+  async rotate(
+    workflowId: string,
+    host: string,
+    request: CallbackKeyRotateRequest,
+  ): Promise<CallbackKeyRotateResult> {
+    checkCallbackKeyRequest({ kind: 'rotate', workflowId, host, request });
+    const at = takeRawReading(this.clock);
+    const decision = decideCallbackKeyRotate(this.pairOf(workflowId, host), request, at);
+    return this.apply(workflowId, host, decision);
+  }
+
+  async endPrevious(workflowId: string, host: string): Promise<CallbackKeyEndResult> {
+    checkCallbackKeyRequest({ kind: 'pair', workflowId, host });
+    const at = takeRawReading(this.clock);
+    const decision = decideCallbackKeyEndPrevious(this.pairOf(workflowId, host), at);
+    return this.apply(workflowId, host, decision);
+  }
+
+  async replace(
+    workflowId: string,
+    host: string,
+    candidate: string,
+  ): Promise<CallbackKeyReplaceResult> {
+    checkCallbackKeyRequest({ kind: 'candidate', workflowId, host, candidate });
+    const at = takeRawReading(this.clock);
+    const decision = decideCallbackKeyReplace(this.pairOf(workflowId, host), candidate, at);
+    return this.apply(workflowId, host, decision);
+  }
+
+  async delete(workflowId: string, host: string): Promise<CallbackKeyDeleteResult> {
+    checkCallbackKeyRequest({ kind: 'pair', workflowId, host });
+    const current = InMemoryCallbackKeys.at(workflowId, host, 'current');
+    const had = this.slots.has(current);
+    this.slots.delete(current);
+    this.slots.delete(InMemoryCallbackKeys.at(workflowId, host, 'previous'));
+    return { had_current: had };
+  }
+
+  /**
+   * A test double for what a sealing store reports when it cannot unseal a slot: the slot becomes
+   * `unreadable` under `masterFp`, keeping its `created_at` and `expires_at`. Throws on a slot that
+   * does not exist. Takes no reading.
+   */
+  makeUnreadable(
+    workflowId: string,
+    host: string,
+    slot: CallbackKeySlotName,
+    masterFp: string,
+  ): void {
+    const at = InMemoryCallbackKeys.at(workflowId, host, slot);
+    const held = this.slots.get(at);
+    if (held === undefined) throw new Error(`makeUnreadable: the pair has no ${slot} key.`);
+    this.slots.set(at, {
+      slot,
+      state: 'unreadable',
+      master_fp: masterFp,
+      created_at: held.created_at,
+      ...(held.expires_at !== undefined ? { expires_at: held.expires_at } : {}),
+    });
+  }
+}
+
+/**
  * R1.3 callback A1a and A1b: the in-memory callback store (an `InMemoryStore`'s `callbacks` member).
  * `create` writes a new run's row through `register`, in the same synchronous stretch as the run.
  * The sender's methods check the request, take their reading when they take one, read the row and
@@ -235,11 +364,15 @@ function callbackBytes(row: CallbackRow | undefined): number {
  */
 export class InMemoryCallbackStore implements CallbackStore {
   private readonly rows = new Map<string, CallbackRow>();
+  /** R1.3 callback A2: the signing keys, in their own map; a run's purge leaves them. */
+  readonly keys: InMemoryCallbackKeys;
 
   constructor(
     private readonly clock: Clock,
     private readonly runOf: (runId: string) => CallbackRunFacts | undefined,
-  ) {}
+  ) {
+    this.keys = new InMemoryCallbackKeys(clock);
+  }
 
   /** Whether any row holds `webhookId`. */
   holds(webhookId: string): boolean {
@@ -600,6 +733,10 @@ export class InMemoryStore implements RunStore {
     // issue #367: the seal-integrity boundary — identical to JsonFileStore's update tail (the
     // measured update/settle asymmetry closed; the listen/run-attach suites drive THIS store).
     assertSealIntegrity(existing, record);
+    // Gap 1, unit A0: an update that drops a stored evidence entry's `model_text` is refused, as the
+    // SQLite store refuses a changed entry: a listing's record leaves the texts out, and is never
+    // written back over them.
+    assertKeepsModelText(existing, record);
     const updated: RunRecord = {
       ...record,
       run_phase: deriveRunPhase(record),
@@ -912,6 +1049,31 @@ export class InMemoryStore implements RunStore {
   }
 
   /**
+   * Gap 1, unit A0: the runs `scan` gives in its `'record'` projection, each without its model
+   * calls' texts, built from copies: this store's `scan` hands out its stored records themselves, so
+   * each listed record is a copy (`structuredClone`) with the texts left out (`listedSnapshotOf`),
+   * and the stored records keep theirs. The pages, filters, readings and lease facts are `scan`'s.
+   */
+  async *scanListed(
+    filter: ScanFilter,
+    options: Omit<ScanOptions, 'projection'>,
+  ): AsyncGenerator<ListedScanPage, void, undefined> {
+    for await (const page of this.scan(filter, { ...options, projection: 'record' })) {
+      yield {
+        ...page,
+        items: page.items.map((item) =>
+          item.kind === 'run'
+            ? {
+                kind: 'run',
+                run: listedSnapshotOf({ ...item.run, record: structuredClone(item.run.record) }),
+              }
+            : item,
+        ),
+      };
+    }
+  }
+
+  /**
    * Who holds `workflowId`'s idempotency key `key` (#616 PR-2c c4-i): `held`, with the run's id, when
    * the key's pointer names a run this store holds; otherwise `unseen`. Never `purged`: this store
    * deletes no run. `since` is the epoch: a store that never deletes a run has forgotten nothing.
@@ -930,3 +1092,30 @@ export class InMemoryStore implements RunStore {
 }
 
 brandClass(InMemoryStore, Symbol.for('@sensigo/realm-testing/InMemoryStore'), REALM_TESTING_BRAND);
+
+/**
+ * Gap 1, unit A0: refuses an update that drops the `model_text` a stored evidence entry holds (the
+ * entry gone, or the key gone from it), with the SQLite store's code for a changed entry.
+ */
+function assertKeepsModelText(existing: RunRecord, record: RunRecord): void {
+  const stored = Array.isArray(existing.evidence) ? existing.evidence : [];
+  const next = Array.isArray(record.evidence) ? record.evidence : [];
+  const dropped = stored.findIndex(
+    (entry, i) =>
+      Object.prototype.hasOwnProperty.call(entry, 'model_text') &&
+      (next[i] === undefined || !Object.prototype.hasOwnProperty.call(next[i], 'model_text')),
+  );
+  if (dropped === -1) return;
+  throw new WorkflowError(
+    `The store refused a write that would remove the model calls' text from evidence entry ` +
+      `${dropped} of run ${record.id}: a listing of runs leaves the texts out, and its record is ` +
+      `never written back.`,
+    {
+      code: 'STATE_EVIDENCE_REWRITTEN',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { runId: record.id, entry: dropped },
+    },
+  );
+}

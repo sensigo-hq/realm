@@ -34,7 +34,6 @@ import type {
 } from '@sensigo/realm';
 import {
   readInstant,
-  type Snapshot,
   type ArtifactDeletionReport,
   WorkflowError,
   ReclaimVersionChanged,
@@ -48,6 +47,8 @@ import type { PurgeReport, PurgeSelection } from '@sensigo/realm-store-sqlite';
 import { parseDuration } from '../lib/parse-duration.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
+// Gap 1, unit A0: the listing that reads no model call's text.
+import { scanListedRuns, type ListedRecord, type ListedSnapshot } from '@sensigo/realm';
 
 export type PurgeEligibility =
   | { eligible: true; overriddenClaimStep?: string | undefined }
@@ -74,7 +75,8 @@ export type PurgeEligibility =
  */
 export function isPurgeEligible(
   // #715 (b) (D6-17): one snapshot — the record and the reading it is judged at; no default clock.
-  snapshot: Snapshot,
+  // Gap 1, unit A0: a listing's snapshot too (every `Snapshot` is one).
+  snapshot: ListedSnapshot,
   opts: { explicit: boolean },
 ): PurgeEligibility {
   const { record: run } = snapshot;
@@ -134,7 +136,7 @@ export function isPurgeEligible(
 }
 
 export interface PurgeCandidate {
-  run: RunRecord;
+  run: ListedRecord;
   bytes: number;
   resumable: boolean;
   /**
@@ -222,7 +224,7 @@ const UNREAD_WORKFLOW = {
  * as one it may take (the old count — a path a purge could destroy).
  */
 async function resumableOf(
-  run: RunRecord,
+  run: ListedRecord,
   workflows: Pick<WorkflowRegistrar, 'get'> | undefined,
 ): Promise<boolean> {
   const workflow =
@@ -261,7 +263,7 @@ export async function purgeRuns(
   const dryRun = options.dryRun ?? true;
   const runsDir = anchorStore.runsDirPath;
 
-  const candidates: Array<{ run: RunRecord; overriddenClaimStep?: string | undefined }> = [];
+  const candidates: Array<{ run: ListedRecord; overriddenClaimStep?: string | undefined }> = [];
   const skipped: Array<{ runId: string; reason: string }> = [];
 
   if (options.runId !== undefined) {
@@ -278,9 +280,10 @@ export async function purgeRuns(
   } else {
     const thresholdMs = options.olderThan !== undefined ? parseDuration(options.olderThan) : 0;
     // #616 PR-2c c4: every page of the store's scan, of one workflow when one is given.
-    const snapshots: Snapshot[] = [];
+    // Gap 1, unit A0: listed, so no model call's text is read; each run is purged by its id.
+    const snapshots: ListedSnapshot[] = [];
     const filter = options.workflow === undefined ? {} : { workflow: options.workflow };
-    for await (const page of anchorStore.scan(filter, { pageSize: 1000, projection: 'record' })) {
+    for await (const page of scanListedRuns(anchorStore, filter, { pageSize: 1000 })) {
       for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
     }
     // #715 (b) (D-26): each row judged at its own snapshot's `at`.

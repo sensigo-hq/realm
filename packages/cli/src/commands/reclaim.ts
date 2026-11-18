@@ -40,6 +40,8 @@ import {
   respondWayOfGate,
 } from '@sensigo/realm';
 import { openCliHome } from '../lib/home.js';
+// Gap 1, unit A0: the listing that reads no model call's text.
+import { scanListedRuns, type ListedSnapshot } from '@sensigo/realm';
 
 /**
  * Pure outcome→(glyph, message) renderer (issue #221 [M4]) — the SINGLE source of both reclaim
@@ -286,9 +288,10 @@ export async function selectAutoReclaims(
   // #715 (b) (D-26): no clock read here — each row is judged at its own snapshot's `at`.
   const selected: AutoReclaimPick[] = [];
   // #616 PR-2c c4: every page of the store's scan, of one workflow when one is given.
-  const snapshots: Snapshot[] = [];
+  // Gap 1, unit A0: listed, so no model call's text is read; each claim is reclaimed by id.
+  const snapshots: ListedSnapshot[] = [];
   const filter = opts.workflow === undefined ? {} : { workflow: opts.workflow };
-  for await (const page of store.scan(filter, { pageSize: 1000, projection: 'record' })) {
+  for await (const page of scanListedRuns(store, filter, { pageSize: 1000 })) {
     for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
   }
   for (const snapshot of snapshots) {
