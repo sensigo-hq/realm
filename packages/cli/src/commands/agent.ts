@@ -168,7 +168,8 @@ const SCHEMA_RETRIES_DEFAULT = 2;
  * `--llm-timeout`, `--mint-writer-nonce` and `--prompt-cache` (issue #600 PR 2: only when it was
  * stated and the provider can apply it — there is no Commander default, so a default is never
  * repeated), then `--cache-diagnostics off` (caching 3-M B2b: a stated `off` only; a stated `on` is
- * what unstated means where it can act, and where it cannot it would print a refused command). Left
+ * what unstated means where it can act, and where it cannot it would print a refused command), and
+ * `--no-record-model-text` (gap 1, unit A1: only when given). Left
  * out: `--workflow`, `--params` and `--register` (they apply only when a run is
  * created) and the hidden `--no-release-line-advisory` and `--spawned-by-listen` (listen's own).
  * A value outside `[A-Za-z0-9._/:@%+=,-]` is single-quoted, `'` written `'\''`.
@@ -196,6 +197,7 @@ export function buildReattachFlags(opts: {
   promptCacheSource?: 'stated' | 'default';
   providerAppliesPromptCache?: boolean;
   cacheDiagnostics?: string;
+  recordModelText?: boolean;
 }): string {
   const words: string[] = [];
   if (opts.providerModule !== undefined) {
@@ -223,6 +225,8 @@ export function buildReattachFlags(opts: {
     words.push('--prompt-cache', shellWord(opts.promptCache));
   }
   if (opts.cacheDiagnostics === 'off') words.push('--cache-diagnostics', 'off');
+  // Gap 1, unit A1: a drive that keeps no model text is continued the same way.
+  if (opts.recordModelText === false) words.push('--no-record-model-text');
   return words.join(' ');
 }
 
@@ -322,6 +326,11 @@ export const agentCommand = new Command('agent')
     "Whether to ask Anthropic why a request missed the cache: on or off. On by default at Anthropic's own address, for a request marked for caching. Each request that asks leaves a short-lived fingerprint of what it sent at Anthropic.",
     parseCacheDiagnostics,
   )
+  // Gap 1, unit A1: Commander's negated flag, so `recordModelText` is true unless it is given.
+  .option(
+    '--no-record-model-text',
+    "Do not keep the text of each model call on the run's record. The step notes that recording was off.",
+  )
   // issue #620 PR-C: the repo's first hidden option. `realm listen` appends it to every child it
   // spawns (buildAgentArgv): listen tells the operator once at startup, so a child per webhook
   // must not repeat the release-line advisory. Hidden because it is listen's, not an operator's.
@@ -359,6 +368,7 @@ export const agentCommand = new Command('agent')
       spawnedByListen?: boolean;
       logMode?: boolean;
       releaseLineAdvisory: boolean;
+      recordModelText: boolean;
     }) => {
       if (!opts.workflow && !opts.runId) {
         console.error('Error: one of --workflow or --run-id is required');
@@ -698,6 +708,8 @@ export const agentCommand = new Command('agent')
               schemaRetries: opts.schemaRetries,
               llmTimeoutSeconds: opts.llmTimeout,
               reattachFlags,
+              // Gap 1, unit A1: `--no-record-model-text` keeps no model text.
+              recordModelText: opts.recordModelText !== false,
               ...promptCacheFor(),
               ...earlierRuns,
               ...(stepCacheChoices !== undefined ? { stepCacheChoices } : {}),
@@ -785,6 +797,8 @@ export const agentCommand = new Command('agent')
               schemaRetries: opts.schemaRetries,
               llmTimeoutSeconds: opts.llmTimeout,
               reattachFlags,
+              // Gap 1, unit A1: `--no-record-model-text` keeps no model text.
+              recordModelText: opts.recordModelText !== false,
               ...promptCacheFor(),
               ...earlierRuns,
               ...(stepCacheChoices !== undefined ? { stepCacheChoices } : {}),

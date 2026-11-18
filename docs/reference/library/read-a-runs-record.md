@@ -57,6 +57,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`CacheState`](#cachestate) | type | One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the provider reported (`StepCacheDetail.state`). |
 | [`ClassifiableRun`](#classifiablerun) | type | The record shape both legacy classifiers read. |
 | [`GateClaimVerdict`](#gateclaimverdict) | type | A verdict with a cause that does not belong to it does not compile. |
+| [`ModelText`](#modeltext) | type | The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`). |
 | [`OutputSource`](#outputsource) | type | One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`). |
 | [`OutputSourceAbsentCause`](#outputsourceabsentcause) | type | Why an evidence entry says nothing about where its output came from (`outputSourceOf`'s `absent_cause`). |
 | [`Principal`](#principal) | type | What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`). |
@@ -389,6 +390,7 @@ interface EvidenceSnapshot {
     agent_profile?: string;
     agent_profile_hash?: string;
     tool_calls?: ToolCallRecord[];
+    model_text?: ModelText;
     resolved_params?: Record<string, unknown>;
     warn?: string;
     debug_output?: unknown;
@@ -1013,6 +1015,62 @@ type GateClaimVerdict = {
 } | {
     proof: 'spent';
     cause: 'answered' | 'expired';
+};
+```
+
+### ModelText
+
+type · public
+
+The text of each model call made for a step, on its evidence entry
+(`EvidenceSnapshot.model_text`). `realm agent` and `realm listen` write it; a program that embeds
+the engine can pass its own in `StepMeta.modelText`.
+
+`recorded: true` holds the texts. `messages` holds each distinct message once, and `tools` each
+distinct tool list (the request's tools as JSON). `realm agent` and `realm listen` mask each text
+for known secret values (`hidden` counts what that mask hid), then cut it at 64 KB of UTF-8 on a
+code-point boundary (`cut` gives the bytes kept and the text's full size). The engine stores a
+`StepMeta.modelText` as it is given: it neither masks nor cuts it. Each of `requests` names what
+one request sent and what came back by their places in `messages`, its tool list by its place in
+`tools`, and carries its `request_id` (the id of its entry in `diagnostics.cache.requests`).
+
+A message's text is its parts in order with no separator: a text part as it is; any other part
+as compact JSON, of a tool part's `type`, `id`, `tool_use_id`, `tool_call_id`, `name`, `input`,
+`content` and `is_error`, of a thinking part's `type` and `thinking`, of any other part's `type`.
+Cache marks, signatures and the data of a redacted thinking part are not kept.
+
+`recorded: false` says why a step Realm drove has no texts: recording was switched off
+(`--no-record-model-text`), or the provider module reported none it could read.
+
+```ts
+type ModelText = {
+    recorded: true;
+    messages: Array<{
+        role: 'system' | 'user' | 'assistant' | 'tool';
+        text: string;
+        cut?: {
+            kept_bytes: number;
+            full_bytes: number;
+        };
+        hidden?: number;
+    }>;
+    tools: Array<{
+        json: string;
+        cut?: {
+            kept_bytes: number;
+            full_bytes: number;
+        };
+        hidden?: number;
+    }>;
+    requests: Array<{
+        request_id: string | null;
+        sent: number[];
+        tools?: number;
+        reply: number[] | null;
+    }>;
+} | {
+    recorded: false;
+    why: 'switched_off' | 'provider_did_not_report';
 };
 ```
 

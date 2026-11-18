@@ -1225,6 +1225,7 @@ EvidenceSnapshot · type · public
       agent_profile?: string;
       agent_profile_hash?: string;
       tool_calls?: ToolCallRecord[];
+      model_text?: ModelText;
       resolved_params?: Record<string, unknown>;
       warn?: string;
       debug_output?: unknown;
@@ -2017,6 +2018,37 @@ MemberKind · type · public
   type MemberKind = typeof KIND.environment | typeof KIND.declared;
 
 MockAdapter · both · internal
+ModelText · type · public
+  type ModelText = {
+      recorded: true;
+      messages: Array<{
+          role: 'system' | 'user' | 'assistant' | 'tool';
+          text: string;
+          cut?: {
+              kept_bytes: number;
+              full_bytes: number;
+          };
+          hidden?: number;
+      }>;
+      tools: Array<{
+          json: string;
+          cut?: {
+              kept_bytes: number;
+              full_bytes: number;
+          };
+          hidden?: number;
+      }>;
+      requests: Array<{
+          request_id: string | null;
+          sent: number[];
+          tools?: number;
+          reply: number[] | null;
+      }>;
+  } | {
+      recorded: false;
+      why: 'switched_off' | 'provider_did_not_report';
+  };
+
 Money · type · internal
 MoneySource · type · internal
 MoneySourceTotal · type · internal
@@ -3399,6 +3431,7 @@ StepMeta · type · public
       toolCalls?: ToolCallRecord[];
       structuredOutput?: StructuredOutputMeta;
       usage?: UsageRecord[];
+      modelText?: ModelText;
   }
 
 StepScopedFencePredicate · type · public
