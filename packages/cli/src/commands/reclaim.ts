@@ -13,10 +13,17 @@ import type {
   InProgressClaimInfo,
   ReclaimResult,
   Snapshot,
+  Unavailable,
+  WorkflowDefinition,
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
-import { formatInstantWords, overdueOf } from '@sensigo/realm';
+import {
+  formatInstantWords,
+  overdueOf,
+  reclaimConditionWords,
+  reclaimRefusalWords,
+} from '@sensigo/realm';
 import { openCliHome } from '../lib/home.js';
 
 /**
@@ -54,6 +61,67 @@ export function renderReclaimOutcome(
         message: `no active claim on '${result.step}' and it is not settled — nothing to reclaim. If its dependencies are satisfied, driving the run will execute it.`,
       };
   }
+}
+
+/**
+ * #922 (P1 items 8, 12): what a judged per-step reclaim prints once admitted — each condition its
+ * `force` discharged, in its words, then the outcome. A step the definition read here does not name
+ * (renamed by a newer definition) says so. A step not held says so (exit 0, as before).
+ */
+export function reclaimResultLines(
+  result: Pick<
+    ReclaimResult,
+    'step' | 'outcome' | 'priorState' | 'conditionsDischarged' | 'refusal'
+  >,
+  runId: string,
+  definition: Pick<WorkflowDefinition, 'steps'> | undefined,
+): string[] {
+  const step = result.step;
+  if (result.outcome === 'already_settled' || result.outcome === 'no_active_claim') {
+    // correction 1: the words, then the run's ways on (the judged entry's remedy)
+    if (result.refusal !== undefined) {
+      return [reclaimRefusalText(reclaimRefusalWords(result.refusal)!, result.refusal)];
+    }
+    return [
+      reclaimRefusalWords({
+        verb: 'reclaim',
+        step,
+        code: 'not_held',
+        facts: { step },
+        remedy: [],
+      })!,
+    ];
+  }
+  if (result.outcome !== 'reclaimed') return [renderReclaimOutcome(result).message];
+  const words = (result.conditionsDischarged ?? []).flatMap((c) => reclaimConditionWords(c) ?? []);
+  const renamed = definition !== undefined && definition.steps[step] === undefined;
+  return [
+    ...words,
+    renamed
+      ? `Reclaimed step '${step}' of run ${runId}. The workflow definition read here has no step named '${step}'.`
+      : `Reclaimed step '${step}' of run ${runId}: it can run again.`,
+  ];
+}
+
+/**
+ * #922 (P1 item 12): a judged refusal — core's fact, then its act through the CLI's one renderer: a
+ * fence names each condition, then the command to reclaim the claim shown; a changed claim, where to
+ * read it; any other, its ways on.
+ */
+export function reclaimRefusalText(message: string, refusal: Unavailable): string {
+  const host = writerHost();
+  const lines = refusal.remedy.flatMap((way) => {
+    const command = cliCommandOf(way, undefined, host);
+    if (command === null) return [];
+    if (way.verb === 'reclaim') {
+      const words = way.conditions.flatMap((c) => reclaimConditionWords(c) ?? []);
+      return [[...words, `To reclaim this claim, run: ${command}`].join(' ')];
+    }
+    if (way.verb === 'respond') return [`To go on, answer its question first: ${command}`];
+    return [way.verb === 'inspect' ? `See: ${command}` : `To go on: ${command}`];
+  });
+  // correction 1: one line per command (two agent steps render the same `realm agent` command)
+  return [message, ...new Set(lines)].join(' ');
 }
 
 /**
@@ -97,6 +165,10 @@ export const reclaimCommand = new Command('reclaim')
   .description('Detect or recover a wedged run (a step claimed but never settled)')
   .argument('[run-id]', 'ID of the run to inspect (default) or reclaim; omit when using --all')
   .option('--step <name>', 'Reclaim this specific in-progress claim (requires --force)')
+  .option(
+    '--claimed-at <stamp>',
+    "With --step: the claim's stamp, as the offered command shows it (required for a claim whose deadline is ahead or unknown)",
+  )
   .option('--force', 'Actually reclaim — re-drives the step(s); side effects may repeat')
   .option(
     '--all',
@@ -112,13 +184,15 @@ export const reclaimCommand = new Command('reclaim')
       runId: string | undefined,
       opts: {
         step?: string;
+        claimedAt?: string;
         force?: boolean;
         all?: boolean;
         workflow?: string;
         olderThan?: string;
       },
     ) => {
-      const { reclaimStep, classifyInProgressClaims, shellWord } = await import('@sensigo/realm');
+      const { reclaimStep, classifyInProgressClaims, shellWord, getWorkflowForRun, WorkflowError } =
+        await import('@sensigo/realm');
       // #616 PR-2a (iii): the one door, opened once; the registry is built on its first use.
       const home = await openCliHome();
       const store = home.runStore;
@@ -147,6 +221,10 @@ export const reclaimCommand = new Command('reclaim')
         }
         if (opts.step !== undefined) {
           console.error('--step is a per-run flag; it cannot be combined with --all.');
+          process.exit(1);
+        }
+        if (opts.claimedAt !== undefined) {
+          console.error('--claimed-at is a per-step flag; it cannot be combined with --all.');
           process.exit(1);
         }
         let olderThanMs: number | undefined;
@@ -256,6 +334,10 @@ export const reclaimCommand = new Command('reclaim')
         process.exit(1);
       }
 
+      if (opts.claimedAt !== undefined && opts.step === undefined) {
+        console.error('--claimed-at requires --step <name>.');
+        process.exit(1);
+      }
       // --force without --step: refuse (must name the claim to act on — no blanket sweep here).
       if (opts.force === true && opts.step === undefined) {
         console.error(
@@ -278,19 +360,29 @@ export const reclaimCommand = new Command('reclaim')
             );
             process.exit(1);
           }
-          const info = classifyInProgressClaims(read).find((c) => c.step === opts.step);
-          if (info?.state === 'healthy') {
-            console.warn(
-              `⚠ '${opts.step}' currently has a HEALTHY claim (a live runner is presumed on it). ` +
-                `--force will override it and may double-drive live work.`,
-            );
+          // #922 (P1 items 8, 9, 12): the judged call — nothing is printed before admission. The
+          // definition is the run's own copy; one that cannot be read is judged `definition_absent`.
+          const definition = await getWorkflowForRun(home.workflowStore, run, {
+            retryVerb: 'reclaim',
+            verb: 'reclaim',
+            terminalOk: true,
+          }).catch(() => undefined);
+          let result: ReclaimResult;
+          try {
+            result = await reclaimStep(store, runId, opts.step, {
+              traceBufferStore,
+              force: true,
+              ...(definition !== undefined ? { definition } : {}),
+              ...(opts.claimedAt !== undefined ? { claimed_at: opts.claimedAt } : {}),
+            });
+          } catch (err) {
+            if (err instanceof WorkflowError && err.refusal !== undefined) {
+              console.error(reclaimRefusalText(err.message, err.refusal));
+              process.exit(1);
+            }
+            throw err;
           }
-          console.warn(
-            `⚠ Reclaiming '${opts.step}' on run '${runId}' — this re-drives the step; ` +
-              `its side effects may repeat.`,
-          );
-          const result = await reclaimStep(store, runId, opts.step, { traceBufferStore });
-          console.log(renderReclaimOutcome(result).message);
+          for (const line of reclaimResultLines(result, runId, definition)) console.log(line);
           if (result.gateAdvisory !== undefined) {
             console.log(`  ⚠ ${result.gateAdvisory}`);
           }

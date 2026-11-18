@@ -690,9 +690,9 @@ const NOT_PRICED_CAUSES: readonly [
 
 Names this job reaches whose entry is on another page.
 
-- [`AbandonWay`](write-a-handler.md#abandonway): End the run.
+- [`AbandonWay`](run-and-drive-a-run.md#abandonway): End the run.
 - [`AdmittedBy`](read-a-runs-record.md#admittedby): How an answer's sender was let through, or why it was not compared (`EvidenceSnapshot.admitted_by`).
-- [`AdvanceWay`](write-a-handler.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
+- [`AdvanceWay`](run-and-drive-a-run.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
 - [`AgentTraceEntry`](implement-a-store.md#agenttraceentry): A single trace entry submitted by the agent.
 - [`AnswerFacts`](read-a-runs-record.md#answerfacts): A recorded answer's route as its door declared it, and what showed a form (`EvidenceSnapshot.answer`).
 - [`AnswerOnRecord`](read-a-runs-record.md#answeronrecord): What an answer's entry holds about its route: the facts, or the absence a library caller leaves (`EvidenceSnapshot.answer`).
@@ -750,7 +750,7 @@ Names this job reaches whose entry is on another page.
 - [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).
 - [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).
 - [`Clock`](implement-a-store.md#clock): The clock a run store reads the time from: `now()` and `at()`.
-- [`Cond`](write-a-handler.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
+- [`Cond`](run-and-drive-a-run.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
 - [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
 - [`CondTag`](write-a-handler.md#condtag): Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member).
 - [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
@@ -783,7 +783,7 @@ Names this job reaches whose entry is on another page.
 - [`GateConfig`](define-and-load-a-workflow.md#gateconfig): A gate's settings: its choices, who may answer, its messages, its timeout and what happens when it expires, and its reminders.
 - [`IdUnreadableClass`](implement-a-store.md#idunreadableclass): The classes a registry with no files (the SQLite registry) gives a registered copy it cannot read: `legacy`, `newer` and `parse`.
 - [`InputMapNode`](define-and-load-a-workflow.md#inputmapnode): One node of a step's `input_map`: a dot-path string, a `$literal` value, or an object of further nodes (`StepDefinition.input_map`).
-- [`InspectWay`](write-a-handler.md#inspectway): Read the run's record.
+- [`InspectWay`](run-and-drive-a-run.md#inspectway): Read the run's record.
 - [`JsonFileFailedAttemptStore`](implement-a-store.md#jsonfilefailedattemptstore): File-backed store for failed agent-attempt sidecars.
 - [`JsonSchema`](define-and-load-a-workflow.md#jsonschema): The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`).
 - [`JsonWorkflowStore`](implement-a-store.md#jsonworkflowstore): Stores WorkflowDefinition objects as JSON files at ~/.realm/workflows/{id}.json.
@@ -818,7 +818,7 @@ Names this job reaches whose entry is on another page.
 - [`PendingGate`](read-a-runs-record.md#pendinggate): The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and choices shown to the person, when it opened, and its owner and time limit when set.
 - [`PerRunArtifactStore`](implement-a-store.md#perrunartifactstore): A store that keeps files of its own for each run and deletes them all for a run when asked, as `realm run purge` does.
 - [`PrefixParts`](read-a-runs-record.md#prefixparts): A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and `format` where it had them (`UsageRecord.prefix_parts`).
-- [`PresentWay`](write-a-handler.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
+- [`PresentWay`](run-and-drive-a-run.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
 - [`Principal`](read-a-runs-record.md#principal): What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`).
 - [`PRINCIPAL_ABSENCES`](read-a-runs-record.md#principal_absences): Why a door names no principal (`Principal`'s `absent`).
 - [`PrincipalAbsence`](read-a-runs-record.md#principalabsence): One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer (`Principal`'s `absent`).
@@ -832,19 +832,19 @@ Names this job reaches whose entry is on another page.
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`RateLimiter`](write-a-handler.md#ratelimiter): Controls the rate at which requests are sent to an external service.
 - [`RealmWorkflowRegistrar`](implement-a-store.md#realmworkflowregistrar): A registrar with every optional member, `listWithDiagnostics` and `getCapped`, as Realm's own JSON and SQLite registries are.
-- [`ReclaimWay`](write-a-handler.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
-- [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
+- [`ReclaimWay`](run-and-drive-a-run.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
+- [`RegisterWay`](run-and-drive-a-run.md#registerway): Register the run's workflow again.
 - [`RegistryListing`](implement-a-store.md#registrylisting): What a registrar's diagnostic listing returns (`WorkflowRegistrar.listWithDiagnostics`).
 - [`ReleaseStepDelta`](implement-a-store.md#releasestepdelta): Releases a step's claim without settling the step.
 - [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`).
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).
-- [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question.
+- [`RespondWay`](run-and-drive-a-run.md#respondway): Answer the run's open question.
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).
 - [`RunPhase`](read-a-runs-record.md#runphase): Derived phase of a workflow run.
 - [`RunRecord`](read-a-runs-record.md#runrecord): A run as its store keeps it: its workflow and version, its phase, its params, its evidence entries, the question it waits on and how it ended; a store's `get` returns it inside a `Snapshot`.
 - [`RunRow`](implement-a-store.md#runrow): One run as a scan's `'row'` projection gives it: the record's own fields, with four derived or renamed.
 - [`RunScopedFencePredicate`](implement-a-store.md#runscopedfencepredicate): The members that condition only the run — the only ones the run-wide `deleteAllForRunFenced` accepts.
-- [`RunStepWay`](write-a-handler.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
+- [`RunStepWay`](run-and-drive-a-run.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
 - [`RunStore`](implement-a-store.md#runstore): Where a program keeps its runs: it creates, reads, updates, lists, claims and settles them, reading the time from its own clock.
 - [`ScanFilter`](implement-a-store.md#scanfilter): The filters of a store's scan.
 - [`ScanItem`](implement-a-store.md#scanitem): One item of a scan's page: a run in the scan's projection, or a tombstone.
@@ -903,9 +903,9 @@ Names this job reaches whose entry is on another page.
 - [`UnreadableRegistryEntry`](implement-a-store.md#unreadableregistryentry): A registered copy a listing could not read (`RegistryListing.unreadable`).
 - [`UsageRecord`](read-a-runs-record.md#usagerecord): One request a step sent to a model provider, as the record keeps it: its index and start, its token counts and its cache facts (`StepCacheDetail.requests`, `DriveFailureRecord.usage`).
 - [`ValidationErrorSummaryEntry`](implement-a-store.md#validationerrorsummaryentry): A single whitelisted Ajv error — value echoes (`params`/`data`) are intentionally excluded.
-- [`WAY_VERBS`](write-a-handler.md#way_verbs): Every verb a way can name, as a closed list (`WayVerb`).
-- [`WayOn`](write-a-handler.md#wayon): One act a party can take on a run, told apart by its `verb`.
-- [`WayVerb`](write-a-handler.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).
+- [`WAY_VERBS`](run-and-drive-a-run.md#way_verbs): Every verb a way can name, as a closed list (`WayVerb`).
+- [`WayOn`](run-and-drive-a-run.md#wayon): One act a party can take on a run, told apart by its `verb`.
+- [`WayVerb`](run-and-drive-a-run.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).
 - [`WebhookAuth`](define-and-load-a-workflow.md#webhookauth): How a webhook trigger checks that a request is genuine: a shared secret, GitHub's or Stripe's signature, an HMAC, or none (`WebhookTrigger.auth`).
 - [`WebhookTrigger`](define-and-load-a-workflow.md#webhooktrigger): A workflow's webhook trigger: the path it answers, how it checks requests, which requests it takes, how it drops repeats, and how it maps a payload to run params.
 - [`WorkflowContextEntry`](define-and-load-a-workflow.md#workflowcontextentry): A single named entry in the workflow_context section.

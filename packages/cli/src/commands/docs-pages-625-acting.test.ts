@@ -1121,7 +1121,18 @@ describe(
         by_source: 'ambient',
         channel: 'agent',
       });
-      const reclaimed = realm(['run', 'reclaim', id, '--step', 'b', '--force']);
+      // #922 P1b: the claim is stamped and of unknown age, so the reclaim names its stamp.
+      const since = (await runStore.get(id)).record.claims!['b']!.since!;
+      const reclaimed = realm([
+        'run',
+        'reclaim',
+        id,
+        '--step',
+        'b',
+        '--claimed-at',
+        since,
+        '--force',
+      ]);
       const { record: record } = await runStore.get(id);
       const aAt = record.evidence.find((e) => e.step_id === 'a')!.completed_at;
       const newest = record.evidence.at(-1)!;

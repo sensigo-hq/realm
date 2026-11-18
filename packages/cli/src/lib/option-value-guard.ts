@@ -59,6 +59,8 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'abandon', option: '--reason' }, // realm run abandon
   { command: 'respond', option: '--by' }, // realm run respond
   { command: 'reclaim', option: '--step' }, // realm run reclaim
+  // #922: the claim's stamp; `--claimed-at --force` would take the flag as the stamp.
+  { command: 'reclaim', option: '--claimed-at' }, // realm run reclaim
   // #616 PR-2c c7: `realm db migrate --backup --no-backup` would take the flag as the copy's path.
   { command: 'migrate', option: '--backup' }, // realm db migrate
   // The filter-mask fix, PR 2: `realm db check --project --json` would take the flag as the folder.

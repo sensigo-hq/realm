@@ -568,7 +568,11 @@ describe('#960 `realm serve` stops when asked (built CLI)', { timeout: 120_000 }
       const inspect = realm(['run', 'inspect', id]).out;
       const stuck = realm(['run', 'list', '--stuck']).out;
       const reclaim = realm(['run', 'reclaim', id]).out;
-      const forced = realm(['run', 'reclaim', id, '--step', 'slow', '--force']);
+      // #922 P1b: the claim is stamped and its deadline is ahead, so the old form is refused with the
+      // conditions and the command to run; that command, run as printed, frees the step.
+      const fenced = realm(['run', 'reclaim', id, '--step', 'slow', '--force']);
+      const printed = /To reclaim this claim, run: (.+)$/.exec(fenced.err.join(' '))?.[1] ?? '';
+      const forced = realm(printed.split(' ').slice(1));
       const after = realm(['run', 'inspect', id]).out;
       // (1) Red when the cut no longer leaves the step taken by `realm serve`, when `--stuck` starts
       //     listing such a run at once, when reclaim no longer shows the claim as healthy with its
@@ -582,10 +586,17 @@ describe('#960 `realm serve` stops when asked (built CLI)', { timeout: 120_000 }
         inProgress: inspect.filter((l) => l.startsWith('In Progress:') || l.startsWith('  slow:')),
         stuck,
         reclaimSays: reclaim.filter((l) => l.startsWith('  • slow:')),
+        fenced: { code: fenced.code, err: fenced.err },
         forced: { code: forced.code, out: forced.out },
         owed: after.filter((l) => l.startsWith('Owed to the engine:')),
       };
       const shown = JSON.stringify(facts).split(id).join('<run>');
+      // the run id and every instant, as placeholders
+      const stamps = (l: string): string =>
+        l
+          .split(id)
+          .join('<run>')
+          .replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, '<T>');
       expect(
         {
           code: facts.code,
@@ -597,7 +608,8 @@ describe('#960 `realm serve` stops when asked (built CLI)', { timeout: 120_000 }
           reclaimSays: facts.reclaimSays.map((l) =>
             l.replace(/\(deadline: [^)]+\)/, '(deadline: …)'),
           ),
-          forced: facts.forced,
+          fenced: { code: facts.fenced.code, err: facts.fenced.err.map(stamps) },
+          forced: { code: facts.forced.code, out: facts.forced.out.map(stamps) },
           owed: facts.owed.map((l) => l.split(id).join('<run>')),
         },
         shown,
@@ -607,10 +619,18 @@ describe('#960 `realm serve` stops when asked (built CLI)', { timeout: 120_000 }
         inProgress: ['In Progress: slow', '  slow: taken by … via mcp-http'],
         stuck: ['No stuck runs found (threshold 24h).'],
         reclaimSays: ['  • slow: healthy  (deadline: …)'],
+        fenced: {
+          code: 1,
+          err: [
+            "Step 'slow' is claimed since <T>. Its deadline is ahead (<T>); if its program is still running, the step runs twice. It is not declared idempotent, so running it again may repeat its effects. To reclaim this claim, run: realm run reclaim <run> --step slow --claimed-at <T> --force",
+          ],
+        },
         forced: {
           code: 0,
           out: [
-            "Reclaimed 'slow' (was healthy). It is eligible again — the next driver will re-drive it.",
+            'Its deadline is ahead (<T>); if its program is still running, the step runs twice.',
+            'It is not declared idempotent, so running it again may repeat its effects.',
+            "Reclaimed step 'slow' of run <run>: it can run again.",
           ],
         },
         owed: [
