@@ -3,14 +3,15 @@
 // rev 3 §2.5): the callback store. One row per run, BESIDE the run record and never in it: where to
 // tell the caller the run finished, and the state of telling. Callback A1a is the door side (the row,
 // registration, `read`, `countPending`, the purge pair); callback A1b the sender side (`due`, `claim`,
-// `freezeBody`, `mark`). The signing keys (A2), the SQLite table (B), the door (C2) and the sender (C3)
-// come later.
+// `freezeBody`, `mark`); callback A2 adds the signing keys (`keys`, in `callback-keys.ts`). The SQLite
+// table (B), the door (C2) and the sender (C3) come later.
 //
 // Core declares the port, its request check and its pure state machine; a store does the I/O around
 // it, as `outbound-ledger.ts`: it checks the request (`checkCallbackRequest`), takes its ONE raw reading
 // when the method takes one, reads the row and the run, calls the pure function and writes what it
 // returns, with nothing that yields between the read and the write.
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
+import type { CallbackKeyStore } from './callback-keys.js';
 import { isPastDeadline } from '../engine/instants.js';
 
 /**
@@ -186,6 +187,8 @@ export interface CallbackStore extends PerRunArtifactStore {
   claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
   freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
   mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
+  /** The signing keys, per workflow and host, kept apart from the rows (callback A2). */
+  readonly keys: CallbackKeyStore;
 }
 
 /** How long a claim holds a row before it is due again, in seconds. */

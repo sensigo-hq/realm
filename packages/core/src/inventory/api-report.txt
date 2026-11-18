@@ -348,6 +348,13 @@ CACHE_STATES · value · public
   ];
 
 CALLBACK_CLAIM_SECONDS · value · internal
+CALLBACK_KEY_KEEP_MAX_SECONDS · value · internal
+CALLBACK_KEY_SLOTS · value · beta
+  const CALLBACK_KEY_SLOTS: readonly [
+      "current",
+      "previous"
+  ];
+
 CALLBACK_LAST_STATUS_WORDS · value · beta
   const CALLBACK_LAST_STATUS_WORDS: readonly [
       "timeout",
@@ -549,6 +556,89 @@ CallbackItem · type · beta
       readonly url: string;
   };
 
+CallbackKeyCheck · type · internal
+CallbackKeyDecision · type · internal
+CallbackKeyDeleteResult · type · beta
+  interface CallbackKeyDeleteResult {
+      readonly had_current: boolean;
+  }
+
+CallbackKeyEndResult · type · beta
+  type CallbackKeyEndResult = {
+      readonly ended: true;
+  } | {
+      readonly ended: false;
+      readonly reason: 'no_previous';
+  };
+
+CallbackKeyMakeResult · type · beta
+  interface CallbackKeyMakeResult {
+      readonly created: boolean;
+      readonly key: CallbackKeySlot;
+  }
+
+CallbackKeyPair · type · beta
+  interface CallbackKeyPair {
+      readonly current?: CallbackKeySlot;
+      readonly previous?: CallbackKeySlot;
+  }
+
+CallbackKeyReplaceResult · type · beta
+  type CallbackKeyReplaceResult = {
+      readonly applied: true;
+      readonly key: CallbackKeySlot;
+  } | {
+      readonly applied: false;
+      readonly reason: 'no_current' | 'readable';
+  };
+
+CallbackKeyRotateRequest · type · beta
+  interface CallbackKeyRotateRequest {
+      readonly candidate: string;
+      readonly keepSeconds: number;
+      readonly endPrevious?: boolean;
+  }
+
+CallbackKeyRotateResult · type · beta
+  type CallbackKeyRotateResult = {
+      readonly applied: true;
+      readonly current: CallbackKeySlot;
+      readonly previous: CallbackKeySlot;
+  } | {
+      readonly applied: false;
+      readonly reason: 'no_current' | 'current_unreadable' | 'previous_live';
+  };
+
+CallbackKeySlot · type · beta
+  type CallbackKeySlot = {
+      readonly slot: CallbackKeySlotName;
+      readonly state: 'readable';
+      readonly key: string;
+      readonly key_fp: string;
+      readonly created_at: string;
+      readonly expires_at?: string;
+  } | {
+      readonly slot: CallbackKeySlotName;
+      readonly state: 'unreadable';
+      readonly master_fp: string;
+      readonly created_at: string;
+      readonly expires_at?: string;
+  };
+
+CallbackKeySlotName · type · beta
+  type CallbackKeySlotName = (typeof CALLBACK_KEY_SLOTS)[number];
+
+CallbackKeyStore · type · beta
+  interface CallbackKeyStore {
+      read(workflowId: string, host: string): Promise<CallbackKeyPair>;
+      make(workflowId: string, host: string, candidate: string): Promise<CallbackKeyMakeResult>;
+      rotate(workflowId: string, host: string, request: CallbackKeyRotateRequest): Promise<CallbackKeyRotateResult>;
+      endPrevious(workflowId: string, host: string): Promise<CallbackKeyEndResult>;
+      replace(workflowId: string, host: string, candidate: string): Promise<CallbackKeyReplaceResult>;
+      delete(workflowId: string, host: string): Promise<CallbackKeyDeleteResult>;
+  }
+
+CallbackKeyWrite · type · internal
 CallbackLastStatus · type · beta
   type CallbackLastStatus = number | (typeof CALLBACK_LAST_STATUS_WORDS)[number];
 
@@ -610,6 +700,7 @@ CallbackStore · type · beta
       claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
       freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
       mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
+      readonly keys: CallbackKeyStore;
   }
 
 CallbackView · type · beta
@@ -4129,6 +4220,9 @@ buildSettlementNamespace · value · internal
 buildTrustRefusal · value · internal
 cacheVerdict · value · internal
 callableSteps · value · internal
+callbackKeyFingerprint · value · internal
+callbackKeyPairAt · value · internal
+callbackPreviousIsLive · value · internal
 callbackRowOf · value · internal
 callbackViewOf · value · internal
 callsHostDispatcher · value · public
@@ -4145,6 +4239,7 @@ capabilityRefusalWords · value · internal
 capabilityWarning · value · internal
 captureEvidence · value · internal
 checkBufferBudget · value · internal
+checkCallbackKeyRequest · value · internal
 checkCallbackRequest · value · internal
 checkFenceWithReader · value · internal
 checkOutboundRequest · value · internal
@@ -4224,6 +4319,10 @@ damagedFileConcerns · value · public
       object?: Record<string, unknown>;
   }, workflowId: string): boolean;
 
+decideCallbackKeyEndPrevious · value · internal
+decideCallbackKeyMake · value · internal
+decideCallbackKeyReplace · value · internal
+decideCallbackKeyRotate · value · internal
 decideIdempotencyPolicy · value · public
   function decideIdempotencyPolicy(matched: Pick<RunRecord, 'id' | 'workflow_id' | 'run_phase' | 'terminal_state'>, options: Pick<CreateRunOptions, 'onTerminalMatch' | 'onLiveMatch'>): IdempotencyDecision;
 

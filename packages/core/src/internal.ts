@@ -15,6 +15,8 @@ export * from './store/lease-port.js';
 export * from './store/outbound-ledger.js';
 // R1.3 callback A1a: the callback store's port (door side), its request check and its row.
 export * from './store/callback-store.js';
+// R1.3 callback A2: the callback store's signing keys, their request check, fingerprint and deciders.
+export * from './store/callback-keys.js';
 // #729, the claim window, CW-1b: the facts a store's lease port found, and their one reader.
 export { leaseFactsOf, leaseFactOf, NO_LEASE_FACTS, LeaseFactsClass } from './store/lease-facts.js';
 export type { LeaseFacts, Unleased } from './store/lease-facts.js';

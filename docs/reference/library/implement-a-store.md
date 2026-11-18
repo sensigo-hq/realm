@@ -34,6 +34,11 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`ArtifactDeletionReport`](#artifactdeletionreport) | interface | What a store reports about the artifacts it just deleted: the bytes it deleted. |
 | [`BufferedEntry`](#bufferedentry) | interface | An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce that carried it, if any. |
 | [`CallbackClaimRequest`](#callbackclaimrequest) | interface | A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters). |
+| [`CallbackKeyDeleteResult`](#callbackkeydeleteresult) | interface | What `delete` answers: whether the pair had a current key, readable or not. |
+| [`CallbackKeyMakeResult`](#callbackkeymakeresult) | interface | What `make` answers: the current key, and whether this call wrote it. |
+| [`CallbackKeyPair`](#callbackkeypair) | interface | The keys of one (workflow, host). |
+| [`CallbackKeyRotateRequest`](#callbackkeyrotaterequest) | interface | A rotation: the new key's text, how long the old key stays as the previous (1–604,800 seconds), and whether a live previous may be dropped to make room. |
+| [`CallbackKeyStore`](#callbackkeystore) | interface | The signing keys of a callback store (`CallbackStore.keys`): for each (workflow, host), a current key and, for a while after a rotation, a previous one. |
 | [`CallbackRegistration`](#callbackregistration) | interface | Where a run's caller asked to be told the run finished (`CreateRunOptions.callback`). |
 | [`CallbackRow`](#callbackrow) | interface | One callback row as a store keeps it, for store implementers only. |
 | [`CallbackStore`](#callbackstore) | interface | A store's callback store (`RunStore.callbacks`): one row per run, written by `create`. |
@@ -90,6 +95,11 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`CallbackClaimResult`](#callbackclaimresult) | type | What a claim answers: the claimed item and the claim's one reading, or why it did not apply. |
 | [`CallbackFreezeResult`](#callbackfreezeresult) | type | What freezing the body answers. |
 | [`CallbackItem`](#callbackitem) | type | A row ready to send, as `due` returns it: for the sender only, never rendered. |
+| [`CallbackKeyEndResult`](#callbackkeyendresult) | type | What `endPrevious` answers: whether a live previous was there to remove. |
+| [`CallbackKeyReplaceResult`](#callbackkeyreplaceresult) | type | What `replace` answers: the new current key, or why it wrote nothing. |
+| [`CallbackKeyRotateResult`](#callbackkeyrotateresult) | type | What `rotate` answers: the pair it wrote, or why it wrote nothing. |
+| [`CallbackKeySlot`](#callbackkeyslot) | type | One slot of a pair, as the store holds it. |
+| [`CallbackKeySlotName`](#callbackkeyslotname) | type | The name of a slot: `current` signs; `previous` is the key a rotation replaced, kept for a while. |
 | [`CallbackLastStatus`](#callbacklaststatus) | type | The last answer a try got: an HTTP status (100–599), or a word for a try that got none. |
 | [`CallbackMarkRequest`](#callbackmarkrequest) | type | A try's outcome: delivered (a 2xx status), another try after a wait in seconds, or failed. |
 | [`CallbackMarkResult`](#callbackmarkresult) | type | What a mark answers. |
@@ -133,6 +143,7 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`TraceCapability`](#tracecapability) | type | The optional rungs a trace buffer store can declare, `seal` and `writer_nonce_carriage` (`TraceBufferStore.traceCapabilities`). |
 | [`Unleased`](#unleased) | type | What `leaseFactOf` answers for a claim that names no lease. |
 | [`UnreadableRegistryEntry`](#unreadableregistryentry) | type | A registered copy a listing could not read (`RegistryListing.unreadable`). |
+| [`CALLBACK_KEY_SLOTS`](#callback_key_slots) | const | The two places a pair keeps a key, one list for every use of the word. |
 | [`CALLBACK_LAST_STATUS_WORDS`](#callback_last_status_words) | const | The words a try's last answer can be when it got no HTTP status. |
 | [`CALLBACK_STATUSES`](#callback_statuses) | const | The states a callback row can be in, one list for every use of the word. |
 | [`CLOCK_READ_CLASSES`](#clock_read_classes) | const | The five classes of a clock read: what a run store's clock governs (`write`, `read`, `event`) and what it does not (`outside`, `duration`). |
@@ -633,6 +644,83 @@ interface CallbackClaimRequest {
 }
 ```
 
+### CallbackKeyDeleteResult
+
+interface · beta: may change in a minor release until it settles
+
+What `delete` answers: whether the pair had a current key, readable or not.
+
+```ts
+interface CallbackKeyDeleteResult {
+    readonly had_current: boolean;
+}
+```
+
+### CallbackKeyMakeResult
+
+interface · beta: may change in a minor release until it settles
+
+What `make` answers: the current key, and whether this call wrote it.
+
+```ts
+interface CallbackKeyMakeResult {
+    readonly created: boolean;
+    readonly key: CallbackKeySlot;
+}
+```
+
+### CallbackKeyPair
+
+interface · beta: may change in a minor release until it settles
+
+The keys of one (workflow, host). An absent slot is omitted, never `null`.
+
+```ts
+interface CallbackKeyPair {
+    readonly current?: CallbackKeySlot;
+    readonly previous?: CallbackKeySlot;
+}
+```
+
+### CallbackKeyRotateRequest
+
+interface · beta: may change in a minor release until it settles
+
+A rotation: the new key's text, how long the old key stays as the previous (1–604,800 seconds),
+and whether a live previous may be dropped to make room.
+
+```ts
+interface CallbackKeyRotateRequest {
+    readonly candidate: string;
+    readonly keepSeconds: number;
+    readonly endPrevious?: boolean;
+}
+```
+
+### CallbackKeyStore
+
+interface · beta: may change in a minor release until it settles
+
+The signing keys of a callback store (`CallbackStore.keys`): for each (workflow, host), a current
+key and, for a while after a rotation, a previous one.
+`workflowId` and `host` are each 1–255 characters, compared byte for byte; a key's text is 64
+lowercase hex characters. Every method but `delete` takes ONE raw reading of the store's clock,
+refused or applied; `delete` takes none; a malformed request throws before any reading, and its
+message never repeats a candidate key. A previous counts only while it is live: past its
+`expires_at` it is absent for every method, and no method returns it. Refusals are results, never
+thrown. Keys are kept apart from the callback rows and the runs: a run's purge leaves them.
+
+```ts
+interface CallbackKeyStore {
+    read(workflowId: string, host: string): Promise<CallbackKeyPair>;
+    make(workflowId: string, host: string, candidate: string): Promise<CallbackKeyMakeResult>;
+    rotate(workflowId: string, host: string, request: CallbackKeyRotateRequest): Promise<CallbackKeyRotateResult>;
+    endPrevious(workflowId: string, host: string): Promise<CallbackKeyEndResult>;
+    replace(workflowId: string, host: string, candidate: string): Promise<CallbackKeyReplaceResult>;
+    delete(workflowId: string, host: string): Promise<CallbackKeyDeleteResult>;
+}
+```
+
 ### CallbackRegistration
 
 interface · beta: may change in a minor release until it settles
@@ -695,6 +783,7 @@ interface CallbackStore extends PerRunArtifactStore {
     claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
     freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
     mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
+    readonly keys: CallbackKeyStore;
 }
 ```
 
@@ -1746,6 +1835,91 @@ type CallbackItem = Pick<CallbackRow, 'run_id' | 'workflow_id' | 'host' | 'webho
 };
 ```
 
+### CallbackKeyEndResult
+
+type · beta: may change in a minor release until it settles
+
+What `endPrevious` answers: whether a live previous was there to remove.
+
+```ts
+type CallbackKeyEndResult = {
+    readonly ended: true;
+} | {
+    readonly ended: false;
+    readonly reason: 'no_previous';
+};
+```
+
+### CallbackKeyReplaceResult
+
+type · beta: may change in a minor release until it settles
+
+What `replace` answers: the new current key, or why it wrote nothing.
+
+```ts
+type CallbackKeyReplaceResult = {
+    readonly applied: true;
+    readonly key: CallbackKeySlot;
+} | {
+    readonly applied: false;
+    readonly reason: 'no_current' | 'readable';
+};
+```
+
+### CallbackKeyRotateResult
+
+type · beta: may change in a minor release until it settles
+
+What `rotate` answers: the pair it wrote, or why it wrote nothing.
+
+```ts
+type CallbackKeyRotateResult = {
+    readonly applied: true;
+    readonly current: CallbackKeySlot;
+    readonly previous: CallbackKeySlot;
+} | {
+    readonly applied: false;
+    readonly reason: 'no_current' | 'current_unreadable' | 'previous_live';
+};
+```
+
+### CallbackKeySlot
+
+type · beta: may change in a minor release until it settles
+
+One slot of a pair, as the store holds it.
+`readable` carries the key's text (64 lowercase hex characters) and `key_fp`, its fingerprint;
+`unreadable` is a slot the store holds but cannot read (sealed under another master key), with the
+fingerprint of the master key that sealed it. `created_at` and `expires_at` are the store's own
+readings; `expires_at` is set on a `previous` only.
+
+```ts
+type CallbackKeySlot = {
+    readonly slot: CallbackKeySlotName;
+    readonly state: 'readable';
+    readonly key: string;
+    readonly key_fp: string;
+    readonly created_at: string;
+    readonly expires_at?: string;
+} | {
+    readonly slot: CallbackKeySlotName;
+    readonly state: 'unreadable';
+    readonly master_fp: string;
+    readonly created_at: string;
+    readonly expires_at?: string;
+};
+```
+
+### CallbackKeySlotName
+
+type · beta: may change in a minor release until it settles
+
+The name of a slot: `current` signs; `previous` is the key a rotation replaced, kept for a while.
+
+```ts
+type CallbackKeySlotName = (typeof CALLBACK_KEY_SLOTS)[number];
+```
+
 ### CallbackLastStatus
 
 type · beta: may change in a minor release until it settles
@@ -2484,6 +2658,19 @@ type UnreadableRegistryEntry = UnreadableFileEntry | UnreadableIdEntry;
 ```
 
 ## Constants
+
+### CALLBACK_KEY_SLOTS
+
+const · beta: may change in a minor release until it settles
+
+The two places a pair keeps a key, one list for every use of the word.
+
+```ts
+const CALLBACK_KEY_SLOTS: readonly [
+    "current",
+    "previous"
+];
+```
 
 ### CALLBACK_LAST_STATUS_WORDS
 
