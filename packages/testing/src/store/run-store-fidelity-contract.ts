@@ -22,6 +22,8 @@ import {
   type Attributed,
   type EvidenceSnapshot,
   type CreateResult,
+  type DriveFailureRecord,
+  type ListedSnapshot,
   type PurgedItem,
   type RunStore,
   type RunRecord,
@@ -65,7 +67,10 @@ import {
  * and filters), `KEY_RESOLVES_THREE_WAYS` (who holds a key: held, purged or unseen),
  * `PURGED_RUNS_SCAN_AS_TOMBSTONES` and `HORIZON_BELOW_TOMBSTONES` (a deleted run's tombstone and the
  * horizon below it), and `PURGE_CAPABILITY_WIRED` (the store's `purgesRuns` agrees with the adapter's
- * `purge`); the three purge laws' cases are skipped for a store that never deletes a run.
+ * `purge`); the three purge laws' cases are skipped for a store that never deletes a run. Gap 1, unit
+ * A0, adds `LISTING_LEAVES_MODEL_TEXT`: a store's `scanListed` gives each run without its model
+ * calls' texts, every other value as `get` reads it, and refuses the listed record written back; its
+ * cases are skipped for a store with no `scanListed`, which Realm lists through `scan`.
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -86,6 +91,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'PURGED_RUNS_SCAN_AS_TOMBSTONES',
   'HORIZON_BELOW_TOMBSTONES',
   'PURGE_CAPABILITY_WIRED',
+  'LISTING_LEAVES_MODEL_TEXT',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -448,6 +454,110 @@ function purgeCase(
       await run();
     },
   };
+}
+
+/**
+ * A `LISTING_LEAVES_MODEL_TEXT` case: skipped, by name, for a store with no `scanListed` (Realm
+ * lists such a store through `scan`, and leaves the texts out itself); otherwise `run`.
+ */
+function listingCase(
+  adapter: RunStoreFidelityContractAdapter,
+  name: string,
+  run: () => Promise<void>,
+): RunStoreFidelityContractCase {
+  if (typeof adapter.store.scanListed !== 'function') {
+    return {
+      law: 'LISTING_LEAVES_MODEL_TEXT',
+      name: `SKIPPED — store has no scanListed: ${name}`,
+      skipped: true,
+      run: async () => {
+        // Intentional no-op — see the case name for why.
+      },
+    };
+  }
+  return { law: 'LISTING_LEAVES_MODEL_TEXT', name, run };
+}
+
+/** A stand-in for a model call's text: no store reads into it, so any object will do. */
+const TCK_MODEL_TEXT = { recorded: true, tck: "a model call's text" };
+
+/**
+ * `LISTING_LEAVES_MODEL_TEXT`'s fixture: a run of a workflow of its own whose one evidence entry and
+ * one failed drive's entry each carry `model_text`, written by `update` (A0 writes no text itself).
+ */
+async function runWithTexts(
+  adapter: RunStoreFidelityContractAdapter,
+  what: string,
+): Promise<{ tag: string; runId: string }> {
+  const tag = `tck-listing-${what}-${Math.random().toString(36).slice(2)}`;
+  const { record: run } = await adapter.store.create({
+    workflowId: tag,
+    workflowVersion: 1,
+    params: {},
+  });
+  const entry = {
+    step_id: 'tck-listed',
+    started_at: '2026-01-01T00:00:00.000Z',
+    completed_at: '2026-01-01T00:00:01.000Z',
+    duration_ms: 1,
+    input_summary: {},
+    output_summary: { answer: 'kept' },
+    status: 'success',
+    evidence_hash: `tck-listing-${what}`,
+    model_text: TCK_MODEL_TEXT,
+  } as unknown as EvidenceSnapshot;
+  const failure = {
+    at: '2026-01-01T00:00:02.000Z',
+    step: adapter.stepName,
+    provider: 'tck-provider',
+    error_class: 'other',
+    message: 'tck',
+    elapsed_ms: 1,
+    model_text: TCK_MODEL_TEXT,
+  } as unknown as DriveFailureRecord;
+  await adapter.store.update({
+    ...run,
+    evidence: [entry],
+    drive_failures: { first_failed_at: '2026-01-01T00:00:02.000Z', total: 1, entries: [failure] },
+  });
+  return { tag, runId: run.id };
+}
+
+/** Run `runId` as the store's `scanListed` gives it, from every page of its workflow's runs. */
+async function listedRun(
+  adapter: RunStoreFidelityContractAdapter,
+  tag: string,
+  runId: string,
+): Promise<ListedSnapshot | undefined> {
+  for await (const page of adapter.store.scanListed!({ workflow: tag }, { pageSize: 1000 })) {
+    for (const item of page.items)
+      if (item.kind === 'run' && item.run.record.id === runId) return item.run;
+  }
+  return undefined;
+}
+
+/** `record` with `model_text` taken out of copies of its entries: what a listing should give. */
+function withoutTexts(record: RunRecord): unknown {
+  const drop = (entry: object): object => {
+    const copy = { ...entry } as Record<string, unknown>;
+    delete copy['model_text'];
+    return copy;
+  };
+  const failures = record.drive_failures;
+  return {
+    ...record,
+    evidence: record.evidence.map(drop),
+    ...(failures !== undefined
+      ? { drive_failures: { ...failures, entries: failures.entries.map(drop) } }
+      : {}),
+  };
+}
+
+/** Whether `record`'s evidence entry and failed drive's entry still carry their `model_text`. */
+function holdsTexts(record: RunRecord): boolean {
+  const has = (entry: object | undefined): boolean =>
+    entry !== undefined && Object.prototype.hasOwnProperty.call(entry, 'model_text');
+  return has(record.evidence[0]) && has(record.drive_failures?.entries[0]);
 }
 
 /**
@@ -1541,6 +1651,49 @@ export function runStoreFidelityContract(
       name: "the store's purgesRuns is true or false and agrees with the adapter: true with a purge, false without one",
       run: async () => checkPurgeWiring(adapter),
     },
+  );
+
+  // Gap 1, unit A0 — LISTING_LEAVES_MODEL_TEXT, for a store with `scanListed`.
+  cases.push(
+    listingCase(
+      adapter,
+      "a listing gives a run without its model calls' texts, from its evidence and its failed drives, every other value as get reads it; the store keeps them",
+      async () => {
+        const { tag, runId } = await runWithTexts(adapter, 'values');
+        const { record: stored } = await adapter.store.get(runId);
+        const listed = await listedRun(adapter, tag, runId);
+        const want = JSON.stringify(withoutTexts(stored));
+        const got = JSON.stringify(listed?.record);
+        if (got !== want || !holdsTexts(stored)) {
+          throw new Error(
+            `LISTING_LEAVES_MODEL_TEXT: scanListed must give run ${runId} as get reads it, with model_text left out of each evidence entry and each failed drive's entry, and get must still read the texts; scanListed gave ${got ?? 'no such run'}, want ${want}; get ${holdsTexts(stored) ? 'reads' : 'does not read'} the texts`,
+          );
+        }
+      },
+    ),
+    listingCase(
+      adapter,
+      "a listing's record written back by update is refused, and the stored texts stay",
+      async () => {
+        const { tag, runId } = await runWithTexts(adapter, 'write-back');
+        const listed = await listedRun(adapter, tag, runId);
+        if (listed === undefined) {
+          throw new Error(`LISTING_LEAVES_MODEL_TEXT: scanListed did not give run ${runId}`);
+        }
+        let refusal: unknown;
+        try {
+          await adapter.store.update(listed.record as unknown as RunRecord);
+        } catch (err) {
+          refusal = err;
+        }
+        const { record: after } = await adapter.store.get(runId);
+        if (refusal === undefined || !holdsTexts(after)) {
+          throw new Error(
+            `LISTING_LEAVES_MODEL_TEXT: an update with a listing's record (no model_text) must be refused, and run ${runId} must keep its texts; the update was ${refusal === undefined ? 'accepted' : 'refused'}, and get ${holdsTexts(after) ? 'reads' : 'does not read'} the texts`,
+          );
+        }
+      },
+    ),
   );
 
   cases.push({

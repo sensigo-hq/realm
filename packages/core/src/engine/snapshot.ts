@@ -7,7 +7,7 @@
 // takes that reading (`store.get` returns the Snapshot); `loadSnapshot` is `store.get`. The
 // source-text witness: no `{ record, at }` literal is built outside this module — every Snapshot is
 // built by `writtenSnapshot`.
-import type { RunRecord } from '../types/run-record.js';
+import type { ListedRecord, RunRecord } from '../types/run-record.js';
 import type { RunStore } from '../store/store-interface.js';
 import { NO_LEASE_FACTS, type LeaseFacts } from '../store/lease-facts.js';
 import type { DefinitionAbsence, LoadErrorCode } from './ways.js';
@@ -28,6 +28,68 @@ export interface Snapshot {
    * lease port; read it through `leaseFactOf`, which reads a missing fact as `not_checked`.
    */
   readonly lease_facts?: LeaseFacts;
+}
+
+/**
+ * One run and the reading it is judged at, as a listing of runs gives it: a {@link Snapshot}
+ * whose record is a {@link ListedRecord}, with the model calls' texts left out. Every `Snapshot`
+ * fits into it.
+ * @public
+ */
+export interface ListedSnapshot {
+  readonly record: ListedRecord;
+  /** The clock reading taken before the record was loaded, as in a `Snapshot`. */
+  readonly at: Date;
+  /** The facts about the leases of the record's in-progress claims, as in a `Snapshot`. */
+  readonly lease_facts?: LeaseFacts;
+}
+
+/** Gap 1, unit A0: the key a listing leaves out of each evidence entry and drive-failure entry. */
+const MODEL_TEXT = 'model_text';
+
+/** `entry` without `model_text`: a new object when it holds the key, else the entry itself. */
+function withoutModelText<T extends object>(entry: T): T {
+  if (!Object.prototype.hasOwnProperty.call(entry, MODEL_TEXT)) return entry;
+  const copy = { ...entry } as Record<string, unknown>;
+  delete copy[MODEL_TEXT];
+  return copy as T;
+}
+
+/**
+ * Gap 1, unit A0: `snapshot` as a listing of runs gives it, for a store with no `scanListed`. Each
+ * evidence entry and each drive-failure entry that holds `model_text` is copied without it, into new
+ * arrays and a new record; nothing is changed in place, because a store may hand out its own stored
+ * objects (the in-memory store's `scan` does). The reading and the lease facts are kept.
+ * @internal
+ */
+export function listedSnapshotOf(snapshot: Snapshot): ListedSnapshot {
+  const record = snapshot.record;
+  const failures = record.drive_failures;
+  const listed: ListedRecord = {
+    ...record,
+    evidence: Array.isArray(record.evidence)
+      ? record.evidence.map(withoutModelText)
+      : record.evidence,
+    ...(failures !== undefined && Array.isArray(failures.entries)
+      ? { drive_failures: { ...failures, entries: failures.entries.map(withoutModelText) } }
+      : {}),
+  };
+  return { ...snapshot, record: listed };
+}
+
+/**
+ * Gap 1, unit A0: a listing's record as the ways engine judges it, for `classifyRunHealth`'s
+ * `cannot_go_on` probe, its one caller (a witness cell holds it to one). It is a copy
+ * (`structuredClone`) and shares nothing with the listed record. It is safe because:
+ * - the ways engine only reads the record it judges, and never writes it;
+ * - no judge reads a model call's text, so the texts a listing left out change no judgement;
+ * - a store refuses a write that drops a stored evidence entry's `model_text`: the in-memory store's
+ *   own refusal, and SQLite's `STATE_EVIDENCE_REWRITTEN` for a changed evidence entry.
+ * Not exported from core's index.
+ * @internal
+ */
+export function recordToJudge(record: ListedRecord): RunRecord {
+  return structuredClone(record) as RunRecord;
 }
 
 /**

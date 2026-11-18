@@ -5,7 +5,7 @@
 // PendingGate fields — never the workflow definition (F2's doctrine, generalized to every
 // read-time consumer).
 import type { PendingGate } from '../types/run-record.js';
-import type { Snapshot } from './snapshot.js';
+import type { ListedSnapshot } from './snapshot.js';
 import { isPastDeadline, overdueOf, parseStamp } from './instants.js';
 import { formatInstantWords } from '../utils/duration.js';
 
@@ -79,7 +79,7 @@ export interface ReminderSchedule {
  * first occurrence not past at the snapshot's `at` (`isPastDeadline`, the engine's one due test,
  * `at ≥ deadline`: an occurrence exactly at `at` has passed).
  */
-export function reminderScheduleOf(snapshot: Snapshot): ReminderSchedule | undefined {
+export function reminderScheduleOf(snapshot: ListedSnapshot): ReminderSchedule | undefined {
   const gate = snapshot.record.pending_gate;
   if (gate === undefined || gate.reminder_seconds === undefined) return undefined;
   const max = gate.reminder_max ?? 3;
