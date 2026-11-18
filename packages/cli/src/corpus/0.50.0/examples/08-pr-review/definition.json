@@ -1,0 +1,141 @@
+{
+  "id": "pr-review",
+  "name": "PR Review",
+  "version": 1,
+  "params_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "repo",
+      "pr_number"
+    ],
+    "properties": {
+      "repo": {
+        "type": "string",
+        "description": "GitHub repository in owner/repo format"
+      },
+      "pr_number": {
+        "type": "integer",
+        "description": "Pull request number to review"
+      }
+    }
+  },
+  "services": {
+    "github": {
+      "adapter": "github",
+      "trust": "engine_delivered"
+    }
+  },
+  "steps": {
+    "fetch_pr": {
+      "description": "Fetch the pull request file diff from GitHub.",
+      "execution": "auto",
+      "depends_on": [],
+      "uses_service": "github",
+      "service_method": "fetch",
+      "operation": "get_pr_diff",
+      "input_map": {
+        "repo": "run.params.repo",
+        "pr_number": "run.params.pr_number"
+      }
+    },
+    "write_review": {
+      "description": "Review the pull request diff and produce a structured code review with risk assessment, key changes, a recommendation, and a review comment ready to post on the PR.\n",
+      "execution": "agent",
+      "depends_on": [
+        "fetch_pr"
+      ],
+      "prompt": "Review the following GitHub pull request and produce a structured code review.\n\nRepository: {{ run.params.repo }}\nPR #{{ run.params.pr_number }}\n\nChanged files:\n{{ context.resources.fetch_pr }}\n\nProduce a complete review:\n- risk: overall risk level of merging this PR — \"low\", \"medium\", or \"high\"\n- key_changes: up to 5 bullet-point strings summarising what changed\n- recommendation: your suggested outcome — \"approve\" or \"request_changes\"\n- review_comment: the full comment to post on the PR — concise, engineering-focused,\n  no greetings, no \"thank you for this PR\", no customer-facing language; under 200 words;\n  begin with \"Approve.\" or \"Changes requested.\" (capitalized, with a period), then explain\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "risk",
+          "key_changes",
+          "recommendation",
+          "review_comment"
+        ],
+        "properties": {
+          "risk": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "key_changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Up to 5 key changes, as bullet-point strings"
+          },
+          "recommendation": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "request_changes"
+            ]
+          },
+          "review_comment": {
+            "type": "string",
+            "description": "Full review comment text to post on the PR"
+          }
+        }
+      },
+      "display": "Risk: {{ risk }}\nRecommendation: {{ recommendation }}\n\nKey changes:\n{{ key_changes | bullets }}\n\n{{ review_comment }}\n"
+    },
+    "confirm_review": {
+      "description": "Present the AI-generated code review to the engineer and wait for them to confirm the outcome — approve or request changes — before any write reaches GitHub.\n",
+      "execution": "auto",
+      "depends_on": [
+        "write_review"
+      ],
+      "trust": "human_confirmed",
+      "gate": {
+        "choices": [
+          "approve",
+          "request_changes"
+        ],
+        "message": "PR #{{ run.params.pr_number }} — {{ run.params.repo }}\n\nRisk: {{ context.resources.write_review.risk | upper }}\nAI recommendation: {{ context.resources.write_review.recommendation }}\n\nKey changes:\n{{ context.resources.write_review.key_changes | bullets }}\n\nReview comment to post:\n{{ context.resources.write_review.review_comment }}\n",
+        "resolution_messages": {
+          "approve": "Approved — review comment posted to GitHub PR.",
+          "request_changes": "Changes requested — review comment posted to GitHub PR."
+        }
+      }
+    },
+    "post_approval": {
+      "description": "Post the review comment on the GitHub PR (approve path).",
+      "execution": "auto",
+      "depends_on": [
+        "confirm_review"
+      ],
+      "when": "confirm_review.choice == 'approve'",
+      "uses_service": "github",
+      "service_method": "create",
+      "operation": "post_comment",
+      "input_map": {
+        "repo": "run.params.repo",
+        "pr_number": "run.params.pr_number",
+        "body": "context.resources.write_review.review_comment"
+      }
+    },
+    "post_changes_request": {
+      "description": "Post the review comment on the GitHub PR (request_changes path).",
+      "execution": "auto",
+      "depends_on": [
+        "confirm_review"
+      ],
+      "when": "confirm_review.choice == 'request_changes'",
+      "uses_service": "github",
+      "service_method": "create",
+      "operation": "post_comment",
+      "input_map": {
+        "repo": "run.params.repo",
+        "pr_number": "run.params.pr_number",
+        "body": "context.resources.write_review.review_comment"
+      }
+    }
+  }
+}

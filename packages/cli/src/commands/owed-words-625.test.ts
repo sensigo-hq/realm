@@ -1630,7 +1630,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
         '→ s',
         "• Step 's': the run ended (abandoned) before this program's outcome for it was recorded.",
         // F2: a run an operator ended says that ending and its reason, never the undo.
-        'Stopped: the run has ended (abandoned). An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
+        'Stopped: the run has ended (abandoned). It was abandoned, with the reason "another program". To run the work again, start a new run.',
         "Run <run>: phase 'abandoned'",
       ],
       failed: [],
@@ -1698,7 +1698,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
       [
         '→ s',
         // F2: a run an operator ended says that ending and its reason, never the undo.
-        'Stopped: the run has ended (abandoned). An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
+        'Stopped: the run has ended (abandoned). It was abandoned, with the reason "another program". To run the work again, start a new run.',
         "Run <run>: phase 'abandoned'",
       ],
     ],
@@ -2274,7 +2274,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         finFailed: ['s', 'clean'],
         // F2: an abandoned run's failed step is the operator's ending to say, never an undo to offer.
         abandonedLast:
-          'Nothing is owed to the engine: the run has ended (abandoned). An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
+          'Nothing is owed to the engine: the run has ended (abandoned). It was abandoned, with the reason "another program". To run the work again, start a new run.',
         resumedPhase: 'running',
         aborted: ['Stopped: the run has ended (aborted)'],
       });
@@ -2326,7 +2326,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
     );
     claim(
       ACTING,
-      'the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make \'<step>\' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when an operator ended it, it goes on `. An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.`, never with `realm run resume`, which would erase that ending and its reason)',
+      'the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make \'<step>\' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when it was abandoned, it goes on `. It was abandoned, with the reason "<reason>". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.50.0, which said an operator ended it), never with `realm run resume`, which would erase that ending and its reason)',
     );
     claim(
       ACTING,

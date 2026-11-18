@@ -175,7 +175,7 @@ describe('#625 PR-2a, F7 — realm run advance reads core’s classifier', () =>
       lines: [
         "Owed to the engine: 's'.",
         '→ s',
-        'Stopped: the run has ended (abandoned). An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
+        'Stopped: the run has ended (abandoned). It was abandoned, with the reason "another program". To run the work again, start a new run.',
         "Run <run>: phase 'abandoned'",
       ],
     });

@@ -10,6 +10,7 @@ import {
   serializeFailedAttemptLine,
   getWorkflowForRun,
   endedRunWaysSentence,
+  saysHowItEnded,
   judgedSnapshotOf,
   TERMINAL_PHASES,
   type StepDispatcher,
@@ -380,7 +381,12 @@ export async function handleExecuteStep(
       reply === result
         ? judgedSnapshotOf(result)
         : await runStore.get(args.run_id).catch(() => undefined);
-    if (ended !== undefined) tail = endedRunWaysSentence(ended.record, definition, ended.at);
+    // #625 A1b-1: how the run ended comes first when someone other than this call ended it (the
+    // one "said once" rule, on the engine's own reply; a form's reply decides for itself).
+    if (ended !== undefined) {
+      const saysEnding = reply === result && saysHowItEnded(result, ended.record);
+      tail = endedRunWaysSentence(ended.record, definition, ended.at, saysEnding);
+    }
   }
   return mcpReplyOf(withHintTail(renderReply(reply, mcpHostOf(stores)), tail));
 }
