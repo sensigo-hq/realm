@@ -22,9 +22,9 @@
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.0",
     "@noble/hashes": "1.8.0",
-    "@sensigo/realm": "0.49.0",
-    "@sensigo/realm-mcp": "0.49.0",
-    "@sensigo/realm-testing": "0.49.0",
+    "@sensigo/realm": "0.50.0",
+    "@sensigo/realm-mcp": "0.50.0",
+    "@sensigo/realm-testing": "0.50.0",
     "acorn": "8.15.0",
     "esbuild": "0.28.2",
     "eslint-scope": "8.4.0"
