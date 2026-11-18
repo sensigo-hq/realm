@@ -165,20 +165,20 @@ describe('#922 P1a — a held step’s state, its facts and clears_at (items 1, 
     ]);
   });
 
-  it('check 5 — a leased claim (CW-2a: no deadline, a lease) is classed by its deadline, never by its lease', () => {
+  it('check 5 — a leased claim (CW-2a: no deadline, a lease) is classed by its lease first (#729 CW-3a): its fact not checked here, so unknown age, whatever its deadline', () => {
     const leased = runWith(['a'], {
       a: { deadline: null, token: 't', since: SINCE, lease: { id: 'l-1' } },
     });
     const leasedAhead = runWith(['a'], {
       a: { deadline: plus(90_000), token: 't', since: SINCE, lease: { id: 'l-1' } },
     });
-    // (a) red when the lease is read here (CW-3 adds the lease states in this one place); (b) prints
-    //     both states. Residual (D4 decision 1, trigger CW-3): on a leased claim the reply rule and
-    //     `stuck_claims` can disagree until CW-3.
+    // (a) red when the lease is not read first (the leased claim with a deadline ahead then reads
+    //     'ahead'); (b) prints both states. The snapshot carries no lease facts, so each lease reads
+    //     `not_checked` (CW-1b), an unknown state: unknown age (#729 CW-3a item 1).
     expect([
       heldStateAt(heldFacts(writtenSnapshot(leased, AT), 'a'), AT).state,
       heldStateAt(heldFacts(writtenSnapshot(leasedAhead, AT), 'a'), AT).state,
-    ]).toEqual(['unknown_age', 'ahead']);
+    ]).toEqual(['unknown_age', 'unknown_age']);
   });
 });
 

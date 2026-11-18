@@ -26,6 +26,7 @@ import {
   reclaimConditionWords,
   heldAgentWords,
   heldRerunOf,
+  heldIsPast,
   heldStateOf,
   heldWordsStateOf,
   HELD_WORDS,
@@ -706,9 +707,10 @@ function elsewhereWords(entry: Unavailable, host: McpHost, held: readonly HeldEn
     const words = way.conditions.flatMap((c) => reclaimConditionWords(c) ?? []);
     // #922 P2-1 (walk O1): a step whose deadline passed says so first — its entry has no deadline of
     // its own (`door_cannot_enact`), so the state is read off the reply's held entry for the step.
+    // #729 CW-3a: a claim whose lease no program held leads with the not-held line.
     const heldEntry = held.find((u) => u.step === way.step);
-    const state = heldEntry !== undefined ? heldStateOf(heldEntry) : undefined;
-    const past = state?.state === 'past' ? [HELD_WORDS.pastLine(state.deadline)] : [];
+    const lead = heldEntry !== undefined ? HELD_WORDS.leadLine(heldStateOf(heldEntry)) : undefined;
+    const past = lead !== undefined ? [lead] : [];
     return [
       `An operator can free step '${way.step}', outside this conversation.`,
       ...past,
@@ -1153,7 +1155,7 @@ function withHeldClause(
   const persists = narrowed.basis.store.persists_claims;
   if (persists && !refusal.remedy.some((w) => w.verb === 'reclaim')) return hint;
   const state = heldWordsStateOf(refusal, persists);
-  const rerun = state === 'past' ? heldRerunOf(refusal) : undefined;
+  const rerun = heldIsPast(state) ? heldRerunOf(refusal) : undefined;
   const after = rerun !== undefined ? ` ${HELD_WORDS.rerun(rerun, false)}` : '';
   return `${hint.slice(0, -1)}${HELD_WORDS.clause(state)}.${after}`;
 }

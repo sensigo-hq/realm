@@ -104,6 +104,20 @@ export function isPurgeEligible(
     };
   }
 
+  // #729 CW-3a (§4.4): a claim under a lease whose state is not known is never removed, with or
+  // without --force (a held lease is the future-deadline refusal above; a not-held one is stale).
+  const unknownLease = claims.find(
+    (c) => c.lease !== undefined && (c.lease.state === 'absent' || c.lease.state === 'unknown'),
+  );
+  if (unknownLease !== undefined) {
+    return {
+      eligible: false,
+      reason:
+        `run carries a claim on step '${unknownLease.step}' under a lease, and whether its program ` +
+        `still holds it is not known; purge does not remove it, with or without --force`,
+    };
+  }
+
   const unknownAgeClaim = claims.find((c) => c.state === 'claim_unknown_age');
   if (unknownAgeClaim !== undefined) {
     if (!opts.explicit) {
