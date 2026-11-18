@@ -432,7 +432,7 @@ describe('#616 unit 7b — the first open', () => {
       mode: (statSync(file).mode & 0o777).toString(8),
     }).toEqual({
       applicationId: REALM_ID,
-      version: 2,
+      version: REALM_STORE_SCHEMA_VERSION,
       meta: [
         {
           one: 1,
@@ -596,7 +596,7 @@ describe('#616 unit 7b — an empty store file that another program already wrot
     //     file's application id and schema version.
     expect({ result, made }).toEqual({
       result: 'opened',
-      made: { applicationId: REALM_ID, version: 2 },
+      made: { applicationId: REALM_ID, version: REALM_STORE_SCHEMA_VERSION },
     });
   });
 });
@@ -795,8 +795,8 @@ describe('#616 unit 7b — the checks of an existing file', () => {
     expect({ result, after: identity(file) }).toEqual({
       result: {
         code: 'STATE_STORE_SCHEMA_TAMPERED',
-        message: `The tables in ${file} do not match what this Realm writes for schema version 2. This usually means someone changed the store outside Realm. Realm will not use it; restore a backup made before the change.`,
-        details: { path: file, version: 2, ...difference },
+        message: `The tables in ${file} do not match what this Realm writes for schema version ${REALM_STORE_SCHEMA_VERSION}. This usually means someone changed the store outside Realm. Realm will not use it; restore a backup made before the change.`,
+        details: { path: file, version: REALM_STORE_SCHEMA_VERSION, ...difference },
       },
       after: before,
     });
@@ -866,8 +866,8 @@ describe('#616 unit 7b — the checks of an existing file', () => {
     expect({ result, after: identity(file) }).toEqual({
       result: {
         code: 'STATE_STORE_SCHEMA_TAMPERED',
-        message: `The tables in ${file} do not match what this Realm writes for schema version 2. This usually means someone changed the store outside Realm. Realm will not use it; restore a backup made before the change.`,
-        details: { path: file, version: 2, ...difference },
+        message: `The tables in ${file} do not match what this Realm writes for schema version ${REALM_STORE_SCHEMA_VERSION}. This usually means someone changed the store outside Realm. Realm will not use it; restore a backup made before the change.`,
+        details: { path: file, version: REALM_STORE_SCHEMA_VERSION, ...difference },
       },
       after: before,
     });

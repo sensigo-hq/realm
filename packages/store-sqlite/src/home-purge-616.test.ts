@@ -379,6 +379,9 @@ describe('#616 PR-2c c9 — the home’s purge: what one batch deletes, and how 
         // preview here sums the three stores' stats, so this cell holds none; the purge of a run's
         // outbound rows, with their bytes, is `store-format-v2-d1c1.test.ts`'s.
         outbound: 0,
+        // Callback B1a: schema version 3's callback rows. No store writes them until B1b; the purge
+        // of a run's callback row, with its bytes, is `store-format-v3-b1a.test.ts`'s.
+        callbacks: 0,
         run_blobs: 1,
         trace_buffer: 1,
         trace_sealed: 1,

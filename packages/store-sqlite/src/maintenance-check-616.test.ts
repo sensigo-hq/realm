@@ -444,7 +444,7 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
     }).toEqual({
       status: 'ok',
       path: join(home, 'realm.db'),
-      versions: [2, 2],
+      versions: [REALM_STORE_SCHEMA_VERSION, REALM_STORE_SCHEMA_VERSION],
       findings: [],
       not_run: [],
       // #616 PR-2c c8b1: the two not-checked entries of the data pass.
@@ -773,7 +773,7 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
       tombstoneFacts: [f.tombstones_since, f.tombstones_through_seq, f.purged_ids],
     }).toEqual({
       status: 'findings',
-      schema_version: 2,
+      schema_version: REALM_STORE_SCHEMA_VERSION,
       findings: [
         {
           check: 'settings',
@@ -792,12 +792,12 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
     // (1) red when the branch is removed or turned back into a refusal; (2) prints the report's parts.
     expect(verdict(await check(home))).toEqual({
       status: 'findings',
-      schema_version: 2,
+      schema_version: REALM_STORE_SCHEMA_VERSION,
       findings: [
         {
           check: 'schema',
           code: 'schema_differs',
-          message: "The schema differs from schema version 2's: missing trigger runs_insert_once.",
+          message: `The schema differs from schema version ${REALM_STORE_SCHEMA_VERSION}'s: missing trigger runs_insert_once.`,
         },
       ],
       not_run: stopped('schema_differs', ...DATA_STOPPED),
@@ -815,7 +815,7 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
       frames: [report.facts.wal_frames, report.facts.wal_frames_copied],
     }).toEqual({
       status: 'findings',
-      schema_version: 2,
+      schema_version: REALM_STORE_SCHEMA_VERSION,
       findings: [
         {
           check: 'settings',
@@ -837,7 +837,7 @@ describe('#616 PR-2c c8a3 — check 1: one cell per code', () => {
       //     report's parts.
       expect(verdict(await check(home))).toEqual({
         status: 'findings',
-        schema_version: 2,
+        schema_version: REALM_STORE_SCHEMA_VERSION,
         findings: [NOT_WRITABLE],
         not_run: [],
       });
@@ -911,14 +911,13 @@ describe('#616 PR-2c c8a3 — checks 2 and 3: a read-only folder, a dropped meta
     // (1) red when settings is skipped whole or reported as run in full; (2) prints the parts.
     expect(verdict(await check(home))).toEqual({
       status: 'findings',
-      schema_version: 2,
+      schema_version: REALM_STORE_SCHEMA_VERSION,
       findings: [
         {
           check: 'schema',
           code: 'schema_differs',
           // Dropping the table drops its triggers too.
-          message:
-            "The schema differs from schema version 2's: missing table store_meta, trigger store_meta_insert_once, trigger store_meta_no_delete, trigger store_meta_immutable, trigger store_meta_forward, trigger store_meta_insert_types, trigger store_meta_update_types.",
+          message: `The schema differs from schema version ${REALM_STORE_SCHEMA_VERSION}'s: missing table store_meta, trigger store_meta_insert_once, trigger store_meta_no_delete, trigger store_meta_immutable, trigger store_meta_forward, trigger store_meta_insert_types, trigger store_meta_update_types.`,
         },
       ],
       not_run: [metaRow('schema_differs'), ...stopped('schema_differs', ...DATA_STOPPED)],
@@ -2099,6 +2098,11 @@ describe('#616 PR-2c c8b2 — checks 2 and 2a: the orphans by table, and example
     [
       'outbound',
       "INSERT INTO outbound (run_id, entry_key, type, occurrence, of_max, status, lease_token, lease_deadline, attempts, created_at) VALUES ('gone', 'gate:g:reminder:1', 'reminder', 1, 3, 'pending', 't', '2030-01-01T00:00:00.000Z', 1, '2030-01-01T00:00:00.000Z')",
+    ],
+    // Callback B1a: schema version 3's callback rows, which go with their run.
+    [
+      'callbacks',
+      "INSERT INTO callbacks (run_id, workflow_id, host, webhook_id, status, attempts, created_at, next_attempt_at, url) VALUES ('gone', 'wf', 'hooks.example:443', 'w-gone', 'pending', 0, '2030-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z', 'https://hooks.example/cb')",
     ],
   ] as const)('%s alone holds an orphan — named, and nothing else found', async (table, seed) => {
     const home = await storeHome();

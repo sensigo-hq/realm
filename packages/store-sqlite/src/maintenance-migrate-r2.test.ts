@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  REALM_STORE_SCHEMA_VERSION,
   REALM_STORE_VERSIONS,
   WorkflowError,
   type CreateRunOptions,
@@ -85,7 +86,9 @@ const V4_DOWN = [
 
 /**
  * Core's versions 1 and 2, then two synthetic versions above them (3 adds two tables, 4 rebuilds one),
- * each with a step back; `three` replaces version 3's fields that say how it is undone.
+ * each with a step back; `three` replaces version 3's fields that say how it is undone. Callback B1a:
+ * the synthetic 3 replaces core's real 3, so the ladder is its own; the real 3's step back has its
+ * own cells (`store-format-v3-b1a.test.ts`), and a file newer than this Realm is `aboveReal`'s.
  */
 function backLadder(
   three: Partial<StoreSchemaVersion> = { downgrade: V3_DOWN },
@@ -94,6 +97,18 @@ function backLadder(
     ...REALM_STORE_VERSIONS,
     [3, { schema: [...REAL_2, V2_TABLE, V2_TAGS], upgrade: STEP_2, ...three }],
     [4, { schema: [...REAL_2, V3_TABLE, V2_TAGS, V3_INDEX], upgrade: STEP_3, downgrade: V4_DOWN }],
+  ]);
+}
+
+/** Callback B1a: the first version above this Realm's. */
+const NEWER = REALM_STORE_SCHEMA_VERSION + 1;
+
+/** Core's versions, then one synthetic version above the real top: a file newer than this Realm. */
+function aboveReal(): StoreSchemaVersions {
+  const top = REALM_STORE_VERSIONS.get(REALM_STORE_SCHEMA_VERSION)!.schema;
+  return new Map([
+    ...REALM_STORE_VERSIONS,
+    [NEWER, { schema: [...top, V2_TABLE, V2_TAGS], upgrade: STEP_2 }],
   ]);
 }
 
@@ -362,7 +377,7 @@ describe('#616 R2 — migrate --to, the step back', () => {
     }
     const unknown = (value: string): string =>
       `Cannot step back to ${value}: give a whole number that is a schema version this Realm ` +
-      'knows (1 to 2).';
+      `knows (1 to ${REALM_STORE_SCHEMA_VERSION}).`;
     // (1) red when a step is run on a file below the version asked for, or a stack trace replaces the
     //     words; (2) prints each refusal, the word's message and the scratch folder.
     expect({
@@ -487,7 +502,7 @@ describe('#616 R2 — migrate --to, the step back', () => {
   it('a file newer than this Realm reads is the open’s own refusal: no step is attempted, nothing changed', async () => {
     const { root, home, file } = nestedHome();
     await storeAt(home, 2);
-    await moveForeign(home, backLadder(), 3);
+    await moveForeign(home, aboveReal(), NEWER);
     const before = hashOf(file);
     const refused = await refusal(openMaintenance({ home, verb: 'migrate' }, {}));
     // (1) red when the open lets a newer file through to a step back; (2) prints the refusal and the
@@ -496,9 +511,9 @@ describe('#616 R2 — migrate --to, the step back', () => {
       refused: {
         code: 'STATE_STORE_VERSION_NEWER',
         message:
-          'This store was migrated by a newer Realm: its schema is version 3 and this Realm ' +
-          'writes version 2. Upgrade Realm to read or write it.',
-        details: { file: 3, realm: 2 },
+          `This store was migrated by a newer Realm: its schema is version ${NEWER} and this Realm ` +
+          `writes version ${REALM_STORE_SCHEMA_VERSION}. Upgrade Realm to read or write it.`,
+        details: { file: NEWER, realm: REALM_STORE_SCHEMA_VERSION },
       },
       root: ['.realm'],
       unchanged: true,
@@ -588,24 +603,24 @@ describe('#616 R2 — the plan judged again under the hold (another writer moves
     const { root, home, file } = nestedHome();
     await storeAt(home, 2);
     const m = await maintain(home, {
-      beforeHold: () => moveForeign(home, backLadder(), 3),
+      beforeHold: () => moveForeign(home, aboveReal(), NEWER),
     });
     const refused = await refusal(m.migrate({ to: 1 }));
     const free = await writable(home);
     m.close();
-    // (1) red when a file newer than this Realm is judged by the plan (version 3's step back, which
-    //     this Realm does not know, is attempted or refused in other words); (2) prints the refusal,
-    //     the scratch folder, the version and the hold.
+    // (1) red when a file newer than this Realm is judged by the plan (the newer version's step back,
+    //     which this Realm does not know, is attempted or refused in other words); (2) prints the
+    //     refusal, the scratch folder, the version and the hold.
     expect({ refused, root: readdirSync(root), version: versionOf(file), free }).toEqual({
       refused: {
         code: 'STATE_STORE_VERSION_NEWER',
         message:
-          'This store was migrated by a newer Realm: its schema is version 3 and this Realm ' +
-          'writes version 2. Upgrade Realm to read or write it.',
-        details: { file: 3, realm: 2 },
+          `This store was migrated by a newer Realm: its schema is version ${NEWER} and this Realm ` +
+          `writes version ${REALM_STORE_SCHEMA_VERSION}. Upgrade Realm to read or write it.`,
+        details: { file: NEWER, realm: REALM_STORE_SCHEMA_VERSION },
       },
       root: ['.realm'],
-      version: 3,
+      version: NEWER,
       free: true,
     });
   });
