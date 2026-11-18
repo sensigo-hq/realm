@@ -992,6 +992,15 @@ DriveClaim · type · beta
   };
 
 DriveFailureCost · type · internal
+DriveFailureModelText · type · public
+  type DriveFailureModelText = (Extract<ModelText, {
+      recorded: true;
+  }> & {
+      dropped_messages?: number;
+  }) | Extract<ModelText, {
+      recorded: false;
+  }>;
+
 DriveFailureRecord · type · public
   interface DriveFailureRecord {
       at: string;
@@ -1008,8 +1017,10 @@ DriveFailureRecord · type · public
       last_observed_status?: number;
       retry_after_observed_ms?: number;
       usage?: UsageRecord[];
+      model_text?: DriveFailureModelText;
   }
 
+DriveFailureTextLoss · type · internal
 DriveFailuresField · type · public
   interface DriveFailuresField {
       first_failed_at: string;
@@ -4405,6 +4416,7 @@ drainFinalizers · value · public
       attempted: string[];
   }>;
 
+driveFailureTextLoss · value · internal
 dueCallbacks · value · internal
 dueExpiry · value · internal
 dueExpiryWords · value · internal

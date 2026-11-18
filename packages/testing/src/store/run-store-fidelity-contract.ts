@@ -22,6 +22,7 @@ import {
   type Attributed,
   type EvidenceSnapshot,
   type CreateResult,
+  type DriveFailureModelText,
   type DriveFailureRecord,
   type ListedSnapshot,
   type PurgedItem,
@@ -74,6 +75,11 @@ import {
  * cases are skipped for a store with no `scanListed`, which Realm lists through `scan`. Gap 1, unit
  * A1, adds `EVIDENCE_KEEPS_MODEL_TEXT`: an evidence entry's `model_text` (each model call's text)
  * reads back exactly as written, its marker too, and an entry written without it reads back without.
+ * Gap 1, unit A2a, adds `DRIVE_FAILURE_KEEPS_MODEL_TEXT`: a drive-failure entry's `model_text` reads
+ * back exactly as written, its marker too, and one written without it reads back without; a listing
+ * leaves the texts out at every ring position, and lists a run with no drive failures, or an empty
+ * ring, as `get` reads it (its listing cases are skipped for a store with no `scanListed`). It also
+ * extends `LISTING_LEAVES_MODEL_TEXT`'s write-back cases to a drive failure's text.
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -96,6 +102,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'PURGE_CAPABILITY_WIRED',
   'LISTING_LEAVES_MODEL_TEXT',
   'EVIDENCE_KEEPS_MODEL_TEXT',
+  'DRIVE_FAILURE_KEEPS_MODEL_TEXT',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -520,6 +527,128 @@ function describeModelText(value: unknown): string {
   if (!Array.isArray(v.messages)) return JSON.stringify(value);
   const lengths = v.messages.map((m) => (typeof m.text === 'string' ? m.text.length : 'no text'));
   return `${v.messages.length} messages (lengths ${lengths.join(', ')}), ${v.requests?.length ?? 0} requests: ${JSON.stringify(value)}`;
+}
+
+/**
+ * `DRIVE_FAILURE_KEEPS_MODEL_TEXT`'s recorded fixture: as the evidence one (a text cut after a 4-byte
+ * character, a text holding U+0000, a request that got no answer), with `dropped_messages`.
+ */
+const TCK_FAILURE_TEXT: DriveFailureModelText = {
+  recorded: true,
+  messages: [
+    { role: 'system', text: 'The TCK failure system text.' },
+    { role: 'user', text: 'failed before\u0000after', hidden: 1 },
+    {
+      role: 'assistant',
+      text: 'cut after this: \u{1F600}',
+      cut: { kept_bytes: 20, full_bytes: 70000 },
+    },
+  ],
+  tools: [{ json: '[{"name":"tck_failure_tool"}]' }],
+  requests: [
+    { request_id: 'tck-failure-request-1', sent: [0, 1], tools: 0, reply: [2] },
+    { request_id: null, sent: [0, 1, 2], reply: null },
+  ],
+  dropped_messages: 2,
+};
+
+/** A distinct text for drive failure `n`, so a comparison by position cannot pass for one by number. */
+function failureText(n: number): DriveFailureModelText {
+  return {
+    recorded: true,
+    messages: [{ role: 'user', text: `the TCK text of drive failure ${n}` }],
+    tools: [],
+    requests: [{ request_id: null, sent: [0], reply: null }],
+  };
+}
+
+/** Drive failure `n` (the TCK's own fake values), carrying `modelText` when given. */
+function tckFailure(
+  adapter: RunStoreFidelityContractAdapter,
+  n: number,
+  modelText?: DriveFailureModelText,
+): DriveFailureRecord {
+  return {
+    at: `2026-01-01T00:00:${String(10 + n).padStart(2, '0')}.000Z`,
+    step: adapter.stepName,
+    provider: 'tck-provider',
+    error_class: 'other',
+    message: `tck drive failure ${n}`,
+    elapsed_ms: n + 1,
+    ...(modelText !== undefined ? { model_text: structuredClone(modelText) } : {}),
+  };
+}
+
+/** A run of a workflow of its own, with the drive-failure ring `drive_failures` written by `update`. */
+async function runWithFailures(
+  adapter: RunStoreFidelityContractAdapter,
+  what: string,
+  driveFailures: RunRecord['drive_failures'],
+): Promise<{ tag: string; runId: string }> {
+  const tag = `tck-failure-${what}-${Math.random().toString(36).slice(2)}`;
+  const { record: run } = await adapter.store.create({
+    workflowId: tag,
+    workflowVersion: 1,
+    params: {},
+  });
+  if (driveFailures !== undefined) {
+    await adapter.store.update({ ...run, drive_failures: driveFailures });
+  }
+  return { tag, runId: run.id };
+}
+
+/** A ring of `texted.length` failures numbered 0 on, `total` that length: entry `i` has a text when `texted[i]`. */
+function ringOf(
+  adapter: RunStoreFidelityContractAdapter,
+  texted: readonly boolean[],
+): NonNullable<RunRecord['drive_failures']> {
+  return {
+    first_failed_at: '2026-01-01T00:00:10.000Z',
+    total: texted.length,
+    entries: texted.map((has, i) => tckFailure(adapter, i, has ? failureText(i) : undefined)),
+  };
+}
+
+/** How many `"model_text"` keys the JSON of `value` holds. */
+function textKeyCount(value: unknown): number {
+  return JSON.stringify(value ?? null).split('"model_text"').length - 1;
+}
+
+/** The `model_text` of each of `record`'s drive failures, in ring order (`undefined` where none). */
+function failureTexts(record: RunRecord): unknown[] {
+  return (record.drive_failures?.entries ?? []).map((entry) => entry.model_text);
+}
+
+/**
+ * A `DRIVE_FAILURE_KEEPS_MODEL_TEXT` listing case: skipped, by name, for a store with no `scanListed`
+ * (Realm lists such a store through `scan`, and leaves the texts out itself); otherwise `run`.
+ */
+function failureListingCase(
+  adapter: RunStoreFidelityContractAdapter,
+  name: string,
+  run: () => Promise<void>,
+): RunStoreFidelityContractCase {
+  if (typeof adapter.store.scanListed !== 'function') {
+    return {
+      law: 'DRIVE_FAILURE_KEEPS_MODEL_TEXT',
+      name: `SKIPPED — store has no scanListed: ${name}`,
+      skipped: true,
+      run: async () => {
+        // Intentional no-op — see the case name for why.
+      },
+    };
+  }
+  return { law: 'DRIVE_FAILURE_KEEPS_MODEL_TEXT', name, run };
+}
+
+/** Runs `write`, and returns the error it threw, or `undefined` when it was accepted. */
+async function refusalOf(write: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await write();
+    return undefined;
+  } catch (err) {
+    return err;
+  }
 }
 
 /**
@@ -1762,6 +1891,116 @@ export function runStoreFidelityContract(
     ),
   );
 
+  // Gap 1, unit A2a — LISTING_LEAVES_MODEL_TEXT's write-back cases for a drive failure's text. Each
+  // ring holds five failures with a different text on each, so a rule that compares by position, not
+  // by the failure's number, is caught by the append case.
+  const writeBack = (
+    name: string,
+    texted: readonly boolean[],
+    next: (stored: RunRecord) => RunRecord,
+    want: 'refused' | 'accepted',
+  ): RunStoreFidelityContractCase =>
+    listingCase(adapter, name, async () => {
+      const { runId } = await runWithFailures(adapter, 'write-back', ringOf(adapter, texted));
+      const { record: stored } = await adapter.store.get(runId);
+      const written = next(stored);
+      const refusal = await refusalOf(() => adapter.store.update(written));
+      const { record: after } = await adapter.store.get(runId);
+      const kept =
+        want === 'refused'
+          ? isDeepStrictEqual(failureTexts(after), failureTexts(stored))
+          : isDeepStrictEqual(failureTexts(after), failureTexts(written));
+      if ((refusal === undefined) !== (want === 'accepted') || !kept) {
+        throw new Error(
+          `LISTING_LEAVES_MODEL_TEXT: ${name}; the update was ${refusal === undefined ? 'accepted' : `refused (${refusal instanceof Error ? refusal.message : String(refusal)})`}, and run ${runId}'s drive-failure texts read ${JSON.stringify(failureTexts(after))}`,
+        );
+      }
+    });
+  const ALL = [true, true, true, true, true];
+  const ring = (record: RunRecord) => record.drive_failures!;
+  cases.push(
+    listingCase(
+      adapter,
+      "a listing's record of a run whose only text is on a drive failure, written back by update, is refused, and the text stays",
+      async () => {
+        const { tag, runId } = await runWithFailures(adapter, 'only-failure', ringOf(adapter, ALL));
+        const { record: stored } = await adapter.store.get(runId);
+        const listed = await listedRun(adapter, tag, runId);
+        if (listed === undefined) {
+          throw new Error(`LISTING_LEAVES_MODEL_TEXT: scanListed did not give run ${runId}`);
+        }
+        const refusal = await refusalOf(() =>
+          adapter.store.update(listed.record as unknown as RunRecord),
+        );
+        const { record: after } = await adapter.store.get(runId);
+        if (
+          refusal === undefined ||
+          !isDeepStrictEqual(failureTexts(after), failureTexts(stored)) ||
+          textKeyCount(stored.evidence) !== 0
+        ) {
+          throw new Error(
+            `LISTING_LEAVES_MODEL_TEXT: an update with a listing's record must be refused when the run's only model_text is on a drive failure, and run ${runId} must keep it; the update was ${refusal === undefined ? 'accepted' : 'refused'}, and its drive-failure texts read ${JSON.stringify(failureTexts(after))}`,
+          );
+        }
+      },
+    ),
+    writeBack(
+      'an update that removes drive_failures, while its failures hold texts, is refused',
+      ALL,
+      (stored) => {
+        const { drive_failures: _removed, ...rest } = stored;
+        void _removed;
+        return rest as RunRecord;
+      },
+      'refused',
+    ),
+    writeBack(
+      'an update that cuts the ring at its front with the same total, dropping the oldest failure, which holds a text, is refused',
+      ALL,
+      (stored) => ({
+        ...stored,
+        drive_failures: { ...ring(stored), entries: ring(stored).entries.slice(1) },
+      }),
+      'refused',
+    ),
+    writeBack(
+      "an update that changes one covered drive failure's text is refused",
+      ALL,
+      (stored) => ({
+        ...stored,
+        drive_failures: {
+          ...ring(stored),
+          entries: ring(stored).entries.map((entry, i) =>
+            i === 2 ? { ...entry, model_text: failureText(99) } : entry,
+          ),
+        },
+      }),
+      'refused',
+    ),
+    writeBack(
+      'an update that appends a failure to a full ring, so the oldest falls off, is accepted, and every kept text stays',
+      ALL,
+      (stored) => ({
+        ...stored,
+        drive_failures: {
+          ...ring(stored),
+          total: ring(stored).total + 1,
+          entries: [...ring(stored).entries.slice(1), tckFailure(adapter, 5, failureText(5))],
+        },
+      }),
+      'accepted',
+    ),
+    writeBack(
+      'an update that cuts the ring at its front with the same total, dropping a failure with no text, is accepted',
+      [false, true, true, true, true],
+      (stored) => ({
+        ...stored,
+        drive_failures: { ...ring(stored), entries: ring(stored).entries.slice(1) },
+      }),
+      'accepted',
+    ),
+  );
+
   // Gap 1, unit A1 — EVIDENCE_KEEPS_MODEL_TEXT. Always active: every store round-trips evidence.
   cases.push(
     {
@@ -1801,6 +2040,100 @@ export function runStoreFidelityContract(
         }
       },
     },
+  );
+
+  // Gap 1, unit A2a — DRIVE_FAILURE_KEEPS_MODEL_TEXT. The round trip is always active: every store
+  // round-trips the drive-failure ring. The listing cases need `scanListed`.
+  const failureRoundTrip = async (what: string, modelText: DriveFailureModelText | undefined) => {
+    const failure = tckFailure(adapter, 0, modelText);
+    const { runId } = await runWithFailures(adapter, `round-trip-${what}`, {
+      first_failed_at: failure.at,
+      total: 1,
+      entries: [failure],
+    });
+    const { record } = await adapter.store.get(runId);
+    return record.drive_failures?.entries[0];
+  };
+  cases.push(
+    {
+      law: 'DRIVE_FAILURE_KEEPS_MODEL_TEXT',
+      name: "a drive failure written with its model calls' texts reads back with them exactly: dropped_messages, a text cut after a multi-byte character, a text holding U+0000, and a request with no id or reply",
+      run: async () => {
+        const entry = await failureRoundTrip('texts', TCK_FAILURE_TEXT);
+        if (!isDeepStrictEqual(entry?.model_text, TCK_FAILURE_TEXT)) {
+          throw new Error(
+            `DRIVE_FAILURE_KEEPS_MODEL_TEXT: a drive failure's model_text must read back exactly as written; ${describeModelText(entry?.model_text)} read back, ${describeModelText(TCK_FAILURE_TEXT)} written`,
+          );
+        }
+      },
+    },
+    {
+      law: 'DRIVE_FAILURE_KEEPS_MODEL_TEXT',
+      name: 'a drive failure written with the marker that the provider reported no texts reads back with it',
+      run: async () => {
+        const marker: DriveFailureModelText = { recorded: false, why: 'provider_did_not_report' };
+        const entry = await failureRoundTrip('marker', marker);
+        if (!isDeepStrictEqual(entry?.model_text, marker)) {
+          throw new Error(
+            `DRIVE_FAILURE_KEEPS_MODEL_TEXT: a drive failure's model_text marker must read back as written; ${JSON.stringify(entry?.model_text)} read back, ${JSON.stringify(marker)} written`,
+          );
+        }
+      },
+    },
+    {
+      law: 'DRIVE_FAILURE_KEEPS_MODEL_TEXT',
+      name: 'a drive failure written without model_text reads back without it',
+      run: async () => {
+        const entry = await failureRoundTrip('absent', undefined);
+        if (entry === undefined || 'model_text' in entry) {
+          throw new Error(
+            `DRIVE_FAILURE_KEEPS_MODEL_TEXT: a drive failure written without model_text must read back without it; read back ${entry === undefined ? 'no entry' : JSON.stringify(entry.model_text)}`,
+          );
+        }
+      },
+    },
+    failureListingCase(
+      adapter,
+      'a listing leaves the texts out of every drive failure of a seven-entry ring, every other value as get reads it',
+      async () => {
+        const texted = [true, true, true, true, true, true, true];
+        const { tag, runId } = await runWithFailures(adapter, 'seven', {
+          ...ringOf(adapter, texted),
+          total: 9,
+        });
+        const { record: stored } = await adapter.store.get(runId);
+        const listed = await listedRun(adapter, tag, runId);
+        const want = JSON.stringify(withoutTexts(stored));
+        const got = JSON.stringify(listed?.record);
+        if (got !== want || textKeyCount(listed?.record) !== 0 || textKeyCount(stored) !== 7) {
+          throw new Error(
+            `DRIVE_FAILURE_KEEPS_MODEL_TEXT: scanListed must give run ${runId} as get reads it with model_text left out of all 7 drive failures, and get must still read the 7 texts; the listing holds ${textKeyCount(listed?.record)} texts and get ${textKeyCount(stored)}; scanListed gave ${got ?? 'no such run'}, want ${want}`,
+          );
+        }
+      },
+    ),
+    failureListingCase(
+      adapter,
+      'a listing gives a run with no drive failures, and one with an empty ring, exactly as get reads them',
+      async () => {
+        const rings: Array<[string, RunRecord['drive_failures']]> = [
+          ['none', undefined],
+          ['empty', { first_failed_at: '2026-01-01T00:00:10.000Z', total: 0, entries: [] }],
+        ];
+        for (const [what, ring] of rings) {
+          const { tag, runId } = await runWithFailures(adapter, what, ring);
+          const { record: stored } = await adapter.store.get(runId);
+          const listed = await listedRun(adapter, tag, runId);
+          const want = JSON.stringify(stored);
+          const got = JSON.stringify(listed?.record);
+          if (got !== want) {
+            throw new Error(
+              `DRIVE_FAILURE_KEEPS_MODEL_TEXT: scanListed must give run ${runId} (${what === 'none' ? 'no drive failures' : 'an empty ring'}) exactly as get reads it; scanListed gave ${got ?? 'no such run'}, want ${want}`,
+            );
+          }
+        }
+      },
+    ),
   );
 
   cases.push({

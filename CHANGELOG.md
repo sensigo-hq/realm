@@ -42,6 +42,7 @@ All notable changes to this project are documented here.
 - `RunStore` gains an optional `scanListed`, a listing of runs that leaves each model call's text out; a store without it keeps working, and Realm lists through `scan` instead.
 - In the library, a listing's run has its own types, `ListedSnapshot`, `ListedRecord`, `ListedScanPage` and `ListedScanItem`, and `update` does not accept a `ListedRecord`; `RunStore`'s `scanListed` returns them, and `classifyRunHealth`, `findEligibleSteps` and `getWorkflowForRun` take a listed run as well as a full one.
 - In the library, `EvidenceSnapshot` gains `model_text`, a `ModelText`: the texts of each model call of the attempt, or a marker saying why there are none. `StepMeta` gains `modelText`, which the engine writes on the attempt's entry as `model_text`.
+- In the library, `DriveFailureRecord` gains an optional `model_text`, a `DriveFailureModelText`, which Realm does not write yet. Stores list runs without it at every ring position, and refuse with `STATE_EVIDENCE_REWRITTEN` a write that would change or remove it.
 
 ## [0.50.0] — 2026-11-17
 

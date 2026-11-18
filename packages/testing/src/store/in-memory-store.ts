@@ -19,6 +19,7 @@ import {
   parseStamp,
   writtenSnapshot,
   listedSnapshotOf,
+  driveFailureTextLoss,
   SCAN_MAX_PAGE_SIZE,
   type Clock,
   type CreateResult,
@@ -735,7 +736,7 @@ export class InMemoryStore implements RunStore {
     assertSealIntegrity(existing, record);
     // Gap 1, unit A0: an update that drops a stored evidence entry's `model_text` is refused, as the
     // SQLite store refuses a changed entry: a listing's record leaves the texts out, and is never
-    // written back over them.
+    // written back over them. Unit A2a: so is one that removes or changes a drive failure's text.
     assertKeepsModelText(existing, record);
     const updated: RunRecord = {
       ...record,
@@ -1095,7 +1096,10 @@ brandClass(InMemoryStore, Symbol.for('@sensigo/realm-testing/InMemoryStore'), RE
 
 /**
  * Gap 1, unit A0: refuses an update that drops the `model_text` a stored evidence entry holds (the
- * entry gone, or the key gone from it), with the SQLite store's code for a changed entry.
+ * entry gone, or the key gone from it), with the SQLite store's code for a changed entry. Unit A2a:
+ * and one that would remove or change the `model_text` a stored drive failure keeps, by core's
+ * `driveFailureTextLoss` (the rule SQLite's `update` applies too), naming the failure by its number
+ * counted from 1 (`total − length + index + 1`).
  */
 function assertKeepsModelText(existing: RunRecord, record: RunRecord): void {
   const stored = Array.isArray(existing.evidence) ? existing.evidence : [];
@@ -1105,17 +1109,33 @@ function assertKeepsModelText(existing: RunRecord, record: RunRecord): void {
       Object.prototype.hasOwnProperty.call(entry, 'model_text') &&
       (next[i] === undefined || !Object.prototype.hasOwnProperty.call(next[i], 'model_text')),
   );
-  if (dropped === -1) return;
+  if (dropped !== -1) {
+    throw new WorkflowError(
+      `The store refused a write that would remove the model calls' text from evidence entry ` +
+        `${dropped} of run ${record.id}: a listing of runs leaves the texts out, and its record is ` +
+        `never written back.`,
+      {
+        code: 'STATE_EVIDENCE_REWRITTEN',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { runId: record.id, entry: dropped },
+      },
+    );
+  }
+  const loss = driveFailureTextLoss(existing.drive_failures, record.drive_failures);
+  if (loss === undefined) return;
+  const n = loss.number + 1;
   throw new WorkflowError(
-    `The store refused a write that would remove the model calls' text from evidence entry ` +
-      `${dropped} of run ${record.id}: a listing of runs leaves the texts out, and its record is ` +
-      `never written back.`,
+    loss.kind === 'removed'
+      ? `The store refused a write that would remove the model calls' text from drive failure ${n} of run ${record.id}: a listing of runs leaves the texts out, and its record is never written back.`
+      : `The store refused a write that would change the model calls' text kept on drive failure ${n} of run ${record.id}: a drive failure's text is written once.`,
     {
       code: 'STATE_EVIDENCE_REWRITTEN',
       category: 'STATE',
       agentAction: 'report_to_user',
       retryable: false,
-      details: { runId: record.id, entry: dropped },
+      details: { runId: record.id, driveFailure: n },
     },
   );
 }

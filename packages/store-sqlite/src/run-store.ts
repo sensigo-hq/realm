@@ -43,6 +43,7 @@ import {
   computeClaimDeadline,
   decideIdempotencyPolicy,
   deriveRunPhase,
+  driveFailureTextLoss,
   findEligibleSteps,
   floorAtHolder,
   floorAtRecord,
@@ -87,7 +88,7 @@ import {
   type RowsDeleted,
 } from './artifact-delete-failure.js';
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
-import { VerifyInconclusive, type RealmDb } from './connection.js';
+import { guardRefusalError, VerifyInconclusive, type RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
 import { SqliteCallbackKeys } from './callback-keys.js';
 import { SqliteOutboundLedger } from './outbound-ledger.js';
@@ -726,9 +727,10 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
    * Writes `record` as the run's next version, as the JSON store does: refused when no run has its id
    * (core's `STATE_RUN_NOT_FOUND`, no reading spent), when the stored version is not the record's
    * (core's `STATE_SNAPSHOT_MISMATCH`), when the write would cross the seal boundary (core's
-   * `assertSealIntegrity`), or when it would change or remove stored evidence or a stored write-once
+   * `assertSealIntegrity`), or when it would change or remove stored evidence, a stored write-once
    * field (the file's guards' `STATE_EVIDENCE_REWRITTEN` and `STATE_WRITE_ONCE_REWRITTEN`, raised by
-   * the store before any write). Otherwise the run is stored with the version moved by one,
+   * the store before any write) or the model text a stored drive failure keeps (gap 1, unit A2a:
+   * `STATE_EVIDENCE_REWRITTEN`, by core's `driveFailureTextLoss`). Otherwise the run is stored with the version moved by one,
    * `updated_at` the call's reading and the derived phase; the new evidence entries and write-once
    * fields are added. Returns the record as `get()` returns it, with the reading.
    *
@@ -748,6 +750,11 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
           throw versionConflictError(record.id, record.version, stored.version);
         }
         assertSealIntegrity(stored, record);
+        // Gap 1, unit A2a: a drive failure's stored model text is written once, like evidence; the
+        // ring is in the core document, which the write below rewrites whole, so it is judged here.
+        if (driveFailureTextLoss(stored.drive_failures, record.drive_failures) !== undefined) {
+          throw guardRefusalError('STATE_EVIDENCE_REWRITTEN');
+        }
         const version = record.version + 1;
         const updatedAt = at.toISOString();
         const text = writeRunUpdate(

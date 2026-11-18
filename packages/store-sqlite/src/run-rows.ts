@@ -533,13 +533,19 @@ export function writeRunUpdate(
 }
 
 /**
- * Gap 1, unit A0: a run's core document as a listing reads it, each drive-failure entry's
- * `model_text` removed: five fixed paths, because the ring keeps five entries (`RING_CAP`).
+ * Gap 1, unit A0, then A2a: a run's core document as a listing reads it, each drive-failure entry's
+ * `model_text` removed at every position of the ring, whatever its length (another writer's ring
+ * may be longer than Realm's own). Each entry is taken whole (`record -> fullkey`, JSON whatever its
+ * type), the key removed from it, and the entries put back in their order in the ring's own place.
+ * The `json_type` guard keeps a run with no ring as it is stored: without it, `json_set` would add
+ * `drive_failures: { entries: [] }` to a run that never failed.
  */
 const LISTED_CORE =
-  'SELECT json_remove(record, ' +
-  [0, 1, 2, 3, 4].map((i) => `'$.drive_failures.entries[${i}].model_text'`).join(', ') +
-  ') AS record FROM runs WHERE id = ?';
+  "SELECT CASE WHEN json_type(record, '$.drive_failures.entries') = 'array' " +
+  "THEN json_set(record, '$.drive_failures.entries', " +
+  "(SELECT json_group_array(json_remove(record -> fullkey, '$.model_text') ORDER BY key) " +
+  "FROM json_each(record, '$.drive_failures.entries'))) " +
+  'ELSE record END AS record FROM runs WHERE id = ?';
 
 /** Gap 1, unit A0: a run's evidence rows as a listing reads them, each entry's `model_text` removed. */
 const LISTED_EVIDENCE =
@@ -562,7 +568,8 @@ function disagreement(runId: string, what: string): Error {
  * Gap 1, unit A0: with `listed`, as a listing reads it: SQLite removes `model_text` from each
  * evidence row and from each of the drive-failure ring's entries in the SELECTs, so the texts are
  * never read (`json_remove` on a missing key changes nothing, and keeps every other value). The read
- * checks no entry hash, so the removal is safe; `update` refuses such a record (it changes an entry).
+ * checks no entry hash, so the removal is safe; `update` refuses such a record (it changes an evidence
+ * entry, or drops a drive failure's text: gap 1, unit A2a).
  */
 export function readRunInTransaction(
   db: DatabaseLike,

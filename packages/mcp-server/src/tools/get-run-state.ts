@@ -287,8 +287,13 @@ function boundedRunHealth(findings: readonly RunHealthFinding[]): {
   return { shown, more };
 }
 
-/** H7: a failed drive as get_run_state shows it — its billed requests bounded, with the count left out. */
-export type DriveFailureView = DriveFailuresField['entries'][number] & { usage_more?: number };
+/**
+ * H7: a failed drive as get_run_state shows it — its billed requests bounded, with the count left
+ * out. Gap 1, unit A2a: without its `model_text`, which get_run_state never shows.
+ */
+export type DriveFailureView = Omit<DriveFailuresField['entries'][number], 'model_text'> & {
+  usage_more?: number;
+};
 
 /** H7: the run's failed drives as get_run_state shows them. */
 export type DriveFailuresView = Omit<DriveFailuresField, 'entries'> & {
@@ -296,27 +301,30 @@ export type DriveFailuresView = Omit<DriveFailuresField, 'entries'> & {
 };
 
 /**
- * #872 (b1) correction 1 (H7): the run's failed drives — the ring of five as stored — each entry's
- * `usage` at most three records, `usage_more` beside it counting the rest. `drive_failure_costs`
- * keeps the totals.
+ * #872 (b1) correction 1 (H7): the run's failed drives — the ring as stored — each entry's `usage` at
+ * most three records, `usage_more` beside it counting the rest. `drive_failure_costs` keeps the
+ * totals. Gap 1, unit A2a: each entry without its `model_text` (the model calls' texts), every
+ * other key as stored, in its order.
  */
 function boundedDriveFailures(field: DriveFailuresField): DriveFailuresView {
   return {
     ...field,
-    entries: field.entries.map((entry) =>
-      entry.usage !== undefined && entry.usage.length > DRIVE_USAGE_SHOWN
+    entries: field.entries.map((entry) => {
+      const { model_text: _text, ...shown } = entry;
+      void _text;
+      return shown.usage !== undefined && shown.usage.length > DRIVE_USAGE_SHOWN
         ? (Object.fromEntries(
-            Object.entries(entry).flatMap(([key, value]) =>
+            Object.entries(shown).flatMap(([key, value]) =>
               key === 'usage'
                 ? [
-                    [key, entry.usage!.slice(0, DRIVE_USAGE_SHOWN)],
-                    [`usage${MORE}`, entry.usage!.length - DRIVE_USAGE_SHOWN],
+                    [key, shown.usage!.slice(0, DRIVE_USAGE_SHOWN)],
+                    [`usage${MORE}`, shown.usage!.length - DRIVE_USAGE_SHOWN],
                   ]
                 : [[key, value]],
             ),
           ) as DriveFailureView)
-        : entry,
-    ),
+        : shown;
+    }),
   };
 }
 

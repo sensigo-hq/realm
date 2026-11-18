@@ -358,7 +358,7 @@ const GUARD_ERRORS = {
   STATE_EVIDENCE_REWRITTEN: guardRefusal(
     'STATE_EVIDENCE_REWRITTEN',
     "The store refused a write that would change or remove a run's stored evidence, which is " +
-      'append-only.',
+      'append-only, or the model text kept on one of its drive failures.',
     false,
   ),
   STATE_WRITE_ONCE_REWRITTEN: guardRefusal(

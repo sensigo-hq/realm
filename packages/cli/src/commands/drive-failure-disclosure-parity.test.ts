@@ -52,6 +52,10 @@ const ENTRY: DriveFailureRecord = {
 const FENCE_WAIVER =
   "the fence against a stale drive-failure entry (the run's evidence count and open question when the entry was appended), consumed by the drive_failing finding; visible verbatim on the MCP door (get_run_state, so an agent can reason about staleness) and as record fields in `realm run export`; inspect shows the finding itself when the fence holds, and nothing of the fence when it does not";
 
+/** Gap 1, unit A2a: why `inspect` does not print a drive failure's `model_text` yet. */
+const MODEL_TEXT_WAIVER =
+  "the model calls' texts a drive failure keeps (gap 1, unit A2a): unit B renders them in inspect; until then `realm run export` carries them, masked as values";
+
 const DRIVE_FAILURE_DISCLOSURE = {
   at: { surface: 'rendered', probe: (out) => expect(out).toContain(ENTRY.at) },
   step: { surface: 'rendered', probe: (out) => expect(out).toContain('classify') },
@@ -85,6 +89,7 @@ const DRIVE_FAILURE_DISCLOSURE = {
   // prompt` — the D2 truth rule fires on the failure line too, not only the step line.
   evidence_count: { surface: 'waived', reason: FENCE_WAIVER },
   gate_id: { surface: 'waived', reason: FENCE_WAIVER },
+  model_text: { surface: 'waived', reason: MODEL_TEXT_WAIVER },
   usage: {
     surface: 'rendered',
     probe: (out) => {
@@ -141,7 +146,7 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
     }
   });
 
-  it('the registry covers every field, and waives only the two fence fields, for their written reason', () => {
+  it('the registry covers every field, and waives only the two fence fields and model_text, for their written reasons', () => {
     expect(Object.keys(DRIVE_FAILURE_DISCLOSURE).sort()).toEqual(
       [
         'at',
@@ -154,6 +159,7 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
         'gate_id',
         'last_observed_status',
         'message',
+        'model_text',
         'provider',
         'retry_after_observed_ms',
         'step',
@@ -171,6 +177,7 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
     ).toEqual([
       ['evidence_count', FENCE_WAIVER],
       ['gate_id', FENCE_WAIVER],
+      ['model_text', MODEL_TEXT_WAIVER],
     ]);
   });
 });

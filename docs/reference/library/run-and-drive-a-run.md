@@ -2853,6 +2853,7 @@ Names this job reaches whose entry is on another page.
 - [`DefinitionBasis`](embed-the-mcp-server.md#definitionbasis): The definition the ways were judged against: the run's workflow by id, or why it is absent.
 - [`DisclosureAudience`](embed-the-mcp-server.md#disclosureaudience): Who reads a surface (`DisclosureSet.audience`).
 - [`DisclosureSet`](embed-the-mcp-server.md#disclosureset): A compiled set: opaque to callers; built once per (entries, options).
+- [`DriveFailureModelText`](read-a-runs-record.md#drivefailuremodeltext): The text of the model requests one drive failure covers, on its entry (`DriveFailureRecord.model_text`).
 - [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`).
 - [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`).
 - [`DueExpiry`](write-a-handler.md#dueexpiry): An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`).

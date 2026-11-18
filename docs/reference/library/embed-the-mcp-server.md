@@ -778,6 +778,7 @@ Names this job reaches whose entry is on another page.
 - [`CreateResult`](implement-a-store.md#createresult): What a run store's `create` returns: the record with the reading the create used, and whether it was written.
 - [`CreateRunOptions`](implement-a-store.md#createrunoptions): What a run store is given to create a run: the workflow and its version, the params, and an idempotency key with the rule for a key already used (`RunStore.create`).
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
+- [`DriveFailureModelText`](read-a-runs-record.md#drivefailuremodeltext): The text of the model requests one drive failure covers, on its entry (`DriveFailureRecord.model_text`).
 - [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`).
 - [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`).
 - [`DueExpiry`](write-a-handler.md#dueexpiry): An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`).
