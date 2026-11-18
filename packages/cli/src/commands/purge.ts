@@ -33,6 +33,10 @@ import type {
   WorkflowRegistrar,
 } from '@sensigo/realm';
 import {
+  CALLBACK_DELIVERY_WINDOW_SECONDS,
+  CALLBACK_PURGE_GRACE_SECONDS,
+  isPastDeadline,
+  parseStamp,
   readInstant,
   type ArtifactDeletionReport,
   WorkflowError,
@@ -145,6 +149,48 @@ export interface PurgeCandidate {
    * (issue #107 correction). Always undefined for a batch-mode selection.
    */
   overriddenClaimStep?: string | undefined;
+  /**
+   * Callback B2: set (to the callback's host label, never its address) when an explicit single-id
+   * purge selected a run whose callback row is still `pending`: the purge drops the callback with the
+   * run, and the report says so. Always undefined for a batch-mode selection: a sweep holds such a run
+   * until its delivery window has ended, then purges it with no line.
+   */
+  undeliveredCallbackHost?: string | undefined;
+}
+
+/**
+ * Callback B2: run `runId`'s callback row, its host and `finished_at`, when it is still `pending`;
+ * undefined for no row, a delivered or failed one, or a store that keeps no callback store. Takes no
+ * reading.
+ */
+async function pendingCallback(
+  store: Pick<RunStore, 'callbacks'>,
+  runId: string,
+): Promise<{ host: string; finishedAt: string | undefined } | undefined> {
+  const view = await store.callbacks?.read(runId);
+  return view?.status === 'pending' ? { host: view.host, finishedAt: view.finished_at } : undefined;
+}
+
+/**
+ * Callback B2: why a batch sweep keeps run `run` at `at` (its snapshot's reading): its callback is
+ * still pending, and the delivery window plus the grace has not passed since its anchor (the row's
+ * `finished_at` when set, else the run's `updated_at`). At or after that instant it is not kept. An
+ * anchor that cannot be read keeps it (a destructive act fails closed) and names the way out.
+ */
+async function callbackHoldReason(
+  store: Pick<RunStore, 'callbacks'>,
+  run: ListedRecord,
+  at: Date,
+): Promise<string | undefined> {
+  const pending = await pendingCallback(store, run.id);
+  if (pending === undefined) return undefined;
+  const anchor = parseStamp(pending.finishedAt ?? run.updated_at);
+  const waiting = `its callback to ${pending.host} is still waiting to be delivered`;
+  if (anchor === undefined)
+    return `${waiting} and its end time cannot be read; run 'realm run purge ${run.id} --force' to purge it anyway`;
+  const ends = anchor + (CALLBACK_DELIVERY_WINDOW_SECONDS + CALLBACK_PURGE_GRACE_SECONDS) * 1000;
+  const release = new Date(ends).toISOString();
+  return isPastDeadline(release, at) ? undefined : `${waiting}; the run is kept until ${release}`;
 }
 
 export interface PurgeRunsResult {
@@ -255,7 +301,7 @@ async function resumableOf(
  */
 export async function purgeRuns(
   options: PurgeRunsOptions,
-  anchorStore: Pick<RunStore, 'get' | 'scan'> &
+  anchorStore: Pick<RunStore, 'get' | 'scan' | 'callbacks'> &
     PerRunArtifactStore & { readonly runsDirPath?: string },
   artifactStores: PerRunArtifactStore[],
   purge?: HomePurge,
@@ -263,7 +309,11 @@ export async function purgeRuns(
   const dryRun = options.dryRun ?? true;
   const runsDir = anchorStore.runsDirPath;
 
-  const candidates: Array<{ run: ListedRecord; overriddenClaimStep?: string | undefined }> = [];
+  const candidates: Array<{
+    run: ListedRecord;
+    overriddenClaimStep?: string | undefined;
+    undeliveredCallbackHost?: string | undefined;
+  }> = [];
   const skipped: Array<{ runId: string; reason: string }> = [];
 
   if (options.runId !== undefined) {
@@ -273,7 +323,14 @@ export async function purgeRuns(
     // eligible override, never a healthy one (issue #107 correction).
     const verdict = isPurgeEligible(snapshot, { explicit: true });
     if (verdict.eligible) {
-      candidates.push({ run, overriddenClaimStep: verdict.overriddenClaimStep });
+      // Callback B2: naming the run is the override of the callback hold too; the report says what
+      // it drops.
+      const pending = await pendingCallback(anchorStore, run.id);
+      candidates.push({
+        run,
+        overriddenClaimStep: verdict.overriddenClaimStep,
+        undeliveredCallbackHost: pending?.host,
+      });
     } else {
       skipped.push({ runId: run.id, reason: verdict.reason });
     }
@@ -305,6 +362,12 @@ export async function purgeRuns(
       // an unparseable stamp has no age, so a by-age sweep does not select it (its NaN used to pass).
       const stamp = readInstant(run.updated_at, 'past_event', snapshot.at);
       if ('absent' in stamp || snapshot.at.getTime() - stamp.ms < thresholdMs) continue;
+      // Callback B2: after the age test, so a sweep warns only for a run it would otherwise delete.
+      const held = await callbackHoldReason(anchorStore, run, snapshot.at);
+      if (held !== undefined) {
+        skipped.push({ runId: run.id, reason: held });
+        continue;
+      }
       candidates.push({ run, overriddenClaimStep: verdict.overriddenClaimStep });
     }
   }
@@ -322,7 +385,7 @@ export async function purgeRuns(
   }
 
   const selected: PurgeCandidate[] = [];
-  for (const { run, overriddenClaimStep } of candidates) {
+  for (const { run, overriddenClaimStep, undeliveredCallbackHost } of candidates) {
     // issue #189: every byte figure is now a number a STORE reported about its OWN artifacts.
     // This used to substring-scan `runsDir` for filenames containing the runId — a caller reading
     // another store's filename layout, which structurally could not see the content-addressed
@@ -346,6 +409,7 @@ export async function purgeRuns(
       // the rule is core's `resumeWay`.
       resumable: await resumableOf(run, options.workflows),
       overriddenClaimStep,
+      undeliveredCallbackHost,
     });
   }
 
@@ -615,6 +679,11 @@ function overriddenClaimPhrase(step: string, dryRun: boolean): string {
   );
 }
 
+/** Callback B2: what an explicit single-id purge drops with a run whose callback is still pending. */
+function undeliveredPhrase(host: string, dryRun: boolean): string {
+  return `callback to ${host} not delivered; ${dryRun ? 'would be dropped' : 'dropped'} with the run`;
+}
+
 /** Prints the dry-run / force report shared by both single-run and batch mode. */
 /**
  * Exported for tests (issue #189): the force line's wording carries the provenance claim
@@ -658,6 +727,8 @@ export function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void
       console.log(
         `  • ${c.run.id}  (${writerCtx().word(c.run.run_phase, RUN_PHASE_WORDS)}, ${formatBytes(c.bytes)})${override}`,
       );
+      if (c.undeliveredCallbackHost !== undefined)
+        console.log(`  ⚠ ${c.run.id}: ${undeliveredPhrase(c.undeliveredCallbackHost, true)}`);
     }
     console.log(`\n${resumableLine}\nRe-run with --force to actually delete.`);
     return;
@@ -699,6 +770,10 @@ export function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void
   for (const c of result.selected) {
     if (c.overriddenClaimStep !== undefined) {
       console.log(`  ⚠ ${c.run.id}: ${overriddenClaimPhrase(c.overriddenClaimStep, false)}`);
+    }
+    // Callback B2: only for a run actually purged: a blocked, failed or gone run dropped nothing.
+    if (c.undeliveredCallbackHost !== undefined && result.purged.includes(c.run.id)) {
+      console.log(`  ⚠ ${c.run.id}: ${undeliveredPhrase(c.undeliveredCallbackHost, false)}`);
     }
   }
   // issue #189: a refusal that already freed real bytes says so. Without this the run reads as
