@@ -1456,6 +1456,7 @@ GitHubAdapterConfig · type · internal
 GorgiasAdapter · both · internal
 GorgiasAdapterConfig · type · internal
 GuardEnding · type · internal
+HELD_WORDS · value · internal
 HaltStop · type · public
   interface HaltStop {
       kind: HaltStopKind;
@@ -1465,6 +1466,7 @@ HaltStopKind · type · public
   type HaltStopKind = Extract<StopKind, 'capability_missing' | 'failed' | 'refused'>;
 
 HeldState · type · internal
+HeldWordsState · type · internal
 HiddenCounts · type · public
   interface HiddenCounts {
       declared: number;
@@ -4165,9 +4167,12 @@ guardEndingOf · value · internal
 guardEndingOfRun · value · internal
 guardPassedLine · value · internal
 hashParams · value · internal
+heldAgentWords · value · internal
 heldLeaseWords · value · internal
+heldRerunOf · value · internal
 heldStateAt · value · internal
 heldStateOf · value · internal
+heldWordsStateOf · value · internal
 identityRefusalLine · value · internal
 inboundMarkerWarning · value · internal
 instantText · value · internal

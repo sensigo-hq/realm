@@ -1017,7 +1017,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
 
   describe('round 23 — C179, C183: an agent step’s prompt holds its claim; one escape for a control character', () => {
     const HOLDS =
-      "While an agent step's prompt waits, the command holds the step's claim, so no other driver does the step's work: `realm run inspect` shows the step taken by this program (`via run`), `realm agent` waits for it and asks no model, and an `execute_step` call is refused with `Step '<step>' cannot be called now: it is in flight (claimed by another call).`";
+      "While an agent step's prompt waits, the command holds the step's claim, so no other driver does the step's work: `realm run inspect` shows the step taken by this program (`via run`), `realm agent` waits for it and asks no model, and an `execute_step` call is refused with `Step '<step>' cannot be called now: it is held by a claim with no deadline …`";
     const LETS_GO =
       "The command lets the claim go when you answer (the engine then takes it for the answer), when you leave the prompt, and when it is ended by SIGHUP, SIGINT or SIGTERM (it then exits with 128 plus the signal's number);";
     const abortError = (): Error =>
@@ -1103,7 +1103,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         atPrompt: { inProgress: ['finish'], channel: 'run' },
         otherCall: {
           status: 'blocked',
-          hint: "Step 'finish' cannot be called now: it is in flight (claimed by another call).",
+          // #922 P2-1: the held step's state (core's reason; an MCP door adds its clause).
+          hint: "Step 'finish' cannot be called now: it is held by a claim with no deadline.",
           ran: false,
         },
         views: { inspect: true, stuck: true },
