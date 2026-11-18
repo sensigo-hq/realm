@@ -462,3 +462,58 @@ describe('gap 1, unit A1 — the tool path and the strict path join each text to
     });
   }, 30_000);
 });
+
+// Correction 1 (prompts/gap1-a1-model-text-record-c1.md, check 1): a module's report whose tool part
+// JSON cannot write (a BigInt, a circular value) is a report Realm cannot read. The step records
+// `provider_did_not_report`, keeps the call's usage, and the drive goes on.
+describe('gap 1, unit A1, correction 1 — a module report JSON cannot write', () => {
+  it('check 1: a BigInt or a circular value in a tool part gives provider_did_not_report, keeps the usage, and the drive completes', async () => {
+    const withInput = (input: unknown): ModelTextReport => ({
+      sent: [{ role: 'user', content: 'module prompt' }],
+      reply: [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'calling' },
+            { type: 'tool_use', id: 'toolu_c1', name: 'lookup', input },
+          ],
+        },
+      ],
+    });
+    const circular: Record<string, unknown> = { name: 'loop' };
+    circular['self'] = circular;
+    const outcomeOf = async (input: unknown) => {
+      const { result, run } = await drive(new ModuleProvider(() => [withInput(input)]));
+      const entry = entriesOf(run)[0];
+      const requests = entry?.diagnostics?.cache?.requests ?? [];
+      return {
+        result,
+        model_text: entry?.model_text,
+        usage: requests.length,
+        idMinted: requests.every((r) => typeof r.request_id === 'string'),
+        driveFailures: run.drive_failures?.entries.length ?? 0,
+      };
+    };
+    // (1) red when the join's reading of a report throws (the drive then fails and the usage is lost);
+    //     (2) prints each case's result, field, usage count and drive-failure count.
+    expect({
+      bigint: await outcomeOf({ n: 10n }),
+      circular: await outcomeOf(circular),
+    }).toEqual({
+      bigint: {
+        result: 'completed',
+        model_text: { recorded: false, why: 'provider_did_not_report' },
+        usage: 1,
+        idMinted: true,
+        driveFailures: 0,
+      },
+      circular: {
+        result: 'completed',
+        model_text: { recorded: false, why: 'provider_did_not_report' },
+        usage: 1,
+        idMinted: true,
+        driveFailures: 0,
+      },
+    });
+  }, 30_000);
+});

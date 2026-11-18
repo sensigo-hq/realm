@@ -270,19 +270,25 @@ export type StepModelTexts =
  * Joins one provider call's reports to its requests, slot by slot: `minted` is the call's usage
  * after `mintRequestIds`, so each report takes its request's id. A missing field, a count that
  * differs from the usage's, an entry with no id, or a report that cannot be read gives
- * `reported: false`.
+ * `reported: false`. Total: a module's report is read here, and a part JSON cannot write (a BigInt,
+ * a circular value) or a getter that throws gives `reported: false` too, so the call's usage, which
+ * is appended after this, is never lost (correction 1).
  */
 export function joinModelTexts(minted: readonly UsageRecord[], reports: unknown): StepModelTexts {
-  if (!Array.isArray(reports) || reports.length !== minted.length) return { reported: false };
-  const requests: Array<{ request_id: string; text: CanonicalRequest }> = [];
-  for (let slot = 0; slot < minted.length; slot++) {
-    const usage = minted[slot] as unknown;
-    const id = isPlain(usage) ? usage['request_id'] : undefined;
-    const text = canonicalRequest(reports[slot]);
-    if (typeof id !== 'string' || text === undefined) return { reported: false };
-    requests.push({ request_id: id, text });
+  try {
+    if (!Array.isArray(reports) || reports.length !== minted.length) return { reported: false };
+    const requests: Array<{ request_id: string; text: CanonicalRequest }> = [];
+    for (let slot = 0; slot < minted.length; slot++) {
+      const usage = minted[slot] as unknown;
+      const id = isPlain(usage) ? usage['request_id'] : undefined;
+      const text = canonicalRequest(reports[slot]);
+      if (typeof id !== 'string' || text === undefined) return { reported: false };
+      requests.push({ request_id: id, text });
+    }
+    return { reported: true, requests };
+  } catch {
+    return { reported: false };
   }
-  return { reported: true, requests };
 }
 
 /** Adds one call's texts to the step's, in wire order, as `appendRequests` adds its usage. */
