@@ -12,6 +12,7 @@ import {
   type PendingGate,
   type ExtensionRegistry,
   type Attributed,
+  type EngineReply,
   buildDisclosureSet,
   composePersonNotice,
   composeQuestionView,
@@ -40,6 +41,7 @@ import { cliCommandOf } from '../../commands/ways-renderer.js';
 import { answerByPart, renderOutcome } from '@sensigo/realm-mcp';
 import {
   PEOPLE_DOOR_WORDS,
+  answerLinesSayEnding,
   cutWayLine,
   questionDeadlineLine,
   terminalRespondLines,
@@ -1058,7 +1060,24 @@ const POST_TAKEN_OVER =
 /** A thrown value's text. */
 const thrownText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-export async function handleBidirectionalGate(params: BidirectionalGateParams): Promise<void> {
+/**
+ * #625 A1b-2 (the one-note rule): whether `renderOutcome`'s line for what the question met says how
+ * the run ended — a step's abort closed it, or its time limit ended the run as aborted.
+ */
+function outcomeSaysEnding(outcome: NonNullable<EngineReply['outcome']>): boolean {
+  const byExpiry =
+    outcome.by.kind === 'timeout' ||
+    (typeof outcome.via === 'object' && outcome.via.absent === 'settled_by_expiry');
+  return byExpiry ? outcome.choice === undefined : outcome.by.kind === 'engine';
+}
+
+/**
+ * Resolves to `true` when it printed a line on this console that says how the run ended (#625
+ * A1b-2, the one-note rule): its own answer's ending, a late answer's, a refusal on an ended run,
+ * what the question met when that ended the run, or its own timer's — so the drive's `Ended:` line
+ * does not say it again.
+ */
+export async function handleBidirectionalGate(params: BidirectionalGateParams): Promise<boolean> {
   const {
     gate,
     runId,
@@ -1087,6 +1106,8 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
   // #729 PR-4 (02): whether the thread was told how a Slack answer went — else, when the question
   // closes, the thread is told it closed (`question_closed`).
   let personTold = false;
+  // #625 A1b-2: whether a line this handler printed said how the run ended.
+  let endingSaid = false;
   const abortController = new AbortController();
   // #729 PR-4 correction (A1): a listener attends the thread — the two intake branches below.
   const listens = slackAppToken !== undefined || slackSigningSecret !== undefined;
@@ -1226,6 +1247,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           // #729 PR-4 (02): the operator's lines stay on this console; the thread gets the person's
           // words for what the question met (`answer_late`), naming no command.
           for (const line of lateLines) console.log(line);
+          if (answerLinesSayEnding(result)) endingSaid = true;
           const after = judged?.record;
           const outcome =
             result.outcome ??
@@ -1254,6 +1276,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           // thread is told, once, what the question met (never "Try again", never "✅").
           const judged = judgedSnapshotOf(result);
           console.log(renderOutcome(result.outcome, PEOPLE_DOOR_WORDS));
+          if (outcomeSaysEnding(result.outcome)) endingSaid = true;
           // Set before the post, as above: no closed line joins it when the poll ends.
           personTold = true;
           await tellThread(
@@ -1281,6 +1304,8 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           console.warn(
             `Gate response submission failed: ${result.errors[0] ?? result.context_hint}`,
           );
+          // #625 A1b-2: the refusal of an answer to a run that has ended says how it ended.
+          endingSaid = true;
           personTold = true;
           await tellThread(
             composePersonNotice({
@@ -1324,6 +1349,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
                   })
                 : describeEndedBy(result);
             for (const line of endingLines) console.log(line);
+            endingSaid = true;
           }
           personTold = true;
           await tellThread(
@@ -1468,6 +1494,10 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     definition,
     ...(registry !== undefined ? { registry } : {}),
     ...(driver !== undefined ? { driver } : {}),
+    // #625 A1b-2: its ⏰ line said how the run ended when its write ended it.
+    onApplied: (endedRun) => {
+      if (endedRun) endingSaid = true;
+    },
   });
 
   // #729 PR-6b (A): the question post's edit once the question closed — its state for the drain.
@@ -1585,6 +1615,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
       clearTimeout(drainTimer!);
     }
   }
+  return endingSaid;
 }
 
 /** How a question closed, read from the record; or the read's error (#729 PR-6b, A.7). */
@@ -1735,7 +1766,7 @@ async function questionPost(
  */
 export function createSlackGateHandler(
   config: SlackGateHandlerConfig,
-): (runId: string, gate: PendingGate) => Promise<void> {
+): (runId: string, gate: PendingGate) => Promise<boolean> {
   return async (runId, gate) => {
     // Bidirectional path (bot token + channel).
     if (config.botToken !== undefined && config.channelId !== undefined) {
@@ -1747,7 +1778,7 @@ export function createSlackGateHandler(
         listens,
       );
       const gateThreadTs = post.ts;
-      await handleBidirectionalGate({
+      return handleBidirectionalGate({
         gate,
         runId,
         definition: config.definition,
@@ -1827,5 +1858,7 @@ export function createSlackGateHandler(
         }
       }
     }
+    // The webhook post and its poll print no line that says how the run ended.
+    return false;
   };
 }

@@ -1,13 +1,14 @@
 // docs-625-a1b1.test.ts — issue #625 PR-2b (A1b-1): the words a user reads about how a run ended,
-// each pinned word for word on its page and tied to the cell that executes it (guardrail 9); and
-// the release rule: A1b-1 and A1b-2 (the CLI screens) ship in one release.
+// each pinned word for word on its page and tied to the cell that executes it (guardrail 9). The
+// release rule's cell (A1b-1 and A1b-2 ship in one release) left with A1b-2, which pins the CLI's
+// sentences in docs-625-a1b2.test.ts.
 //
 // A1b-1 gives each ending one sentence, read from the run's record only, and an abandoned run no
 // longer says "an operator ended" it. These cells check that each page says what A1b-1 made true,
 // and that the cell each sentence names as its proof is still there. Every assertion carries (a)
 // the change that turns it red and (b) what it prints.
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,7 +20,6 @@ const flat = (text: string): string => text.replace(/\s+/g, ' ');
 type Cell = readonly [file: string, title: string];
 
 const MCP = 'packages/mcp-server/src/ending-a1b1.test.ts';
-const CLI = 'packages/cli/src/commands/operator-ending-625.test.ts';
 const EVERY_ENDING: Cell = [MCP, 'check 1 — %s'];
 const NO_SEAL: Cell = [MCP, 'check 1 — a record with no seal'];
 const NO_ACTOR: Cell = [MCP, 'check 2 — no actor'];
@@ -34,9 +34,6 @@ const ZOMBIE: Cell = [MCP, 'check 6 — the zombie refusal'];
 const WAY_OUT: Cell = [MCP, 'check 7 — the way out'];
 const D5: Cell = [MCP, 'check 8 (D5)'];
 const SECOND_ANSWER: Cell = [MCP, 'correction 1 (WK-08)'];
-const CLI_ADVANCE: Cell = [CLI, 'realm run advance: the ended reason goes on'];
-const CLI_RUN: Cell = [CLI, 'realm workflow run’s hand-back'];
-const CLI_AGENT: Cell = [CLI, 'realm agent whose run an operator ends during the drive'];
 
 const TOOLS = 'docs/reference/mcp/tools.md';
 
@@ -102,24 +99,6 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
     cells: [SECOND_ANSWER],
   },
   {
-    page: 'docs/reference/cli/realm-workflow.md',
-    words:
-      'When the run was abandoned, that line says how it ended and the way on: `  Ended:     It was abandoned, with the reason "<reason>". To run the work again, start a new run.`',
-    cells: [CLI_RUN],
-  },
-  {
-    page: 'docs/reference/cli/realm-agent.md',
-    words:
-      'When the run was abandoned, that line says how it ended and the way on: `  Ended:     It was abandoned, with the reason "<reason>". To run the work again, start a new run.`',
-    cells: [CLI_AGENT],
-  },
-  {
-    page: 'docs/reference/cli/realm-run-acting.md',
-    words:
-      'when it was abandoned, it goes on `. It was abandoned, with the reason "<reason>". To run the work again, start a new run.`',
-    cells: [CLI_ADVANCE],
-  },
-  {
     page: 'docs/concepts/evidence.md',
     words: 'The run was abandoned, with `realm run abandon` or `abandon_run`.',
     cells: [NO_ACTOR],
@@ -153,22 +132,4 @@ describe('#625 A1b-1 — the pages say how a run ended, each sentence tied to it
       expect(missing).toEqual([]);
     },
   );
-});
-
-describe('#625 A1b-1 — the release rule: A1b-1 and A1b-2 ship in one release', () => {
-  it('A1b-1’s CHANGELOG lines stay under the literal [Unreleased] heading until A1b-2 has landed', () => {
-    // A1b-2 creates this file, and deletes this cell.
-    if (existsSync(join(ROOT, 'packages/cli/src/commands/docs-625-a1b2.test.ts'))) return;
-    const text = read('CHANGELOG.md');
-    const start = text.indexOf('\n## [Unreleased]\n');
-    const end = start === -1 ? -1 : text.indexOf('\n## [', start + 1);
-    const section = start === -1 ? '' : text.slice(start, end === -1 ? undefined : end);
-    // (a) red when a release renames [Unreleased] (or moves A1b-1's lines out of it) before A1b-2
-    //     has landed; read without the house CHANGELOG reader, which reads every section above
-    //     [0.49.0] and would stay green; (b) prints the rule.
-    expect(
-      section.includes(CHANGED) && section.includes(UPGRADING),
-      '#625 A1b-1 and A1b-2 ship in one release; A1b-2 has not landed: cut from before A1b-1, or wait',
-    ).toBe(true);
-  });
 });

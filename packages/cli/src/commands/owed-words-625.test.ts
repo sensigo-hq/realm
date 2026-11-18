@@ -1341,7 +1341,8 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
       (id: string) => [
         '→ process',
         "• Step 'process': the run ended (aborted) before this program's outcome for it was recorded.",
-        'Stopped: the run has ended (aborted)',
+        // #625 A1b-2: another program ended the run during the call, so the reason says how.
+        "Stopped: the run has ended (aborted). Step 'process''s handler aborted the run.",
         `Run ${id}: phase 'aborted'`,
       ],
     ],
@@ -1682,7 +1683,8 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
       lines: [
         '→ s',
         "• Step 's': the run ended (aborted) before this program's outcome for it was recorded.",
-        'Stopped: the run has ended (aborted)',
+        // #625 A1b-2: another program ended the run during the call, so the reason says how.
+        "Stopped: the run has ended (aborted). Step 't''s handler aborted the run.",
         "Run <run>: phase 'aborted'",
       ],
       failed: [],
@@ -2175,7 +2177,8 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
           "Run <run>: phase 'failed'",
         ],
         firstCode: 1,
-        next: "Nothing is owed to the engine: the run has ended (failed) — to make 's' runnable again: realm run resume <run> --from s",
+        // #625 A1b-2: on the next call the run had already ended: how, then the way back in.
+        next: "Nothing is owed to the engine: the run has ended (failed). Step 's' failed. To make 's' runnable again: realm run resume <run> --from s",
         nextCode: 0,
         resumed: ['→ s', '→ done', "Run <run>: phase 'completed'"],
       });
@@ -2324,9 +2327,11 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
       ACTING,
       "a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed, and never for a step it started whose outcome was not recorded: when another program's run of that step failed, the step's own line says so, `…, and failed; this program's outcome for it was not recorded.` (below), and no failed line is printed)",
     );
+    // #625 A1b-2: the clause for a run this call's own act ended (another program's ending gets a
+    // sentence of its own first: docs-625-a1b2.test.ts).
     claim(
       ACTING,
-      'the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make \'<step>\' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when it was abandoned, it goes on `. It was abandoned, with the reason "<reason>". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.50.0, which said an operator ended it), never with `realm run resume`, which would erase that ending and its reason)',
+      "when this call's own step, guard or expiry ended the run, its own lines above say how, and when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make '<step>' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names)",
     );
     claim(
       ACTING,

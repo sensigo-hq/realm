@@ -289,7 +289,12 @@ export interface AgentDeps {
    * the relevant channel and blocking until the gate resolves.
    * Omit for terminal-only fallback (choices printed to terminal + store polling).
    */
-  gateHandler?: (runId: string, gate: PendingGate) => Promise<void>;
+  /**
+   * #625 A1b-2 (the one-note rule): it resolves to `true` when it printed a line that says how the
+   * run ended (its own answer's ending, a late answer's, its own timer's), so the drive's `Ended:`
+   * line does not say it again.
+   */
+  gateHandler?: (runId: string, gate: PendingGate) => Promise<boolean | void>;
   /**
    * Factory for creating an McpClient instance. Injected by tests for mock isolation.
    * Defaults to constructing a real McpClient when absent.
@@ -785,11 +790,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // #715 (b) (D6-17, Amendment 4): judged on the snapshot the drive holds when it stops — the one the
   // engine judged its last reply on, or the drive's own last read — never a second load. None (a
   // reply that loaded no run): no line about the record.
+  // #625 A1b-2 (the owner's one-note rule): "have I already printed how this run ended?" — set by
+  // every line this drive prints that says it (the `✗` line of the step that ended the run, the ⏰
+  // line of the timer whose write ended it, the ⚠ line of an `on_expiry: abort` this drive's call
+  // carried out, the gate handler's lines for its own answer). The stop's `Ended:` line says the
+  // ending only while it is unset.
+  let endingSaid = false;
   const printResumeLine = (endedSnap: Snapshot | undefined): void => {
     const ended = endedSnap?.record;
     // #729 PR-3 (L-2): the writer's context only inside the print call.
-    if (ended !== undefined && resumeLine(ended, definition) !== undefined) {
-      console.error(resumeLine(ended, definition, writerCtx()));
+    if (ended !== undefined && resumeLine(ended, definition, PLAIN, endingSaid) !== undefined) {
+      console.error(resumeLine(ended, definition, writerCtx(), endingSaid));
     }
     const cleanup =
       endedSnap === undefined ? undefined : pendingCleanupLine(endedSnap.record, endedSnap.at);
@@ -915,7 +926,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           if (view.cut !== undefined) console.log(`   ${cutWayLine(runId, writerCtx())}\n`);
 
           if (deps.gateHandler !== undefined) {
-            await deps.gateHandler(runId, gate);
+            if ((await deps.gateHandler(runId, gate)) === true) endingSaid = true;
           } else {
             // Terminal fallback: print each choice as a command and poll. #729 PR-0 (Part C): the
             // answer commands are the CLI renderer's, from the gate's `respond` way.
@@ -932,6 +943,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               definition,
               registry: deps.registry,
               ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
+              onApplied: (endedRun) => {
+                if (endedRun) endingSaid = true;
+              },
             });
             try {
               await pollUntilGateResolved(
@@ -1013,6 +1027,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             );
           },
         });
+        // #625 A1b-2: the ⚠ line of an `on_expiry: abort` this call carried out said the run ended.
+        if (advanced.expiry?.on_expiry === 'abort') endingSaid = true;
         if (advanced.status === 'confirm_required') {
           if (!holdJudged(advanced)) return stopOnEngineWords(advanced);
           continue;
@@ -1024,6 +1040,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           if (engineStep === undefined) {
             // A refusal before any step ran (a guard refusal, a store failure): today's failed exit.
             console.error(`\n✗ ${advanced.errors.join(', ') || advanced.context_hint}`);
+            // #625 A1b-2: a refusal that ended the run (a guard's resolution error) said how.
+            if (judgedSnapshotOf(advanced)?.record.terminal_state === true) endingSaid = true;
             printResumeLine(judgedSnapshotOf(advanced));
             return 'failed';
           }
@@ -2389,6 +2407,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             console.error(
               `\n✗ Step '${stoppedStep}'${ranAfter} failed: ${result.errors.join(', ')}${repairSuffix}`,
             );
+            // #625 A1b-2: the `✗` line of the step whose failure ended the run says how it ended.
+            if (errorSnapshot?.record.terminal_state === true) endingSaid = true;
             // ═══ issue #401, CHOKEPOINT (4) — the disposition table, KEYED ON ERROR CODE ═══
             //
             // A validation rejection that reaches here has WEDGED the run: it settles nothing, so

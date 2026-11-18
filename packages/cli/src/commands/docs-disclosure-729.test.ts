@@ -2300,11 +2300,15 @@ describe('#729 PR-3 correction 3 — the pages this correction changes', () => {
         out(['mcp', '--check', '--gate-answers', 'withheld'], 'withheld', { MODE_X: 'withheld' }),
         'The gate-answers value:',
       )?.split(' (')[0],
-      agent: find(
-        out(['agent', '--run-id', viaMcp, '--model', 'anthropic:fake-model-0729'], 'abandoned', {
-          ANTHROPIC_API_KEY: 'fake-key-0729',
-        }),
-        'Error:',
+      // #625 A1b-2: pinned up to the phase — the variable holds `abandoned`, so the writer masks that
+      // word inside the sentence that follows.
+      agent: ((line) => line?.slice(0, line.indexOf('(abandoned).') + '(abandoned).'.length))(
+        find(
+          out(['agent', '--run-id', viaMcp, '--model', 'anthropic:fake-model-0729'], 'abandoned', {
+            ANTHROPIC_API_KEY: 'fake-key-0729',
+          }),
+          'Error:',
+        ),
       ),
     }).toEqual({
       cause: 'Cause: Workflow completed.',
@@ -2313,7 +2317,7 @@ describe('#729 PR-3 correction 3 — the pages this correction changes', () => {
       list: 'abandoned',
       advance: `Run ${auto}: phase 'completed'`,
       check: 'The gate-answers value: withheld',
-      agent: `Error: Run ${viaMcp} has already ended (abandoned): an operator ended it.`,
+      agent: `Error: Run ${viaMcp} has already ended (abandoned).`,
     });
   }, 120_000);
 
@@ -2861,15 +2865,14 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
   }, 60_000);
 
   it("realm-run-acting.md and realm-agent.md: an ended run's stored reason is masked like the record's values, and its shape while its declared secrets cannot all be read", async () => {
-    const tail =
-      "the reason is stored text, masked like the record's values, and shown as its type and size while the run's declared secrets cannot all be read (`realm run inspect <id> --accept-partial-disclosure` reads it";
     claim(
       ACTING_PAGE,
       "The reason is stored text: it is masked like the record's values, and shown as its type and size while the run's declared secrets cannot all be read (`realm run inspect <id> --accept-partial-disclosure` reads it). Added after version 0.47.1.",
     );
+    // #625 A1b-2: an abandoned run's reason moved into the refusal's sentence.
     claim(
       AGENT_PAGE,
-      `For a run that failed or was abandoned, a \`Reason:\` line follows: ${tail}`,
+      `For a run that failed or was aborted, a \`Reason:\` line follows; for an abandoned run the reason is inside the sentence. Either way it is stored text, masked like the record's values, and shown as its type and size while the run's declared secrets cannot all be read (\`realm run inspect <id> --accept-partial-disclosure\` reads it`,
     );
     const reason = `upstream refused key ${DECLARED}`;
     const intact = await c4Ended(base, 'intact', reason);
@@ -2891,14 +2894,18 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
     expect({
       kept: reasonOf(kept.stdout),
       held: [reasonOf(held.stdout), held.stderr.includes(named)],
+      // #625 A1b-2: the abandoned run's reason, inside the refusal's sentence.
       agent: [
-        agent.stderr.split('\n').find((l) => l.startsWith('Reason:')),
+        agent.stderr
+          .split('\n')
+          .find((l) => l.startsWith('Error:'))
+          ?.split('with the reason ')[1],
         agent.stderr.includes(named),
       ],
     }).toEqual({
       kept: 'Reason: upstream refused key [REDACTED].',
       held: [`Reason: ‹string, ${reason.length} characters›.`, true],
-      agent: [`Reason: ‹string, ${reason.length} characters›`, true],
+      agent: [`‹string, ${reason.length} characters›.`, true],
     });
   }, 120_000);
 });

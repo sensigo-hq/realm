@@ -807,8 +807,22 @@ function sealStepOf(run: Pick<RunRecord, 'sealed_by' | 'aborted_at'>): string | 
   return abortArm ? run.aborted_at?.step_id : undefined;
 }
 
+/**
+ * #625 A1b-2: how a value the sentence quotes is rendered — an abandon's reason, a guard's message,
+ * each already escaped and bounded. The default prints it as written: the MCP masks a reply whole at
+ * its boundary. The CLI passes its writer's `ctx.escaped`, as its `Reason:` line does.
+ */
+export interface RunEndingOptions {
+  quote?: (escaped: string) => string;
+}
+
 /** The ending sentence of an arm, without how it is known. */
-function endingWords(run: EndingFacts, arm: SealArm, step: string | undefined): string {
+function endingWords(
+  run: EndingFacts,
+  arm: SealArm,
+  step: string | undefined,
+  quote: (escaped: string) => string,
+): string {
   const failed = [...new Set(run.failed_steps)];
   switch (arm) {
     case 'complete':
@@ -849,7 +863,7 @@ function endingWords(run: EndingFacts, arm: SealArm, step: string | undefined): 
       // `Reason:` line instead, so the mint itself never adds it).
       return message === undefined
         ? sentence
-        : `${sentence.slice(0, -1)}: ${escapedBoundedValue(message)}.`;
+        : `${sentence.slice(0, -1)}: ${quote(escapedBoundedValue(message))}.`;
     }
     case 'gate_expiry_abort':
       return step !== undefined
@@ -858,7 +872,7 @@ function endingWords(run: EndingFacts, arm: SealArm, step: string | undefined): 
     case 'abandon_requested':
       return isDefaultAbandonReason(run.terminal_reason)
         ? 'It was abandoned; no reason was given.'
-        : `It was abandoned, with the reason ${escapedBoundedValue(run.terminal_reason)}.`;
+        : `It was abandoned, with the reason ${quote(escapedBoundedValue(run.terminal_reason))}.`;
     case 'cleanup_sweep':
       return "'realm run cleanup' marked it abandoned.";
   }
@@ -867,16 +881,19 @@ function endingWords(run: EndingFacts, arm: SealArm, step: string | undefined): 
 /**
  * #625 A1b-1: the one ending composer — how a run that has ended ended, read from its record only:
  * one sentence per seal arm, how it is known, and the way out as its own part. `undefined` for a run
- * that has not ended. Every reader that says an ended run's ending takes it from here.
+ * that has not ended. Every reader that says an ended run's ending takes it from here. #625 A1b-2:
+ * `options.quote` renders the stored values the sentence quotes; with no `workflow` (a surface that
+ * says the ending before it loads one) no resume way is read, so `wayOut` is never `resume`.
  */
 export function runEndingOf(
   run: Parameters<typeof resumeWay>[0],
-  workflow: Parameters<typeof resumeWay>[1],
+  workflow: Parameters<typeof resumeWay>[1] | undefined,
+  options: RunEndingOptions = {},
 ): RunEnding | undefined {
   if (run.terminal_state !== true) return undefined;
-  const resume = offeredResumeWay(run, workflow);
+  const resume = workflow === undefined ? undefined : offeredResumeWay(run, workflow);
   return {
-    sentence: runEndingSentence(run),
+    sentence: runEndingSentence(run, options.quote ?? ((escaped) => escaped)),
     wayOut:
       deriveRunPhase(run) === 'abandoned'
         ? { kind: 'new_run' }
@@ -887,33 +904,21 @@ export function runEndingOf(
 }
 
 /** The ending's one sentence and how it is known, for a run that has ended. */
-function runEndingSentence(run: EndingFacts): string {
+function runEndingSentence(run: EndingFacts, quote: (escaped: string) => string): string {
   const seal = run.sealed_by;
   const ending =
     seal !== undefined
-      ? endingWords(run, seal.arm, sealStepOf(run))
+      ? endingWords(run, seal.arm, sealStepOf(run), quote)
       : deriveRunPhase(run) === 'abandoned'
         ? // An abandoned record keeps its reason (by the same default rule), and says how it is known.
-          `${endingWords(run, 'abandon_requested', undefined).slice(0, -1)} (worked out from its record; no seal was written).`
+          `${endingWords(run, 'abandon_requested', undefined, quote).slice(0, -1)} (worked out from its record; no seal was written).`
         : `Its ending was worked out from its record (phase '${deriveRunPhase(run)}'); no seal was written.`;
   // How it is known: said inside the sentence, before its last full stop.
   return seal?.classified === true ? `${ending.slice(0, -1)}${CLASSIFIED_WORDS}.` : ending;
 }
 
-/** The way out of an abandoned run, as a sentence of its own. */
+/** The way out of an abandoned run, as a sentence of its own (every surface reads it from here). */
 export const NEW_RUN_SENTENCE = 'To run the work again, start a new run.';
-
-/**
- * F2, #625 A1b-1: what a surface says, in the resume offer's place, about an abandoned run: the
- * composer's ending sentence ({@link runEndingOf}), then `To run the work again, start a new run.` —
- * the CLI hand-backs print it as a line of their own (`Ended:`). `undefined` for any other run.
- */
-export function operatorEndingSentence(
-  run: Pick<RunRecord, 'terminal_reason'> & EndingFacts,
-): string | undefined {
-  if (deriveRunPhase(run) !== 'abandoned') return undefined;
-  return `${runEndingSentence(run)} ${NEW_RUN_SENTENCE}`;
-}
 
 /**
  * The placeholder a printed command gives for a value that is one of several (decision C206): the
