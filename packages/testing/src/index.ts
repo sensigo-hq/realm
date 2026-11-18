@@ -88,6 +88,15 @@ export type {
   LeasedClaimContractCase,
   LeasedClaimTestStore,
 } from './store/leased-claim-contract.js';
+// issue #729, the claim window (CW-3b): the laws of the engine's automatic take-back of a step whose
+// lease no program holds.
+export { takeBackContract, TAKE_BACK_LAWS } from './store/take-back-contract.js';
+export type {
+  TakeBackLaw,
+  TakeBackContractAdapter,
+  TakeBackContractCase,
+  TakeBackTestStore,
+} from './store/take-back-contract.js';
 // issue #597, D1a: the laws of a store's outbound ledger (`RunStore.outbound`).
 export { outboundLedgerContract, OUTBOUND_LEDGER_LAWS } from './store/outbound-ledger-contract.js';
 export type {

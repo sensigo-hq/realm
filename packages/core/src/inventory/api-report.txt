@@ -35,6 +35,7 @@ ANSWER_TOOL_NAMES · value · internal
 ARGS · value · internal
 AUTHOR_RULES_LABEL · value · internal
 AUTHOR_TEXT_LABEL · value · internal
+AUTOMATIC_TAKEBACKS_PER_STEP · value · internal
 AUTO_GAPS_KEPT · value · internal
 AUTO_LIFETIME_MARGIN · value · internal
 AbandonWay · type · public
@@ -3514,6 +3515,7 @@ SwitchOutcome · type · internal
 SwitchPath · type · internal
 SwitchPathReading · type · internal
 SwitchWhose · type · internal
+TAKE_BACK_NOT_TAKEN_REASONS · value · internal
 TERMINAL_PHASES · value · internal
 TERMINAL_REASON_ROW · value · internal
 TERMINAL_STATES · value · internal
@@ -3525,6 +3527,9 @@ TRACE_POLICY_HASH · value · internal
 TRACE_POLICY_VERSION · value · internal
 TRACKED_RESIDUALS · value · internal
 TRUST_LEVELS · value · internal
+TakeBackNotTakenReason · type · internal
+TakeBackOutcome · type · internal
+TakeBackStepOptions · type · internal
 TemplateDefinition · type · public
   interface TemplateDefinition {
       params?: Record<string, TemplateParam>;
@@ -4161,6 +4166,7 @@ assessStructuredOutputEligibility · value · internal
 asyncSchemaValidity · value · internal
 atomicWriteFile · value · internal
 authorTextNote · value · internal
+automaticTakebacksOf · value · internal
 bareStepOutput · value · internal
 basisOf · value · internal
 boundRequestFacts · value · internal
@@ -4707,6 +4713,7 @@ switchPathsCondition · value · internal
 systemClock · value · public
   const systemClock: Clock;
 
+takeBackStep · value · internal
 takeRawReading · value · public
   function takeRawReading(clock: Clock): Date;
 

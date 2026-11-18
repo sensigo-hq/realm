@@ -301,9 +301,9 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
             ? `  Go on:     once 'sleep' is no longer in flight, realm run advance ${runId}`
             : `  Go on:     once 'sleep' is freed (realm run reclaim ${runId} prints its command), realm run advance ${runId}`,
         );
-        // (1) red when the watch's last read is judged without its facts (a held lease then reads past
-        //     its deadline, with the command), or a closed one is still waited for; (2) prints the
-        //     in-flight lines and the exit.
+        // (1) red when the watch's last read is judged without its facts (a held lease, with no
+        //     deadline, then reads as a claim of unknown age, not as held), or a closed one is still
+        //     waited for; (2) prints the in-flight lines and the exit.
         expect({
           lines: inFlight.map((l) => ({
             waits: l.includes(waits('sleep')) && l.includes('To free it anyway, run:'),

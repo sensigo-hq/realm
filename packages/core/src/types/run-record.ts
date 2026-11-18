@@ -1026,9 +1026,11 @@ export interface EvidenceSnapshot {
    * that ran the step gave itself (`REALM_OPERATOR`, or the OS user and host name), how that name is
    * known, and the host's channel. Written on the entries where a program's code ran (a step's own
    * entries and the cleanup steps a drain runs) and — #627 W (§5.8) — on a `gate_response` entry an
-   * ANSWER wrote, naming the program that recorded it; absent on every entry the engine builds
-   * without running anyone's code (guards, expiries, the reclaim audit line), on an answer whose
-   * caller passed no driver, and on records written before this field. A label for people and
+   * ANSWER wrote, naming the program that recorded it; #729 CW-3b: on an automatic take-back's entry
+   * (`reason: 'lease_not_held'`), naming the program that took the step back. Absent on every other
+   * entry the engine builds without running anyone's code (guards, expiries, a manual reclaim's
+   * audit line), on an answer whose caller passed no driver, and on records written before this
+   * field. A label for people and
    * replies — never compared, never enforced; it is not a person and not a process.
    */
   driven_by?: Attributed;

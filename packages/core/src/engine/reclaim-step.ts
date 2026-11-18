@@ -8,7 +8,7 @@
 // handler author owns idempotency. reclaim is PER-CLAIM (unlike abandon, which is per-run): a dead
 // non-gated sibling on a gate_waiting run is reclaimable.
 import type { RunStore } from '../store/store-interface.js';
-import type { RunRecord } from '../types/run-record.js';
+import type { EvidenceSnapshot, RunRecord } from '../types/run-record.js';
 import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import { storeDeclaresSeal } from '../store/trace-buffer-store.js';
 import { ReclaimVersionChanged, type FencePredicate } from '../store/fence-predicate.js';
@@ -29,7 +29,9 @@ import { captureEvidence } from '../evidence/snapshot.js';
 import { classifyClaim, omitClaim, type ClaimState } from './claim-liveness.js';
 import { isPastDeadline } from './instants.js';
 import type { Snapshot } from './snapshot.js';
-import { leaseFactOf } from '../store/lease-facts.js';
+import { isLeaseFact, leaseFactOf } from '../store/lease-facts.js';
+import type { LeaseProbeReason } from '../store/lease-port.js';
+import { readDrivenBy, type ActorAbsent, type Attributed } from './holder.js';
 
 /**
  * What `reclaimStep` did: moved the claim out, so the step can run again; nothing, as the step was
@@ -193,19 +195,20 @@ export interface ReclaimStepOptions {
   claimed_at?: string;
 }
 
-/** Pure mutation: remove the claim from in_progress + claims and append a reclaim audit entry.
- *  The step is NOT added to completed/failed/skipped (it returns to eligible); terminal marks,
- *  aborted_at, and pending_gate are untouched. #729 CW-1b part 2: `snap` is the store's snapshot
- *  the decision read, its lease facts included (the prior state judges the claim's lease). */
-function applyReclaim(
+/**
+ * A manual reclaim's audit entry. #729 CW-1b part 2: `snap` is the store's snapshot the decision
+ * read, its lease facts included (the prior state judges the claim's lease). The engine makes it:
+ * it names no program (an operator's act, not a step's work).
+ */
+function manualReclaimEntry(
   snap: Snapshot,
   stepName: string,
   // #922: a judged call's discharged conditions; absent, the audit entry is as before #922.
   discharged?: readonly Cond[],
-): RunRecord {
+): EvidenceSnapshot {
   const { record: run, at: now } = snap;
   const priorClaim = run.claims?.[stepName];
-  const auditEvidence = captureEvidence({
+  return captureEvidence({
     stepId: stepName,
     startedAt: now,
     completedAt: now,
@@ -219,11 +222,17 @@ function applyReclaim(
       ...(discharged !== undefined ? { conditions_discharged: [...discharged] } : {}),
     },
   });
+}
+
+/** Pure mutation: remove the claim from in_progress + claims and append `entry`, the audit entry.
+ *  The step is NOT added to completed/failed/skipped (it returns to eligible); terminal marks,
+ *  aborted_at, and pending_gate are untouched. */
+function applyReclaim(run: RunRecord, stepName: string, entry: EvidenceSnapshot): RunRecord {
   return {
     ...run,
     in_progress_steps: run.in_progress_steps.filter((s) => s !== stepName),
     claims: omitClaim(run.claims, stepName),
-    evidence: [...run.evidence, auditEvidence],
+    evidence: [...run.evidence, entry],
   };
 }
 
@@ -555,7 +564,9 @@ export async function reclaimStep(
       );
       warnFencedClearOutcome(runId, stepName, clearResult);
     }
-    const written = await store.update(applyReclaim(read, stepName));
+    const written = await store.update(
+      applyReclaim(run, stepName, manualReclaimEntry(read, stepName)),
+    );
     if (!fenced) {
       await clearStaleWal(traceBufferStore, runId, stepName);
     }
@@ -631,7 +642,9 @@ export async function reclaimStep(
       );
       warnFencedClearOutcome(runId, stepName, clearResult);
     }
-    const written = await store.update(applyReclaim(reread, stepName));
+    const written = await store.update(
+      applyReclaim(reloaded, stepName, manualReclaimEntry(reread, stepName)),
+    );
     if (!fenced) {
       await clearStaleWal(traceBufferStore, runId, stepName);
     }
@@ -688,7 +701,18 @@ async function reclaimJudged(
   const first = judge(read);
   if (!('ok' in first)) return refuseReclaim(read, stepName, first, prior);
   try {
-    return await writeReclaim(store, read, stepName, options, first.way.conditions, prior);
+    return judgedResult(
+      await writeReclaim(
+        store,
+        read,
+        stepName,
+        options.traceBufferStore,
+        manualReclaimEntry(read, stepName, first.way.conditions),
+      ),
+      stepName,
+      first.way.conditions,
+      prior,
+    );
   } catch (err) {
     if (!(err instanceof WorkflowError) || err.code !== 'STATE_SNAPSHOT_MISMATCH') throw err;
     const reread = await store.get(runId);
@@ -709,21 +733,34 @@ async function reclaimJudged(
       return refuseReclaim(reread, stepName, again, prior);
     }
     // once: a second mismatch propagates (reclaim loses, as before)
-    return writeReclaim(store, reread, stepName, options, again.way.conditions, prior);
+    return judgedResult(
+      await writeReclaim(
+        store,
+        reread,
+        stepName,
+        options.traceBufferStore,
+        manualReclaimEntry(reread, stepName, again.way.conditions),
+      ),
+      stepName,
+      again.way.conditions,
+      prior,
+    );
   }
 }
 
-/** #922: the write of an admitted reclaim — the trace buffer's seal or clear, then the update. */
+/**
+ * #922: the write of an admitted reclaim — the trace buffer's seal or clear at the read's version,
+ * then the whole-record update with `entry`, the audit entry. #729 CW-3b: the automatic take-back
+ * writes through it too, with its own entry. Returns the written snapshot.
+ */
 async function writeReclaim(
   store: RunStore,
   snap: Snapshot,
   stepName: string,
-  options: ReclaimStepOptions,
-  discharged: readonly Cond[],
-  prior: Pick<ReclaimResult, 'priorState' | 'priorDeadline'>,
-): Promise<ReclaimResult> {
+  traceBufferStore: TraceBufferStore | undefined,
+  entry: EvidenceSnapshot,
+): Promise<Snapshot> {
   const runId = snap.record.id;
-  const traceBufferStore = options.traceBufferStore;
   const fenced =
     traceBufferStore !== undefined && typeof traceBufferStore.deleteFenced === 'function';
   if (fenced && storeDeclaresSeal(traceBufferStore!)) {
@@ -743,10 +780,20 @@ async function writeReclaim(
     );
     warnFencedClearOutcome(runId, stepName, result);
   }
-  const written = await store.update(applyReclaim(snap, stepName, discharged));
+  const written = await store.update(applyReclaim(snap.record, stepName, entry));
   if (!fenced) {
     await clearStaleWal(traceBufferStore, runId, stepName);
   }
+  return written;
+}
+
+/** #922: a judged reclaim's result, from the snapshot its write returned. */
+function judgedResult(
+  written: Snapshot,
+  stepName: string,
+  discharged: readonly Cond[],
+  prior: Pick<ReclaimResult, 'priorState' | 'priorDeadline'>,
+): ReclaimResult {
   const gateAdvisory = buildGateExpiryAdvisory(written);
   return {
     run: written.record,
@@ -811,4 +858,194 @@ function refuseReclaim(
     code: 'STATE_TRANSITION_DENIED',
     details: { runId, stepName },
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// #729, the claim window (CW-3b; design record C5 §4.2, §4.4): the automatic take-back
+// ---------------------------------------------------------------------------------------------
+
+/** How many times a step is taken back automatically before a person must decide (§4.4). */
+export const AUTOMATIC_TAKEBACKS_PER_STEP = 1;
+
+/** Whether `entry` is an automatic take-back's audit entry. */
+function isTakeBackEntry(entry: EvidenceSnapshot): boolean {
+  return (
+    entry.output_summary?.['reclaimed'] === true &&
+    entry.output_summary['reason'] === 'lease_not_held'
+  );
+}
+
+/**
+ * The step's automatic take-backs since a person last reclaimed it (§4.2's one counter): the
+ * `lease_not_held` entries for `step` after its last `manual reclaim` entry, and the newest of them —
+ * when it was written and by whom (read through `readDrivenBy`).
+ */
+export function automaticTakebacksOf(
+  run: RunRecord,
+  step: string,
+): { automatic: number; last?: { at: string; driven_by: Attributed | ActorAbsent } } {
+  const entries = run.evidence.filter((e) => e.step_id === step);
+  let since = 0;
+  entries.forEach((e, i) => {
+    if (e.output_summary?.['reclaimed'] === true && e.output_summary['reason'] === 'manual reclaim')
+      since = i + 1;
+  });
+  const automatic = entries.slice(since).filter(isTakeBackEntry);
+  const newest = automatic[automatic.length - 1];
+  if (newest === undefined) return { automatic: 0 };
+  const at = newest.output_summary['reclaimed_at'];
+  return {
+    automatic: automatic.length,
+    last: {
+      at: typeof at === 'string' ? at : newest.completed_at,
+      driven_by: readDrivenBy(newest),
+    },
+  };
+}
+
+/** Why {@link takeBackStep} did not take the step back (each but `lease_unknown`, which says why). */
+export const TAKE_BACK_NOT_TAKEN_REASONS = [
+  'run_ended',
+  'not_in_progress',
+  'open_gate',
+  'unleased',
+  'lease_held',
+  'lease_absent',
+  'at_cap',
+] as const;
+
+export type TakeBackNotTakenReason = (typeof TAKE_BACK_NOT_TAKEN_REASONS)[number];
+
+/** {@link takeBackStep}'s settings. */
+export interface TakeBackStepOptions {
+  /** The token of the claim the caller read: only that claim is taken back. */
+  expectToken: string;
+  /** The program taking the step back: the audit entry's `driven_by`. */
+  drivenBy: Attributed;
+  /** The trace buffer store whose leftover trace for the step is sealed or cleared, as a reclaim's is. */
+  traceBufferStore?: TraceBufferStore;
+}
+
+/**
+ * What {@link takeBackStep} answers, with the snapshot it was judged on, or the written one:
+ * - `taken_back`: the claim is gone and the step can run again (the written snapshot);
+ * - `not_taken`, with why: the first condition that failed (`lease_unknown` with the probe's reason);
+ * - `changed`: the step's claim is not the one the caller read; nothing was removed.
+ */
+export type TakeBackOutcome =
+  | { readonly kind: 'taken_back'; readonly snapshot: Snapshot }
+  | {
+      readonly kind: 'not_taken';
+      readonly reason: TakeBackNotTakenReason;
+      readonly snapshot: Snapshot;
+    }
+  | {
+      readonly kind: 'not_taken';
+      readonly reason: 'lease_unknown';
+      readonly unknown: LeaseProbeReason;
+      readonly snapshot: Snapshot;
+    }
+  | { readonly kind: 'changed'; readonly snapshot: Snapshot };
+
+/**
+ * The conditions, in order, on the record `snap` holds; the first that fails is the answer. Every one
+ * holds ⇒ `undefined`: take it back.
+ */
+function takeBackBlock(
+  snap: Snapshot,
+  stepName: string,
+  expectToken: string,
+): TakeBackOutcome | undefined {
+  const run = snap.record;
+  const notTaken = (reason: TakeBackNotTakenReason): TakeBackOutcome => ({
+    kind: 'not_taken',
+    reason,
+    snapshot: snap,
+  });
+  if (run.terminal_state === true) return notTaken('run_ended');
+  const claim = run.in_progress_steps.includes(stepName) ? run.claims?.[stepName] : undefined;
+  if (claim === undefined) return notTaken('not_in_progress');
+  if (claim.token === undefined || claim.token !== expectToken) {
+    return { kind: 'changed', snapshot: snap };
+  }
+  if (run.pending_gate?.step_name === stepName) return notTaken('open_gate');
+  const lease = leaseFactOf(snap, claim);
+  if (!isLeaseFact(lease)) return notTaken('unleased');
+  if (lease.state === 'held') return notTaken('lease_held');
+  if (lease.state === 'absent') return notTaken('lease_absent');
+  if (lease.state === 'unknown') {
+    return { kind: 'not_taken', reason: 'lease_unknown', unknown: lease.reason, snapshot: snap };
+  }
+  if (automaticTakebacksOf(run, stepName).automatic >= AUTOMATIC_TAKEBACKS_PER_STEP) {
+    return notTaken('at_cap');
+  }
+  return undefined;
+}
+
+/**
+ * The automatic take-back's audit entry: written by the taker (`driven_by`), with the taken claim as
+ * it was, without its token (`prior_claim`). Nothing is discharged, so it has no
+ * `conditions_discharged`.
+ */
+function takeBackEntry(snap: Snapshot, stepName: string, drivenBy: Attributed): EvidenceSnapshot {
+  const { record: run, at: now } = snap;
+  const priorClaim = run.claims?.[stepName];
+  const { token: _token, ...claimWithoutToken } = priorClaim ?? {};
+  return captureEvidence({
+    stepId: stepName,
+    startedAt: now,
+    completedAt: now,
+    input: {},
+    output: {
+      reclaimed: true,
+      reason: 'lease_not_held',
+      prior_state: classifyClaim(priorClaim, now, leaseFactOf(snap, priorClaim)),
+      prior_deadline: priorClaim?.deadline ?? null,
+      reclaimed_at: now.toISOString(),
+      prior_claim: claimWithoutToken,
+    },
+    drivenBy,
+  });
+}
+
+/**
+ * #729, the claim window (CW-3b): takes back a step whose claim's lease no program holds, without a
+ * person, once. Only the claim the caller read (`expectToken`), whose lease a probe found not held,
+ * and only while the step has not been taken back since a person last reclaimed it
+ * (`AUTOMATIC_TAKEBACKS_PER_STEP`). It shares a reclaim's write: the trace buffer's fenced seal and
+ * the whole-record write at the read's version. On a write race it reads the run again and judges
+ * that read; a second race is thrown. Nothing in Realm calls it yet (CW-5 will). It does not read the
+ * step's kind: its caller passes only the steps it may take back.
+ */
+export async function takeBackStep(
+  store: RunStore,
+  runId: string,
+  stepName: string,
+  options: TakeBackStepOptions,
+): Promise<TakeBackOutcome> {
+  admitEntry('takeBackStep', {
+    store,
+    storeKind: 'run store',
+    driver: (options as Partial<TakeBackStepOptions> | undefined)?.drivenBy,
+    parts: { runId, stepName, options },
+  });
+  const take = async (snap: Snapshot): Promise<TakeBackOutcome> =>
+    takeBackBlock(snap, stepName, options.expectToken) ?? {
+      kind: 'taken_back',
+      snapshot: await writeReclaim(
+        store,
+        snap,
+        stepName,
+        options.traceBufferStore,
+        takeBackEntry(snap, stepName, options.drivenBy),
+      ),
+    };
+  const read = await store.get(runId);
+  try {
+    return await take(read);
+  } catch (err) {
+    if (!(err instanceof WorkflowError) || err.code !== 'STATE_SNAPSHOT_MISMATCH') throw err;
+    // Once: the conditions again on the re-read; a second mismatch is thrown, as a reclaim's is.
+    return take(await store.get(runId));
+  }
 }
