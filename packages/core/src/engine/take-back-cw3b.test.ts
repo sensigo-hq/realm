@@ -113,6 +113,47 @@ describe('#729 CW-3b — check 1: the conditions the take-back laws do not hold'
   });
 });
 
+describe('#729 CW-3b — item 3: a second write race is thrown', () => {
+  it('another write before each of the take-back’s writes: STATE_SNAPSHOT_MISMATCH is thrown, and the claim stays', async () => {
+    const { store, runId, token } = await notHeld();
+    // Every `update` the take-back makes meets another write first (the run's own record written
+    // again, which moves its version).
+    const racing = new Proxy(store, {
+      get(target, prop) {
+        if (prop === 'update') {
+          return async (record: Parameters<RunStore['update']>[0]) => {
+            await target.update((await target.get(runId)).record);
+            return target.update(record);
+          };
+        }
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === 'function'
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
+    const thrown = await takeBackStep(racing, runId, 'a', {
+      expectToken: token,
+      drivenBy: TAKER,
+    }).then(
+      () => 'nothing',
+      (err: { code?: string }) => err.code,
+    );
+    const read = (await store.get(runId)).record;
+    // (1) red when the take-back retries again after its re-read (a loop), or answers instead of
+    //     throwing; (2) prints what was thrown and the step's claim.
+    expect({
+      thrown,
+      inProgress: read.in_progress_steps,
+      token: read.claims?.['a']?.token,
+    }).toEqual({
+      thrown: 'STATE_SNAPSHOT_MISMATCH',
+      inProgress: ['a'],
+      token,
+    });
+  });
+});
+
 describe('#729 CW-3b — the CHANGELOG’s "no Realm command uses it yet"', () => {
   const HERE = dirname(fileURLToPath(import.meta.url));
   const PACKAGES = join(HERE, '..', '..', '..');
