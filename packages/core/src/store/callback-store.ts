@@ -190,7 +190,7 @@ export interface CallbackStore extends PerRunArtifactStore {
 
 /** How long a claim holds a row before it is due again, in seconds. */
 export const CALLBACK_CLAIM_SECONDS = 60;
-/** The longest wait a `retry` may ask for, in seconds (a larger one could not be stamped). */
+/** The longest wait a `retry` may ask for, in seconds. */
 export const CALLBACK_RETRY_MAX_SECONDS = 86_400;
 
 const WORDS = new Set<string>(CALLBACK_LAST_STATUS_WORDS);

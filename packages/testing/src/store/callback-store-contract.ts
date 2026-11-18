@@ -47,19 +47,24 @@ import { settableClock } from '../clock/settable-clock.js';
  * - `CB_DUE_RUN_GONE` — a row whose run is gone is not due, and its claim answers `run_not_finished`
  *   (an adapter hook removes the run; a store that cannot lists the law in its `NOT_RUN`).
  * - `CB_DUE_FAIRNESS_AND_ORDER` — 60 rows of one host and the newest row of another, `limit` 50: the
- *   first host's oldest, the other host's row, then the first host's next 48; ties are broken by `host`
- *   between hosts and by `run_id` within one, in code-unit order.
+ *   first host's oldest, the other host's row, then the first host's next 48; inside a round the hosts
+ *   go by the `next_attempt_at` of the row each gives (z at +0 and +100 ms, a at +5 and +6 ms: z0, a0,
+ *   a1, z1); ties are broken by `host` between hosts and by `run_id` within one, in code-unit order.
  * - `CB_CLAIM_ONE_WINNER` — two claims at once: one applies, the other is `stale`; the claim answers
  *   the item with `attempts` 1, `next_attempt_at` 60 s after the reading, `first_attempt_at` the reading
  *   and `finished_at` the run's `updated_at`, and the reading as `at`; the next claim keeps both
- *   instants; a run without a row is `no_row`, a delivered row `not_pending`.
- * - `CB_CLAIM_NEEDS_TERMINAL` — a run un-finished after `due` answers `run_not_finished` and the row is
- *   unchanged.
+ *   instants; a run without a row is `no_row`, a delivered row `not_pending`, with a stale expected
+ *   instant too (the reasons go `no_row`, `not_pending`, `stale`, `run_not_finished`: the first that
+ *   holds answers).
+ * - `CB_CLAIM_NEEDS_TERMINAL` — a run un-finished after `due` answers `run_not_finished`, and `stale`
+ *   with a stale expected instant; the row is unchanged.
  * - `CB_FREEZE_ONCE` — the claim's token freezes the body once; a second freeze is `body_set`, another
- *   token `lost_claim`, a finished row `not_pending`, a run without a row `no_row`; `due` carries the
- *   first body.
+ *   token `lost_claim`, a finished row `not_pending` (with another token too), a run without a row
+ *   `no_row`; `due` carries the first body; after a `retry` mark the next claim's item carries the body
+ *   and the last answer.
  * - `CB_MARK_CONDITIONAL` — another token is `lost_claim` and changes nothing; after `delivered` or
- *   `failed`, every mark is `not_pending` and the row stays finished; a run without a row is `no_row`.
+ *   `failed`, every mark is `not_pending` (with another token too) and the row stays finished; a run
+ *   without a row is `no_row`.
  * - `CB_NULLING_ONE_WRITE` — `retry` keeps the address and body and `due` sends them; `delivered` and
  *   `failed` clear them in the same write (zero bytes), keep the host, and record the ending's own
  *   status; a `due` beside a mark sees the row with its address or not at all.
@@ -694,6 +699,26 @@ function family(adapter: CallbackStoreContractAdapter) {
           other,
           ...sorted.slice(1),
         ]);
+        for (const id of [other, ...tied]) await b.callbacks.deleteAllForRun(id);
+        // Inside a round the hosts go by the `next_attempt_at` of the row each gives, then by `host`:
+        // z's rows at +0 and +100 ms, a's at +5 and +6 ms, so z leads round 0 and a leads round 1. A
+        // round sorted by `host` alone gives a0, z0, a1, z1.
+        const base = 30 * MIN;
+        const at = async (ms: number, n: number, host: string): Promise<string> => {
+          await b.at(base + ms);
+          return finishedRun(b, n, host);
+        };
+        const z0 = await at(0, 400, 'z.example:443');
+        const a0 = await at(5, 401, 'a.example:443');
+        const a1 = await at(6, 402, 'a.example:443');
+        const z1 = await at(100, 403, 'z.example:443');
+        await b.at(base + 10 * MIN);
+        same(law, 'inside a round: by the row’s instant, then by host', await dueIds(b, 10), [
+          z0,
+          a0,
+          a1,
+          z1,
+        ]);
       }),
     ),
     L(
@@ -783,6 +808,12 @@ function family(adapter: CallbackStoreContractAdapter) {
             answer(await b.callbacks.claim(id, { expectedNextAttemptAt: T(125_000), token: 'W' })),
             'not_pending',
           );
+          same(
+            law,
+            'a delivered row with a stale expected instant: not_pending comes first',
+            answer(await b.callbacks.claim(id, { expectedNextAttemptAt: T(0), token: 'W' })),
+            'not_pending',
+          );
         }),
     ),
     L(
@@ -807,6 +838,17 @@ function family(adapter: CallbackStoreContractAdapter) {
               }),
             ),
             'run_not_finished',
+          );
+          same(
+            law,
+            'an unfinished run with a stale expected instant: stale comes first',
+            answer(
+              await b.callbacks.claim(id, {
+                expectedNextAttemptAt: T(MIN),
+                token: 'X',
+              }),
+            ),
+            'stale',
           );
           same(law, 'the row unchanged', await b.callbacks.read(id), before);
           same(law, 'and not due', await dueIds(b), []);
@@ -840,6 +882,25 @@ function family(adapter: CallbackStoreContractAdapter) {
           applied: false,
           reason: 'not_pending',
         });
+        same(
+          law,
+          'a delivered row, another token: not_pending comes first',
+          await b.callbacks.freezeBody(id, 'Y', 'body two'),
+          { applied: false, reason: 'not_pending' },
+        );
+        // A sender that claims a row again after a retry needs the frozen body and the last answer.
+        const r = await finishedRun(b, 2);
+        await claimNow(b, r, 'X');
+        await b.callbacks.freezeBody(r, 'X', 'the frozen body');
+        await b.callbacks.mark(r, 'X', { kind: 'retry', afterSeconds: 30, lastStatus: 503 });
+        await b.at(3 * MIN);
+        const again = await claimNow(b, r, 'Y');
+        same(
+          law,
+          'the next claim after a retry carries the body and the last answer',
+          again.applied ? { body: again.item.body, last_status: again.item.last_status } : again,
+          { body: 'the frozen body', last_status: 503 },
+        );
         same(law, 'a run without a row', await b.callbacks.freezeBody(await b.create(), 'X', 'b'), {
           applied: false,
           reason: 'no_row',
@@ -880,6 +941,12 @@ function family(adapter: CallbackStoreContractAdapter) {
             applied: false,
             reason: 'not_pending',
           });
+        same(
+          law,
+          'after delivered, another token: not_pending comes first',
+          await b.callbacks.mark(a, 'Y', { kind: 'failed', lastStatus: 500 }),
+          { applied: false, reason: 'not_pending' },
+        );
         same(law, 'still delivered', (await b.callbacks.read(a))?.status, 'delivered');
         const f = await finishedRun(b, 2);
         await claimNow(b, f, 'X');
