@@ -33,6 +33,9 @@ All notable changes to this project are documented here.
 - **The CLI says each held step's state and how to free it.** `realm run advance`, `realm run drain`, `realm run respond`, `realm agent`, `realm workflow run` and `realm run inspect` say whether a held step's deadline is ahead or passed, or that its claim has none. They say to wait where it can still finish, then each condition, then the `realm run reclaim` command with the claim's stamp. The reclaim dry run lists every held step's command, and `realm run reclaim --all` frees only the claims it read. No held-step line says a program died.
 - **The CLI says how a run ended, from the record only.** `realm agent --run-id` refuses an ended run with the sentence for how it ended, naming the steps that failed, and never says an operator ended it. The `Ended:` line of `realm workflow run` and `realm agent` says it for every ending the command had not already printed, once (before, only an abandon), so `realm workflow run` no longer shows "aborted" without why. `realm run advance`'s `Stopped:` line says it for a run that had already ended or that another program ended during the call, whatever the ending (before, only an abandon), and `realm run respond` says it when the question's run has ended. `realm run inspect` no longer calls an abandon an operator's ending. (#625)
 
+- `RunStore` gains an optional `scanListed`, a listing of runs that leaves each model call's text out; a store without it keeps working, and Realm lists through `scan` instead.
+- In the library, a listing's run has its own types, `ListedSnapshot`, `ListedRecord`, `ListedScanPage` and `ListedScanItem`, and `update` does not accept a `ListedRecord`; `RunStore`'s `scanListed` returns them, and `classifyRunHealth`, `findEligibleSteps` and `getWorkflowForRun` take a listed run as well as a full one.
+
 ## [0.50.0] — 2026-11-17
 
 ### Upgrading

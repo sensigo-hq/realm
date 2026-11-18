@@ -17,7 +17,7 @@ export function testClockNoticeLine(at: Date): string {
 
 /**
  * Returns `store` as it is, or — when its clock is a test location's — the same store whose first
- * `get`, page of `scan` or `listWithDiagnostics` in this process hands `sink` the notice line with
+ * `get`, page of `scan` or `scanListed`, or `listWithDiagnostics` in this process hands `sink` the notice line with
  * that read's reading (a snapshot's `at`, a page's or a listing's `read_at`). Every other member
  * passes through to the store, bound to it.
  */
@@ -45,6 +45,18 @@ export function withTestClockNotice<S extends RunStore>(store: S, sink: (line: s
       if (prop === 'scan') {
         return async function* (...args: Parameters<RunStore['scan']>) {
           for await (const page of target.scan(...args)) {
+            once(page.read_at);
+            yield page;
+          }
+        };
+      }
+      // Gap 1, unit A0: a page of a listing is a read too, as a page of `scan` is. A store without
+      // `scanListed` keeps none, so the listing goes through `scan` above.
+      if (prop === 'scanListed') {
+        const listed = Reflect.get(target, prop, target) as RunStore['scanListed'];
+        if (typeof listed !== 'function') return listed;
+        return async function* (...args: Parameters<NonNullable<RunStore['scanListed']>>) {
+          for await (const page of listed.apply(target, args)) {
             once(page.read_at);
             yield page;
           }

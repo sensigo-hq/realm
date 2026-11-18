@@ -68,7 +68,7 @@ Step 'assess' completed. Step 'pay' failed. Recovery steps are available in next
 Handler 'pay' threw: payment provider declined 500
 ```
 
-The first line opens with the step the call answered, `Step 'assess' completed.`, after version 0.49.0.
+The first line opens with the step the call answered, `Step 'assess' completed.`, after version 0.50.0.
 
 ## Guard steps
 
