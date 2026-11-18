@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
+import { REALM_STORE_SCHEMA_VERSION } from '@sensigo/realm';
 import { openRealmHome, openRealmHomeForMaintenance } from '@sensigo/realm-store-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -145,9 +146,9 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
     expect(r).toEqual({
       code: 0,
       stdout:
-        `Backed up ${shown(file)} (schema version 2, ${readFileSync(kept).length} bytes) to ` +
+        `Backed up ${shown(file)} (schema version ${REALM_STORE_SCHEMA_VERSION}, ${readFileSync(kept).length} bytes) to ` +
         `${shown(kept)}; the copy passes SQLite's quick check.\n` +
-        `Restored ${shown(file)} from ${backup} (schema version 2).\n` +
+        `Restored ${shown(file)} from ${backup} (schema version ${REALM_STORE_SCHEMA_VERSION}).\n` +
         'Left out of the restored file: 1 run(s) that only the replaced file had, and the replaced ' +
         "file's version of 0 run(s) that both files hold. Brought back: 0 run(s) that only the " +
         'backup had. All of the replaced file is in the copy above. Only runs are counted.\n',
@@ -191,7 +192,7 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
     }).toEqual({
       code: 0,
       last:
-        'This backup is at schema version 1 and this Realm writes version 2. To use it with this ' +
+        `This backup is at schema version 1 and this Realm writes version ${REALM_STORE_SCHEMA_VERSION}. To use it with this ` +
         'Realm, run `realm db migrate`; to use it with an older Realm, install that Realm now.',
       migrate: 0,
     });
@@ -218,13 +219,13 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
     expect({ r, kept, empty }).toEqual({
       r: {
         code: 0,
-        stdout: `Restored ${shown(file)} from ${backup} (schema version 2). The home had no store file, so nothing was replaced.\n`,
+        stdout: `Restored ${shown(file)} from ${backup} (schema version ${REALM_STORE_SCHEMA_VERSION}). The home had no store file, so nothing was replaced.\n`,
         stderr: '',
       },
       kept: false,
       empty: {
         code: 0,
-        stdout: `Restored ${shown(file)} from ${backup} (schema version 2). The store file was empty, so nothing was replaced.\n`,
+        stdout: `Restored ${shown(file)} from ${backup} (schema version ${REALM_STORE_SCHEMA_VERSION}). The store file was empty, so nothing was replaced.\n`,
         stderr: '',
       },
     });
@@ -251,7 +252,7 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
         `${shown(file)} could not be read as a store, so it was copied as it was to ` +
         `${shown(asFound)} (and its -wal beside it, if it had one). What was in it could not be ` +
         'counted.\n' +
-        `Restored ${shown(file)} from ${backup} (schema version 2).\n`,
+        `Restored ${shown(file)} from ${backup} (schema version ${REALM_STORE_SCHEMA_VERSION}).\n`,
       stderr:
         `SQLite could not check whether another process has ${shown(file)} open (it cannot read ` +
         'the file as a database) and no -wal or -shm file is beside it.\n',
@@ -284,7 +285,7 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
     mkdirSync(scratchHome, { recursive: true });
     writeFileSync(join(scratchHome, 'realm.db'), readFileSync(newer));
     const c = await openForeignConnection(scratchHome);
-    c.exec('PRAGMA user_version = 3');
+    c.exec(`PRAGMA user_version = ${REALM_STORE_SCHEMA_VERSION + 1}`);
     c.close();
     writeFileSync(newer, readFileSync(join(scratchHome, 'realm.db')));
     const error = (message: string): Run => ({
@@ -312,7 +313,7 @@ describe('#616 R1b — realm db restore, on the built CLI', { timeout: 120_000 }
           `Cannot restore from ${shown(file)}: it is the store file itself. Nothing was changed.`,
         ),
         newer: error(
-          `Cannot restore from ${newer}: Written by a later version of Realm (schema version 3; this version reads up to 2). Nothing was changed.`,
+          `Cannot restore from ${newer}: Written by a later version of Realm (schema version ${REALM_STORE_SCHEMA_VERSION + 1}; this version reads up to ${REALM_STORE_SCHEMA_VERSION}). Nothing was changed.`,
         ),
       },
       folder: false,

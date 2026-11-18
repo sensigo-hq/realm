@@ -28,7 +28,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { REALM_STORE_SCHEMA_VERSION } from '@sensigo/realm';
+import { REALM_STORE_SCHEMA_VERSION, REALM_STORE_VERSIONS } from '@sensigo/realm';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
 import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -146,7 +146,7 @@ function claim(page: string, sentence: string): void {
 }
 
 const ALREADY = (file: string): string =>
-  `${file} is already at schema version 2; no schema step to run.\n`;
+  `${file} is already at schema version ${REALM_STORE_SCHEMA_VERSION}; no schema step to run.\n`;
 const RESTAMPED = (runs: number): string =>
   `Re-stamped the phase index of ${runs} run(s) with the current derivation.\n`;
 
@@ -187,7 +187,7 @@ describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_
     });
   });
 
-  it('(J) a store at this Realm’s version (2): with --backup, the backup line, the already-at line and a re-stamp of 0, exit 0, and the copy made; with --no-backup, the two lines and nothing at any path', async () => {
+  it(`(J) a store at this Realm’s version (${REALM_STORE_SCHEMA_VERSION}): with --backup, the backup line, the already-at line and a re-stamp of 0, exit 0, and the copy made; with --no-backup, the two lines and nothing at any path`, async () => {
     await makeStore();
     const file = shown(join(home, 'realm.db'));
     const copy = join(base, 'realm-before-upgrade.db');
@@ -202,7 +202,7 @@ describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_
       withBackup: {
         code: 0,
         stdout:
-          `Backed up ${file} (schema version 2, ${bytes} bytes) to ${copy}; the copy passes SQLite's quick check.\n` +
+          `Backed up ${file} (schema version ${REALM_STORE_SCHEMA_VERSION}, ${bytes} bytes) to ${copy}; the copy passes SQLite's quick check.\n` +
           ALREADY(file) +
           RESTAMPED(0),
         stderr: '',
@@ -298,14 +298,16 @@ describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_
     });
   });
 
-  it('(N) #597 D1c-1, the first real step: a home an older Realm left at version 1 is refused until `realm db migrate --backup` moves it to 2, then every command works, and a second migrate has nothing to do', async () => {
+  it(`(N) #597 D1c-1, the first real step: a home an older Realm left at version 1 is refused until \`realm db migrate --backup\` moves it to ${REALM_STORE_SCHEMA_VERSION}, then every command works, and a second migrate has nothing to do`, async () => {
     // The version-1 file (no export is added; `openRealmHome` takes no seams): a home made by this
-    // Realm, closed, then the one statement of version 2 taken back on a foreign connection. Its
-    // schema then equals 0.49.0's, not its bytes (the corpus of PR #1180 is the byte witness).
+    // Realm, closed, then every step above version 1 taken back on a foreign connection, the top one
+    // first (callback B1a: version 3's, then version 2's). Its schema then equals 0.49.0's, not its
+    // bytes (the corpus of PR #1180 is the byte witness).
     const ids = await storeWithRuns(2);
     const foreign = await openForeignConnection(home);
     try {
-      foreign.exec('DROP TABLE outbound');
+      for (let v = REALM_STORE_SCHEMA_VERSION; v > 1; v--)
+        for (const statement of REALM_STORE_VERSIONS.get(v)!.downgrade!) foreign.exec(statement);
       foreign.exec('PRAGMA user_version = 1');
     } finally {
       foreign.close();
@@ -347,25 +349,31 @@ describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_
     }).toEqual({
       checkOlder: {
         code: 1,
-        first: `Checked ${file} (schema version 1; this version of Realm reads up to 2).`,
-        finding:
-          '✗ Written by an earlier version: schema version 1; this version needs 2; run `realm db migrate`.',
+        first: `Checked ${file} (schema version 1; this version of Realm reads up to ${REALM_STORE_SCHEMA_VERSION}).`,
+        finding: `✗ Written by an earlier version: schema version 1; this version needs ${REALM_STORE_SCHEMA_VERSION}; run \`realm db migrate\`.`,
         notRun: true,
       },
       listOlder: {
         code: 1,
         stdout: '',
-        stderr:
-          "Error: This store's file is at schema version 1; this Realm writes version 2. Run `realm db migrate` with Realm stopped to upgrade it.\n",
+        stderr: `Error: This store's file is at schema version 1; this Realm writes version ${REALM_STORE_SCHEMA_VERSION}. Run \`realm db migrate\` with Realm stopped to upgrade it.\n`,
       },
       migrated: {
         code: 0,
         stdout:
           `Backed up ${file} (schema version 1, ${bytes} bytes) to ${copy}; the copy passes SQLite's quick check.\n` +
-          lineOf(file, {
-            kind: 'step',
-            report: { from: 1, to: 2, statements: 1, evidenceChecked: 0 },
-          }) +
+          // Callback B1a: one line per step, each with its version's statements.
+          Array.from({ length: REALM_STORE_SCHEMA_VERSION - 1 }, (_, i) =>
+            lineOf(file, {
+              kind: 'step',
+              report: {
+                from: i + 1,
+                to: i + 2,
+                statements: REALM_STORE_VERSIONS.get(i + 2)!.upgrade.length,
+                evidenceChecked: 0,
+              },
+            }),
+          ).join('\n') +
           '\n' +
           // #616 R1: a migrate that ran a step records it beside the home.
           `Recorded this migrate in ${shown(join(root, '.realm-backups', 'migrations.jsonl'))}.\n` +
@@ -379,7 +387,7 @@ describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_
     });
   });
 
-  it('(N2) #597 D1c-1: a home that `realm run import` creates is at version 2 and needs no migrate', () => {
+  it(`(N2) #597 D1c-1: a home that \`realm run import\` creates is at version ${REALM_STORE_SCHEMA_VERSION} and needs no migrate`, () => {
     const runs = join(base, 'old-runs');
     mkdirSync(runs);
     writeFileSync(

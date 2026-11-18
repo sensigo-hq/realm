@@ -265,7 +265,12 @@ describe('#616 PR-2c c6 — the maintenance entry and realm db backup', () => {
     expect({ opened, found, report }).toEqual({
       opened: 'opened',
       found: ids,
-      report: { path: copy, bytes: statSync(copy).size, schemaVersion: 2, quickCheck: 'ok' },
+      report: {
+        path: copy,
+        bytes: statSync(copy).size,
+        schemaVersion: REALM_STORE_SCHEMA_VERSION,
+        quickCheck: 'ok',
+      },
     });
   });
 
@@ -871,7 +876,7 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
         left: leftovers(target),
       }).toEqual({
         report: 'resolved',
-        copy: { version: 2, mode: 'wal' },
+        copy: { version: REALM_STORE_SCHEMA_VERSION, mode: 'wal' },
         mode: '600',
         left: [],
       });
@@ -1003,7 +1008,7 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
         expect({ outcome: result, left: leftovers(target), copy: copyHeader(target) }).toEqual({
           outcome: 'resolved',
           left: [],
-          copy: { version: 2, mode: 'wal' },
+          copy: { version: REALM_STORE_SCHEMA_VERSION, mode: 'wal' },
         });
       },
     );

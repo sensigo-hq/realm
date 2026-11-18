@@ -7,6 +7,8 @@
 // handles', its verbs' and its reports' types; and `readRegisteredWorkflows` (PR-2c c10a-3b-i, DELTAS 56), the separation check's
 // one read-only look at the registered workflows, with its result types. Every other module is internal.
 export { openRealmHome, type OpenRealmHomeOptions, type RealmHome } from './open-realm-home.js';
+// Callback B1a: what seals a home's signing keys, given to `openRealmHome` as `sealer`.
+export type { CallbackKeySealer } from './callback-keys.js';
 export {
   openRealmHomeForMaintenance,
   // #616 R2: `realm db migrate --to`'s value, read before the store is opened.

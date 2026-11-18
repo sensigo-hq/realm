@@ -10,8 +10,9 @@
 // before any of its rows go ({@link deleteRunIfDeletable}); a refused run writes nothing and leaves the
 // batch's other runs deleted. A deletable run's rows go by each store's own code: the run's rows
 // (stamped with the batch's one reading, the primitive's), then its trace lines and seals, then its
-// failed attempts, then its outbound ledger rows (#597 D1c-1). The replay store keeps nothing per run, and the duplicate-webhook memory clears
-// its own expired ids.
+// failed attempts, then its outbound ledger rows (#597 D1c-1), then its callback row (callback B1a).
+// The replay store keeps nothing per run, the signing keys belong to no run, and the duplicate-webhook
+// memory clears its own expired ids.
 //
 // After the batches, when at least one run was deleted: the free pages go back in steps of
 // {@link VACUUM_STEP_PAGES} (`incremental_vacuum` through `all()`, which returns one row per page
@@ -45,6 +46,7 @@ import {
   isOwnStatementFailure,
   type RowsDeleted,
 } from './artifact-delete-failure.js';
+import { ARTIFACT as CALLBACKS, deleteCallbackRowsOfRun } from './callback-store.js';
 import type { RealmDb } from './connection.js';
 import {
   ARTIFACT as FAILED_ATTEMPTS,
@@ -71,7 +73,7 @@ export interface PurgeSelection {
 
 /** What the purge did with one run it attempted. */
 export type PurgeRunOutcome =
-  /** Deleted: its bytes, the stores' receipts (#597 D1c-1: the outbound rows' too). */
+  /** Deleted: its bytes, the stores' receipts (#597 D1c-1: the outbound rows' too; B1a: its callback row's). */
   | { readonly runId: string; readonly outcome: 'purged'; readonly bytes_deleted: number }
   /** Not there when its batch read it (something else deleted it first): nothing written. */
   | { readonly runId: string; readonly outcome: 'already_gone' }
@@ -221,12 +223,15 @@ async function purgeBatch(
           const attempts = own(FAILED_ATTEMPTS)(() => deleteFailedAttemptRowsOfRun(tx, runId));
           // #597 D1c-1: the run's outbound ledger rows, with the run, in the same transaction.
           const outbound = own(OUTBOUND)(() => deleteOutboundRowsOfRun(tx, runId));
+          // Callback B1a: the run's callback row, with the run, in the same transaction.
+          const callback = own(CALLBACKS)(() => deleteCallbackRowsOfRun(tx, runId));
           outcomes.push({
             runId,
             outcome: 'purged',
-            bytes_deleted: judged.bytes + trace.bytes + attempts.bytes + outbound.bytes,
+            bytes_deleted:
+              judged.bytes + trace.bytes + attempts.bytes + outbound.bytes + callback.bytes,
           });
-          checks.push(judged, trace, attempts, outbound);
+          checks.push(judged, trace, attempts, outbound, callback);
         }
         return { outcomes, checks };
       },

@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
-import { VERSION } from '@sensigo/realm';
+import { REALM_STORE_SCHEMA_VERSION, REALM_STORE_VERSIONS, VERSION } from '@sensigo/realm';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
 import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -197,9 +197,15 @@ function guideExample(): string {
     .join('\n');
 }
 
-const STEP = (evidence: number): string =>
-  `Migrated ${shown(file)} from schema version 1 to 2: 1 statement(s) ran, the schema matches ` +
-  `version 2's, ${evidence} evidence entries match their stored hashes.`;
+/** Callback B1a: the step lines of a version-1 file, one per version up to this Realm's. */
+const STEPS = (evidence: number): string[] =>
+  Array.from(
+    { length: REALM_STORE_SCHEMA_VERSION - 1 },
+    (_, i) =>
+      `Migrated ${shown(file)} from schema version ${i + 1} to ${i + 2}: ` +
+      `${REALM_STORE_VERSIONS.get(i + 2)!.upgrade.length} statement(s) ran, the schema matches ` +
+      `version ${i + 2}'s, ${evidence} evidence entries match their stored hashes.`,
+  );
 const RESTAMPED = 'Re-stamped the phase index of 0 run(s) with the current derivation.';
 const IN_USE = (): string =>
   `Another process has ${shown(file)} open: a Realm agent, server or command, an MCP server that ` +
@@ -208,7 +214,7 @@ const IN_USE = (): string =>
 
 // Each cell starts the built CLI (a cold start each time), so the describe carries its own budget.
 describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout: 120_000 }, () => {
-  it("no flag on the home 0.49.0's release recorded: the copy beside the home passes the quick check, the file is at 2, one record line with its six fields, and the lines are the guide's example", async () => {
+  it(`no flag on the home 0.49.0's release recorded: the copy beside the home passes the quick check, the file is at ${REALM_STORE_SCHEMA_VERSION}, one record line with its six fields, and the lines are the guide's example`, async () => {
     recordedHome();
     const run = realm(['db', 'migrate']);
     const folder = join(root, '.realm-backups');
@@ -244,20 +250,25 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
       stderr: '',
       lines: [
         `Backed up ${shown(file)} (schema version 1, 638976 bytes) to ${shown(copy)}; the copy passes SQLite's quick check.`,
-        STEP(6),
+        ...STEPS(6),
         `Recorded this migrate in ${shown(join(folder, 'migrations.jsonl'))}.`,
         RESTAMPED,
       ],
-      names: ['migrations.jsonl', expect.stringMatching(/^realm-v1-to-v2-\d{8}T\d{6}Z\.db$/)],
+      names: [
+        'migrations.jsonl',
+        expect.stringMatching(
+          new RegExp(`^realm-v1-to-v${REALM_STORE_SCHEMA_VERSION}-\\d{8}T\\d{6}Z\\.db$`),
+        ),
+      ],
       quick: { quick_check: 'ok' },
       copyVersion: 1,
-      version: 2,
+      version: REALM_STORE_SCHEMA_VERSION,
       keys: ['at', 'home', 'from_format', 'to_format', 'backup', 'migrated_by'],
       record: {
         at: 'string',
         home: realpathSync(home),
         from_format: 1,
-        to_format: 2,
+        to_format: REALM_STORE_SCHEMA_VERSION,
         backup: copy,
         migrated_by: VERSION,
       },
@@ -305,7 +316,7 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
       run: {
         code: 0,
         stdout:
-          `${shown(file)} is already at schema version 2; no schema step to run.\n` +
+          `${shown(file)} is already at schema version ${REALM_STORE_SCHEMA_VERSION}; no schema step to run.\n` +
           `${RESTAMPED}\n`,
         stderr: '',
       },
@@ -335,12 +346,12 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
       unchanged: true,
       noBackup: {
         code: 0,
-        stdout: `${STEP(6)}\n${RESTAMPED}\n`,
+        stdout: `${STEPS(6).join('\n')}\n${RESTAMPED}\n`,
         stderr:
           `Could not record this migrate in ${shown(join(folder, 'migrations.jsonl'))}: ${reason}. ` +
           'The file is migrated; the record is only a note for going back.\n',
       },
-      version: 2,
+      version: REALM_STORE_SCHEMA_VERSION,
     });
     claim(
       PAGE,
@@ -364,11 +375,12 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
       version: versionOf(file),
     }).toEqual({
       code: 0,
-      lines: 3,
+      // The copy line, one line per step, the re-stamp line.
+      lines: 2 + STEPS(6).length,
       stderr:
         `Could not record this migrate in ${shown(join(root, '.realm-backups', 'migrations.jsonl'))}: ` +
         'illegal operation on a directory. The file is migrated; the record is only a note for going back.\n',
-      version: 2,
+      version: REALM_STORE_SCHEMA_VERSION,
     });
   });
 
@@ -381,7 +393,8 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
     const outcome = (r: Run): string =>
       r.code === 0 && r.stdout.includes('Migrated ')
         ? 'migrated'
-        : r.code === 0 && r.stdout.includes('is already at schema version 2')
+        : r.code === 0 &&
+            r.stdout.includes(`is already at schema version ${REALM_STORE_SCHEMA_VERSION}`)
           ? 'nothing to do'
           : r.code === 1 && r.stderr.includes('Another process has ')
             ? 'refused in use'
@@ -398,7 +411,7 @@ describe('#616 R1 — the shorter realm db migrate, on the built CLI', { timeout
         ['busy at its open', 'nothing to do', 'refused in use'].includes(
           outcomes.find((o) => o !== 'migrated') ?? 'none',
         ) &&
-        version === 2 &&
+        version === REALM_STORE_SCHEMA_VERSION &&
         records().length === 1) ||
       (outcomes.every((o) => o === 'refused in use') && version === 1 && records().length === 0);
     // (1) red when both run the step (two step lines, two records), a loser fails some other way, or

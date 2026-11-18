@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  REALM_STORE_SCHEMA_VERSION,
   REALM_STORE_VERSIONS,
   WorkflowError,
   type CreateRunOptions,
@@ -99,7 +100,8 @@ const KEPT = 'its two tables are kept on purpose';
 /**
  * Core's versions 1 and 2, then two synthetic versions above them (3 adds two tables, 4 rebuilds one),
  * each with a step back (as R2's cells build it); `three` replaces version 3's fields that say how it
- * is undone.
+ * is undone. Callback B1a: the synthetic 3 replaces core's real 3, so the ladder is its own; the real
+ * 3's rollback has its own cell (`store-format-v3-b1a.test.ts`).
  */
 function backLadder(
   three: Partial<StoreSchemaVersion> = { downgrade: V3_DOWN },
@@ -455,7 +457,18 @@ describe('#616 R3 — rollback: a record line with more fields than the six', ()
       to: report.schemaVersion,
       last: recordLines(folder).at(-1)?.['to_format'],
     }).toEqual({
-      seen: ['rolling back 1 to 2', 'backup', 'back 2 to 1', 'recorded', 'install'],
+      seen: [
+        `rolling back 1 to ${REALM_STORE_SCHEMA_VERSION}`,
+        'backup',
+        // Callback B1a: one step back per version the forward migrate climbed.
+        ...Array.from(
+          { length: REALM_STORE_SCHEMA_VERSION - 1 },
+          (_, i) =>
+            `back ${REALM_STORE_SCHEMA_VERSION - i} to ${REALM_STORE_SCHEMA_VERSION - i - 1}`,
+        ),
+        'recorded',
+        'install',
+      ],
       version: 1,
       to: 1,
       last: 1,
@@ -490,7 +503,8 @@ describe('#616 R3 — rollback: the install sentence for a file an older Realm w
         code: 'STATE_STORE_MIGRATE_REFUSED',
         message:
           `The last record for ${four.home} (${String(at4)}) took the store file from schema version ` +
-          '1 to 2, but it is at schema version 1 now. Realm does not know what to roll back. Use ' +
+          `1 to ${REALM_STORE_SCHEMA_VERSION}, but it is at schema version 1 now.` +
+          ' Realm does not know what to roll back. Use ' +
           'realm db migrate --to <n> to choose the version yourself, or realm db restore <backup>.' +
           `${INSTALL_1('an older Realm')} Nothing was changed.`,
       },
@@ -504,22 +518,23 @@ describe('#616 R3 — rollback: the install sentence for a file an older Realm w
     });
   });
 
-  it('a file at the version this Realm writes: no sentence (state 4, the file at 2)', async () => {
+  it(`a file at the version this Realm writes: no sentence (state 4, the file at ${REALM_STORE_SCHEMA_VERSION})`, async () => {
     const { home, folder } = nestedHome();
     await storeAt(home, 1);
     await migrateForward(home, {}, false);
     const back = await maintain(home, {}, 'migrate');
     await back.migrate({ to: 1, backup: false });
     back.close();
-    await moveForeign(home, REALM_STORE_VERSIONS, 2);
+    await moveForeign(home, REALM_STORE_VERSIONS, REALM_STORE_SCHEMA_VERSION);
     const at = recordLines(folder).at(-1)?.['at'];
     const rolled = await refusal((await maintain(home)).rollback());
     // (1) red when the sentence is added for the version this Realm writes; (2) prints the refusal.
     expect(rolled).toEqual({
       code: 'STATE_STORE_MIGRATE_REFUSED',
       message:
-        `The last record for ${home} (${String(at)}) took the store file from schema version 2 to ` +
-        '1, but it is at schema version 2 now. Realm does not know what to roll back. Use realm ' +
+        `The last record for ${home} (${String(at)}) took the store file from schema version ` +
+        `${REALM_STORE_SCHEMA_VERSION} to 1, but it is at schema version ${REALM_STORE_SCHEMA_VERSION} ` +
+        'now. Realm does not know what to roll back. Use realm ' +
         'db migrate --to <n> to choose the version yourself, or realm db restore <backup>. ' +
         'Nothing was changed.',
     });
