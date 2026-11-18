@@ -181,7 +181,7 @@ export const howChecked = [
 
 /** Words the page keeps on one line: a command-line flag that, broken after its "--", would read as
  *  a dash. Only the page marks them; the Markdown copy and llms.txt are plain text. */
-const ONE_LINE = ['--gate-answers withheld'];
+const ONE_LINE = ['--gate-answers permitted'];
 const ONE_LINE_SPLIT = new RegExp(
   `(${ONE_LINE.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
 );
