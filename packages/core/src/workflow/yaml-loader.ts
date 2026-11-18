@@ -77,7 +77,7 @@ import {
   type StepKeyCell,
 } from './step-key-registry.js';
 import type { ExecutionMode } from '../types/workflow-definition.js';
-import { quotedCommand, shellWord } from '../utils/shell-word.js';
+import { quotedCommand } from '../utils/shell-word.js';
 import { VERSION } from '../version.js';
 import { answerToolNamedIn, authorTextNote } from './author-text.js';
 
@@ -2198,7 +2198,8 @@ function parseWorkflowString(
           message:
             `Step '${stepName}': 'idempotent: true' cannot enable auto-reclaim in a finalizer-bearing ` +
             `workflow (its claim carries no deadline, so 'realm run reclaim --all' can never select ` +
-            `it). Recover it with ${quotedCommand(`realm run reclaim <run-id> --step ${shellWord(stepName)} --force`)}.` +
+            // #922 P2-2 (S-2): the dry run, which prints the command for the claim it shows.
+            `it). See ${quotedCommand('realm run reclaim <run-id>')}, which prints each held step's command.` +
             (onTimeoutDeclared
               ? ` Its 'retry.on_timeout' gate role is unaffected — timeout retries remain active.`
               : ''),

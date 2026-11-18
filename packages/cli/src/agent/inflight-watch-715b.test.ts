@@ -81,8 +81,12 @@ describe('#715 (b) §B.1 — the in-flight watch judges a held claim at its late
     clearTimeout(step);
     const out = logSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
-    expect(out.includes('Its claim is past its deadline (its runner likely died).'), out).toBe(
-      true,
-    );
+    // #922 P2-2: the past state's words (the claim's deadline, judged at the latest reading).
+    expect(
+      out.includes(
+        `'review' was claimed and its deadline passed at ${new Date(DEADLINE).toISOString()}; no result is recorded for it.`,
+      ),
+      out,
+    ).toBe(true);
   });
 });

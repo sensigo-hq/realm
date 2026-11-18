@@ -48,33 +48,21 @@ Where the docs teach it: [Handlers](../handlers.md), [Project extensions](../pro
 | [`UnreadableRunFilesFacts`](#unreadablerunfilesfacts) | interface | What `unreadableRunFilesError` carries: the command that did not run, the runs folder, and every run file it could not read. |
 | [`ValidationErrorFacts`](#validationerrorfacts) | interface | The typed facts of a refused answer: the validator's rows, their total before the cap, and, for an agent step's counted rejection, the countdown. |
 | [`WorkflowErrorOptions`](#workflowerroroptions) | interface | What a `WorkflowError` is built with: its code and category, what the agent does next, whether it may be tried again, and the optional facts, step and ways on. |
-| [`AbandonWay`](#abandonway) | type | End the run. |
-| [`AdvanceWay`](#advanceway) | type | Have the engine carry out what it owes: a due expiry first, then steps. |
 | [`AgentAction`](#agentaction) | type | What an agent does next, decided by the engine (`WorkflowError.agentAction`). |
-| [`Cond`](#cond) | type | A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`). |
 | [`CondTag`](#condtag) | type | Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member). |
 | [`ErrorCategory`](#errorcategory) | type | The broad kind of failure a `WorkflowError` reports: network, an outside service, the run's state, invalid input, the engine itself, or a resource (`WorkflowError.category`). |
 | [`ErrorFacts`](#errorfacts) | type | Any typed error facts. |
-| [`InspectWay`](#inspectway) | type | Read the run's record. |
-| [`PresentWay`](#presentway) | type | Show the open question again, as a form in the agent's own call: the MCP door's `present_question`. |
 | [`QuoteState`](#quotestate) | type | How a quote was found in its source: whole, reformatted, stitched from parts in order or out of order, or not found; `unquoted` is for a value given with no quote. |
-| [`ReclaimWay`](#reclaimway) | type | Free a held step so it can run again: a person's act, never an agent's. |
-| [`RegisterWay`](#registerway) | type | Register the run's workflow again. |
-| [`RespondWay`](#respondway) | type | Answer the run's open question. |
-| [`RunStepWay`](#runstepway) | type | Run one step: an agent step's answer, or an engine step's input given by the operator. |
 | [`SideFileKind`](#sidefilekind) | type | One of `SIDE_FILE_KINDS`. |
 | [`Slot`](#slot) | type | A value the caller picks from a closed set, printed by each door's own rule (`RespondWay.choice`). |
 | [`StoredFileClass`](#storedfileclass) | type | What is wrong with a damaged stored file: empty, not JSON, not a run, filed under another id, from an earlier Realm, or unreadable (`UnreadableFileFacts.class`). |
 | [`StoredFileErrorFacts`](#storedfileerrorfacts) | type | The typed facts of a damaged stored file's error: one file (`scope: 'file'`) or a decision over every run that failed closed (`scope: 'files'`). |
 | [`WarningCode`](#warningcode) | type | Every warning code the workflow loader can give (`LoaderWarning.code`). |
-| [`WayOn`](#wayon) | type | One act a party can take on a run, told apart by its `verb`. |
-| [`WayVerb`](#wayverb) | type | The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`). |
 | [`WorkflowCopyFault`](#workflowcopyfault) | type | What a registered copy that is a JSON object lacks to be a workflow: a numeric `schema_version`, an `id`, `steps`, or the legacy shape. |
 | [`COND_TAGS`](#cond_tags) | const | Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt. |
 | [`QUOTE_STATES`](#quote_states) | const | How a quote was found in its source, rung by rung: `exact`, `reformatted`, `stitched`, `stitched_out_of_order` or `not_found`, and the handler's `unquoted`. |
 | [`SIDE_FILE_KINDS`](#side_file_kinds) | const | The kinds of side file a run keeps beside its file in its runs folder: failed attempts, a trace buffer, and sealed traces. |
 | [`STORED_FILE_CLASSES`](#stored_file_classes) | const | The kinds of fault a damaged stored JSON file can have (`UnreadableFileFacts.class`). |
-| [`WAY_VERBS`](#way_verbs) | const | Every verb a way can name, as a closed list (`WayVerb`). |
 
 ## Functions
 
@@ -230,7 +218,7 @@ function walkField(data: unknown, fieldName: string): Record<string, unknown>[];
 
 ### WorkflowError
 
-class · public
+class · public (beta: refusal): those members may change in a minor release until they settle
 
 The error Realm throws and records, carrying a code, a category and what the agent does next. A
 handler throws one with `retryable: true` to have its step tried again when the step has a
@@ -246,6 +234,7 @@ class WorkflowError extends Error {
     readonly facts?: ErrorFacts;
     readonly about?: string;
     readonly remedy?: readonly WayOn[];
+    readonly refusal?: Unavailable;
     readonly stepId?: string;
     readonly attempt: number;
     readonly retry_after?: number;
@@ -753,7 +742,7 @@ uses ErrorObject (ajv 8)
 
 ### WorkflowErrorOptions
 
-interface · public
+interface · public (beta: refusal): those members may change in a minor release until they settle
 
 What a `WorkflowError` is built with: its code and category, what the agent does next, whether it
 may be tried again, and the optional facts, step and ways on.
@@ -768,6 +757,7 @@ interface WorkflowErrorOptions {
     facts?: ErrorFacts;
     about?: string;
     remedy?: readonly WayOn[];
+    refusal?: Unavailable;
     stepId?: string;
     attempt?: number;
     retry_after?: number;
@@ -777,35 +767,6 @@ interface WorkflowErrorOptions {
 ```
 
 ## Types
-
-### AbandonWay
-
-type · public
-
-End the run.
-
-```ts
-type AbandonWay = Base<'abandon'> & {
-    run_id: string;
-};
-```
-
-### AdvanceWay
-
-type · public
-
-Have the engine carry out what it owes: a due expiry first, then steps.
-
-```ts
-type AdvanceWay = Base<'advance'> & {
-    run_id: string;
-    owed: readonly ({
-        step: string;
-    } | {
-        expiry: DueExpiry;
-    })[];
-};
-```
 
 ### AgentAction
 
@@ -819,44 +780,6 @@ program's step (D3 A-2); its replies carry `poll_after_ms` and, when the record 
 
 ```ts
 type AgentAction = 'report_to_user' | 'provide_input' | 'resolve_precondition' | 'stop' | 'wait_for_service' | 'wait_and_proceed' | 'await';
-```
-
-### Cond
-
-type · public
-
-A condition a way is offered with: a way offered with a condition is admitted only when the
-condition is met (`Base.conditions`).
-PR-0's one member: `enactor_has` — the step needs a handler or
-an adapter, and whether this program has it is judged from its `basis`: `marker` (the run's own
-`capability_blocks` record: the program that last attempted the step lacked it), `unjudged` (an
-observer passed no registry — C33: a read surface never executes project code), `load_failed` (this
-program's project code failed to load).
-
-W added `client_prompt`; PR-1 adds `confirm_after_preview`, `erases_operator_ending`,
-`override_claim_unknown_age` — each with its producer, never reserved here. The gate-answers default
-(2026-11-14) removed `client_prompt`'s one producer, the MCP door's fallback row; the member and its
-tag stay, as exported names, and nothing composes it now.
-
-```ts
-type Cond = {
-    code: 'enactor_has';
-    kind: 'handler' | 'adapter';
-    name: string;
-    basis: 'marker' | 'unjudged' | 'load_failed';
-} | {
-    code: 'client_prompt';
-    tag: CondTag;
-} | {
-    code: 'claim_deadline_ahead';
-    deadline: string;
-} | {
-    code: 'override_claim_unknown_age';
-    state: 'unknown_age' | 'unreadable' | 'no_claim_record';
-} | {
-    code: 'rerun_not_idempotent';
-    basis: 'not_declared' | 'definition_absent';
-};
 ```
 
 ### CondTag
@@ -891,34 +814,6 @@ Any typed error facts.
 type ErrorFacts = ErrorFactsByCode[keyof ErrorFactsByCode];
 ```
 
-### InspectWay
-
-type · public
-
-Read the run's record.
-
-```ts
-type InspectWay = Base<'inspect'> & {
-    run_id: string;
-};
-```
-
-### PresentWay
-
-type · public
-
-Show the open question again, as a form in the agent's own call: the MCP door's
-`present_question`.
-The agent cannot answer through it: the person's accept records the
-answer. No `step`: a renderer reads the step from the reply it already holds.
-
-```ts
-type PresentWay = Base<'present'> & {
-    run_id: string;
-    gate_id: string;
-};
-```
-
 ### QuoteState
 
 type · public
@@ -928,85 +823,6 @@ order, or not found; `unquoted` is for a value given with no quote.
 
 ```ts
 type QuoteState = (typeof QUOTE_STATES)[number];
-```
-
-### ReclaimWay
-
-type · public
-
-Free a held step so it can run again: a person's act, never an agent's. Its conditions say what
-holds, each discharged by `force`; `claimed_at` is the claim's stamp, present exactly when the claim
-carries one, so the act applies only to the claim it was shown (#922).
-
-```ts
-type ReclaimWay = Base<'reclaim'> & {
-    run_id: string;
-    step: string;
-    claimed_at?: string;
-};
-```
-
-### RegisterWay
-
-type · public
-
-Register the run's workflow again. No judge admits it; on MCP it is the operator's, done outside
-the conversation (the door renders no instruction).
-`path` only
-when the registry knows the file (T-21: the unreadable, invalid, legacy and newer copies carry
-it): the registered COPY that cannot be used — never a file to register (correction 2, 3.2: each
-door words it as a copy to repair).
-
-`copy` (#616 PR-2c c10a-4c) says the registered copy EXISTS but cannot be used, whether or not it
-has a file: a copy in a database has none, so `path` alone cannot tell it from a copy that is not
-there. The doors read it; the library's own words (`LIBRARY_WORDS`) do not, because the library's
-repair is the same act either way.
-
-```ts
-type RegisterWay = Base<'register'> & {
-    workflow_id: string;
-    run_id?: string;
-    path?: string;
-    copy?: 'unusable';
-};
-```
-
-### RespondWay
-
-type · public
-
-Answer the run's open question.
-
-```ts
-type RespondWay = Base<'respond'> & {
-    run_id: string;
-    gate_id: string;
-    step: string;
-    choice: Slot<string>;
-    expires_at?: string;
-    on_expiry?: 'settle_default' | 'abort';
-    holds: readonly string[];
-    presented: 'with_gate' | 'alone';
-    has_message?: true;
-    owner?: string;
-    proof?: {
-        claim_token: string;
-    };
-};
-```
-
-### RunStepWay
-
-type · public
-
-Run one step: an agent step's answer, or an engine step's input given by the operator.
-
-```ts
-type RunStepWay = Base<'run_step'> & {
-    run_id: string;
-    step: string;
-    brief: StepBrief;
-};
 ```
 
 ### SideFileKind
@@ -1069,28 +885,6 @@ Every warning code the workflow loader can give (`LoaderWarning.code`).
 
 ```ts
 type WarningCode = 'UNKNOWN_WORKFLOW_KEY' | 'UNKNOWN_STEP_KEY' | 'UNKNOWN_CREATE_WORKFLOW_KEY' | 'IDEMPOTENT_INERT_IN_FINALIZER' | 'DUAL_SCHEMA_DECLARED' | 'RETRY_NO_TIMEOUT' | 'EXTENSION_SENTINEL' | 'UNKNOWN_RETRY_KEY' | 'ON_TIMEOUT_SINGLE_ATTEMPT' | 'TOTAL_TIMEOUT_BELOW_ATTEMPT' | 'TOTAL_TIMEOUT_NON_AUTO' | 'RETRY_INERT_NON_AUTO' | 'UNKNOWN_VALIDATION_EXHAUSTION_KEY' | 'DEAD_VALIDATION_EXHAUSTION_CONFIG' | 'UNKNOWN_GATE_KEY' | 'DEAD_GATE_CONFIG' | 'SCHEMA_STRICT_ADVISORY' | 'REALM_RELEASE_LINE_MISMATCH' | 'AUTHOR_TEXT_NAMES_ANSWER_TOOL' | 'INPUT_MAP_PATH_UNRESOLVABLE' | 'INPUT_MAP_PATH_UNCERTAIN' | 'WHEN_PATH_UNRESOLVABLE' | 'WHEN_CHOICE_NOT_OFFERED' | 'WHEN_PATH_UNCERTAIN' | 'PARAMS_MAP_UNKNOWN_PARAM' | 'PARAMS_MAP_REQUIRED_UNMAPPED' | 'PARAMS_MAP_UNDECLARED_PARAM' | 'HANDLER_NOT_PROVIDED' | 'ADAPTER_NOT_PROVIDED' | 'TEMPLATE_FILTER_UNKNOWN' | 'TEMPLATE_FILTER_ARGUMENT' | 'TEMPLATED_FIELD_NOT_TEXT' | 'GATE_ANSWERER_NOT_SLACK_ID' | 'TEMPLATE_PATH_UNRESOLVABLE' | 'TEMPLATE_PATH_NO_DEFAULT' | 'TEMPLATE_PATH_UNCERTAIN';
-```
-
-### WayOn
-
-type · public
-
-One act a party can take on a run, told apart by its `verb`.
-
-```ts
-type WayOn = RespondWay | RunStepWay | AdvanceWay | InspectWay | AbandonWay | RegisterWay | PresentWay | ReclaimWay;
-```
-
-### WayVerb
-
-type · public
-
-The acts a way names: answer a question, run a step, have the engine carry out what it owes, read
-the run, end it, register its workflow again, or send a question's form to the person
-(`Base.verb`).
-
-```ts
-type WayVerb = (typeof WAY_VERBS)[number];
 ```
 
 ### WorkflowCopyFault
@@ -1201,32 +995,37 @@ const STORED_FILE_CLASSES: readonly [
 ];
 ```
 
-### WAY_VERBS
-
-const · public
-
-Every verb a way can name, as a closed list (`WayVerb`).
-
-PR-0's verbs (option B) and #627 W's `present` (Amendment 2): PR-1 adds resume/drain/purge, PR-2
-reclaim/validate/export, PR-7 start.
-
-```ts
-const WAY_VERBS: readonly [
-    "respond",
-    "run_step",
-    "advance",
-    "inspect",
-    "abandon",
-    "register",
-    "present",
-    "reclaim"
-];
-```
-
 ## Also used by this job
 
 Names this job reaches whose entry is on another page.
 
+- [`AbandonWay`](run-and-drive-a-run.md#abandonway): End the run.
+- [`AdvanceWay`](run-and-drive-a-run.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
+- [`Cond`](run-and-drive-a-run.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
+- [`DEFINITION_ABSENCES`](embed-the-mcp-server.md#definition_absences): How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
+- [`DefinitionAbsence`](embed-the-mcp-server.md#definitionabsence): Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read.
 - [`ErrorCode`](define-and-load-a-workflow.md#errorcode): Every code a `WorkflowError` can carry, grouped by its category; a reply's error and the error catalogue name it (`WorkflowError.code`).
 - [`ExtensionRegistry`](run-and-drive-a-run.md#extensionregistry): The handlers, service adapters and processors a program registers by name; the engine looks a step's handler or adapter up in it.
+- [`FactsByCode`](run-and-drive-a-run.md#factsbycode): The typed facts of each unavailable code (`FactsOf`).
+- [`FactsOf`](run-and-drive-a-run.md#factsof): The typed facts an `Unavailable` entry carries for its code (`Unavailable.facts`).
+- [`InspectWay`](run-and-drive-a-run.md#inspectway): Read the run's record.
+- [`LEASE_PROBE_REASONS`](implement-a-store.md#lease_probe_reasons): Why a probe could not say whether a lease is held: a closed list.
+- [`LeaseFact`](implement-a-store.md#leasefact): What a probe found.
+- [`LeaseProbeReason`](implement-a-store.md#leaseprobereason): Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
+- [`LoadErrorCode`](embed-the-mcp-server.md#loaderrorcode): The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`.
+- [`NoRemedy`](run-and-drive-a-run.md#noremedy): Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`).
+- [`PreconditionFacts`](run-and-drive-a-run.md#preconditionfacts): A failed precondition: its expression and the value read, escaped and bounded (`PreClaimRefused.precondition`).
+- [`PresentWay`](run-and-drive-a-run.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
+- [`ReclaimWay`](run-and-drive-a-run.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
+- [`RefusedCheck`](run-and-drive-a-run.md#refusedcheck): The checks other than capability that refuse a step before its claim (`checkPreClaim`).
+- [`RegisterWay`](run-and-drive-a-run.md#registerway): Register the run's workflow again.
+- [`RespondWay`](run-and-drive-a-run.md#respondway): Answer the run's open question.
+- [`RunPhase`](read-a-runs-record.md#runphase): Derived phase of a workflow run.
+- [`RunStepWay`](run-and-drive-a-run.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
+- [`Unavailable`](run-and-drive-a-run.md#unavailable): A way that cannot be taken now, with its code, its facts and the remedies that lead on.
+- [`UNAVAILABLE_CODES`](run-and-drive-a-run.md#unavailable_codes): The codes that say why a way is unavailable, each with how it is judged and the verbs it applies to.
+- [`UnavailableCode`](run-and-drive-a-run.md#unavailablecode): The codes that say why a way cannot be taken now, one per reason (`Unavailable.code`).
 - [`UnreadableFileFacts`](run-and-drive-a-run.md#unreadablefilefacts): The facts of one damaged stored file: names, classes and type words, never its content.
+- [`WAY_VERBS`](run-and-drive-a-run.md#way_verbs): Every verb a way can name, as a closed list (`WayVerb`).
+- [`WayOn`](run-and-drive-a-run.md#wayon): One act a party can take on a run, told apart by its `verb`.
+- [`WayVerb`](run-and-drive-a-run.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).

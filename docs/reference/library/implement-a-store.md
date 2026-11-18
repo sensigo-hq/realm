@@ -33,6 +33,10 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`AppendResult`](#appendresult) | interface | What a trace buffer reports after an append: how many entries and bytes this writer holds against its limits, and the whole file's when the store keeps them (`TraceBufferStore.append`). |
 | [`ArtifactDeletionReport`](#artifactdeletionreport) | interface | What a store reports about the artifacts it just deleted: the bytes it deleted. |
 | [`BufferedEntry`](#bufferedentry) | interface | An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce that carried it, if any. |
+| [`CallbackClaimRequest`](#callbackclaimrequest) | interface | A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters). |
+| [`CallbackRegistration`](#callbackregistration) | interface | Where a run's caller asked to be told the run finished (`CreateRunOptions.callback`). |
+| [`CallbackRow`](#callbackrow) | interface | One callback row as a store keeps it, for store implementers only. |
+| [`CallbackStore`](#callbackstore) | interface | A store's callback store (`RunStore.callbacks`): one row per run, written by `create`. |
 | [`Clock`](#clock) | interface | The clock a run store reads the time from: `now()` and `at()`. |
 | [`CreateRunOptions`](#createrunoptions) | interface | What a run store is given to create a run: the workflow and its version, the params, and an idempotency key with the rule for a key already used (`RunStore.create`). |
 | [`DedupStore`](#dedupstore) | interface | Where `realm listen` remembers the webhook events it has seen, so an event delivered twice starts one run. |
@@ -80,6 +84,15 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`UnreadableRunFileEntry`](#unreadablerunfileentry) | interface | One run file the JSON store could not read as a run, as a listing reports it (`RunListing.unreadable`). |
 | [`ValidationErrorSummaryEntry`](#validationerrorsummaryentry) | interface | A single whitelisted Ajv error — value echoes (`params`/`data`) are intentionally excluded. |
 | [`WorkflowRegistrar`](#workflowregistrar) | interface | Where a program registers its workflows and reads them back by id. |
+| [`CallbackClaimedItem`](#callbackclaimeditem) | type | A claimed row: the item with the instants a sender judges its ends from. |
+| [`CallbackClaimResult`](#callbackclaimresult) | type | What a claim answers: the claimed item and the claim's one reading, or why it did not apply. |
+| [`CallbackFreezeResult`](#callbackfreezeresult) | type | What freezing the body answers. |
+| [`CallbackItem`](#callbackitem) | type | A row ready to send, as `due` returns it: for the sender only, never rendered. |
+| [`CallbackLastStatus`](#callbacklaststatus) | type | The last answer a try got: an HTTP status (100–599), or a word for a try that got none. |
+| [`CallbackMarkRequest`](#callbackmarkrequest) | type | A try's outcome: delivered (a 2xx status), another try after a wait in seconds, or failed. |
+| [`CallbackMarkResult`](#callbackmarkresult) | type | What a mark answers. |
+| [`CallbackStatus`](#callbackstatus) | type | The state of a callback row: `pending` while it may be tried, then `delivered` or `failed`. |
+| [`CallbackView`](#callbackview) | type | A callback row as the port's `read` returns it: no address, body, token or webhook id. |
 | [`CappedRead`](#cappedread) | type | What `WorkflowRegistrar.getCapped` resolves to. |
 | [`CreateResult`](#createresult) | type | What a run store's `create` returns: the record with the reading the create used, and whether it was written. |
 | [`FencePredicate`](#fencepredicate) | type | The four facts a fenced trace-buffer operation can be conditioned on. |
@@ -116,6 +129,8 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`TraceCapability`](#tracecapability) | type | The optional rungs a trace buffer store can declare, `seal` and `writer_nonce_carriage` (`TraceBufferStore.traceCapabilities`). |
 | [`Unleased`](#unleased) | type | What `leaseFactOf` answers for a claim that names no lease. |
 | [`UnreadableRegistryEntry`](#unreadableregistryentry) | type | A registered copy a listing could not read (`RegistryListing.unreadable`). |
+| [`CALLBACK_LAST_STATUS_WORDS`](#callback_last_status_words) | const | The words a try's last answer can be when it got no HTTP status. |
+| [`CALLBACK_STATUSES`](#callback_statuses) | const | The states a callback row can be in, one list for every use of the word. |
 | [`CLOCK_READ_CLASSES`](#clock_read_classes) | const | The five classes of a clock read: what a run store's clock governs (`write`, `read`, `event`) and what it does not (`outside`, `duration`). |
 | [`FENCE_TARGETS_STEP`](#fence_targets_step) | const | Whether a member conditions one step — evaluated against the fenced method's own `stepId`. |
 | [`LEASE_PROBE_REASONS`](#lease_probe_reasons) | const | Why a probe could not say whether a lease is held: a closed list. |
@@ -601,6 +616,84 @@ interface BufferedEntry extends AgentTraceEntry {
 }
 ```
 
+### CallbackClaimRequest
+
+interface · beta: may change in a minor release until it settles
+
+A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters).
+
+```ts
+interface CallbackClaimRequest {
+    readonly expectedNextAttemptAt: string;
+    readonly token: string;
+}
+```
+
+### CallbackRegistration
+
+interface · beta: may change in a minor release until it settles
+
+Where a run's caller asked to be told the run finished (`CreateRunOptions.callback`).
+`url` is the address as given (1–2,048 characters), `host` the label the caller computed from it
+(1–255) and `webhook_id` a uuid the caller made, the same on every try.
+
+```ts
+interface CallbackRegistration {
+    readonly url: string;
+    readonly host: string;
+    readonly webhook_id: string;
+}
+```
+
+### CallbackRow
+
+interface · beta: may change in a minor release until it settles
+
+One callback row as a store keeps it, for store implementers only.
+It carries the address, the frozen body and the claim token, so it is never rendered: the port's
+`read` returns a `CallbackView`, and the address comes only from `due` and `claim`. An unset
+field is omitted, never `null`.
+
+```ts
+interface CallbackRow {
+    readonly run_id: string;
+    readonly workflow_id: string;
+    readonly host: string;
+    readonly webhook_id: string;
+    readonly status: CallbackStatus;
+    readonly attempts: number;
+    readonly created_at: string;
+    readonly next_attempt_at: string;
+    readonly first_attempt_at?: string;
+    readonly finished_at?: string;
+    readonly last_attempt_at?: string;
+    readonly last_status?: CallbackLastStatus;
+    readonly url?: string;
+    readonly body?: string;
+    readonly claim_token?: string;
+}
+```
+
+### CallbackStore
+
+interface · beta: may change in a minor release until it settles
+
+A store's callback store (`RunStore.callbacks`): one row per run, written by `create`.
+`due`, `claim` and a `retry` mark each take ONE raw reading of the store's clock, refused or
+applied; `read`, `countPending`, `freezeBody`, the other marks and the purge pair take none; a
+malformed request throws before any reading. A run without a row is no error.
+
+```ts
+interface CallbackStore extends PerRunArtifactStore {
+    read(runId: string): Promise<CallbackView | undefined>;
+    countPending(): Promise<number>;
+    due(limit: number): Promise<CallbackItem[]>;
+    claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
+    freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
+    mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
+}
+```
+
 ### Clock
 
 interface · public
@@ -629,7 +722,7 @@ interface Clock {
 
 ### CreateRunOptions
 
-interface · public
+interface · public (beta: callback): those members may change in a minor release until they settle
 
 What a run store is given to create a run: the workflow and its version, the params, and an
 idempotency key with the rule for a key already used (`RunStore.create`).
@@ -644,6 +737,7 @@ interface CreateRunOptions {
     onTerminalMatch?: 'reuse' | 'reject' | 'rerun_if_failed' | 'rerun';
     onLiveMatch?: 'use_existing' | 'fail';
     extensionIdentity?: ExtensionIdentityEntry[];
+    callback?: CallbackRegistration;
 }
 ```
 
@@ -1173,7 +1267,7 @@ interface RunRow {
 
 ### RunStore
 
-interface · public (beta: claimStep.hold, leases, outbound): those members may change in a minor release until they settle
+interface · public (beta: callbacks, claimStep.hold, leases, outbound): those members may change in a minor release until they settle
 
 Where a program keeps its runs: it creates, reads, updates, lists, claims and settles them,
 reading the time from its own clock.
@@ -1185,6 +1279,7 @@ interface RunStore {
     readonly purgesRuns: boolean;
     readonly leases?: LeasePort | null;
     readonly outbound?: OutboundLedger | null;
+    readonly callbacks?: CallbackStore | null;
     readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
     create(options: CreateRunOptions): Promise<CreateResult>;
     get(runId: string): Promise<Snapshot>;
@@ -1555,6 +1650,128 @@ interface WorkflowRegistrar {
 ```
 
 ## Types
+
+### CallbackClaimedItem
+
+type · beta: may change in a minor release until it settles
+
+A claimed row: the item with the instants a sender judges its ends from.
+
+```ts
+type CallbackClaimedItem = CallbackItem & Pick<CallbackRow, 'last_status'> & {
+    readonly finished_at: string;
+    readonly first_attempt_at: string;
+};
+```
+
+### CallbackClaimResult
+
+type · beta: may change in a minor release until it settles
+
+What a claim answers: the claimed item and the claim's one reading, or why it did not apply.
+
+```ts
+type CallbackClaimResult = {
+    readonly applied: true;
+    readonly item: CallbackClaimedItem;
+    readonly at: string;
+} | {
+    readonly applied: false;
+    readonly reason: 'no_row' | 'not_pending' | 'stale' | 'run_not_finished';
+};
+```
+
+### CallbackFreezeResult
+
+type · beta: may change in a minor release until it settles
+
+What freezing the body answers.
+
+```ts
+type CallbackFreezeResult = {
+    readonly applied: true;
+} | {
+    readonly applied: false;
+    readonly reason: 'no_row' | 'not_pending' | 'lost_claim' | 'body_set';
+};
+```
+
+### CallbackItem
+
+type · beta: may change in a minor release until it settles
+
+A row ready to send, as `due` returns it: for the sender only, never rendered.
+
+```ts
+type CallbackItem = Pick<CallbackRow, 'run_id' | 'workflow_id' | 'host' | 'webhook_id' | 'attempts' | 'next_attempt_at' | 'body'> & {
+    readonly url: string;
+};
+```
+
+### CallbackLastStatus
+
+type · beta: may change in a minor release until it settles
+
+The last answer a try got: an HTTP status (100–599), or a word for a try that got none.
+
+```ts
+type CallbackLastStatus = number | (typeof CALLBACK_LAST_STATUS_WORDS)[number];
+```
+
+### CallbackMarkRequest
+
+type · beta: may change in a minor release until it settles
+
+A try's outcome: delivered (a 2xx status), another try after a wait in seconds, or failed.
+
+```ts
+type CallbackMarkRequest = {
+    readonly kind: 'delivered';
+    readonly lastStatus: number;
+} | {
+    readonly kind: 'retry';
+    readonly afterSeconds: number;
+    readonly lastStatus: CallbackLastStatus;
+} | {
+    readonly kind: 'failed';
+    readonly lastStatus: CallbackLastStatus;
+};
+```
+
+### CallbackMarkResult
+
+type · beta: may change in a minor release until it settles
+
+What a mark answers.
+
+```ts
+type CallbackMarkResult = {
+    readonly applied: true;
+} | {
+    readonly applied: false;
+    readonly reason: 'no_row' | 'not_pending' | 'lost_claim';
+};
+```
+
+### CallbackStatus
+
+type · beta: may change in a minor release until it settles
+
+The state of a callback row: `pending` while it may be tried, then `delivered` or `failed`.
+
+```ts
+type CallbackStatus = (typeof CALLBACK_STATUSES)[number];
+```
+
+### CallbackView
+
+type · beta: may change in a minor release until it settles
+
+A callback row as the port's `read` returns it: no address, body, token or webhook id.
+
+```ts
+type CallbackView = Omit<CallbackRow, 'run_id' | 'webhook_id' | 'url' | 'body' | 'claim_token'>;
+```
 
 ### CappedRead
 
@@ -2202,6 +2419,37 @@ type UnreadableRegistryEntry = UnreadableFileEntry | UnreadableIdEntry;
 
 ## Constants
 
+### CALLBACK_LAST_STATUS_WORDS
+
+const · beta: may change in a minor release until it settles
+
+The words a try's last answer can be when it got no HTTP status.
+
+```ts
+const CALLBACK_LAST_STATUS_WORDS: readonly [
+    "timeout",
+    "connection",
+    "redirect",
+    "refused_address",
+    "not_allowed",
+    "expired"
+];
+```
+
+### CALLBACK_STATUSES
+
+const · beta: may change in a minor release until it settles
+
+The states a callback row can be in, one list for every use of the word.
+
+```ts
+const CALLBACK_STATUSES: readonly [
+    "pending",
+    "delivered",
+    "failed"
+];
+```
+
 ### CLOCK_READ_CLASSES
 
 const · public
@@ -2289,9 +2537,9 @@ const systemClock: Clock;
 
 Names this job reaches whose entry is on another page.
 
-- [`AbandonWay`](write-a-handler.md#abandonway): End the run.
+- [`AbandonWay`](run-and-drive-a-run.md#abandonway): End the run.
 - [`AdmittedBy`](read-a-runs-record.md#admittedby): How an answer's sender was let through, or why it was not compared (`EvidenceSnapshot.admitted_by`).
-- [`AdvanceWay`](write-a-handler.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
+- [`AdvanceWay`](run-and-drive-a-run.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
 - [`AgentAction`](write-a-handler.md#agentaction): What an agent does next, decided by the engine (`WorkflowError.agentAction`).
 - [`AnswererMismatchFacts`](write-a-handler.md#answerermismatchfacts): The facts of an answer refused because its sender may not answer the question: the names that may, and the account the channel reported.
 - [`AnswerFacts`](read-a-runs-record.md#answerfacts): A recorded answer's route as its door declared it, and what showed a form (`EvidenceSnapshot.answer`).
@@ -2338,13 +2586,15 @@ Names this job reaches whose entry is on another page.
 - [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): The marker on a step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
 - [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).
 - [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).
-- [`Cond`](write-a-handler.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
+- [`Cond`](run-and-drive-a-run.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
 - [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
 - [`CondTag`](write-a-handler.md#condtag): Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member).
 - [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
 - [`damagedFileConcerns`](run-and-drive-a-run.md#damagedfileconcerns): Whether a damaged run file can concern a workflow: the one scope test of the keyed fallback scan and of every workflow-scoped read.
 - [`declareReleaseLine`](write-a-handler.md#declarereleaseline): Declares that a host's store class (or plain-object store) belongs to this copy of realm.
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
+- [`DEFINITION_ABSENCES`](embed-the-mcp-server.md#definition_absences): How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
+- [`DefinitionAbsence`](embed-the-mcp-server.md#definitionabsence): Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read.
 - [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the `run_phase` from the run record's fields.
 - [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`).
 - [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`).
@@ -2359,40 +2609,46 @@ Names this job reaches whose entry is on another page.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.
 - [`ExtensionIdentitySignals`](write-a-handler.md#extensionidentitysignals): Labeled advisory signals — each independently fail-soft; never part of the comparison.
 - [`ExtensionIdentityTree`](write-a-handler.md#extensionidentitytree): Versioned deterministic directory-tree fingerprint over the module roots.
+- [`FactsByCode`](run-and-drive-a-run.md#factsbycode): The typed facts of each unavailable code (`FactsOf`).
+- [`FactsOf`](run-and-drive-a-run.md#factsof): The typed facts an `Unavailable` entry carries for its code (`Unavailable.facts`).
 - [`FilterCondition`](define-and-load-a-workflow.md#filtercondition): One condition of a webhook trigger's filter: a header or a dot-path into the payload, and the value it must equal or the values one of which it must equal; a request that fails a condition is ignored.
 - [`FinalizerTrigger`](define-and-load-a-workflow.md#finalizertrigger): Terminal outcome(s) a finalizer step matches.
 - [`findEligibleSteps`](run-and-drive-a-run.md#findeligiblesteps): Returns the names of all steps currently eligible for execution.
 - [`GateClaimVerdict`](read-a-runs-record.md#gateclaimverdict): A verdict with a cause that does not belong to it does not compile.
 - [`GateConfig`](define-and-load-a-workflow.md#gateconfig): A gate's settings: its choices, who may answer, its messages, its timeout and what happens when it expires, and its reminders.
 - [`InputMapNode`](define-and-load-a-workflow.md#inputmapnode): One node of a step's `input_map`: a dot-path string, a `$literal` value, or an object of further nodes (`StepDefinition.input_map`).
-- [`InspectWay`](write-a-handler.md#inspectway): Read the run's record.
+- [`InspectWay`](run-and-drive-a-run.md#inspectway): Read the run's record.
 - [`isCopyOfReadableRun`](run-and-drive-a-run.md#iscopyofreadablerun): Whether a damaged run file is a copy of a run whose own file reads: a file holding another run (`mismatched`) whose held run's file reads as that run.
 - [`JsonFileStore`](run-and-drive-a-run.md#jsonfilestore): The run store that keeps each run as a JSON file, `<runId>.json`, in its runs folder.
 - [`JsonSchema`](define-and-load-a-workflow.md#jsonschema): The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`).
 - [`LiteralNode`](define-and-load-a-workflow.md#literalnode): A node in an input_map tree.
+- [`LoadErrorCode`](embed-the-mcp-server.md#loaderrorcode): The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`.
 - [`LoaderWarning`](write-a-handler.md#loaderwarning): A single structured diagnostic.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
 - [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads.
+- [`NoRemedy`](run-and-drive-a-run.md#noremedy): Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`).
 - [`OUTPUT_SOURCES`](read-a-runs-record.md#output_sources): Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`OutputSource`](read-a-runs-record.md#outputsource): One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`PendingGate`](read-a-runs-record.md#pendinggate): The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and choices shown to the person, when it opened, and its owner and time limit when set.
+- [`PreconditionFacts`](run-and-drive-a-run.md#preconditionfacts): A failed precondition: its expression and the value read, escaped and bounded (`PreClaimRefused.precondition`).
 - [`PrefixParts`](read-a-runs-record.md#prefixparts): A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and `format` where it had them (`UsageRecord.prefix_parts`).
-- [`PresentWay`](write-a-handler.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
+- [`PresentWay`](run-and-drive-a-run.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
 - [`Principal`](read-a-runs-record.md#principal): What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`).
 - [`PRINCIPAL_ABSENCES`](read-a-runs-record.md#principal_absences): Why a door names no principal (`Principal`'s `absent`).
 - [`PrincipalAbsence`](read-a-runs-record.md#principalabsence): One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer (`Principal`'s `absent`).
 - [`ProtocolConfig`](define-and-load-a-workflow.md#protocolconfig): A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
-- [`ReclaimWay`](write-a-handler.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
-- [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
+- [`ReclaimWay`](run-and-drive-a-run.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
+- [`RefusedCheck`](run-and-drive-a-run.md#refusedcheck): The checks other than capability that refuse a step before its claim (`checkPreClaim`).
+- [`RegisterWay`](run-and-drive-a-run.md#registerway): Register the run's workflow again.
 - [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`).
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).
-- [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question.
+- [`RespondWay`](run-and-drive-a-run.md#respondway): Answer the run's open question.
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).
 - [`RunPhase`](read-a-runs-record.md#runphase): Derived phase of a workflow run.
 - [`RunRecord`](read-a-runs-record.md#runrecord): A run as its store keeps it: its workflow and version, its phase, its params, its evidence entries, the question it waits on and how it ended; a store's `get` returns it inside a `Snapshot`.
 - [`RunRecordFieldProblem`](write-a-handler.md#runrecordfieldproblem): One field a value lacks, or holds with the wrong type.
-- [`RunStepWay`](write-a-handler.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
+- [`RunStepWay`](run-and-drive-a-run.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
 - [`SEAL_ARMS`](read-a-runs-record.md#seal_arms): Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`).
 - [`SealArm`](read-a-runs-record.md#sealarm): Which code path sealed a run, named as a fact about the code, never a verdict on the run (`SealedBy.arm`).
 - [`SealedBy`](read-a-runs-record.md#sealedby): Who sealed a run: the recorded fact `deriveRunPhase` reads before every marker and the terminal reason's text (`RunRecord.sealed_by`).
@@ -2422,14 +2678,17 @@ Names this job reaches whose entry is on another page.
 - [`TriggerFilter`](define-and-load-a-workflow.md#triggerfilter): Post-normalisation form (loader converts shorthand → { all: [...] }).
 - [`TriggerRule`](define-and-load-a-workflow.md#triggerrule): Controls when a step becomes eligible based on its dependencies' outcomes.
 - [`TrustLevel`](define-and-load-a-workflow.md#trustlevel): The words a step's `trust` takes: `auto`, or `human_confirmed` and `human_reviewed`, which open a gate a person answers (`StepDefinition.trust`).
+- [`Unavailable`](run-and-drive-a-run.md#unavailable): A way that cannot be taken now, with its code, its facts and the remedies that lead on.
+- [`UNAVAILABLE_CODES`](run-and-drive-a-run.md#unavailable_codes): The codes that say why a way is unavailable, each with how it is judged and the verbs it applies to.
+- [`UnavailableCode`](run-and-drive-a-run.md#unavailablecode): The codes that say why a way cannot be taken now, one per reason (`Unavailable.code`).
 - [`UnreadableFileFacts`](run-and-drive-a-run.md#unreadablefilefacts): The facts of one damaged stored file: names, classes and type words, never its content.
 - [`UnreadableRunFilesFacts`](write-a-handler.md#unreadablerunfilesfacts): What `unreadableRunFilesError` carries: the command that did not run, the runs folder, and every run file it could not read.
 - [`UsageRecord`](read-a-runs-record.md#usagerecord): One request a step sent to a model provider, as the record keeps it: its index and start, its token counts and its cache facts (`StepCacheDetail.requests`, `DriveFailureRecord.usage`).
 - [`ValidationErrorFacts`](write-a-handler.md#validationerrorfacts): The typed facts of a refused answer: the validator's rows, their total before the cap, and, for an agent step's counted rejection, the countdown.
 - [`WarningCode`](write-a-handler.md#warningcode): Every warning code the workflow loader can give (`LoaderWarning.code`).
-- [`WAY_VERBS`](write-a-handler.md#way_verbs): Every verb a way can name, as a closed list (`WayVerb`).
-- [`WayOn`](write-a-handler.md#wayon): One act a party can take on a run, told apart by its `verb`.
-- [`WayVerb`](write-a-handler.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).
+- [`WAY_VERBS`](run-and-drive-a-run.md#way_verbs): Every verb a way can name, as a closed list (`WayVerb`).
+- [`WayOn`](run-and-drive-a-run.md#wayon): One act a party can take on a run, told apart by its `verb`.
+- [`WayVerb`](run-and-drive-a-run.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).
 - [`WebhookAuth`](define-and-load-a-workflow.md#webhookauth): How a webhook trigger checks that a request is genuine: a shared secret, GitHub's or Stripe's signature, an HMAC, or none (`WebhookTrigger.auth`).
 - [`WebhookTrigger`](define-and-load-a-workflow.md#webhooktrigger): A workflow's webhook trigger: the path it answers, how it checks requests, which requests it takes, how it drops repeats, and how it maps a payload to run params.
 - [`WorkflowContextEntry`](define-and-load-a-workflow.md#workflowcontextentry): A single named entry in the workflow_context section.

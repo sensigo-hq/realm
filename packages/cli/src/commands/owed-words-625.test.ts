@@ -23,6 +23,7 @@ import {
   WorkflowError,
   type Attributed,
   type StepHandlerResult,
+  type RunRecord,
   type RunStore,
 } from '@sensigo/realm';
 import { FIT_WORDS, fitWords, advanceRunFromShell } from './run-advance.js';
@@ -54,6 +55,14 @@ import { inspectRun } from './inspect.js';
 import { resumeRun } from './resume.js';
 import { sweepExpiredGates } from './listen.js';
 import { writtenSnapshot } from '@sensigo/realm';
+
+/** #922 P2-2: the CLI's held line for a step held inside its claim's window, not declared idempotent. */
+const heldAheadLine = (
+  step: string,
+  runId: string,
+  claim: { deadline: string | null; since?: string } | undefined,
+): string =>
+  `'${step}' is held; wait for it. Its deadline is ahead (${claim?.deadline}); if its program is still running, the step runs twice. It is not declared idempotent, so running it again may repeat its effects. To free it anyway, run: realm run reclaim ${runId} --step ${step} --claimed-at ${claim?.since} --force`;
 
 const wf = (id: string, steps: WorkflowDefinition['steps']): WorkflowDefinition => ({
   id,
@@ -352,14 +361,16 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         (l) => lines.push(l),
         new ExtensionRegistry(),
       );
-      const since = (await runs.get(run.id)).record.claims?.['x']?.since;
+      const claim = (await runs.get(run.id)).record.claims?.['x'];
+      const since = claim?.since;
       expect(code).toBe(0);
       expect(lines.slice(4)).toEqual([
         '→ x',
         `• Step 'x' was taken by other@host (from the OS user, via agent) at ${since}; not run here.`,
         // decision C37: the step the other process holds is the reason — not "nothing is ready"; the
-        // holder and the time are on the taken line above, printed once (decision C43).
-        `Stopped: 'x' is in flight in another program — wait for it, or see realm run inspect ${run.id}`,
+        // holder and the time are on the taken line above, printed once (decision C43). #922 P2-2:
+        // its state and what frees it.
+        `Stopped: ${heldAheadLine('x', run.id, claim)}`,
         `Run ${run.id}: phase 'running'`,
       ]);
     } finally {
@@ -598,7 +609,8 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
         by_source: 'derived',
         channel: 'advance',
       });
-      const since = (await runs.get(run.id)).record.claims?.['x']?.since;
+      const claim = (await runs.get(run.id)).record.claims?.['x'];
+      const since = claim?.since;
       expect(since).toBeDefined();
       const lines: string[] = [];
       const code = await advanceRunFromShell(
@@ -614,7 +626,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
       expect(lines.slice(3)).toEqual([
         `In flight: 'x' is in flight, taken by other@host (from the OS user, via advance) since ${since}.`,
         // decision C43: `x` is still owed; the holder and the time are on the line above, once.
-        `The engine can run nothing now: 'x' is in flight in another program — wait for it, or see realm run inspect ${run.id}`,
+        `The engine can run nothing now: ${heldAheadLine('x', run.id, claim)}`,
       ]);
     } finally {
       await cleanup();
@@ -876,14 +888,27 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
                 deadline: { absent: 'unknown_age' },
                 claimed_at: { absent: 'not_stamped' },
               },
-              remedy: [],
+              // #922: the reclaim way core composes for it, with its conditions
+              remedy: [
+                {
+                  verb: 'reclaim',
+                  conditions: [
+                    { code: 'override_claim_unknown_age', state: 'unknown_age' },
+                    { code: 'rerun_not_idempotent', basis: 'not_declared' },
+                  ],
+                  run_id: 'r',
+                  step: 'z',
+                },
+              ],
             },
           ],
         ),
         'r',
         'running',
       ),
-    ).toEqual(["'z' is in flight in another program — wait for it, or see realm run inspect r"]);
+    ).toEqual([
+      "'z' is held; wait for it, or free it if its program has stopped. Its claim has no deadline, so whether its program still runs is not known; if it does, the step runs twice. It is not declared idempotent, so running it again may repeat its effects. To free it, run: realm run reclaim r --step z --force",
+    ]);
   });
 });
 
@@ -1268,7 +1293,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
   it('the page’s screen: another program ran the step (STATE_STEP_ALREADY_SETTLED) — the line from the record, never "failed", and the command goes on with what is left; exit 0', async () => {
     claim(
       ACTING,
-      "When another program settles the step or takes it over (after `realm run reclaim <id> --step <step> --force` freed this program's claim, for one), or ends the run (`realm run abandon`, for one), while this one is running it, the outcome this program reached for the step is not recorded. The command says so, read from the run's record, never that the step failed, and goes on with what is left:",
+      "When another program settles the step or takes it over (after `realm run reclaim` freed this program's claim, for one), or ends the run (`realm run abandon`, for one), while this one is running it, the outcome this program reached for the step is not recorded. The command says so, read from the run's record, never that the step failed, and goes on with what is left:",
     );
     const r = await race('ran-it');
     // (a) red when the refused settle is said as `'process' failed: …`, the command stops instead of
@@ -1325,10 +1350,10 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
       'held' as const,
       'claim_lost',
       0,
-      (id: string, since?: string) => [
+      (id: string, since?: string, after?: RunRecord) => [
         '→ process',
         `• Step 'process' was taken by ${RACER_WORDS} at ${since}; ${NOT_RECORDED}.`,
-        `Stopped: 'process' is in flight in another program — wait for it, or see realm run inspect ${id}`,
+        `Stopped: ${heldAheadLine('process', id, after?.claims?.['process'])}`,
         `Run ${id}: phase 'running'`,
       ],
     ],
@@ -1352,7 +1377,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
     expect({ refusals: r.refusals, code: r.code, lines: r.lines }).toEqual({
       refusals: [refusal],
       code: exit,
-      lines: expected(r.id, r.since),
+      lines: expected(r.id, r.since, r.after),
     });
     expect(r.handlerRuns).toBe(kase === 'released' ? 2 : 1);
   });
@@ -1381,7 +1406,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
     );
     claim(
       ACTING,
-      'Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, or when a step cannot run, else 0.',
+      'Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, when a step cannot run, or when every step it waits on is held by a claim whose deadline has passed (added after version 0.50.0), else 0.',
     );
   });
 
@@ -1588,7 +1613,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
   it('the walk\'s abandon race (STATE_RUN_TERMINAL): the run-ended line from the record, never "failed"; exit 0 — nothing failed here', async () => {
     claim(
       ACTING,
-      "When another program settles the step or takes it over (after `realm run reclaim <id> --step <step> --force` freed this program's claim, for one), or ends the run (`realm run abandon`, for one), while this one is running it, the outcome this program reached for the step is not recorded. The command says so, read from the run's record, never that the step failed, and goes on with what is left:",
+      "When another program settles the step or takes it over (after `realm run reclaim` freed this program's claim, for one), or ends the run (`realm run abandon`, for one), while this one is running it, the outcome this program reached for the step is not recorded. The command says so, read from the run's record, never that the step failed, and goes on with what is left:",
     );
     const r = await advance(sAndDone('c199-abandon'), {
       slow: async ({ runs, runId }) => {
@@ -1605,7 +1630,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
         '→ s',
         "• Step 's': the run ended (abandoned) before this program's outcome for it was recorded.",
         // F2: a run an operator ended says that ending and its reason, never the undo.
-        'Stopped: the run has ended (abandoned). An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
+        'Stopped: the run has ended (abandoned). It was abandoned, with the reason "another program". To run the work again, start a new run.',
         "Run <run>: phase 'abandoned'",
       ],
       failed: [],
@@ -1673,7 +1698,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
       [
         '→ s',
         // F2: a run an operator ended says that ending and its reason, never the undo.
-        'Stopped: the run has ended (abandoned). An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
+        'Stopped: the run has ended (abandoned). It was abandoned, with the reason "another program". To run the work again, start a new run.',
         "Run <run>: phase 'abandoned'",
       ],
     ],
@@ -2068,7 +2093,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
     );
     claim(
       ACTING,
-      'Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, or when a step cannot run, else 0.',
+      'Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, when a step cannot run, or when every step it waits on is held by a claim whose deadline has passed (added after version 0.50.0), else 0.',
     );
   });
 });
@@ -2165,6 +2190,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
       // another program holds `b`, so `a`'s failure leaves the run open; then its claim is freed and
       // this program's next call runs `b`, which fails too.
       await t.runs.claimStep(t.id, 'b', t.d, OTHER);
+      const claimB = (await t.runs.get(t.id)).record.claims?.['b'];
       const first = await t.advance();
       await reclaimStep(t.runs, t.id, 'b');
       const second = await t.advance();
@@ -2177,7 +2203,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
       }).toEqual({
         first: [
           "Stopped: 'a' failed: Handler 'boom' threw: it broke",
-          "Stopped: 'b' is in flight in another program — wait for it, or see realm run inspect <run>",
+          `Stopped: ${heldAheadLine('b', '<run>', claimB)}`,
         ],
         failed: ['a', 'b'],
         second: [
@@ -2248,7 +2274,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         finFailed: ['s', 'clean'],
         // F2: an abandoned run's failed step is the operator's ending to say, never an undo to offer.
         abandonedLast:
-          'Nothing is owed to the engine: the run has ended (abandoned). An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
+          'Nothing is owed to the engine: the run has ended (abandoned). It was abandoned, with the reason "another program". To run the work again, start a new run.',
         resumedPhase: 'running',
         aborted: ['Stopped: the run has ended (aborted)'],
       });
@@ -2300,7 +2326,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
     );
     claim(
       ACTING,
-      'the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make \'<step>\' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when an operator ended it, it goes on `. An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.`, never with `realm run resume`, which would erase that ending and its reason)',
+      'the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make \'<step>\' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when it was abandoned, it goes on `. It was abandoned, with the reason "<reason>". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.50.0, which said an operator ended it), never with `realm run resume`, which would erase that ending and its reason)',
     );
     claim(
       ACTING,

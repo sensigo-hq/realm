@@ -1,0 +1,236 @@
+{
+  "id": "webhook-pr-review",
+  "name": "Webhook PR Review",
+  "version": 1,
+  "description": "Reviews a GitHub pull request using MCP tools, notifies a Slack channel with the draft review, pauses for human approval, then posts the approved review as a GitHub comment and confirms on Slack.\n",
+  "trigger": {
+    "type": "webhook",
+    "path": "/webhook-pr-review",
+    "auth": {
+      "mode": "github",
+      "secret_from": "GITHUB_WEBHOOK_SECRET"
+    },
+    "filter": {
+      "all": [
+        {
+          "header": "x-github-event",
+          "value": "pull_request"
+        },
+        {
+          "path": "body.action",
+          "value": [
+            "opened",
+            "synchronize"
+          ]
+        }
+      ]
+    },
+    "dedup": {
+      "id_from": "headers.x-github-delivery"
+    },
+    "params_map": {
+      "pr_number": "body.pull_request.number",
+      "pr_url": "body.pull_request.html_url",
+      "repo": "body.repository.full_name",
+      "repo_owner": "body.repository.owner.login",
+      "repo_name": "body.repository.name",
+      "pr_title": "body.pull_request.title",
+      "base_sha": "body.pull_request.base.sha",
+      "head_sha": "body.pull_request.head.sha",
+      "author": "body.sender.login",
+      "pr_action": "body.action",
+      "github_delivery_id": "headers.x-github-delivery"
+    }
+  },
+  "params_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "pr_number",
+      "repo",
+      "repo_owner",
+      "repo_name",
+      "pr_title",
+      "head_sha",
+      "pr_url",
+      "author",
+      "pr_action",
+      "github_delivery_id"
+    ],
+    "properties": {
+      "pr_number": {
+        "type": "integer"
+      },
+      "repo": {
+        "type": "string",
+        "description": "Full repository name in owner/repo format"
+      },
+      "repo_owner": {
+        "type": "string"
+      },
+      "repo_name": {
+        "type": "string"
+      },
+      "pr_title": {
+        "type": "string"
+      },
+      "head_sha": {
+        "type": "string"
+      },
+      "base_sha": {
+        "type": "string"
+      },
+      "pr_url": {
+        "type": "string"
+      },
+      "author": {
+        "type": "string"
+      },
+      "pr_action": {
+        "type": "string"
+      },
+      "github_delivery_id": {
+        "type": "string"
+      }
+    }
+  },
+  "services": {
+    "github": {
+      "adapter": "github",
+      "trust": "engine_delivered"
+    },
+    "slack": {
+      "adapter": "slack",
+      "trust": "engine_delivered"
+    }
+  },
+  "mcp_servers": [
+    {
+      "id": "github",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    }
+  ],
+  "steps": {
+    "fetch_pr": {
+      "description": "Retrieve the full diff, list of changed files, and any inline review comments already present on this PR. Capture the content needed to assess the change.\n",
+      "execution": "agent",
+      "prompt": "Retrieve the full diff, list of changed files, and any inline review comments\nalready present on PR #{{ run.params.pr_number }} in {{ run.params.repo }}.\nOwner: {{ run.params.repo_owner }}, repo: {{ run.params.repo_name }}.\nUse get_pull_request to fetch PR metadata and get_pull_request_files for the\nlist of changed files. Summarise what changed in diff_summary and list the\nchanged file paths in changed_files.\n",
+      "tools": [
+        "github:get_pull_request",
+        "github:get_pull_request_files"
+      ],
+      "max_tool_calls": 10,
+      "tool_timeout": 30,
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "diff_summary",
+          "changed_files"
+        ],
+        "properties": {
+          "diff_summary": {
+            "type": "string"
+          },
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "analyze_changes": {
+      "description": "Using the diff and file list from fetch_pr, analyze the change for correctness, style, test coverage, and security concerns. Draft a concise review comment (max 500 words) that summarizes findings and any blocking issues.\n",
+      "execution": "agent",
+      "depends_on": [
+        "fetch_pr"
+      ],
+      "prompt": "You are reviewing PR #{{ run.params.pr_number }} in {{ run.params.repo }}.\nTitle: {{ run.params.pr_title }}\nAuthor: {{ run.params.author }}\nPR URL: {{ run.params.pr_url }}\n\nDiff summary from fetch_pr:\n{{ context.resources.fetch_pr.diff_summary }}\n\nChanged files:\n{{ context.resources.fetch_pr.changed_files }}\n\nAnalyze the change for correctness, style, test coverage, and security concerns.\nUse get_pull_request if you need additional detail about the PR.\nDraft a concise review comment (max 500 words) — store it in review_body.\nCount blocking issues and suggestions. Also compose confirmation_text: a short\nSlack message (plain text, ≤ 60 words) to send after the review is approved\nand posted. Include the PR number and repo.\n",
+      "tools": [
+        "github:get_pull_request"
+      ],
+      "max_tool_calls": 5,
+      "tool_timeout": 30,
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "review_body",
+          "confirmation_text"
+        ],
+        "properties": {
+          "review_body": {
+            "type": "string"
+          },
+          "confirmation_text": {
+            "type": "string"
+          },
+          "blocking_count": {
+            "type": "integer"
+          },
+          "suggestion_count": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "approve_review": {
+      "description": "Present the drafted review to a human reviewer. They may approve it for posting or reject it to discard this run without commenting on the PR.\n",
+      "execution": "auto",
+      "depends_on": [
+        "analyze_changes"
+      ],
+      "trust": "human_confirmed",
+      "gate": {
+        "choices": [
+          "approve",
+          "reject"
+        ],
+        "message": "PR #{{ run.params.pr_number }} — {{ run.params.repo }}\nTitle: {{ run.params.pr_title }}\nAuthor: {{ run.params.author }}\n\nDrafted review:\n{{ context.resources.analyze_changes.review_body }}\n",
+        "resolution_messages": {
+          "approve": "Review approved — posting to GitHub PR.",
+          "reject": "Review rejected — run will not continue."
+        }
+      }
+    },
+    "post_review": {
+      "description": "Post the approved review body as a PR review comment on GitHub.",
+      "execution": "auto",
+      "depends_on": [
+        "approve_review"
+      ],
+      "when": "approve_review.choice == 'approve'",
+      "uses_service": "github",
+      "service_method": "create",
+      "operation": "post_comment",
+      "input_map": {
+        "repo": "run.params.repo",
+        "pr_number": "run.params.pr_number",
+        "body": "context.resources.analyze_changes.review_body"
+      }
+    },
+    "notify_posted": {
+      "description": "Confirm on Slack that the review was posted to GitHub.",
+      "execution": "auto",
+      "depends_on": [
+        "post_review"
+      ],
+      "uses_service": "slack",
+      "service_method": "create",
+      "operation": "post_message",
+      "input_map": {
+        "text": "context.resources.analyze_changes.confirmation_text"
+      }
+    }
+  }
+}

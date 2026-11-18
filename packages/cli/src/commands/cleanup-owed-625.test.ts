@@ -64,7 +64,7 @@ describe('#625 PR-2a, F11 — realm run respond on a completed run with a cleanu
         nothingOwed: refused.includes('nothing is owed'),
         times: refused.split(command).length - 1,
       }).toEqual({
-        refused: `Run '${run.id}' is terminal (completed); cannot submit a gate response — it completed; cleanup step left pending: 'tidy' — ${command} runs it with code that has its handler.`,
+        refused: `Run '${run.id}' is terminal (completed); cannot submit a gate response — It completed. Cleanup step left pending: 'tidy' — ${command} runs it with code that has its handler.`,
         nothingOwed: false,
         times: 1,
       });

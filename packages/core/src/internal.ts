@@ -13,6 +13,8 @@ export * from './store/store-interface.js';
 export * from './store/lease-port.js';
 // #597 D1a: the outbound ledger's port, its request check and its pure state machine.
 export * from './store/outbound-ledger.js';
+// R1.3 callback A1a: the callback store's port (door side), its request check and its row.
+export * from './store/callback-store.js';
 // #729, the claim window, CW-1b: the facts a store's lease port found, and their one reader.
 export { leaseFactsOf, leaseFactOf, NO_LEASE_FACTS, LeaseFactsClass } from './store/lease-facts.js';
 export type { LeaseFacts, Unleased } from './store/lease-facts.js';
@@ -198,9 +200,9 @@ export {
   // #729 PR-6a (B5): the way out of an ended run, the sentence a refusal on it ends with.
   endedRunWayOutOf,
   withResumeOffer,
-  withPendingCleanup,
-  withEndedRunWays,
   endedRunWaysSentence,
+  // #625 A1b-1: the one "said once" rule — whether a reply about an ended run says how it ended.
+  saysHowItEnded,
   pendingGateQuestion,
 } from './engine/execution-loop.js';
 export type {
@@ -277,6 +279,13 @@ export {
   heldStateAt,
   heldStateOf,
   reclaimConditionWords,
+  // #922 P2-1 (R13): the one table of a held step's words, by its state, and its readers.
+  HELD_WORDS,
+  heldWordsStateOf,
+  heldRerunOf,
+  heldAgentWords,
+  // #922: the fact a reclaim refusal states (each door renders its act).
+  reclaimRefusalWords,
 } from './engine/ways.js';
 export type {
   Party,
@@ -294,6 +303,7 @@ export type {
   PresentWay,
   ReclaimWay,
   HeldState,
+  HeldWordsState,
   WayOn,
   WayOf,
   CodeTag,
@@ -387,6 +397,8 @@ export {
   // the offer's place for a run an operator ended.
   offeredResumeWay,
   operatorEndingSentence,
+  // #625 A1b-1: the one ending composer — how an ended run ended, from its record only.
+  runEndingOf,
   oneOf,
   waitingOnAnswer,
   pendingCleanupWay,
@@ -420,6 +432,7 @@ export type {
   ProgramFit,
   DueExpiry,
   OpenQuestion,
+  RunEnding,
 } from './engine/pending.js';
 export {
   findEligibleSteps,
@@ -1012,6 +1025,7 @@ export {
   STEP_DIAGNOSTICS_TABLE,
   USAGE_RECORD_TABLE,
   OUTBOUND_VIEW_TABLE,
+  CALLBACK_VIEW_TABLE,
   discloseGate,
   discloseRecord,
   discloseReply,

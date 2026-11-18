@@ -26,7 +26,6 @@ import {
   consumesInputMap,
   pendingCleanupLine,
   describeClaimHolder,
-  classifyInProgressClaims,
   composeQuestionView,
   discloseGate,
   stripSpanMarks,
@@ -75,8 +74,10 @@ import {
   CLI_COMMANDS,
   writerHost,
   cannotGoOnLines,
+  heldEntriesOf,
   owedItems,
   owedRunsWords,
+  type HeldEntry,
 } from './ways-renderer.js';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { buildReattachFlags } from './agent.js';
@@ -279,17 +280,26 @@ export function renderDetachMap(
     lines.push(inspectLine);
     return lines.join('\n');
   } else {
-    // decision C202: a step another program holds — C188's way on, and no Discard line.
-    const inFlight = record.in_progress_steps.filter((s) => s !== record.pending_gate?.step_name);
-    if (inFlight.length > 0) {
+    // decision C202: a step another program holds — C188's way on, and no Discard line. #922
+    // P2-2: each held step as core composed it, so a step past its deadline is said to be freed.
+    const held = heldEntriesOf(
+      composeWaysAt(record, recordAt, {
+        definition: ways.workflow,
+        persistsClaims: ways.persistsClaims,
+        lease_facts: snapshot.lease_facts,
+      }),
+    );
+    if (held.length > 0) {
       lines.push(
         goOnLine(
-          inFlight,
+          held,
+          record.id,
           CLI_COMMANDS.advance(
             { verb: 'advance', conditions: [], run_id: record.id, owed: [] },
             undefined,
             writerHost(),
           )!,
+          writerCtx(),
         ),
       );
       lines.push(inspectLine);
@@ -316,19 +326,21 @@ export function renderDetachMap(
  *
  * @internal Exported for testing only.
  */
-export function renderInFlightHandBack(record: RunRecord, held: readonly string[]): string {
-  const names = held.map((s) => `'${s}'`).join(', ');
+export function renderInFlightHandBack(record: RunRecord, held: readonly HeldEntry[]): string {
+  const names = held.map((e) => `'${e.facts.step}'`).join(', ');
   const steps = held.length === 1 ? `step ${names}` : `steps ${names}`;
   return [
     `Stopped waiting — detached from run '${record.id}' at ${steps} (phase: ${writerCtx().word(deriveRunPhase(record), RUN_PHASE_WORDS)}). The run is saved.`,
     // #729 PR-0 (F.2): the commands come from the CLI door's renderer, never a literal here.
     goOnLine(
       held,
+      record.id,
       CLI_COMMANDS.advance(
         { verb: 'advance', conditions: [], run_id: record.id, owed: [] },
         undefined,
         writerHost(),
       )!,
+      writerCtx(),
     ),
     `  Inspect:   ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: record.id }, undefined, writerHost())}`,
   ].join('\n');
@@ -1112,24 +1124,31 @@ export const runCommand = new Command('run')
               holdSnapshot(writtenSnapshot(record, runAt, read.lease_facts));
               continue;
             }
-            const states = new Map(classifyInProgressClaims(read).map((c) => [c.step, c.state]));
-            for (const step of inFlight) {
+            // #922 P2-2: each held step's state and what frees it, from the ways composed at this
+            // last read.
+            const held = heldEntriesOf(
+              composeWaysAt(record, read.at, {
+                definition,
+                persistsClaims: store.persistsClaims === true,
+                lease_facts: read.lease_facts,
+              }),
+            );
+            for (const entry of held) {
+              const claim = record.claims?.[entry.facts.step];
               console.error(
                 inFlightLine(
-                  runId,
-                  step,
+                  entry,
                   describeClaimHolder(
-                    record.claims?.[step],
+                    claim,
                     store.persistsClaims === true,
-                    leaseFactOf(read, record.claims?.[step]),
+                    leaseFactOf(read, claim),
                   ),
-                  states.get(step) === 'claim_stale',
                   inFlightWatchMs,
                   writerCtx(),
                 ),
               );
             }
-            console.error(renderInFlightHandBack(record, inFlight));
+            console.error(renderInFlightHandBack(record, held));
             // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
             rl.close();
             exitProcess(1);

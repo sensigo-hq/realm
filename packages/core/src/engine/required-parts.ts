@@ -40,7 +40,9 @@ type PartKind =
   | 'party'
   // #627 W (correction 1, C1): a principal the total reader reads, and a route that names one.
   | 'principal'
-  | 'route';
+  | 'route'
+  // #922: the literal `true` (`reclaimStep`'s `force`).
+  | 'true';
 
 const EXPECTED: Record<PartKind, string> = {
   object: 'an object',
@@ -57,6 +59,7 @@ const EXPECTED: Record<PartKind, string> = {
   // Correction 2 (3.6): the absences by name, from the record's own closed list.
   principal: `a principal: { kind: 'api_key', id: <a non-empty string> }, { kind: 'shared_token' } or { absent: <one of: ${PRINCIPAL_ABSENCES.join(', ')}> }`,
   route: 'a non-empty string',
+  true: 'true',
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -124,6 +127,8 @@ function holds(kind: PartKind, value: unknown): boolean {
       return principalOf({ principal: value } as never) !== undefined;
     case 'route':
       return typeof value === 'string' && value.length > 0;
+    case 'true':
+      return value === true;
   }
 }
 
@@ -173,6 +178,15 @@ const needWhen = (
   kind: PartKind,
   ...path: string[]
 ): PartRule => ({ path, kind, required });
+
+/** #922: a `reclaimStep` call passing `definition` or `claimed_at`, which only the judge reads. */
+function passesJudgedMember(parts: Record<string, unknown>): boolean {
+  const options = parts['options'];
+  return (
+    isPlainObject(options) &&
+    (options['definition'] !== undefined || options['claimed_at'] !== undefined)
+  );
+}
 
 const DEFINITION: readonly PartRule[] = [
   need('object', 'definition'),
@@ -284,6 +298,12 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     need('string', 'stepName'),
     typed('object', 'options'),
     typed('object', 'options', 'traceBufferStore'),
+    // #922: the judged call's members (`@beta`). `force` is required when `definition` or
+    // `claimed_at` is passed, and is `true` whenever present; a definition carries its steps.
+    typed('object', 'options', 'definition'),
+    need('object', 'options', 'definition', 'steps'),
+    needWhen(passesJudgedMember, 'true', 'options', 'force'),
+    typed('string', 'options', 'claimed_at'),
   ],
   // #729, the claim window (CW-2a): `driver` is the `driver_shape` row's, as for every entry.
   claimStepForDrive: [
@@ -407,6 +427,9 @@ const GET_WORKFLOW_FOR_RUN_MEMBERS = [
 ] as const satisfies readonly (keyof Parameters<typeof getWorkflowForRun>[2])[];
 const RECLAIM_STEP_MEMBERS = [
   'traceBufferStore',
+  'definition',
+  'force',
+  'claimed_at',
 ] as const satisfies readonly (keyof ReclaimStepOptions)[];
 const CLAIM_STEP_FOR_DRIVE_MEMBERS = [
   'definition',

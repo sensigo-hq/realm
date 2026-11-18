@@ -988,7 +988,7 @@ describe('#616 PR-2c c8a3 — check 4: still refused in check mode, no handle', 
         closeSync(fd);
         expected = {
           code: 'STATE_STORE_SETTINGS_REFUSED',
-          message: `The store file ${file} is not a Realm store this Realm can use: it is damaged (SQLite: database disk image is malformed). Realm does not change or replace a store file by itself.`,
+          message: `The store file ${file} is not a Realm store this Realm can use: it is damaged (SQLite: database disk image is malformed). Realm does not change or replace a store file by itself. If you have a backup, realm db restore <backup> keeps a copy of this file as it is and puts the backup in its place.`,
         };
       }
       const got = await refusal(openMaintenance({ home, verb: 'check' }, seams));

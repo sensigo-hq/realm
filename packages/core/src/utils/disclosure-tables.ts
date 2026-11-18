@@ -27,6 +27,7 @@ import type {
   WorkflowContextSnapshot,
 } from '../types/run-record.js';
 import type { OutboundEntryView } from '../store/outbound-ledger.js';
+import type { CallbackView } from '../store/callback-store.js';
 import {
   CACHE_REQUESTERS,
   CACHE_REQUESTS,
@@ -389,6 +390,22 @@ export const OUTBOUND_VIEW_TABLE = {
   sent_at: 'fact',
   created_at: 'fact',
 } as const satisfies Row<OutboundEntryView>;
+
+/** R1.3 callback A1a: a callback row as the port's `read` returns it (never its address, body, token or webhook
+ *  id): closed words, counts, a host label and times, each a fact. A field added to the view fails to
+ *  compile here until it is classed. Shown by nothing yet. */
+export const CALLBACK_VIEW_TABLE = {
+  workflow_id: 'fact',
+  host: 'fact',
+  status: 'fact',
+  attempts: 'fact',
+  last_status: 'fact',
+  next_attempt_at: 'fact',
+  first_attempt_at: 'fact',
+  last_attempt_at: 'fact',
+  created_at: 'fact',
+  finished_at: 'fact',
+} as const satisfies Row<CallbackView>;
 
 /** A claim: its token is the claim's proof, shown as a fact on record views as it is today; export
  *  replaces a live one with its own marker. */

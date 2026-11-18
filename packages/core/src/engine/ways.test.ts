@@ -491,7 +491,8 @@ describe('#729 PR-0 — S7: one law per UnavailableCode (rule 19), Amendment 15�
         'completed',
         ended({ sealed_by: { arm: 'complete' } } as Partial<RunRecord>),
         'start',
-        'nothing is owed',
+        // #625 A1b-1: after the ending's sentence the way out starts a sentence of its own.
+        'Nothing is owed',
       ],
       [
         'completed, a cleanup step pending',
@@ -1482,7 +1483,9 @@ describe('#729 PR-0 — agent_action: agentActionOf is D-8’s ordered table, ro
         // settle's persist failure (`'stop'`) were deleted with the legacy blocks that held them.
         // the guard-persist failure (no error object; its word is the mint's literal)
         "'stop' as const",
-        // the three ended-run anchors on ok replies (D-8 row 2, C154)
+        // the ended-run anchors on ok replies (D-8 row 2, C154), and #625 A1b-1's D5: advanceRun on
+        // a run that had already ended at its first read
+        "'stop' as const",
         "'stop' as const",
         "'stop' as const",
         "'stop' as const",

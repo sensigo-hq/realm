@@ -692,7 +692,11 @@ describe('#920 C-2 — the pages name every guarded option', () => {
     claim(ACTING, two('--project', '--extensions-module'));
     claim(ACTING, two('--by', '--project'));
     claim(ACTING, one('--reason'));
-    claim(ACTING, two('--step', '--workflow'));
+    // #922 P1b: reclaim's sentence names `--claimed-at` too.
+    claim(
+      ACTING,
+      '`--step`, `--claimed-at` and `--workflow` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
+    );
     claim(MCP, two('--project', '--extensions-module'));
     // `realm mcp` and `realm serve` each hold the two-option sentence (`serve --port` left the
     // guard: issues #944, #949).
@@ -714,10 +718,13 @@ describe('#920 C-2 — the pages name every guarded option', () => {
         project: count(one('--project')),
         workflow: count(one('--workflow')),
         reason: count(one('--reason')),
-        stepAndWorkflow: count(two('--step', '--workflow')),
+        // #922 P1b: reclaim's sentence names `--claimed-at` too.
+        stepClaimedAtAndWorkflow: count(
+          '`--step`, `--claimed-at` and `--workflow` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
+        ),
       },
       `${ACTING}: the single-option sentences, and reclaim's two-option one`,
-    ).toEqual({ project: 1, workflow: 1, reason: 1, stepAndWorkflow: 1 });
+    ).toEqual({ project: 1, workflow: 1, reason: 1, stepClaimedAtAndWorkflow: 1 });
     expect(flat(unreleased()), 'the CHANGELOG [Unreleased] #920 bullet, C-2 clause').toContain(
       flat(
         'The same now holds for 20 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`), `run export --out`, `run abandon --reason`, `run respond --by`, `run reclaim --step`, and `agent --params` and `--base-url`, and `db migrate --backup`.',
