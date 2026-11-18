@@ -1612,6 +1612,7 @@ interface StepMeta {
     toolCalls?: ToolCallRecord[];
     structuredOutput?: StructuredOutputMeta;
     usage?: UsageRecord[];
+    modelText?: ModelText;
 }
 ```
 
@@ -2892,6 +2893,7 @@ Names this job reaches whose entry is on another page.
 - [`MarkFinalizerResult`](implement-a-store.md#markfinalizerresult): The result a `mark_finalizer` delta reports for one finalizer's handler: `completed` or `failed`.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
 - [`MemberKind`](embed-the-mcp-server.md#memberkind): Where a value a disclosure set hides came from: the environment, or the values declared to it; the declared kind wins where two overlap (`DisclosureSet.forms`).
+- [`ModelText`](read-a-runs-record.md#modeltext): The text of each model call `realm agent` or `realm listen` made for a step, on its evidence entry (`EvidenceSnapshot.model_text`).
 - [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads.
 - [`OpenGateDelta`](implement-a-store.md#opengatedelta): Opens a human gate on a claimed step.
 - [`OpeningGate`](implement-a-store.md#openinggate): The gate an `open_gate` delta opens, without its instants: everything a `PendingGate` holds but `opened_at` and `expires_at`.

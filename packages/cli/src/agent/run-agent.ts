@@ -82,6 +82,12 @@ import {
   agentDisclosureSet,
   type LlmClock,
 } from './providers/agent-utils.js';
+import {
+  appendModelTexts,
+  joinModelTexts,
+  modelTextOf,
+  type StepModelTexts,
+} from './providers/model-text.js';
 import { isToolCapable } from './providers/llm-provider.js';
 import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensions.js';
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
@@ -362,6 +368,12 @@ export interface AgentDeps {
    * what the provider asks for without saying where the setting came from.
    */
   promptCache?: ResolvedPromptCache;
+  /**
+   * Gap 1, unit A1: whether each model call's text is kept on the step's evidence entry. `false`
+   * (`--no-record-model-text`) keeps none, and the entry says recording was switched off. Absent ⇒
+   * kept.
+   */
+  recordModelText?: boolean;
 }
 
 /**
@@ -722,6 +734,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // true only once the step's repair loop has ended — `executeChain` returned for its final
   // attempt — so from then on the step's calls live on its record and are never attached twice.
   let usageForStep: UsageRecord[] | undefined;
+  // Gap 1, unit A1: the texts of the step's calls, gathered where `usageForStep` gathers their usage.
+  let textsForStep: StepModelTexts | undefined;
   let stepUsageSaved = false;
   // #600: whether the driven step's calls are ALREADY on its record. Chokepoints 3 and 4 attach
   // `usageForStep` to a drive-failure entry; when the failure belongs to a step `executeChain` ran
@@ -1358,6 +1372,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         let structuredOutputMetaForStep: StructuredOutputMeta | undefined;
         // issue #600 PR 1a — what the provider said this step's wire requests cost.
         usageForStep = undefined;
+        textsForStep = undefined;
         stepUsageSaved = false;
         let result: Awaited<ReturnType<typeof executeChain>>;
         let repairsUsed = 0;
@@ -1859,13 +1874,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // paid for, in wire order.
               // Caching 3-M (piece A-1): after the mint, the step's first request in the drive takes
               // the copy of its predecessor, when one was found (`recordedBefore`).
+              // Gap 1, unit A1: each id copied onto its request's text before the append.
+              const mintedTools = mintRequestIds(toolsResult.usage ?? []);
+              textsForStep = appendModelTexts(
+                textsForStep,
+                joinModelTexts(mintedTools, toolsResult.modelText),
+              );
               usageForStep = appendRequests(
                 usageForStep,
-                attachRecordedReference(
-                  usageForStep,
-                  mintRequestIds(toolsResult.usage ?? []),
-                  recordedBefore(stepName),
-                ),
+                attachRecordedReference(usageForStep, mintedTools, recordedBefore(stepName)),
               );
               toolCallsForMeta = toolsResult.toolCalls;
               // issue #332 item 6: the tools path never consumes structuredOutputPlan (there is no
@@ -1945,7 +1962,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // synthesis rule (design §5 [R2-3]) can distinguish a genuinely-absent meta
                   // (third-party provider ⇒ provider_unsupported) from a gate/sticky decision
                   // that never even attempted a call.
-                  const { output, meta, usage } = await deps.provider.callStepWithMeta(
+                  const { output, meta, usage, modelText } = await deps.provider.callStepWithMeta(
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
@@ -1965,13 +1982,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // Repair calls now accumulate: each #217 repair pass appends its requests, so a
                   // repaired step records every call it paid for, in wire order.
                   // Caching 3-M (piece A-1): the first request's predecessor, as at S1.
+                  // Gap 1, unit A1: each id copied onto its request's text before the append.
+                  const minted = mintRequestIds(usage ?? []);
+                  textsForStep = appendModelTexts(textsForStep, joinModelTexts(minted, modelText));
                   usageForStep = appendRequests(
                     usageForStep,
-                    attachRecordedReference(
-                      usageForStep,
-                      mintRequestIds(usage ?? []),
-                      recordedBefore(stepName),
-                    ),
+                    attachRecordedReference(usageForStep, minted, recordedBefore(stepName)),
                   );
                   if (structuredOutputPlan.ineligibleMeta !== undefined) {
                     // Gate-ineligible or sticky — strict was never attempted this call at all.
@@ -2014,7 +2030,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // `structuredOutputStrict`, which is not passed here. `meta` is DELIBERATELY not
                   // destructured: a third-party provider that overrides callStepWithMeta must not
                   // be able to stamp a structured_output disclosure on a step that declared none.
-                  const { output, usage } = await deps.provider.callStepWithMeta(
+                  const { output, usage, modelText } = await deps.provider.callStepWithMeta(
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
@@ -2029,13 +2045,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // Repair calls now accumulate: each #217 repair pass appends its requests, so a
                   // repaired step records every call it paid for, in wire order.
                   // Caching 3-M (piece A-1): the first request's predecessor, as at S1.
+                  // Gap 1, unit A1: each id copied onto its request's text before the append.
+                  const minted = mintRequestIds(usage ?? []);
+                  textsForStep = appendModelTexts(textsForStep, joinModelTexts(minted, modelText));
                   usageForStep = appendRequests(
                     usageForStep,
-                    attachRecordedReference(
-                      usageForStep,
-                      mintRequestIds(usage ?? []),
-                      recordedBefore(stepName),
-                    ),
+                    attachRecordedReference(usageForStep, minted, recordedBefore(stepName)),
                   );
                 }
               } catch (err) {
@@ -2156,6 +2171,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             usageForStep !== undefined
               ? {
                   stepMeta: {
+                    // Gap 1, unit A1: the texts of the calls whose usage is below, or the marker.
+                    ...((modelText) => (modelText !== undefined ? { modelText } : {}))(
+                      modelTextOf(textsForStep, deps.recordModelText !== false),
+                    ),
                     ...(toolCallsForMeta !== undefined ? { toolCalls: toolCallsForMeta } : {}),
                     ...(structuredOutputMetaForStep !== undefined
                       ? { structuredOutput: structuredOutputMetaForStep }

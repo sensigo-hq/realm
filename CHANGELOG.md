@@ -22,6 +22,7 @@ All notable changes to this project are documented here.
 - **`realm run reclaim --claimed-at`** `<stamp>`: with `--step`, the time the step's claim was taken. The step is freed only while that is still its claim, and a reclaim refused for want of it prints the command to run.
 - **A run store can keep a callback store beside each run, for store implementers (`@beta`)** (R1.3): `RunStore` gains the optional `callbacks` member, a `CallbackStore` with `read`, `countPending` and the per-run purge pair, and `CreateRunOptions` gains `callback`, a `CallbackRegistration` (the address, its host label and a webhook id). A store that keeps a callback store writes the run's `CallbackRow` in the same step as the run; `read` returns a `CallbackView`, which never carries the address; `CallbackLastStatus` names the last answer a try got. `InMemoryStore` keeps one unless it is built with `new InMemoryStore({ callbacks: null })`, and then refuses a `callback`. No Realm command uses it yet, and the SQLite and JSON stores keep none yet and ignore a `callback` they are given. `@sensigo/realm-testing` exports `callbackStoreContract` and `CALLBACK_STORE_LAWS`, the laws such a store keeps.
 - **A callback store has a sender side, for store implementers (`@beta`)** (R1.3): `CallbackStore` gains `due`, `claim`, `freezeBody` and `mark`. `due` lists the rows to send now, one per host per round (`CallbackItem`); `claim` takes one by a conditional write (`CallbackClaimRequest`, `CallbackClaimResult`, `CallbackClaimedItem`); `freezeBody` sets once the body every try sends (`CallbackFreezeResult`); `mark` records a try's outcome (`CallbackMarkRequest`, `CallbackMarkResult`), and `delivered` and `failed` clear the address and body in the same write. `CallbackRow`'s `status` is a `CallbackStatus`, and `CALLBACK_STATUSES` and `CALLBACK_LAST_STATUS_WORDS` list the words `CallbackStatus` and `CallbackLastStatus` take. `callbackStoreContract` gains the sender's laws. No Realm command uses them yet.
+- `EvidenceSnapshot.model_text` (optional): the text of each model call Realm sends and receives under `realm agent` and `realm listen`, masked, each text capped at 64 KB, on by default; `realm agent --no-record-model-text` and `realm listen --no-record-model-text` turn it off.
 
 ### Changed
 
@@ -34,6 +35,7 @@ All notable changes to this project are documented here.
 
 - `RunStore` gains an optional `scanListed`, a listing of runs that leaves each model call's text out; a store without it keeps working, and Realm lists through `scan` instead.
 - In the library, a listing's run has its own types, `ListedSnapshot`, `ListedRecord`, `ListedScanPage` and `ListedScanItem`, and `update` does not accept a `ListedRecord`; `RunStore`'s `scanListed` returns them, and `classifyRunHealth`, `findEligibleSteps` and `getWorkflowForRun` take a listed run as well as a full one.
+- In the library, `EvidenceSnapshot` gains `model_text`, a `ModelText`: the texts of each model call of the attempt, or a marker saying why there are none. `StepMeta` gains `modelText`, which the engine writes on the attempt's entry as `model_text`.
 
 ## [0.50.0] — 2026-11-17
 

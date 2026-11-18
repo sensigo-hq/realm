@@ -93,7 +93,13 @@ export function agentDisclosureSet(): DisclosureSet {
 /** Text as a model and the run record are given it: every tier, and no span mark (D3/07 R3-4) —
  *  the marks removed BEFORE the law reads it (F26), so none can part a name from its value. */
 export function discloseForAgent(text: string): string {
-  return disclose(stripMarks(text), agentDisclosureSet(), 'all').text;
+  return discloseForAgentCounted(text).text;
+}
+
+/** Gap 1, unit A1: {@link discloseForAgent}'s text, and how many values it hid (every tier). */
+export function discloseForAgentCounted(text: string): { text: string; hidden: number } {
+  const { text: shown, hidden } = disclose(stripMarks(text), agentDisclosureSet(), 'all');
+  return { text: shown, hidden: hidden.declared + hidden.environment + hidden.pattern };
 }
 
 /**

@@ -988,6 +988,49 @@ export const OUTPUT_SOURCES = ['driven_step', 'dependency', 'run_params', 'none'
 export type OutputSource = (typeof OUTPUT_SOURCES)[number];
 
 /**
+ * The text of each model call `realm agent` or `realm listen` made for a step, on its evidence entry
+ * (`EvidenceSnapshot.model_text`).
+ *
+ * `recorded: true` holds the texts. `messages` holds each distinct message once, and `tools` each
+ * distinct tool list (the request's tools as JSON). Each text is masked for known secret values
+ * (`hidden` counts what the mask hid), then cut at 64 KB of UTF-8 on a code-point boundary (`cut`
+ * gives the bytes kept and the text's full size). Each of `requests` names what one request sent
+ * and what came back by their places in `messages`, its tool list by its place in `tools`, and
+ * carries its `request_id` (the id of its entry in `diagnostics.cache.requests`).
+ *
+ * A message's text is its parts in order with no separator: a text part as it is; any other part
+ * as compact JSON, of a tool part's `type`, `id`, `tool_use_id`, `tool_call_id`, `name`, `input`,
+ * `content` and `is_error`, of a thinking part's `type` and `thinking`, of any other part's `type`.
+ * Cache marks, signatures and the data of a redacted thinking part are not kept.
+ *
+ * `recorded: false` says why a step Realm drove has no texts: recording was switched off
+ * (`--no-record-model-text`), or the provider module reported none it could read.
+ * @public
+ */
+export type ModelText =
+  | {
+      recorded: true;
+      messages: Array<{
+        role: 'system' | 'user' | 'assistant' | 'tool';
+        text: string;
+        cut?: { kept_bytes: number; full_bytes: number };
+        hidden?: number;
+      }>;
+      tools: Array<{
+        json: string;
+        cut?: { kept_bytes: number; full_bytes: number };
+        hidden?: number;
+      }>;
+      requests: Array<{
+        request_id: string | null;
+        sent: number[];
+        tools?: number;
+        reply: number[] | null;
+      }>;
+    }
+  | { recorded: false; why: 'switched_off' | 'provider_did_not_report' };
+
+/**
  * One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered
  * question recorded, with its times, its input and output, its status and its hash.
  * @public
@@ -1102,6 +1145,14 @@ export interface EvidenceSnapshot {
   agent_profile_hash?: string;
   /** MCP tool calls made during this step, if any. */
   tool_calls?: ToolCallRecord[];
+  /**
+   * Gap 1, unit A1: the text of each model call of this attempt, when `realm agent` or `realm
+   * listen` drove the step ({@link ModelText}). Written once, with the attempt's `diagnostics`, on
+   * every entry of an attempt whose model calls this Realm made: the texts, or a marker saying why
+   * there are none. Absent on every other entry: a step no Realm drive ran, and entries written
+   * before this field. Never in `evidence_hash`, `get_run_state` or a prompt.
+   */
+  model_text?: ModelText;
   /**
    * Present only when the step used input_map. Records the concrete params the engine
    * derived from run state and passed to the service adapter. Absent for all other step types.

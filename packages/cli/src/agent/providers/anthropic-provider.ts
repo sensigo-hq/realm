@@ -57,6 +57,7 @@ import {
   type CacheFieldMemory,
 } from './agent-utils.js';
 import { SUBMIT_TOOL_NAME, buildSubmitTool } from './request-layout.js';
+import { anthropicAnsweredText, pushAnswered, type ModelTextReport } from './model-text.js';
 
 /**
  * Returns the maximum output tokens for the given Anthropic model.
@@ -1047,6 +1048,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // the provider accumulates — a single usage object for a step that bills 1-21 requests is a
     // false number by construction.
     const requests: UsageRecord[] = billed ?? [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests`.
+    const texts: ModelTextReport[] = [];
     // Caching 3-M (B2a): this call's last checked answer id; `null` opts the call's first request in.
     let previousAnswerId: string | null = null;
     const makeRequest = async (userContent: string): Promise<CallResult> => {
@@ -1105,7 +1108,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const toolUse = blocks.find((b) => b.type === 'tool_use' && b.name === SUBMIT_TOOL_NAME);
       const textBlock = blocks.find((b) => b.type === 'text');
       const usage = readAnthropicUsage(response);
-      requests.push(
+      // Gap 1, unit A1: the request's text beside its record, in the same statement.
+      pushAnswered(
+        requests,
         toUsageRecord(requests.length, requestStart, usage, {
           // caching 3-B (E3; MA2-3B-IA1-12): sent without the cache fields after an endpoint refused
           // them, the request records no ask, as #899's final request does: any ask would be false.
@@ -1126,6 +1131,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           // caching 3-M (piece B3a): what this send asked, and what came back.
           ...cacheDiagnosticsFacts(this.cacheAsk, sent, response, this.choiceFor(call)),
         }),
+        texts,
+        anthropicAnsweredText(sent, response),
       );
       return {
         ...(toolUse !== undefined ? { toolInput: toolUse.input as Record<string, unknown> } : {}),
@@ -1148,7 +1155,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     ): CallStepWithMetaResult => {
       // issue #600 PR 1a: `usage` rides beside `meta`, never inside it — a step that reports usage
       // and no structured-output meta is expressible.
-      const usage = requests.length > 0 ? { usage: requests } : {};
+      const usage = requests.length > 0 ? { usage: requests, modelText: texts } : {};
       if (state.meta === undefined) return { output, ...usage };
       return {
         output,
@@ -1278,6 +1285,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // sees every request that got an answer, whatever throws below: a wire error on a later turn,
     // an unknown tool name, or a final answer that does not parse.
     const requests: UsageRecord[] = [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests`.
+    const texts: ModelTextReport[] = [];
     try {
       const result = await this.callStepWithToolsInternal(
         prompt,
@@ -1285,8 +1294,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         executor,
         options,
         requests,
+        texts,
       );
-      return requests.length > 0 ? { ...result, usage: requests } : result;
+      return requests.length > 0 ? { ...result, usage: requests, modelText: texts } : result;
     } catch (err) {
       attachBilledUsage(err, requests);
       throw err;
@@ -1300,6 +1310,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     executor: ToolExecutor,
     options: Parameters<AnthropicProvider['callStepWithTools']>[3],
     requests: UsageRecord[],
+    texts: ModelTextReport[],
   ): Promise<StepWithToolsResult> {
     const clock = options.llmClock;
     // issue #401: per-invocation, minted beside the client below (never a module global).
@@ -1360,11 +1371,15 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     ): Promise<any> => {
       const requestStart = new Date().toISOString();
       const response = await send(body);
-      requests.push(
+      // Gap 1, unit A1: the request's text beside its record, in the same statement.
+      pushAnswered(
+        requests,
         toUsageRecord(requests.length, requestStart, readAnthropicUsage(response), {
           ...facts(response, client),
           ...responseIdFacts(response),
         }),
+        texts,
+        anthropicAnsweredText(body, response),
       );
       // Caching 3-M (B2a): whichever send answered (#311's retry included); a refused send has no id.
       previousAnswerId = checkedResponseId(response) ?? null;

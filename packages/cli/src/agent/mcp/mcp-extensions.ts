@@ -7,6 +7,7 @@ import type {
   StructuredOutputMeta,
   UsageRecord,
 } from '@sensigo/realm';
+import type { ModelTextReport } from '../providers/model-text.js';
 export type { ToolCallRecord, McpServerConfig };
 
 // MCP-native tool shape returned by the server's tool list
@@ -89,6 +90,8 @@ export interface StepWithToolsResult {
    * reported nothing; realm's own providers always report once a request returned.
    */
   usage?: UsageRecord[];
+  /** Gap 1, unit A1: as `CallStepWithMetaResult.modelText`: one entry per entry of `usage`. */
+  modelText?: ModelTextReport[];
 }
 
 // McpClient interface — implemented in mcp-client.ts

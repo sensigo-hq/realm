@@ -27,6 +27,7 @@ import {
   sendUnderGatewayRule,
   type CacheFieldMemory,
 } from './agent-utils.js';
+import { openAiAnsweredText, pushAnswered, type ModelTextReport } from './model-text.js';
 
 /**
  * issue #600 PR 1a — the response's `usage` block, typed LOCALLY (same discipline as the other two
@@ -167,7 +168,11 @@ export class OpenAIReasoningProvider extends LlmProvider {
     callOpts?: { llmClock?: LlmClock; cachePrefixChars?: number },
     // issue #600 PR 1a (D9): owned by the entry point so one `catch` there sees everything billed.
     billed?: UsageRecord[],
-  ): Promise<{ output: Record<string, unknown>; usage?: UsageRecord[] }> {
+  ): Promise<{
+    output: Record<string, unknown>;
+    usage?: UsageRecord[];
+    modelText?: ModelTextReport[];
+  }> {
     const clock = callOpts?.llmClock;
     // issue #401: per-invocation counters, minted beside the client they count for.
     const counters: WireCounters = { attempts: 0 };
@@ -220,6 +225,9 @@ export class OpenAIReasoningProvider extends LlmProvider {
 
     // issue #600 PR 1a: ONE entry per WIRE REQUEST, in wire order.
     const requests: UsageRecord[] = billed ?? [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests`. Its system text is
+    // folded into the user message, so its messages are that one user message, as sent.
+    const texts: ModelTextReport[] = [];
     const makeRequest = async (msgs: Message[]): Promise<string> => {
       const requestStart = new Date().toISOString();
       const base = {
@@ -234,7 +242,9 @@ export class OpenAIReasoningProvider extends LlmProvider {
         body = withCache ? withCacheKey(base, plan) : base;
         return bounded(body);
       });
-      requests.push(
+      // Gap 1, unit A1: the request's text beside its record, in the same statement.
+      pushAnswered(
+        requests,
         toUsageRecord(requests.length, requestStart, readOpenAiReasoningUsage(response), {
           ...reasoningRequestFacts(response, client),
           // caching 3-M (A-0): on every request; the prompt part is the step's prompt as given,
@@ -244,13 +254,15 @@ export class OpenAIReasoningProvider extends LlmProvider {
             ? { cache_controls_rejected: this.cacheFields.rejected }
             : {}),
         }),
+        texts,
+        openAiAnsweredText(body, response),
       );
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
     };
 
     const content = await makeRequest(messages);
     const parsed = extractJsonObject(content);
-    if (parsed !== null) return { output: parsed, usage: requests };
+    if (parsed !== null) return { output: parsed, usage: requests, modelText: texts };
     // Retry once with an explicit reminder to return JSON.
     const retryMessages: Message[] = [
       ...messages,
@@ -262,7 +274,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
     ];
     const retry = await makeRequest(retryMessages);
     const retryParsed = extractJsonObject(retry);
-    if (retryParsed !== null) return { output: retryParsed, usage: requests };
+    if (retryParsed !== null) return { output: retryParsed, usage: requests, modelText: texts };
     // issue #600 PR 1a (D9): two billed, completed requests preceded this throw.
     const err = new Error(
       sanitizeError(`OpenAI returned non-JSON content after retry: ${passedSnippet(retry)}`),
