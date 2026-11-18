@@ -59,7 +59,7 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
   {
     page: 'docs/reference/mcp/tools.md',
     words:
-      'On an `execute_step` reply whose step was recorded and whose reply is then another\'s — a step the engine ran after it (completed, failed, blocked or opened a question), a guard its answer made end the run, a step another program took meanwhile, or the chain\'s own error — and on `start_run` when the run was created and a step it ran then failed or stopped it: `{ "command": …, "recorded": true }`. Added after version 0.49.0.',
+      'On an `execute_step` reply whose step was recorded and whose reply is then another\'s — a step the engine ran after it (completed, failed, blocked or opened a question), a guard its answer made end the run, a step another program took meanwhile, or the chain\'s own error — and on `start_run` when the run was created and a step it ran then failed or stopped it: `{ "command": …, "recorded": true }`. Added after version 0.50.0.',
     cells: [CHECK_1, CHECK_7, GUARD_EXAMPLE],
   },
   {
@@ -71,7 +71,7 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
   {
     page: 'docs/reference/mcp/tools.md',
     words:
-      "From `execute_step`, when the step you called completed, `context_hint` opens with `Step '<step>' completed.` before it (added after version 0.49.0).",
+      "From `execute_step`, when the step you called completed, `context_hint` opens with `Step '<step>' completed.` before it (added after version 0.50.0).",
     cells: [GUARD_EXAMPLE, CHECK_5],
   },
   {
@@ -93,19 +93,19 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
   {
     page: 'docs/reference/core-library.md',
     words:
-      "`executeChain` only: `advanceRun`'s step callbacks, called for each step it runs after the named one; `onGuard` also for the guards the named step's own answer decided. Added after version 0.49.0.",
+      "`executeChain` only: `advanceRun`'s step callbacks, called for each step it runs after the named one; `onGuard` also for the guards the named step's own answer decided. Added after version 0.50.0.",
     cells: [CHECK_2, CHECK_5, CHECK_6, NOT_RECORDED],
   },
   {
     page: 'docs/reference/cli/realm-agent.md',
     words:
-      "When the engine runs `auto` steps right after an agent step's answer, the agent step's `✓ → running` is printed as the first of them starts, then each as `→ [auto] <step>`, its own `✓` as the next one starts; a step another program took gets the line that says so, and no `✓`. Added after version 0.49.0, which printed one `✓` after the whole chain, none when it stopped at a question, and no `→ [auto]` line for its steps.",
+      "When the engine runs `auto` steps right after an agent step's answer, the agent step's `✓ → running` is printed as the first of them starts, then each as `→ [auto] <step>`, its own `✓` as the next one starts; a step another program took gets the line that says so, and no `✓`. Added after version 0.50.0, which printed one `✓` after the whole chain, none when it stopped at a question, and no `→ [auto]` line for its steps.",
     cells: [AGENT_GATE, AGENT_TAKEN],
   },
   {
     page: 'docs/reference/cli/realm-workflow.md',
     words:
-      "When the engine runs steps after the step you answered, that step's `✓` line shows the step's own hash, not the last step's, and when they stop at a question its `✓` line comes before `Gate opened for '<step>'.` A step that waits at its own question prints `Gate opened for '<step>'.` only. Added after version 0.49.0, whose `✓` line showed the last step's hash, and which printed no `✓` before a question the engine's steps reached.",
+      "When the engine runs steps after the step you answered, that step's `✓` line shows the step's own hash, not the last step's, and when they stop at a question its `✓` line comes before `Gate opened for '<step>'.` A step that waits at its own question prints `Gate opened for '<step>'.` only. Added after version 0.50.0, whose `✓` line showed the last step's hash, and which printed no `✓` before a question the engine's steps reached.",
     cells: [RUN_HASH, RUN_GATE, RUN_OWN_GATE],
   },
   {
@@ -123,13 +123,13 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
   {
     page: 'docs/concepts/step-kinds.md',
     words:
-      "The first line opens with the step the call answered, `Step 'assess' completed.`, after version 0.49.0.",
+      "The first line opens with the step the call answered, `Step 'assess' completed.`, after version 0.50.0.",
     cells: [EX_REFUND],
   },
   {
     page: 'docs/guides/step-handlers.md',
     words:
-      "The first line opens with the run's creation after version 0.49.0. The run ends as `failed`, unless the workflow has a step that handles the failure.",
+      "The first line opens with the run's creation after version 0.50.0. The run ends as `failed`, unless the workflow has a step that handles the failure.",
     cells: [EX_PRICE],
   },
   {
@@ -141,7 +141,7 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
   {
     page: 'docs/guides/human-gates.md',
     words:
-      "The line opens with `Step 'draft' completed.`, the step the call answered, after version 0.49.0.",
+      "The line opens with `Step 'draft' completed.`, the step the call answered, after version 0.50.0.",
     cells: [EX_GATE],
   },
   {

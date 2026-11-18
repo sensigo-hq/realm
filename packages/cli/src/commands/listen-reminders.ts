@@ -11,7 +11,6 @@ import {
   type OutboundLeaseRequest,
   type OutboundLedger,
   type PendingGate,
-  type RunRecord,
   type RunStore,
   type SlackGateNotifierConfig,
   type WorkflowDefinition,
@@ -29,6 +28,8 @@ import { sendOnce } from '../agent/gate/outbound-send.js';
 import { readSlackPostFile, slackPostPath } from '../agent/gate/slack-post-file.js';
 import { rowsOfOneQuestion } from '../lib/outbound-words.js';
 import type { Logger } from './listen.js';
+// Gap 1, unit A0: the listing that reads no model call's text.
+import { scanListedRuns, type ListedRecord } from '@sensigo/realm';
 
 /** How often a pass runs: a poll, not a stored instant (every pass derives from the store's clock). */
 export const REMINDER_POLL_MS = 60_000;
@@ -116,7 +117,7 @@ export interface ReminderWorkflow {
 }
 
 export interface ReminderSenderDeps {
-  readonly runStore: Pick<RunStore, 'scan' | 'clock'>;
+  readonly runStore: Pick<RunStore, 'scan' | 'scanListed' | 'clock'>;
   /** The store's outbound ledger (`runStore.outbound`, present). */
   readonly outbound: OutboundLedger;
   /** Where the question post files are (`<home>/slack-posts/`). */
@@ -190,7 +191,7 @@ export function makeReminderPass(
 
   /** One question; answers whether the rest of its workflow is left alone this pass. */
   const remindOne = async (
-    run: RunRecord,
+    run: ListedRecord,
     gate: PendingGate,
     wfId: string,
     wf: ReminderWorkflow,
@@ -345,10 +346,8 @@ export function makeReminderPass(
     const spent = (): boolean => performance.now() - started >= REMINDER_PASS_BUDGET_MS;
     /** Workflows left alone for the rest of this pass (paused, or a probe not due). */
     const held = new Set<string>();
-    const pages = runStore.scan(
-      { phase: 'gate_waiting' },
-      { pageSize: 1000, projection: 'record' },
-    );
+    // Gap 1, unit A0: listed, so no model call's text is read.
+    const pages = scanListedRuns(runStore, { phase: 'gate_waiting' }, { pageSize: 1000 });
     for await (const page of pages) {
       for (const scanned of page.items) {
         if (!live()) return false;
@@ -384,7 +383,7 @@ export interface ReminderSource {
 export function reminderSenderOf(
   sources: readonly ReminderSource[],
   deps: {
-    readonly runStore: Pick<RunStore, 'scan' | 'clock' | 'outbound'>;
+    readonly runStore: Pick<RunStore, 'scan' | 'scanListed' | 'clock' | 'outbound'>;
     readonly home: string | undefined;
     readonly logger: Pick<Logger, 'info' | 'warn' | 'error'>;
   },

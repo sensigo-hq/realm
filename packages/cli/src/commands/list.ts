@@ -22,12 +22,13 @@ import type {
   RunHealthFinding,
   FailedAttemptReadResult,
   WorkflowDefinition,
-  Snapshot,
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
 import { outboundWords, readOutboundRows, rowsOfOneQuestion } from '../lib/outbound-words.js';
+// Gap 1, unit A0: the listing that reads no model call's text.
+import { scanListedRuns, type ListedSnapshot } from '@sensigo/realm';
 
 /** Returns a chalk-coloured phase label — `phase` is the caller's already-DERIVED value (issue
  *  #279, increment 2, PR-C — D-3 leg vi: render sweep), never a raw `run.run_phase` read here.
@@ -250,9 +251,10 @@ export async function listRuns(
   workflowProbe?: (workflowId: string) => Promise<StuckDefinitionProbe | undefined>,
 ): Promise<string> {
   // #616 PR-2c c4: every page of the store's scan, of one workflow when one is given.
-  const snapshots: Snapshot[] = [];
+  // Gap 1, unit A0: listed, so no model call's text is read.
+  const snapshots: ListedSnapshot[] = [];
   const filter = workflowId === undefined ? {} : { workflow: workflowId };
-  for await (const page of store.scan(filter, { pageSize: 1000, projection: 'record' })) {
+  for await (const page of scanListedRuns(store, filter, { pageSize: 1000 })) {
     for (const item of page.items) if (item.kind === 'run') snapshots.push(item.run);
   }
   const runs = snapshots.map((s) => s.record);

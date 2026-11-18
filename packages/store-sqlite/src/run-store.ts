@@ -63,6 +63,7 @@ import {
   type CreateResult,
   type CreateRunOptions,
   type KeyAnswer,
+  type ListedScanPage,
   type LeaseHold,
   type LeasePort,
   type LoadBearingRunRecordField,
@@ -194,8 +195,8 @@ function verifyCreated(db: DatabaseLike, record: RunRecord): boolean {
  * that does not exist is core's not-found refusal. A stored run that cannot be read back throws the
  * reader's plain error naming it.
  */
-function readSnapshot(db: DatabaseLike, runId: string, reading: Date): Snapshot {
-  const record = readRunInTransaction(db, runId);
+function readSnapshot(db: DatabaseLike, runId: string, reading: Date, listed = false): Snapshot {
+  const record = readRunInTransaction(db, runId, listed);
   if (record === null) throw runNotFoundError(runId);
   return writtenSnapshot(record, floorAtRecord(reading, record));
 }
@@ -656,6 +657,30 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
     filter: ScanFilter,
     options: ScanOptions,
   ): AsyncGenerator<ScanPage<'record' | 'row'>, void, undefined> {
+    yield* this.#scanPages(filter, options, false);
+  }
+
+  /**
+   * Gap 1, unit A0: the runs `scan` gives in its `'record'` projection, each read without its model
+   * calls' texts (`readRunInTransaction`'s `listed`: SQLite removes them in the SELECTs): the same
+   * pages, filters and readings, with each run's lease facts asked after the page's cut, as `scan`
+   * attaches them.
+   */
+  async *scanListed(
+    filter: ScanFilter,
+    options: Omit<ScanOptions, 'projection'>,
+  ): AsyncGenerator<ListedScanPage, void, undefined> {
+    for await (const page of this.#scanPages(filter, { ...options, projection: 'record' }, true)) {
+      yield page as ScanPage<'record'>;
+    }
+  }
+
+  /** `scan`'s pages; with `listed`, each run read as a listing reads it (`scanListed`). */
+  async *#scanPages(
+    filter: ScanFilter,
+    options: ScanOptions,
+    listed: boolean,
+  ): AsyncGenerator<ScanPage<'record' | 'row'>, void, undefined> {
     assertScanArguments(filter, options);
     // The caller's objects are copied, so a change to them mid-scan does not change the walks.
     const scanned: ScanFilter = { ...filter };
@@ -665,7 +690,9 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
     for (;;) {
       const request = { pageSize, projection, after } as const;
       const page = await this.#db.snapshot((db, reading) =>
-        readScanPage(db, reading, scanned, request, (runId) => readSnapshot(db, runId, reading)),
+        readScanPage(db, reading, scanned, request, (runId) =>
+          readSnapshot(db, runId, reading, listed),
+        ),
       );
       yield projection === 'record' ? await this.#pageWithFacts(page) : page;
       if (page.next_after === undefined) return;
