@@ -61,7 +61,8 @@ export interface CaptureEvidenceParams {
   /**
    * Issue #625 (the holder slice): the host PROGRAM whose code and credentials did this work —
    * stamped as `driven_by`. Passed only where a program's code ran (a step's own attempt, a cleanup
-   * step); never on an entry the engine makes itself. Not hashed.
+   * step), and #729 CW-3b on an automatic take-back's entry, naming the program that took the step
+   * back; never on any other entry the engine makes itself. Not hashed.
    */
   drivenBy?: Attributed;
   /** Issue #625 PR-2a: a bare auto step's output source — written as `output_source`. */

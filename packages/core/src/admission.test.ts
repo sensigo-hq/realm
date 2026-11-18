@@ -15,7 +15,7 @@ import {
   drainFinalizers,
 } from './engine/execution-loop.js';
 import { abandonRun } from './engine/abandon-run.js';
-import { reclaimStep } from './engine/reclaim-step.js';
+import { reclaimStep, takeBackStep } from './engine/reclaim-step.js';
 import { claimStepForDrive, releaseDriveClaim } from './engine/drive-claim.js';
 import { getWorkflowForRun } from './workflow/registrar.js';
 import { declareReleaseLine } from './release-line.js';
@@ -29,6 +29,8 @@ import type { Attributed } from './engine/holder.js';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OTHER = createRealmBrand('@sensigo/realm', '9.9.9', 'file:///tmp/other-realm/');
 const BAD_DRIVER = { by: 'a\nb', by_source: 'derived', channel: 'agent' } as unknown as Attributed;
+/** #729 CW-3b: a sound taker for `takeBackStep`, whose `drivenBy` is required. */
+const TAKER: Attributed = { by: 'taker', by_source: 'stated', channel: 'agent' };
 
 /** A store that records every call and answers none. `declared` decides its release line. */
 function trapStore(declared: boolean): { s: RunStore; calls: string[] } {
@@ -134,6 +136,9 @@ const CALLS: Record<
     claimStepForDrive(s, 'r', 'work', { definition: def, ...opt(registry, driver) } as never),
   releaseDriveClaim: (s) =>
     releaseDriveClaim(s, 'r', 'work', { definition: def, hold: { id: 'h', close: () => {} } }),
+  // #729, the claim window (CW-3b): its taker is checked as a driver (`drivenBy`).
+  takeBackStep: (s, _registry, driver) =>
+    takeBackStep(s, 'r', 'work', { expectToken: 't', drivenBy: driver ?? TAKER }),
 };
 
 /** The entries that take a registry and a driver; the other three take a store only (C155: executeEngineStep admits its own call). */
@@ -327,6 +332,17 @@ describe('every entry admits first, in order (each cell stacks defects; the firs
       expect(calls).toEqual([]);
     },
   );
+
+  it('takeBackStep (#729 CW-3b): a taker whose name holds a control character THROWS before any store read', async () => {
+    const { s, calls } = trapStore(true);
+    // (a) red when `drivenBy` is not handed to `admitEntry` as the driver (the name then reaches the
+    //     audit entry unchecked); (b) prints what was thrown and the store calls made.
+    await expect(CALLS.takeBackStep(s, undefined, BAD_DRIVER)).rejects.toMatchObject({
+      code: 'VALIDATION_ACTOR_INVALID',
+      message: 'Invalid driver.by: contains a control character.',
+    });
+    expect(calls).toEqual([]);
+  });
 });
 
 describe('the source-text witness: each entry admits as its first statement and checks nothing itself', () => {
@@ -342,6 +358,7 @@ describe('the source-text witness: each entry admits as its first statement and 
     getWorkflowForRun: 'workflow/registrar.ts',
     claimStepForDrive: 'engine/drive-claim.ts',
     releaseDriveClaim: 'engine/drive-claim.ts',
+    takeBackStep: 'engine/reclaim-step.ts',
   };
   const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 

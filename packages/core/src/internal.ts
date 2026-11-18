@@ -545,6 +545,18 @@ export {
 export type { ClaimState, InProgressClaimInfo } from './engine/claim-liveness.js';
 export { reclaimStep } from './engine/reclaim-step.js';
 export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine/reclaim-step.js';
+// #729, the claim window (CW-3b): the automatic take-back, internal (no caller until CW-5).
+export {
+  takeBackStep,
+  automaticTakebacksOf,
+  AUTOMATIC_TAKEBACKS_PER_STEP,
+  TAKE_BACK_NOT_TAKEN_REASONS,
+} from './engine/reclaim-step.js';
+export type {
+  TakeBackStepOptions,
+  TakeBackOutcome,
+  TakeBackNotTakenReason,
+} from './engine/reclaim-step.js';
 // #729, the claim window (CW-2a): a drive takes a step's claim under its lease, and gives it back.
 export { claimStepForDrive, releaseDriveClaim } from './engine/drive-claim.js';
 export type {

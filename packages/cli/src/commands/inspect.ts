@@ -47,6 +47,10 @@ import {
   FIXED_TERMINAL_REASONS,
   type DisclosureReceipt,
   controlEscape,
+  readAttributed,
+  readDrivenBy,
+  type ActorAbsent,
+  type Attributed,
 } from '@sensigo/realm';
 import {
   CLI_COMMANDS,
@@ -1293,6 +1297,16 @@ function formatDiagnostics(
   return `${tokens}${prompt}${output}${model} | preconditions: ${traceStr}${guard}${cache}`;
 }
 /**
+ * #729 CW-3b: ` by <program>` / ` from <program>` on a take-back's line — the program as
+ * `describeProgram` prints it, the one unshowable phrase for a name that cannot be shown, and nothing
+ * when no name was recorded.
+ */
+function programClause(word: ' by' | ' from', read: Attributed | ActorAbsent): string {
+  if (read.by !== null) return `${word} ${describeProgram(read, writerCtx())}`;
+  return read.absent_cause === 'name_unreadable' ? `${word} ${UNSHOWABLE_NAME}` : '';
+}
+
+/**
  * issue #625 (holder slice): the line naming the program whose code did an attempt's work. The
  * attempt that opened a step's question — the last attempt of a step whose question is open or
  * answered — reads "Question opened through" (the program that OPENED it — never who answered,
@@ -1954,8 +1968,20 @@ export async function inspectRun(
     const isReclaim = (s: EvidenceSnapshot | undefined): boolean =>
       s?.output_summary?.['reclaimed'] === true;
     const reclaimLines = stepEntries.filter(isReclaim).map((s) => {
-      const at = s.output_summary['reclaimed_at'];
-      return `     Reclaimed at ${typeof at === 'string' ? at : s.completed_at}: its claim was removed so the step could run again.`;
+      const atField = s.output_summary['reclaimed_at'];
+      const at = typeof atField === 'string' ? atField : s.completed_at;
+      // #729 CW-3b: an automatic take-back's entry — its taker and the claim's holder, each read
+      // through core's total reader; a missing name drops its clause.
+      if (s.output_summary['reason'] === 'lease_not_held') {
+        const taker = programClause(' by', readDrivenBy(s));
+        const prior = s.output_summary['prior_claim'];
+        const holder =
+          typeof prior === 'object' && prior !== null && 'holder' in prior
+            ? programClause(' from', readAttributed((prior as { holder: unknown }).holder))
+            : '';
+        return `     Taken back at ${at}${taker}${holder}: no program held the claim's lease when it was checked, so its claim was removed and the step could run again.`;
+      }
+      return `     Reclaimed at ${at}: its claim was removed so the step could run again.`;
     });
     const snaps = stepEntries.filter((s) => !isReclaim(s));
     // issue #600 PR 1b: multi-attempt is now keyed on EXECUTION-entry count alone — the `attempt`
