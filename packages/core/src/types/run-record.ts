@@ -988,15 +988,17 @@ export const OUTPUT_SOURCES = ['driven_step', 'dependency', 'run_params', 'none'
 export type OutputSource = (typeof OUTPUT_SOURCES)[number];
 
 /**
- * The text of each model call `realm agent` or `realm listen` made for a step, on its evidence entry
- * (`EvidenceSnapshot.model_text`).
+ * The text of each model call made for a step, on its evidence entry
+ * (`EvidenceSnapshot.model_text`). `realm agent` and `realm listen` write it; a program that embeds
+ * the engine can pass its own in `StepMeta.modelText`.
  *
  * `recorded: true` holds the texts. `messages` holds each distinct message once, and `tools` each
- * distinct tool list (the request's tools as JSON). Each text is masked for known secret values
- * (`hidden` counts what the mask hid), then cut at 64 KB of UTF-8 on a code-point boundary (`cut`
- * gives the bytes kept and the text's full size). Each of `requests` names what one request sent
- * and what came back by their places in `messages`, its tool list by its place in `tools`, and
- * carries its `request_id` (the id of its entry in `diagnostics.cache.requests`).
+ * distinct tool list (the request's tools as JSON). `realm agent` and `realm listen` mask each text
+ * for known secret values (`hidden` counts what that mask hid), then cut it at 64 KB of UTF-8 on a
+ * code-point boundary (`cut` gives the bytes kept and the text's full size). The engine stores a
+ * `StepMeta.modelText` as it is given: it neither masks nor cuts it. Each of `requests` names what
+ * one request sent and what came back by their places in `messages`, its tool list by its place in
+ * `tools`, and carries its `request_id` (the id of its entry in `diagnostics.cache.requests`).
  *
  * A message's text is its parts in order with no separator: a text part as it is; any other part
  * as compact JSON, of a tool part's `type`, `id`, `tool_use_id`, `tool_call_id`, `name`, `input`,
@@ -1146,11 +1148,12 @@ export interface EvidenceSnapshot {
   /** MCP tool calls made during this step, if any. */
   tool_calls?: ToolCallRecord[];
   /**
-   * Gap 1, unit A1: the text of each model call of this attempt, when `realm agent` or `realm
-   * listen` drove the step ({@link ModelText}). Written once, with the attempt's `diagnostics`, on
-   * every entry of an attempt whose model calls this Realm made: the texts, or a marker saying why
-   * there are none. Absent on every other entry: a step no Realm drive ran, and entries written
-   * before this field. Never in `evidence_hash`, `get_run_state` or a prompt.
+   * Gap 1, unit A1: the text of each model call of this attempt ({@link ModelText}). Written once,
+   * with the attempt's `diagnostics`: by `realm agent` and `realm listen` on every entry of an
+   * attempt whose model calls they made (the texts, or a marker saying why there are none), or as a
+   * program that embeds the engine passes it in `StepMeta.modelText`. Absent on any other entry,
+   * and on entries written before this field. Never in `evidence_hash`, `get_run_state` or a
+   * prompt.
    */
   model_text?: ModelText;
   /**

@@ -199,8 +199,11 @@ export interface StepMeta {
   toolCalls?: ToolCallRecord[];
   structuredOutput?: StructuredOutputMeta;
   usage?: UsageRecord[];
-  /** Gap 1, unit A1: the text of each model call of the attempt, or why there is none. Written on
-   *  the attempt's entry as `model_text`. */
+  /**
+   * Gap 1, unit A1: the text of each model call of the attempt, or why there is none. Written on
+   * the attempt's entry as `model_text`, as given: the engine neither masks nor cuts it, so mask
+   * any secret value before passing it, as `realm agent` and `realm listen` do.
+   */
   modelText?: ModelText;
 }
 

@@ -57,7 +57,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`CacheState`](#cachestate) | type | One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the provider reported (`StepCacheDetail.state`). |
 | [`ClassifiableRun`](#classifiablerun) | type | The record shape both legacy classifiers read. |
 | [`GateClaimVerdict`](#gateclaimverdict) | type | A verdict with a cause that does not belong to it does not compile. |
-| [`ModelText`](#modeltext) | type | The text of each model call `realm agent` or `realm listen` made for a step, on its evidence entry (`EvidenceSnapshot.model_text`). |
+| [`ModelText`](#modeltext) | type | The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`). |
 | [`OutputSource`](#outputsource) | type | One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`). |
 | [`OutputSourceAbsentCause`](#outputsourceabsentcause) | type | Why an evidence entry says nothing about where its output came from (`outputSourceOf`'s `absent_cause`). |
 | [`Principal`](#principal) | type | What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`). |
@@ -1022,15 +1022,17 @@ type GateClaimVerdict = {
 
 type · public
 
-The text of each model call `realm agent` or `realm listen` made for a step, on its evidence entry
-(`EvidenceSnapshot.model_text`).
+The text of each model call made for a step, on its evidence entry
+(`EvidenceSnapshot.model_text`). `realm agent` and `realm listen` write it; a program that embeds
+the engine can pass its own in `StepMeta.modelText`.
 
 `recorded: true` holds the texts. `messages` holds each distinct message once, and `tools` each
-distinct tool list (the request's tools as JSON). Each text is masked for known secret values
-(`hidden` counts what the mask hid), then cut at 64 KB of UTF-8 on a code-point boundary (`cut`
-gives the bytes kept and the text's full size). Each of `requests` names what one request sent
-and what came back by their places in `messages`, its tool list by its place in `tools`, and
-carries its `request_id` (the id of its entry in `diagnostics.cache.requests`).
+distinct tool list (the request's tools as JSON). `realm agent` and `realm listen` mask each text
+for known secret values (`hidden` counts what that mask hid), then cut it at 64 KB of UTF-8 on a
+code-point boundary (`cut` gives the bytes kept and the text's full size). The engine stores a
+`StepMeta.modelText` as it is given: it neither masks nor cuts it. Each of `requests` names what
+one request sent and what came back by their places in `messages`, its tool list by its place in
+`tools`, and carries its `request_id` (the id of its entry in `diagnostics.cache.requests`).
 
 A message's text is its parts in order with no separator: a text part as it is; any other part
 as compact JSON, of a tool part's `type`, `id`, `tool_use_id`, `tool_call_id`, `name`, `input`,
