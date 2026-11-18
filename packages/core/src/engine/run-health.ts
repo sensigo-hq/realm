@@ -656,7 +656,12 @@ function classifyRecordHealth(
       kind: derivedPhase === 'gate_waiting' ? 'wedged_gate_sibling' : 'stale_claim',
       step: c.step,
       reason: c.state,
-      evidence: { state: c.state, deadline: c.deadline },
+      // #729 CW-3a: a leased claim's lease fact beside its state (axis 14: a fact)
+      evidence: {
+        state: c.state,
+        deadline: c.deadline,
+        ...(c.lease !== undefined ? { lease: c.lease } : {}),
+      },
     });
   }
 

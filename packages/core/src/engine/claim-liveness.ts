@@ -266,6 +266,8 @@ export function classifyInProgressClaims(snapshot: Snapshot): InProgressClaimInf
  * record stamped ahead of the reading has no age yet and is not idle), and no step held by a LIVE
  * claim (`classifyInProgressClaims` says `healthy`: a deadline not yet passed). A stale claim, a claim
  * of unknown age (`deadline: null`, what a crashed `realm agent` leaves) and no claim are swept.
+ * #729 CW-3a (§4.4): a claim that names a lease is kept unless its lease was not held — a lease that
+ * is absent or whose state is not known is never swept.
  */
 export function isIdleForCleanup(snapshot: Snapshot, thresholdMs: number): boolean {
   const { record: run, at } = snapshot;
@@ -273,5 +275,7 @@ export function isIdleForCleanup(snapshot: Snapshot, thresholdMs: number): boole
   if (run.pending_gate !== undefined || WAITING_PHASES.has(deriveRunPhase(run))) return false;
   const stamp = readInstant(run.updated_at, 'past_event', at);
   if ('absent' in stamp || at.getTime() - stamp.ms < thresholdMs) return false;
-  return !classifyInProgressClaims(snapshot).some((c) => c.state === 'healthy');
+  return !classifyInProgressClaims(snapshot).some(
+    (c) => c.state === 'healthy' || (c.lease !== undefined && c.lease.state !== 'not_held'),
+  );
 }

@@ -694,7 +694,9 @@ async function reclaimJudged(
     const reread = await store.get(runId);
     const again = judge(reread);
     if (!('ok' in again)) {
-      if (options.claimed_at === undefined && again.code === 'fence_required') {
+      // #729 CW-3a: a leased claim is never `taken_over` — its refusal is thrown as on a first read.
+      const leased = reread.record.claims?.[stepName]?.lease !== undefined;
+      if (options.claimed_at === undefined && again.code === 'fence_required' && !leased) {
         const gateAdvisory = buildGateExpiryAdvisory(reread);
         return {
           run: reread.record,

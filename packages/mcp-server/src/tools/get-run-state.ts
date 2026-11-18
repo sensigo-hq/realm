@@ -232,11 +232,13 @@ function valueRowsBut(node: unknown, rows: ClassTable): ClassTable {
 /**
  * #729 PR-3 correction 2 (G3, DQ 2): a run-health finding's evidence. Its `refused` entries (each
  * refused step's facts, `cannot_go_on`) read their precondition as `engine_runnable` does — the
- * expression shown, the value it read masked — so one reply never shows one text two ways. Every
- * other part of the evidence is a value.
+ * expression shown, the value it read masked — so one reply never shows one text two ways. A leased
+ * claim's `lease` fact is a fact (#729 CW-3a). Every other part of the evidence is a value.
  */
 export const RUN_HEALTH_EVIDENCE_TABLE = (evidence: unknown): ClassTable =>
   valueRowsBut(evidence, {
+    // #729 CW-3a: a leased claim's lease fact — closed words, a fact (axis 14)
+    lease: { nested: { state: 'fact', basis: 'fact', reason: 'fact' } },
     refused: {
       nested: (refused: unknown) =>
         valueRowsBut(refused, { precondition: { nested: PRECONDITION_FACTS_TABLE } }),
