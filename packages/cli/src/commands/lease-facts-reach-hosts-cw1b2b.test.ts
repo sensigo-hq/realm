@@ -54,11 +54,14 @@ const LEASE = 'lease-cw1b2b-host';
 /** A deadline long passed: by its deadline alone, the claim is stale. */
 const PAST = '2020-01-02T03:04:05.000Z';
 /**
- * #922 P2-2 (MA 2, WO922-P22-MA2-03): the watchers' last line (`inFlightLine`) for a claim whose
- * lease is held — wait for it, no command. Without the lease fact the claim is judged by its deadline
- * alone (PAST): its deadline-passed words and the command that frees it.
+ * #729 CW-3a: the watchers' last line (`inFlightLine`) for a claim whose lease is held — wait for it,
+ * then `lease_held`'s words and the command after "To free it anyway" (P2-2's no-command branch is
+ * removed). Without the lease fact the claim is judged by its deadline alone (PAST): its
+ * deadline-passed words.
  */
-const waits = (step: string): string => `'${step}' is held; wait for it.`;
+const LEASE_HELD =
+  "Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.";
+const waits = (step: string): string => `'${step}' is held; wait for it. ${LEASE_HELD}`;
 
 /** Another program's claim of a step, naming the lease `id`, its deadline passed. */
 const claimNaming = (id: string, step: string): ClaimRecord => ({
@@ -205,9 +208,17 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
         expect(lines.filter((l) => l.startsWith('  • '))).toEqual([
           `  • a: healthy  (deadline: ${PAST})`,
         ]);
-        // #922 P2-2 (MA 2, WO922-P22-MA2-03): nothing under a claim whose lease is held. (1) red when
-        //     the dry run offers to free a program that holds its lease; (2) prints its lines.
-        expect(lines.filter((l) => l.startsWith('      '))).toEqual([]);
+        // #729 CW-3a: under a claim whose lease is held, lease_held's words first and the command
+        //     after "To free it anyway". (1) red when the held lease is offered no command, or read by
+        //     its deadline (the past line); (2) prints its lines.
+        const under = lines.filter((l) => l.startsWith('      '));
+        expect({
+          first: under[0],
+          last: under.at(-1)?.startsWith('      To free it anyway, run:'),
+        }).toEqual({
+          first: `      ${LEASE_HELD}`,
+          last: true,
+        });
       } finally {
         held.close();
       }
@@ -253,7 +264,11 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
             held = await holdLease(store);
             const { record: named } = await store.update({
               ...record,
-              claims: { ...record.claims, sleep: claimNaming(held.id, 'sleep') },
+              // #729 CW-3a (check 2): a claim with no deadline, as a drive's claim of an agent step
+              claims: {
+                ...record.claims,
+                sleep: { ...claimNaming(held.id, 'sleep'), deadline: null },
+              },
             });
             // closed: the claim stays, naming a lease file nothing holds (CW-1's L5)
             if (lease === 'closed') held.close(named);
@@ -291,9 +306,9 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
         //     in-flight lines and the exit.
         expect({
           lines: inFlight.map((l) => ({
-            waits: l.endsWith(waits('sleep')),
+            waits: l.includes(waits('sleep')) && l.includes('To free it anyway, run:'),
             past: l.endsWith(
-              `'sleep' was claimed and its deadline passed at ${PAST}; no result is recorded for it. It is not declared idempotent, so running it again may repeat its effects. To free it, run: realm run reclaim ${runId} --step sleep --claimed-at ${PAST} --force`,
+              `'sleep' was claimed, and no program held the claim's lease when it was checked; no result is recorded for it. It is not declared idempotent, so running it again may repeat its effects. To free it, run: realm run reclaim ${runId} --step sleep --claimed-at ${PAST} --force`,
             ),
           })),
           code,
@@ -306,7 +321,7 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
     );
   });
 
-  it('(h) realm agent: the watch on a step whose claim’s lease is held says to wait for it, with no command (#922 P2-2)', async () => {
+  it('(h) realm agent: the watch on a step whose claim’s lease is held says to wait for it, with lease_held’s words and the command after “anyway” (#729 CW-3a)', async () => {
     const store = leasedStore('live');
     const run = await seedHeld(store);
     const provider = new (class extends LlmProvider {
@@ -341,12 +356,12 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
       .map((c: unknown[]) => String(c[0]))
       .filter((l) => l.startsWith("• Step 'a' has been in flight"));
     // (1) red when the watch's last read is judged without its facts (the claim then reads past its
-    //     deadline, with the command that frees it); (2) prints the in-flight lines.
+    //     deadline); (2) prints the in-flight lines.
     expect(
       inFlight.map((l) => ({
-        waits: l.endsWith(waits('a')),
-        command: l.includes('realm run reclaim'),
+        waits: l.includes(waits('a')),
+        anyway: l.includes('To free it anyway, run: realm run reclaim'),
       })),
-    ).toEqual([{ waits: true, command: false }]);
+    ).toEqual([{ waits: true, anyway: true }]);
   });
 });

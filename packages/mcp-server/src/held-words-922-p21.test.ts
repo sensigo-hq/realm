@@ -17,6 +17,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   HELD_WORDS,
   InMemoryTraceBufferStore,
+  reclaimConditionWords,
   type HeldState,
   type HeldWordsState,
   type WayOn,
@@ -502,6 +503,9 @@ describe('#922 P2-1 — check 10, rule 10: no liveness verdict', () => {
       'unreadable',
       'no_claim_record',
       'store_keeps_no_claims',
+      // #729 CW-3a: the two lease states
+      'lease_held',
+      'lease_not_held',
     ];
     const held: HeldState[] = [
       { state: 'ahead', deadline: AHEAD },
@@ -509,6 +513,8 @@ describe('#922 P2-1 — check 10, rule 10: no liveness verdict', () => {
       { state: 'unknown_age' },
       { state: 'unreadable' },
       { state: 'no_claim_record' },
+      { state: 'lease_held' },
+      { state: 'lease_not_held' },
     ];
     const table = [
       ...states.flatMap((s) => [
@@ -529,6 +535,27 @@ describe('#922 P2-1 — check 10, rule 10: no liveness verdict', () => {
     // (a) red when a held sentence or a protocol text says a program died, is dead, gone or down;
     //     (b) prints each such text.
     expect([...table, ...protocol].filter((t) => VERDICT.test(t ?? ''))).toEqual([]);
+  });
+
+  it('#729 CW-3a: the lease states’ words — the four tables, the lease_held condition and the not-held line — hold no word of the deny-list', () => {
+    // The prompt's deny-list, for the words CW-3a writes for `lease_held` and `lease_not_held` only.
+    const DENY =
+      /\b(died|dead|alive|live runner|live driver|presumed|probably|likely|unknown age|deadline)\b/i;
+    const words = (state: 'lease_held' | 'lease_not_held'): string[] => [
+      HELD_WORDS.agent(state, "'a'", false, SINCE),
+      HELD_WORDS.agent(state, "'a', 'b'", true, SINCE),
+      HELD_WORDS.reason({ state }),
+      HELD_WORDS.clause(state),
+      HELD_WORDS.cli(state, 'a', SINCE),
+    ];
+    const held = [...words('lease_held'), reclaimConditionWords({ code: 'lease_held' })!];
+    const notHeld = [...words('lease_not_held'), HELD_WORDS.notHeldLine];
+    // (a) red when a lease state's words say a program died, is alive, presumed or likely, name an
+    //     unknown age or a deadline, or a not-held one says "wait for it"; (b) prints each such text.
+    expect({
+      deny: [...held, ...notHeld].filter((t) => DENY.test(t)),
+      wait: notHeld.filter((t) => /wait for it/i.test(t)),
+    }).toEqual({ deny: [], wait: [] });
   });
 
   it('the definition_absent past sentences, pinned at the table (no reply reaches them: advance_run loads the definition first)', () => {

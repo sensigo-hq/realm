@@ -17,7 +17,6 @@ import {
   unbrandedClause,
   shellWord,
   getWorkflowForRun,
-  deriveRunPhase,
 } from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -46,7 +45,7 @@ import {
   resolvePromptCache,
   type CacheDiagnosticsSetting,
 } from '../agent/prompt-cache.js';
-import { reattachable, resolveRunAttach } from '../agent/run-attach.js';
+import { reattachable, refusalPrintsStoredValue, resolveRunAttach } from '../agent/run-attach.js';
 import {
   loadProjectExtensions,
   collectReleaseLineWarnings,
@@ -88,7 +87,7 @@ export function buildManifestGateHandler(
      *  is kept under it. */
     home: string;
   },
-): ((runId: string, gate: import('@sensigo/realm').PendingGate) => Promise<void>) | undefined {
+): ((runId: string, gate: import('@sensigo/realm').PendingGate) => Promise<boolean>) | undefined {
   const slack = notifiers?.slack_gate;
   if (slack === undefined) return undefined;
   const config: SlackGateHandlerConfig = {
@@ -642,7 +641,7 @@ export const agentCommand = new Command('agent')
               refuseInertCacheDiagnostics(stated);
             }
           }
-          // #729 PR-3 correction 4 (I-11): an ended run is refused below with its stored reason, so
+          // #729 PR-3 correction 4 (I-11): an ended run is refused below with its stored values, so
           // its manifest is read first, as `attempts` reads it — the reason is masked with the run's
           // declared values, and shown as its type and size while they cannot all be read (no flag
           // here: the line names the command that takes it). A run re-attached, or one that cannot
@@ -657,11 +656,9 @@ export const agentCommand = new Command('agent')
             await noteRunManifest(endedDefinition, ended);
             withholdUnlessAccepted(false);
             const withheld = valuesWithheldFor();
-            if (
-              withheld !== undefined &&
-              ended.terminal_reason !== undefined &&
-              deriveRunPhase(ended) !== 'completed'
-            )
+            // #625 A1b-2: when the refusal prints a stored value — its `Reason:` line, or a reason or
+            // message inside its sentence (the composer says whether it quoted one).
+            if (withheld !== undefined && refusalPrintsStoredValue(ended))
               console.error(
                 valuesWithheldLine(
                   withheld,

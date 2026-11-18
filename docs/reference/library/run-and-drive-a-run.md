@@ -1847,6 +1847,8 @@ type Cond = {
     code: 'override_claim_unknown_age';
     state: 'unknown_age' | 'unreadable' | 'no_claim_record';
 } | {
+    code: 'lease_held';
+} | {
     code: 'rerun_not_idempotent';
     basis: 'not_declared' | 'definition_absent';
 };

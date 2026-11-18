@@ -254,12 +254,17 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
         sealed_by: { arm: 'handler_abort' },
       } as Partial<RunRecord>).slice(1),
     }).toEqual({
+      // #625 A1b-2: a map given no note says how the run ended, from its record, before the way on.
       several: [
+        "  Ended:     Steps 'a', 'clean', 'b' failed.",
         '  Resume:    realm run resume run_abc --from <one of: a, b>',
         '  Inspect:   realm run inspect run_abc',
       ],
-      cleanupOnly: ['  Inspect:   realm run inspect run_abc'],
-      aborted: ['  Inspect:   realm run inspect run_abc'],
+      cleanupOnly: ["  Ended:     Step 'clean' failed.", '  Inspect:   realm run inspect run_abc'],
+      aborted: [
+        "  Ended:     Step 'a''s handler aborted the run.",
+        '  Inspect:   realm run inspect run_abc',
+      ],
     });
   });
 

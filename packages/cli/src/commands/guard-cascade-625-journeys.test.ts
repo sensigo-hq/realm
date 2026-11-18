@@ -529,8 +529,11 @@ describe('issue #625 `realm agent --run-id` on a run an external answer moved pa
     //     attaches, finds nothing and prints "Run ended in phase: running"); (b) prints the exit
     //     code and the whole output.
     expect({ status: out.status, screen }).toMatchObject({ status: 1 });
-    // #729 PR-0 (E1 (d)): the run-a-step family's `run_ended`, naming who ended the run.
-    expect(screen).toContain(`Run ${runId} has already ended (aborted): guard 'check' ended it.`);
+    // #729 PR-0 (E1 (d)): the run-a-step family's `run_ended`; #625 A1b-2: how the run ended, from
+    // its record, the guard's message in the sentence.
+    expect(screen).toContain(
+      `Run ${runId} has already ended (aborted). Guard step 'check' aborted the run: "not approved".`,
+    );
     expect(screen).not.toContain('Run ended in phase: running');
     expect(deriveRunPhase((await runs.get(runId)).record)).toBe('aborted');
     await h.cleanup();
