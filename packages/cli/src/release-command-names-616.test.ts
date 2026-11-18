@@ -20,8 +20,8 @@
 // `realm` and the run of words `[a-z][a-z-]*` after it, up to the first word that is not one (a flag, a
 // placeholder, a path, a word with a digit or a dot, punctuation).
 //
-// THE REGISTRY: `commands-registry.ts`'s four exports, read as Commander objects (`.name()`), never a
-// hand-written list; the groups are `workflow`, `run` and `db`, as the CLI's `index.ts` names the
+// THE REGISTRY: `commands-registry.ts`'s five exports, read as Commander objects (`.name()`), never a
+// hand-written list (#616 R3: `storeTopLevelCommands`, top-level like `topLevelCommands`); the groups are `workflow`, `run` and `db`, as the CLI's `index.ts` names the
 // commands that hold `workflowCommands`, `runCommands` and `dbCommands`. Valid: `realm` alone; `realm
 // <top>` (words after it are arguments); `realm <group>` alone; `realm <group> <sub>` (words after it are
 // arguments). Anything else is red.
@@ -43,13 +43,14 @@ import { describe, expect, it } from 'vitest';
 import {
   dbCommands,
   runCommands,
+  storeTopLevelCommands,
   topLevelCommands,
   workflowCommands,
 } from './commands-registry.js';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
-const TOP = new Set(topLevelCommands.map((c) => c.name()));
+const TOP = new Set([...storeTopLevelCommands, ...topLevelCommands].map((c) => c.name()));
 const GROUPS = new Map<string, Set<string>>([
   ['workflow', new Set(workflowCommands.map((c) => c.name()))],
   ['run', new Set(runCommands.map((c) => c.name()))],
