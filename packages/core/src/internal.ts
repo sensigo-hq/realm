@@ -277,6 +277,8 @@ export {
   heldStateAt,
   heldStateOf,
   reclaimConditionWords,
+  // #922: the fact a reclaim refusal states (each door renders its act).
+  reclaimRefusalWords,
 } from './engine/ways.js';
 export type {
   Party,

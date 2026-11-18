@@ -676,14 +676,16 @@ type WebhookAuth = AuthSharedSecret | AuthGithub | AuthStripe | AuthHmac | AuthN
 
 Names this job reaches whose entry is on another page.
 
-- [`AbandonWay`](write-a-handler.md#abandonway): End the run.
-- [`AdvanceWay`](write-a-handler.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
+- [`AbandonWay`](run-and-drive-a-run.md#abandonway): End the run.
+- [`AdvanceWay`](run-and-drive-a-run.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
 - [`AgentAction`](write-a-handler.md#agentaction): What an agent does next, decided by the engine (`WorkflowError.agentAction`).
 - [`AnswererMismatchFacts`](write-a-handler.md#answerermismatchfacts): The facts of an answer refused because its sender may not answer the question: the names that may, and the account the channel reported.
 - [`Base`](write-a-handler.md#base): What every way carries: its verb and the conditions it is offered with; each way type adds its own fields to it.
-- [`Cond`](write-a-handler.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
+- [`Cond`](run-and-drive-a-run.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
 - [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
 - [`CondTag`](write-a-handler.md#condtag): Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member).
+- [`DEFINITION_ABSENCES`](embed-the-mcp-server.md#definition_absences): How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
+- [`DefinitionAbsence`](embed-the-mcp-server.md#definitionabsence): Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read.
 - [`DueExpiry`](write-a-handler.md#dueexpiry): An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`).
 - [`ErrorCategory`](write-a-handler.md#errorcategory): The broad kind of failure a `WorkflowError` reports: network, an outside service, the run's state, invalid input, the engine itself, or a resource (`WorkflowError.category`).
 - [`ErrorFacts`](write-a-handler.md#errorfacts): Any typed error facts.
@@ -693,20 +695,30 @@ Names this job reaches whose entry is on another page.
 - [`ExtensionIdentitySignals`](write-a-handler.md#extensionidentitysignals): Labeled advisory signals — each independently fail-soft; never part of the comparison.
 - [`ExtensionIdentityTree`](write-a-handler.md#extensionidentitytree): Versioned deterministic directory-tree fingerprint over the module roots.
 - [`ExtensionRegistry`](run-and-drive-a-run.md#extensionregistry): The handlers, service adapters and processors a program registers by name; the engine looks a step's handler or adapter up in it.
-- [`InspectWay`](write-a-handler.md#inspectway): Read the run's record.
+- [`FactsByCode`](run-and-drive-a-run.md#factsbycode): The typed facts of each unavailable code (`FactsOf`).
+- [`FactsOf`](run-and-drive-a-run.md#factsof): The typed facts an `Unavailable` entry carries for its code (`Unavailable.facts`).
+- [`InspectWay`](run-and-drive-a-run.md#inspectway): Read the run's record.
+- [`LEASE_PROBE_REASONS`](implement-a-store.md#lease_probe_reasons): Why a probe could not say whether a lease is held: a closed list.
+- [`LeaseFact`](implement-a-store.md#leasefact): What a probe found.
+- [`LeaseProbeReason`](implement-a-store.md#leaseprobereason): Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
+- [`LoadErrorCode`](embed-the-mcp-server.md#loaderrorcode): The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`.
 - [`LoaderWarning`](write-a-handler.md#loaderwarning): A single structured diagnostic.
 - [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads.
-- [`PresentWay`](write-a-handler.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
+- [`NoRemedy`](run-and-drive-a-run.md#noremedy): Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`).
+- [`PreconditionFacts`](run-and-drive-a-run.md#preconditionfacts): A failed precondition: its expression and the value read, escaped and bounded (`PreClaimRefused.precondition`).
+- [`PresentWay`](run-and-drive-a-run.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
 - [`Processor`](write-a-handler.md#processor): A program's step that changes content, registered under its `id` and run in order by `runPipeline`.
 - [`ProcessorInput`](write-a-handler.md#processorinput): The text and metadata a processor is given (`Processor.process`).
 - [`ProcessorOutput`](write-a-handler.md#processoroutput): The text and metadata a processor returns; the next processor in the pipeline is given it.
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`RateLimiter`](write-a-handler.md#ratelimiter): Controls the rate at which requests are sent to an external service.
-- [`ReclaimWay`](write-a-handler.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
-- [`RegisterWay`](write-a-handler.md#registerway): Register the run's workflow again.
-- [`RespondWay`](write-a-handler.md#respondway): Answer the run's open question.
+- [`ReclaimWay`](run-and-drive-a-run.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
+- [`RefusedCheck`](run-and-drive-a-run.md#refusedcheck): The checks other than capability that refuse a step before its claim (`checkPreClaim`).
+- [`RegisterWay`](run-and-drive-a-run.md#registerway): Register the run's workflow again.
+- [`RespondWay`](run-and-drive-a-run.md#respondway): Answer the run's open question.
+- [`RunPhase`](read-a-runs-record.md#runphase): Derived phase of a workflow run.
 - [`RunRecordFieldProblem`](write-a-handler.md#runrecordfieldproblem): One field a value lacks, or holds with the wrong type.
-- [`RunStepWay`](write-a-handler.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
+- [`RunStepWay`](run-and-drive-a-run.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
 - [`ServiceAdapter`](write-a-handler.md#serviceadapter): Service adapter — handles communication with a specific external API.
 - [`ServiceResponse`](write-a-handler.md#serviceresponse): What a service adapter's call returns: the HTTP status and the data (`ServiceAdapter`'s methods).
 - [`SIDE_FILE_KINDS`](write-a-handler.md#side_file_kinds): The kinds of side file a run keeps beside its file in its runs folder: failed attempts, a trace buffer, and sealed traces.
@@ -721,13 +733,16 @@ Names this job reaches whose entry is on another page.
 - [`STORED_FILE_CLASSES`](write-a-handler.md#stored_file_classes): The kinds of fault a damaged stored JSON file can have (`UnreadableFileFacts.class`).
 - [`StoredFileClass`](write-a-handler.md#storedfileclass): What is wrong with a damaged stored file: empty, not JSON, not a run, filed under another id, from an earlier Realm, or unreadable (`UnreadableFileFacts.class`).
 - [`StoredFileErrorFacts`](write-a-handler.md#storedfileerrorfacts): The typed facts of a damaged stored file's error: one file (`scope: 'file'`) or a decision over every run that failed closed (`scope: 'files'`).
+- [`Unavailable`](run-and-drive-a-run.md#unavailable): A way that cannot be taken now, with its code, its facts and the remedies that lead on.
+- [`UNAVAILABLE_CODES`](run-and-drive-a-run.md#unavailable_codes): The codes that say why a way is unavailable, each with how it is judged and the verbs it applies to.
+- [`UnavailableCode`](run-and-drive-a-run.md#unavailablecode): The codes that say why a way cannot be taken now, one per reason (`Unavailable.code`).
 - [`UnreadableFileFacts`](run-and-drive-a-run.md#unreadablefilefacts): The facts of one damaged stored file: names, classes and type words, never its content.
 - [`UnreadableRunFilesFacts`](write-a-handler.md#unreadablerunfilesfacts): What `unreadableRunFilesError` carries: the command that did not run, the runs folder, and every run file it could not read.
 - [`ValidationErrorFacts`](write-a-handler.md#validationerrorfacts): The typed facts of a refused answer: the validator's rows, their total before the cap, and, for an agent step's counted rejection, the countdown.
 - [`WarningCode`](write-a-handler.md#warningcode): Every warning code the workflow loader can give (`LoaderWarning.code`).
-- [`WAY_VERBS`](write-a-handler.md#way_verbs): Every verb a way can name, as a closed list (`WayVerb`).
-- [`WayOn`](write-a-handler.md#wayon): One act a party can take on a run, told apart by its `verb`.
-- [`WayVerb`](write-a-handler.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).
+- [`WAY_VERBS`](run-and-drive-a-run.md#way_verbs): Every verb a way can name, as a closed list (`WayVerb`).
+- [`WayOn`](run-and-drive-a-run.md#wayon): One act a party can take on a run, told apart by its `verb`.
+- [`WayVerb`](run-and-drive-a-run.md#wayverb): The acts a way names: answer a question, run a step, have the engine carry out what it owes, read the run, end it, register its workflow again, or send a question's form to the person (`Base.verb`).
 - [`WorkflowCopyFault`](write-a-handler.md#workflowcopyfault): What a registered copy that is a JSON object lacks to be a workflow: a numeric `schema_version`, an `id`, `steps`, or the legacy shape.
 - [`WorkflowError`](write-a-handler.md#workflowerror): The error Realm throws and records, carrying a code, a category and what the agent does next.
 - [`WorkflowErrorOptions`](write-a-handler.md#workflowerroroptions): What a `WorkflowError` is built with: its code and category, what the agent does next, whether it may be tried again, and the optional facts, step and ways on.

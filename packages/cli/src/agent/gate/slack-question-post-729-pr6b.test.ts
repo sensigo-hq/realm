@@ -480,16 +480,17 @@ describe('#729 PR-6b — the Slack question post', () => {
     const def = gated('pr6b-7b');
     const { runId, gate } = await openQuestion(def);
     const file = slackPostPath(h.path, runId, gate.gate_id);
-    // The read that shows the question closed ends the wait; every read after it fails.
-    let closed = false;
+    // The read the handler makes at close (`readClosed`) fails; every other read — the wait's own
+    // polls included — succeeds. Keyed on the caller, not on read order: a read that saw the question
+    // close first could otherwise make the wait's next poll throw instead (a race under load).
     const closingStore = new Proxy(store, {
       get(target, prop) {
         if (prop === 'get') {
           return async (id: string) => {
-            if (closed) throw new Error('the store could not be read at close');
-            const snapshot = await target.get(id);
-            if (snapshot.record.pending_gate === undefined) closed = true;
-            return snapshot;
+            if (new Error().stack?.includes('readClosed') === true) {
+              throw new Error('the store could not be read at close');
+            }
+            return target.get(id);
           };
         }
         const v = Reflect.get(target, prop, target) as unknown;
