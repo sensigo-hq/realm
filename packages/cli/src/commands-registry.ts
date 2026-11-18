@@ -34,6 +34,7 @@ import { dbBackupCommand } from './commands/db-backup.js';
 import { dbMigrateCommand } from './commands/db-migrate.js';
 import { dbCheckCommand } from './commands/db-check.js';
 import { dbRestoreCommand } from './commands/db-restore.js';
+import { rollbackCommand } from './commands/rollback.js';
 import { setClockErrorSink } from '@sensigo/realm';
 import { Command } from 'commander';
 import { VERSION } from './version.js';
@@ -80,6 +81,13 @@ export const runCommands = [
 /** Commands that maintain the store file (realm db <cmd>; #616 PR-2c). */
 export const dbCommands = [dbBackupCommand, dbMigrateCommand, dbCheckCommand, dbRestoreCommand];
 
+/**
+ * Top-level commands that maintain this machine's store file (#616 R3: `realm rollback`). A list of
+ * their own, beside `dbCommands`, and not in `topLevelCommands`: realm-cloud's CLI registers that list,
+ * and a command that steps a local store file back has no place in it.
+ */
+export const storeTopLevelCommands = [rollbackCommand];
+
 /** Top-level commands not nested under a subgroup. */
 export const topLevelCommands = [
   mcpCommand,
@@ -89,14 +97,26 @@ export const topLevelCommands = [
   listenCommand,
 ];
 
-// issue #920: the option-value guard, on every command object in the four lists. Attached BEFORE the
+// issue #920: the option-value guard, on every command object in the five lists. Attached BEFORE the
 // writer's hook (a command's hooks run in the order they were added): a refusal is printed before the
 // writer is installed.
-attachOptionValueGuard([workflowCommands, runCommands, dbCommands, topLevelCommands]);
-// #729 PR-3 (L-1): every command object in the four lists — nested ones included — carries the
+attachOptionValueGuard([
+  workflowCommands,
+  runCommands,
+  dbCommands,
+  storeTopLevelCommands,
+  topLevelCommands,
+]);
+// #729 PR-3 (L-1): every command object in the five lists — nested ones included — carries the
 // writer's `preAction` hook, so the one writer is installed in any program that reuses realm's
 // commands (cli-cloud attaches the exported hook to its own commands too).
-attachWriterHook([workflowCommands, runCommands, dbCommands, topLevelCommands]);
+attachWriterHook([
+  workflowCommands,
+  runCommands,
+  dbCommands,
+  storeTopLevelCommands,
+  topLevelCommands,
+]);
 
 /**
  * #715 (b) (03 §A.1, D-22): installs the process's waiter-error sink — a waiter on a store's clock (a
@@ -119,6 +139,6 @@ export function buildRealmProgram(): Command {
   program.addCommand(group('workflow', 'Manage workflow definitions', workflowCommands));
   program.addCommand(group('run', 'Manage workflow run instances', runCommands));
   program.addCommand(group('db', 'Maintain the store file', dbCommands));
-  for (const cmd of topLevelCommands) program.addCommand(cmd);
+  for (const cmd of [...storeTopLevelCommands, ...topLevelCommands]) program.addCommand(cmd);
   return program;
 }
