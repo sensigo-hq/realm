@@ -304,6 +304,8 @@ export const EVIDENCE_TABLE = {
   agent_profile: 'fact',
   agent_profile_hash: 'fact',
   tool_calls: 'value',
+  // Gap 1, unit A1: each model call's text, masked for the agent when kept; a file masks it again.
+  model_text: 'value',
   resolved_params: 'value',
   warn: 'bounded',
   debug_output: 'value',

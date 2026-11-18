@@ -5,6 +5,7 @@ import type {
   StepDiagnostics,
   AgentTraceEntry,
   OutputSource,
+  ModelText,
 } from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import type { Attributed } from '../engine/holder.js';
@@ -60,11 +61,15 @@ export interface CaptureEvidenceParams {
   /**
    * Issue #625 (the holder slice): the host PROGRAM whose code and credentials did this work —
    * stamped as `driven_by`. Passed only where a program's code ran (a step's own attempt, a cleanup
-   * step); never on an entry the engine makes itself. Not hashed.
+   * step), and #729 CW-3b on an automatic take-back's entry, naming the program that took the step
+   * back; never on any other entry the engine makes itself. Not hashed.
    */
   drivenBy?: Attributed;
   /** Issue #625 PR-2a: a bare auto step's output source — written as `output_source`. */
   outputSource?: OutputSource;
+  /** Gap 1, unit A1: the attempt's model call texts, or why there are none — written as
+   *  `model_text`. Not hashed. */
+  modelText?: ModelText;
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.
@@ -114,6 +119,7 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
     ...(params.warn !== undefined ? { warn: params.warn } : {}),
     ...(params.debugOutput !== undefined ? { debug_output: params.debugOutput } : {}),
     ...(params.toolCalls !== undefined ? { tool_calls: params.toolCalls } : {}),
+    ...(params.modelText !== undefined ? { model_text: params.modelText } : {}),
     ...(params.effectiveTimeoutSeconds !== undefined
       ? { effective_timeout_seconds: params.effectiveTimeoutSeconds }
       : {}),

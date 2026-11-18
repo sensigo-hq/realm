@@ -207,9 +207,10 @@ describe("every place a program's code runs names the program (captureEvidence s
     ],
     [
       'core/src/engine/reclaim-step.ts',
-      0,
       1,
-      "the reclaim audit line: the operator's act, not a step's work",
+      1,
+      // #729 CW-3b: the automatic take-back's line names its taker; a manual reclaim's names no one.
+      "the automatic take-back's audit line passes the taker; a manual reclaim's line is the operator's act, not a step's work",
     ],
     ['cli/src/commands/drain.ts', 0, 1, "the --void line: an operator's act"],
   ];

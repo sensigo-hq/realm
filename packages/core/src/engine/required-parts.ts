@@ -21,7 +21,7 @@ import type {
   AdvanceRunOptions,
   SubmitGateOptions,
 } from './execution-loop.js';
-import type { ReclaimStepOptions } from './reclaim-step.js';
+import type { ReclaimStepOptions, TakeBackStepOptions } from './reclaim-step.js';
 import type { ClaimStepForDriveOptions, ReleaseDriveClaimOptions } from './drive-claim.js';
 import type { getWorkflowForRun } from '../workflow/registrar.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
@@ -325,6 +325,15 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     need('function', 'options', 'hold', 'close'),
     typed('array', 'options', 'evidence'),
   ],
+  // #729, the claim window (CW-3b): `drivenBy` is the `driver_shape` row's too (handed as `driver`).
+  takeBackStep: [
+    need('string', 'runId'),
+    need('string', 'stepName'),
+    need('object', 'options'),
+    need('string', 'options', 'expectToken'),
+    need('object', 'options', 'drivenBy'),
+    typed('object', 'options', 'traceBufferStore'),
+  ],
 };
 
 /**
@@ -442,6 +451,12 @@ const RELEASE_DRIVE_CLAIM_MEMBERS = [
   'evidence',
 ] as const satisfies readonly (keyof ReleaseDriveClaimOptions)[];
 
+const TAKE_BACK_STEP_MEMBERS = [
+  'expectToken',
+  'drivenBy',
+  'traceBufferStore',
+] as const satisfies readonly (keyof TakeBackStepOptions)[];
+
 const _membersExhaustive: [
   ListsEveryKey<ExecuteStepOptions, typeof EXECUTE_STEP_MEMBERS>,
   ListsEveryKey<ExecuteChainOptions, typeof EXECUTE_CHAIN_MEMBERS>,
@@ -452,7 +467,8 @@ const _membersExhaustive: [
   ListsEveryKey<ReclaimStepOptions, typeof RECLAIM_STEP_MEMBERS>,
   ListsEveryKey<ClaimStepForDriveOptions, typeof CLAIM_STEP_FOR_DRIVE_MEMBERS>,
   ListsEveryKey<ReleaseDriveClaimOptions, typeof RELEASE_DRIVE_CLAIM_MEMBERS>,
-] = [true, true, true, true, true, true, true, true, true];
+  ListsEveryKey<TakeBackStepOptions, typeof TAKE_BACK_STEP_MEMBERS>,
+] = [true, true, true, true, true, true, true, true, true, true];
 void _membersExhaustive;
 
 /**
@@ -474,6 +490,7 @@ export const OPTION_MEMBERS: Readonly<
   reclaimStep: { container: 'options', members: RECLAIM_STEP_MEMBERS },
   claimStepForDrive: { container: 'options', members: CLAIM_STEP_FOR_DRIVE_MEMBERS },
   releaseDriveClaim: { container: 'options', members: RELEASE_DRIVE_CLAIM_MEMBERS },
+  takeBackStep: { container: 'options', members: TAKE_BACK_STEP_MEMBERS },
 };
 
 /** One defect, as the error's details name it: names and type words only. */

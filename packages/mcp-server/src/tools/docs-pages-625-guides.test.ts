@@ -8,7 +8,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, afterEach } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -843,79 +843,9 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 115 codes defined — 100 raised, 15 that nothing raises', () => {
-    claim(
-      'docs/reference/error-codes.md',
-      'This page lists all 115 codes that Realm defines: the 100 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
-    );
-    // #616 unit 3: the "nothing raises" block's own header, whose count the units that first raise
-    // these codes change (the list's length is checked below, as `unraised`). (1) red when the
-    // header's count is not the list's; (2) prints the sentence.
-    claim(
-      'docs/reference/error-codes.md',
-      'These 15 are in the `ErrorCode` type, and no code in Realm raises them:',
-    );
-    const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
-    const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
-    const end = lines.findIndex((l) => /^\s*\| '[A-Z0-9_]+';/.test(l));
-    const defined = lines
-      .slice(0, end + 1)
-      .map((l) => /^\s*\| '([A-Z0-9_]+)'/.exec(l)?.[1])
-      .filter((c): c is string => c !== undefined);
-    const text = readFileSync(join(ROOT, 'docs/reference/error-codes.md'), 'utf8');
-    const raisedPart = text.slice(
-      text.indexOf('## The codes Realm raises'),
-      text.indexOf('## The codes nothing raises'),
-    );
-    const listedRaised = [...raisedPart.matchAll(/^\| `([A-Z0-9_]+)` +\|/gm)].map((m) => m[1]!);
-    const listedUnraised = block('docs/reference/error-codes.md', 'NETWORK_TIMEOUT, ')
-      .join(' ')
-      .split(/[,\s]+/)
-      .filter((c) => c !== '');
-    // Realm's own code, every file but tests and the type itself: where a code is written in it.
-    const sources: string[] = [];
-    const walk = (dir: string): void => {
-      for (const name of readdirSync(dir)) {
-        const path = join(dir, name);
-        if (statSync(path).isDirectory()) {
-          if (name !== 'node_modules' && name !== 'test-support') walk(path);
-        } else if (/\.ts$/.test(name) && !/\.(test|d)\.ts$/.test(name)) {
-          if (!path.endsWith(join('types', 'workflow-error.ts')))
-            sources.push(readFileSync(path, 'utf8'));
-        }
-      }
-    };
-    for (const pkg of readdirSync(join(ROOT, 'packages'))) {
-      const src = join(ROOT, 'packages', pkg, 'src');
-      try {
-        if (statSync(src).isDirectory()) walk(src);
-      } catch {
-        // a package with no src
-      }
-    }
-    const written = (code: string) => sources.some((s) => s.includes(`'${code}'`));
-    // (a) red when a code is added to the type without the page, the page's two lists stop
-    //     covering the type, a code the page says nothing raises is written in Realm's code, or a
-    //     code it says is raised is written nowhere; (b) prints the counts and the strays.
-    expect({
-      defined: defined.length,
-      raised: listedRaised.length,
-      unraised: listedUnraised.length,
-      cover: [...listedRaised, ...listedUnraised].sort(),
-      unraisedWritten: listedUnraised.filter(written),
-      raisedNowhere: listedRaised.filter((c) => !written(c)),
-    }).toEqual({
-      // #603 A3a: STATE_ANSWERER_MISMATCH, defined and raised. #616 R1: STATE_STORE_IN_USE, the same.
-      // #616 R1b: STATE_STORE_RESTORE_REFUSED, the same.
-      defined: 115,
-      raised: 100,
-      unraised: 15,
-      cover: [...defined].sort(),
-      unraisedWritten: [],
-      raisedNowhere: [],
-    });
-  });
-
+  // Q1 (#592) d1: error-codes.md's counts, its "nothing raises" header and list, and the scan of
+  // where Realm's code writes each code moved to scripts/generate-docs-tables.mjs; its drift test
+  // (packages/core/src/inventory/docs-tables.test.ts) checks the committed page against it.
   // #616 unit 13c: the rows the SQLite store's import (`save`) adds a clause to, or first raises.
   // Each names the cells that execute its claims.
   it('error-codes.md: STATE_RUN_DIVERGED', () => {

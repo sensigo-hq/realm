@@ -59,6 +59,8 @@ const HOLD_CALLERS: Readonly<Record<string, string>> = {
   'core/src/engine/drive-claim.ts': 'claimStepForDrive takes the lease a drive claims a step under',
   'testing/src/store/leased-claim-contract.ts':
     "the leased-claim laws take their holds from the store's own port",
+  'testing/src/store/take-back-contract.ts':
+    "the take-back laws take their claims' holds from the store's own port",
 };
 
 /** What the lease module may take from `node:fs`: make, close, delete, mkdir, stat, access, constants. */

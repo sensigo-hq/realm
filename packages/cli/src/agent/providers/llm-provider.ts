@@ -16,6 +16,7 @@ import type { ToolDefinition, ToolExecutor, StepWithToolsResult } from '../mcp/m
 import type { LlmClock } from './agent-utils.js';
 import type { RequestAdapter } from './request-layout.js';
 import type { CacheDiagnosticsSetting } from '../prompt-cache.js';
+import type { ModelTextReport } from './model-text.js';
 
 /**
  * Describes the optional feature set that an LLM provider supports.
@@ -161,6 +162,13 @@ export interface CallStepWithMetaResult {
   meta?: StructuredOutputMeta;
   /** One entry per WIRE REQUEST this step made, in wire order. Absent ⇒ nothing was observed. */
   usage?: UsageRecord[];
+  /**
+   * Gap 1, unit A1: what each request that got an answer sent and got back, one entry per entry
+   * of `usage`, in the same order. Realm keeps each text on the step's record, masked and cut at
+   * 64 KB. Absent, or not one per `usage` entry, or not readable: the step records that the
+   * provider did not report its texts. Realm's own providers always report it.
+   */
+  modelText?: ModelTextReport[];
 }
 
 export abstract class LlmProvider {

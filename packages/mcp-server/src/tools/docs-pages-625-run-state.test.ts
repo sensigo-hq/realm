@@ -453,7 +453,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     async () => {
       claim(
         PAGE,
-        "| `capability_blocks` | The run is open and records that the program which last attempted a step lacked its code, and the step has not run since | Each such step, what it needs, and the error code: the record's marker, shown whenever the run carries one, whatever this server has. The `capability_block` finding is narrower: `get_run_state` reports it only when this server lacks the code too (see [The 16 findings](#the-16-findings)). Added after version 0.46.0. |",
+        "| `capability_blocks` | The run is open and records that the program which last attempted a step lacked its code, and the step has not run since | Each such step, what it needs, and the error code: the record's marker, shown whenever the run carries one, whatever this server has. The `capability_block` finding is narrower: `get_run_state` reports it only when this server lacks the code too (see [The findings](#the-findings)). Added after version 0.46.0. |",
       );
       claim(
         PAGE,
@@ -1176,7 +1176,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
 // and the built CLI (fresh HOME). What a failing cell prints: kinds, steps, checks, line counts.
 describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
   it('the page: 16 findings, the cannot_go_on row and example, the list --stuck surface row, the guard and trust rows', () => {
-    claim(PAGE, '### The 16 findings'); // #715 (b) commit 4: record_stamped_ahead
+    claim(PAGE, '### The findings'); // #715 (b) commit 4: record_stamped_ahead
     claim(
       PAGE,
       "| `cannot_go_on` | The run is in `running`, no step is in progress, and a step it must run next is refused before its claim — its trust, a precondition, or an input its schema rejects — so nothing can run until the workflow is corrected. Found the moment it is so, at any age, wherever the definition can be read (`list --stuck`, `inspect`, `get_run_state`). `since` is the run's last change (the record's own instant): the finding keeps no clock, and a workflow corrected or registered again later is not a change of the run. (added after version 0.47.0) | `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)` |",

@@ -1089,8 +1089,9 @@ export function agentRenderedList(
       )
       .map((w) => w.gate_id),
   );
-  // #922 (D3 §3): a held step waits only while it can still finish — its deadline ahead, or its
-  // age unknown or unreadable; a held step past its deadline is no wait, and never one alone.
+  // #922 (D3 §3): a held step waits only while it can still finish — its deadline ahead, its lease
+  // held (#729 CW-3a), or its age unknown or unreadable; a held step past its deadline, or whose
+  // lease no program held, is no wait, and never one alone.
   const waitsOnOthers = (u: Unavailable): boolean => {
     if (u.code === 'held_elsewhere') return !heldIsPast(heldStateOf(u).state);
     if (u.code === 'door_withholds_answers') return true;
@@ -3339,10 +3340,10 @@ export function heldRerunOf(
 
 /**
  * #922 P2-1 (D3 §6, N6): the agent's clauses for a reply's held steps — one per group of steps in the
- * same state (and, past, the same rerun basis), past → unknown age → unreadable → no claim record →
- * ahead, each naming at most `NAMES_SHOWN` steps and its group's instant: the earliest deadline (ahead,
- * past), the earliest stamped `since` (unknown age, unreadable). Each clause is a full sentence;
- * empty for no held step.
+ * same state (and, past or lease not held, the same rerun basis), no claims kept → past → lease not
+ * held → unknown age → unreadable → no claim record → ahead → lease held (#729 CW-3a), each naming at
+ * most `NAMES_SHOWN` steps and its group's instant: the earliest deadline (ahead, past), the earliest
+ * stamped `since` (unknown age, unreadable). Each clause is a full sentence; empty for no held step.
  */
 export function heldAgentWords(
   held: readonly (HeldWordsEntry & { facts: FactsOf<'held_elsewhere'> })[],

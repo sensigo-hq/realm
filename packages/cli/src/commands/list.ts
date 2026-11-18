@@ -6,6 +6,7 @@ import {
   classifyRunHealth,
   RUN_HEALTH_STUCK_EXCLUDED,
   deriveRunPhase,
+  RUN_PHASES,
   DEFAULT_IDLE_THRESHOLD_MS,
   type FailedAttemptStore,
   computeGateDueState,
@@ -40,18 +41,6 @@ function colorState(phase: RunPhase): string {
   if (phase === 'gate_waiting') return chalk.cyan(word);
   return chalk.yellow(word);
 }
-
-// issue #289: 'aborted' was missing — RunPhase has carried it since #279 increment 2 (PR-C), but
-// this list (the ONLY --status validator) was never updated, so a genuinely valid phase value was
-// rejected. This is the single source both the --status help text and the validator below read.
-const VALID_PHASES: RunPhase[] = [
-  'running',
-  'gate_waiting',
-  'completed',
-  'failed',
-  'abandoned',
-  'aborted',
-];
 
 /**
  * Formats a threshold duration for the `--stuck` header, e.g. `24h`, `30d`, `10m`, `0m`. Whole-
@@ -552,7 +541,7 @@ export async function listRuns(
 export const listCommand = new Command('list')
   .description('List all runs, sorted by most recent first')
   .option('--workflow <id>', 'Filter by workflow ID')
-  .option('--status <phase>', `Filter by run phase (${VALID_PHASES.join(', ')})`)
+  .option('--status <phase>', `Filter by run phase (${RUN_PHASES.join(', ')})`)
   .option(
     '--stuck',
     'Show only runs with a health finding (realm run inspect names it) — among them a run that cannot go on until its workflow is corrected, at any age, and an open run idle past --older-than; ' +
@@ -656,9 +645,9 @@ export const listCommand = new Command('list')
 
       let statusFilter: RunPhase | undefined;
       if (opts.status !== undefined) {
-        if (!VALID_PHASES.includes(opts.status as RunPhase)) {
+        if (!RUN_PHASES.includes(opts.status as RunPhase)) {
           console.error(
-            `Invalid --status value '${opts.status}'. Valid values: ${VALID_PHASES.map((p) => writerCtx().word(p, RUN_PHASE_WORDS)).join(', ')}`,
+            `Invalid --status value '${opts.status}'. Valid values: ${RUN_PHASES.map((p) => writerCtx().word(p, RUN_PHASE_WORDS)).join(', ')}`,
           );
           process.exit(1);
         }

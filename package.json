@@ -16,6 +16,7 @@
     "check:versions": "node scripts/check-versions.mjs",
     "check:brands": "node scripts/check-brands.mjs",
     "docs:library": "node scripts/generate-library-reference.mjs",
+    "docs:tables": "node scripts/generate-docs-tables.mjs",
     "audit:ci": "audit-ci --config ./audit-ci.jsonc",
     "audit:full": "audit-ci --config ./audit-ci.tier2.jsonc",
     "deps:audit": "knip --dependencies --treat-config-hints-as-errors",

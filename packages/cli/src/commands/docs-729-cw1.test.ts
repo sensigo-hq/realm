@@ -59,7 +59,7 @@ describe('#729 CW-1 — the claim lease’s words', () => {
     // The two counts (40 values, 39 types) are docs-616-c12's C10 and docs-715a's type-count cell.
     claim(
       TESTING,
-      '`storeClockContract`, `STORE_CLOCK_LAWS`, `leasePortContract`, `LEASE_PORT_LAWS`, `createLeaseDouble`, `leaseFactsContract`, `LEASE_FACTS_LAWS`, `leasedClaimContract`, `LEASED_CLAIM_LAWS` |',
+      '`storeClockContract`, `STORE_CLOCK_LAWS`, `leasePortContract`, `LEASE_PORT_LAWS`, `createLeaseDouble`, `leaseFactsContract`, `LEASE_FACTS_LAWS`, `leasedClaimContract`, `LEASED_CLAIM_LAWS`, `takeBackContract`, `TAKE_BACK_LAWS` |',
     );
     // The section: each law's line is the law the contract checks (lease-port-contract.ts, run in
     // contract-leases-cw1); the evidence line is the contract's own print; the refusal of an
