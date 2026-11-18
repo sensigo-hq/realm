@@ -214,6 +214,8 @@ describe('#922 P2-2 — item 2: what `realm run advance` exits 1 on (the compose
       ['past + unreadable', { x: CLAIMS['past'], y: CLAIMS['unreadable'] }],
       ['past + no claim record', { x: CLAIMS['past'], y: undefined }],
       ['ahead', { y: CLAIMS['ahead'] }, ['x']],
+      // `y` owed to the engine: the advance way is offered, so nothing waits on the past step alone
+      ['past + owed engine work', { x: CLAIMS['past'] }, []],
     ] as const) {
       results[name] = waitsOnlyOnPastHeld((await heldOn(held, true, [...(completed ?? [])])).ways);
     }
@@ -227,6 +229,7 @@ describe('#922 P2-2 — item 2: what `realm run advance` exits 1 on (the compose
       'past + unreadable': false,
       'past + no claim record': false,
       ahead: false,
+      'past + owed engine work': false,
     });
   });
 });
