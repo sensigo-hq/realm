@@ -35,7 +35,9 @@ import { settableClock } from '../clock/settable-clock.js';
  *   run's workflow, the host, `attempts` 0, `created_at` and `next_attempt_at` the run's `created_at`);
  *   a `webhook_id` another row holds throws and leaves no new run and no row; an idempotent match
  *   (`created: false`) writes no row and does not throw. "No run" is read two ways: the store's count
- *   of the workflow's runs (a scan) and the refused create's key.
+ *   of the workflow's runs (a scan) and the refused create's key. Callback B1b: a keyed create that
+ *   supersedes a finished run stamped after the clock's reading stamps its row, as its run, at the
+ *   holder's floor, never at the raw reading.
  * - `CB_NO_PORT_REFUSES` — a store built without a callback store refuses a `callback` with
  *   `VALIDATION_OPTION_INVALID` and leaves no run, on an idempotent match too; a malformed `callback`
  *   throws its own error first.
@@ -663,6 +665,49 @@ function family(adapter: CallbackStoreContractAdapter) {
           );
           const made = await b.create(reg(5));
           same(law, 'and the run has its row', (await b.callbacks.read(made))?.status, 'pending');
+          // Callback B1b: a keyed create that supersedes a finished run stamped after the clock's
+          // reading is stamped at its holder's floor (1 ms after it), and so is its row: the run's
+          // own `created_at`, never the raw reading.
+          // The holder is planted as a new finished run under the key (a store keeps a run's
+          // `created_at` fixed, so it is not moved).
+          const ended = await b.create();
+          await b.finish(ended);
+          const holderId = uuid(90);
+          const finishedAt = await b.record(ended);
+          const ahead = iso(Date.parse(finishedAt.created_at) + 2000);
+          await b.plant({
+            ...finishedAt,
+            id: holderId,
+            idempotency_key: 'floor',
+            created_at: ahead,
+            updated_at: ahead,
+          });
+          const superseding = await b.store.create({
+            workflowId: WORKFLOW,
+            workflowVersion: 1,
+            params: {},
+            idempotencyKey: 'floor',
+            onTerminalMatch: 'rerun',
+            callback: reg(6),
+          });
+          const floored = superseding.record.created_at;
+          const row = await b.callbacks.read(superseding.record.id);
+          same(
+            law,
+            'a supersede: the run at its holder’s floor, the row with the run’s created_at',
+            {
+              created: superseding.created,
+              rerunOf: superseding.record.rerun_of,
+              run: floored,
+              row: { created_at: row?.created_at, next_attempt_at: row?.next_attempt_at },
+            },
+            {
+              created: true,
+              rerunOf: holderId,
+              run: iso(Date.parse(ahead) + 1),
+              row: { created_at: floored, next_attempt_at: floored },
+            },
+          );
         }),
     ),
     L(

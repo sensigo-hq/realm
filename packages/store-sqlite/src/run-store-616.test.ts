@@ -367,6 +367,32 @@ describe('#616 unit 12a — create, get and a page of scan', () => {
     }).toEqual({ readsBack: true, fired: 1 });
   });
 
+  it('callback B1b, check 5: a create with a callback whose COMMIT reports an error after its rows reached the file answers landed: the create resolves, and the run and its row read back', async () => {
+    const files = faultyFiles(openDatabase);
+    const { runStore } = await open(testClock(T).clock, { openFile: files.openFile });
+    const connection = files.opened.at(-1)!;
+    connection.arm({
+      at: (sql) => sql === 'COMMIT',
+      times: 1,
+      first: 'run',
+      error: SQLITE.ioError,
+    });
+    const callback = {
+      url: 'https://hooks.example/callback/1',
+      host: 'hooks.example:443',
+      webhook_id: '00000000-0000-4000-8000-000000000001',
+    };
+    const created = await runStore.create({ ...BARE, callback });
+    // (1) red when the create's check does not find the row it wrote by its content (the protocol
+    //     then answers inconclusive and the create rejects), or the fault did not fire; (2) prints
+    //     whether the run read back equal, the row's state and the fault's firings.
+    expect({
+      readsBack: text(await runStore.get(created.record.id)) === text(created),
+      row: (await runStore.callbacks.read(created.record.id))?.status,
+      fired: connection.hits(),
+    }).toEqual({ readsBack: true, row: 'pending', fired: 1 });
+  });
+
   it('check 5: a create whose COMMIT reports an error after SQLite rolled it back answers not_landed: the create rejects and no run is stored', async () => {
     const files = faultyFiles(openDatabase);
     const { runStore } = await open(testClock(T).clock, { openFile: files.openFile });

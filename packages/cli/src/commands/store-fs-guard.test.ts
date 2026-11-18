@@ -175,6 +175,8 @@ const WIRED_STORES = [
   'SqliteFailedAttemptStore',
   'SqliteRunStore',
   'SqliteOutboundLedger',
+  // Callback B1b: the run store's callback store.
+  'SqliteCallbackStore',
 ];
 
 /** This guard's OWN file — excluded from its own scan below (issue #197 PR-1, design §12: fixing

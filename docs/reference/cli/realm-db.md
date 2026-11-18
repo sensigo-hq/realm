@@ -229,7 +229,7 @@ It prints `realm db backup`'s line for the kept file, then:
 
 and then either `The file it replaced and the backup hold the same runs.` or `Left out of the restored file: <a> run(s) that only the replaced file had, and the replaced file's version of <b> run(s) that both files hold. Brought back: <c> run(s) that only the backup had. All of the replaced file is in the copy above. Only runs are counted.`
 
-The counts cover runs only. Not counted: the Slack reminders and escalations already sent, which are not restored and are sent again; `realm listen`'s duplicate-webhook marks; saved replays; refused answers. A run purged after the backup was made comes back, and the record of its purge is gone.
+The counts cover runs only. Not counted: the Slack reminders and escalations already sent, which are not restored and are sent again; `realm listen`'s duplicate-webhook marks; saved replays; refused answers. The `callbacks` and `callback_keys` tables are not counted either: a callback marked delivered after the backup reads pending again, and a signing key made after the backup is gone. A run purged after the backup was made comes back, and the record of its purge is gone.
 
 When the backup is at an older schema version than this Realm writes, a last line says what comes next: ``This backup is at schema version <m> and this Realm writes version <r>. To use it with this Realm, run `realm db migrate`; to use it with an older Realm, install that Realm now.`` To go back to an older Realm, restore first with this Realm, then install the older one. A file that is already migrated can instead be stepped back without losing a run: `realm db migrate --to 1` (see [Going back without losing runs](../guides/upgrade.md#going-back-without-losing-runs)).
 
