@@ -53,8 +53,12 @@ import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.j
 const LEASE = 'lease-cw1b2b-host';
 /** A deadline long passed: by its deadline alone, the claim is stale. */
 const PAST = '2020-01-02T03:04:05.000Z';
-/** The stale sentence of the watchers' last line (`inFlightLine`). */
-const STALE = 'Its claim is past its deadline (its runner likely died).';
+/**
+ * #922 P2-2 (MA 2, WO922-P22-MA2-03): the watchers' last line (`inFlightLine`) for a claim whose
+ * lease is held — wait for it, no command. Without the lease fact the claim is judged by its deadline
+ * alone (PAST): its deadline-passed words and the command that frees it.
+ */
+const waits = (step: string): string => `'${step}' is held; wait for it.`;
 
 /** Another program's claim of a step, naming the lease `id`, its deadline passed. */
 const claimNaming = (id: string, step: string): ClaimRecord => ({
@@ -201,81 +205,109 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
         expect(lines.filter((l) => l.startsWith('  • '))).toEqual([
           `  • a: healthy  (deadline: ${PAST})`,
         ]);
+        // #922 P2-2 (MA 2, WO922-P22-MA2-03): nothing under a claim whose lease is held. (1) red when
+        //     the dry run offers to free a program that holds its lease; (2) prints its lines.
+        expect(lines.filter((l) => l.startsWith('      '))).toEqual([]);
       } finally {
         held.close();
       }
     }, 60_000);
 
-    it('(h) realm workflow run: the watch on a step whose claim’s lease is not held says it is stale', async () => {
-      const dir = mkdtempSync(join(tmpdir(), 'realm-cw1b2b-wf-'));
-      const savedTTY = process.stdin.isTTY;
-      // Without this the non-TTY guard refuses before the loop.
-      process.stdin.isTTY = true;
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
-        throw new Error('process.exit');
-      }) as never);
-      const yaml = [
-        'id: wf-cw1b2b-watch',
-        'name: wf-cw1b2b-watch',
-        'version: 1',
-        'steps:',
-        '  a:',
-        '    description: Note a.',
-        '    execution: agent',
-        '  sleep:',
-        '    description: Slow step.',
-        '    execution: auto',
-        '',
-      ].join('\n');
-      const def = loadWorkflowFromString(yaml);
-      const store = h.home.runStore;
-      // At `a`'s prompt, another program has taken `sleep` under a lease it then closed: the claim
-      // stays, naming a lease file nothing holds.
-      mocks.question.mockImplementation(async (prompt: string) => {
-        if (prompt.startsWith('  Agent output')) {
-          const runId = (await runIds(store))[0]!;
-          const { record } = await store.claimStep(runId, 'sleep', def);
-          const held = await holdLease(store);
-          const { record: named } = await store.update({
-            ...record,
-            claims: { ...record.claims, sleep: claimNaming(held.id, 'sleep') },
-          });
-          held.close(named);
+    // #922 P2-2 (MA 2, WO922-P22-MA2-03): the lease held, the watch says to wait (no command); closed
+    // (not held), the claim is judged by its deadline: the past line and the command that frees it.
+    it.each(['held', 'closed'] as const)(
+      '(h) realm workflow run, the lease %s: the watch reads the claim’s lease fact (#922 P2-2)',
+      async (lease) => {
+        const dir = mkdtempSync(join(tmpdir(), 'realm-cw1b2b-wf-'));
+        const savedTTY = process.stdin.isTTY;
+        // Without this the non-TTY guard refuses before the loop.
+        process.stdin.isTTY = true;
+        const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+          throw new Error('process.exit');
+        }) as never);
+        const yaml = [
+          'id: wf-cw1b2b-watch',
+          'name: wf-cw1b2b-watch',
+          'version: 1',
+          'steps:',
+          '  a:',
+          '    description: Note a.',
+          '    execution: agent',
+          '  sleep:',
+          '    description: Slow step.',
+          '    execution: auto',
+          '',
+        ].join('\n');
+        const def = loadWorkflowFromString(yaml);
+        const store = h.home.runStore;
+        // At `a`'s prompt, another program has taken `sleep` under a lease it still holds while the
+        // command runs (#922 P2-2: the held lease is what the watch reads); closed after the command.
+        let held: LeaseHold | undefined;
+        let runId = '';
+        mocks.question.mockImplementation(async (prompt: string) => {
+          if (prompt.startsWith('  Agent output')) {
+            runId = (await runIds(store))[0]!;
+            const { record } = await store.claimStep(runId, 'sleep', def);
+            held = await holdLease(store);
+            const { record: named } = await store.update({
+              ...record,
+              claims: { ...record.claims, sleep: claimNaming(held.id, 'sleep') },
+            });
+            // closed: the claim stays, naming a lease file nothing holds (CW-1's L5)
+            if (lease === 'closed') held.close(named);
+          }
+          return '';
+        });
+        writeFileSync(join(dir, 'workflow.yaml'), yaml, 'utf8');
+        const restore = setInFlightWatchForTests(200);
+        let code: number;
+        try {
+          await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
+          code = 0;
+        } catch (err) {
+          if (!(err instanceof Error) || err.message !== 'process.exit') throw err;
+          code = Number(exitSpy.mock.calls[0]?.[0]);
+        } finally {
+          restore();
+          held?.close();
+          if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
+          else process.stdin.isTTY = savedTTY;
+          mocks.question.mockReset();
+          rmSync(dir, { recursive: true, force: true });
         }
-        return '';
-      });
-      writeFileSync(join(dir, 'workflow.yaml'), yaml, 'utf8');
-      const restore = setInFlightWatchForTests(200);
-      let code: number;
-      try {
-        await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
-        code = 0;
-      } catch (err) {
-        if (!(err instanceof Error) || err.message !== 'process.exit') throw err;
-        code = Number(exitSpy.mock.calls[0]?.[0]);
-      } finally {
-        restore();
-        if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
-        else process.stdin.isTTY = savedTTY;
-        mocks.question.mockReset();
-        rmSync(dir, { recursive: true, force: true });
-      }
-      const inFlight = errSpy.mock.calls
-        .map((c: unknown[]) => String(c[0]))
-        .filter((l) => l.startsWith("• Step 'sleep' has been in flight"));
-      // (1) red when the watch's last read is judged without its facts (the claim then reads
-      //     claim_unknown_age, never stale); (2) prints the in-flight lines and the exit.
-      expect({ stale: inFlight.map((l) => l.includes(STALE)), code }).toEqual({
-        stale: [true],
-        code: 1,
-      });
-    }, 60_000);
+        const errLines = errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+        const inFlight = errLines.filter((l) => l.startsWith("• Step 'sleep' has been in flight"));
+        // #922 P2-2 (item 4): the hand-back's way on — wait while the lease is held; free it once not.
+        const goOn = errLines.flatMap((l) => l.split('\n')).find((l) => l.startsWith('  Go on:'));
+        expect(goOn).toBe(
+          lease === 'held'
+            ? `  Go on:     once 'sleep' is no longer in flight, realm run advance ${runId}`
+            : `  Go on:     once 'sleep' is freed (realm run reclaim ${runId} prints its command), realm run advance ${runId}`,
+        );
+        // (1) red when the watch's last read is judged without its facts (a held lease then reads past
+        //     its deadline, with the command), or a closed one is still waited for; (2) prints the
+        //     in-flight lines and the exit.
+        expect({
+          lines: inFlight.map((l) => ({
+            waits: l.endsWith(waits('sleep')),
+            past: l.endsWith(
+              `'sleep' was claimed and its deadline passed at ${PAST}; no result is recorded for it. It is not declared idempotent, so running it again may repeat its effects. To free it, run: realm run reclaim ${runId} --step sleep --claimed-at ${PAST} --force`,
+            ),
+          })),
+          code,
+        }).toEqual({
+          lines: [{ waits: lease === 'held', past: lease === 'closed' }],
+          code: 1,
+        });
+      },
+      60_000,
+    );
   });
 
-  it('(h) realm agent: the watch on a step whose claim’s lease is not held says it is stale', async () => {
-    const store = leasedStore('dead');
+  it('(h) realm agent: the watch on a step whose claim’s lease is held says to wait for it, with no command (#922 P2-2)', async () => {
+    const store = leasedStore('live');
     const run = await seedHeld(store);
     const provider = new (class extends LlmProvider {
       callStep = vi.fn();
@@ -308,8 +340,13 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
     const inFlight = logSpy.mock.calls
       .map((c: unknown[]) => String(c[0]))
       .filter((l) => l.startsWith("• Step 'a' has been in flight"));
-    // (1) red when the watch's last read is judged without its facts (the claim then reads
-    //     claim_unknown_age, never stale); (2) prints the in-flight lines.
-    expect(inFlight.map((l) => l.includes(STALE))).toEqual([true]);
+    // (1) red when the watch's last read is judged without its facts (the claim then reads past its
+    //     deadline, with the command that frees it); (2) prints the in-flight lines.
+    expect(
+      inFlight.map((l) => ({
+        waits: l.endsWith(waits('a')),
+        command: l.includes('realm run reclaim'),
+      })),
+    ).toEqual([{ waits: true, command: false }]);
   });
 });

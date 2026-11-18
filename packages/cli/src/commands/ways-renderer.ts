@@ -9,16 +9,21 @@
 // `shellWord`; a `Slot` printed as its one value or `<one of: …>` with each member quoted (T-7); no
 // full stop after a printed command (C212).
 import {
+  HELD_WORDS,
   NAMES_SHOWN,
+  PROGRESS_VERBS,
   cannotGoOnFrom,
   cannotGoOnUntilCorrected,
   cannotRunParts,
   capText,
+  heldStateOf,
+  heldWordsStateOf,
   libraryCannotRunWords,
   listWords,
   oneOf,
   preconditionHint,
   preconditionRefusal,
+  reclaimConditionWords,
   sentenceEnd,
   shellWord,
   withFullStop,
@@ -401,12 +406,102 @@ export function agentReadyLine(
   return `${ready} with ${ctx.cmd(`realm agent --run-id ${runId} --provider <provider> --model <model>`)}`;
 }
 
+/** #922 P2-2: one step held by another program, as core composed it — its state and its reclaim way. */
+export type HeldEntry = Extract<Unavailable, { code: 'held_elsewhere' }>;
+
+/** #922 P2-2: the held steps of a composition, in its order (never `advance`'s copy of one). */
+export function heldEntriesOf(composed: Pick<ComposedWays, 'unavailable'>): HeldEntry[] {
+  return composed.unavailable.filter(
+    (u): u is HeldEntry => u.verb === 'run_step' && u.code === 'held_elsewhere',
+  );
+}
+
 /**
- * The reason for one step in flight in another program (decisions C37, C205): `'<s>' is in flight in
- * another program — wait for it, or see realm run inspect <id>`.
+ * #922 P2-2 (MA 2, WO922-P22-MA2-03) — TEMPORARY, until CW-3 folds the lease into the held state for
+ * every door and removes this branch: a held step whose claim names a lease the store reports held
+ * is still running (CW-1b) — the CLI says to wait for it, with no command. Read from the entry's own
+ * lease fact.
  */
-export function inFlightLine(runId: string, step: string, ctx: RenderCtx = PLAIN): string {
-  return `'${step}' is in flight in another program — wait for it, or see ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: runId }, undefined, hostOf(ctx))}`;
+export function leaseHeld(entry: HeldEntry): boolean {
+  return entry.facts.lease?.state === 'held';
+}
+
+/** A held entry's reclaim way; `undefined` on a store that keeps no claims (its entry offers none). */
+function reclaimWayIn(entry: HeldEntry): WayOf<'reclaim'> | undefined {
+  return entry.remedy.find((w): w is WayOf<'reclaim'> => w.verb === 'reclaim');
+}
+
+/**
+ * #922 P2-2 (the owner's B): what frees a held step — each condition's words, said before the
+ * command (core's one table, `reclaimConditionWords`), then `To free it, run: <command>` (`To free it
+ * anyway, run:` while its deadline is ahead), the claim's stamp in the command when it carries one.
+ */
+function freeingParts(entry: HeldEntry, way: WayOf<'reclaim'>, ctx: RenderCtx): string[] {
+  const anyway = heldStateOf(entry).state === 'ahead' ? ' anyway' : '';
+  return [
+    ...way.conditions.flatMap((c) => reclaimConditionWords(c) ?? []),
+    `To free it${anyway}, run: ${CLI_COMMANDS.reclaim(way, undefined, hostOf(ctx))}`,
+  ];
+}
+
+/**
+ * #922 P2-2 (R13): the ONE CLI line for a held step, read by every CLI door that names one — its
+ * state's opening (core's `HELD_WORDS.cli`), then what frees it ({@link freeingParts}); on a store
+ * that keeps no claims, the opening alone; a claim whose lease is held, `'<s>' is held; wait for it.`
+ * alone ({@link leaseHeld}). Facts and conditions only (rule 10).
+ */
+export function heldLine(entry: HeldEntry, ctx: RenderCtx = PLAIN): string {
+  if (leaseHeld(entry)) return HELD_WORDS.cli('ahead', entry.facts.step, undefined);
+  const way = reclaimWayIn(entry);
+  const held = heldStateOf(entry);
+  const at =
+    held.state === 'ahead' || held.state === 'past'
+      ? held.deadline
+      : typeof entry.facts.claimed_at === 'string'
+        ? entry.facts.claimed_at
+        : undefined;
+  const opening = HELD_WORDS.cli(heldWordsStateOf(entry, way !== undefined), entry.facts.step, at);
+  return way === undefined ? opening : [opening, ...freeingParts(entry, way, ctx)].join(' ');
+}
+
+/**
+ * #922 P2-2: the lines under a held step on the screens that list each one (`realm run reclaim
+ * <id>`, `realm run inspect`) — for a step past its deadline, `HELD_WORDS.pastLine` first; then what
+ * frees it ({@link freeingParts}), one line each. Empty on a store that keeps no claims, and for a
+ * claim whose lease is held ({@link leaseHeld}).
+ */
+export function heldWayLines(entry: HeldEntry, ctx: RenderCtx = PLAIN): string[] {
+  const way = reclaimWayIn(entry);
+  if (way === undefined || leaseHeld(entry)) return [];
+  const held = heldStateOf(entry);
+  return [
+    ...(held.state === 'past' ? [HELD_WORDS.pastLine(held.deadline)] : []),
+    ...freeingParts(entry, way, ctx),
+  ];
+}
+
+/**
+ * #922 P2-2 (m-I): what `realm run inspect` and `realm run drain` print in place of the held lines
+ * on a run whose workflow definition cannot be read — the dry run, which lists each one's command.
+ */
+export function heldWithoutDefinitionLine(runId: string, ctx: RenderCtx = PLAIN): string {
+  return `Its workflow definition cannot be read here; ${ctx.cmd(`realm run reclaim ${runId}`)} lists each held step's command.`;
+}
+
+/**
+ * #922 P2-2 (ladder row 4): whether the only thing a run waits on is steps held past their deadline
+ * — no progress way offered (no owed engine work, no ready agent step, no question to answer), and
+ * every progress-verb entry listed is a held step past its deadline (`advance`'s copy of one
+ * included). `realm run advance` exits 1 then.
+ */
+export function waitsOnlyOnPastHeld(composed: Pick<ComposedWays, 'ways' | 'unavailable'>): boolean {
+  const progress = (verb: string): boolean => (PROGRESS_VERBS as readonly string[]).includes(verb);
+  if (composed.ways.some((w) => progress(w.verb))) return false;
+  const blockers = composed.unavailable.filter((u) => progress(u.verb));
+  return (
+    blockers.length > 0 &&
+    blockers.every((u) => u.code === 'held_elsewhere' && heldStateOf(u).state === 'past')
+  );
 }
 
 /**
@@ -452,11 +547,8 @@ export function stopReasons(
     .map((w) => w.step);
   const ready = agentReadyLine(runId, agentSteps, ctx);
   if (ready !== undefined) reasons.push(ready);
-  for (const held of composed.unavailable) {
-    if (held.verb === 'run_step' && held.code === 'held_elsewhere') {
-      reasons.push(inFlightLine(runId, held.facts.step, ctx));
-    }
-  }
+  // #922 P2-2: each held step's state and what frees it, from its composed entry.
+  for (const held of heldEntriesOf(composed)) reasons.push(heldLine(held, ctx));
   return reasons.length > 0 ? reasons : ['nothing is ready to run now'];
 }
 

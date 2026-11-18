@@ -339,18 +339,31 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
   });
 
   it("the in-flight watch line's reclaim command (#706's): a step name with a space and a quote, quoted; the line ends with the command", () => {
+    // #922 P2-2: the line reads the step's composed entry (its reclaim way, with the claim's stamp).
+    const since = '2026-01-01T00:00:00.000Z';
     const line = inFlightLine(
-      'R',
-      "it's held",
       {
-        holder: { by: 'other', by_source: 'stated', channel: 'agent' },
-        since: '2026-01-01T00:00:00.000Z',
+        verb: 'run_step',
+        step: "it's held",
+        code: 'held_elsewhere',
+        facts: { step: "it's held", deadline: { absent: 'unknown_age' }, claimed_at: since },
+        remedy: [
+          {
+            verb: 'reclaim',
+            conditions: [{ code: 'override_claim_unknown_age', state: 'unknown_age' }],
+            run_id: 'R',
+            step: "it's held",
+            claimed_at: since,
+          },
+        ],
       },
-      false,
+      { holder: { by: 'other', by_source: 'stated', channel: 'agent' }, since },
       60_000,
     );
     // (a) red when the step name is printed bare (`--step it's held` — an unterminated quote, the
     //     command refused or run on another step); (b) prints the line's command.
-    expect(commandOf(line)).toBe("realm run reclaim R --step 'it'\\''s held' --force");
+    expect(commandOf(line)).toBe(
+      `realm run reclaim R --step 'it'\\''s held' --claimed-at ${since} --force`,
+    );
   });
 });

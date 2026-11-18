@@ -191,8 +191,8 @@ async function priceSourceFor(
  * - `awaiting_human` — a human gate is open, and has not expired with a declared `on_expiry`.
  * - `workflow_unresolved` — no workflow store provided, or the workflow is not registered.
  * - `skipped_terminal` — the run is terminal; nothing to do.
- * - `claim_stale` — a non-terminal run has an in-progress claim past its deadline (a likely-dead
- *   runner / the after-claim wedge, issue #101). Surfaced even when a healthy sibling is in flight.
+ * - `claim_stale` — a non-terminal run has an in-progress claim past its deadline (the after-claim
+ *   wedge, issue #101). Surfaced even when a healthy sibling is in flight.
  * - `claim_unknown_age` — a non-terminal run's only in-progress claims have no deadline (agent /
  *   finalizer-bearing / legacy) and there is nothing else to do — detect-only, human-judged.
  * - `blocked_on_capability` — an owed step needs a handler or an adapter that this server does not
@@ -604,8 +604,8 @@ export interface RunStateSummary {
   };
   /**
    * Eligible agent/handler steps for this run. Empty unless `next_actions_status` is `'ok'` —
-   * except a `claim_stale` status may accompany still-actionable steps when a dead claim coexists
-   * with eligible work mid-fan-out (the dead claim overrides the status but does not hide the work).
+   * except a `claim_stale` status may accompany still-actionable steps when a claim past its deadline
+   * coexists with eligible work mid-fan-out (it overrides the status but does not hide the work).
    */
   next_actions: McpNextAction[];
   /** Diagnostic classification — distinguishes a genuinely-stuck run from "nothing pending". */
@@ -1111,9 +1111,9 @@ export async function handleGetRunState(
     // Wedge detection (issue #101) — definition-free (reads the stored per-claim deadline), so it
     // also refines the `workflow_unresolved` path. Carves the wedge states OUT of the
     // ok / advance_owed / workflow_unresolved fall-through:
-    //  - a `claim_stale` claim (past deadline → likely-dead runner) is surfaced even mid-fan-out;
+    //  - a `claim_stale` claim (past its deadline) is surfaced even mid-fan-out;
     //  - when only unknown-age claims remain and there is nothing else to do, surface
-    //    `claim_unknown_age` (detect-only). A `healthy` in-flight claim (a live runner) stays 'ok'.
+    //    `claim_unknown_age` (detect-only). A `healthy` in-flight claim (its deadline ahead) stays 'ok'.
     if (run.in_progress_steps.length > 0) {
       // The open question's own step holds a claim while it waits (decision C95 reaches this block
       // with a question open, when its time is up): it is not work in flight, as `stuck_claims`

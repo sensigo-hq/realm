@@ -60,6 +60,9 @@ import {
   owedItems,
   advanceNeedsWords,
   heldByAnswerWords,
+  heldEntriesOf,
+  heldWayLines,
+  heldWithoutDefinitionLine,
   writerHost,
 } from './ways-renderer.js';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
@@ -1678,6 +1681,18 @@ export async function inspectRun(
   }
   lines.push(`Completed: ${run.completed_steps.join(', ') || '(none)'}`);
   lines.push(`In Progress: ${run.in_progress_steps.join(', ') || '(none)'}`);
+  // #922 P2-2 (item 7): each held step's composed entry — under its line, what frees it.
+  const heldSteps = new Map(
+    definition !== undefined && !run.terminal_state
+      ? heldEntriesOf(
+          composeWaysAt(run, runAt, {
+            definition,
+            persistsClaims: store.persistsClaims === true,
+            lease_facts: read.lease_facts,
+          }),
+        ).map((e) => [e.facts.step, e])
+      : [],
+  );
   // issue #625 (holder slice): one line per in-progress step — the program that took it, how its
   // name is known, the door it came through, how long ago; or why there is no name. A step whose
   // question is open or answered reads "question opened through": that claim names the program
@@ -1705,6 +1720,18 @@ export async function inspectRun(
           ? `${verb} ${ABSENCE_WORDS.name_unreadable}`
           : ABSENCE_WORDS[described.absent_cause];
     lines.push(`  ${step}: ${body}${age}`);
+    const held = heldSteps.get(step);
+    if (held !== undefined) {
+      for (const line of heldWayLines(held, writerCtx())) lines.push(`    ${line}`);
+    }
+  }
+  // #922 P2-2 (m-I): with no definition read, the dry run lists each held step's command.
+  if (
+    definition === undefined &&
+    !run.terminal_state &&
+    run.in_progress_steps.some((s) => s !== run.pending_gate?.step_name)
+  ) {
+    lines.push(`  ${heldWithoutDefinitionLine(run.id, writerCtx())}`);
   }
   lines.push(`Failed: ${run.failed_steps.join(', ') || '(none)'}`);
   lines.push(`Skipped: ${run.skipped_steps.join(', ') || '(none)'}`);
@@ -1917,18 +1944,39 @@ export async function inspectRun(
   lines.push(`Evidence (${stepOrder.length} ${stepOrder.length === 1 ? 'step' : 'steps'}):`);
 
   stepOrder.forEach((stepId, idx) => {
-    const snaps = stepSnapshots.get(stepId)!;
+    const isExecution = (s: EvidenceSnapshot): boolean =>
+      s.kind === undefined || s.kind === 'execution';
+    const stepEntries = stepSnapshots.get(stepId)!;
+    // #922 P2-2 (item 7, walk N4): a reclaim's audit entry is its own line in the step's history —
+    // out of the step's entries before either branch (the single branch prints `snaps[0]`), and out
+    // of its view's attempts by the same index, so every later attempt keeps its program line and
+    // cost, and it is never printed as an attempt or as the step's result.
+    const isReclaim = (s: EvidenceSnapshot | undefined): boolean =>
+      s?.output_summary?.['reclaimed'] === true;
+    const reclaimLines = stepEntries.filter(isReclaim).map((s) => {
+      const at = s.output_summary['reclaimed_at'];
+      return `     Reclaimed at ${typeof at === 'string' ? at : s.completed_at}: its claim was removed so the step could run again.`;
+    });
+    const snaps = stepEntries.filter((s) => !isReclaim(s));
     // issue #600 PR 1b: multi-attempt is now keyed on EXECUTION-entry count alone — the `attempt`
     // field is ignored. A resumed agent step has two execution entries and no `attempt` at all;
     // the old `snaps.length > 1 && snaps.some(s => s.attempt !== undefined)` gate sent it to the
     // single branch, which renders only `snaps[0]` — the FAILED first entry, hiding the success.
-    const executionSnaps = snaps.filter((s) => s.kind === undefined || s.kind === 'execution');
+    const executionSnaps = snaps.filter(isExecution);
     const isMultiAttempt = executionSnaps.length >= 2;
     const totalAttempts = executionSnaps.length;
     const view = stepViews[stepId];
-    const attempts = view?.attempts ?? [];
+    const allExecution = stepEntries.filter(isExecution);
+    const attempts = (view?.attempts ?? []).filter((_, i) => !isReclaim(allExecution[i]));
 
     lines.push('');
+
+    if (snaps.length === 0) {
+      // A step whose only entries are reclaims: its heading and those lines.
+      lines.push(`  ${idx + 1}. ${stepId}`);
+      lines.push(...reclaimLines);
+      return;
+    }
 
     if (isMultiAttempt) {
       // Show step name as header, then each attempt as a sub-item.
@@ -1939,12 +1987,13 @@ export async function inspectRun(
           : '';
       // issue #600 caching PR P: the step's money across its attempts, beside its name; a lower
       // bound when an attempt has no usage figures (the composer's own attempt facts, never a sum).
-      const leavesOut =
-        view?.attempts.some((a) => a.cost_unrecorded !== undefined || a.cost_unreadable === true) ??
-        false;
+      const leavesOut = attempts.some(
+        (a) => a.cost_unrecorded !== undefined || a.cost_unreadable === true,
+      );
       lines.push(
         `  ${idx + 1}. ${stepId}${profileLabel}${stepTotalText(view?.total, totalAttempts, leavesOut)}`,
       );
+      lines.push(...reclaimLines);
       executionSnaps.forEach((snap, ai) => {
         const statusColored = colorStatus(snap.status);
         // #729 PR-3 correction 4 (I-9, I-9b): a hash of the output is a value — shown as its type and
@@ -2065,6 +2114,7 @@ export async function inspectRun(
       lines.push(
         `  ${idx + 1}. ${stepId.padEnd(22)}${profileLabel}${kindLabel} ${statusColored}   ${snap.duration_ms}ms   ${hashShort}`,
       );
+      lines.push(...reclaimLines);
       if (snap.kind === 'gate_response') {
         if (isAnswerEntry(snap)) {
           const { choice: _choice, ...shown } = snap.output_summary;
@@ -2113,7 +2163,7 @@ export async function inspectRun(
             }
           }
         }
-        const singleAttempt = view?.attempts[0];
+        const singleAttempt = attempts[0];
         if (snap.diagnostics !== undefined) {
           lines.push(
             chalk.dim(
