@@ -203,7 +203,8 @@ process.kill(process.pid, 'SIGKILL');`,
       for (const sentence of [
         'The file list comes from the code and from a listing of a home after one command.',
         'Every `realm` command and the `realm-mcp` server keep their data in one SQLite file in the Realm home. The first command on a new home creates the home folder, the store file and four fence files:',
-        "| `realm.db` | The store: runs with their evidence, refused answers, trace lines and sealed lines; `outbound`, a per-run table where `realm agent` records the Slack reminders and escalation it sends; the registered workflows; saved replays; `realm listen`'s duplicate-webhook marks. Created owner-only (mode 0600). | Every command and tool that opens its stores |",
+        // Callback B1a: store format 3's two tables (store-format-v3-b1a.test.ts).
+        "| `realm.db` | The store: runs with their evidence, refused answers, trace lines and sealed lines; `outbound`, a per-run table where `realm agent` records the Slack reminders and escalation it sends; `callbacks`, a per-run table for the callback a run asks for, and `callback_keys`, for the keys that sign callbacks, never stored as plain text; the registered workflows; saved replays; `realm listen`'s duplicate-webhook marks. Created owner-only (mode 0600). | Every command and tool that opens its stores |",
         "| `realm.db-wal`, `realm.db-shm` | SQLite's write-ahead log and its index, beside the file while a process has the store open. A Realm that exits normally leaves none behind; after a crash, the next Realm that opens the store replays the log, and the files go when it exits. | SQLite |",
         // The fence's own text says so (store-sqlite home.ts, FENCE_MARKER and the placed file's words).
         "| `runs`, `workflows`, `replays`, `dedup` | Four read-only fence files (mode 0444), a few lines of text each, at the names the old JSON store's folders had. A Realm from before the SQLite store that is pointed at this home fails on them at once instead of starting a second store. Do not delete them while Realm uses the home. | The first open of the home |",
@@ -213,7 +214,8 @@ process.kill(process.pid, 'SIGKILL');`,
         '### Which commands remove data',
         // purge-sqlite-616.test.ts (the force line's `realm.db shrank by`); store-sqlite home-purge (the
         // run's rows and its artifact stores' rows, then vacuum and checkpoint when no other process holds it).
-        "| `realm run purge` | An ended run: its record and evidence, its refused answers, trace lines and sealed lines, and any `outbound` rows — rows in `realm.db`. The space goes back to the file (the force line says by how much). Text of a deleted run may stay readable in the file's free pages and in `realm.db-wal` until the file is vacuumed and checkpointed, which the purge does when no other process is using the file. |",
+        // Callback B1a: the purge takes the run's callback row, never a key (store-format-v3-b1a.test.ts).
+        "| `realm run purge` | An ended run: its record and evidence, its refused answers, trace lines and sealed lines, any `outbound` rows and its `callbacks` row — rows in `realm.db`. The signing keys in `callback_keys` belong to no run and stay. The space goes back to the file (the force line says by how much). Text of a deleted run may stay readable in the file's free pages and in `realm.db-wal` until the file is vacuumed and checkpointed, which the purge does when no other process is using the file. |",
         // store-sqlite dedup-store.ts (EXPIRED_PER_RECORD, below).
         'A duplicate-webhook mark expires at the end of its window; `realm listen` removes up to 100 expired marks of a workflow each time it records a new one. Nothing removes a registered workflow or a saved replay.',
         '## A store other than `realm.db`',

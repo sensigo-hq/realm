@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  REALM_STORE_SCHEMA_VERSION,
   REALM_STORE_VERSIONS,
   systemClock,
   VERSION,
@@ -37,6 +38,12 @@ import {
   type MaintenanceHome,
   type MigrateProgress,
 } from './maintenance.js';
+
+/** Callback B1a: the steps a version-1 file takes to this Realm's version, as the recorder says them. */
+const STEPS_FROM_1 = Array.from(
+  { length: REALM_STORE_SCHEMA_VERSION - 1 },
+  (_, i) => `step ${i + 1} to ${i + 2}`,
+);
 import { openRealmDb } from './open-file.js';
 import { openHome } from './open-realm-home.js';
 import { migrateSchema } from './schema-ladder.js';
@@ -259,7 +266,7 @@ describe('#616 R1 — the shorter migrate: the hold, the default copy and the re
       //     scratch folder.
       expect({ outcome, seen: r.seen, root: readdirSync(root) }).toEqual({
         outcome: 'resolved',
-        seen: ['already at 2', 'restamped 0'],
+        seen: [`already at ${REALM_STORE_SCHEMA_VERSION}`, 'restamped 0'],
         root: ['.realm'],
       });
     },
@@ -295,11 +302,13 @@ describe('#616 R1 — the shorter migrate: the hold, the default copy and the re
     }).toEqual({
       seen: [
         'backup at version 1',
-        'step 1 to 2',
+        ...STEPS_FROM_1,
         `recorded in ${join(folder, 'migrations.jsonl')}`,
         'restamped 0',
       ],
-      name: expect.stringMatching(/^realm-v1-to-v2-\d{8}T\d{6}Z\.db$/),
+      name: expect.stringMatching(
+        new RegExp(`^realm-v1-to-v${REALM_STORE_SCHEMA_VERSION}-\\d{8}T\\d{6}Z\\.db$`),
+      ),
       quick: { quick_check: 'ok' },
       copyVersion: 1,
       folderMode: '700',
@@ -309,12 +318,12 @@ describe('#616 R1 — the shorter migrate: the hold, the default copy and the re
         at: 'string',
         home: realpathSync(home),
         from_format: 1,
-        to_format: 2,
+        to_format: REALM_STORE_SCHEMA_VERSION,
         backup: copy,
         migrated_by: VERSION,
       },
       atIsAnInstant: true,
-      version: 2,
+      version: REALM_STORE_SCHEMA_VERSION,
     });
   });
 
@@ -377,11 +386,11 @@ describe('#616 R1 — the shorter migrate: the hold, the default copy and the re
       unchanged: true,
       outcome: 'resolved',
       seen: [
-        'step 1 to 2',
+        ...STEPS_FROM_1,
         `unrecorded in ${join(folder, 'migrations.jsonl')}: ${reason}`,
         'restamped 0',
       ],
-      version: 2,
+      version: REALM_STORE_SCHEMA_VERSION,
     });
   });
 
@@ -399,11 +408,11 @@ describe('#616 R1 — the shorter migrate: the hold, the default copy and the re
       outcome: 'resolved',
       seen: [
         'backup at version 1',
-        'step 1 to 2',
+        ...STEPS_FROM_1,
         `unrecorded in ${join(folder, 'migrations.jsonl')}: illegal operation on a directory`,
         'restamped 0',
       ],
-      version: 2,
+      version: REALM_STORE_SCHEMA_VERSION,
     });
   });
 
@@ -431,16 +440,17 @@ describe('#616 R1 — the shorter migrate: the hold, the default copy and the re
     });
   });
 
-  it('the version is read again under the hold: a file another writer moves to version 2 after migrate read version 1, before its hold, gets no copy, no record and no step', async () => {
+  it(`the version is read again under the hold: a file another writer moves to version ${REALM_STORE_SCHEMA_VERSION} after migrate read version 1, before its hold, gets no copy, no record and no step`, async () => {
     const { root, home } = nestedHome();
     await versionOneStore(home);
     // The window between migrate's first read and its hold (the seam): another writer moves the file
-    // to 2, as a migrate that took the hold and finished there would, and lets go of it.
+    // to this Realm's version, as a migrate that took the hold and finished there would, and lets go
+    // of it.
     const late = await maintain(home, {
       beforeHold: async () => {
         const other = await openForeignConnection(home);
         try {
-          migrateSchema(other, 2, REALM_STORE_VERSIONS);
+          migrateSchema(other, REALM_STORE_SCHEMA_VERSION, REALM_STORE_VERSIONS);
         } finally {
           other.close();
         }
@@ -450,11 +460,11 @@ describe('#616 R1 — the shorter migrate: the hold, the default copy and the re
     const outcome = await refusal(late.migrate({ progress: r.progress }));
     late.close();
     // (1) red when the version is not read again under the hold (a copy and a record are made, and
-    //     the step is run on a file already at 2); (2) prints the outcome, the events and the scratch
-    //     folder.
+    //     the step is run on a file already at this Realm's version); (2) prints the outcome, the
+    //     events and the scratch folder.
     expect({ outcome, seen: r.seen, root: readdirSync(root) }).toEqual({
       outcome: 'resolved',
-      seen: ['already at 2', 'restamped 0'],
+      seen: [`already at ${REALM_STORE_SCHEMA_VERSION}`, 'restamped 0'],
       root: ['.realm'],
     });
   });

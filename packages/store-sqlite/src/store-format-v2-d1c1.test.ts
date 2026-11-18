@@ -14,6 +14,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  REALM_STORE_SCHEMA_VERSION,
   REALM_STORE_VERSIONS,
   WorkflowError,
   type EvidenceSnapshot,
@@ -179,7 +180,7 @@ async function outcome(promise: Promise<unknown>): Promise<string> {
 }
 
 describe('#597 D1c-1 — a version-1 file moves to version 2 with `realm db migrate`, losing nothing', () => {
-  it('a real migration: one step of one statement, every row as it was, `outbound` empty, the backup a readable version-1 file, and the schema a fresh version-2 file’s', async () => {
+  it('a real migration: one step of one statement to version 2 (callback B1a: then version 3’s), every row as it was, `outbound` empty, the backup a readable version-1 file, and the schema a fresh file’s', async () => {
     const v1 = REALM_STORE_VERSIONS.get(1)!.schema;
     // (1) red when version 1's statements are not 0.49.0's (the cell would build from another
     //     schema); (2) prints the hash and the length.
@@ -221,8 +222,8 @@ describe('#597 D1c-1 — a version-1 file moves to version 2 with `realm db migr
     atOne.close();
     const evidence = (before.rows['evidence'] ?? []).length;
     // (1) red when the step is skipped (the file stays at 1, no step reported), when it changes a
-    //     row (any run, evidence, blob or meta row differs), when the step's text and version 2's
-    //     schema differ (the stored schema is not a fresh version-2 file's), when the backup is
+    //     row (any run, evidence, blob or meta row differs), when the steps' text and the top
+    //     version's schema differ (the stored schema is not a fresh file's), when the backup is
     //     taken after the step (it reads at 2) or is not a usable copy, or when the open gate is
     //     lost; (2) prints the report's steps, both versions, which rows differ, the outbound rows,
     //     the schema difference, the backup's version and the gate read from it.
@@ -231,16 +232,20 @@ describe('#597 D1c-1 — a version-1 file moves to version 2 with `realm db migr
       versions: [before.version, after.version],
       rowsAsBefore: JSON.stringify(after.rows) === JSON.stringify(before.rows),
       outboundRows: after.outboundRows,
-      schemaIsAFreshVersion2File: JSON.stringify(after.schema) === JSON.stringify(fresh),
+      schemaIsAFreshFile: JSON.stringify(after.schema) === JSON.stringify(fresh),
       readBack: read.map((r) => [r.id, r.evidence.length, r.pending_gate?.gate_id ?? null]),
       backupVersion,
       fromBackup,
     }).toEqual({
-      steps: [{ from: 1, to: 2, statements: 1, evidenceChecked: evidence }],
-      versions: [1, 2],
+      steps: [
+        { from: 1, to: 2, statements: 1, evidenceChecked: evidence },
+        // Callback B1a: version 3's step, the two callback tables and their index.
+        { from: 2, to: 3, statements: 3, evidenceChecked: evidence },
+      ],
+      versions: [1, REALM_STORE_SCHEMA_VERSION],
       rowsAsBefore: true,
       outboundRows: 0,
-      schemaIsAFreshVersion2File: true,
+      schemaIsAFreshFile: true,
       readBack: [
         [ids[0], 1, null],
         [ids[1], 2, 'gate-review'],
@@ -299,8 +304,7 @@ describe('#597 D1c-1 — a version-1 file moves to version 2 with `realm db migr
     // (1) red when the open reads the older file (it opens, or writes: the bytes change) or refuses
     //     it in other words; (2) prints the refusal and whether the file changed.
     expect({ result, unchanged: readFileSync(file).equals(bytes) }).toEqual({
-      result:
-        "STATE_STORE_VERSION_OLDER: This store's file is at schema version 1; this Realm writes version 2. Run `realm db migrate` with Realm stopped to upgrade it.",
+      result: `STATE_STORE_VERSION_OLDER: This store's file is at schema version 1; this Realm writes version ${REALM_STORE_SCHEMA_VERSION}. Run \`realm db migrate\` with Realm stopped to upgrade it.`,
       unchanged: true,
     });
   });

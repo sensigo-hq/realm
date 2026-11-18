@@ -9,8 +9,9 @@
 // test clock file (`<home>/.realm-test-clock`, read by core's root reader; the one call site the
 // test-clock lint and scan admit) or the system clock. A caller that brings another clock than the
 // one the home is open with is refused (MA 3's ruling, SEAMS "unit 11"): sharing would silently keep
-// stamping from the first clock. The home's path comes from core's resolver alone; this package never
-// asks the system for the user's home.
+// stamping from the first clock. Callback B1a: the same holds for the sealer of the home's signing
+// keys, by identity: a caller with another sealer is refused, never given the first one's. The home's
+// path comes from core's resolver alone; this package never asks the system for the user's home.
 //
 // Every refusal is a rejected promise, never a synchronous throw: the resolver's, the clock file's,
 // this module's own, and the open's (the loader, the filesystem gate, the old-store guard, the file's
@@ -33,6 +34,7 @@ import {
   type RealmWorkflowRegistrar,
   type TraceBufferStore,
 } from '@sensigo/realm';
+import type { CallbackKeySealer } from './callback-keys.js';
 import { createLeasePort } from './claim-lease.js';
 import { RealmDb } from './connection.js';
 import { SqliteDedupStore } from './dedup-store.js';
@@ -55,6 +57,12 @@ export interface OpenRealmHomeOptions {
    * the very clock it was opened with.
    */
   readonly clock?: Clock;
+  /**
+   * Callback B1a: seals the home's signing keys for the file and unseals them. Without one, every
+   * stored key reads unreadable and no new key can be written. A home already open in this process is
+   * shared only with a caller that passes no sealer or the very sealer it was opened with.
+   */
+  readonly sealer?: CallbackKeySealer;
 }
 
 /**
@@ -109,6 +117,8 @@ interface OpenHome {
   readonly opening: Promise<RealmHome>;
   /** The clock its first caller passed; `undefined` when the home runs on its default clock. */
   readonly clock: Clock | undefined;
+  /** The sealer its first caller passed; `undefined` when it passed none. */
+  readonly sealer: CallbackKeySealer | undefined;
 }
 
 /** The homes open in this process, by real path. */
@@ -169,6 +179,11 @@ async function lookUp(
         `The Realm home ${home} is already open in this process with another clock; close it first.`,
       );
     }
+    if (options.sealer !== undefined && options.sealer !== shared.sealer) {
+      throw new Error(
+        `The Realm home ${home} is already open in this process with another callback key sealer; close it first.`,
+      );
+    }
     const handle = await shared.opening;
     // Closed while this caller waited: the cache no longer holds the open.
     if (again && homes.get(key)?.opening !== shared.opening) return lookUp(options, seams, false);
@@ -180,7 +195,8 @@ async function lookUp(
   };
   const opening = (async (): Promise<RealmHome> => {
     const clock = options.clock ?? resolveRootClock(home);
-    const db = await RealmDb.open(home, { clock }, seams);
+    const sealing = options.sealer === undefined ? {} : { sealer: options.sealer };
+    const db = await RealmDb.open(home, { clock, ...sealing }, seams);
     let closed = false;
     const dedupStores = new Map<string, DedupStore>();
     return {
@@ -209,7 +225,7 @@ async function lookUp(
       },
     };
   })();
-  homes.set(key, { opening, clock: options.clock });
+  homes.set(key, { opening, clock: options.clock, sealer: options.sealer });
   // A failed open is not cached: the next call opens again.
   opening.catch(forget);
   return opening;

@@ -53,6 +53,7 @@
 // that takes its own reading, or none; `snapshot`: a read that judges nothing by time, unit 14).
 import { REALM_STORE_SCHEMA_VERSION, takeRawReading, WorkflowError } from '@sensigo/realm';
 import type { Clock } from '@sensigo/realm';
+import type { CallbackKeySealer } from './callback-keys.js';
 import type { DatabaseLike } from './driver.js';
 import { openRealmDb, type OpenOptions, type OpenSeams } from './open-file.js';
 
@@ -141,6 +142,8 @@ export interface RealmDbOptions {
   readonly path: string;
   /** The clock every reading is taken from. */
   readonly clock: Clock;
+  /** Callback B1a: the sealer of the home's signing keys; none when the open was given none. */
+  readonly sealer?: CallbackKeySealer;
   /** Opens a fresh connection to the same file, with its pragmas applied (unit 7 supplies it). */
   readonly reopen: () => DatabaseLike;
   /** How long a call waits for a busy store, in milliseconds; {@link DEFAULT_BUSY_BUDGET_MS} if left out. */
@@ -455,6 +458,8 @@ export class InProcessLock {
 export class RealmDb {
   /** The clock every reading is taken from. */
   readonly clock: Clock;
+  /** Callback B1a: the sealer of the home's signing keys (`SqliteCallbackKeys`), when the open had one. */
+  readonly sealer: CallbackKeySealer | undefined;
   /** The schema version the connection was opened under: a file at a higher one is refused. */
   readonly schemaVersion: number;
   /** The in-process lock, shared with the COMMIT outcome protocol (unit 9). */
@@ -485,6 +490,7 @@ export class RealmDb {
     this.#db = connection;
     this.#path = options.path;
     this.clock = options.clock;
+    this.sealer = options.sealer;
     this.#reopen = options.reopen;
     this.#budgetMs = options.budgetMs ?? DEFAULT_BUSY_BUDGET_MS;
     this.schemaVersion = options.schemaVersion ?? REALM_STORE_SCHEMA_VERSION;
