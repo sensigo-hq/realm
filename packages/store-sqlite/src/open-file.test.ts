@@ -119,6 +119,19 @@ function settings(path: string, ...differences: string[]): unknown {
 }
 
 /**
+ * The settings refusal for the four causes `realm db restore` recovers (the words-616 unit, owner
+ * a6b12979): not a database, damaged, another program's database, a missing meta row. The message
+ * then names the restore; `details` is the same.
+ */
+function restorable(path: string, ...differences: string[]): unknown {
+  return {
+    code: 'STATE_STORE_SETTINGS_REFUSED',
+    message: `The store file ${path} is not a Realm store this Realm can use: ${differences.join('; ')}. Realm does not change or replace a store file by itself. If you have a backup, realm db restore <backup> keeps a copy of this file as it is and puts the backup in its place.`,
+    details: { path, differences },
+  };
+}
+
+/**
  * The settings refusal of an empty file that already has pages, as a user reads it: the lead and
  * the remedy are in the message only, `details` lists the differences alone.
  */
@@ -664,7 +677,7 @@ describe('#616 unit 7b — the checks of an existing file', () => {
     //     as a plain error), or the file is replaced; (2) prints the outcome and the file's hash and
     //     inode.
     expect({ result, after: identity(file) }).toEqual({
-      result: settings(file, 'it is not a SQLite database (SQLite: file is not a database)'),
+      result: restorable(file, 'it is not a SQLite database (SQLite: file is not a database)'),
       after: before,
     });
   });
@@ -680,7 +693,7 @@ describe('#616 unit 7b — the checks of an existing file', () => {
     // (1) red when SQLite's "database disk image is malformed" (11) is not turned into the refusal,
     //     or the file is replaced; (2) prints the outcome and the file's hash and inode.
     expect({ result, after: identity(file) }).toEqual({
-      result: settings(file, 'it is damaged (SQLite: database disk image is malformed)'),
+      result: restorable(file, 'it is damaged (SQLite: database disk image is malformed)'),
       after: before,
     });
   });
@@ -695,7 +708,7 @@ describe('#616 unit 7b — the checks of an existing file', () => {
     //     refuses a newer version first (the refusal then says a newer Realm migrated it); (2) prints
     //     the outcome and the file's hash and inode.
     expect({ result, after: identity(file) }).toEqual({
-      result: settings(file, `its application id is 0, not Realm's ${REALM_ID}`),
+      result: restorable(file, `its application id is 0, not Realm's ${REALM_ID}`),
       after: before,
     });
   });
@@ -714,7 +727,7 @@ describe('#616 unit 7b — the checks of an existing file', () => {
       //     schema object) is dropped: the file is then set up as Realm's and opened; (2) prints the
       //     outcome and the file's hash and inode.
       expect({ result, after: identity(file) }).toEqual({
-        result: settings(file, `its application id is ${applicationId}, not Realm's ${REALM_ID}`),
+        result: restorable(file, `its application id is ${applicationId}, not Realm's ${REALM_ID}`),
         after: before,
       });
     },
@@ -875,7 +888,7 @@ describe('#616 unit 7b — the checks of an existing file', () => {
     // (1) red when the meta row's absence is not refused (the page size is then compared with
     //     nothing); (2) prints the outcome and the file's hash and inode.
     expect({ result, after: identity(file) }).toEqual({
-      result: settings(file, 'its meta row is missing'),
+      result: restorable(file, 'its meta row is missing'),
       after: before,
     });
   });
