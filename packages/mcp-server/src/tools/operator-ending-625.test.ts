@@ -47,7 +47,7 @@ const TWO = {
 
 const REASON = 'wrong run\nPhase: completed\u001b[31m RED';
 const SHOWN = '"wrong run\\nPhase: completed\\u001b[31m RED"';
-const SENTENCE = `An operator ended this run, with the reason ${SHOWN}; to run the work again, start a new run.`;
+const SENTENCE = `It was abandoned, with the reason ${SHOWN}. To run the work again, start a new run.`;
 
 const handles: TempHome[] = [];
 afterEach(async () => {
@@ -97,23 +97,23 @@ describe('#625 PR-2a, F2 — over MCP, a run an operator ended is never offered 
   it('execute_step, advance_run, a late submit_human_response and start_run’s key match: the ending and its reason, one line, no realm run resume (discrimination)', async () => {
     claim(
       'mcp/tools.md',
-      'for a run an operator ended (`abandoned`), never that offer — resuming it would erase the operator\'s ending and its reason — but who ended it and why: `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.`;',
+      'for an abandoned run, never that offer — resuming it would erase its ending and its reason — but `To run the work again, start a new run.`;',
     );
     claim(
       'mcp/tools.md',
-      '`Run \'<id>\' is already terminal (<phase>); no steps executed.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place',
+      "`Run '<id>' is already terminal (<phase>); no steps executed.`, then how the run ended (added after version 0.50.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for an abandoned run, `To run the work again, start a new run.` in its place",
     );
     claim(
       'mcp/tools.md',
-      '`Run \'<id>\' is already terminal (<phase>); nothing ran.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place',
+      "`Run '<id>' is already terminal (<phase>); nothing ran.`, then how the run ended (added after version 0.50.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for an abandoned run, `To run the work again, start a new run.` in its place",
     );
     claim(
       'mcp/tools.md',
-      "`an operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run; 'realm run purge <id>' previews what it would remove.` for an abandoned one (never `realm run resume`, which would erase the operator's ending and its reason);",
+      "`To run the work again, start a new run; 'realm run purge <id>' previews what it would remove.` for an abandoned one (never `realm run resume`, which would erase its ending and its reason);",
     );
     claim(
       'mcp/tools.md',
-      'when an operator ended the run, with `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.`',
+      'when the run was abandoned, with `To run the work again, start a new run.` When the run had ended before the call, or another program ended it during the call, how it ended comes first (added after version 0.50.0).',
     );
     const { call, runId } = await ended('abandoned', 'op-625-key');
     const replies = {
@@ -156,11 +156,11 @@ describe('#625 PR-2a, F2 — over MCP, a run an operator ended is never offered 
   it('get_run_state on a run an operator ended: no resumable (discrimination); terminal_reason and sealed_by_arm still carry the ending (preservation)', async () => {
     claim(
       'mcp/tools.md',
-      '`resumable` names, for a run an engine failure ended, the failed steps `realm run resume` takes and its command (never for a run an operator ended: its `terminal_reason` and `sealed_by_arm` say who ended it and why),',
+      '`resumable` names, for a run an engine failure ended, the failed steps `realm run resume` takes and its command (never for an abandoned run: its `terminal_reason` and `sealed_by_arm` say how it ended),',
     );
     claim(
       'mcp/run-state-and-health.md',
-      "| `resumable` | An engine failure ended the run (`failed`) with a failed step `realm run resume` takes | `steps`, those steps (never a cleanup step) — at most ten, then `steps_more`, how many more — and `command`, `realm run resume <id> --from <step>`, its `<one of: …>` naming at most ten, then how many more (both added after version 0.48.0). Never for a run an operator ended (`abandoned`): resuming it would erase the operator's ending and its reason, which `terminal_reason` and `sealed_by_arm` give.",
+      '| `resumable` | An engine failure ended the run (`failed`) with a failed step `realm run resume` takes | `steps`, those steps (never a cleanup step) — at most ten, then `steps_more`, how many more — and `command`, `realm run resume <id> --from <step>`, its `<one of: …>` naming at most ten, then how many more (both added after version 0.48.0). Never for an abandoned run: resuming it would erase its ending and its reason, which `terminal_reason` and `sealed_by_arm` give.',
     );
     const { call, runId } = await ended('abandoned', 'op-625-state');
     const s = await call('get_run_state', { run_id: runId });
@@ -183,7 +183,8 @@ describe('#625 PR-2a, F2 — over MCP, a run an operator ended is never offered 
     const s = await call('get_run_state', { run_id: runId });
     // (a) red when the failed run loses its offer; (b) prints the hint and resumable.
     expect({ hint: r['context_hint'], resumable: s['resumable'] }).toEqual({
-      hint: `Run '${runId}' is already terminal (failed); no steps executed. To make the failed step runnable again: realm run resume ${runId} --from a`,
+      // #625 A1b-1: how the run ended, then the offer.
+      hint: `Run '${runId}' is already terminal (failed); no steps executed. Step 'a' failed. To make the failed step runnable again: realm run resume ${runId} --from a`,
       resumable: { steps: ['a'], command: `realm run resume ${runId} --from a` },
     });
   });

@@ -489,7 +489,7 @@ describe(
       async (kind) => {
         claim(
           'mcp/tools.md',
-          "for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which none did.",
+          "for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which only steps it does not take failed, and `No step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which none did.",
         );
         let runId: string;
         let step: string;
@@ -630,7 +630,8 @@ describe(
         first: [
           1,
           [
-            `Run '${runId}' is terminal (failed); cannot submit a gate response — ${purge}; to make the failed step runnable again: realm run resume ${runId} --from s`,
+            // #625 A1b-1: the failed steps are named first.
+            `Run '${runId}' is terminal (failed); cannot submit a gate response — Steps 's', 'clean' failed. ${purge}; to make the failed step runnable again: realm run resume ${runId} --from s`,
           ],
         ],
         fromClean: 1,
@@ -640,7 +641,7 @@ describe(
         second: [
           1,
           [
-            `Run '${runId}' is terminal (abandoned); cannot submit a gate response — an operator ended this run, with the reason "Abandoned via realm run abandon"; to run the work again, start a new run; ${purge}.`,
+            `Run '${runId}' is terminal (abandoned); cannot submit a gate response — It was abandoned; no reason was given. To run the work again, start a new run; ${purge}.`,
           ],
         ],
       });

@@ -16,6 +16,7 @@ import {
   stepCompletedWords,
   waysStoreOf,
   deriveRunPhase,
+  runEndingOf,
   dueExpiry,
   loadSnapshot,
   judgedSnapshotOf,
@@ -690,7 +691,8 @@ export async function replyAfterForm(
     return carried({
       ...base,
       intrinsic_action: 'stop',
-      context_hint: `Run '${record.id}' ended while the form was open (phase '${deriveRunPhase(record)}').`,
+      // #625 A1b-1: another program ended the run while the form was open — how it ended, once.
+      context_hint: `Run '${record.id}' ended while the form was open (phase '${deriveRunPhase(record)}').${((s) => (s === undefined ? '' : ` ${s}`))(runEndingOf(record, deps.definition)?.sentence)}`,
       names_next: true,
     });
   }

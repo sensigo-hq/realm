@@ -26,6 +26,9 @@ const DOOR: Record<
     map: Record<string, string>;
     absent?: Record<string, string>;
     extras: Record<string, string>;
+    /** #922: a command with several forms names the one that enacts the verb, and the places that
+     *  form requires though the command as a whole leaves them optional. */
+    form?: { usage: string; requires: readonly string[] };
   }
 > = {
   respond: {
@@ -57,6 +60,20 @@ const DOOR: Record<
     map: { run_id: '<run-id>', reason: '--reason' },
     extras: {},
   },
+  // #922 P1b: the per-step form; the dry run (`<run-id>` alone) and `--all` are the command's others.
+  reclaim: {
+    command: () => runCommands.find((c) => c.name() === 'reclaim'),
+    map: { run_id: '<run-id>', step: '--step', force: '--force', claimed_at: '--claimed-at' },
+    form: {
+      usage: 'realm run reclaim <run-id> --step <name> [--claimed-at <stamp>] --force',
+      requires: ['<run-id>', '--step', '--force'],
+    },
+    extras: {
+      '--all': 'the batch form: every idempotent, past-deadline, non-gated claim (this door’s own)',
+      '--workflow': 'with --all: only runs of this workflow (the batch form’s)',
+      '--older-than': 'with --all: only claims past their deadline by this long (the batch form’s)',
+    },
+  },
   register: {
     command: () => workflowCommands.find((c) => c.name() === 'register'),
     map: { path: '<path>' },
@@ -87,7 +104,7 @@ function placesOf(command: Command): Map<string, boolean> {
 }
 
 describe('#729 PR-0 — P-5: each CLI command takes its verb’s ARGS', () => {
-  it('respond, advance, inspect, abandon, register: every argument in its place with its requiredness, every other option named', () => {
+  it('respond, advance, inspect, abandon, reclaim (its per-step form), register: every argument in its place with its requiredness, every other option named', () => {
     const found: string[] = [];
     for (const [verb, door] of Object.entries(DOOR)) {
       const command = door.command();
@@ -104,9 +121,10 @@ describe('#729 PR-0 — P-5: each CLI command takes its verb’s ARGS', () => {
           found.push(`${command.name()}: no place for ${verb}'s '${arg}'`);
           continue;
         }
-        if (places.get(place) !== spec.required) {
+        const required = door.form?.requires.includes(place) ?? places.get(place);
+        if (required !== spec.required) {
           found.push(
-            `${command.name()} ${place}: required ${places.get(place)}, ARGS says ${spec.required}`,
+            `${command.name()} ${place}: required ${required}, ARGS says ${spec.required}`,
           );
         }
       }

@@ -347,6 +347,7 @@ CACHE_STATES · value · public
       "unobservable"
   ];
 
+CALLBACK_VIEW_TABLE · value · internal
 CAPABILITY_BASES · value · public
   const CAPABILITY_BASES: readonly [
       "registry",
@@ -493,6 +494,45 @@ CacheVerdict · type · internal
 CacheabilityOptions · type · internal
 CacheabilityStep · type · internal
 CacheabilityStepInput · type · internal
+CallbackCheck · type · internal
+CallbackLastStatus · type · beta
+  type CallbackLastStatus = number | 'timeout' | 'connection' | 'redirect' | 'refused_address' | 'not_allowed' | 'expired';
+
+CallbackRegistration · type · beta
+  interface CallbackRegistration {
+      readonly url: string;
+      readonly host: string;
+      readonly webhook_id: string;
+  }
+
+CallbackRow · type · beta
+  interface CallbackRow {
+      readonly run_id: string;
+      readonly workflow_id: string;
+      readonly host: string;
+      readonly webhook_id: string;
+      readonly status: 'pending' | 'delivered' | 'failed';
+      readonly attempts: number;
+      readonly created_at: string;
+      readonly next_attempt_at: string;
+      readonly first_attempt_at?: string;
+      readonly finished_at?: string;
+      readonly last_attempt_at?: string;
+      readonly last_status?: CallbackLastStatus;
+      readonly url?: string;
+      readonly body?: string;
+      readonly claim_token?: string;
+  }
+
+CallbackStore · type · beta
+  interface CallbackStore extends PerRunArtifactStore {
+      read(runId: string): Promise<CallbackView | undefined>;
+      countPending(): Promise<number>;
+  }
+
+CallbackView · type · beta
+  type CallbackView = Omit<CallbackRow, 'run_id' | 'webhook_id' | 'url' | 'body' | 'claim_token'>;
+
 CapabilityBasis · type · public
   type CapabilityBasis = (typeof CAPABILITY_BASES)[number];
 
@@ -619,7 +659,7 @@ CreateResult · type · public
       created: boolean;
   };
 
-CreateRunOptions · type · public
+CreateRunOptions · type · public (beta: callback)
   interface CreateRunOptions {
       workflowId: string;
       workflowVersion: number;
@@ -629,6 +669,7 @@ CreateRunOptions · type · public
       onTerminalMatch?: 'reuse' | 'reject' | 'rerun_if_failed' | 'rerun';
       onLiveMatch?: 'use_existing' | 'fail';
       extensionIdentity?: ExtensionIdentityEntry[];
+      callback?: CallbackRegistration;
   }
 
 DEFAULT_CHARS_PER_TOKEN_HIGH · value · internal
@@ -1456,6 +1497,7 @@ GitHubAdapterConfig · type · internal
 GorgiasAdapter · both · internal
 GorgiasAdapterConfig · type · internal
 GuardEnding · type · internal
+HELD_WORDS · value · internal
 HaltStop · type · public
   interface HaltStop {
       kind: HaltStopKind;
@@ -1465,6 +1507,7 @@ HaltStopKind · type · public
   type HaltStopKind = Extract<StopKind, 'capability_missing' | 'failed' | 'refused'>;
 
 HeldState · type · internal
+HeldWordsState · type · internal
 HiddenCounts · type · public
   interface HiddenCounts {
       declared: number;
@@ -2323,7 +2366,7 @@ RealmWorkflowRegistrar · type · public
 ReclaimOutcome · type · public
   type ReclaimOutcome = 'reclaimed' | 'already_settled' | 'taken_over' | 'no_active_claim';
 
-ReclaimResult · type · public
+ReclaimResult · type · public (beta: conditionsDischarged, refusal)
   interface ReclaimResult {
       run: RunRecord;
       step: string;
@@ -2332,11 +2375,16 @@ ReclaimResult · type · public
       priorState: ClaimState;
       priorDeadline: string | null;
       gateAdvisory?: string;
+      conditionsDischarged?: readonly Cond[];
+      refusal?: Unavailable;
   }
 
-ReclaimStepOptions · type · public
+ReclaimStepOptions · type · public (beta: claimed_at, definition, force)
   interface ReclaimStepOptions {
       traceBufferStore?: TraceBufferStore;
+      definition?: WorkflowDefinition;
+      force?: true;
+      claimed_at?: string;
   }
 
 ReclaimVersionChanged · both · internal
@@ -2486,6 +2534,7 @@ RetryConfig · type · public
 
 RouteId · type · internal
 RunCost · type · internal
+RunEnding · type · internal
 RunHealthFinding · type · public
   interface RunHealthFinding {
       kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'definition_unresolvable' | 'record_stamped_ahead';
@@ -2598,13 +2647,14 @@ RunStepWay · type · public
       brief: StepBrief;
   };
 
-RunStore · type · public (beta: claimStep.hold, leases, outbound)
+RunStore · type · public (beta: callbacks, claimStep.hold, leases, outbound)
   interface RunStore {
       readonly clock: Clock;
       persistsClaims: boolean;
       readonly purgesRuns: boolean;
       readonly leases?: LeasePort | null;
       readonly outbound?: OutboundLedger | null;
+      readonly callbacks?: CallbackStore | null;
       readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
       create(options: CreateRunOptions): Promise<CreateResult>;
       get(runId: string): Promise<Snapshot>;
@@ -3817,7 +3867,7 @@ WorkflowDefinition · type · public
       trigger?: TriggerDefinition;
   }
 
-WorkflowError · both · public
+WorkflowError · both · public (beta: refusal)
   class WorkflowError extends Error {
       readonly code: ErrorCode;
       readonly category: ErrorCategory;
@@ -3827,6 +3877,7 @@ WorkflowError · both · public
       readonly facts?: ErrorFacts;
       readonly about?: string;
       readonly remedy?: readonly WayOn[];
+      readonly refusal?: Unavailable;
       readonly stepId?: string;
       readonly attempt: number;
       readonly retry_after?: number;
@@ -3835,7 +3886,7 @@ WorkflowError · both · public
       constructor(message: string, options: WorkflowErrorOptions);
   }
 
-WorkflowErrorOptions · type · public
+WorkflowErrorOptions · type · public (beta: refusal)
   interface WorkflowErrorOptions {
       code: ErrorCode;
       category: ErrorCategory;
@@ -3845,6 +3896,7 @@ WorkflowErrorOptions · type · public
       facts?: ErrorFacts;
       about?: string;
       remedy?: readonly WayOn[];
+      refusal?: Unavailable;
       stepId?: string;
       attempt?: number;
       retry_after?: number;
@@ -3934,6 +3986,8 @@ buildSettlementNamespace · value · internal
 buildTrustRefusal · value · internal
 cacheVerdict · value · internal
 callableSteps · value · internal
+callbackRowOf · value · internal
+callbackViewOf · value · internal
 callsHostDispatcher · value · public
   function callsHostDispatcher(step: StepDefinition | undefined): boolean;
 
@@ -3948,6 +4002,7 @@ capabilityRefusalWords · value · internal
 capabilityWarning · value · internal
 captureEvidence · value · internal
 checkBufferBudget · value · internal
+checkCallbackRequest · value · internal
 checkFenceWithReader · value · internal
 checkOutboundRequest · value · internal
 checkPreClaim · value · internal
@@ -4158,9 +4213,12 @@ guardEndingOf · value · internal
 guardEndingOfRun · value · internal
 guardPassedLine · value · internal
 hashParams · value · internal
+heldAgentWords · value · internal
 heldLeaseWords · value · internal
+heldRerunOf · value · internal
 heldStateAt · value · internal
 heldStateOf · value · internal
+heldWordsStateOf · value · internal
 identityRefusalLine · value · internal
 inboundMarkerWarning · value · internal
 instantText · value · internal
@@ -4334,6 +4392,7 @@ readSupplier · value · public
 readTestClockFile · value · internal
 realmHomePath · value · internal
 reclaimConditionWords · value · internal
+reclaimRefusalWords · value · internal
 reclaimStep · value · public
   function reclaimStep(store: RunStore, runId: string, stepName: string, options?: ReclaimStepOptions): Promise<ReclaimResult>;
 
@@ -4382,10 +4441,12 @@ resolveRootClock · value · internal
 resolveSeverity · value · internal
 respondWayOfGate · value · internal
 resumeWay · value · internal
+runEndingOf · value · internal
 runNotFoundError · value · internal
 runPhaseDerivationFingerprint · value · internal
 runReadError · value · internal
 saidIds · value · internal
+saysHowItEnded · value · internal
 scanSecretString · value · internal
 sealRunLevel · value · internal
 seedSaid · value · internal
@@ -4474,12 +4535,10 @@ waysStoreOf · value · internal
 weakestDeclared · value · internal
 whitelistValidationRow · value · internal
 withDeclaredStanding · value · internal
-withEndedRunWays · value · internal
 withFullStop · value · internal
 withLibraryWords · value · public
   function withLibraryWords<Host>(partial: PartialWayRenderer<Host>): WayRenderer<string, Host>;
 
-withPendingCleanup · value · internal
 withResumeOffer · value · internal
 withTestClockNotice · value · internal
 withheldCauseOf · value · internal

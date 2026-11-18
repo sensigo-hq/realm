@@ -216,7 +216,7 @@ describe('#616 PR-2c c6 — realm db backup, on the built CLI', { timeout: 120_0
       text: {
         code: 1,
         stdout: '',
-        stderr: `Error: The store file ${shown(noneFile)} is not a Realm store this Realm can use: it is not a SQLite database (SQLite: file is not a database). Realm does not change or replace a store file by itself.\n`,
+        stderr: `Error: The store file ${shown(noneFile)} is not a Realm store this Realm can use: it is not a SQLite database (SQLite: file is not a database). Realm does not change or replace a store file by itself. If you have a backup, realm db restore <backup> keeps a copy of this file as it is and puts the backup in its place.\n`,
       },
       textHome: textBefore,
       made: ['taken.db'],

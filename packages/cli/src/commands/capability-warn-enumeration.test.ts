@@ -68,6 +68,9 @@ const N_A: Record<string, string> = {
   'outbound-ledger-contract.ts':
     'the #597 D1a outbound-ledger TCK — creates one throwaway run per case purely to build the runs ' +
     'it plants in a store under test; not a production run-creating path',
+  'callback-store-contract.ts':
+    'the R1.3 callback A1a callback-store TCK — creates runs in a store under test to hold it to its ' +
+    'laws; not a production run-creating path',
 };
 
 describe('#134 pre-flight capability warning — create-site enumeration (Part B3)', () => {

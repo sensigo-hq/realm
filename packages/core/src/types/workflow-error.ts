@@ -1,7 +1,7 @@
 // Structured, categorized error class used throughout the engine.
 import type { LoaderWarning } from '../workflow/diagnostics.js';
 import type { UnreadableFileFacts, UnreadableRunFilesFacts } from '../store/run-file.js';
-import type { WayOn } from '../engine/ways.js';
+import type { Unavailable, WayOn } from '../engine/ways.js';
 import type { ErrorObject } from 'ajv';
 import { brandClass, REALM_BRAND } from '../brand.js';
 
@@ -391,6 +391,12 @@ export interface WorkflowErrorOptions {
    * them (they replace the remedy clause a message or untyped `details` carried).
    */
   remedy?: readonly WayOn[];
+  /**
+   * #922: the judged refusal this error carries, as `EngineReply.refusal` carries one — its code,
+   * typed facts and remedies. Set by `reclaimStep`'s judge (a call that passed `force: true`).
+   * @beta
+   */
+  refusal?: Unavailable;
   stepId?: string;
   attempt?: number;
   retry_after?: number; // seconds; set only for SERVICE_RATE_LIMITED errors
@@ -431,6 +437,11 @@ export class WorkflowError extends Error {
   readonly about?: string;
   /** issue #729 PR-0: the ways that lead on from this error (a reply's `error.remedy`). */
   readonly remedy?: readonly WayOn[];
+  /**
+   * #922: the judged refusal this error carries (its code, typed facts and remedies).
+   * @beta
+   */
+  readonly refusal?: Unavailable;
   readonly stepId?: string;
   readonly attempt: number;
   readonly retry_after?: number;
@@ -474,6 +485,7 @@ export class WorkflowError extends Error {
     if (options.facts !== undefined) this.facts = options.facts;
     if (options.about !== undefined) this.about = options.about;
     if (options.remedy !== undefined) this.remedy = options.remedy;
+    if (options.refusal !== undefined) this.refusal = options.refusal;
     if (options.stepId !== undefined) this.stepId = options.stepId;
     this.attempt = options.attempt ?? 1;
     if (options.retry_after !== undefined) this.retry_after = options.retry_after;

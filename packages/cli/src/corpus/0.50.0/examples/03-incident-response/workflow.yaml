@@ -1,0 +1,150 @@
+# examples/03-incident-response/workflow.yaml
+# Incident First-Response — reads an alert from disk, runs root-cause analysis and
+# response drafting via agent steps, then requires human approval before the decision
+# is recorded. Demonstrates: FileSystemAdapter, sequential agent steps with persona schemas,
+# human gate with real stakes, gate-response branching, idempotent record step.
+id: incident-response
+name: Incident First-Response
+version: 1
+
+params_schema:
+  type: object
+  additionalProperties: false
+  required: [path]
+  properties:
+    path:
+      type: string
+      description: 'Path to the alert JSON file (relative paths resolved from example root)'
+
+services:
+  alerts:
+    adapter: filesystem
+    trust: engine_delivered
+
+steps:
+  read_alert:
+    description: Load alert data from disk
+    execution: auto
+    depends_on: []
+    uses_service: alerts
+    operation: read
+    input_map:
+      path: run.params.path
+
+  analyze_cause:
+    description: Identify root cause, severity, and impacted services from the alert
+    execution: agent
+    depends_on: [read_alert]
+    agent_profile: incident-analyzer
+    prompt: |
+      You are an on-call engineer performing incident triage.
+
+      Review the alert below and identify:
+      - The root cause (one clear sentence — state what failed and why)
+      - Severity: P1 (critical — service down or data loss), P2 (degraded — partial outage),
+        P3 (warning — no user impact yet)
+      - Impacted services: list by service name
+      - Confidence: high (clear signal), medium (likely cause), low (speculative)
+      - Recommended runbook (if identifiable from the alert data)
+
+      Alert:
+      {{ context.resources.read_alert.content }}
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [root_cause, severity, impacted_services, confidence]
+      properties:
+        root_cause:
+          type: string
+          description: 'One-sentence root cause statement'
+        severity:
+          type: string
+          enum: [P1, P2, P3]
+        impacted_services:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: string
+          enum: [high, medium, low]
+        runbook:
+          type: string
+          description: 'Runbook name or URL if identifiable from the alert data'
+
+  draft_response:
+    description: Draft the oncall channel message based on the triage analysis
+    execution: agent
+    depends_on: [analyze_cause]
+    agent_profile: response-drafter
+    prompt: |
+      Draft an oncall incident message based on the triage analysis below.
+
+      The message will be posted to the incident channel. Write it for a technical audience
+      under pressure. Be direct. No markdown headers. No emoji. Under 200 words.
+
+      Structure:
+      1. One-line headline: severity + impacted service + root cause
+      2. Impact statement: what users or systems are affected and how
+      3. Runbook reference (include only if the runbook field is present)
+      4. Next steps: 2-3 concrete bullet points for the responding engineer
+
+      Analysis:
+      Root cause: {{ context.resources.analyze_cause.root_cause }}
+      Severity: {{ context.resources.analyze_cause.severity }}
+      Impacted services: {{ context.resources.analyze_cause.impacted_services }}
+      Confidence: {{ context.resources.analyze_cause.confidence }}
+      Runbook: {{ context.resources.analyze_cause.runbook | default: 'none given' }}
+
+      Raw alert data:
+      {{ context.resources.read_alert.content }}
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [headline, message]
+      properties:
+        headline:
+          type: string
+          description: 'One-line headline for the incident'
+        message:
+          type: string
+          description: 'Full channel message text'
+
+  confirm_and_send:
+    description: Present the analysis and draft to the oncall engineer for approval
+    execution: auto
+    depends_on: [draft_response]
+    trust: human_confirmed
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        choice:
+          type: string
+          enum: [send, reject]
+    gate:
+      choices:
+        - send
+        - reject
+      resolution_messages:
+        send: 'Draft approved — choice recorded in the evidence chain.'
+        reject: 'Draft rejected — choice recorded in the evidence chain.'
+      message: |
+        {{ context.resources.analyze_cause.severity | upper }} — {{ context.resources.analyze_cause.root_cause | truncate: 80 }}
+        Impacted: {{ context.resources.analyze_cause.impacted_services | join }}
+        Confidence: {{ context.resources.analyze_cause.confidence }}
+
+        Draft: {{ context.resources.draft_response.headline | truncate: 80 }}
+    prompt: |
+      INCIDENT ANALYSIS
+      Severity:  {{ context.resources.analyze_cause.severity }}
+      Root cause: {{ context.resources.analyze_cause.root_cause }}
+      Impacted:  {{ context.resources.analyze_cause.impacted_services }}
+      Confidence: {{ context.resources.analyze_cause.confidence }}
+
+      DRAFT MESSAGE
+      {{ context.resources.draft_response.message }}
+
+      Send this message to the incident channel? Choose 'send' to post it or 'reject' to discard it.
+    instructions: |
+      Present the display content to the user verbatim. The person answers the question; follow
+      next_actions for what to do while it waits.
