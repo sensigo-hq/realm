@@ -152,10 +152,11 @@ describe('issue #960 — realm-mcp-and-serve.md', () => {
     // Executed by serve B13 (b): the step stays taken (`realm run inspect`), `--stuck` lists
     // nothing while the claim is healthy, `realm run reclaim` shows it healthy with its deadline,
     // `--step … --force` frees it with the side-effects warning, then the step is owed with
-    // `realm run advance`.
+    // `realm run advance`. #922 P2-2: the dry run's command, run as printed, frees a claim inside
+    // its window (held-doors-922-p22 check 5); the old form is refused there (B13 (b), P1b).
     claim(
       SERVE,
-      "A request cut while it ran an `auto` step leaves that step taken by `realm serve`: `realm run inspect <run>` shows it in progress, and `realm run list --stuck` does not list the run while that claim is healthy (`realm run reclaim <run>` shows it healthy, with its deadline). `realm run reclaim <run> --step <step> --force` frees it and warns that the step's side effects may repeat; `realm run inspect` then shows the step owed, with the `realm run advance <run>` that runs it again. Every paragraph above in this section was added or changed after version 0.49.0.",
+      "A request cut while it ran an `auto` step leaves that step taken by `realm serve`: `realm run inspect <run>` shows it in progress, and `realm run list --stuck` does not list the run while that claim is healthy (`realm run reclaim <run>` shows it healthy, with its deadline and the command that frees it). That command, run as printed, frees it, after saying that its deadline is ahead and the step runs twice if its program is still running (changed after version 0.50.0: the command carries the claim's time, `--claimed-at <time>`, and `realm run reclaim <run> --step <step> --force` without it is refused inside the claim's window); `realm run inspect` then shows the step owed, with the `realm run advance <run>` that runs it again. Every paragraph above in this section was added or changed after version 0.49.0.",
     );
   });
 

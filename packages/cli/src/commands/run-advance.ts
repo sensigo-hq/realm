@@ -57,10 +57,12 @@ import {
   agentReadyLine,
   cannotGoOnWithRefusal,
   cannotRunWayOut,
-  inFlightLine,
+  heldEntriesOf,
+  heldLine,
   owedItems,
   owedRunsWords,
   stopReasons,
+  waitsOnlyOnPastHeld,
 } from './ways-renderer.js';
 import {
   PLAIN,
@@ -152,19 +154,18 @@ export function inFlightItems(
 }
 
 /**
- * The reason for each step in flight in another program (decisions C37, C205): `'<s>' is in flight
- * in another program — wait for it, or see realm run inspect <id>`. `realm run advance` prints it as
- * a `Stopped:` reason; `realm run respond` and `realm run drain` as their own line — the same words
- * from here. A step whose question is open is not in flight (it waits on the answer).
+ * The reason for each step in flight in another program (decisions C37, C205; #922 P2-2): the CLI's
+ * one held line, from the step's composed entry — its state, then what frees it. `realm run advance`
+ * prints it as a `Stopped:` reason; `realm run respond` and `realm run drain` as their own line —
+ * the same words from here. A step whose question is open is not in flight (it waits on the answer).
  */
 export function inFlightReasons(
-  runId: string,
-  run: RunForReasons,
+  composed: Pick<ComposedWays, 'unavailable'>,
   ctx: RenderCtx = writerCtx(),
 ): string[] {
   // #729 PR-0: the words are the CLI renderer's one line. #729 PR-3: a print helper, so its
   // commands carry the writer's marks by default.
-  return inFlightSteps(run).map((step) => inFlightLine(runId, step, ctx));
+  return heldEntriesOf(composed).map((held) => heldLine(held, ctx));
 }
 
 /**
@@ -493,7 +494,12 @@ export async function advanceRunFromShell(
     // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
     // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
     // call that ran other steps.
-    return !run.terminal_state && stepsThatCannotRun(pending).length > 0 ? 1 : 0;
+    // #922 P2-2 (ladder row 4): it exits 1 too when the only thing it waits on is steps held past
+    // their deadline.
+    return !run.terminal_state &&
+      (stepsThatCannotRun(pending).length > 0 || waitsOnlyOnPastHeld(ways))
+      ? 1
+      : 0;
   }
   // decision C207: with several owed, where this call stops — never a promise that all of them run.
   // #729 PR-0 (Part B): the owed work as the `advance` way carries it, in the CLI renderer's words.
@@ -738,7 +744,9 @@ export async function advanceRunFromShell(
       : `Run ${runId}: phase '${writerCtx().word(deriveRunPhase(after), RUN_PHASE_WORDS)}'`,
   );
   const refused = !after.terminal_state && stepsThatCannotRun(afterView).length > 0;
-  return refusal || refused || guardFailed ? 1 : 0;
+  // #922 P2-2 (ladder row 4): steps held past their deadline as the only thing it waits on.
+  const pastHeldOnly = !after.terminal_state && waitsOnlyOnPastHeld(afterWays);
+  return refusal || refused || guardFailed || pastHeldOnly ? 1 : 0;
 }
 
 export const runAdvanceCommand = new Command('advance')

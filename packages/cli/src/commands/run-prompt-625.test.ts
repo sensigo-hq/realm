@@ -53,7 +53,7 @@ const PROMPT_CLOSE_ORDER =
   "When that read and this process's own timer settle the same question within a few milliseconds, the `⏰` line and the `This prompt is closed:` line can appear in either order.";
 /** C173: the wait for a step another process holds (realm-workflow.md). */
 const IN_FLIGHT_WAIT =
-  "While another process holds a step and nothing else is ready, it waits for that process, as `realm agent` does, and says so: `• Step '<step>' is in flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.` When the record changes it runs what is ready; when the record has not changed for 60 seconds it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and hands the run back at that step, with the ways on that fit a step another program is still running: `realm run advance`, once the step is no longer in flight, runs what the engine then owes and names an agent step or a question that is ready.";
+  "While another process holds a step and nothing else is ready, it waits for that process, as `realm agent` does, and says so: `• Step '<step>' is in flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.` When the record changes it runs what is ready; when the record has not changed for 60 seconds it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s.` followed by the step's held line, the one [`realm run advance`](realm-run-acting.md#advance) prints (added after version 0.50.0, which ended `If the program that took it is gone: realm run reclaim <run> --step <step> --force`), and hands the run back at that step, with the ways on that fit a step another program is still running: `realm run advance`, once the step is no longer in flight, runs what the engine then owes and names an agent step or a question that is ready; for a step whose deadline has passed, once it is freed, and `realm run reclaim <run>` prints its command (added after version 0.50.0).";
 /** C167, C175, C176: the question on the gate's prompt (realm-workflow.md). */
 // #729 PR-4 (f), re-pinned: the prompt was the question's second source; now no surface invents one.
 const QUESTION_LINES =
@@ -822,7 +822,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
             [
               expect.stringMatching(
                 new RegExp(
-                  `^• Step 'finish' has been in flight since .+, taken by other-terminal \\(as stated, via agent\\); the record has not changed for 2s\\. If the program that took it is gone: realm run reclaim ${await runId()} --step finish --force$`,
+                  // #922 P2-2: its held line — its state, its conditions, the command with the stamp
+                  `^• Step 'finish' has been in flight since .+, taken by other-terminal \\(as stated, via agent\\); the record has not changed for 2s\\. 'finish' is held; wait for it\\. .+ To free it anyway, run: realm run reclaim ${await runId()} --step finish --claimed-at \\S+ --force$`,
                 ),
               ),
             ],
@@ -1254,9 +1255,9 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       expect(afterSignal).toEqual({ printed: [], exits: [130], phase: 'running' });
     }, 30_000);
 
-    it('C179: a claim the prompt left behind (the command killed outright) is released by `realm run reclaim --step --force`', async () => {
+    it('C179: a claim the prompt left behind (the command killed outright) is released by the command `realm run reclaim <run>` prints for it', async () => {
       claimWorkflowPage(
-        'a command killed outright (SIGKILL) leaves it, and `realm run reclaim <run> --step <step> --force` releases it.',
+        'a command killed outright (SIGKILL) leaves it, and the command `realm run reclaim <run>` prints for the step releases it (with `--claimed-at`, the time the claim was taken: added after version 0.50.0).',
       );
       // The record a killed prompt leaves: the agent step's claim, holder via `run`, no time limit.
       const { loadWorkflowFromString } = await import('@sensigo/realm');
@@ -1278,14 +1279,19 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       const { spawnSync } = await import('node:child_process');
       const cli = join(dirname(fileURLToPath(import.meta.url)), '../../dist/index.js');
       const env = { PATH: process.env['PATH'] ?? '', HOME: home, NO_COLOR: '1' };
-      // #922 P1b: the claim is stamped and of unknown age, so the reclaim names its stamp (the page's
-      // sentence, the old form, is P2's).
+      // #922 P2-2: the dry run prints the step's command (the claim is stamped and of unknown age, so
+      // it names the stamp), and that command, run as printed, releases it.
       const since = (await store.get(created.id)).record.claims!['finish']!.since!;
-      const reclaim = spawnSync(
-        process.execPath,
-        [cli, 'run', 'reclaim', created.id, '--step', 'finish', '--claimed-at', since, '--force'],
-        { env, encoding: 'utf8' },
-      );
+      const dry = spawnSync(process.execPath, [cli, 'run', 'reclaim', created.id], {
+        env,
+        encoding: 'utf8',
+      });
+      const printed = /To free it, run: realm (.+)$/m.exec(dry.stdout)?.[1] ?? '<none printed>';
+      expect(printed).toBe(`run reclaim ${created.id} --step finish --claimed-at ${since} --force`);
+      const reclaim = spawnSync(process.execPath, [cli, ...printed.split(' ')], {
+        env,
+        encoding: 'utf8',
+      });
       const { record: after } = await store.get(created.id);
       // (a) red when the left claim cannot be released this way; (b) prints the command's output.
       expect(
@@ -1514,6 +1520,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     const ADVANCE_WORDS = 'mihai@host (from the OS user, via advance)';
     const PAGE_RUN = '7d1f0c2e-5a8b-4c36-9e21-3b6f8d0a4c17';
     const PAGE_SINCE = '2026-10-08T12:34:50.336Z';
+    /** #922 P2-2: the page's deadline for the held step (its claim + 61 minutes). */
+    const PAGE_DEADLINE = '2026-10-08T13:35:50.336Z';
 
     /**
      * Another process (as `realm run advance` does) takes each of `steps` and holds it until
@@ -1584,7 +1592,12 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     }
 
     /** The page's screen of the hand-back (realm-workflow.md), its values put in place. */
-    function pageScreen(since: string, watchWords: string, run: string): string[] {
+    function pageScreen(
+      since: string,
+      watchWords: string,
+      run: string,
+      deadline = PAGE_DEADLINE,
+    ): string[] {
       const text = readFileSync(
         join(
           dirname(fileURLToPath(import.meta.url)),
@@ -1605,6 +1618,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
             .join(run)
             .split(PAGE_SINCE)
             .join(since)
+            .split(PAGE_DEADLINE)
+            .join(deadline)
             .split('mihai@host (from the OS user, via advance)')
             .join(ADVANCE_WORDS)
             .replace('changed for 60s', `changed for ${watchWords}`),
@@ -1650,7 +1665,10 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       } finally {
         restore();
       }
-      const since = (await readRecord()).claims!['sleep']!.since!;
+      const { since, deadline } = (await readRecord()).claims!['sleep']! as {
+        since: string;
+        deadline: string;
+      };
       // (a) red when the hand-back says the run stalled, names the last prompted step `a` (completed)
       //     rather than the held `sleep`, offers `Drive it` (no agent step is ready) or `Discard`, or
       //     differs from the page's screen; (b) prints stderr, the prompts and the exit.
@@ -1660,7 +1678,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         code,
       }).toEqual({
         asked: ['Agent'],
-        err: pageScreen(since, '2s', await runId()),
+        err: pageScreen(since, '2s', await runId(), deadline),
         code: 1,
       });
       expect(errored().filter((l) => /stalled|Drive it|Discard/.test(l))).toEqual([]);
@@ -1672,8 +1690,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       await holder!.done;
       const after = await advance(yaml);
       expect({ whileHeld: whileHeld.at(-1), after: after.slice(-2) }).toEqual({
-        whileHeld:
-          "The engine can run nothing now: 'sleep' is in flight in another program — wait for it, or see realm run inspect <run>",
+        // #922 P2-2: the held line for a step whose deadline is ahead
+        whileHeld: `The engine can run nothing now: 'sleep' is held; wait for it. Its deadline is ahead (${deadline}); if its program is still running, the step runs twice. It is not declared idempotent, so running it again may repeat its effects. To free it anyway, run: realm run reclaim <run> --step sleep --claimed-at ${since} --force`,
         after: ['→ done', "Run <run>: phase 'completed'"],
       });
     }, 30_000);

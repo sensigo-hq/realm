@@ -3219,6 +3219,24 @@ export const HELD_WORDS = {
   pastLine(deadline: string): string {
     return `Its deadline passed at ${deadline}; no result is recorded for it.`;
   },
+  /**
+   * #922 P2-2 (R13): the CLI's opening of one held step's line, before its condition words and its
+   * command; `at` is the deadline (ahead, past) or the claim's `since`, left out when it has none.
+   */
+  cli(state: HeldWordsState, step: string, at: string | undefined): string {
+    switch (state) {
+      case 'past':
+        return `'${step}' was claimed and its deadline passed at ${at}; no result is recorded for it.`;
+      case 'ahead':
+        return `'${step}' is held; wait for it.`;
+      case 'unknown_age':
+      case 'unreadable':
+      case 'no_claim_record':
+        return `'${step}' is held${at !== undefined ? ` since ${at}` : ''}; wait for it, or free it if its program has stopped.`;
+      case 'store_keeps_no_claims':
+        return `'${step}' is held; this store keeps no claim records, so it cannot be freed with reclaim.`;
+    }
+  },
 } as const;
 
 /** #922 P2-1: a held entry's words key — its state, or `store_keeps_no_claims` on such a store. */

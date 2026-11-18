@@ -186,7 +186,19 @@ describe('#729 PR-3 correction 5 (J-2) — the race and prompt lines print the p
   });
 
   it("run.ts — the in-flight hand-back's `(phase: …)` (the declared route: `running`)", () => {
-    const line = shown(() => renderInFlightHandBack(record(), ['a']).split('\n')[0]!, {
+    // #922 P2-2 (MA 2, WO922-P22-MA2-04): the hand-back takes the held step's composed entry.
+    const held = {
+      verb: 'run_step',
+      step: 'a',
+      code: 'held_elsewhere',
+      facts: {
+        step: 'a',
+        deadline: { absent: 'unknown_age' },
+        claimed_at: { absent: 'not_stamped' },
+      },
+      remedy: [],
+    } as const;
+    const line = shown(() => renderInFlightHandBack(record(), [held]).split('\n')[0]!, {
       declared: { C5_PIN: 'running' },
     });
     // (a) red when the phase prints as plain text; (b) prints the first line.

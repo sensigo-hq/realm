@@ -741,7 +741,7 @@ export interface StepDefinition {
    *   1. The bounded-time auto-reclaim allow-list (`realm run reclaim --all`). A concrete
    *      `claims[S].deadline` is still required, so this function is inert on a step in a
    *      workflow WITH finalizer steps (those write `deadline: null` → `claim_unknown_age` →
-   *      never cron-reclaimable; use `realm run reclaim --step <id> --force` there instead).
+   *      never cron-reclaimable; there `realm run reclaim <run-id>` prints the step's command).
    *   2. Since issue #140, `retry.on_timeout: true` — required there (E1, hard error otherwise)
    *      before a timed-out attempt may be retried in place. A timeout-retry can run
    *      CONCURRENTLY with the still-in-flight original attempt, so `on_timeout` claims MORE than

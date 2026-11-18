@@ -955,7 +955,8 @@ describe(
         by_source: 'ambient',
         channel: 'advance',
       });
-      const since = (await runStore.get(idh)).record.claims!['process']!.since;
+      const heldClaim = (await runStore.get(idh)).record.claims!['process']!;
+      const since = heldClaim.since;
       const h = realm(['run', 'advance', idh]);
       // (a) red when the lines differ from the page's screen, or In flight is said twice; (b)
       //     prints both.
@@ -963,6 +964,8 @@ describe(
         code: 0,
         tail: put(block(PAGE, "In flight: 'process' is in flight, taken by crown"), {
           '2026-10-04T22:26:13.994Z': since!,
+          // #922 P2-2: the held line's deadline
+          '2026-10-04T23:27:13.994Z': heldClaim.deadline!,
           '65d2afc8-2cb3-4401-808c-1d83a40bf989': idh,
         }),
       });
@@ -1202,12 +1205,12 @@ describe(
     it('advance, L162 + L183: one `Stopped:` line per reason, in the page’s order; a completed run gets none; exit 1 when a step failed or cannot run, else 0', async () => {
       claim(
         PAGE,
-        "`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed, and never for a step it started whose outcome was not recorded: when another program's run of that step failed, the step's own line says so, `…, and failed; this program's outcome for it was not recorded.` (below), and no failed line is printed), a refusal that failed no step (`'<step>': <error>`: the step it is about, with the engine's words, or the engine's words alone when the refusal names no step), the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make '<step>' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when it was abandoned, it goes on `. It was abandoned, with the reason \"<reason>\". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.50.0, which said an operator ended it), never with `realm run resume`, which would erase that ending and its reason), a question opened (with the `realm run respond` command; when steps wait for its answer — ready by what they depend on, but held while a question is open — it names them first: `a question is open ('<step>' waits for its answer) — realm run respond …`, and the preview's `Nothing is owed to the engine:` line does the same), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks, ending with its way out: `— load the missing extension, or run the step on a runner that has it`), work the engine still owes when the call stops, after a refusal for one (`the engine still owes '<step>' — to run it: realm run advance <id>`, or, for several, `the engine still owes '<a>', '<b>' — to run them until a step opens a question, fails or ends the run: realm run advance <id>`), agent steps ready (`an agent step is ready: '<step>' — drive it with realm agent --run-id <id> --provider <provider> --model <model>` for one, `agent steps are ready: '<a>', '<b>' — drive them with …` for several; put the provider and model you drive the run with in place of the two placeholders; the next line is the one `respond` prints after its commands, `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.`, also after a preview line that names agent steps ready), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`.",
+        "`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed, and never for a step it started whose outcome was not recorded: when another program's run of that step failed, the step's own line says so, `…, and failed; this program's outcome for it was not recorded.` (below), and no failed line is printed), a refusal that failed no step (`'<step>': <error>`: the step it is about, with the engine's words, or the engine's words alone when the refusal names no step), the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make '<step>' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when it was abandoned, it goes on `. It was abandoned, with the reason \"<reason>\". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.50.0, which said an operator ended it), never with `realm run resume`, which would erase that ending and its reason), a question opened (with the `realm run respond` command; when steps wait for its answer — ready by what they depend on, but held while a question is open — it names them first: `a question is open ('<step>' waits for its answer) — realm run respond …`, and the preview's `Nothing is owed to the engine:` line does the same), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks, ending with its way out: `— load the missing extension, or run the step on a runner that has it`), work the engine still owes when the call stops, after a refusal for one (`the engine still owes '<step>' — to run it: realm run advance <id>`, or, for several, `the engine still owes '<a>', '<b>' — to run them until a step opens a question, fails or ends the run: realm run advance <id>`), agent steps ready (`an agent step is ready: '<step>' — drive it with realm agent --run-id <id> --provider <provider> --model <model>` for one, `agent steps are ready: '<a>', '<b>' — drive them with …` for several; put the provider and model you drive the run with in place of the two placeholders; the next line is the one `respond` prints after its commands, `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.`, also after a preview line that names agent steps ready), each step another program holds (its held line, below), and otherwise `nothing is ready to run now`.",
       );
       claim(PAGE, 'A run the command completes gets no `Stopped:` line: the phase line says it.');
       claim(
         PAGE,
-        'Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, or when a step cannot run, else 0.',
+        'Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, when a step cannot run, or when every step it waits on is held by a claim whose deadline has passed (added after version 0.50.0), else 0.',
       );
       const go = async (id: string, steps: string) => {
         const { def } = await project(id, steps, true);
@@ -1330,7 +1333,10 @@ describe(
         'utf8',
       );
       const r = realm(['run', 'advance', id, '--extensions-module', racer]);
-      const since = (await runStore.get(id)).record.claims!['process']!.since!;
+      const { since, deadline } = (await runStore.get(id)).record.claims!['process']! as {
+        since: string;
+        deadline: string;
+      };
       const at = r.out.indexOf('→ process');
       // (a) red when the lines differ from the page's screen (or are not adjacent), the command
       //     stops instead of going on, or the run's `process` was run here; (b) prints stdout.
@@ -1346,7 +1352,8 @@ describe(
         }),
         rest: [
           '→ notify',
-          `Stopped: 'process' is in flight in another program — wait for it, or see realm run inspect ${id}`,
+          // #922 P2-2: its held line
+          `Stopped: 'process' is held; wait for it. Its deadline is ahead (${deadline}); if its program is still running, the step runs twice. It is not declared idempotent, so running it again may repeat its effects. To free it anyway, run: realm run reclaim ${id} --step process --claimed-at ${since} --force`,
           `Run ${id}: phase 'running'`,
         ],
         ran: ['notify'],
@@ -1513,14 +1520,25 @@ describe(
         "The runs after the second — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out after it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>` for every run in `running`. The second line is now for a run with none of these. A command ends its line: where the way out follows it, it is the next line (added after version 0.46.0, which printed them on one line, the command followed by a full stop).",
       );
       // The page's lines for one run (decision C212: the way out on the line after its command).
-      const of = (pageId: string, runId: string): string[] =>
-        shown.filter((l) => l.includes(pageId)).map((l) => l.replaceAll(pageId, runId));
+      const of = (pageId: string, runId: string, instants: Record<string, string> = {}): string[] =>
+        put(
+          shown.filter((l) => l.includes(pageId)),
+          { [pageId]: runId, ...instants },
+        );
+      // #922 P2-2: the held line's instants
+      const fetchClaim = (await runStore.get(idf)).record.claims!['fetch']!;
       // (a) red when a line differs from the page's (its run ID put in place); (b) prints them.
       expect([line(id), line(ids), line(ida), line(idf)]).toEqual([
         { code: 0, lines: of('daeede5e-c0dd-4b88-9caf-6efa089902dd', id) },
         { code: 0, lines: of('573ff99d-44fc-42c9-98e8-c394fed45e6e', ids) },
         { code: 0, lines: of('e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68', ida) },
-        { code: 0, lines: of('5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25', idf) },
+        {
+          code: 0,
+          lines: of('5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25', idf, {
+            '2026-10-09T09:14:02.338Z': fetchClaim.since!,
+            '2026-10-09T10:15:02.338Z': fetchClaim.deadline!,
+          }),
+        },
       ]);
       // (a) red when a run's way out is joined to its command on one line; (b) prints the counts.
       expect([
@@ -2191,6 +2209,7 @@ describe(
           channel: 'advance',
         });
         const several = realm(['run', 'advance', tid]).out;
+        const fetchClaim = (await runStore.get(tid)).record.claims!['fetch']!;
         const at = several.findIndex((l) => l.startsWith('The engine can run nothing now'));
         // (a) red when a full stop follows the command, the paste is refused, or the reasons share a
         //     line; (b) prints the lines and the paste's exit and output.
@@ -2206,7 +2225,8 @@ describe(
           several: [
             'The engine can run nothing now:',
             `  an agent step is ready: 'write' — drive it with realm agent --run-id ${tid} --provider <provider> --model <model>`,
-            `  'fetch' is in flight in another program — wait for it, or see realm run inspect ${tid}`,
+            // #922 P2-2: its held line
+            `  'fetch' is held; wait for it. Its deadline is ahead (${fetchClaim.deadline}); if its program is still running, the step runs twice. It is not declared idempotent, so running it again may repeat its effects. To free it anyway, run: realm run reclaim ${tid} --step fetch --claimed-at ${fetchClaim.since} --force`,
           ],
         });
       });
@@ -2400,7 +2420,7 @@ describe(
       it("respond: an answer that leaves nothing to name but a step in flight in another program says to wait for it — the page's screen", async () => {
         claim(
           PAGE,
-          'When the answer leaves nothing to name but a step in flight in another program, the line says to wait for it, in the words `realm run advance` uses. Added after version 0.46.0:',
+          "When the answer leaves nothing to name but a step in flight in another program, the line is that step's held line, in the words `realm run advance` uses (see [`advance`](#advance)). Added after version 0.46.0; the held line by its claim's state after version 0.50.0:",
         );
         const def = await fromString(
           'acting-c205-held',
@@ -2415,11 +2435,15 @@ describe(
           dispatcher: async () => ({}),
         });
         const r = respond({ id, gateId: opened.gate!.gate_id }, 'approve');
+        const pack = (await runStore.get(id)).record.claims!['pack']!;
         // (a) red when the step in flight is not named, or another way on is offered; (b) prints both.
         expect({ code: r.code, out: r.out }).toEqual({
           code: 0,
           out: put(block(PAGE, 'Responded: 5c1e8a42'), {
             '5c1e8a42-3f0b-4d7e-9a61-2b8f0c4d7e13': id,
+            // #922 P2-2: the held line's instants
+            '2026-10-04T22:31:05.120Z': pack.since!,
+            '2026-10-04T23:32:05.120Z': pack.deadline!,
           }),
         });
       });
@@ -2502,9 +2526,15 @@ describe(
         });
         expect(opened.status, 'fixture').toBe('confirm_required');
         const d = realm(['run', 'drain', id, '--expired', '--force']);
+        const pack = (await runStore.get(id)).record.claims!['pack']!;
         // (a) red when the step in flight is not named, or another way on is offered; (b) prints both.
         expect(d.out).toEqual(
-          put(block(PAGE, "Run '7d2e9b14"), { '7d2e9b14-5a3c-4f81-b0e6-93c4a1f2d857': id }),
+          put(block(PAGE, "Run '7d2e9b14"), {
+            '7d2e9b14-5a3c-4f81-b0e6-93c4a1f2d857': id,
+            // #922 P2-2: the held line's instants
+            '2026-10-09T09:12:40.512Z': pack.since!,
+            '2026-10-09T10:13:40.512Z': pack.deadline!,
+          }),
         );
       });
     });
