@@ -1846,6 +1846,8 @@ type Cond = {
     code: 'override_claim_unknown_age';
     state: 'unknown_age' | 'unreadable' | 'no_claim_record';
 } | {
+    code: 'lease_held';
+} | {
     code: 'rerun_not_idempotent';
     basis: 'not_declared' | 'definition_absent';
 };
@@ -2805,6 +2807,7 @@ Names this job reaches whose entry is on another page.
 - [`CacheRequest`](read-a-runs-record.md#cacherequest): One of the words in `CACHE_REQUESTS`: what Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`).
 - [`CacheRequestSource`](read-a-runs-record.md#cacherequestsource): One of the words in `CACHE_REQUEST_SOURCES`: whether a request's cache setting was stated with `--prompt-cache` or was the runner's default (`UsageRecord.cache_requested_source`).
 - [`CacheState`](read-a-runs-record.md#cachestate): One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the provider reported (`StepCacheDetail.state`).
+- [`CALLBACK_KEY_SLOTS`](implement-a-store.md#callback_key_slots): The two places a pair keeps a key, one list for every use of the word.
 - [`CALLBACK_LAST_STATUS_WORDS`](implement-a-store.md#callback_last_status_words): The words a try's last answer can be when it got no HTTP status.
 - [`CALLBACK_STATUSES`](implement-a-store.md#callback_statuses): The states a callback row can be in, one list for every use of the word.
 - [`CallbackClaimedItem`](implement-a-store.md#callbackclaimeditem): A claimed row: the item with the instants a sender judges its ends from.
@@ -2812,6 +2815,16 @@ Names this job reaches whose entry is on another page.
 - [`CallbackClaimResult`](implement-a-store.md#callbackclaimresult): What a claim answers: the claimed item and the claim's one reading, or why it did not apply.
 - [`CallbackFreezeResult`](implement-a-store.md#callbackfreezeresult): What freezing the body answers.
 - [`CallbackItem`](implement-a-store.md#callbackitem): A row ready to send, as `due` returns it: for the sender only, never rendered.
+- [`CallbackKeyDeleteResult`](implement-a-store.md#callbackkeydeleteresult): What `delete` answers: whether the pair had a current key, readable or not.
+- [`CallbackKeyEndResult`](implement-a-store.md#callbackkeyendresult): What `endPrevious` answers: whether a live previous was there to remove.
+- [`CallbackKeyMakeResult`](implement-a-store.md#callbackkeymakeresult): What `make` answers: the current key, and whether this call wrote it.
+- [`CallbackKeyPair`](implement-a-store.md#callbackkeypair): The keys of one (workflow, host).
+- [`CallbackKeyReplaceResult`](implement-a-store.md#callbackkeyreplaceresult): What `replace` answers: the new current key, or why it wrote nothing.
+- [`CallbackKeyRotateRequest`](implement-a-store.md#callbackkeyrotaterequest): A rotation: the new key's text, how long the old key stays as the previous (1–604,800 seconds), and whether a live previous may be dropped to make room.
+- [`CallbackKeyRotateResult`](implement-a-store.md#callbackkeyrotateresult): What `rotate` answers: the pair it wrote, or why it wrote nothing.
+- [`CallbackKeySlot`](implement-a-store.md#callbackkeyslot): One slot of a pair, as the store holds it.
+- [`CallbackKeySlotName`](implement-a-store.md#callbackkeyslotname): The name of a slot: `current` signs; `previous` is the key a rotation replaced, kept for a while.
+- [`CallbackKeyStore`](implement-a-store.md#callbackkeystore): The signing keys of a callback store (`CallbackStore.keys`): for each (workflow, host), a current key and, for a while after a rotation, a previous one.
 - [`CallbackLastStatus`](implement-a-store.md#callbacklaststatus): The last answer a try got: an HTTP status (100–599), or a word for a try that got none.
 - [`CallbackMarkRequest`](implement-a-store.md#callbackmarkrequest): A try's outcome: delivered (a 2xx status), another try after a wait in seconds, or failed.
 - [`CallbackMarkResult`](implement-a-store.md#callbackmarkresult): What a mark answers.
