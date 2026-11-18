@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
-import { REALM_STORE_VERSIONS } from '@sensigo/realm';
+import { REALM_STORE_SCHEMA_VERSION, REALM_STORE_VERSIONS } from '@sensigo/realm';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
 import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -189,12 +189,15 @@ function guideExample(): string {
     .join('\n');
 }
 
-const STEPPED = (from: number, to: number, loses: string): string =>
-  `Stepped ${shown(file)} back from schema version ${from} to ${to}: 1 statement(s) ran, the ` +
+const STEPPED = (from: number, to: number, loses: string, statements = 1): string =>
+  `Stepped ${shown(file)} back from schema version ${from} to ${to}: ${statements} statement(s) ran, the ` +
   `schema matches version ${to}'s. ${loses}`;
 const SENT = (k: number): string =>
   `The outbound table was dropped: the record of ${k} reminder(s) and escalation(s) sent is no longer in the file.`;
 const NONE = 'The outbound table was dropped; it held no record of a reminder or escalation sent.';
+/** Callback B1a: version 3's step back (two statements) on a file with no callback row or key. */
+const NONE_3 =
+  'The callbacks and callback_keys tables were dropped; they held no undelivered callback and no signing key.';
 const INSTALL = (n: number, r: number, range: string): string =>
   'Every command of this Realm that uses the store, except `realm db check`, `realm db backup`, ' +
   '`realm db migrate` and `realm db restore`, now refuses the file, because it is at schema ' +
@@ -204,14 +207,14 @@ const INSTALL = (n: number, r: number, range: string): string =>
   'package together" in the upgrade guide).';
 const UNKNOWN = (value: string): string =>
   `Error: Cannot step back to ${value}: give a whole number that is a schema version this Realm ` +
-  'knows (1 to 2).';
+  `knows (1 to ${REALM_STORE_SCHEMA_VERSION}).`;
 const OLDER =
-  "Error: This store's file is at schema version 1; this Realm writes version 2. Run `realm db " +
+  `Error: This store's file is at schema version 1; this Realm writes version ${REALM_STORE_SCHEMA_VERSION}. Run \`realm db ` +
   'migrate` with Realm stopped to upgrade it.';
 
 // Each cell starts the built CLI (a cold start each time), so the describe carries its own budget.
 describe('#616 R2 — realm db migrate --to, on the built CLI', { timeout: 120_000 }, () => {
-  it("the home 0.49.0's release recorded, migrated, given outbound rows, stepped back to 1: every run and evidence entry kept, the file exactly version 1's, the copy, one record line from 2 to 1, the page's lines, and every command then refuses the file", async () => {
+  it("the home 0.49.0's release recorded, migrated, given outbound rows, stepped back to 1: every run and evidence entry kept, the file exactly version 1's, the copy, one record line from this Realm's version to 1, the page's lines, and every command then refuses the file", async () => {
     recordedHome();
     const forward = realm(['db', 'migrate', '--no-backup']);
     await outboundRows();
@@ -246,19 +249,26 @@ describe('#616 R2 — realm db migrate --to, on the built CLI', { timeout: 120_0
       code: 0,
       stderr: '',
       lines: [
-        `Backed up ${shown(file)} (schema version 2, ${existsSync(copy) ? statSync(copy).size : 0} bytes) to ${shown(copy)}; the copy passes SQLite's quick check.`,
+        `Backed up ${shown(file)} (schema version ${REALM_STORE_SCHEMA_VERSION}, ${existsSync(copy) ? statSync(copy).size : 0} bytes) to ${shown(copy)}; the copy passes SQLite's quick check.`,
+        // Callback B1a: version 3's step back first, then version 2's.
+        STEPPED(3, 2, NONE_3, 2),
         STEPPED(2, 1, SENT(1)),
         `Recorded this migrate in ${shown(join(folder, 'migrations.jsonl'))}.`,
-        INSTALL(1, 2, '0.49'),
+        INSTALL(1, REALM_STORE_SCHEMA_VERSION, '0.49'),
       ],
       runsKept: true,
       counts: { runs: 2, evidence: 6 },
       outbound: { before: '3 row(s)', after: 'no table' },
       schemaIsVersion1: true,
       version: 1,
-      names: ['migrations.jsonl', expect.stringMatching(/^realm-v2-to-v1-\d{8}T\d{6}Z\.db$/)],
-      copyVersion: 2,
-      record: { from: 2, to: 1, backup: copy },
+      names: [
+        'migrations.jsonl',
+        expect.stringMatching(
+          new RegExp(`^realm-v${REALM_STORE_SCHEMA_VERSION}-to-v1-\\d{8}T\\d{6}Z\\.db$`),
+        ),
+      ],
+      copyVersion: REALM_STORE_SCHEMA_VERSION,
+      record: { from: REALM_STORE_SCHEMA_VERSION, to: 1, backup: copy },
       listed: { code: 1, stderr: [OLDER] },
     });
   });
@@ -273,16 +283,17 @@ describe('#616 R2 — realm db migrate --to, on the built CLI', { timeout: 120_0
       code: run.code,
       printed: lines(run.stdout).join('\n').replace(STAMP, '<stamp>'),
     }).toEqual({ code: 0, printed: guideExample().replace(STAMP, '<stamp>') });
-    expect(lines(run.stdout)[1]).toBe(STEPPED(2, 1, NONE));
+    expect(lines(run.stdout).slice(1, 3)).toEqual([STEPPED(3, 2, NONE_3, 2), STEPPED(2, 1, NONE)]);
   });
 
   it('--to equal to the file’s version: the nothing-to-undo line, exit 0; no copy (a --backup path ignored), no record, no folder', async () => {
     await currentHome();
     const before = hashOf(file);
-    const plain = realm(['db', 'migrate', '--to', '2']);
+    const top = String(REALM_STORE_SCHEMA_VERSION);
+    const plain = realm(['db', 'migrate', '--to', top]);
     const target = join(base, 'asked-for.db');
-    const withTarget = realm(['db', 'migrate', '--to', '2', '--backup', target]);
-    const already = `${shown(file)} is already at schema version 2; no step to undo.`;
+    const withTarget = realm(['db', 'migrate', '--to', top, '--backup', target]);
+    const already = `${shown(file)} is already at schema version ${top}; no step to undo.`;
     // (1) red when a copy, a record or the folder is made for a file already there; (2) prints both
     //     runs, the scratch folder and the target.
     expect({

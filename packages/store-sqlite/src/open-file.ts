@@ -67,6 +67,7 @@ import {
   type Clock,
   type StoreSchemaVersions,
 } from '@sensigo/realm';
+import type { CallbackKeySealer } from './callback-keys.js';
 import {
   BUSY_SLICE_MS,
   busyError,
@@ -85,6 +86,8 @@ import { storedSchemaDifference, type SchemaDifference } from './schema-ladder.j
 /** The options of the open: the home's clock, and the busy budget of every call on the store. */
 export interface OpenOptions {
   readonly clock: Clock;
+  /** Callback B1a: the sealer of the home's signing keys, carried on the primitive like its clock. */
+  readonly sealer?: CallbackKeySealer;
   /** How long a call waits for a busy store, in milliseconds; the class's default if left out. */
   readonly budgetMs?: number;
   /**
@@ -847,6 +850,7 @@ export async function openRealmDb(
       new RealmDb(connect(path, openFile, false), {
         path,
         clock: options.clock,
+        ...(options.sealer === undefined ? {} : { sealer: options.sealer }),
         reopen: reopener(path, openFile, false, pragmas),
         schemaVersion: realm,
         ...(options.budgetMs === undefined ? {} : { budgetMs: options.budgetMs }),

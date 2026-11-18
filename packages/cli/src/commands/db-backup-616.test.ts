@@ -29,6 +29,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { REALM_STORE_SCHEMA_VERSION } from '@sensigo/realm';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -153,7 +154,7 @@ describe('#616 PR-2c c6 — realm db backup, on the built CLI', { timeout: 120_0
     //     the command writes to stderr or exits non-zero; (2) prints the run.
     expect(r).toEqual({
       code: 0,
-      stdout: `Backed up ${shown(join(home, 'realm.db'))} (schema version 2, ${bytes} bytes) to ${copy}; the copy passes SQLite's quick check.\n`,
+      stdout: `Backed up ${shown(join(home, 'realm.db'))} (schema version ${REALM_STORE_SCHEMA_VERSION}, ${bytes} bytes) to ${copy}; the copy passes SQLite's quick check.\n`,
       stderr: '',
     });
   });
@@ -285,12 +286,12 @@ describe('#616 PR-2c c6 — realm db backup, on the built CLI', { timeout: 120_0
         first: 0,
         restored: {
           code: 0,
-          stdout: `Restored [REDACTED]/.realm/realm.db from ${copy} (schema version 2). The home had no store file, so nothing was replaced.\n`,
+          stdout: `Restored [REDACTED]/.realm/realm.db from ${copy} (schema version ${REALM_STORE_SCHEMA_VERSION}). The home had no store file, so nothing was replaced.\n`,
           stderr: '',
         },
         r: {
           code: 0,
-          stdout: `Backed up [REDACTED]/.realm/realm.db (schema version 2, ${bytes} bytes) to ${again}; the copy passes SQLite's quick check.\n`,
+          stdout: `Backed up [REDACTED]/.realm/realm.db (schema version ${REALM_STORE_SCHEMA_VERSION}, ${bytes} bytes) to ${again}; the copy passes SQLite's quick check.\n`,
           stderr: '',
         },
       });

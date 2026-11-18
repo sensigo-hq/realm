@@ -2,7 +2,7 @@
 
 <!-- description: Upgrade Realm without surprises: read what changed, upgrade every Realm package together, and check your workflows and runs against the new version. -->
 
-This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.49.0 to 0.50.0 on Node 22, except three blocks in step 2, kept as they were: the block that shows two versions in one project and the `ENGINE_HANDLER_FAILED` line, from an earlier upgrade from 0.43.0 to 0.45.0, and the two lines the 0.46.0 `realm` command printed for a project still on 0.43.0. The blocks in [A store version change](#a-store-version-change) and [Going back without losing runs](#going-back-without-losing-runs) are from the published 0.50.0, run on a home that the published 0.49.0 wrote.
+This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.49.0 to 0.50.0 on Node 22, except three blocks in step 2, kept as they were: the block that shows two versions in one project and the `ENGINE_HANDLER_FAILED` line, from an earlier upgrade from 0.43.0 to 0.45.0, and the two lines the 0.46.0 `realm` command printed for a project still on 0.43.0. The blocks in [A store version change](#a-store-version-change) and [Going back without losing runs](#going-back-without-losing-runs) are from the version after 0.50.0, built from its source before its release, run on the homes that the published 0.50.0 and 0.49.0 wrote; the line a 0.50 process prints is from the published 0.50.0.
 
 ## What an upgrade can change
 
@@ -10,7 +10,7 @@ Realm's version starts with 0, and a release such as 0.44.0 may change behaviour
 
 - **Workflows you registered keep working as they were, with two exceptions.** A new version often checks workflow files more strictly. Those checks apply when a workflow is loaded from its file. A copy that is already registered is not checked again until you register it again. The first is the version after 0.48.0: it does not carry registered copies over, so after the move you register each workflow from its file (the first section, step 4), and the new version's checks apply then. The second is the version after 0.49.0: in Slack, a registered gate whose `owner` is not a Slack member ID can no longer be answered in its thread (see [In Slack, only the people a question names can answer](#in-slack-only-the-people-a-question-names-can-answer)).
 - **Runs carry over, with one exception.** Runs started on the old version can be listed, inspected and continued on the new one. The exception is the version after 0.48.0, which keeps runs in one SQLite file instead of JSON files: its first command on an old home refuses to run until you move the old folders out and import the runs. Do [the first section](#move-your-runs-into-the-sqlite-store) before anything else.
-- **A home of 0.49.0 needs one command, from the version after 0.49.0.** Its store file moves to format version 2, and every command that opens the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, refuses the home with one line until you run `realm db migrate` with Realm stopped. See [A store version change](#a-store-version-change).
+- **A home of 0.49.0 or 0.50.0 needs one command.** The store file moves to format version 2 from the version after 0.49.0, and to format version 3 from the version after 0.50.0. Every command that opens the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, refuses an older home with one line until you run `realm db migrate` with Realm stopped; a 0.49.0 home takes both steps in that one command. See [A store version change](#a-store-version-change).
 - **All Realm packages must be the same version.** There are five: `@sensigo/realm`, `@sensigo/realm-cli`, `@sensigo/realm-mcp`, `@sensigo/realm-testing` and, from the version after 0.48.0, `@sensigo/realm-store-sqlite`, which `@sensigo/realm-cli` and `@sensigo/realm-mcp` install for you.
 
 ## Move your runs into the SQLite store
@@ -56,54 +56,66 @@ Do this, in this order:
 
 ## A store version change
 
-From the version after 0.49.0, the store file `realm.db` is at format version 2, which adds `outbound`, a per-run table where `realm agent` records the Slack reminders and escalation it sends. A home that 0.49.0 used is at version 1. Every command that opens the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, refuses it with one line, creates nothing and exits with code 1:
+The store file `realm.db` carries a format version. From the version after 0.49.0 it is at least version 2, which adds `outbound`, a per-run table where `realm agent` records the Slack reminders and escalation it sends. Version 3, from the version after 0.50.0, adds `callbacks`, a per-run table for the callback a run asks for, and `callback_keys`, for the keys that sign callbacks, never stored as plain text. A home that 0.49.0 used is at version 1, and one that 0.50.0 used is at version 2. Every command that opens the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, refuses an older file with one line, creates nothing and exits with code 1. On a home that 0.50.0 used:
 
 ```text
-Error: This store's file is at schema version 1; this Realm writes version 2. Run `realm db migrate` with Realm stopped to upgrade it.
+Error: This store's file is at schema version 2; this Realm writes version 3. Run `realm db migrate` with Realm stopped to upgrade it.
 ```
+
+On a home that 0.49.0 used, the line says `schema version 1`.
 
 Do this, in this order:
 
-1. **Stop every Realm process that uses the home**: `realm listen`, `realm agent`, `realm serve` and every MCP server (`realm mcp`, `realm-mcp`), supervised ones too. A 0.49 process still running when the file is migrated cannot use the store afterwards: its next call fails and records nothing. A command prints `This store was migrated by a newer Realm: its schema is version 2 and this Realm writes version 1. Upgrade Realm to read or write it.`; an assistant connected through `realm mcp` may be told only to try again. `realm db migrate`, when a schema step is pending, refuses to run while any process still has the store file open, and changes nothing, so stop them first.
+1. **Stop every Realm process that uses the home**: `realm listen`, `realm agent`, `realm serve` and every MCP server (`realm mcp`, `realm-mcp`), supervised ones too. A process of the older Realm still running when the file is migrated cannot use the store afterwards: its next call fails and records nothing. A 0.50 command prints `This store was migrated by a newer Realm: its schema is version 3 and this Realm writes version 2. Upgrade Realm to read or write it.`; an assistant connected through `realm mcp` may be told only to try again. `realm db migrate`, when a schema step is pending, refuses to run while any process still has the store file open, and changes nothing, so stop them first.
 2. **Upgrade the packages** (section 2 below, "Upgrade every package together").
-3. **Migrate**: `realm db migrate`. It copies the store first, into the backups folder beside the home (`~/.realm-backups/`), then runs the step in one transaction, re-checks every evidence entry's hash and moves the file to version 2, and records the migrate in `~/.realm-backups/migrations.jsonl`; when the copy or the step fails, it stops and leaves the file at version 1, as it was; when only the record cannot be written, the file is migrated and a warning on standard error says so. `--backup <path>` puts the copy at a path you name instead, outside the home; `--no-backup` makes none. On a sample home that 0.49.0 wrote, holding two finished runs and six evidence entries:
+3. **Migrate**: `realm db migrate`. It copies the store first, into the backups folder beside the home (`~/.realm-backups/`), then runs each step to version 3 in its own transaction, re-checking every evidence entry's hash after each: one step for a 0.50.0 home, two for a 0.49.0 home. It records the migrate once, in `~/.realm-backups/migrations.jsonl`. When the copy fails, it stops and leaves the file as it was; when a step fails, it stops and leaves the file at the version before that step. When only the record cannot be written, the file is migrated and a warning on standard error says so. `--backup <path>` puts the copy at a path you name instead, outside the home; `--no-backup` makes none. On a sample home that 0.49.0 wrote, holding two finished runs and six evidence entries:
 
    ```text
-   Backed up [REDACTED]/.realm/realm.db (schema version 1, 638976 bytes) to [REDACTED]/.realm-backups/realm-v1-to-v2-20261117T193757Z.db; the copy passes SQLite's quick check.
+   Backed up [REDACTED]/.realm/realm.db (schema version 1, 638976 bytes) to [REDACTED]/.realm-backups/realm-v1-to-v3-20261118T165649Z.db; the copy passes SQLite's quick check.
    Migrated [REDACTED]/.realm/realm.db from schema version 1 to 2: 1 statement(s) ran, the schema matches version 2's, 6 evidence entries match their stored hashes.
+   Migrated [REDACTED]/.realm/realm.db from schema version 2 to 3: 3 statement(s) ran, the schema matches version 3's, 6 evidence entries match their stored hashes.
    Recorded this migrate in [REDACTED]/.realm-backups/migrations.jsonl.
    Re-stamped the phase index of 0 run(s) with the current derivation.
    ```
 
    The last line is printed by every migrate that finishes; 0 means that no run's stored phase needed re-stamping.
 
+   On a sample home that 0.50.0 wrote, with the same runs, the copy is named `realm-v2-to-v3-<UTC time>.db` and there is one `Migrated` line, version 3's:
+
+   ```text
+   Migrated [REDACTED]/.realm/realm.db from schema version 2 to 3: 3 statement(s) ran, the schema matches version 3's, 6 evidence entries match their stored hashes.
+   ```
+
 4. **Check** with `realm db check`: its second line reads `No problems found by the checks that ran.`
 5. **Start the processes again.**
 
-If the migrate stops with an error, the file is still at version 1 with nothing of the step in it, and the backup it made first is where its first line says. Run the command again once the cause is fixed: each copy in the backups folder is named by the second it was made. With `--backup <path>`, the command never replaces a file, so give a new path when you run it again. The error names the cause: an evidence entry that no longer matches its stored hash means a stored run was changed outside Realm, and the step cannot run until that is fixed (restore the file from an earlier backup of your own), then run the command again.
+If the migrate stops with an error, the file is at the version before the step that failed, with nothing of that step in it, and the backup it made first is where its first line says. Run the command again once the cause is fixed: each copy in the backups folder is named by the second it was made. With `--backup <path>`, the command never replaces a file, so give a new path when you run it again. The error names the cause: an evidence entry that no longer matches its stored hash means a stored run was changed outside Realm, and the step cannot run until that is fixed (restore the file from an earlier backup of your own), then run the command again.
 
-A home the new version creates, or that `realm run import` fills, is created at version 2 and needs no migrate. An older Realm refuses a version-2 file with the line quoted in step 1, exits with code 1 and changes nothing. To go back, run `realm db restore <backup>` with this Realm first, then reinstall the older Realm: writes made after the backup are not in the restored file, but are in the copy the command keeps of the file it replaced. A file that is already migrated can instead be stepped back without losing a run: `realm db migrate --to 1` (see [Going back without losing runs](#going-back-without-losing-runs)). See [`realm db restore`](../reference/cli/realm-db.md#restore).
+A home the new version creates, or that `realm run import` fills, is created at version 3 and needs no migrate. An older Realm refuses a version-3 file with the line quoted in step 1, exits with code 1 and changes nothing. To go back, run `realm db restore <backup>` with this Realm first, then reinstall the older Realm: writes made after the backup are not in the restored file, but are in the copy the command keeps of the file it replaced. A file that is already migrated can instead be stepped back without losing a run: `realm db migrate --to 1` (see [Going back without losing runs](#going-back-without-losing-runs)), or `realm db migrate --to 2` for 0.50.0. See [`realm db restore`](../reference/cli/realm-db.md#restore).
 
 ## Going back without losing runs
 
 To use an older Realm again and keep every run this one stored, step the store file back before you install the older Realm:
 
 1. **Stop every Realm process that uses the home**, as for an upgrade.
-2. **Step back**, with this Realm still installed: `realm db migrate --to 1` takes a file at version 2 back to version 1, the version 0.49.0 writes. It makes a backup first, as a forward migrate does, keeps every run, records the step back in `~/.realm-backups/migrations.jsonl`, and prints the command that installs a Realm that writes version 1. On the sample home above, after its migrate:
+2. **Step back**, with this Realm still installed: `realm db migrate --to 2` takes a file at version 3 back to version 2, the version 0.50.0 writes. `realm db migrate --to 1` takes a file at version 2 back to version 1, the version 0.49.0 writes. From version 3, `--to 1` takes both steps. It makes a backup first, as a forward migrate does, keeps every run, records the step back in `~/.realm-backups/migrations.jsonl`, and prints the command that installs a Realm that writes the version it reached. On the sample home that 0.49.0 wrote, after its migrate, `realm db migrate --to 1` prints one `Stepped` line per step:
 
    ```text
-   Backed up [REDACTED]/.realm/realm.db (schema version 2, 655360 bytes) to [REDACTED]/.realm-backups/realm-v2-to-v1-20261117T193806Z.db; the copy passes SQLite's quick check.
+   Backed up [REDACTED]/.realm/realm.db (schema version 3, 720896 bytes) to [REDACTED]/.realm-backups/realm-v3-to-v1-20261118T174956Z.db; the copy passes SQLite's quick check.
+   Stepped [REDACTED]/.realm/realm.db back from schema version 3 to 2: 2 statement(s) ran, the schema matches version 2's. The callbacks and callback_keys tables were dropped; they held no undelivered callback and no signing key.
    Stepped [REDACTED]/.realm/realm.db back from schema version 2 to 1: 1 statement(s) ran, the schema matches version 1's. The outbound table was dropped; it held no record of a reminder or escalation sent.
    Recorded this migrate in [REDACTED]/.realm-backups/migrations.jsonl.
-   Every command of this Realm that uses the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, now refuses the file, because it is at schema version 1 and this Realm writes version 2. To use it, install a Realm that writes schema version 1: npm install -g "@sensigo/realm-cli@0.49" (in a project that lists Realm packages, give every one of them the same exact version within 0.49; see "Upgrade every package together" in the upgrade guide).
+   Every command of this Realm that uses the store, except `realm db check`, `realm db backup`, `realm db migrate` and `realm db restore`, now refuses the file, because it is at schema version 1 and this Realm writes version 3. To use it, install a Realm that writes schema version 1: npm install -g "@sensigo/realm-cli@0.49" (in a project that lists Realm packages, give every one of them the same exact version within 0.49; see "Upgrade every package together" in the upgrade guide).
    ```
+
+   On a home that 0.50.0 wrote, `realm db migrate --to 2` prints the first `Stepped` line only, and its last line names the releases that write version 2: `npm install -g "@sensigo/realm-cli@>=0.50.0 <0.51.0"`.
 
 3. **Install that Realm**, and give every Realm package in a project the same exact version (section 2 below).
 4. **Start the processes again.**
 
-`realm rollback` finds the version for you: in step 2, run it instead of `realm db migrate --to 1`. It reads the last migrate recorded for this home in `~/.realm-backups/migrations.jsonl` and steps the store file back to the version before it, the same way. A home that no migrate of Realm 0.50.0 or later has touched (one created at version 2, or one whose record was deleted) has no record: there, `realm db migrate --to 1` is the way. See [`realm rollback`](../reference/cli/realm-db.md#realm-rollback).
+`realm rollback` finds the version for you: in step 2, run it instead of `realm db migrate --to <n>`. It reads the last migrate recorded for this home in `~/.realm-backups/migrations.jsonl` and steps the store file back to the version before it, the same way: a 0.49.0 home that one migrate took to version 3 goes back to version 1, in two steps. A home that no migrate of Realm 0.50.0 or later has touched (one created at version 2 or 3, or one whose record was deleted) has no record: there, `realm db migrate --to <n>` is the way. See [`realm rollback`](../reference/cli/realm-db.md#realm-rollback).
 
-Version 2's step back drops the `outbound` table, the record of the Slack reminders and escalations `realm agent` or `realm listen --send-reminders` sent; its line says how many were recorded as sent. Without that record, an agent that restarts may send a reminder or an escalation again, as 0.49.0's agents could. When a step cannot be undone, `realm db migrate --to` refuses and changes nothing; restore a backup made before the upgrade instead, with `realm db restore <backup>`. See [`realm db migrate`](../reference/cli/realm-db.md#migrate).
+Version 3's step back drops the `callbacks` and `callback_keys` tables; its line says how many undelivered callbacks (a failed one too) and signing keys they held, counted together, and the copy made first keeps them. Version 2's step back drops the `outbound` table, the record of the Slack reminders and escalations `realm agent` or `realm listen --send-reminders` sent; its line says how many were recorded as sent. Without that record, an agent that restarts may send a reminder or an escalation again, as 0.49.0's agents could. When a step cannot be undone, `realm db migrate --to` refuses and changes nothing; restore a backup made before the upgrade instead, with `realm db restore <backup>`. See [`realm db migrate`](../reference/cli/realm-db.md#migrate).
 
 ## The agent no longer answers gates by default
 

@@ -16,6 +16,8 @@ All notable changes to this project are documented here.
 
 **4. `realm run advance` exits 1 when every step it waits on is held by a claim whose deadline has passed (it exited 0). On exit 1, `realm run reclaim <run-id>` lists each held step's command.**
 
+**5. The store file moves to format version 3.** Stop every `realm listen`, `realm agent`, `realm serve` and MCP server (supervised ones too), run `realm db migrate` (it copies the store into `~/.realm-backups/` first and records the migrate there; a 0.50.0 home takes one step, a 0.49.0 home two), then `realm db check`, then start them again. A 0.50 process still running when the file is migrated cannot use the store afterwards. `realm db migrate --to 2` steps a version-3 file back and drops the callback tables.
+
 ### Added
 
 - **`realm rollback` undoes the last migrate of this home, using the record it left** (#616): it reads `~/.realm-backups/migrations.jsonl`, the record `realm db migrate` keeps, and, when the store file is at the version that migrate reached, steps it back to the version before it as `realm db migrate --to` does: a backup first, every run kept, the step back recorded, and the command that installs the older Realm printed last. A home migrated by Realm 0.50.0 or later has that record. It refuses, and changes nothing, when the home has no record, the file is at another version, or the last record is a step back. `realm rollback` takes no options (`realm rollback --help` describes it). See [`realm rollback`](docs/reference/cli/realm-db.md#realm-rollback).
