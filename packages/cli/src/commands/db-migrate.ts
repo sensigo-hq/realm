@@ -63,6 +63,13 @@ export function lineOf(file: string, event: MigrateProgress): string {
     }
     case 'nothingToUndo':
       return `${file} is already at schema version ${event.schemaVersion}; no step to undo.`;
+    // #616 R3: `realm rollback`'s line before the step back it runs.
+    case 'rollingBack':
+      return (
+        `Rolling back the migrate recorded at ${event.at} (schema version ${event.from} to ` +
+        `${event.to}, by Realm ${event.migratedBy}): stepping the store file back to schema ` +
+        `version ${event.from}.`
+      );
     case 'install':
       return (
         'Every command of this Realm that uses the store, except `realm db check`, ' +
