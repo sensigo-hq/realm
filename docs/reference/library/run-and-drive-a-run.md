@@ -2569,6 +2569,11 @@ Names this job reaches whose entry is on another page.
 - [`CacheRequest`](read-a-runs-record.md#cacherequest): One of the words in `CACHE_REQUESTS`: what Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`).
 - [`CacheRequestSource`](read-a-runs-record.md#cacherequestsource): One of the words in `CACHE_REQUEST_SOURCES`: whether a request's cache setting was stated with `--prompt-cache` or was the runner's default (`UsageRecord.cache_requested_source`).
 - [`CacheState`](read-a-runs-record.md#cachestate): One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the provider reported (`StepCacheDetail.state`).
+- [`CallbackLastStatus`](implement-a-store.md#callbacklaststatus): The last answer a try got: an HTTP status (100–599), or a word for a try that got none.
+- [`CallbackRegistration`](implement-a-store.md#callbackregistration): Where a run's caller asked to be told the run finished (`CreateRunOptions.callback`).
+- [`CallbackRow`](implement-a-store.md#callbackrow): One callback row as a store keeps it, for store implementers only.
+- [`CallbackStore`](implement-a-store.md#callbackstore): A store's callback store (`RunStore.callbacks`): one row per run, written by `create`.
+- [`CallbackView`](implement-a-store.md#callbackview): A callback row as the port's `read` returns it: no address, body, token or webhook id.
 - [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): The marker on a step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
 - [`CappedRead`](implement-a-store.md#cappedread): What `WorkflowRegistrar.getCapped` resolves to.
 - [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).

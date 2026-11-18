@@ -33,6 +33,9 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`AppendResult`](#appendresult) | interface | What a trace buffer reports after an append: how many entries and bytes this writer holds against its limits, and the whole file's when the store keeps them (`TraceBufferStore.append`). |
 | [`ArtifactDeletionReport`](#artifactdeletionreport) | interface | What a store reports about the artifacts it just deleted: the bytes it deleted. |
 | [`BufferedEntry`](#bufferedentry) | interface | An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce that carried it, if any. |
+| [`CallbackRegistration`](#callbackregistration) | interface | Where a run's caller asked to be told the run finished (`CreateRunOptions.callback`). |
+| [`CallbackRow`](#callbackrow) | interface | One callback row as a store keeps it, for store implementers only. |
+| [`CallbackStore`](#callbackstore) | interface | A store's callback store (`RunStore.callbacks`): one row per run, written by `create`. |
 | [`Clock`](#clock) | interface | The clock a run store reads the time from: `now()` and `at()`. |
 | [`CreateRunOptions`](#createrunoptions) | interface | What a run store is given to create a run: the workflow and its version, the params, and an idempotency key with the rule for a key already used (`RunStore.create`). |
 | [`DedupStore`](#dedupstore) | interface | Where `realm listen` remembers the webhook events it has seen, so an event delivered twice starts one run. |
@@ -80,6 +83,8 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`UnreadableRunFileEntry`](#unreadablerunfileentry) | interface | One run file the JSON store could not read as a run, as a listing reports it (`RunListing.unreadable`). |
 | [`ValidationErrorSummaryEntry`](#validationerrorsummaryentry) | interface | A single whitelisted Ajv error — value echoes (`params`/`data`) are intentionally excluded. |
 | [`WorkflowRegistrar`](#workflowregistrar) | interface | Where a program registers its workflows and reads them back by id. |
+| [`CallbackLastStatus`](#callbacklaststatus) | type | The last answer a try got: an HTTP status (100–599), or a word for a try that got none. |
+| [`CallbackView`](#callbackview) | type | A callback row as the port's `read` returns it: no address, body, token or webhook id. |
 | [`CappedRead`](#cappedread) | type | What `WorkflowRegistrar.getCapped` resolves to. |
 | [`CreateResult`](#createresult) | type | What a run store's `create` returns: the record with the reading the create used, and whether it was written. |
 | [`FencePredicate`](#fencepredicate) | type | The four facts a fenced trace-buffer operation can be conditioned on. |
@@ -601,6 +606,66 @@ interface BufferedEntry extends AgentTraceEntry {
 }
 ```
 
+### CallbackRegistration
+
+interface · beta: may change in a minor release until it settles
+
+Where a run's caller asked to be told the run finished (`CreateRunOptions.callback`).
+`url` is the address as given (1–2,048 characters), `host` the label the caller computed from it
+(1–255) and `webhook_id` a uuid the caller made, the same on every try.
+
+```ts
+interface CallbackRegistration {
+    readonly url: string;
+    readonly host: string;
+    readonly webhook_id: string;
+}
+```
+
+### CallbackRow
+
+interface · beta: may change in a minor release until it settles
+
+One callback row as a store keeps it, for store implementers only.
+It carries the address, the frozen body and the claim token, so it is never rendered: the port
+returns a `CallbackView`, and an address only from `due` and `claim`. An unset field is
+omitted, never `null`.
+
+```ts
+interface CallbackRow {
+    readonly run_id: string;
+    readonly workflow_id: string;
+    readonly host: string;
+    readonly webhook_id: string;
+    readonly status: 'pending' | 'delivered' | 'failed';
+    readonly attempts: number;
+    readonly created_at: string;
+    readonly next_attempt_at: string;
+    readonly first_attempt_at?: string;
+    readonly finished_at?: string;
+    readonly last_attempt_at?: string;
+    readonly last_status?: CallbackLastStatus;
+    readonly url?: string;
+    readonly body?: string;
+    readonly claim_token?: string;
+}
+```
+
+### CallbackStore
+
+interface · beta: may change in a minor release until it settles
+
+A store's callback store (`RunStore.callbacks`): one row per run, written by `create`.
+`read`, `countPending` and the purge pair take no reading of the store's clock; the row is written
+at the create's own reading. A run without a row is no error.
+
+```ts
+interface CallbackStore extends PerRunArtifactStore {
+    read(runId: string): Promise<CallbackView | undefined>;
+    countPending(): Promise<number>;
+}
+```
+
 ### Clock
 
 interface · public
@@ -629,7 +694,7 @@ interface Clock {
 
 ### CreateRunOptions
 
-interface · public
+interface · public (beta: callback): those members may change in a minor release until they settle
 
 What a run store is given to create a run: the workflow and its version, the params, and an
 idempotency key with the rule for a key already used (`RunStore.create`).
@@ -644,6 +709,7 @@ interface CreateRunOptions {
     onTerminalMatch?: 'reuse' | 'reject' | 'rerun_if_failed' | 'rerun';
     onLiveMatch?: 'use_existing' | 'fail';
     extensionIdentity?: ExtensionIdentityEntry[];
+    callback?: CallbackRegistration;
 }
 ```
 
@@ -1173,7 +1239,7 @@ interface RunRow {
 
 ### RunStore
 
-interface · public (beta: claimStep.hold, leases, outbound): those members may change in a minor release until they settle
+interface · public (beta: callbacks, claimStep.hold, leases, outbound): those members may change in a minor release until they settle
 
 Where a program keeps its runs: it creates, reads, updates, lists, claims and settles them,
 reading the time from its own clock.
@@ -1185,6 +1251,7 @@ interface RunStore {
     readonly purgesRuns: boolean;
     readonly leases?: LeasePort | null;
     readonly outbound?: OutboundLedger | null;
+    readonly callbacks?: CallbackStore | null;
     readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
     create(options: CreateRunOptions): Promise<CreateResult>;
     get(runId: string): Promise<Snapshot>;
@@ -1555,6 +1622,26 @@ interface WorkflowRegistrar {
 ```
 
 ## Types
+
+### CallbackLastStatus
+
+type · beta: may change in a minor release until it settles
+
+The last answer a try got: an HTTP status (100–599), or a word for a try that got none.
+
+```ts
+type CallbackLastStatus = number | 'timeout' | 'connection' | 'redirect' | 'refused_address' | 'not_allowed' | 'expired';
+```
+
+### CallbackView
+
+type · beta: may change in a minor release until it settles
+
+A callback row as the port's `read` returns it: no address, body, token or webhook id.
+
+```ts
+type CallbackView = Pick<CallbackRow, 'workflow_id' | 'host' | 'status' | 'attempts' | 'last_status' | 'next_attempt_at' | 'first_attempt_at' | 'last_attempt_at' | 'created_at' | 'finished_at'>;
+```
 
 ### CappedRead
 

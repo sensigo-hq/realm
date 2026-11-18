@@ -9,6 +9,7 @@ import type { Clock } from '../utils/clock.js';
 import type { LeaseHold, LeasePort } from './lease-port.js';
 import type { LeaseFacts } from './lease-facts.js';
 import type { OutboundLedger } from './outbound-ledger.js';
+import type { CallbackRegistration, CallbackStore } from './callback-store.js';
 
 /**
  * The `RunRecord` fields the engine relies on enough that a store must declare which of them it
@@ -102,6 +103,13 @@ export interface CreateRunOptions {
    * leaves them out.
    */
   extensionIdentity?: ExtensionIdentityEntry[];
+  /**
+   * Where to tell the caller this run finished (R1.3, callback A1a). A store with a callback store writes its
+   * row in the same step as the run; a store built without one refuses it, `VALIDATION_OPTION_INVALID`;
+   * an idempotent match (`created: false`) ignores it.
+   * @beta
+   */
+  callback?: CallbackRegistration;
 }
 
 /**
@@ -214,6 +222,15 @@ export interface RunStore {
    * @beta
    */
   readonly outbound?: OutboundLedger | null;
+
+  /**
+   * The store's callback store (R1.3, callback A1a). OPTIONAL: absent or `null`, the store keeps none; nothing
+   * in core treats that as an error. One row per run registered with `CreateRunOptions.callback`, beside
+   * the run record, never in it. `InMemoryStore` keeps one unless it is built with `callbacks: null`.
+   * No Realm command uses it yet.
+   * @beta
+   */
+  readonly callbacks?: CallbackStore | null;
 
   /**
    * Which {@link LoadBearingRunRecordField}s this store guarantees to round-trip through
