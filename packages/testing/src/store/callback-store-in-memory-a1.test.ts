@@ -7,6 +7,12 @@
 // Each assertion carries the two questions of `~/.claude/TESTING-RULES.md` rule 8 next to it:
 // (a) what turns it red, (b) what it prints then.
 import { describe, expect, it } from 'vitest';
+import {
+  callbackKeyFingerprint,
+  callbackPreviousIsLive,
+  decideCallbackKeyRotate,
+  type CallbackKeySlot,
+} from '@sensigo/realm';
 import { InMemoryCallbackStore, InMemoryStore } from './in-memory-store.js';
 import {
   CALLBACK_STORE_LAWS,
@@ -33,6 +39,8 @@ const ADAPTER: CallbackStoreContractAdapter = {
   makeStoreWithoutPort: async ({ clock }) => ({
     store: new InMemoryStore({ clock, callbacks: null }),
   }),
+  makeUnreadable: async (store, workflowId, host, slot, masterFp) =>
+    (store as InMemoryStore).callbacks!.keys.makeUnreadable(workflowId, host, slot, masterFp),
 };
 
 describe('R1.3 callback A1a — InMemoryStore runs the callback-store contract', () => {
@@ -82,5 +90,49 @@ describe('R1.3 callback A1a — InMemoryStore’s own callback store', () => {
       without: await store.callbacks!.read(record.id),
       recordKeys: Object.keys((await store.get(withRow.record.id)).record).includes('callback'),
     }).toEqual({ without: undefined, recordKeys: false });
+  });
+});
+
+describe('R1.3 callback A2 — the key fingerprint and a previous with no end', () => {
+  it('a key’s fingerprint is the first 8 lowercase hex characters of SHA-256 of its text', () => {
+    // Computed apart, both ways, for 64 × `a`: node:crypto and `printf %s <text> | sha256sum`.
+    // (a) red when the fingerprint hashes other bytes, takes other characters or another length;
+    //     (b) prints the fingerprint, its length and whether it is lowercase.
+    const fp = callbackKeyFingerprint('a'.repeat(64));
+    expect({ fp, length: fp.length, lowercase: fp === fp.toLowerCase() }).toEqual({
+      fp: 'ffe054fe',
+      length: 8,
+      lowercase: true,
+    });
+  });
+
+  it('a previous without expires_at is never live, so a rotate drops it without the flag', () => {
+    // The port never writes such a slot (rotate always sets `expires_at`), so no contract case can
+    // build one: this pins the liveness function and a decider directly.
+    const at = new Date('2026-01-01T00:00:00.000Z');
+    const current: CallbackKeySlot = {
+      slot: 'current',
+      state: 'readable',
+      key: '1'.repeat(64),
+      key_fp: callbackKeyFingerprint('1'.repeat(64)),
+      created_at: '2025-12-31T00:00:00.000Z',
+    };
+    const endless: CallbackKeySlot = {
+      slot: 'previous',
+      state: 'readable',
+      key: '2'.repeat(64),
+      key_fp: callbackKeyFingerprint('2'.repeat(64)),
+      created_at: '2025-12-30T00:00:00.000Z',
+    };
+    // (a) red when a previous with no `expires_at` counts as live: the liveness answers true and the
+    //     rotate answers previous_live; (b) prints both answers.
+    expect({
+      live: callbackPreviousIsLive(endless, at),
+      rotate: decideCallbackKeyRotate(
+        { current, previous: endless },
+        { candidate: '3'.repeat(64), keepSeconds: 60 },
+        at,
+      ).result.applied,
+    }).toEqual({ live: false, rotate: true });
   });
 });

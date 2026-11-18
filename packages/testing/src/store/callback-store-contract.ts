@@ -1,20 +1,25 @@
-// callback-store-contract.ts — R1.3 the callback, callback A1a and A1b (prompt
-// `feat-callback-a1-delivery-port.md` and its split amendment): the laws of a store's callback store
-// (`RunStore.callbacks`). The door side (A1a): registration inside `create`, `read`, `countPending`
-// and the purge pair. The sender side (A1b): `due` and `claim`, the only methods that return the
-// address, then `freezeBody` and `mark`. The store is ALSO a `PerRunArtifactStore`: a file wiring
+// callback-store-contract.ts — R1.3 the callback, callback A1a, A1b and A2 (prompts
+// `feat-callback-a1-delivery-port.md` and its split amendment, `feat-callback-a2-keys-port.md`): the
+// laws of a store's callback store (`RunStore.callbacks`). The door side (A1a): registration inside
+// `create`, `read`, `countPending` and the purge pair. The sender side (A1b): `due` and `claim`, the
+// only methods that return the address, then `freezeBody` and `mark`. The signing keys (A2): the
+// `CBK_` laws of `keys`. The store is ALSO a `PerRunArtifactStore`: a file wiring
 // this family runs `perRunArtifactStoreContract` on `store.callbacks` too, naming in its `NOT_RUN`
 // what its store cannot run there.
 //
 // Pure case descriptors (no test framework is imported). Each case builds its own stores through the
 // adapter, on a clock the case moves and counts. A failing case throws an error that names the law,
 // the step and what it got.
+import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
   abandonRun,
   markTestClock,
   WorkflowError,
   type CallbackClaimResult,
+  type CallbackKeySlot,
+  type CallbackKeySlotName,
+  type CallbackKeyStore,
   type CallbackMarkRequest,
   type CallbackRegistration,
   type CallbackStore,
@@ -78,6 +83,37 @@ import { settableClock } from '../clock/settable-clock.js';
  *   takes, keyed and unkeyed, and the row is stamped with the create's own reading; `read`,
  *   `countPending` and the purge pair take none. Callback A1b: `due`, `claim` and a `retry` mark take
  *   one, applied or refused; `freezeBody` and the other marks take none.
+ *
+ * Callback A2, the signing keys (`store.callbacks.keys`), for each (workflow, host) a `current` and
+ * a `previous`. A previous counts only while live (at its `expires_at` it is gone, for every method):
+ * - `CBK_MAKE_ONE_KEY` — two makers at once with two candidates get one key, exactly one with
+ *   `created: true`; a later make returns it; another host and another workflow get their own.
+ * - `CBK_ROTATE_ATOMIC` — a `read` beside an applied rotate sees the pair before it or after it, never
+ *   another; after it the current is the candidate and the previous the old current, its text and
+ *   `created_at` carried, ending `keepSeconds` after the rotate's reading.
+ * - `CBK_EXPIRY_AT_STORE_CLOCK` — 1 ms before `expires_at`, `read` returns the previous, `rotate`
+ *   without the flag is `previous_live` and `endPrevious` ends it; at `expires_at`, `read` omits it,
+ *   `rotate` applies, `endPrevious` is `no_previous` and `delete` still answers: by the store's clock.
+ * - `CBK_ROTATE_REFUSALS` — no current is `no_current`; a live previous is `previous_live` unless
+ *   `endPrevious: true`, which drops it; a refused rotate changes nothing.
+ * - `CBK_REPLACE_REFUSALS` — `replace` with no current is `no_current`, with a readable one
+ *   `readable`, each changing nothing.
+ * - `CBK_UNREADABLE_STATES` — with an unreadable current (the adapter's `makeUnreadable`; a store
+ *   that cannot lists this law in its `NOT_RUN`): `read` returns it and a live previous, `make`
+ *   returns it, `rotate` is `current_unreadable` even beside a live previous, `replace` applies (one
+ *   reading) and keeps the previous, `endPrevious` ends a live previous, `delete` answers; with a live
+ *   previous made unreadable, `rotate` is `previous_live` without the flag; a missing slot throws.
+ * - `CBK_END_AND_DELETE` — `endPrevious` without a live previous is `no_previous`, with one it ends it
+ *   and keeps the current; `delete` answers twice and leaves another pair.
+ * - `CBK_MALFORMED_THROWS` — for each of the six methods an empty or 256-character `workflowId` or
+ *   `host`; a candidate that is not 64 lowercase hex; a `keepSeconds` of 0, 604,801, 1.5 or a string;
+ *   an `endPrevious` that is not a boolean: each throws, takes no reading, writes nothing, and its
+ *   message does not repeat the candidate; 1- and 255-character labels, and a `keepSeconds` of 1 and
+ *   604,800, are accepted.
+ * - `CBK_CLOCK_READINGS` — `read`, `make`, `rotate`, `endPrevious` and `replace` take one reading,
+ *   applied or refused; `delete` takes none.
+ * - `CBK_KEYS_APART` — a key's text appears in no run, scan page, callback row or callback result;
+ *   a run's purge leaves the key, and `delete` of the pair leaves the row.
  */
 export const CALLBACK_STORE_LAWS = [
   'CB_CREATE_BOTH_OR_NEITHER',
@@ -94,6 +130,16 @@ export const CALLBACK_STORE_LAWS = [
   'CB_VIEW_HIDES',
   'CB_PURGE_PAIR',
   'CB_CLOCK_READINGS',
+  'CBK_MAKE_ONE_KEY',
+  'CBK_ROTATE_ATOMIC',
+  'CBK_EXPIRY_AT_STORE_CLOCK',
+  'CBK_ROTATE_REFUSALS',
+  'CBK_REPLACE_REFUSALS',
+  'CBK_UNREADABLE_STATES',
+  'CBK_END_AND_DELETE',
+  'CBK_MALFORMED_THROWS',
+  'CBK_CLOCK_READINGS',
+  'CBK_KEYS_APART',
 ] as const;
 
 export type CallbackStoreLaw = (typeof CALLBACK_STORE_LAWS)[number];
@@ -124,6 +170,19 @@ export interface CallbackStoreContractAdapter {
   makeStoreWithoutPort?(o: {
     clock: Clock;
   }): Promise<{ store: RunStore; dispose?(): Promise<void> }>;
+  /**
+   * Makes one key slot of a pair unreadable, as a sealing store reports a slot it cannot unseal, under
+   * the master key fingerprint `masterFp`; it throws on a slot that does not exist, and reads no clock
+   * (callback A2: `CBK_UNREADABLE_STATES`). A store that cannot leaves this out and lists exactly that
+   * law in its `NOT_RUN`.
+   */
+  makeUnreadable?(
+    store: RunStore,
+    workflowId: string,
+    host: string,
+    slot: CallbackKeySlotName,
+    masterFp: string,
+  ): Promise<void>;
 }
 
 export interface CallbackStoreContractCase {
@@ -156,6 +215,8 @@ function show(value: unknown): string {
 interface Bench {
   readonly store: RunStore;
   readonly callbacks: CallbackStore;
+  /** The callback store's signing keys (`store.callbacks.keys`). */
+  readonly keys: CallbackKeyStore;
   /** Moves the clock to `T0 + ms`. */
   at(ms: number): Promise<void>;
   /** How many readings the store took since the bench was built. */
@@ -199,6 +260,7 @@ function family(adapter: CallbackStoreContractAdapter) {
     return {
       store: built.store,
       callbacks: keeps as CallbackStore,
+      keys: (keeps as CallbackStore)?.keys,
       keeps,
       at: (ms) => inner.set(new Date(T0 + ms)),
       reads: () => reads,
@@ -465,6 +527,78 @@ function family(adapter: CallbackStoreContractAdapter) {
       },
     );
   }
+
+  // ---- callback A2: the signing keys ----
+
+  /** A key's text: 64 of one hex digit. */
+  const KEY = (digit: string): string => digit.repeat(64);
+  /** A key's text a case looks for in messages and results. */
+  const PLANT = '0123456789abcdef'.repeat(4);
+  const OTHER_WORKFLOW = 'wf-callback-law-other';
+  const MASTER = 'deadbeef';
+  const at443 = (name: string): string => `${name}.example:443`;
+
+  /** A key's fingerprint, computed here, apart from the store. */
+  const fp = (text: string): string =>
+    createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 8);
+
+  /** A readable slot as the store must answer it. */
+  const readable = (
+    slot: CallbackKeySlotName,
+    text: string,
+    createdMs: number,
+    expiresMs?: number,
+  ): CallbackKeySlot => ({
+    slot,
+    state: 'readable',
+    key: text,
+    key_fp: fp(text),
+    created_at: T(createdMs),
+    ...(expiresMs !== undefined ? { expires_at: T(expiresMs) } : {}),
+  });
+
+  /** An unreadable slot as the store must answer it, under {@link MASTER}. */
+  const sealed = (
+    slot: CallbackKeySlotName,
+    createdMs: number,
+    expiresMs?: number,
+  ): CallbackKeySlot => ({
+    slot,
+    state: 'unreadable',
+    master_fp: MASTER,
+    created_at: T(createdMs),
+    ...(expiresMs !== undefined ? { expires_at: T(expiresMs) } : {}),
+  });
+
+  /** A slot's text, or its state when it has none. */
+  const textOf = (s: CallbackKeySlot | undefined): string =>
+    s === undefined ? 'absent' : s.state === 'readable' ? s.key : s.state;
+
+  /** Makes one slot of `host`'s pair unreadable through the adapter's hook. */
+  async function unseal(
+    b: Bench,
+    law: CallbackStoreLaw,
+    host: string,
+    slot: CallbackKeySlotName,
+  ): Promise<void> {
+    if (adapter.makeUnreadable === undefined)
+      throw new Error(`${law}: the adapter has no makeUnreadable; list the law in NOT_RUN.`);
+    await adapter.makeUnreadable(b.store, WORKFLOW, host, slot, MASTER);
+  }
+
+  /** The readings `call` takes. */
+  async function readingsOf(b: Bench, call: () => Promise<unknown>): Promise<number> {
+    const before = b.reads();
+    await call();
+    return b.reads() - before;
+  }
+
+  const rotate = (b: Bench, host: string, keepSeconds: number, candidate: string, end?: boolean) =>
+    b.keys.rotate(WORKFLOW, host, {
+      candidate,
+      keepSeconds,
+      ...(end !== undefined ? { endPrevious: end } : {}),
+    });
 
   const L = (law: CallbackStoreLaw, name: string, run: () => Promise<void>) => ({
     law,
@@ -1171,6 +1305,528 @@ function family(adapter: CallbackStoreContractAdapter) {
           );
           await clockSender(b);
         }),
+    ),
+    L('CBK_MAKE_ONE_KEY', 'two makers of one pair end with one key, made by one of them', () =>
+      on('CBK_MAKE_ONE_KEY', async (b) => {
+        const law = 'CBK_MAKE_ONE_KEY';
+        const both = await Promise.all([
+          b.keys.make(WORKFLOW, HOST, KEY('1')),
+          b.keys.make(WORKFLOW, HOST, KEY('2')),
+        ]);
+        same(law, 'both makers get the same key', textOf(both[0].key), textOf(both[1].key));
+        same(law, 'exactly one created it', both.map((r) => r.created).sort(), [false, true]);
+        const first = both.find((r) => r.created)?.key;
+        same(law, 'the pair holds it', await b.keys.read(WORKFLOW, HOST), { current: first });
+        same(law, 'a later make returns it', await b.keys.make(WORKFLOW, HOST, KEY('3')), {
+          created: false,
+          key: first,
+        });
+        same(law, 'another host gets its own', await b.keys.make(WORKFLOW, at443('b'), KEY('3')), {
+          created: true,
+          key: readable('current', KEY('3'), 0),
+        });
+        same(
+          law,
+          'another workflow gets its own',
+          await b.keys.make(OTHER_WORKFLOW, HOST, KEY('4')),
+          { created: true, key: readable('current', KEY('4'), 0) },
+        );
+      }),
+    ),
+    L('CBK_ROTATE_ATOMIC', 'a read beside a rotate sees the pair before it or after it', () =>
+      on('CBK_ROTATE_ATOMIC', async (b) => {
+        const law = 'CBK_ROTATE_ATOMIC';
+        await b.keys.make(WORKFLOW, HOST, KEY('1'));
+        await b.at(10_000);
+        const before = await b.keys.read(WORKFLOW, HOST);
+        const [rotated, beside] = await Promise.all([
+          rotate(b, HOST, 3600, KEY('2')),
+          b.keys.read(WORKFLOW, HOST),
+        ]);
+        const after = {
+          current: readable('current', KEY('2'), 10_000),
+          previous: readable('previous', KEY('1'), 0, 10_000 + 3_600_000),
+        };
+        same(law, 'the pair before', before, { current: readable('current', KEY('1'), 0) });
+        same(law, 'the rotate answers the pair it wrote', rotated, { applied: true, ...after });
+        same(law, 'the pair after', await b.keys.read(WORKFLOW, HOST), after);
+        same(
+          law,
+          'the read beside it sees the pair before or after',
+          isDeepStrictEqual(beside, before) || isDeepStrictEqual(beside, after)
+            ? 'one of them'
+            : beside,
+          'one of them',
+        );
+      }),
+    ),
+    L(
+      'CBK_EXPIRY_AT_STORE_CLOCK',
+      'a previous ends at its expires_at, by the store’s clock, for every method',
+      () =>
+        on('CBK_EXPIRY_AT_STORE_CLOCK', async (b) => {
+          const law = 'CBK_EXPIRY_AT_STORE_CLOCK';
+          const hosts = ['r1', 'o1', 'e1', 'r2', 'o2', 'e2', 'd2'].map(at443);
+          for (const host of hosts) await b.keys.make(WORKFLOW, host, KEY('1'));
+          await b.at(1000);
+          for (const host of hosts) await rotate(b, host, 60, KEY('2'));
+          const ends = 61_000;
+          await b.at(ends - 1);
+          same(
+            law,
+            '1 ms before: read returns the previous',
+            (await b.keys.read(WORKFLOW, at443('r1'))).previous,
+            readable('previous', KEY('1'), 0, ends),
+          );
+          same(
+            law,
+            '1 ms before: rotate without the flag',
+            await rotate(b, at443('o1'), 60, KEY('3')),
+            { applied: false, reason: 'previous_live' },
+          );
+          same(law, '1 ms before: endPrevious', await b.keys.endPrevious(WORKFLOW, at443('e1')), {
+            ended: true,
+          });
+          await b.at(ends);
+          same(law, 'at expires_at: read omits it', await b.keys.read(WORKFLOW, at443('r2')), {
+            current: readable('current', KEY('2'), 1000),
+          });
+          same(
+            law,
+            'at expires_at: rotate applies without the flag',
+            await rotate(b, at443('o2'), 60, KEY('3')),
+            {
+              applied: true,
+              current: readable('current', KEY('3'), ends),
+              previous: readable('previous', KEY('2'), 1000, ends + 60_000),
+            },
+          );
+          same(law, 'at expires_at: endPrevious', await b.keys.endPrevious(WORKFLOW, at443('e2')), {
+            ended: false,
+            reason: 'no_previous',
+          });
+          same(law, 'at expires_at: delete answers', await b.keys.delete(WORKFLOW, at443('d2')), {
+            had_current: true,
+          });
+          same(law, 'and the pair is empty', await b.keys.read(WORKFLOW, at443('d2')), {});
+        }),
+    ),
+    L('CBK_ROTATE_REFUSALS', 'a rotate refuses in order and a refusal changes nothing', () =>
+      on('CBK_ROTATE_REFUSALS', async (b) => {
+        const law = 'CBK_ROTATE_REFUSALS';
+        same(law, 'no current', await rotate(b, at443('none'), 60, KEY('2')), {
+          applied: false,
+          reason: 'no_current',
+        });
+        same(law, 'which wrote nothing', await b.keys.read(WORKFLOW, at443('none')), {});
+        await b.keys.make(WORKFLOW, HOST, KEY('1'));
+        await b.at(1000);
+        same(law, 'a current and no live previous: applies', await rotate(b, HOST, 60, KEY('2')), {
+          applied: true,
+          current: readable('current', KEY('2'), 1000),
+          previous: readable('previous', KEY('1'), 0, 61_000),
+        });
+        await b.at(2000);
+        const live = await b.keys.read(WORKFLOW, HOST);
+        for (const end of [undefined, false])
+          same(
+            law,
+            `a live previous, endPrevious ${String(end)}`,
+            await rotate(b, HOST, 60, KEY('3'), end),
+            { applied: false, reason: 'previous_live' },
+          );
+        same(law, 'which changed nothing', await b.keys.read(WORKFLOW, HOST), live);
+        await b.at(3000);
+        const ended = {
+          current: readable('current', KEY('3'), 3000),
+          previous: readable('previous', KEY('2'), 1000, 123_000),
+        };
+        same(
+          law,
+          'a live previous, endPrevious true: applies and drops it',
+          await rotate(b, HOST, 120, KEY('3'), true),
+          { applied: true, ...ended },
+        );
+        same(law, 'the pair after', await b.keys.read(WORKFLOW, HOST), ended);
+      }),
+    ),
+    L(
+      'CBK_REPLACE_REFUSALS',
+      'replace writes nothing where there is no current or a readable one',
+      () =>
+        on('CBK_REPLACE_REFUSALS', async (b) => {
+          const law = 'CBK_REPLACE_REFUSALS';
+          same(law, 'no current', await b.keys.replace(WORKFLOW, at443('none'), KEY('2')), {
+            applied: false,
+            reason: 'no_current',
+          });
+          same(law, 'which wrote nothing', await b.keys.read(WORKFLOW, at443('none')), {});
+          await b.keys.make(WORKFLOW, at443('p0'), KEY('1'));
+          await b.keys.make(WORKFLOW, at443('p1'), KEY('1'));
+          await b.at(1000);
+          await rotate(b, at443('p1'), 60, KEY('2'));
+          for (const host of [at443('p0'), at443('p1')]) {
+            const before = await b.keys.read(WORKFLOW, host);
+            same(
+              law,
+              `${host}: a readable current`,
+              await b.keys.replace(WORKFLOW, host, KEY('3')),
+              {
+                applied: false,
+                reason: 'readable',
+              },
+            );
+            same(law, `${host}: which changed nothing`, await b.keys.read(WORKFLOW, host), before);
+          }
+        }),
+    ),
+    L('CBK_UNREADABLE_STATES', 'an unreadable key: kept, never rotated, replaced only there', () =>
+      on('CBK_UNREADABLE_STATES', async (b) => {
+        const law = 'CBK_UNREADABLE_STATES';
+        const refused = { applied: false, reason: 'current_unreadable' };
+        // u0: an unreadable current, no previous. u1, u2: an unreadable current beside a live
+        // previous, readable (u1) or unreadable too (u2). u3: an unreadable current, deleted.
+        // u4, u5: a readable current beside a live previous made unreadable.
+        for (const name of ['u0', 'u1', 'u2']) await b.keys.make(WORKFLOW, at443(name), KEY('1'));
+        await b.at(1000);
+        for (const name of ['u1', 'u2']) await rotate(b, at443(name), 600, KEY('2'));
+        for (const name of ['u0', 'u1', 'u2']) await unseal(b, law, at443(name), 'current');
+        await unseal(b, law, at443('u2'), 'previous');
+        const c0 = sealed('current', 0);
+        const c1 = sealed('current', 1000);
+        const live = readable('previous', KEY('1'), 0, 601_000);
+        same(law, 'u0: read', await b.keys.read(WORKFLOW, at443('u0')), { current: c0 });
+        same(law, 'u0: make returns it', await b.keys.make(WORKFLOW, at443('u0'), KEY('3')), {
+          created: false,
+          key: c0,
+        });
+        for (const end of [undefined, true])
+          same(
+            law,
+            `u0: rotate, endPrevious ${String(end)}`,
+            await rotate(b, at443('u0'), 60, KEY('3'), end),
+            refused,
+          );
+        same(law, 'u1: read', await b.keys.read(WORKFLOW, at443('u1')), {
+          current: c1,
+          previous: live,
+        });
+        for (const end of [undefined, true])
+          same(
+            law,
+            `u1: rotate beside a live previous, endPrevious ${String(end)}`,
+            await rotate(b, at443('u1'), 60, KEY('3'), end),
+            refused,
+          );
+        same(law, 'u1: endPrevious', await b.keys.endPrevious(WORKFLOW, at443('u1')), {
+          ended: true,
+        });
+        same(law, 'u1: the current stays', await b.keys.read(WORKFLOW, at443('u1')), {
+          current: c1,
+        });
+        const sealedLive = sealed('previous', 0, 601_000);
+        same(law, 'u2: read', await b.keys.read(WORKFLOW, at443('u2')), {
+          current: c1,
+          previous: sealedLive,
+        });
+        same(law, 'u2: make returns it', await b.keys.make(WORKFLOW, at443('u2'), KEY('3')), {
+          created: false,
+          key: c1,
+        });
+        same(law, 'u2: rotate', await rotate(b, at443('u2'), 60, KEY('3')), refused);
+        await b.at(2000);
+        let answer: unknown;
+        const reads = await readingsOf(b, async () => {
+          answer = await b.keys.replace(WORKFLOW, at443('u2'), KEY('3'));
+        });
+        same(
+          law,
+          'u2: replace applies, with one reading',
+          { answer, reads },
+          {
+            answer: { applied: true, key: readable('current', KEY('3'), 2000) },
+            reads: 1,
+          },
+        );
+        same(
+          law,
+          'u2: the new current reads; the previous is as it was',
+          await b.keys.read(WORKFLOW, at443('u2')),
+          {
+            current: readable('current', KEY('3'), 2000),
+            previous: sealedLive,
+          },
+        );
+        for (const name of ['u3', 'u4', 'u5']) await b.keys.make(WORKFLOW, at443(name), KEY('1'));
+        await unseal(b, law, at443('u3'), 'current');
+        same(law, 'u3: delete', await b.keys.delete(WORKFLOW, at443('u3')), { had_current: true });
+        same(law, 'u3: the pair is empty', await b.keys.read(WORKFLOW, at443('u3')), {});
+        same(
+          law,
+          'makeUnreadable on a missing slot throws',
+          (await thrown(() => unseal(b, law, at443('none'), 'current'))) !== undefined,
+          true,
+        );
+        await b.at(3000);
+        for (const name of ['u4', 'u5']) {
+          await rotate(b, at443(name), 600, KEY('2'));
+          await unseal(b, law, at443(name), 'previous');
+        }
+        same(law, 'u4: read', await b.keys.read(WORKFLOW, at443('u4')), {
+          current: readable('current', KEY('2'), 3000),
+          previous: sealed('previous', 2000, 603_000),
+        });
+        same(law, 'u4: rotate without the flag', await rotate(b, at443('u4'), 60, KEY('3')), {
+          applied: false,
+          reason: 'previous_live',
+        });
+        same(law, 'u4: rotate with the flag', await rotate(b, at443('u4'), 60, KEY('3'), true), {
+          applied: true,
+          current: readable('current', KEY('3'), 3000),
+          previous: readable('previous', KEY('2'), 3000, 63_000),
+        });
+        same(law, 'u5: endPrevious', await b.keys.endPrevious(WORKFLOW, at443('u5')), {
+          ended: true,
+        });
+      }),
+    ),
+    L('CBK_END_AND_DELETE', 'endPrevious ends only a live previous; delete removes one pair', () =>
+      on('CBK_END_AND_DELETE', async (b) => {
+        const law = 'CBK_END_AND_DELETE';
+        same(law, 'no keys', await b.keys.endPrevious(WORKFLOW, at443('none')), {
+          ended: false,
+          reason: 'no_previous',
+        });
+        await b.keys.make(WORKFLOW, at443('p0'), KEY('1'));
+        await b.keys.make(WORKFLOW, at443('p1'), KEY('1'));
+        same(law, 'a current only', await b.keys.endPrevious(WORKFLOW, at443('p0')), {
+          ended: false,
+          reason: 'no_previous',
+        });
+        same(law, 'which keeps it', await b.keys.read(WORKFLOW, at443('p0')), {
+          current: readable('current', KEY('1'), 0),
+        });
+        await b.at(1000);
+        await rotate(b, at443('p1'), 60, KEY('2'));
+        same(law, 'a live previous', await b.keys.endPrevious(WORKFLOW, at443('p1')), {
+          ended: true,
+        });
+        same(law, 'gone; the current kept', await b.keys.read(WORKFLOW, at443('p1')), {
+          current: readable('current', KEY('2'), 1000),
+        });
+        same(law, 'delete', await b.keys.delete(WORKFLOW, at443('p1')), { had_current: true });
+        same(law, 'delete again', await b.keys.delete(WORKFLOW, at443('p1')), {
+          had_current: false,
+        });
+        same(law, 'the pair is empty', await b.keys.read(WORKFLOW, at443('p1')), {});
+        same(law, 'another pair stays', await b.keys.read(WORKFLOW, at443('p0')), {
+          current: readable('current', KEY('1'), 0),
+        });
+      }),
+    ),
+    L(
+      'CBK_MALFORMED_THROWS',
+      'a malformed key request throws, reads no clock and keeps the key out',
+      () =>
+        on('CBK_MALFORMED_THROWS', async (b) => {
+          const law = 'CBK_MALFORMED_THROWS';
+          await b.keys.make(WORKFLOW, HOST, KEY('1'));
+          /** One malformed call: it throws, takes no reading, repeats no key, writes nothing. */
+          const quiet = async (step: string, call: () => Promise<unknown>, given?: unknown) => {
+            const before = await b.keys.read(WORKFLOW, HOST);
+            const blank = await b.keys.read(WORKFLOW, at443('blank'));
+            let err: unknown;
+            const reads = await readingsOf(b, async () => {
+              err = await thrown(call);
+            });
+            const message = err instanceof Error ? err.message : String(err);
+            same(
+              law,
+              step,
+              {
+                threw: err !== undefined,
+                reads,
+                repeats:
+                  message.includes(PLANT) ||
+                  (typeof given === 'string' && given.length > 0 && message.includes(given)),
+                unchanged:
+                  isDeepStrictEqual(await b.keys.read(WORKFLOW, HOST), before) &&
+                  isDeepStrictEqual(await b.keys.read(WORKFLOW, at443('blank')), blank),
+              },
+              { threw: true, reads: 0, repeats: false, unchanged: true },
+            );
+          };
+          const calls = (w: string, h: string): Record<string, () => Promise<unknown>> => ({
+            read: () => b.keys.read(w, h),
+            make: () => b.keys.make(w, h, PLANT),
+            rotate: () => b.keys.rotate(w, h, { candidate: PLANT, keepSeconds: 60 }),
+            endPrevious: () => b.keys.endPrevious(w, h),
+            replace: () => b.keys.replace(w, h, PLANT),
+            delete: () => b.keys.delete(w, h),
+          });
+          for (const bad of ['', 'x'.repeat(256)])
+            for (const [method, call] of [
+              ...Object.entries(calls(bad, HOST)).map(
+                ([m, c]) => [`${m}: workflowId of ${bad.length}`, c] as const,
+              ),
+              ...Object.entries(calls(WORKFLOW, bad)).map(
+                ([m, c]) => [`${m}: host of ${bad.length}`, c] as const,
+              ),
+            ])
+              await quiet(method, call);
+          const candidates: unknown[] = [
+            PLANT.slice(0, 63),
+            `${PLANT}0`,
+            PLANT.toUpperCase(),
+            'g'.repeat(64),
+            '',
+            42,
+          ];
+          for (const c of candidates) {
+            const given = c as string;
+            await quiet(
+              `make with ${show(c).slice(0, 12)}`,
+              () => b.keys.make(WORKFLOW, at443('blank'), given),
+              c,
+            );
+            await quiet(
+              `rotate with ${show(c).slice(0, 12)}`,
+              () => b.keys.rotate(WORKFLOW, HOST, { candidate: given, keepSeconds: 60 }),
+              c,
+            );
+            await quiet(
+              `replace with ${show(c).slice(0, 12)}`,
+              () => b.keys.replace(WORKFLOW, HOST, given),
+              c,
+            );
+          }
+          for (const keep of [0, 604_801, 1.5, '60'])
+            await quiet(`rotate keeping ${show(keep)}`, () =>
+              b.keys.rotate(WORKFLOW, HOST, { candidate: PLANT, keepSeconds: keep as number }),
+            );
+          await quiet("rotate with endPrevious 'false'", () =>
+            b.keys.rotate(WORKFLOW, HOST, {
+              candidate: PLANT,
+              keepSeconds: 60,
+              endPrevious: 'false' as unknown as boolean,
+            }),
+          );
+          const accepted: string[] = [];
+          for (const good of ['w', 'w'.repeat(255)])
+            for (const [method, call] of [
+              ...Object.entries(calls(good, HOST)),
+              ...Object.entries(calls(WORKFLOW, good.replaceAll('w', 'h'))),
+            ])
+              if ((await thrown(call)) !== undefined) accepted.push(`${method} at ${good.length}`);
+          await b.keys.make(WORKFLOW, at443('k1'), KEY('1'));
+          await b.keys.make(WORKFLOW, at443('k2'), KEY('1'));
+          for (const [host, keep] of [
+            [at443('k1'), 1],
+            [at443('k2'), 604_800],
+          ] as const)
+            if ((await thrown(() => rotate(b, host, keep, KEY('2')))) !== undefined)
+              accepted.push(`rotate keeping ${keep}`);
+          same(
+            law,
+            'labels of 1 and 255 characters, and keeps of 1 and 604,800 s, are accepted',
+            accepted,
+            [],
+          );
+        }),
+    ),
+    L(
+      'CBK_CLOCK_READINGS',
+      'every key method takes one reading, applied or refused; delete none',
+      () =>
+        on('CBK_CLOCK_READINGS', async (b) => {
+          const law = 'CBK_CLOCK_READINGS';
+          const none = at443('none');
+          const got = {
+            read: await readingsOf(b, () => b.keys.read(WORKFLOW, HOST)),
+            make: await readingsOf(b, () => b.keys.make(WORKFLOW, HOST, KEY('1'))),
+            makeKept: await readingsOf(b, () => b.keys.make(WORKFLOW, HOST, KEY('2'))),
+            rotateNoCurrent: await readingsOf(b, () => rotate(b, none, 60, KEY('2'))),
+            rotate: await readingsOf(b, () => rotate(b, HOST, 60, KEY('2'))),
+            rotateLive: await readingsOf(b, () => rotate(b, HOST, 60, KEY('3'))),
+            endPrevious: await readingsOf(b, () => b.keys.endPrevious(WORKFLOW, HOST)),
+            endNone: await readingsOf(b, () => b.keys.endPrevious(WORKFLOW, HOST)),
+            replaceNoCurrent: await readingsOf(b, () => b.keys.replace(WORKFLOW, none, KEY('3'))),
+            replaceReadable: await readingsOf(b, () => b.keys.replace(WORKFLOW, HOST, KEY('3'))),
+            delete: await readingsOf(b, () => b.keys.delete(WORKFLOW, HOST)),
+            deleteEmpty: await readingsOf(b, () => b.keys.delete(WORKFLOW, HOST)),
+          };
+          same(law, 'one reading each, refused or applied; delete none', got, {
+            read: 1,
+            make: 1,
+            makeKept: 1,
+            rotateNoCurrent: 1,
+            rotate: 1,
+            rotateLive: 1,
+            endPrevious: 1,
+            endNone: 1,
+            replaceNoCurrent: 1,
+            replaceReadable: 1,
+            delete: 0,
+            deleteEmpty: 0,
+          });
+        }),
+    ),
+    L('CBK_KEYS_APART', 'a key is kept apart from the runs and the callback rows', () =>
+      on('CBK_KEYS_APART', async (b) => {
+        const law = 'CBK_KEYS_APART';
+        await b.keys.make(WORKFLOW, HOST, PLANT);
+        const id = await b.create(reg(1, HOST));
+        const carries = (value: unknown): boolean => JSON.stringify(value ?? null).includes(PLANT);
+        const pages: unknown[] = [];
+        for await (const page of b.store.scan({ workflow: WORKFLOW }, { pageSize: 1000 }))
+          pages.push(page);
+        await b.finish(id);
+        const due = await b.callbacks.due(10);
+        const claim = await claimNow(b, id, 'X');
+        const freeze = await b.callbacks.freezeBody(id, 'X', 'the body');
+        const view = await b.callbacks.read(id);
+        const mark = await b.callbacks.mark(id, 'X', {
+          kind: 'retry',
+          afterSeconds: 30,
+          lastStatus: 503,
+        });
+        same(
+          law,
+          'the key text is in no run, scan page, row or callback result',
+          {
+            get: carries(await b.store.get(id)),
+            scan: carries(pages),
+            view: carries(view),
+            count: carries(await b.callbacks.countPending()),
+            due: carries(due),
+            claim: carries(claim),
+            freeze: carries(freeze),
+            mark: carries(mark),
+            stat: carries(await b.callbacks.statAllForRun(id)),
+          },
+          {
+            get: false,
+            scan: false,
+            view: false,
+            count: false,
+            due: false,
+            claim: false,
+            freeze: false,
+            mark: false,
+            stat: false,
+          },
+        );
+        await b.callbacks.deleteAllForRun(id);
+        same(
+          law,
+          'a run’s purge leaves the key',
+          textOf((await b.keys.read(WORKFLOW, HOST)).current),
+          PLANT,
+        );
+        const other = await b.create(reg(2, HOST));
+        same(law, 'delete of the pair', await b.keys.delete(WORKFLOW, HOST), { had_current: true });
+        same(law, 'leaves the row', (await b.callbacks.read(other))?.status, 'pending');
+      }),
     ),
   ];
 }
