@@ -888,8 +888,12 @@ describe('U1b — exits, signals and the drain', () => {
     // This host's own kill latency, measured in the same cell BEFORE the second signal: a throwaway
     // child sent SIGKILL directly, observed dead by the same poll. A fixed 100 ms was the flake (the
     // third of U1b's load-timing cells, after n2 and s): on a shared CI runner the SIGKILL came, with
-    // the right signal and the first SIGINT survived, but past 100 ms. The bound is 100 ms or ten
-    // times the measured latency, whichever is larger; the figures are printed with the verdict.
+    // the right signal and the first SIGINT survived, but past the bound. The bound is 500 ms or
+    // ten times the measured latency, whichever is larger, at most 5 s; the figures are printed
+    // with the verdict. (2026-11-17, the third fix of this cell: 100 ms or 10 × an 11 ms probe
+    // missed by 1 ms on a CI runner. The bound only has to separate "killed by the second
+    // signal" from "lived to the 10 s graceful bound"; it does not measure speed, so its floor
+    // absorbs a runner's scheduling jitter rather than scaling one bare-process probe.)
     // The wait for the worker runs to that bound, at most 5 s (2026-11-17: a fixed 2 s wait made the
     // bound inert — under two concurrent heavy suites the probe saturated its 2 s cap, the bound read
     // 20 s, and the worker's own kill past 2 s was reported as `undefined`). The broken case (no
@@ -901,7 +905,7 @@ describe('U1b — exits, signals and the drain', () => {
     await new Promise((r) => probe.once('spawn', r));
     probe.kill('SIGKILL');
     const killLatency = (await waitDead(probe.pid!, 2000)) ?? 2000;
-    const bound = Math.max(100, 10 * killLatency);
+    const bound = Math.min(Math.max(500, 10 * killLatency), 5000);
     started.child.kill('SIGINT');
     const deadIn = await waitDead(worker, Math.min(Math.max(2000, bound), 5000));
     const ran = await started.done;

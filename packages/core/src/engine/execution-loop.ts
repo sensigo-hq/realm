@@ -152,12 +152,13 @@ import {
   openQuestionWords,
   resumeWay,
   offeredResumeWay,
-  operatorEndingClause,
-  operatorEndingSentence,
+  guardEndingSentence,
+  runEndingOf,
+  NEW_RUN_SENTENCE,
   pendingCleanupSentence,
-  pendingCleanupWay,
   heldLeaseWords,
   pendingCleanupLine,
+  type GuardOutcome,
   type PendingView,
   type PreClaimRefused,
 } from './pending.js';
@@ -1422,17 +1423,15 @@ function resumeOffer(command: string): string {
 }
 
 /**
- * The way out of a run that has ended, for its kind of ending (decisions C170, C204): a completed run
- * owes nothing; an aborted one is never resumed (`realm run resume` refuses it); a run an operator
- * ended is never offered the undo (F2): it says the operator's ending, its reason and that a new run
- * runs the work again ({@link operatorEndingClause}); a failed one is resumed only from a failed step
- * `realm run resume --from` takes — {@link offeredResumeWay} (never a cleanup step). F3 (framework
- * A.3 #10, R10: a destructive act shows its blast radius first): the purge it names is the preview,
- * `realm run purge <id>` with no `--force`, which says what it would remove and removes nothing;
- * never the `--force` form. The refusal of an answer to an ended run ends with it, and so does the
- * refusal of a late answer whose run another call ended (decision C204). F11 (review G5-2): a
- * completed run whose ending left a cleanup step `pending` owes that step — said in
- * {@link pendingCleanupWay}'s words, never "nothing is owed".
+ * The way out of a run that has ended, for its kind of ending (decisions C170, C204) — the way out
+ * only, never how it ended (#625 A1b-1: the ending is {@link runEndingOf}'s sentence): a completed
+ * run owes nothing, or owes the cleanup step its ending left `pending` (F11, said in
+ * `pendingCleanupWay`'s words alone); an aborted one is never resumed (`realm run resume`
+ * refuses it); an abandoned one is never offered the undo (F2): a new run runs the work again; a
+ * failed one is resumed only from a failed step `realm run resume --from` takes —
+ * {@link offeredResumeWay} (never a cleanup step). F3 (framework A.3 #10, R10: a destructive act
+ * shows its blast radius first): the purge it names is the preview, `realm run purge <id>` with no
+ * `--force`, which says what it would remove and removes nothing; never the `--force` form.
  */
 function endedRunWayOut(
   run: RunRecord,
@@ -1442,17 +1441,16 @@ function endedRunWayOut(
 ): string {
   const phase = deriveRunPhase(run);
   const purge = `'realm run purge ${run.id}' previews what it would remove`;
-  const operator = operatorEndingClause(run);
   const resume = offeredResumeWay(run, workflow);
   const cleanup = pendingCleanupSentence(run, now).trim();
   return phase === 'completed'
     ? cleanup === ''
-      ? 'it completed, and nothing is owed.'
-      : `it completed; ${cleanup.charAt(0).toLowerCase()}${cleanup.slice(1)}`
+      ? 'nothing is owed.'
+      : `${cleanup.charAt(0).toLowerCase()}${cleanup.slice(1)}`
     : phase === 'aborted'
       ? `an aborted run is never resumed; ${purge}.`
-      : operator !== undefined
-        ? `${operator}; ${purge}.`
+      : phase === 'abandoned'
+        ? `to run the work again, start a new run; ${purge}.`
         : resume !== undefined
           ? // F6: the command ends the sentence, so the purge preview comes first.
             `${purge}; ${resumeOffer(resume.command)}`
@@ -1474,17 +1472,17 @@ export function endedRunWayOutOf(
 }
 
 /**
- * F2: the sentence an ended run's reply ends with in place of a resume offer — for a run an operator
- * ended, {@link operatorEndingSentence}; for one an engine failure ended with a failed step `realm
- * run resume` takes ({@link offeredResumeWay}), `To make the failed step runnable again: <the command>`; `undefined` otherwise. The one composer {@link withResumeOffer}, {@link
- * endedRunWaysSentence} and {@link describeAnswerEnding} read.
+ * F2: the sentence an ended run's reply ends with in place of a resume offer — the way out only
+ * (#625 A1b-1): for an abandoned run, `To run the work again, start a new run.`; for one an engine
+ * failure ended with a failed step `realm run resume` takes ({@link offeredResumeWay}), `To make
+ * the failed step runnable again: <the command>`; `undefined` otherwise. The one composer
+ * {@link withResumeOffer}, {@link endedRunWaysSentence} and {@link describeAnswerEnding} read.
  */
 function endedRunOfferSentence(
   run: RunRecord,
   workflow: Parameters<typeof resumeWay>[1],
 ): string | undefined {
-  const operator = operatorEndingSentence(run);
-  if (operator !== undefined) return operator;
+  if (deriveRunPhase(run) === 'abandoned') return NEW_RUN_SENTENCE;
   const resume = offeredResumeWay(run, workflow);
   if (resume === undefined) return undefined;
   // F6: the sentence ends with the bare command (C212) — no full stop a paste would carry.
@@ -1493,16 +1491,35 @@ function endedRunOfferSentence(
 }
 
 /**
- * The refusal of an answer to a run that has ended (decision C170): `Run '<id>' is terminal
- * (<phase>); cannot submit a gate response — <the way out for that kind of ending>`
- * ({@link endedRunWayOut}).
+ * The refusal of an answer to a run that has ended (decision C170), #625 A1b-1: `Run '<id>' is
+ * terminal (<phase>); cannot submit a gate response — <how it ended> <the way out>`
+ * ({@link runEndingOf}, then {@link endedRunWayOut}). `withEnding: false` leaves how it ended out,
+ * for a refusal whose own words already say it (an answer after a time limit another call carried
+ * out: its `outcome`).
+ */
+function answerRefusalOnEndedRun(
+  run: RunRecord,
+  workflow: Parameters<typeof resumeWay>[1],
+  now: Date,
+  withEnding: boolean,
+): string {
+  const ending = withEnding ? runEndingOf(run, workflow) : undefined;
+  const way = endedRunWayOut(run, workflow, now);
+  return `Run '${run.id}' is terminal (${deriveRunPhase(run)}); cannot submit a gate response — ${
+    ending === undefined ? way : `${ending.sentence} ${way.charAt(0).toUpperCase()}${way.slice(1)}`
+  }`;
+}
+
+/**
+ * The refusal of an answer to a run that has ended (decision C170; #625 A1b-1): `Run '<id>' is
+ * terminal (<phase>); cannot submit a gate response — <how it ended> <the way out>`.
  */
 export function terminalAnswerRefusalMessage(
   run: RunRecord,
   workflow: Parameters<typeof resumeWay>[1],
   now: Date,
 ): string {
-  return `Run '${run.id}' is terminal (${deriveRunPhase(run)}); cannot submit a gate response — ${endedRunWayOut(run, workflow, now)}`;
+  return answerRefusalOnEndedRun(run, workflow, now, true);
 }
 
 /**
@@ -1511,7 +1528,7 @@ export function terminalAnswerRefusalMessage(
  * resumeOffer}, C170's words). Every other reply is returned unchanged. An answer's reply reads it
  * here — the recorded answer's and, decision C211, the late answer's whose expiry ended the run —
  * so `realm run respond`, the run prompt and the Slack notifier print it through {@link
- * describeAnswerEnding}; the MCP tools whose reply can end a run apply {@link withEndedRunWays}.
+ * describeAnswerEnding}; the MCP tools append {@link endedRunWaysSentence}.
  */
 export function withResumeOffer(
   envelope: EngineReply,
@@ -1519,7 +1536,7 @@ export function withResumeOffer(
   workflow: Parameters<typeof resumeWay>[1],
 ): EngineReply {
   if (!run.terminal_state) return envelope;
-  // F2: a run an operator ended says that ending, never the undo.
+  // F2: an abandoned run is never offered the undo.
   const offer = endedRunOfferSentence(run, workflow);
   if (offer === undefined) return envelope;
   const hint = envelope.context_hint;
@@ -1527,75 +1544,52 @@ export function withResumeOffer(
 }
 
 /**
- * Decision C211 (walk c14 W3-4's class): a reply on a run that has ended with cleanup steps left
- * `pending` ends with the command that runs them — ` Cleanup step left pending: '<s>' — 'realm run
- * drain <id> --force' runs it with code that has its handler.` ({@link pendingCleanupSentence}).
- * Every other reply is returned unchanged. The MCP tools apply it (the CLI prints its own line).
- */
-export function withPendingCleanup(
-  envelope: EngineReply,
-  run: RunRecord,
-  // F6: the run's workflow, when the reply already ends with the resume offer — the cleanup sentence
-  // then goes before it, so the offer's command still ends the hint.
-  workflow: Parameters<typeof resumeWay>[1] | undefined,
-  // F12: the call's clock — a cleanup step under another drainer's lease is judged at it.
-  now: Date,
-): EngineReply {
-  const sentence = pendingCleanupSentence(run, now);
-  if (sentence === '') return envelope;
-  const hint = envelope.context_hint;
-  // F11: said once — a reply whose hint already names the command that runs them (the refusal of
-  // an answer to a completed run says it, `endedRunWayOut`) gets no second sentence.
-  if (hint.includes(`'${pendingCleanupWay(run, now)!.command}'`)) return envelope;
-  const offer = workflow === undefined ? undefined : endedRunOfferSentence(run, workflow);
-  if (offer !== undefined && hint.endsWith(` ${offer}`)) {
-    return {
-      ...envelope,
-      context_hint: `${hint.slice(0, -offer.length - 1)}${sentence} ${offer}`,
-    };
-  }
-  return {
-    ...envelope,
-    context_hint: hint.length > 0 ? `${hint}${sentence}` : sentence.trimStart(),
-  };
-}
-
-/**
- * The ways back into a run that has ended, on an MCP reply (decisions C205, C211): {@link
- * withResumeOffer}, then {@link withPendingCleanup}. `advance_run`, `start_run`, `start_run_batch`
- * and `execute_step` apply it to a reply on a run that has ended; `submit_human_response`, whose
- * core reply already carries the resume offer, applies {@link withPendingCleanup} alone.
- */
-export function withEndedRunWays(
-  envelope: EngineReply,
-  run: RunRecord,
-  workflow: Parameters<typeof resumeWay>[1],
-  // F12: the call's clock — a cleanup step under another drainer's lease is judged at it.
-  now: Date,
-): EngineReply {
-  const tail = endedRunWaysSentence(run, workflow, now);
-  if (tail === '') return envelope;
-  const hint = envelope.context_hint;
-  return { ...envelope, context_hint: hint.length > 0 ? `${hint}${tail}` : tail.trimStart() };
-}
-
-/**
- * The sentences {@link withEndedRunWays} appends (decisions C205, C211), for a composer that builds
- * its own hint (`start_run`'s and `start_run_batch`'s hand-back of a run the key matched): the
- * cleanup sentence, then the run's ending sentence ({@link endedRunOfferSentence}: the operator's
- * ending, or ` To make the failed step runnable again: <the resume command>`, the command last);
- * empty for a run that has not ended, or has neither.
+ * The sentences an MCP reply on a run that has ended ends with (decisions C205, C211), for a
+ * composer that builds its own hint (`start_run`'s and `start_run_batch`'s hand-back of a run the
+ * key matched) and for the tools' tails: the cleanup sentence, then the way out
+ * ({@link endedRunOfferSentence}: ` To run the work again, start a new run.` for an abandoned run,
+ * or ` To make the failed step runnable again: <the resume command>`, the command last); empty for
+ * a run that has not ended, or has neither. #625 A1b-1: with `saysEnding`, how the run ended
+ * ({@link runEndingOf}) comes first.
  */
 export function endedRunWaysSentence(
   run: RunRecord,
   workflow: Parameters<typeof resumeWay>[1],
   now: Date,
+  saysEnding = false,
 ): string {
   if (!run.terminal_state) return '';
-  // F2: a run an operator ended says that ending, never the undo. F6: the cleanup sentence first,
-  // so the resume offer's command ends the hint.
+  const ending = saysEnding ? runEndingOf(run, workflow) : undefined;
+  // F6: the cleanup sentence first, so the resume offer's command ends the hint.
   const offer = endedRunOfferSentence(run, workflow);
-  return `${pendingCleanupSentence(run, now)}${offer === undefined ? '' : ` ${offer}`}`;
+  return `${ending === undefined ? '' : ` ${ending.sentence}`}${pendingCleanupSentence(run, now)}${
+    offer === undefined ? '' : ` ${offer}`
+  }`;
+}
+
+/**
+ * #625 A1b-1 (ruled 2026-11-18): whether an engine reply about an ended run says how it ended — the
+ * one "said once" rule. It does when someone other than this call ended the run: (i) it was
+ * terminal at the call's first read (the chain's entry, `advanceRun`'s D5, both `ok` with `stop`);
+ * or (ii) another program ended it during the call — a `run_ended` race (beside any expiry receipt),
+ * the guard's run-already-terminal reply (`ok` with `stop`), or a write refused
+ * `STATE_RUN_TERMINAL`. A reply whose own act ended the run carries none of these signals, and a
+ * reply that already says how it ended (an `outcome`) never does. (`start_run`'s matched run and the
+ * answer form's replies decide for themselves.)
+ */
+export function saysHowItEnded(
+  reply: EngineReply,
+  run: Pick<RunRecord, 'terminal_state'>,
+): boolean {
+  if (run.terminal_state !== true || reply.outcome !== undefined) return false;
+  return (
+    // `ok` with `stop`: the run was terminal at the call's first read (the chain's entry, D5), the
+    // guard found the run already ended, or a `run_ended` race met the ended run (composeAfterRaces
+    // sets `stop` exactly then).
+    (reply.status === 'ok' && reply.intrinsic_action === 'stop') ||
+    // The call's own step's write was refused because another program had ended the run.
+    reply.error_code === 'STATE_RUN_TERMINAL'
+  );
 }
 
 /**
@@ -4996,20 +4990,8 @@ async function executeStepBody(
 // `Reason:` line, the reply rule, and the lines a surface prints after an answer.
 // ---------------------------------------------------------------------------
 
-/** A guard's settled outcome, as `SettlementResult.guards` reports it. */
-type GuardOutcome = 'pass' | 'abort' | 'resolution_error';
-
-/**
- * The sentence for a guard that ENDED a run — the ONE mint of the three, verbatim what the chain
- * has always answered when a guard it settled ended the run.
- */
-function guardEndingSentence(step: string, outcome: GuardOutcome): string {
-  return outcome === 'abort'
-    ? `Guard step '${step}' aborted the run.`
-    : outcome === 'resolution_error'
-      ? `Guard step '${step}' failed with a resolution error. Run is terminated.`
-      : `Guard step '${step}' passed and completed the run.`;
-}
+// #625 A1b-1: `GuardOutcome` and the one mint of the three ending sentences,
+// `guardEndingSentence`, live in pending.ts (the ending composer calls them; words unchanged).
 
 /** The line for a settled guard that passed and did NOT end the run — the same voice as the three
  *  ending sentences. */
@@ -6167,8 +6149,14 @@ async function submitHumanResponseBody(
           // stale pending_gate (never cleared), which is the best-effort step label here.
           const zombieStep = result.run.pending_gate?.step_name ?? 'submit_gate';
           // decision C170: the way out the refusal names is true for the run's kind of ending.
+          // #625 A1b-1: the sentence of how it ended, except where the time limit's own words say it.
           const err = new WorkflowError(
-            terminalAnswerRefusalMessage(result.run, definition, result.at),
+            answerRefusalOnEndedRun(
+              result.run,
+              definition,
+              result.at,
+              expiredOutcome === undefined,
+            ),
             {
               code: 'STATE_RUN_TERMINAL',
               category: 'STATE',
@@ -7321,12 +7309,8 @@ async function advanceLoop(
             `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
           ];
         }
-        const migratedContextHint =
-          guardSettleOutcome === 'abort'
-            ? `Guard step '${guardName}' aborted the run.`
-            : guardSettleOutcome === 'resolution_error'
-              ? `Guard step '${guardName}' failed with a resolution error. Run is terminated.`
-              : `Guard step '${guardName}' passed and completed the run.`;
+        // #625 A1b-1: the one mint, never a copy of its words.
+        const migratedContextHint = guardEndingSentence(guardName, guardSettleOutcome);
         // F13 (review F-R4): the guard this loop decided ended the run — the reply says so as a
         // step's write that ends the run says it (the one reply rule): `guards`, the guard this
         // write settled, and `ended_by`, its seal arm, step and reason, read off the record.
@@ -7772,6 +7756,9 @@ async function advanceRunBody(
     // error reply, labelled with this call's `command` — never a throw.
     return firstReadRefusal({ command, runId: options.runId }, err);
   }
+  // #625 A1b-1 (D5): the run had already ended at this call's first read — before any expiry this
+  // call carries out — so the call runs nothing and says `stop`, as the other ended-run replies do.
+  const endedBefore = stored.terminal_state === true;
   // decision C95: an open question whose time is up and that declares `on_expiry` is carried out
   // first — the same function `executeStep`'s Step 1.5 calls, with its race behaviour (a refusal is
   // absorbed; the fresh record is what the loop then reads) — and then what it made owed runs.
@@ -7869,6 +7856,7 @@ async function advanceRunBody(
     ...hint,
     context_hint: withRaceClauses(hint.context_hint, races),
     ...racesOf(races),
+    ...(endedBefore ? { intrinsic_action: 'stop' as const } : {}),
     ...(expiryReceipt !== undefined && advanced.expiry === undefined
       ? { expiry: expiryReceipt }
       : {}),

@@ -2534,6 +2534,7 @@ RetryConfig · type · public
 
 RouteId · type · internal
 RunCost · type · internal
+RunEnding · type · internal
 RunHealthFinding · type · public
   interface RunHealthFinding {
       kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'definition_unresolvable' | 'record_stamped_ahead';
@@ -4440,10 +4441,12 @@ resolveRootClock · value · internal
 resolveSeverity · value · internal
 respondWayOfGate · value · internal
 resumeWay · value · internal
+runEndingOf · value · internal
 runNotFoundError · value · internal
 runPhaseDerivationFingerprint · value · internal
 runReadError · value · internal
 saidIds · value · internal
+saysHowItEnded · value · internal
 scanSecretString · value · internal
 sealRunLevel · value · internal
 seedSaid · value · internal
@@ -4532,12 +4535,10 @@ waysStoreOf · value · internal
 weakestDeclared · value · internal
 whitelistValidationRow · value · internal
 withDeclaredStanding · value · internal
-withEndedRunWays · value · internal
 withFullStop · value · internal
 withLibraryWords · value · public
   function withLibraryWords<Host>(partial: PartialWayRenderer<Host>): WayRenderer<string, Host>;
 
-withPendingCleanup · value · internal
 withResumeOffer · value · internal
 withTestClockNotice · value · internal
 withheldCauseOf · value · internal

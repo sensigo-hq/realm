@@ -52,21 +52,21 @@ The reason includes the value the condition was checked against. See [Order and 
 
 A finished run has one of four final phases. The record also says exactly what ended it, on the `Sealed by` line.
 
-| Final phase | Sealed by                  | What happened                                                   |
-| ----------- | -------------------------- | --------------------------------------------------------------- |
-| `completed` | `complete`                 | The last step finished.                                         |
-| `completed` | `gate_resolution_complete` | Answering a gate finished the run.                              |
-| `completed` | `guard_pass_complete`      | A guard passed and nothing was left to run.                     |
-| `completed` | `gate_expiry_default`      | A gate ran out of time and its default choice finished the run. |
-| `failed`    | `step_failure`             | A step failed and the workflow had no way to carry on.          |
-| `failed`    | `guard_resolution_error`   | A guard's condition pointed at a value that does not exist.     |
-| `failed`    | `spawn_failure`            | `realm listen` could not start the process to drive the run.    |
-| `failed`    | `extensions_load_failure`  | The project's own code could not be loaded.                     |
-| `aborted`   | `guard_abort`              | A guard's condition was false.                                  |
-| `aborted`   | `handler_abort`            | A handler asked for the run to stop.                            |
-| `aborted`   | `gate_expiry_abort`        | A gate ran out of time and was set to abort.                    |
-| `abandoned` | `abandon_requested`        | An operator ended the run with `realm run abandon`.             |
-| `abandoned` | `cleanup_sweep`            | `realm run cleanup` ended the run because it was idle.          |
+| Final phase | Sealed by                  | What happened                                                     |
+| ----------- | -------------------------- | ----------------------------------------------------------------- |
+| `completed` | `complete`                 | The last step finished.                                           |
+| `completed` | `gate_resolution_complete` | Answering a gate finished the run.                                |
+| `completed` | `guard_pass_complete`      | A guard passed and nothing was left to run.                       |
+| `completed` | `gate_expiry_default`      | A gate ran out of time and its default choice finished the run.   |
+| `failed`    | `step_failure`             | A step failed and the workflow had no way to carry on.            |
+| `failed`    | `guard_resolution_error`   | A guard's condition pointed at a value that does not exist.       |
+| `failed`    | `spawn_failure`            | `realm listen` could not start the process to drive the run.      |
+| `failed`    | `extensions_load_failure`  | The project's own code could not be loaded.                       |
+| `aborted`   | `guard_abort`              | A guard's condition was false.                                    |
+| `aborted`   | `handler_abort`            | A handler asked for the run to stop.                              |
+| `aborted`   | `gate_expiry_abort`        | A gate ran out of time and was set to abort.                      |
+| `abandoned` | `abandon_requested`        | The run was abandoned, with `realm run abandon` or `abandon_run`. |
+| `abandoned` | `cleanup_sweep`            | `realm run cleanup` ended the run because it was idle.            |
 
 For example, a run stopped by a guard:
 
