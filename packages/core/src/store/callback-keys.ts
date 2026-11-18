@@ -9,7 +9,7 @@
 // that yields between the read and the last write. The port is storage-neutral: key text goes in and
 // comes out plain; how a store keeps it at rest is its own business.
 import { createHash } from 'node:crypto';
-import { isPastDeadline } from '../engine/instants.js';
+import { isPastDeadline, parseStamp } from '../engine/instants.js';
 
 /**
  * The two places a pair keeps a key, one list for every use of the word.
@@ -205,15 +205,12 @@ export function callbackKeyFingerprint(text: string): string {
 /**
  * Whether `previous` is live at `at`: it ends at its `expires_at` (`isPastDeadline`, at or after it).
  * The ONE judgement of expiry: `read` and every decider use it, so a previous stops counting at the
- * same instant for all of them. A previous without `expires_at` is never live, so a key with no end
- * never signs.
+ * same instant for all of them. A previous without a readable end never signs: one with no
+ * `expires_at`, or one `parseStamp` cannot read, is never live.
  */
 export function callbackPreviousIsLive(previous: CallbackKeySlot | undefined, at: Date): boolean {
-  return (
-    previous !== undefined &&
-    previous.expires_at !== undefined &&
-    !isPastDeadline(previous.expires_at, at)
-  );
+  const end = previous?.expires_at;
+  return end !== undefined && parseStamp(end) !== undefined && !isPastDeadline(end, at);
 }
 
 /** The pair as `read` returns it at `at`: the current as stored, the previous only while live. */

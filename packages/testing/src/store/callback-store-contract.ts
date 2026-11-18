@@ -101,10 +101,12 @@ import { settableClock } from '../clock/settable-clock.js';
  * - `CBK_UNREADABLE_STATES` — with an unreadable current (the adapter's `makeUnreadable`; a store
  *   that cannot lists this law in its `NOT_RUN`): `read` returns it and a live previous, `make`
  *   returns it, `rotate` is `current_unreadable` even beside a live previous, `replace` applies (one
- *   reading) and keeps the previous, `endPrevious` ends a live previous, `delete` answers; with a live
- *   previous made unreadable, `rotate` is `previous_live` without the flag; a missing slot throws.
+ *   reading) and keeps the previous, `endPrevious` ends a live previous, `delete` answers and removes
+ *   a live previous too (unreadable or not); with a live previous made unreadable, `rotate` is
+ *   `previous_live` without the flag; a missing slot throws.
  * - `CBK_END_AND_DELETE` — `endPrevious` without a live previous is `no_previous`, with one it ends it
- *   and keeps the current; `delete` answers twice and leaves another pair.
+ *   and keeps the current; `delete` answers twice, leaves another pair, and removes the previous,
+ *   live or ended: a pair made again holds only its new key.
  * - `CBK_MALFORMED_THROWS` — for each of the six methods an empty or 256-character `workflowId` or
  *   `host`; a candidate that is not 64 lowercase hex; a `keepSeconds` of 0, 604,801, 1.5 or a string;
  *   an `endPrevious` that is not a boolean: each throws, takes no reading, writes nothing, and its
@@ -1486,12 +1488,13 @@ function family(adapter: CallbackStoreContractAdapter) {
         const refused = { applied: false, reason: 'current_unreadable' };
         // u0: an unreadable current, no previous. u1, u2: an unreadable current beside a live
         // previous, readable (u1) or unreadable too (u2). u3: an unreadable current, deleted.
-        // u4, u5: a readable current beside a live previous made unreadable.
-        for (const name of ['u0', 'u1', 'u2']) await b.keys.make(WORKFLOW, at443(name), KEY('1'));
+        // u4, u5: a readable current beside a live previous made unreadable. u6: as u2, deleted.
+        const pairs = ['u0', 'u1', 'u2', 'u6'];
+        for (const name of pairs) await b.keys.make(WORKFLOW, at443(name), KEY('1'));
         await b.at(1000);
-        for (const name of ['u1', 'u2']) await rotate(b, at443(name), 600, KEY('2'));
-        for (const name of ['u0', 'u1', 'u2']) await unseal(b, law, at443(name), 'current');
-        await unseal(b, law, at443('u2'), 'previous');
+        for (const name of ['u1', 'u2', 'u6']) await rotate(b, at443(name), 600, KEY('2'));
+        for (const name of pairs) await unseal(b, law, at443(name), 'current');
+        for (const name of ['u2', 'u6']) await unseal(b, law, at443(name), 'previous');
         const c0 = sealed('current', 0);
         const c1 = sealed('current', 1000);
         const live = readable('previous', KEY('1'), 0, 601_000);
@@ -1561,6 +1564,18 @@ function family(adapter: CallbackStoreContractAdapter) {
         await unseal(b, law, at443('u3'), 'current');
         same(law, 'u3: delete', await b.keys.delete(WORKFLOW, at443('u3')), { had_current: true });
         same(law, 'u3: the pair is empty', await b.keys.read(WORKFLOW, at443('u3')), {});
+        same(law, 'u6: delete beside a live previous', await b.keys.delete(WORKFLOW, at443('u6')), {
+          had_current: true,
+        });
+        same(law, 'u6: the pair is empty', await b.keys.read(WORKFLOW, at443('u6')), {});
+        const fresh = readable('current', KEY('3'), 2000);
+        same(law, 'u6: make again', await b.keys.make(WORKFLOW, at443('u6'), KEY('3')), {
+          created: true,
+          key: fresh,
+        });
+        same(law, 'u6: only the new key', await b.keys.read(WORKFLOW, at443('u6')), {
+          current: fresh,
+        });
         same(
           law,
           'makeUnreadable on a missing slot throws',
@@ -1597,8 +1612,8 @@ function family(adapter: CallbackStoreContractAdapter) {
           ended: false,
           reason: 'no_previous',
         });
-        await b.keys.make(WORKFLOW, at443('p0'), KEY('1'));
-        await b.keys.make(WORKFLOW, at443('p1'), KEY('1'));
+        for (const name of ['p0', 'p1', 'p2', 'p3'])
+          await b.keys.make(WORKFLOW, at443(name), KEY('1'));
         same(law, 'a current only', await b.keys.endPrevious(WORKFLOW, at443('p0')), {
           ended: false,
           reason: 'no_previous',
@@ -1607,7 +1622,9 @@ function family(adapter: CallbackStoreContractAdapter) {
           current: readable('current', KEY('1'), 0),
         });
         await b.at(1000);
-        await rotate(b, at443('p1'), 60, KEY('2'));
+        // p2's previous is live until 601,000; p1's and p3's end at 61,000.
+        for (const name of ['p1', 'p3']) await rotate(b, at443(name), 60, KEY('2'));
+        await rotate(b, at443('p2'), 600, KEY('2'));
         same(law, 'a live previous', await b.keys.endPrevious(WORKFLOW, at443('p1')), {
           ended: true,
         });
@@ -1622,6 +1639,36 @@ function family(adapter: CallbackStoreContractAdapter) {
         same(law, 'another pair stays', await b.keys.read(WORKFLOW, at443('p0')), {
           current: readable('current', KEY('1'), 0),
         });
+        same(law, 'p2: delete beside a live previous', await b.keys.delete(WORKFLOW, at443('p2')), {
+          had_current: true,
+        });
+        same(law, 'p2: the pair is empty', await b.keys.read(WORKFLOW, at443('p2')), {});
+        const fresh = readable('current', KEY('3'), 1000);
+        same(law, 'p2: make again', await b.keys.make(WORKFLOW, at443('p2'), KEY('3')), {
+          created: true,
+          key: fresh,
+        });
+        same(law, 'p2: only the new key', await b.keys.read(WORKFLOW, at443('p2')), {
+          current: fresh,
+        });
+        // p3: deleted after its previous ended. A read at that instant omits an ended previous, so
+        // only the clock set back before the end shows whether one was left behind.
+        await b.at(61_000);
+        same(
+          law,
+          'p3: delete after the previous ended',
+          await b.keys.delete(WORKFLOW, at443('p3')),
+          {
+            had_current: true,
+          },
+        );
+        await b.at(2000);
+        same(
+          law,
+          'p3: the clock set back, the pair is still empty',
+          await b.keys.read(WORKFLOW, at443('p3')),
+          {},
+        );
       }),
     ),
     L(

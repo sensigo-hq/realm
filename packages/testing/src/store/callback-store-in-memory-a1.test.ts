@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   callbackKeyFingerprint,
+  callbackKeyPairAt,
   callbackPreviousIsLive,
   decideCallbackKeyRotate,
   type CallbackKeySlot,
@@ -106,9 +107,10 @@ describe('R1.3 callback A2 — the key fingerprint and a previous with no end', 
     });
   });
 
-  it('a previous without expires_at is never live, so a rotate drops it without the flag', () => {
+  it('a previous without a readable expires_at is never live: a rotate drops it, read omits it', () => {
     // The port never writes such a slot (rotate always sets `expires_at`), so no contract case can
-    // build one: this pins the liveness function and a decider directly.
+    // build one: this pins the liveness function and a decider directly. An end `parseStamp` cannot
+    // read is a store's own fault (a hand edit, a writer bug), and it fails closed the same way.
     const at = new Date('2026-01-01T00:00:00.000Z');
     const current: CallbackKeySlot = {
       slot: 'current',
@@ -124,15 +126,22 @@ describe('R1.3 callback A2 — the key fingerprint and a previous with no end', 
       key_fp: callbackKeyFingerprint('2'.repeat(64)),
       created_at: '2025-12-30T00:00:00.000Z',
     };
-    // (a) red when a previous with no `expires_at` counts as live: the liveness answers true and the
-    //     rotate answers previous_live; (b) prints both answers.
-    expect({
-      live: callbackPreviousIsLive(endless, at),
+    const garbled: CallbackKeySlot = { ...endless, expires_at: 'garbage' };
+    const judged = (previous: CallbackKeySlot) => ({
+      live: callbackPreviousIsLive(previous, at),
       rotate: decideCallbackKeyRotate(
-        { current, previous: endless },
+        { current, previous },
         { candidate: '3'.repeat(64), keepSeconds: 60 },
         at,
       ).result.applied,
-    }).toEqual({ live: false, rotate: true });
+      read: callbackKeyPairAt({ current, previous }, at),
+    });
+    // (a) red when a previous with no `expires_at`, or one that does not parse, counts as live: the
+    //     liveness answers true, the rotate answers previous_live and the read returns it; (b) prints
+    //     the three answers for each.
+    expect({ endless: judged(endless), garbled: judged(garbled) }).toEqual({
+      endless: { live: false, rotate: true, read: { current } },
+      garbled: { live: false, rotate: true, read: { current } },
+    });
   });
 });
