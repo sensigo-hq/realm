@@ -15,10 +15,10 @@ import {
   offeredResumeWay,
   operatorEndingSentence,
   resumeWay,
-  shellWord,
   buildDisclosureSet,
   respondWayOfGate,
   formatInstantWords,
+  heldStateOf,
   instantText,
   parseStamp,
   quoteStatedName,
@@ -44,7 +44,13 @@ import type {
 } from '@sensigo/realm';
 import { accountLabelOf } from '@sensigo/realm-mcp';
 import { PLAIN, RUN_PHASE_WORDS, writerSetFor, type RenderCtx } from '../output/writer.js';
-import { cliCommandOf, respondLines } from '../commands/ways-renderer.js';
+import {
+  cliCommandOf,
+  heldLine,
+  leaseHeld,
+  respondLines,
+  type HeldEntry,
+} from '../commands/ways-renderer.js';
 
 /** The one phrase for a recorded name that cannot be printed; defined in core (#729 PR-6a c1). */
 export { UNSHOWABLE_NAME };
@@ -128,22 +134,17 @@ export function takenLine(
 /**
  * issue #625 PR-2a (D6.2; decision C173): the line a driver prints for a step in flight in another
  * process when the record has not changed for `watchMs` — `realm agent` and `realm workflow run`
- * print the same words.
+ * print the same words. #922 P2-2: after its opening, the one CLI held line ({@link heldLine}),
+ * from the step's composed entry.
  */
 export function inFlightLine(
-  runId: string,
-  step: string,
+  held: HeldEntry,
   described: Parameters<typeof takenPhrase>[0],
-  stale: boolean,
   watchMs: number,
   ctx: RenderCtx = PLAIN,
 ): string {
   const since = described.since ?? 'an unrecorded time';
-  return (
-    `• Step '${step}' has been in flight since ${since}, ${takenPhrase(described, ctx)}; the record has not changed for ${Math.round(watchMs / 1000)}s.` +
-    (stale ? ' Its claim is past its deadline (its runner likely died).' : '') +
-    ` If the program that took it is gone: ${ctx.cmd(`realm run reclaim ${runId} --step ${shellWord(step)} --force`)}`
-  );
+  return `• Step '${held.facts.step}' has been in flight since ${since}, ${takenPhrase(described, ctx)}; the record has not changed for ${Math.round(watchMs / 1000)}s. ${heldLine(held, ctx)}`;
 }
 
 /**
@@ -167,15 +168,36 @@ export function resumeLine(
 }
 
 /**
- * decisions C188, C195: the way on a driver gives when it stops waiting for steps another process
- * holds — `  Go on:     once '<s>' is no longer in flight, <command>` (`'<a>', '<b>' are` for
- * several). `realm workflow run` gives `realm run advance <run>`; `realm agent` gives itself again,
- * with the flags it was started with.
+ * decisions C188, C195; #922 P2-2 (item 4): the way on a driver gives when it stops waiting for
+ * steps another process holds — `  Go on:     once '<s>' is no longer in flight, <command>`
+ * (`'<a>', '<b>' are` for several). A step past its deadline is no wait: `once '<a>' is freed
+ * (realm run reclaim <id> prints its command), <command>` (`are freed (… prints their commands)` for
+ * several), and beside steps that can still finish `once '<b>' is no longer in flight and '<a>' is
+ * freed (…), <command>`. `realm workflow run` gives `realm run advance <run>`; `realm agent` gives
+ * itself again, with the flags it was started with.
  */
-export function goOnLine(held: readonly string[], command: string): string {
-  const names = held.map((s) => `'${s}'`).join(', ');
-  const are = held.length === 1 ? 'is' : 'are';
-  return `  Go on:     once ${names} ${are} no longer in flight, ${command}`;
+export function goOnLine(
+  held: readonly HeldEntry[],
+  runId: string,
+  command: string,
+  ctx: RenderCtx = PLAIN,
+): string {
+  const group = (entries: readonly HeldEntry[]): string =>
+    `${entries.map((e) => `'${e.facts.step}'`).join(', ')} ${entries.length === 1 ? 'is' : 'are'}`;
+  // A claim whose lease is held is waited for, whatever its deadline (`leaseHeld`).
+  const isPast = (e: HeldEntry): boolean => heldStateOf(e).state === 'past' && !leaseHeld(e);
+  const past = held.filter(isPast);
+  const waiting = held.filter((e) => !isPast(e));
+  const parts: string[] = [];
+  if (waiting.length > 0) parts.push(`${group(waiting)} no longer in flight`);
+  if (past.length > 0) {
+    // MA 2 (WO922-P22-MA2-02): `prints their commands` for two or more.
+    const commands = past.length === 1 ? 'its command' : 'their commands';
+    parts.push(
+      `${group(past)} freed (${ctx.cmd(`realm run reclaim ${runId}`)} prints ${commands})`,
+    );
+  }
+  return `  Go on:     once ${parts.join(' and ')}, ${command}`;
 }
 
 /**

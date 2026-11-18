@@ -237,7 +237,7 @@ Output that is piped or redirected reads as a log, so to see the full values, ru
 
 ## Two rarer cases
 
-- **A step was started and never finished**, because the process running it died. `realm run reclaim <run-id>` reports such steps, and with `--force` makes them runnable again. The step's work may then happen twice, so read what it reports first.
+- **A step was started and never finished**, for example because the process running it was killed. `realm run reclaim <run-id>` lists such steps, each with what holds for it and the command that makes it runnable again. The step's work may then happen twice, so read what it lists first.
 - **A run ended but its cleanup steps did not finish.** `realm run drain <run-id>` reports them, and with `--force` runs them.
 
 ## If you see something else

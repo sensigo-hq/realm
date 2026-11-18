@@ -4,7 +4,6 @@
 import { join } from 'node:path';
 import {
   loadWorkflowFromFile,
-  classifyInProgressClaims,
   executeChain,
   advanceRun,
   executeEngineStep,
@@ -92,6 +91,7 @@ import {
   cannotRunEntries,
   cannotRunWayOut,
   cliCommandOf,
+  heldEntriesOf,
   stopReasons,
   writerHost,
 } from '../commands/ways-renderer.js';
@@ -1264,27 +1264,36 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               }
             }
             if (changed) continue;
-            const states = new Map(
-              classifyInProgressClaims(currentSnap).map((c) => [c.step, c.state]),
+            // #922 P2-2: each held step's state and what frees it, from the ways composed at the
+            // watch's last reading.
+            const held = heldEntriesOf(
+              composeWaysAt(currentRun, currentAt, {
+                definition,
+                registry: deps.registry,
+                persistsClaims: keepsClaims,
+                lease_facts: currentSnap.lease_facts,
+              }),
             );
-            for (const step of inFlight) {
+            for (const entry of held) {
+              const claim = currentRun.claims?.[entry.facts.step];
               const described = describeClaimHolder(
-                currentRun.claims?.[step],
+                claim,
                 keepsClaims,
-                leaseFactOf(currentSnap, currentRun.claims?.[step]),
+                leaseFactOf(currentSnap, claim),
               );
-              const stale = states.get(step) === 'claim_stale';
-              console.log(inFlightLine(runId, step, described, stale, watchMs, writerCtx()));
+              console.log(inFlightLine(entry, described, watchMs, writerCtx()));
             }
             // decision C195: the way on once the program holding the step is done with it — this
             // drive again, with the flags it was started with (`realm workflow run`'s hand-back,
             // C188, gives `realm run advance` the same way).
             console.log(
               goOnLine(
-                inFlight,
+                held,
+                runId,
                 writerCtx().cmd(
                   `realm agent --run-id ${runId} ${deps.reattachFlags ?? '--provider <provider> --model <model>'}`,
                 ),
+                writerCtx(),
               ),
             );
             // decision C179: the drive stops on the step another process holds; the run did not end,

@@ -2,7 +2,8 @@
 // and 13; checks 10 and 14; guardrail 9): every sentence P1a writes for a person, each with the cell
 // that executes what it says — the condition words of the one table, the MCP person block's reclaim
 // line printed through the CLI's own operator route (the words before the command, B b7f72a42), the
-// CHANGELOG's lines — and the release rule: #922 P1 and P2 ship in one release.
+// CHANGELOG's lines. The release rule (P1 and P2 in one release) ended with #922 P2-2, which created
+// docs-922-p2.test.ts and deleted its cell here.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the page
 // and the sentence, the words, or the cell that is missing.
@@ -91,26 +92,6 @@ const CORE_WAY: Cell = [
 function cellExists([file, title]: Cell): boolean {
   return existsSync(join(ROOT, file)) && read(file).includes(title);
 }
-
-describe('#922 P1a — the release rule (item 13, check 14)', () => {
-  it('#922 P1 and P2 ship in one release: until docs-922-p2.test.ts exists, P1’s lines sit between the literal `## [Unreleased]` heading and the next section', () => {
-    // NOT #871's form: after a release renames [Unreleased], that form reads the release's section,
-    // so a gate written with it never fails. P2 deletes this cell.
-    if (existsSync(join(HERE, 'docs-922-p2.test.ts'))) return;
-    const text = read('CHANGELOG.md');
-    const at = text.indexOf('\n## [Unreleased]\n');
-    const section = at < 0 ? '' : text.slice(at, text.indexOf('\n## [', at + 1));
-    const missing = [UPGRADING, CHANGED, UPGRADING_P1B, ADDED_P1B, CHANGED_P1B].filter(
-      (line) => !flat(section).includes(flat(line)),
-    );
-    // (a) red when a release commit renames [Unreleased] (or moves P1's lines under a version) before
-    //     P2 lands; (b) prints the rule and the lines not found under the literal heading.
-    expect(
-      missing,
-      '#922 P1 and P2 ship in one release; P2 has not landed: cut from before P1, or wait',
-    ).toEqual([]);
-  });
-});
 
 describe('#922 P1a — the CHANGELOG lines, each with the cell that executes it', () => {
   it('Upgrading: the MCP reply on a run whose every blocker is a step past its deadline', () => {

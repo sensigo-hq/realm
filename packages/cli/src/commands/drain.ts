@@ -18,7 +18,13 @@ import type {
   ComposedWays,
   Snapshot,
 } from '@sensigo/realm';
-import { CLI_COMMANDS, advanceNeedsWords, cannotGoOnLines, writerHost } from './ways-renderer.js';
+import {
+  CLI_COMMANDS,
+  advanceNeedsWords,
+  cannotGoOnLines,
+  heldWithoutDefinitionLine,
+  writerHost,
+} from './ways-renderer.js';
 import {
   parseStamp,
   describePending,
@@ -78,15 +84,25 @@ const nothingToDrain = (runId: string): string =>
 /**
  * decision C205: the way on of a run that has not ended, owes the engine nothing and has no step
  * that cannot run — the ready line for an agent step (the drive), else one line per step in flight
- * in another program (wait for it); empty when neither. The same words `realm run advance` and
- * `realm run respond` print.
+ * in another program (#922 P2-2: its state and what frees it, from its composed entry); empty when
+ * neither. The same words `realm run advance` and `realm run respond` print. With no definition
+ * read (`composed` absent), the held steps get the dry run's line in place of theirs.
  */
-const waysOnWithoutEngineWork = (runId: string, run: RunRecord, pending: PendingView): string[] => {
+const waysOnWithoutEngineWork = (
+  runId: string,
+  run: RunRecord,
+  composed: ComposedWays | undefined,
+  pending: PendingView | undefined,
+): string[] => {
+  if (composed === undefined || pending === undefined) {
+    const held = run.in_progress_steps.some((s) => s !== run.pending_gate?.step_name);
+    return held ? [heldWithoutDefinitionLine(runId, writerCtx())] : [];
+  }
   const ready = agentReadyReason(runId, pending.agent_steps);
   // decision C212: each line ends with its command — no full stop.
   if (ready !== undefined)
     return [sentenceEnd(`${ready.charAt(0).toUpperCase()}${ready.slice(1)}`)];
-  return inFlightReasons(runId, run).map((reason) => sentenceEnd(reason));
+  return inFlightReasons(composed).map((reason) => sentenceEnd(reason));
 };
 
 /**
@@ -150,7 +166,7 @@ const wayOutOf = (
     }
     // decision C205: an agent step ready — the drive; a step in flight in another program — wait
     // for it. Each with the way out beside it.
-    const goOn = pending === undefined ? [] : waysOnWithoutEngineWork(runId, run, pending);
+    const goOn = waysOnWithoutEngineWork(runId, run, composed, pending);
     return goOn.length > 0
       ? [...goOn, `To end the run instead: realm run abandon ${runId}`]
       : [`To end the run: realm run abandon ${runId}`];
@@ -949,8 +965,13 @@ export async function runDrainAction(
       for (const line of cannotGoOn) console.log(line);
       // decision C205: with no engine work and nothing that cannot run, an agent step ready (the
       // drive) or a step in flight in another program (wait for it).
-      if (owed !== undefined && owed.owed.length === 0 && cannotGoOn.length === 0) {
-        for (const line of waysOnWithoutEngineWork(runId, working.record, owed)) console.log(line);
+      if (
+        (owed === undefined && working.record.pending_gate === undefined) ||
+        (owed !== undefined && owed.owed.length === 0 && cannotGoOn.length === 0)
+      ) {
+        for (const line of waysOnWithoutEngineWork(runId, working.record, composed, owed)) {
+          console.log(line);
+        }
       }
       return;
     }
