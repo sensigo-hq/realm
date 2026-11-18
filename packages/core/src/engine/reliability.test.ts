@@ -317,7 +317,8 @@ describe('reliability', () => {
     const hint = secondEnvelope.context_hint ?? '';
     // The second call is blocked either because the step is already claimed (in_progress)
     // or because findEligibleSteps already excluded it — both indicate concurrent conflict.
-    expect(hint.toLowerCase()).toMatch(/claim|already|in.?progress|not.?eligible/i);
+    // #922 P2-1: a held step's reason says its state ("it is held; its deadline is ahead (…)").
+    expect(hint.toLowerCase()).toMatch(/claim|held|already|in.?progress|not.?eligible/i);
 
     // Let first call finish.
     resolveFirst({});
