@@ -309,7 +309,7 @@ const liveNotes = JSON.stringify(S.notes);
   border:1px solid var(--line);background:transparent;color:var(--ink)}
 .rp-picks button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
 .rp button.ok{background:var(--c-accent);color:var(--c-on-accent);border-color:var(--c-accent)}
-.rp-nav button:disabled,.rp [data-live-try]:disabled{opacity:.45;cursor:not-allowed}
+.rp-nav button:disabled,.rp [data-live-try]:disabled,.rp[data-mode="live"] [data-act]:disabled,.rp[data-mode="live"] [data-s="1"] [data-pick]:disabled{opacity:.45;cursor:not-allowed}
 .rp-out{display:grid;gap:8px;min-width:0}
 .rp-out > div{display:grid;gap:8px;min-width:0}
 .rp-hint{color:var(--muted)}
@@ -415,6 +415,7 @@ const liveNotes = JSON.stringify(S.notes);
     };
     const tryB = q('[data-live-try]'), note = q('[data-live-note]'), ed = q('[data-l=box]'), sel = q('[data-l=step]'), hint = q('[data-l=hint]');
     const box = (k: string) => q(`[data-box=${k}]`);
+    const picks = q('[data-s="1"]').querySelectorAll('[data-pick]');
     let SS: any, M: any, E: any, rid: string, st: any, thr: any, T: any, gen = 0, busy = false, live = false, dead = false;
     // Realm's form (engine.mjs: open, answered or withdrawn), Realm's reply after it withdrew the form,
     // whether a call is holding the form open, and the short call in flight.
@@ -432,6 +433,8 @@ const liveNotes = JSON.stringify(S.notes);
         const a = x.dataset.act;
         x.disabled = busy || (held && ['send', 'post', 'other', 'ask'].includes(a)) || (a == 'answer' && !gv.choices) || (a == 'ask' && !gv.askAgain);
       });
+      // Stage 02's presets wait with Send (live mode only: recorded mode's never turn off).
+      picks.forEach((x: any) => (x.disabled = live && (busy || held)));
       const fh = q('[data-l=form-hint]');
       fh.textContent = gv.hint ?? '';
       fh.hidden = gv.hint == null;
@@ -650,7 +653,8 @@ const liveNotes = JSON.stringify(S.notes);
       const l = p.ok
         ? await act('execute_step', { command: sel.value, params: p.value }, b)
         : paint(b, M.replyView(null, { kind: 'page', message: p.message }, st, st));
-      if (p.note) b.append(el('p', p.note, 'rp-ev'));
+      // The note goes with a reply this Send painted, never into a run that replaced it meanwhile.
+      if (p.note && l) b.append(el('p', p.note, 'rp-ev'));
       if (answered(l, was)) show(3, true);
       else if (l) b.scrollIntoView({ block: 'nearest' });
     });

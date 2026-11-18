@@ -186,6 +186,13 @@ async function walk(which, width) {
     await idle();
     return { txt: await sendOut(), ms: Date.now() - t0 };
   }
+  // The same, without waiting: for a call that holds Realm's form open.
+  async function sendBoxNoWait(step, text) {
+    await go(1);
+    await page.selectOption('[data-l="step"]', step);
+    await page.fill('[data-l="box"]', text);
+    await page.click('[data-act="send"]');
+  }
   const preset = async (label) => {
     await go(1);
     await page.click(`.rp-stage[data-s="1"] [data-pick]:text-is("${label}")`);
@@ -772,6 +779,21 @@ async function walk(which, width) {
       choices: await enabled('[data-act="answer"]'),
     }),
   );
+  // correction 1: while the form holds the Send call, stage 2's presets are off with Send, and an off
+  // button looks off (the page's own off style: opacity 0.45, cursor not-allowed)
+  const PRESETS = '.rp-stage[data-s="1"] [data-pick]';
+  const look = (sel) =>
+    page.$eval(sel, (b) => [getComputedStyle(b).opacity, getComputedStyle(b).cursor]);
+  ok(
+    'while the form is open, the five presets of stage 2 are off',
+    (await page.$$(PRESETS)).length === 5 && (await enabled(PRESETS)) === 0,
+    `${await enabled(PRESETS)} of ${(await page.$$(PRESETS)).length} on`,
+  );
+  ok(
+    'while the form is open, Send looks off: opacity 0.45, cursor not-allowed',
+    JSON.stringify(await look('[data-act="send"]')) === JSON.stringify(['0.45', 'not-allowed']),
+    JSON.stringify(await look('[data-act="send"]')),
+  );
   // ---- the answer → state C
   const ending1 = R.endings.request_changes;
   await page.click('[data-act="answer"][data-choice="request_changes"]');
@@ -781,6 +803,13 @@ async function walk(which, width) {
     'the answer lands on stage 4, focus on its heading',
     (await page.getAttribute('.rp', 'data-stage')) === '3' &&
       (await focusIs('.rp-stage[data-s="3"] h3[data-say="branch"]')),
+  );
+  ok(
+    'after the answer, the five presets work again, and Send works and looks on (opacity 1)',
+    (await enabled(PRESETS)) === 5 &&
+      (await enabled('[data-act="send"]')) === 1 &&
+      (await look('[data-act="send"]'))[0] === '1',
+    JSON.stringify({ presets: await enabled(PRESETS), send: await look('[data-act="send"]') }),
   );
   await cells('C', ending1);
   const h2 = await headings();
@@ -906,7 +935,8 @@ async function walk(which, width) {
     await cells('C', ending);
   }
 
-  // ---- Start a new run while Realm's form is open: the open form goes with the old engine
+  // ---- Start a new run while Realm's form is open: the open form goes with the old engine. The
+  // review is sent with curly quotes, so the page notes their repair: the note is the old run's only.
   await page.click('.rp-live-mark [data-act="new"]');
   await page.waitForFunction(
     (id) => !document.querySelector('.rp-live-mark p').textContent.endsWith(id),
@@ -914,8 +944,11 @@ async function walk(which, width) {
   );
   await idle();
   runId = (await marker()).slice(-8);
-  await preset('Submit a valid review');
-  await page.click('[data-act="send"]');
+  const curly = JSON.stringify(R.attempts.find((a) => a.id === 'valid').call.params).replace(
+    /"/g,
+    '“',
+  );
+  await sendBoxNoWait('write_review', curly);
   await formOpen();
   await page.click('.rp-live-mark [data-act="new"]');
   await page.waitForFunction(
@@ -931,6 +964,13 @@ async function walk(which, width) {
       (await enabled('[data-act="send"]')) === 1 &&
       (await enabled('[data-act="answer"]')) === 0,
     `state ${await letter()}`,
+  );
+  await page.waitForTimeout(5000);
+  const box5 = await sendOut();
+  ok(
+    "Start a new run while the form is open: the new run's Send box stays empty for 5 s (no note from the old run)",
+    box5 === '',
+    JSON.stringify(box5.slice(0, 120)),
   );
   runId = m.slice(-8);
 
