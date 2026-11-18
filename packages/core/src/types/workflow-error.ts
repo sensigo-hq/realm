@@ -12,6 +12,21 @@ import { brandClass, REALM_BRAND } from '../brand.js';
  */
 export type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
 
+/** Every {@link ErrorCategory}, in the type's order; compile-checked both ways. */
+export const ERROR_CATEGORIES = [
+  'NETWORK',
+  'SERVICE',
+  'STATE',
+  'VALIDATION',
+  'ENGINE',
+  'RESOURCE',
+] as const satisfies readonly ErrorCategory[];
+type MissingErrorCategory = Exclude<ErrorCategory, (typeof ERROR_CATEGORIES)[number]>;
+const _everyErrorCategoryListed: [MissingErrorCategory] extends [never]
+  ? true
+  : MissingErrorCategory = true;
+void _everyErrorCategoryListed;
+
 /**
  * What an agent does next, decided by the engine (`WorkflowError.agentAction`).
  * `wait_for_service`: an outside service is unavailable —
@@ -39,6 +54,10 @@ export const AGENT_ACTIONS = [
   'wait_and_proceed',
   'await',
 ] as const satisfies readonly AgentAction[];
+type MissingAgentAction = Exclude<AgentAction, (typeof AGENT_ACTIONS)[number]>;
+const _everyAgentActionListed: [MissingAgentAction] extends [never] ? true : MissingAgentAction =
+  true;
+void _everyAgentActionListed;
 
 /**
  * Every code a `WorkflowError` can carry, grouped by its category; a reply's error and the error
@@ -280,6 +299,132 @@ export type ErrorCode =
   | 'MCP_CONNECTION_FAILED'
   | 'MCP_TOOL_NOT_FOUND'
   | 'MCP_TOOL_NAME_COLLISION';
+
+/**
+ * Every {@link ErrorCode}, in the type's order; compile-checked both ways (a code here the type
+ * lacks fails the `satisfies`, one added there and not here the check below). `npm run docs:tables`
+ * reads it.
+ */
+export const ERROR_CODES = [
+  'NETWORK_TIMEOUT',
+  'NETWORK_UNREACHABLE',
+  'NETWORK_DNS_FAILED',
+  'NETWORK_CONNECTION_RESET',
+  'SERVICE_HTTP_4XX',
+  'SERVICE_HTTP_5XX',
+  'SERVICE_RATE_LIMITED',
+  'SERVICE_AUTH_FAILED',
+  'SERVICE_NOT_FOUND',
+  'SERVICE_RESPONSE_INVALID',
+  'SERVICE_UNEXPECTED_REDIRECT',
+  'STATE_BLOCKED',
+  'STATE_PRECONDITION_FAILED',
+  'STATE_RUN_NOT_FOUND',
+  'STATE_WORKFLOW_NOT_FOUND',
+  'STATE_WORKFLOW_UNREADABLE',
+  'STATE_RUN_TERMINAL',
+  'STATE_SNAPSHOT_MISMATCH',
+  'STATE_RUN_LOCKED',
+  'STATE_RUN_BUSY',
+  'STATE_TRANSITION_DENIED',
+  'STATE_LEGACY_FORMAT',
+  'STATE_NEWER_FORMAT',
+  'STATE_STEP_ALREADY_CLAIMED',
+  'STATE_STEP_NOT_ELIGIBLE',
+  'STATE_STEP_ALREADY_SETTLED',
+  'STATE_CLAIM_LOST',
+  'STATE_ANSWERER_MISMATCH',
+  'STATE_RUN_DIVERGED',
+  'STATE_RUN_ALREADY_ACTIVE',
+  'STATE_IDEMPOTENCY_KEY_USED',
+  'STATE_TEST_CLOCK_FOREIGN',
+  'STATE_HOME_UNUSABLE',
+  'STATE_STORE_DRIVER_UNAVAILABLE',
+  'STATE_STORE_FILESYSTEM_REFUSED',
+  'STATE_STORE_SETTINGS_REFUSED',
+  'STATE_STORE_VERSION_OLDER',
+  'STATE_STORE_VERSION_NEWER',
+  'STATE_STORE_SCHEMA_TAMPERED',
+  'STATE_STORE_FULL',
+  'STATE_STORE_READONLY',
+  'STATE_STORE_WRITES_FENCED',
+  'STATE_STORE_LIMIT_EXCEEDED',
+  'STATE_STORE_BACKUP_REFUSED',
+  'STATE_STORE_BACKUP_UNVERIFIED',
+  'STATE_STORE_MIGRATE_REFUSED',
+  'STATE_STORE_MIGRATE_FAILED',
+  'STATE_STORE_IN_USE',
+  'STATE_STORE_RESTORE_REFUSED',
+  'STATE_STORE_CHECK_REFUSED',
+  'STATE_HOME_HOLDS_LEGACY_STORE',
+  'STATE_RUN_PURGED',
+  'STATE_RUN_TIMESTAMP_INVALID',
+  'STATE_WRITE_ONCE_REWRITTEN',
+  'STATE_EVIDENCE_REWRITTEN',
+  'STATE_RUN_IDENTITY',
+  'RUN_ABORTING',
+  'VALIDATION_INPUT_SCHEMA',
+  'VALIDATION_OUTPUT_SCHEMA',
+  'VALIDATION_TRACE_SCHEMA',
+  'VALIDATION_EXHAUSTED',
+  'VALIDATION_WORKFLOW_SCHEMA',
+  'VALIDATION_HASH_MISMATCH',
+  'VALIDATION_QUOTE_NOT_FOUND',
+  'VALIDATION_FIELD_UNKNOWN',
+  'VALIDATION_FIELD_EXCLUDED',
+  'VALIDATION_EMPTY_VALUE',
+  'VALIDATION_BATCH_TOO_LARGE',
+  'VALIDATION_BATCH_ITEMS',
+  'VALIDATION_TRUST_VALUE',
+  'VALIDATION_ACTOR_INVALID',
+  'VALIDATION_CALLER_INVALID',
+  'VALIDATION_OPTION_INVALID',
+  'VALIDATION_CURSOR',
+  'STEP_HANDLER_ERROR',
+  'ENGINE_INTERNAL',
+  'ENGINE_STORE_FAILED',
+  'ENGINE_ARTIFACT_DELETE_FAILED',
+  'ENGINE_ADAPTER_FAILED',
+  'ENGINE_ADAPTER_NOT_REGISTERED',
+  'ENGINE_PROCESSOR_FAILED',
+  'ENGINE_HANDLER_FAILED',
+  'ENGINE_HANDLER_NOT_REGISTERED',
+  'ENGINE_STEP_FAILED',
+  'ENGINE_GATE_OPEN_FAILED',
+  'ENGINE_RELEASE_LINE_MISMATCH',
+  'ENGINE_RELEASE_LINE_UNDECLARED',
+  'GATE_MESSAGE_UNRESOLVABLE',
+  'FILTER_UNKNOWN',
+  'ADAPTER_OP_UNSUPPORTED',
+  'ADAPTER_VALIDATION_FAILED',
+  'ADAPTER_REQUEST_FAILED',
+  'STEP_TIMEOUT',
+  'STEP_ABORTED',
+  'STEP_RETRY_EXHAUSTED',
+  'STATE_STEP_PENDING',
+  'STATE_SEAL_UNSTAMPED',
+  'STATE_SEAL_ORPHANED',
+  'STATE_SEAL_ERASED',
+  'STATE_SEAL_UNKNOWN_ARM',
+  'STATE_SEAL_INCOHERENT',
+  'STATE_SEAL_REWRITTEN',
+  'STEP_NOT_FOUND',
+  'GUARD_RESOLUTION_ERROR',
+  'INPUT_MAP_DEPTH_EXCEEDED',
+  'INPUT_MAP_UNKNOWN_DIRECTIVE',
+  'RESOURCE_FETCH_FAILED',
+  'RESOURCE_TOO_LARGE',
+  'RESOURCE_FORMAT_INVALID',
+  'RESOURCE_NOT_ACCESSIBLE',
+  'BUFFER_FULL',
+  'TRACE_CAPABILITY_INCONSISTENT',
+  'MCP_CONNECTION_FAILED',
+  'MCP_TOOL_NOT_FOUND',
+  'MCP_TOOL_NAME_COLLISION',
+] as const satisfies readonly ErrorCode[];
+type MissingErrorCode = Exclude<ErrorCode, (typeof ERROR_CODES)[number]>;
+const _everyErrorCodeListed: [MissingErrorCode] extends [never] ? true : MissingErrorCode = true;
+void _everyErrorCodeListed;
 
 /**
  * The typed facts of a damaged stored file's error: one file (`scope: 'file'`) or a decision over
