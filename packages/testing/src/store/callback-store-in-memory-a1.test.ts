@@ -1,13 +1,12 @@
 // callback-store-in-memory-a1.test.ts — R1.3 the callback, callback A1a: the published callback-store
-// contract (`callbackStoreContract`) run against `InMemoryStore`'s callback store, every law it can
-// run; the per-run artifact contract on `store.callbacks` (L1, L2, L5, L6: an in-memory store can
-// neither fail nor declare a release line, so L3, L4 and `STORE_RELEASE_LINE_TRUE` run on SQLite's
-// store, unit B); and the store's own cells (built with `callbacks: null` it keeps none).
+// contract (`callbackStoreContract`) run against `InMemoryStore`'s callback store, every law, and the
+// store's own cells (built with `callbacks: null` it keeps none). The per-run artifact contract runs on
+// SQLite's callbacks in B, every law; in memory CB_PURGE_PAIR pins the purge pair (a store with no
+// release line cannot run STORE_RELEASE_LINE_TRUE).
 //
 // Each assertion carries the two questions of `~/.claude/TESTING-RULES.md` rule 8 next to it:
 // (a) what turns it red, (b) what it prints then.
 import { describe, expect, it } from 'vitest';
-import { callbackRowOf } from '@sensigo/realm';
 import { InMemoryCallbackStore, InMemoryStore } from './in-memory-store.js';
 import {
   CALLBACK_STORE_LAWS,
@@ -15,11 +14,6 @@ import {
   type CallbackStoreContractAdapter,
   type CallbackStoreLaw,
 } from './callback-store-contract.js';
-import {
-  ARTIFACT_STORE_LAWS,
-  perRunArtifactStoreContract,
-  type ArtifactStoreLaw,
-} from './per-run-artifact-store-contract.js';
 
 /** The callback laws this file does not run, each with its reason. None: the in-memory store runs every one. */
 const NOT_RUN: Partial<Record<CallbackStoreLaw, string>> = {};
@@ -47,53 +41,6 @@ describe('R1.3 callback A1a — InMemoryStore runs the callback-store contract',
       const target = cases.find((c) => c.law === law);
       // (a) red when the contract stops registering a case for a law this file runs; (b) prints the
       //     law. The case itself throws, naming the law, the step and what the store returned.
-      expect(target, `no case for ${law}`).toBeDefined();
-      await target!.run();
-    });
-  }
-});
-
-/** The per-run artifact laws an in-memory callback store cannot run, each with its reason. */
-const ARTIFACT_NOT_RUN: Partial<Record<ArtifactStoreLaw, string>> = {
-  L3_FAILURE_REJECTS:
-    'an in-memory store cannot be made to fail (`injectFailure`): SQLite’s store runs it (B)',
-  L4_TYPED_REJECTION:
-    'an in-memory store cannot be made to fail (`injectFailure`): SQLite’s store runs it (B)',
-  STORE_RELEASE_LINE_TRUE:
-    'an in-memory store declares no release line: SQLite’s store runs it (B)',
-};
-
-const WITH = 'run-callback-artifact';
-const ABSENT = 'run-callback-absent';
-
-describe('R1.3 callback A1a — the per-run artifact contract on store.callbacks', () => {
-  const callbacks = new InMemoryCallbackStore();
-  const cases = perRunArtifactStoreContract({
-    store: callbacks,
-    runIdWithArtifact: WITH,
-    runIdAbsent: ABSENT,
-    injectFailure: () => {
-      throw new Error('an in-memory callback store cannot be made to fail');
-    },
-    reseed: () => {
-      callbacks.register(
-        callbackRowOf(
-          WITH,
-          'wf-callback-artifact',
-          {
-            url: 'https://hooks.example/callback/artifact',
-            host: 'hooks.example:443',
-            webhook_id: '00000000-0000-4000-8000-0000000000aa',
-          },
-          new Date('2026-01-01T00:00:00.000Z'),
-        ),
-      );
-    },
-  });
-  for (const law of ARTIFACT_STORE_LAWS.filter((l) => !(l in ARTIFACT_NOT_RUN))) {
-    it(`conforms to ${law}`, async () => {
-      const target = cases.find((c) => c.law === law);
-      // (a) red when the purge pair breaks a per-run artifact law; (b) prints the law's own failure.
       expect(target, `no case for ${law}`).toBeDefined();
       await target!.run();
     });
