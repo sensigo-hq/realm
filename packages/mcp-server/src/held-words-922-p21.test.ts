@@ -136,7 +136,7 @@ describe('#922 P2-1 — check 1, the bug’s words: a run whose only blocker is 
   it('advance_run says the deadline passed and to tell the user, never "wait"; get_run_state’s elsewhere and person block lead with the past line', async () => {
     claim(
       'mcp/tools.md',
-      "every step it waits on is held by a claim whose deadline has passed (`report_to_user`; `No step is ready: '<step>' was claimed and its deadline passed at <time>; no result is recorded for it. Tell the user: a person can free it.`)",
+      "every step it waits on is held by a claim whose deadline has passed (`report_to_user`; `No step is ready: '<step>' was claimed and its deadline passed at <time>; no result is recorded for it. Tell the user: a person can free it.`, then, for a step not declared idempotent, `It is not declared idempotent, so running it again may repeat its effects.`)",
     );
     claim(
       'mcp/tools.md',
@@ -144,11 +144,20 @@ describe('#922 P2-1 — check 1, the bug’s words: a run whose only blocker is 
     );
     claim(
       'mcp/run-state-and-health.md',
-      'Or every step it waits on is held by a claim whose deadline has passed (`report_to_user`): no result is recorded for them, and a person can free each one.',
+      'Or every step it waits on is held by a claim whose deadline has passed (`report_to_user`): no result is recorded for them, and a person can free each one (both added after version 0.50.0).',
     );
     claim(
       'mcp/run-state-and-health.md',
       'else `report_to_user` (a step cannot run, or every step it waits on is held by a claim whose deadline has passed).',
+    );
+    // Correction 1 (RV-02): the version notes of P2-1's sentences, in each page's own form.
+    claim(
+      'mcp/tools.md',
+      "the `agent_action` words after version 0.47.0; a held step whose deadline has passed, and each held step's state, after version 0.50.0.",
+    );
+    claim(
+      'mcp/run-state-and-health.md',
+      'Added after version 0.47.0; a held step whose deadline has passed after version 0.50.0.',
     );
     const d = await door(workflow('p21-c1', { a: agent() }));
     const runId = await d.start();
@@ -219,7 +228,7 @@ describe('#922 P2-1 — check 2, S-1: in every ahead unit, "can free" appears if
 });
 
 describe('#922 P2-1 — check 3, each other state on advance_run’s reply', () => {
-  it('unknown age, unreadable, no claim record, not stamped, and a store that keeps no claims', async () => {
+  it('unknown age, unreadable, no claim record, not stamped, and a store that keeps no claims — one step, and (correction 1, RD-11) two', async () => {
     claim(
       'mcp/tools.md',
       "`'<step>' has been held since <time> by a claim with no deadline; wait for it. If its program has stopped, a person can free it.`",
@@ -234,7 +243,10 @@ describe('#922 P2-1 — check 3, each other state on advance_run’s reply', () 
     );
     const words = async (claims: Record<string, Claim>, keepsClaims = true) => {
       const d = await door(
-        workflow(`p21-c3-${Math.random().toString(36).slice(2)}`, { a: agent() }),
+        workflow(
+          `p21-c3-${Math.random().toString(36).slice(2)}`,
+          Object.fromEntries(Object.keys(claims).map((s) => [s, agent()])),
+        ),
         {
           keepsClaims,
         },
@@ -255,6 +267,14 @@ describe('#922 P2-1 — check 3, each other state on advance_run’s reply', () 
       noRecord: await words({ a: 'no_record' }),
       notStamped: await words({ a: { deadline: null } }),
       noClaimsStore: await words({ a: 'no_record' }, false),
+      // Correction 1 (RD-11): the plural of each, through advance_run; the longest-held instant is
+      // the second step's, so a first-member pick is caught.
+      unreadableTwo: await words({
+        a: { deadline: 'not-a-time', since: SINCE },
+        b: { deadline: 'not-a-time-either', since: plus(-7_200_000) },
+      }),
+      noRecordTwo: await words({ a: 'no_record', b: 'no_record' }),
+      noClaimsStoreTwo: await words({ a: 'no_record', b: 'no_record' }, false),
     }).toEqual({
       unknown: {
         hint: `'a' has been held since ${SINCE} by a claim with no deadline; wait for it. If its program has stopped, a person can free it.`,
@@ -276,6 +296,18 @@ describe('#922 P2-1 — check 3, each other state on advance_run’s reply', () 
         hint: "'a' is held; this store keeps no claim records, so a person cannot free it with reclaim. Wait for it.",
         action: 'await',
       },
+      unreadableTwo: {
+        hint: `'a', 'b' have been held, the longest since ${plus(-7_200_000)}, by claims whose deadlines cannot be read; wait for them. If their programs have stopped, a person can free them.`,
+        action: 'await',
+      },
+      noRecordTwo: {
+        hint: "'a', 'b' are held, since an unknown time, with no claim record; wait for them. If their programs have stopped, a person can free them.",
+        action: 'await',
+      },
+      noClaimsStoreTwo: {
+        hint: "'a', 'b' are held; this store keeps no claim records, so a person cannot free them with reclaim. Wait for them.",
+        action: 'await',
+      },
     });
   });
 });
@@ -284,7 +316,7 @@ describe('#922 P2-1 — check 4, a mix of ahead and past on advance_run’s repl
   it('both groups, the past one first; agent_action stays await (GROUNDING: P1a’s)', async () => {
     claim(
       'mcp/tools.md',
-      "`No step is ready: ` and each held step's state when a step is held by another call (one clause for each group of steps in the same state, the steps whose deadline passed first: `'<step>' was claimed and its deadline passed at <time>; no result is recorded for it. Tell the user: a person can free it.`).",
+      "`No step is ready: ` and each held step's state when a step is held by another call (one clause for each group of steps in the same state, the steps whose deadline passed first: `'<step>' was claimed and its deadline passed at <time>; no result is recorded for it. Tell the user: a person can free it.`, then, for a step not declared idempotent, `It is not declared idempotent, so running it again may repeat its effects.`; added after version 0.50.0).",
     );
     claim(
       'mcp/run-state-and-health.md',

@@ -239,7 +239,7 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
     );
   });
 
-  it('C205: with nothing ready but held steps, the sentence names them and their state — several (`are`, `them`); #922 P2-1: on a store that keeps no claims, its words', async () => {
+  it('C205: with nothing ready but held steps, the sentence names them and their state — several (`are`, `them`); #922 P2-1 correction 1: composed with the store that holds the claims', async () => {
     const d = def({
       a: { description: 'A', execution: 'auto', depends_on: [] },
       b: { description: 'B', execution: 'auto', depends_on: [] },
@@ -257,9 +257,24 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
       });
       await store.claimStep(run.id, 'a', d, other);
       await store.claimStep(run.id, 'b', d, other);
-      expect(nextSentenceOf((await store.get(run.id)).record, d)).toBe(
-        " No step is ready: 'a', 'b' are held; this store keeps no claim records, so a person cannot free them with reclaim. Wait for them.",
-      );
+      const { record } = await store.get(run.id);
+      // #922 P2-1 correction 1 (RD-11): the store holds both claims, so the composition says so
+      // (`persistsClaims` read off the store, true for a JsonFileStore) and the words are the
+      // plural of a deadline ahead, the earliest of the two.
+      const earliest = [record.claims?.['a']?.deadline, record.claims?.['b']?.deadline]
+        .filter((t): t is string => typeof t === 'string')
+        .sort()[0];
+      const sentence = renderWaysOf(
+        composeWaysAt(record, new Date(), {
+          persistsClaims: store.persistsClaims === true,
+          definition: d,
+        }),
+        {},
+      ).next_sentence;
+      expect([store.persistsClaims, sentence]).toEqual([
+        true,
+        ` No step is ready: 'a', 'b' are held; their deadlines are ahead (the earliest at ${earliest}). Wait for them. A person can free them, but if a program is still running, its step runs twice.`,
+      ]);
     });
   });
 
