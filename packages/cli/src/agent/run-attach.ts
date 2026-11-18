@@ -15,6 +15,7 @@ import {
   deriveRunPhase,
   escapedBoundedValue,
   lastExecutionIdentity,
+  runEndingOf,
 } from '@sensigo/realm';
 import type {
   LoaderWarning,
@@ -50,29 +51,60 @@ export function reattachable(run: RunRecord): boolean {
 }
 
 /**
- * Who ended a run, from its record (#729 PR-0, E1 (d)): an operator (`abandoned`), a guard (its seal
- * arm names the guard step), a step that failed, a declared expiry, or nothing to name (a run that
- * completed). A clause after the run's phase, or empty.
+ * #625 A1b-2: how an ended run ended, for the refusal — the one ending composer's sentence (from the
+ * record only; no workflow is read, so a run whose workflow is gone still gets it), the stored values
+ * it quotes (an abandon's reason, a guard's message) rendered through `ctx.escaped` as the `Reason:`
+ * line renders its value, and whether it quoted one. `undefined` for a run whose seal is the plain
+ * `complete` arm, not classified: the phase says it.
  */
-function endedBy(run: RunRecord): string {
+function refusalEnding(
+  run: RunRecord,
+  ctx: RenderCtx,
+): { sentence: string; quotesStoredValue: boolean } | undefined {
+  if (run.sealed_by?.arm === 'complete' && run.sealed_by.classified !== true) return undefined;
+  let quotesStoredValue = false;
+  const ending = runEndingOf(run, undefined, {
+    quote: (escaped) => {
+      quotesStoredValue = true;
+      return ctx.escaped(escaped);
+    },
+  });
+  return ending === undefined ? undefined : { sentence: ending.sentence, quotesStoredValue };
+}
+
+/**
+ * #625 A1b-2: whether the refusal keeps the `Reason:` line — for a run that did not complete and
+ * stores a reason its sentence does not say: a step failure, a handler's abort, a guard's resolution
+ * error, and a failed or aborted record with no seal. Left out where the sentence says it: an
+ * abandoned run (its reason is in the sentence), a gate expiry's abort (its stored reason is the
+ * sentence word for word), and the spawn and extensions failures (Realm's own codes, said in words).
+ * A guard's abort stores no reason.
+ */
+function keepsReasonLine(run: RunRecord): boolean {
+  if (run.terminal_reason === undefined) return false;
+  const phase = deriveRunPhase(run);
+  if (phase === 'completed' || phase === 'abandoned') return false;
   const arm = run.sealed_by?.arm;
-  const step = run.sealed_by?.step;
-  if (deriveRunPhase(run) === 'abandoned') return ': an operator ended it';
-  if ((arm === 'guard_abort' || arm === 'guard_resolution_error') && step !== undefined) {
-    return `: guard '${step}' ended it`;
-  }
-  if (arm === 'handler_abort' && step !== undefined) return `: step '${step}' ended it`;
-  if (arm === 'gate_expiry_abort')
-    return ': its question expired, and its declared on_expiry ended it';
-  if (arm === 'step_failure' && step !== undefined) return `: step '${step}' failed`;
-  return '';
+  return arm === undefined
+    ? phase === 'failed' || phase === 'aborted'
+    : arm === 'step_failure' || arm === 'handler_abort' || arm === 'guard_resolution_error';
+}
+
+/**
+ * #729 PR-3 correction 4 (I-11), #625 A1b-2: whether the ended-run refusal prints a stored value — its
+ * `Reason:` line, or a reason or message inside its sentence (the composer says whether it quoted
+ * one) — so `realm agent` prints the "Values withheld" line before it while values are withheld.
+ */
+export function refusalPrintsStoredValue(run: RunRecord): boolean {
+  return keepsReasonLine(run) || refusalEnding(run, PLAIN)?.quotesStoredValue === true;
 }
 
 /**
  * The refusal `realm agent --run-id` gives a run that has ended — ONE mint, thrown by both
  * carriers: the pre-attach check ({@link resolveRunAttach}) and the agent loop (`runAgent`), so the
  * two can never word it differently (framework rule 3). #729 PR-0 (E1 (d), (e), (j); Table row 55):
- * the run-a-step family's `run_ended`, rendered with who ended the run and why from the record —
+ * the run-a-step family's `run_ended`, rendered with how the run ended, from the record (#625
+ * A1b-2: the one ending composer's sentence, never who ended it) —
  * Realm's own sentence ends with Realm's stop; the recorded reason is stored text, printed after a
  * label as written through the one escaped, bounded value renderer, with no stop added; and the
  * command that delivers cleanup steps left pending ends its own line (C212). The phase is worked out
@@ -86,10 +118,13 @@ export function terminalRunRefusal(runId: string, run: RunRecord, ctx: RenderCtx
   // #729 PR-3 correction 3 (H-8): the phase is realm's own word. `ctx` is the CLI's writer context
   // on the pre-attach carrier, so it prints whole; the library carrier (`runAgent`) passes none and
   // its message carries no span mark (I13).
+  // #625 A1b-2: how it ended, from the record only — never who ended it (Realm never claims who was
+  // on the other end).
+  const ending = refusalEnding(run, ctx);
   const lines = [
-    `Run ${runId} has already ended (${ctx.word(phase, RUN_PHASE_WORDS)})${endedBy(run)}.`,
+    `Run ${runId} has already ended (${ctx.word(phase, RUN_PHASE_WORDS)}).${ending === undefined ? '' : ` ${ending.sentence}`}`,
   ];
-  if (run.terminal_reason !== undefined && phase !== 'completed') {
+  if (run.terminal_reason !== undefined && keepsReasonLine(run)) {
     // Correction 4 (I-11): the stored reason is a value — its shape while the run's declared values
     // are withheld (the CLI read its manifest first); PLAIN leaves it as written.
     lines.push(`Reason: ${ctx.escaped(escapedBoundedValue(run.terminal_reason))}`);

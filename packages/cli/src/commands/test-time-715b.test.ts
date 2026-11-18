@@ -84,6 +84,13 @@ const REAL_CLOCK_EXPIRY_WAITS: Record<string, { cells: string[]; reason: string 
     reason:
       "the same race as C146's (the late answer read before this process's own timer fires), held the same way",
   },
+  'packages/cli/src/commands/ending-a1b2.test.ts': {
+    cells: [
+      'correction 1, check 3 — this drive’s answer carries out an expired default, and the guard then aborts: the guard’s lines once, no Ended:',
+    ],
+    reason:
+      "C146's race: the answer must be handled past the deadline BEFORE this process's own expiry timer runs. Only a synchronous hold past a real deadline orders the two; a test location's clock moves by an asynchronous file write, during which the timer's watch can fire first",
+  },
 };
 
 function testFiles(): string[] {

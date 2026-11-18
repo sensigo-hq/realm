@@ -234,9 +234,11 @@ describe('#625 PR-2a, F16 — realm agent: a run that has not ended is never sai
       { ok: false },
     );
     // (a) red when a run that ended is no longer said to have ended; (b) prints the last line.
+    // #625 A1b-2: the guard the chain settled printed only `✓ → aborted`, so the stop's last line
+    // says how the run ended (`Run ended in phase: aborted` above it: ending-a1b2-agent.test.ts).
     expect({ phase: d.phase, ended: d.last }).toEqual({
       phase: 'aborted',
-      ended: 'error: \nRun ended in phase: aborted',
+      ended: "error:   Ended:     Guard step 'g' aborted the run.",
     });
   });
 });

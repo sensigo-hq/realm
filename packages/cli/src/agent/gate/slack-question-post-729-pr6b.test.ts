@@ -214,7 +214,8 @@ describe('#729 PR-6b — the Slack question post', () => {
   function handler(
     def: WorkflowDefinition,
     o: { listen?: boolean; webhook?: boolean; store?: RunStore } = {},
-  ): (runId: string, gate: PendingGate) => Promise<void> {
+    // #625 A1b-2: the handler resolves to whether it said how the run ended.
+  ): (runId: string, gate: PendingGate) => Promise<boolean> {
     return createSlackGateHandler({
       store: o.store ?? store,
       definition: def,

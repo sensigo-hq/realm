@@ -226,7 +226,8 @@ describe('#729 PR-3 correction 5 (J-5) — round 5 W1: a run that never executed
       inspectReceipt: line(inspected.out, 'Disclosure:')?.split(';')[0],
       againReason: line(again.out, `Run '${runId}'`)?.split('Reason: ')[1],
       againWithheld: again.err.startsWith('Values withheld (declared values changed)'),
-      attachedReason: line(attached.err, 'Reason:'),
+      // #625 A1b-2: an abandoned run's reason is inside the refusal's sentence, not on a `Reason:` line.
+      attachedReason: line(attached.err, 'Error:')?.split('with the reason ')[1],
       doorReason: reply.terminal_reason,
       doorValues: reply.disclosure?.values,
       restoredCause: line(restored.out, 'Cause:'),
@@ -238,7 +239,7 @@ describe('#729 PR-3 correction 5 (J-5) — round 5 W1: a run that never executed
       inspectReceipt: 'Disclosure: declared values partial (manifest changed)',
       againReason: '‹string, 30 characters›.',
       againWithheld: true,
-      attachedReason: 'Reason: ‹string, 30 characters›',
+      attachedReason: '‹string, 30 characters›.',
       doorReason: '‹string, 30 characters›',
       doorValues: 'withheld',
       restoredCause: 'Cause: token [REDACTED]',

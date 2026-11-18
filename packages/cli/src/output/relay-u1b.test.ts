@@ -548,7 +548,8 @@ describe('U1b — the relay holds a declared value before the worker prints next
     const refused = await asWorker(
       ['agent', '--run-id', id!, '--provider', 'anthropic', '--model', 'fake-model'],
       {},
-      { ackDelayMs: 400, watch: /Reason:/ },
+      // #625 A1b-2: an abandoned run's reason is inside the refusal's sentence.
+      { ackDelayMs: 400, watch: /with the reason / },
     );
     // (a) red without the sync at `noteRunManifest`'s end (the reason prints while the run's
     //     declared values wait for the relay); (b) prints the code, the pieces sent and how many
