@@ -2,7 +2,9 @@
 
 <!-- description: Every error code Realm defines: when each one is raised and what it tells the caller to do, and the codes that nothing raises. -->
 
-Every error Realm raises on purpose has a code. This page lists all 115 codes that Realm defines: the 100 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises. The lists were made by a script that read the `ErrorCode` type and every place in Realm's code that raises one. The replies shown came from calls to a running server.
+<!-- The counts in the first paragraph, the count above the list of codes nothing raises and that list are written by scripts/generate-docs-tables.mjs from Realm's `ERROR_CODES` list and its code, which also checks the tables' rows against them; the rows' words are written by hand. After `npm run build`, run `npm run docs:tables`. -->
+
+Every error Realm raises on purpose has a code. This page lists all 115 codes that Realm defines: the 100 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises. The three counts and the list of codes nothing raises are written by a script that reads Realm's `ERROR_CODES` list and every place in Realm's code that writes one, and a test fails when a code is in neither a table nor that list, is in both, or a row names a code the type has not; what each row says was written by hand. The replies shown came from calls to a running server.
 
 ## Where a code appears
 
