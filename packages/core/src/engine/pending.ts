@@ -1204,6 +1204,58 @@ export function composeNextActionsStatusWord(
   return pending.owed.length > 0 && pending.agent_steps.length === 0 ? ADVANCE_OWED : undefined;
 }
 
+/**
+ * Diagnostic classification of `next_actions`:
+ * - `ok` — next_actions reflects what to do next (agent steps, then the `advance_run` act when
+ *   engine work is also owed); empty when nothing can run here (`engine_runnable` and
+ *   `agent_refused` name each refused step and why).
+ * - `advance_owed` — the only next work is the engine's: a guard is pending or an `auto` step can
+ *   run, and no agent step is ready — or the open question's time is up and it declares
+ *   `on_expiry`, which `advance_run` carries out first (decision C95). `next_actions` holds the one
+ *   act, `advance_run` — call it. (issue #625 PR-2a; replaces `auto_pending`, which told the caller
+ *   the opposite.)
+ * - `awaiting_human` — a human gate is open, and has not expired with a declared `on_expiry`.
+ * - `workflow_unresolved` — no workflow store provided, or the workflow is not registered.
+ * - `skipped_terminal` — the run is terminal; nothing to do.
+ * - `claim_stale` — a non-terminal run has an in-progress claim past its deadline (the after-claim
+ *   wedge, issue #101). Surfaced even when a healthy sibling is in flight.
+ * - `claim_unknown_age` — a non-terminal run's only in-progress claims have no deadline (agent /
+ *   finalizer-bearing / legacy) and there is nothing else to do — detect-only, human-judged.
+ * - `blocked_on_capability` — an owed step needs a handler or an adapter that this server does not
+ *   have (issue #134), and nothing else is owed to the engine: the view, judged with this server's
+ *   registry — or, when it has none, with the run's own `capability_blocks` marker — refuses the
+ *   step for capability and offers no act (issue #625 PR-2a, decision C33). A server that HAS the
+ *   handler reports `advance_owed` instead; the old marker stays visible in `capability_blocks`.
+ *   Without the definition the marker alone decides, so it also refines `workflow_unresolved`.
+ *   Outranks `claim_stale` (a more specific, actionable diagnosis); ranks below `awaiting_human`.
+ */
+export type NextActionsStatus =
+  | 'ok'
+  | typeof ADVANCE_OWED
+  | 'awaiting_human'
+  | 'workflow_unresolved'
+  | 'skipped_terminal'
+  | 'claim_stale'
+  | 'claim_unknown_age'
+  | 'blocked_on_capability';
+
+/** Every {@link NextActionsStatus} word, in the type's order; compile-checked both ways. */
+export const NEXT_ACTIONS_STATUS = [
+  'ok',
+  ADVANCE_OWED,
+  'awaiting_human',
+  'workflow_unresolved',
+  'skipped_terminal',
+  'claim_stale',
+  'claim_unknown_age',
+  'blocked_on_capability',
+] as const satisfies readonly NextActionsStatus[];
+type MissingNextActionsStatus = Exclude<NextActionsStatus, (typeof NEXT_ACTIONS_STATUS)[number]>;
+const _everyNextActionsStatusListed: [MissingNextActionsStatus] extends [never]
+  ? true
+  : MissingNextActionsStatus = true;
+void _everyNextActionsStatusListed;
+
 /** How this program's project code compares with what the run last recorded (holder D-8). */
 export const PROGRAM_FITS = ['same', 'differs', 'not_comparable', 'none'] as const;
 export type ProgramFit = (typeof PROGRAM_FITS)[number];

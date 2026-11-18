@@ -205,6 +205,16 @@ export function omitClaim(
  */
 export type ClaimState = 'healthy' | 'claim_stale' | 'claim_unknown_age';
 
+/** Every {@link ClaimState}, in the type's order; compile-checked both ways. */
+export const CLAIM_STATES = [
+  'healthy',
+  'claim_stale',
+  'claim_unknown_age',
+] as const satisfies readonly ClaimState[];
+type MissingClaimState = Exclude<ClaimState, (typeof CLAIM_STATES)[number]>;
+const _everyClaimStateListed: [MissingClaimState] extends [never] ? true : MissingClaimState = true;
+void _everyClaimStateListed;
+
 /**
  * Classifies a single claim record against `now`. Definition-free (reads only the stored deadline).
  *

@@ -181,7 +181,7 @@ export const howChecked = [
 
 /** Words the page keeps on one line: a command-line flag that, broken after its "--", would read as
  *  a dash. Only the page marks them; the Markdown copy and llms.txt are plain text. */
-const ONE_LINE = ['--gate-answers withheld'];
+const ONE_LINE = ['--gate-answers permitted'];
 const ONE_LINE_SPLIT = new RegExp(
   `(${ONE_LINE.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
 );
@@ -206,7 +206,7 @@ export const issueLink = (number) => `${SOURCE_URL}/issues/${number}`;
 // answer it was written from, so neither can drift from the table without stopping the build.
 
 /** The Realm release llms.txt's text and /compare/'s "Other tools" section were checked against. */
-export const TEXTS_CHECKED_ON = '0.49.0';
+export const TEXTS_CHECKED_ON = '0.50.0';
 if (!/^\d+\.\d+\.\d+$/.test(TEXTS_CHECKED_ON)) {
   throw new Error(
     `compare-text.mjs: TEXTS_CHECKED_ON is "${TEXTS_CHECKED_ON}", not a release of the form X.Y.Z.`,
@@ -348,11 +348,11 @@ export const OTHER_TOOLS = {
   items: [
     {
       strong: 'By webhook.',
-      text: " The other tool POSTs to realm listen, which starts a run and answers 202 with the run's run_id straight away. That is a hand-off: the reply comes when the run starts, not when it ends. To send a result back, a later step in the Realm workflow can POST to the other tool's webhook with the http adapter. That webhook must reply with JSON, or Realm records the step as failed although the POST arrived. We ran Realm's side with requests and replies shaped as n8n's code sends them, not with n8n, Zapier or Make.",
+      text: " The other tool POSTs to realm listen, which starts a run and answers 202 with the run's run_id straight away. By default that is a hand-off: the reply comes when the run starts, not when it ends. A workflow with a result_map and shared-secret auth can hand back the result instead: the other tool sends Prefer: wait to wait for it (up to 25 seconds by default), or reads it later at the address the reply gives. To send a result back, a later step in the Realm workflow can POST to the other tool's webhook with the http adapter. That webhook must reply with JSON, or Realm records the step as failed although the POST arrived. We ran Realm's side with requests and replies shaped as n8n's code sends them, not with n8n, Zapier or Make.",
     },
     {
       strong: 'Over MCP.',
-      text: " realm serve is an MCP server reached over HTTP with a bearer token. n8n's MCP Client nodes connect to it when set to HTTP Streamable, with Bearer auth; their SSE option, the one n8n's docs page shows, does not connect to Realm. We checked Realm's server with the MCP library and version that n8n 2.47.7 uses, not with n8n itself. Zapier and Make have MCP clients in beta; we have not checked them against Realm. Over realm serve the other tool's agent also gets the tool that answers gates: start realm serve with --gate-answers withheld when a person must answer.",
+      text: " realm serve is an MCP server reached over HTTP with a bearer token. n8n's MCP Client nodes connect to it when set to HTTP Streamable, with Bearer auth; their SSE option, the one n8n's docs page shows, does not connect to Realm. We checked Realm's server with the MCP library and version that n8n 2.47.7 uses, not with n8n itself. Zapier and Make have MCP clients in beta; we have not checked them against Realm. Over realm serve, the other tool's agent has no tool to answer a gate: a person answers it in a terminal on the server's computer, with realm run respond. Start realm serve with --gate-answers permitted to let the agent pass on the person's answer.",
     },
     {
       text: 'Either way, the other tool must reach Realm. realm listen and realm serve listen on the machine Realm runs on (127.0.0.1) over plain HTTP by default, so a cloud service needs a public address you provide, and Make accepts only HTTPS.',
@@ -362,3 +362,11 @@ export const OTHER_TOOLS = {
     },
   ],
 };
+// A ONE_LINE phrase that no "Other tools" text holds keeps nothing on one line: stop the build.
+for (const phrase of ONE_LINE) {
+  if (!OTHER_TOOLS.items.some((item) => item.text.includes(phrase))) {
+    throw new Error(
+      `compare-text.mjs: ONE_LINE names "${phrase}", but no "Other tools" text holds it, so that entry keeps nothing on one line. Name the phrase as the text writes it, or remove it from ONE_LINE.`,
+    );
+  }
+}

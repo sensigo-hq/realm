@@ -1180,6 +1180,55 @@ export interface EvidenceSnapshot {
   exhausted_by?: 'attempts' | 'total_timeout';
 }
 
+/** Every evidence entry status (`EvidenceSnapshot['status']`); compile-checked both ways. */
+export const EVIDENCE_STATUSES = [
+  'success',
+  'error',
+  'skipped',
+  'abandoned',
+] as const satisfies readonly EvidenceSnapshot['status'][];
+type MissingEvidenceStatus = Exclude<
+  EvidenceSnapshot['status'],
+  (typeof EVIDENCE_STATUSES)[number]
+>;
+const _everyEvidenceStatusListed: [MissingEvidenceStatus] extends [never]
+  ? true
+  : MissingEvidenceStatus = true;
+void _everyEvidenceStatusListed;
+
+/** The words of an evidence entry's `exhausted_by`: why a step stopped retrying, out of budget. */
+export type ExhaustedBy = NonNullable<EvidenceSnapshot['exhausted_by']>;
+
+/** Every {@link ExhaustedBy} word, in the field's order; compile-checked both ways. */
+export const EXHAUSTED_BY = ['attempts', 'total_timeout'] as const satisfies readonly ExhaustedBy[];
+type MissingExhaustedBy = Exclude<ExhaustedBy, (typeof EXHAUSTED_BY)[number]>;
+const _everyExhaustedByListed: [MissingExhaustedBy] extends [never] ? true : MissingExhaustedBy =
+  true;
+void _everyExhaustedByListed;
+
+/**
+ * Q1 (#592): why a step's retrying stopped — no retry policy, the total-time cap, an error that is
+ * not retried, or the attempts used up. Nothing writes or reads a stop reason yet: the record's
+ * field comes with a later unit; the words exist now so the docs and the schema can name them.
+ */
+export type StopReason = 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
+
+/** Every {@link StopReason}, in judging order; compile-checked both ways, ⊇ {@link ExhaustedBy}. */
+export const STOP_REASONS = [
+  'no_retry_policy',
+  'total_timeout',
+  'non_retryable',
+  'attempts',
+] as const satisfies readonly StopReason[];
+type MissingStopReason = Exclude<StopReason, (typeof STOP_REASONS)[number]>;
+const _everyStopReasonListed: [MissingStopReason] extends [never] ? true : MissingStopReason = true;
+void _everyStopReasonListed;
+type ExhaustedByNotStopReason = Exclude<ExhaustedBy, StopReason>;
+const _everyExhaustedByAStopReason: [ExhaustedByNotStopReason] extends [never]
+  ? true
+  : ExhaustedByNotStopReason = true;
+void _everyExhaustedByAStopReason;
+
 /**
  * The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and
  * choices shown to the person, when it opened, and its owner and time limit when set.
@@ -1250,6 +1299,19 @@ export interface PendingGate {
  */
 export type RunPhase =
   'running' | 'gate_waiting' | 'completed' | 'failed' | 'abandoned' | 'aborted';
+
+/** Every {@link RunPhase}, in the type's order; compile-checked both ways. */
+export const RUN_PHASES = [
+  'running',
+  'gate_waiting',
+  'completed',
+  'failed',
+  'abandoned',
+  'aborted',
+] as const satisfies readonly RunPhase[];
+type MissingRunPhase = Exclude<RunPhase, (typeof RUN_PHASES)[number]>;
+const _everyRunPhaseListed: [MissingRunPhase] extends [never] ? true : MissingRunPhase = true;
+void _everyRunPhaseListed;
 
 /**
  * Snapshot of a single workflow context entry taken at run start.
@@ -1407,9 +1469,22 @@ export type SkipDetail =
    */
   | { kind: 'gate_expired'; gate_id: string };
 
+/** Every {@link SkipDetail} `kind`, in the type's order; compile-checked both ways. */
+export const SKIP_KINDS = [
+  'when_false',
+  'trigger_rule_unsatisfiable',
+  'handler_abort',
+  'guard_abort',
+  'gate_cancelled_by_abort',
+  'gate_expired',
+] as const satisfies readonly SkipDetail['kind'][];
+type MissingSkipKind = Exclude<SkipDetail['kind'], (typeof SKIP_KINDS)[number]>;
+const _everySkipKindListed: [MissingSkipKind] extends [never] ? true : MissingSkipKind = true;
+void _everySkipKindListed;
+
 /**
  * Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`). The type
- * {@link SealArm} derives from it (the `VALID_PHASES` pattern: the const array is the runtime
+ * {@link SealArm} derives from it (the `STOP_KINDS` pattern: the const array is the runtime
  * enumeration). One value per terminal seal-site function-branch in the 21-path census.
  *
  * APPEND-ONLY (the Tekton lesson, design rev 3 §3): an arm's meaning never changes; changed seal
@@ -1610,6 +1685,20 @@ export interface DriveFailureRecord {
    */
   usage?: UsageRecord[];
 }
+
+/** Every {@link DriveFailureRecord} `error_class`, in the type's order; checked both ways. */
+export const ERROR_CLASSES = [
+  'connection_timeout',
+  'connection_error',
+  'api_status',
+  'sdk_missing',
+  'validation_rejected',
+  'aborted_by_budget',
+  'other',
+] as const satisfies readonly DriveFailureRecord['error_class'][];
+type MissingErrorClass = Exclude<DriveFailureRecord['error_class'], (typeof ERROR_CLASSES)[number]>;
+const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : MissingErrorClass = true;
+void _everyErrorClassListed;
 
 /**
  * A run's recent drive failures: the last few, plus the total and the time of the first, which do

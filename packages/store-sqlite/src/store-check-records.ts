@@ -11,7 +11,7 @@
 // is not judged here (the orphans read below judges it), nor is a run whose record is not JSON.
 //
 // In the same transaction, the reads that compare the tables (c8b2): the meta row's purge counter and
-// horizon with the count of purged ids; the rows of the six tables whose run is gone; each workflow's
+// horizon with the count of purged ids; the rows of the seven tables whose run is gone; each workflow's
 // pointer with its newest registration; and each stored workflow version's hash with its text.
 //
 // Every per-row judgement is kept from throwing: one bad row is one entry in a finding. A scan that
@@ -101,7 +101,7 @@ export interface RecordPass {
   readonly tombstones: ScanOutcome;
   /** What the tombstone reads found; absent when the store has no meta row. */
   readonly horizon?: Horizon;
-  /** The six orphan reads (c8b2; #597 D1c-1 added `outbound`). */
+  /** The seven orphan reads (c8b2; #597 D1c-1 added `outbound`, callback B1a `callbacks`). */
   readonly orphans: ScanOutcome;
   /** Rows whose run is gone, by table and run, in {@link ORPHAN_TABLES}' order. */
   readonly orphanRows: readonly {
@@ -505,6 +505,8 @@ export const ORPHAN_TABLES = [
   // #597 D1c-1: schema version 2's ledger rows. The scan never runs on a version-1 file: an older
   // file stops the data checks.
   'outbound',
+  // Callback B1a: schema version 3's callback rows (an older file stops the data checks too).
+  'callbacks',
 ] as const;
 
 /** Every row whose run is gone, counted by table and run (c8b2). */

@@ -429,6 +429,9 @@ export {
   sentenceEnd,
   ADVANCE_OWED,
   composeNextActionsStatusWord,
+  // Q1 (#592) d1: every `next_actions_status` word, as a list (its type moved here from the MCP
+  // server).
+  NEXT_ACTIONS_STATUS,
   PROGRAM_FITS,
   judgeProgramFit,
   describeRunDriver,
@@ -452,6 +455,7 @@ export type {
   DueExpiry,
   OpenQuestion,
   RunEnding,
+  NextActionsStatus,
 } from './engine/pending.js';
 export {
   findEligibleSteps,
@@ -535,6 +539,8 @@ export {
   shouldEnforceTimeout,
   worstCaseScheduleSeconds,
   resolveCapMs,
+  // Q1 (#592) d1: every claim state, as a list.
+  CLAIM_STATES,
 } from './engine/claim-liveness.js';
 export type { ClaimState, InProgressClaimInfo } from './engine/claim-liveness.js';
 export { reclaimStep } from './engine/reclaim-step.js';

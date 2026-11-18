@@ -250,12 +250,14 @@ describe('#616 unit 14 — deleteAllForRun: what a deletion removes and how it i
     });
     const before = rowsOf();
     await runStore.deleteAllForRun(run.id);
-    // (1) red when a table holding a run id is added and not classified here (a seventh name), when
+    // (1) red when a table holding a run id is added and not classified here (an eighth name), when
     //     the deletion skips one of the run store's tables (its evidence rows left behind, the
     //     Temporal #11233 class), or when it deletes another store's rows of the run (a DELETE over
     //     every `run_id` table); (2) prints the tables found and each table's rows before and after.
     expect({ runIdTables, before, after: rowsOf() }).toEqual({
       runIdTables: [
+        // Callback B1a: schema version 3's callback rows (`callback_keys` holds no run id).
+        'callbacks',
         'evidence',
         'failed_attempts',
         'outbound',
@@ -269,6 +271,7 @@ describe('#616 unit 14 — deleteAllForRun: what a deletion removes and how it i
         run_blobs: 1,
         failed_attempts: 1,
         outbound: 1,
+        callbacks: 0,
         trace_buffer: 1,
         trace_sealed: 1,
       },
@@ -278,6 +281,7 @@ describe('#616 unit 14 — deleteAllForRun: what a deletion removes and how it i
         run_blobs: 0,
         failed_attempts: 1,
         outbound: 1,
+        callbacks: 0,
         trace_buffer: 1,
         trace_sealed: 1,
       },
