@@ -24,7 +24,12 @@ import { startOpenAiStub } from './test-support/openai-stub.js';
 import { startAnthropicStub } from './test-support/anthropic-stub.js';
 import { OpenAIProvider } from './providers/openai-provider.js';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
-import { LlmProvider, type CallStepWithMetaResult } from './providers/llm-provider.js';
+import {
+  LlmProvider,
+  ToolCapableLlmProvider,
+  type CallStepWithMetaResult,
+} from './providers/llm-provider.js';
+import type { McpClient, McpTool, StepWithToolsResult } from './mcp/mcp-extensions.js';
 import type { ModelTextReport } from './providers/model-text.js';
 import { runAgent, type AgentDeps } from './run-agent.js';
 import { agentCommand, buildReattachFlags } from '../commands/agent.js';
@@ -354,4 +359,106 @@ describe('gap 1, unit A1 — the words (check 13)', () => {
       ),
     }).toEqual({ agent: true, listen: true, added: true, rows: true });
   });
+});
+
+/** A tool-capable provider module: its tool path and its strict path each answer with one usage
+ *  record and that request's text. */
+class ToolModule extends ToolCapableLlmProvider {
+  async callStep(): Promise<Record<string, unknown>> {
+    return { summary: 'from a module' };
+  }
+  override async callStepWithMeta(): Promise<CallStepWithMetaResult> {
+    return {
+      output: { summary: 'strict answer' },
+      meta: { requested: true, sent: true },
+      usage: [usageRecord()],
+      modelText: [readable('{"summary":"strict answer"}')],
+    };
+  }
+  async callStepWithTools(): Promise<StepWithToolsResult> {
+    return {
+      output: { summary: 'tool answer' },
+      toolCalls: [],
+      usage: [usageRecord()],
+      modelText: [readable('{"summary":"tool answer"}')],
+    };
+  }
+}
+const usageRecord = (): UsageRecord =>
+  ({
+    request_index: 0,
+    request_start: '2026-01-01T00:00:00.000Z',
+    model: 'module-model',
+    prompt_tokens: 1,
+    output_tokens: 1,
+  }) as UsageRecord;
+const mcpClient: McpClient = {
+  async connect() {},
+  async getTools(_serverId: string, allowList: string[]): Promise<McpTool[]> {
+    return allowList.map((name) => ({
+      name,
+      description: 'A tool',
+      inputSchema: { type: 'object' },
+    }));
+  },
+  async call() {
+    return { result: 'ok' };
+  },
+  async disconnect() {},
+};
+
+describe('gap 1, unit A1 — the tool path and the strict path join each text to its request', () => {
+  /** The step's one entry's field and the id of its one usage record, after a drive of `step`. */
+  const joined = async (step: Record<string, unknown>, extra: Partial<WorkflowDefinition> = {}) => {
+    const def = {
+      ...definition,
+      ...extra,
+      steps: { ask: { ...definition.steps['ask'], ...step } },
+    } as unknown as WorkflowDefinition;
+    const store = new InMemoryStore();
+    const { record } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const result = await runAgent(
+      {
+        store,
+        workflowStore: { register: async () => {}, get: async () => def, list: async () => [] },
+        provider: new ToolModule(),
+        registry: new ExtensionRegistry(),
+        mcpClientFactory: () => mcpClient,
+      } as unknown as AgentDeps,
+      { existingRunId: record.id, definition: def, params: {} },
+    );
+    const entry = entriesOf((await store.get(record.id)).record)[0];
+    const text = entry?.model_text as Extract<ModelText, { recorded: true }> | undefined;
+    return {
+      result,
+      recorded: text?.recorded,
+      idsMatch:
+        typeof text?.requests[0]?.request_id === 'string' &&
+        text.requests[0].request_id === entry?.diagnostics?.cache?.requests[0]?.request_id,
+      reply: text?.messages[2]?.text,
+    };
+  };
+
+  it('check 1 (the tool path and the strict path): each kept text carries its request id', async () => {
+    const tools = await joined({ tools: ['srv:t'] }, {
+      mcp_servers: [{ id: 'srv', transport: 'stdio', command: 'npx', args: ['-y', 'mcp-srv'] }],
+    } as unknown as Partial<WorkflowDefinition>);
+    const strict = await joined({ structured_output: 'strict' });
+    // (1) red when the tool path's or the strict path's id is not copied onto its text (that path
+    //     then records `provider_did_not_report`); (2) prints each drive's result and field.
+    expect({ tools, strict }).toEqual({
+      tools: {
+        result: 'completed',
+        recorded: true,
+        idsMatch: true,
+        reply: '{"summary":"tool answer"}',
+      },
+      strict: {
+        result: 'completed',
+        recorded: true,
+        idsMatch: true,
+        reply: '{"summary":"strict answer"}',
+      },
+    });
+  }, 30_000);
 });

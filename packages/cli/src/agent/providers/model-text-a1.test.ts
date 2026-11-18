@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelText, UsageRecord } from '@sensigo/realm';
 import { AnthropicProvider } from './anthropic-provider.js';
 import { OpenAIProvider } from './openai-provider.js';
+import { OpenAIReasoningProvider } from './openai-reasoning-provider.js';
 import { mintRequestIds, setAdditionalRedactionValues } from './agent-utils.js';
 import {
   MODEL_TEXT_CAP_BYTES,
@@ -338,6 +339,59 @@ describe('gap 1, unit A1 — mask, then cut, then each distinct text once', () =
     expect({ users: users.length, sent: record.requests.map((r) => r.sent) }).toEqual({
       users: 2,
       sent: [[0], [2]],
+    });
+  });
+});
+
+describe('gap 1, unit A1 — the single-shot send points', () => {
+  const answer = {
+    model: 'gpt-test-1',
+    choices: [{ message: { role: 'assistant', content: '{"answer":"done"}' } }],
+    usage: { prompt_tokens: 10, completion_tokens: 1 },
+  };
+
+  it("check 1 (OpenAI's strict send): a request sent with strict keeps the system text, the prompt and the reply", async () => {
+    script = [answer];
+    const result = await new OpenAIProvider('gpt-x').callStepWithMeta('prompt', SCHEMA, undefined, {
+      structuredOutputStrict: true,
+    });
+    const record = kept(result);
+    const wire = sent[0]!.messages as Array<{ role: string; content: string }>;
+    // (1) red when the strict send point pushes no text beside its usage record (no texts are kept);
+    //     (2) prints the record's messages and whether the request was sent with strict.
+    expect({
+      strict: JSON.stringify(sent[0]).includes('"strict":true'),
+      messages: record.messages,
+      requests: record.requests.map((r) => ({ sent: r.sent, reply: r.reply })),
+    }).toEqual({
+      strict: true,
+      messages: [
+        { role: 'system', text: wire[0]!.content },
+        { role: 'user', text: 'prompt' },
+        { role: 'assistant', text: '{"answer":"done"}' },
+      ],
+      requests: [{ sent: [0, 1], reply: [2] }],
+    });
+  });
+
+  it('check 1 (the reasoning provider): its one user message, the system text folded in, is kept as sent', async () => {
+    script = [answer];
+    const result = await new OpenAIReasoningProvider('o1-x').callStepWithMeta('prompt', SCHEMA);
+    const record = kept(result);
+    const wire = sent[0]!.messages as Array<{ role: string; content: string }>;
+    // (1) red when the reasoning provider pushes no text beside its usage record; (2) prints the
+    //     record's messages and the wire's message count.
+    expect({
+      wireMessages: wire.length,
+      folded: wire[0]!.content.endsWith('\n\nprompt'),
+      messages: record.messages,
+    }).toEqual({
+      wireMessages: 1,
+      folded: true,
+      messages: [
+        { role: 'user', text: wire[0]!.content },
+        { role: 'assistant', text: '{"answer":"done"}' },
+      ],
     });
   });
 });
