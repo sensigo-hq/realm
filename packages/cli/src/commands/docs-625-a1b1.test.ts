@@ -44,7 +44,7 @@ const TOOLS = 'docs/reference/mcp/tools.md';
 const CHANGED =
   "- **`execute_step`, `advance_run`, `start_run` and `submit_human_response`, on a run that had already ended, say how it ended, from the record only.** One sentence per ending: which steps failed, which step or guard aborted it, a question's time-limit default or abort, 'realm run cleanup', the reason an abandon was given, or a record whose ending was worked out without a seal. An abandoned run no longer says an operator ended it: the record does not say who. (#625)";
 const UPGRADING =
-  '**2. `advance_run` (and `advanceRun` in the library) on a run that had already ended now returns `agent_action` / `intrinsic_action` `stop` (it had none).**';
+  '**3. `advance_run` (and `advanceRun` in the library) on a run that had already ended now returns `agent_action` / `intrinsic_action` `stop` (it had none).**';
 
 /** The page's sentences, each with the cells that execute it. */
 const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[] }> = [

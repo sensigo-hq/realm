@@ -144,7 +144,7 @@ describe('#872 (b1) correction 1 HC2 (H2) — names in the MCP sentences: at mos
     });
   });
 
-  it('"in flight elsewhere": one held step → "is … it"; eleven → "are … and 1 more … them"', async () => {
+  it('a held step: one → "is … it"; eleven → "are … and 1 more … them" (#922 P2-1: the held words)', async () => {
     const lead = (k: number) => named('h', k);
     const { call, runStore } = await door([
       wf(
@@ -165,18 +165,18 @@ describe('#872 (b1) correction 1 HC2 (H2) — names in the MCP sentences: at mos
         in_progress_steps: [...ids],
         claims: Object.fromEntries(ids.map((s) => [s, { deadline: until, token: `t-${s}` }])),
       } as RunRecord);
-      return hint(await call('advance_run', { run_id: run.id }));
+      return { hint: hint(await call('advance_run', { run_id: run.id })), until };
     };
     const one = await hold('hc2-held-1', lead(1));
     const eleven = await hold('hc2-held-11', lead(11));
     // (a) red when the bound is removed, or the verb and pronoun follow the names shown instead of
     //     the total; (b) prints the two sentences' ends.
     expect({
-      one: one.includes(
-        "No step is ready: 'h00' is in flight elsewhere — wait for it, then call get_run_state.",
+      one: one.hint.includes(
+        `No step is ready: 'h00' is held; its deadline is ahead (${one.until}). Wait for it.`,
       ),
-      eleven: eleven.includes(
-        `No step is ready: ${quoted(lead(11).slice(0, 10))} and 1 more are in flight elsewhere — wait for them, then call get_run_state.`,
+      eleven: eleven.hint.includes(
+        `No step is ready: ${quoted(lead(11).slice(0, 10))} and 1 more are held; their deadlines are ahead (the earliest at ${eleven.until}). Wait for them.`,
       ),
     }).toEqual({ one: true, eleven: true });
   });

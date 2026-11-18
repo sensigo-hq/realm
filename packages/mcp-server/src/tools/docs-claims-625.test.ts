@@ -465,7 +465,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
   const ENDED_ROW =
     'never on `confirm_required`; on a run that had ended before the call `advance_run` replies `ok` without it, and so does `submit_human_response` repeating the recorded choice';
   const OK_STOP =
-    'on an `ok` reply as `stop` (`execute_step` on a run that has already ended; a run found ended by another process meanwhile), as `report_to_user` (nothing can be called and the run is open: a step cannot run), or as `await` (a step in flight elsewhere, or a question handed to the person)';
+    'on an `ok` reply as `stop` (`execute_step` on a run that has already ended; a run found ended by another process meanwhile), as `report_to_user` (nothing can be called and the run is open: a step cannot run, or every step it waits on is held by a claim whose deadline has passed), or as `await` (a held step that can still finish, or a question handed to the person)';
 
   it('C154 execute_step: ok with stop, no steps executed', async () => {
     claim('mcp/tools.md', OK_STOP);
@@ -1116,7 +1116,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163 ok: next_actions empty when a step cannot run — the hint names it and why, and ends with the way out', async () => {
     claim(
       'mcp/tools.md',
-      "When it is empty, nothing can be called now, and `agent_action` names which: the run has ended (`stop`, or none — see [A run that has ended](#a-run-that-has-ended)), a step cannot run (`report_to_user`; `context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`await`, with `poll_after_ms`; `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
+      "When it is empty, nothing can be called now, and `agent_action` names which: the run has ended (`stop`, or none — see [A run that has ended](#a-run-that-has-ended)), a step cannot run (`report_to_user`; `context_hint` names it and why, and ends with the way out when the workflow must be corrected), every step it waits on is held by a claim whose deadline has passed (`report_to_user`; `No step is ready: '<step>' was claimed and its deadline passed at <time>; no result is recorded for it. Tell the user: a person can free it.`, then, for a step not declared idempotent, `It is not declared idempotent, so running it again may repeat its effects.`), or nothing is ready while a held step can still finish (`await`, with `poll_after_ms`; `No step is ready: ` and each held step's state, such as `'<step>' has been held since <time> by a claim with no deadline; wait for it. If its program has stopped, a person can free it.`, or, while its deadline is ahead, `'<step>' is held; its deadline is ahead (<time>). Wait for it. A person can free it, but if its program is still running, the step runs twice.`; `get_run_state`'s `step_claims` names the step).",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(STUCK);
@@ -1132,15 +1132,16 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     expect(String(r['context_hint']).endsWith(WAY_OUT)).toBe(true);
   });
 
-  it('C163 ok: next_actions empty while a step is in flight in another process — No step is ready, with the step and the wait (decision C205), step_claims names it', async () => {
+  it('C163 ok: next_actions empty while a held step can still finish — No step is ready, with the step and its state (decision C205; #922 P2-1), step_claims names it', async () => {
     claim(
       'mcp/tools.md',
-      "When it is empty, nothing can be called now, and `agent_action` names which: the run has ended (`stop`, or none — see [A run that has ended](#a-run-that-has-ended)), a step cannot run (`report_to_user`; `context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`await`, with `poll_after_ms`; `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
+      "When it is empty, nothing can be called now, and `agent_action` names which: the run has ended (`stop`, or none — see [A run that has ended](#a-run-that-has-ended)), a step cannot run (`report_to_user`; `context_hint` names it and why, and ends with the way out when the workflow must be corrected), every step it waits on is held by a claim whose deadline has passed (`report_to_user`; `No step is ready: '<step>' was claimed and its deadline passed at <time>; no result is recorded for it. Tell the user: a person can free it.`, then, for a step not declared idempotent, `It is not declared idempotent, so running it again may repeat its effects.`), or nothing is ready while a held step can still finish (`await`, with `poll_after_ms`; `No step is ready: ` and each held step's state, such as `'<step>' has been held since <time> by a claim with no deadline; wait for it. If its program has stopped, a person can free it.`, or, while its deadline is ahead, `'<step>' is held; its deadline is ahead (<time>). Wait for it. A person can free it, but if its program is still running, the step runs twice.`; `get_run_state`'s `step_claims` names the step).",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(STUCK);
     const runId = (await call('start_run', { workflow_id: STUCK.id }))['run_id'] as string;
     await runStore.claimStep(runId, 'b', STUCK);
+    const since = (await runStore.get(runId)).record.claims?.['b']?.since;
     const r = await call('advance_run', { run_id: runId });
     const state = await call('get_run_state', { run_id: runId });
     // #729 PR-0 (T-22, P-2): the empty list's word — a step in flight elsewhere: `await`, paced.
@@ -1153,7 +1154,8 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     ]).toEqual([
       'ok',
       [],
-      `Run '${runId}': nothing ran. No step is ready: 'b' is in flight elsewhere — wait for it, then call get_run_state.`,
+      // #922 P2-1: the held step's state — an agent step's claim has no deadline.
+      `Run '${runId}': nothing ran. No step is ready: 'b' has been held since ${since} by a claim with no deadline; wait for it. If its program has stopped, a person can free it.`,
       'await',
       30_000,
     ]);
@@ -3251,10 +3253,10 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
     ]);
   });
 
-  it('start_run that matches a run whose only step is in flight in another call: No step is ready, with the step and the wait', async () => {
+  it('start_run that matches a run whose only step is held by another call: No step is ready, with the step and its state', async () => {
     claim(
       'mcp/tools.md',
-      "`No step is ready.` only when none of these holds — `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.` when a step is in flight in another call.",
+      "`No step is ready.` only when none of these holds — `No step is ready: ` and each held step's state when a step is held by another call (one clause for each group of steps in the same state, the steps whose deadline passed first: `'<step>' was claimed and its deadline passed at <time>; no result is recorded for it. Tell the user: a person can free it.`, then, for a step not declared idempotent, `It is not declared idempotent, so running it again may repeat its effects.`; added after version 0.50.0).",
     );
     const { call, runStore, workflowStore } = await connectWith(new ExtensionRegistry());
     const def = loadWorkflowFromString(
@@ -3281,18 +3283,19 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
       idempotencyKey: 'c205-key',
     });
     await runStore.claimStep(run.id, 'p', def, OTHER);
+    const deadline = (await runStore.get(run.id)).record.claims?.['p']?.deadline;
     const r = await call('start_run', { workflow_id: def.id, idempotency_key: 'c205-key' });
     // (a) red when the step in flight is not named with the wait; (b) prints the reply.
     expect([r['run_id'], r['context_hint']]).toEqual([
       run.id,
-      `Matched existing run '${run.id}' (idempotent) in phase 'running'; no new run created. No step is ready: 'p' is in flight elsewhere — wait for it, then call get_run_state.`,
+      `Matched existing run '${run.id}' (idempotent) in phase 'running'; no new run created. No step is ready: 'p' is held; its deadline is ahead (${deadline}). Wait for it. A person can free it, but if its program is still running, the step runs twice.`,
     ]);
   });
 
-  it('submit_human_response that leaves only a step in flight in another call: No step is ready, with the step and the wait', async () => {
+  it('submit_human_response that leaves only a step held by another call: No step is ready, with the step and its state', async () => {
     claim(
       'mcp/tools.md',
-      "`No step is ready.` only when none of these holds — `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.` when a step is in flight in another call.",
+      "`No step is ready.` only when none of these holds — `No step is ready: ` and each held step's state when a step is held by another call (one clause for each group of steps in the same state, the steps whose deadline passed first: `'<step>' was claimed and its deadline passed at <time>; no result is recorded for it. Tell the user: a person can free it.`, then, for a step not declared idempotent, `It is not declared idempotent, so running it again may repeat its effects.`; added after version 0.50.0).",
     );
     const { call, runStore, workflowStore } = await connectWith(new ExtensionRegistry());
     const def = loadWorkflowFromString(
@@ -3324,6 +3327,7 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
     await runStore.claimStep(run.id, 'p', def, OTHER);
     await call('advance_run', { run_id: run.id });
     const gateId = (await runStore.get(run.id)).record.pending_gate!.gate_id;
+    const deadline = (await runStore.get(run.id)).record.claims?.['p']?.deadline;
     const r = await call('submit_human_response', {
       run_id: run.id,
       gate_id: gateId,
@@ -3334,7 +3338,7 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
     expect([r['status'], next(r), r['context_hint']]).toEqual([
       'ok',
       [],
-      "Gate 'g' resolved with choice 'approve'. No step is ready: 'p' is in flight elsewhere — wait for it, then call get_run_state.",
+      `Gate 'g' resolved with choice 'approve'. No step is ready: 'p' is held; its deadline is ahead (${deadline}). Wait for it. A person can free it, but if its program is still running, the step runs twice.`,
     ]);
   });
 });

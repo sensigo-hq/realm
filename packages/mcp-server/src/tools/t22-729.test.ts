@@ -147,11 +147,12 @@ describe('#729 PR-0 — T-22 on W2’s workflow: an ok reply on a run that canno
     ]);
   });
 
-  it('NEGATIVE: an ok reply whose only blocker is a step in flight elsewhere — await with poll_after_ms, never report_to_user', async () => {
+  it('NEGATIVE: an ok reply whose only blocker is a held step with no deadline — await with poll_after_ms, never report_to_user', async () => {
     const h = await connect();
     const started = await h.call('start_run', { workflow_id: W2.id });
     const runId = started['run_id'] as string;
     await h.runStore.claimStep(runId, 'summarize', W2);
+    const since = (await h.runStore.get(runId)).record.claims?.['summarize']?.since;
     const r = await h.call('advance_run', { run_id: runId });
     // (a) red when a held step reads as report_to_user, or the pace is dropped; (b) prints status,
     //     tools, word and the pace.
@@ -161,14 +162,15 @@ describe('#729 PR-0 — T-22 on W2’s workflow: an ok reply on a run that canno
       'await',
       30_000,
     ]);
+    // #922 P2-1: the held step's state — an agent step's claim has no deadline.
     expect(String(r['context_hint'])).toContain(
-      "No step is ready: 'summarize' is in flight elsewhere",
+      `No step is ready: 'summarize' has been held since ${since} by a claim with no deadline; wait for it.`,
     );
   });
 
   it('the protocol’s report_to_user sentence, claim by claim, on the reply that produces it', async () => {
     const sentence =
-      'It also comes on an `ok` reply when the run cannot go on and only a person can change that: nothing can be called, and `context_hint` names the step, the check that refused it and the way out — tell the user.';
+      'It also comes on an `ok` reply when nothing can be called and only a person can change that: a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or every step it waits on is held by a claim whose deadline has passed (a person can free each one) — tell the user.';
     // (a) red when the protocol drops the sentence; (b) prints whether it is there.
     expect(generateProtocol(W2).error_handling['report_to_user']?.includes(sentence)).toBe(true);
     const h = await connect();

@@ -1456,6 +1456,7 @@ GitHubAdapterConfig · type · internal
 GorgiasAdapter · both · internal
 GorgiasAdapterConfig · type · internal
 GuardEnding · type · internal
+HELD_WORDS · value · internal
 HaltStop · type · public
   interface HaltStop {
       kind: HaltStopKind;
@@ -1465,6 +1466,7 @@ HaltStopKind · type · public
   type HaltStopKind = Extract<StopKind, 'capability_missing' | 'failed' | 'refused'>;
 
 HeldState · type · internal
+HeldWordsState · type · internal
 HiddenCounts · type · public
   interface HiddenCounts {
       declared: number;
@@ -2323,7 +2325,7 @@ RealmWorkflowRegistrar · type · public
 ReclaimOutcome · type · public
   type ReclaimOutcome = 'reclaimed' | 'already_settled' | 'taken_over' | 'no_active_claim';
 
-ReclaimResult · type · public
+ReclaimResult · type · public (beta: conditionsDischarged, refusal)
   interface ReclaimResult {
       run: RunRecord;
       step: string;
@@ -2332,11 +2334,16 @@ ReclaimResult · type · public
       priorState: ClaimState;
       priorDeadline: string | null;
       gateAdvisory?: string;
+      conditionsDischarged?: readonly Cond[];
+      refusal?: Unavailable;
   }
 
-ReclaimStepOptions · type · public
+ReclaimStepOptions · type · public (beta: claimed_at, definition, force)
   interface ReclaimStepOptions {
       traceBufferStore?: TraceBufferStore;
+      definition?: WorkflowDefinition;
+      force?: true;
+      claimed_at?: string;
   }
 
 ReclaimVersionChanged · both · internal
@@ -3818,7 +3825,7 @@ WorkflowDefinition · type · public
       trigger?: TriggerDefinition;
   }
 
-WorkflowError · both · public
+WorkflowError · both · public (beta: refusal)
   class WorkflowError extends Error {
       readonly code: ErrorCode;
       readonly category: ErrorCategory;
@@ -3828,6 +3835,7 @@ WorkflowError · both · public
       readonly facts?: ErrorFacts;
       readonly about?: string;
       readonly remedy?: readonly WayOn[];
+      readonly refusal?: Unavailable;
       readonly stepId?: string;
       readonly attempt: number;
       readonly retry_after?: number;
@@ -3836,7 +3844,7 @@ WorkflowError · both · public
       constructor(message: string, options: WorkflowErrorOptions);
   }
 
-WorkflowErrorOptions · type · public
+WorkflowErrorOptions · type · public (beta: refusal)
   interface WorkflowErrorOptions {
       code: ErrorCode;
       category: ErrorCategory;
@@ -3846,6 +3854,7 @@ WorkflowErrorOptions · type · public
       facts?: ErrorFacts;
       about?: string;
       remedy?: readonly WayOn[];
+      refusal?: Unavailable;
       stepId?: string;
       attempt?: number;
       retry_after?: number;
@@ -4159,9 +4168,12 @@ guardEndingOf · value · internal
 guardEndingOfRun · value · internal
 guardPassedLine · value · internal
 hashParams · value · internal
+heldAgentWords · value · internal
 heldLeaseWords · value · internal
+heldRerunOf · value · internal
 heldStateAt · value · internal
 heldStateOf · value · internal
+heldWordsStateOf · value · internal
 identityRefusalLine · value · internal
 inboundMarkerWarning · value · internal
 instantText · value · internal
@@ -4335,6 +4347,7 @@ readSupplier · value · public
 readTestClockFile · value · internal
 realmHomePath · value · internal
 reclaimConditionWords · value · internal
+reclaimRefusalWords · value · internal
 reclaimStep · value · public
   function reclaimStep(store: RunStore, runId: string, stepName: string, options?: ReclaimStepOptions): Promise<ReclaimResult>;
 
