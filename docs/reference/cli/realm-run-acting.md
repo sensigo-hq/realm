@@ -181,7 +181,7 @@ The preview's `project code` words compare the code this program loaded with wha
 
 When another program holds an owed step, the preview says so before anything runs, once, with the program and the time: `In flight: '<step>' is in flight, taken by <program> since <time>.`
 
-`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed, and never for a step it started whose outcome was not recorded: when another program's run of that step failed, the step's own line says so, `…, and failed; this program's outcome for it was not recorded.` (below), and no failed line is printed), a refusal that failed no step (`'<step>': <error>`: the step it is about, with the engine's words, or the engine's words alone when the refusal names no step), the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make '<step>' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when an operator ended it, it goes on `. An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.`, never with `realm run resume`, which would erase that ending and its reason), a question opened (with the `realm run respond` command; when steps wait for its answer — ready by what they depend on, but held while a question is open — it names them first: `a question is open ('<step>' waits for its answer) — realm run respond …`, and the preview's `Nothing is owed to the engine:` line does the same), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks, ending with its way out: `— load the missing extension, or run the step on a runner that has it`), work the engine still owes when the call stops, after a refusal for one (`the engine still owes '<step>' — to run it: realm run advance <id>`, or, for several, `the engine still owes '<a>', '<b>' — to run them until a step opens a question, fails or ends the run: realm run advance <id>`), agent steps ready (`an agent step is ready: '<step>' — drive it with realm agent --run-id <id> --provider <provider> --model <model>` for one, `agent steps are ready: '<a>', '<b>' — drive them with …` for several; put the provider and model you drive the run with in place of the two placeholders; the next line is the one `respond` prints after its commands, `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.`, also after a preview line that names agent steps ready), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`. A run the command completes gets no `Stopped:` line: the phase line says it. When the run ends during the call and has cleanup steps, one line per cleanup step that ending ran or left pending follows, just before the phase line, in the order the engine runs them, with the status the run's record holds for it: `finalizer '<name>': <status>` — `completed`, `failed` when its handler threw, or `pending` when this program could not run it (a `⚠` line above says why). A cleanup step that completed or failed when the run ended before, and `realm run resume` reopened the run, does not run again and gets no line. When the ending left cleanup steps `pending`, the next line names them and the command that runs them: `Cleanup step left pending: '<name>' — to run it with code that has its handler: realm run drain <id> --force` (`Cleanup steps left pending: '<a>', '<b>' — to run them with code that has their handlers: …` for several); the preview of a run that ended with cleanup steps pending prints the same line after its last line. While another drainer's lease on one of them has not passed, the line is `Cleanup step left pending: '<name>' — held by another drainer's lease until <time> (realm cannot tell whether it is still running) — after <time>: realm run drain <id> --force`, and a `⚠ finalizer '<name>' left pending — held by another drainer's lease until <time> (realm cannot tell whether it is still running)` line above says why it is `pending` (added after version 0.46.0). A step another process took while this one was about to run it is said as a fact, and the command goes on with what is left. The command prints `→ <step>` as it starts a step, before it claims it, so the losing program prints both lines, in this order — the second says another program took the step first, so it did not run here:
+`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed, and never for a step it started whose outcome was not recorded: when another program's run of that step failed, the step's own line says so, `…, and failed; this program's outcome for it was not recorded.` (below), and no failed line is printed), a refusal that failed no step (`'<step>': <error>`: the step it is about, with the engine's words, or the engine's words alone when the refusal names no step), the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make '<step>' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when it was abandoned, it goes on `. It was abandoned, with the reason "<reason>". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.50.0, which said an operator ended it), never with `realm run resume`, which would erase that ending and its reason), a question opened (with the `realm run respond` command; when steps wait for its answer — ready by what they depend on, but held while a question is open — it names them first: `a question is open ('<step>' waits for its answer) — realm run respond …`, and the preview's `Nothing is owed to the engine:` line does the same), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks, ending with its way out: `— load the missing extension, or run the step on a runner that has it`), work the engine still owes when the call stops, after a refusal for one (`the engine still owes '<step>' — to run it: realm run advance <id>`, or, for several, `the engine still owes '<a>', '<b>' — to run them until a step opens a question, fails or ends the run: realm run advance <id>`), agent steps ready (`an agent step is ready: '<step>' — drive it with realm agent --run-id <id> --provider <provider> --model <model>` for one, `agent steps are ready: '<a>', '<b>' — drive them with …` for several; put the provider and model you drive the run with in place of the two placeholders; the next line is the one `respond` prints after its commands, `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.`, also after a preview line that names agent steps ready), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`. A run the command completes gets no `Stopped:` line: the phase line says it. When the run ends during the call and has cleanup steps, one line per cleanup step that ending ran or left pending follows, just before the phase line, in the order the engine runs them, with the status the run's record holds for it: `finalizer '<name>': <status>` — `completed`, `failed` when its handler threw, or `pending` when this program could not run it (a `⚠` line above says why). A cleanup step that completed or failed when the run ended before, and `realm run resume` reopened the run, does not run again and gets no line. When the ending left cleanup steps `pending`, the next line names them and the command that runs them: `Cleanup step left pending: '<name>' — to run it with code that has its handler: realm run drain <id> --force` (`Cleanup steps left pending: '<a>', '<b>' — to run them with code that has their handlers: …` for several); the preview of a run that ended with cleanup steps pending prints the same line after its last line. While another drainer's lease on one of them has not passed, the line is `Cleanup step left pending: '<name>' — held by another drainer's lease until <time> (realm cannot tell whether it is still running) — after <time>: realm run drain <id> --force`, and a `⚠ finalizer '<name>' left pending — held by another drainer's lease until <time> (realm cannot tell whether it is still running)` line above says why it is `pending` (added after version 0.46.0). A step another process took while this one was about to run it is said as a fact, and the command goes on with what is left. The command prints `→ <step>` as it starts a step, before it claims it, so the losing program prints both lines, in this order — the second says another program took the step first, so it did not run here:
 
 ```text
 → process
@@ -352,7 +352,7 @@ Without `--dry-run`, the first line reads `Marked 4 run(s) as abandoned.` A run 
 
 ```text
 realm run reclaim <run-id>
-realm run reclaim <run-id> --step <name> --force
+realm run reclaim <run-id> --step <name> [--claimed-at <stamp>] --force
 realm run reclaim --all [--workflow <id>] [--older-than <duration>] [--force]
 ```
 
@@ -361,12 +361,13 @@ When a step starts, Realm marks it in progress and, where it can, records a time
 | Flag                      | What it does                                                                                                              |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `--step <name>`           | The step to free. Needs `--force`.                                                                                        |
+| `--claimed-at <stamp>`    | With `--step`: the time the step's claim was taken, as the command `reclaim` prints shows it. See below.                  |
 | `--force`                 | Frees the step, or with `--all` every selected step.                                                                      |
 | `--all`                   | Selects, across all runs, every step that is past its time, is declared `idempotent: true`, and is not waiting at a gate. |
 | `--workflow <id>`         | With `--all`: only runs of this workflow.                                                                                 |
 | `--older-than <duration>` | With `--all`: only steps that are past their time by at least this long.                                                  |
 
-`--step` and `--workflow` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+`--step`, `--claimed-at` and `--workflow` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 With a run ID alone, it lists the steps in progress and the state of each:
 
@@ -392,16 +393,35 @@ The time is the step's `timeout_seconds` across all its attempts plus one minute
 
 A step that is waiting at a gate is listed with `open gate — resolve via 'realm run respond <run-id>', not reclaim.`
 
-With `--step` and `--force`:
+With `--step` and `--force`, `reclaim` first judges the claim the step holds now, and prints nothing before it is admitted. Once the step is freed, it says each condition that held, then that it is done:
 
 ```text
-⚠ Reclaiming 'fetch' on run '70f9528e-4f45-4806-8690-c4e92a31760d' — this re-drives the step; its side effects may repeat.
-Reclaimed 'fetch' (was claim_stale). It is eligible again — the next driver will re-drive it.
+It is not declared idempotent, so running it again may repeat its effects.
+Reclaimed step 'fetch' of run 70f9528e-4f45-4806-8690-c4e92a31760d: it can run again.
 ```
 
-`reclaim` runs no step. The freed step runs when a driver next calls the run. The run's record keeps an entry for the step that says it was reclaimed, with the state and the time it had.
+The conditions it can name:
 
-Freeing a step that is still `healthy` is allowed, with a second warning first: `⚠ 'fetch' currently has a HEALTHY claim (a live runner is presumed on it). --force will override it and may double-drive live work.`
+- `Its deadline is ahead (<time>); if its program is still running, the step runs twice.`
+- `Its claim has no deadline, so whether its program still runs is not known; if it does, the step runs twice.` (`Its claim's deadline cannot be read, so …` when the time cannot be read; `It is held with no claim record, so …` when the record keeps no claim for the step.)
+- `It is not declared idempotent, so running it again may repeat its effects.`
+- `Its workflow definition is not available here, so whether running it again is safe is not known.` (when the run's workflow cannot be read; the reclaim still runs.)
+
+`reclaim` runs no step. The freed step runs when a driver next calls the run. The run's record keeps an entry for the step that says it was reclaimed, with the state and the time it had, and the conditions it was freed under.
+
+A claim that records when it was taken, and whose deadline is ahead or of unknown age, is freed only with `--claimed-at` set to that time: inside its window, its program may still be running. Without it, nothing is freed, and the command says what holds and the command to run:
+
+```text
+Step 'fetch' is claimed since 2026-10-01T23:00:36.957Z. Its deadline is ahead (2026-10-01T23:15:36.957Z); if its program is still running, the step runs twice. It is not declared idempotent, so running it again may repeat its effects. To reclaim this claim, run: realm run reclaim 70f9528e-4f45-4806-8690-c4e92a31760d --step fetch --claimed-at 2026-10-01T23:00:36.957Z --force
+```
+
+With `--claimed-at`, the step is freed only while that is still its claim. If another program took the step since, nothing is removed:
+
+```text
+Step 'fetch' is claimed since 2026-10-01T23:20:02.114Z, not since 2026-10-01T23:00:36.957Z as the command says; nothing was removed. See: realm run inspect 70f9528e-4f45-4806-8690-c4e92a31760d
+```
+
+A claim past its deadline, or one that records no time it was taken, is freed without `--claimed-at`. A step that is not in progress is not freed: `Step 'fetch' is not held; nothing to reclaim.`, followed by the run's ways on. A name the run's workflow does not have is refused: `Step 'fecth' is not a step of workflow 'w'; nothing was reclaimed.`, followed by the run's ways on. A step the workflow no longer names, still in progress from an older version, is freed with `Reclaimed step 'fetch' of run <id>. The workflow definition read here has no step named 'fetch'.`
 
 With `--all`:
 
@@ -423,7 +443,7 @@ Reclaimed 1/1 selected claim(s).
 
 When nothing is selected, it prints `No auto-reclaimable claims found (idempotent ∧ concrete-past-deadline ∧ non-gated).` A run with no step in progress gets `Run '<id>' (running) has no in-progress claims. Nothing to reclaim.`, and a run that has ended gets `Run '<id>' is terminal (completed); it has no reclaimable claim.`
 
-**Exit code:** 0, also when there is nothing to free. 1 for a combination that cannot be used:
+**Exit code:** 0 when the step is freed, also when there is nothing to free. 1 when the reclaim is refused (a name the workflow does not have, a claim that needs `--claimed-at`, a `--claimed-at` that is not the claim's, the step a question is open on, a run that has ended), and for a combination that cannot be used:
 
 ```text
 Provide a <run-id> to inspect/reclaim, or use --all for batch mode.
@@ -432,6 +452,8 @@ Refusing to reclaim 'fetch' without --force. Re-run with --force to re-drive it 
 --workflow and --older-than are only valid with --all.
 Cannot combine a <run-id> with --all. Use one or the other.
 --step is a per-run flag; it cannot be combined with --all.
+--claimed-at requires --step <name>.
+--claimed-at is a per-step flag; it cannot be combined with --all.
 ```
 
 ## `drain`

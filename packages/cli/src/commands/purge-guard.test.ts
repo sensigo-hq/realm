@@ -101,6 +101,8 @@ const EXCLUDED: Record<string, string> = {
   InMemoryTraceBufferStore: 'test-only in-memory store — never purged (no on-disk artifacts)',
   // #597 D1a: `InMemoryStore`'s outbound ledger (`store.outbound`), rows in memory only.
   InMemoryOutboundLedger: 'test-only in-memory ledger — never purged (no on-disk artifacts)',
+  // R1.3 callback A1a: the in-memory callback store, beside the in-memory runs.
+  InMemoryCallbackStore: 'test-only in-memory callback store — never purged (no on-disk artifacts)',
   // #616 PR-2c c10a-3a: the door opens the SQLite home, so no command purges through these two; the
   // MCP program has no purge. PR-3 deletes them with the JSON store.
   JsonTraceBufferStore:

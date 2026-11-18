@@ -95,6 +95,13 @@ export type {
   OutboundLedgerContractAdapter,
   OutboundLedgerContractCase,
 } from './store/outbound-ledger-contract.js';
+// R1.3 callback A1a: the laws of a store's callback store (`RunStore.callbacks`), the door side.
+export { callbackStoreContract, CALLBACK_STORE_LAWS } from './store/callback-store-contract.js';
+export type {
+  CallbackStoreLaw,
+  CallbackStoreContractAdapter,
+  CallbackStoreContractCase,
+} from './store/callback-store-contract.js';
 
 // Clocks and test locations (issue #715 (a); D5 §6, D6-1, D6-20, D6-54)
 export { settableClock, steppingClock, countingClock } from './clock/settable-clock.js';

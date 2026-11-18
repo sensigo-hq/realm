@@ -350,10 +350,11 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
       return realClaim(...args);
     };
     const reply = await handleAdvanceRun({ run_id: run.id }, { runStore, workflowStore });
+    const deadline = (await runStore.get(run.id)).record.claims?.['head']?.deadline;
     expect(reply.chained_auto_steps).toBeUndefined();
     expect(reply.context_hint).toBe(
-      // decision C205: nothing is ready because 'head' is in flight elsewhere — wait for it.
-      `Run '${run.id}': nothing ran. No step is ready: 'head' is in flight elsewhere — wait for it, then call get_run_state. 'head' was claimed by another process, so it did not run here.`,
+      // decision C205 (#922 P2-1): nothing is ready because 'head' is held, its deadline ahead.
+      `Run '${run.id}': nothing ran. No step is ready: 'head' is held; its deadline is ahead (${deadline}). Wait for it. A person can free it, but if its program is still running, the step runs twice. 'head' was claimed by another process, so it did not run here.`,
     );
   });
 

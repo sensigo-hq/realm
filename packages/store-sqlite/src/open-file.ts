@@ -216,13 +216,27 @@ function connectionPragmas(platform: string): readonly ConnectionPragma[] {
 function settingsRefused(
   path: string,
   differences: readonly string[],
-  holdsNoStore = false,
+  options: {
+    /** The file holds no store yet: its own remedy, remove it. */
+    readonly holdsNoStore?: boolean;
+    /**
+     * The words-616 unit (owner a6b12979): `realm db restore <backup>` recovers the file, so the
+     * message names it. Set per cause, by the site that builds it: a file that is not a database, a
+     * damaged one, another program's database, a Realm store whose meta row is missing.
+     */
+    readonly restoreFits?: boolean;
+  } = {},
 ): WorkflowError {
-  const lead = holdsNoStore ? 'it holds no store yet, but ' : '';
-  const remedy = holdsNoStore ? 'Remove it and Realm makes a new one. ' : '';
+  const lead = options.holdsNoStore === true ? 'it holds no store yet, but ' : '';
+  const remedy = options.holdsNoStore === true ? 'Remove it and Realm makes a new one. ' : '';
+  const restore =
+    options.restoreFits === true
+      ? ' If you have a backup, realm db restore <backup> keeps a copy of this file as it is and ' +
+        'puts the backup in its place.'
+      : '';
   return new WorkflowError(
     `The store file ${path} is not a Realm store this Realm can use: ${lead}${differences.join('; ')}. ` +
-      `${remedy}Realm does not change or replace a store file by itself.`,
+      `${remedy}Realm does not change or replace a store file by itself.${restore}`,
     {
       code: 'STATE_STORE_SETTINGS_REFUSED',
       category: 'STATE',
@@ -325,10 +339,14 @@ function notADatabase(err: unknown, path: string): WorkflowError | undefined {
   const errcode = (err as { errcode?: unknown }).errcode;
   if (typeof errcode !== 'number') return undefined;
   if ((errcode & 0xff) === 26) {
-    return settingsRefused(path, ['it is not a SQLite database (SQLite: file is not a database)']);
+    return settingsRefused(path, ['it is not a SQLite database (SQLite: file is not a database)'], {
+      restoreFits: true,
+    });
   }
   if ((errcode & 0xff) === 11) {
-    return settingsRefused(path, ['it is damaged (SQLite: database disk image is malformed)']);
+    return settingsRefused(path, ['it is damaged (SQLite: database disk image is malformed)'], {
+      restoreFits: true,
+    });
   }
   return undefined;
 }
@@ -504,9 +522,13 @@ async function checkFile(
           expected: String(REALM_STORE_APPLICATION_ID),
         },
         () =>
-          settingsRefused(path, [
-            `its application id is ${header.applicationId}, not Realm's ${REALM_STORE_APPLICATION_ID}`,
-          ]),
+          settingsRefused(
+            path,
+            [
+              `its application id is ${header.applicationId}, not Realm's ${REALM_STORE_APPLICATION_ID}`,
+            ],
+            { restoreFits: true },
+          ),
       );
     }
     // The version whose schema the file is held to: this Realm's, or, for the maintenance entry
@@ -588,7 +610,7 @@ async function checkFile(
       if (!stored.metaTable && stored.row === undefined) {
         refuse(
           { kind: 'settings_differ', setting: META_ROW_PART, found: 'absent', expected: 'one row' },
-          () => settingsRefused(path, ['its meta row is missing']),
+          () => settingsRefused(path, ['its meta row is missing'], { restoreFits: true }),
         );
       } else if (!stored.metaTable) {
         recorded = Number(stored.row);
@@ -647,7 +669,7 @@ async function setUp(
         `its page size is ${pageSize} bytes, not the ${REALM_STORE_PAGE_SIZE} Realm needs`,
       );
     }
-    if (differences.length > 0) throw settingsRefused(path, differences, true);
+    if (differences.length > 0) throw settingsRefused(path, differences, { holdsNoStore: true });
   });
   await db.autocommit((c) => {
     const mode = String(c.prepare('PRAGMA journal_mode = WAL').get()?.['journal_mode']);

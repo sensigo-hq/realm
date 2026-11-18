@@ -8,6 +8,7 @@ import {
   buildPreExecutionErrorEnvelope,
   getWorkflowForRun,
   endedRunWaysSentence,
+  saysHowItEnded,
   judgedSnapshotOf,
   TERMINAL_PHASES,
   type Attributed,
@@ -133,7 +134,17 @@ export async function handleAdvanceRun(
   // #729 PR-0: the MCP door's one renderer (next_actions, agent_action, the way sentence); the ended
   // run's ways back in follow the door's next sentence, as before — judged at the snapshot's reading
   // (#715 (b)).
-  const tail = ended === undefined ? '' : endedRunWaysSentence(ended.record, definition, ended.at);
+  // #625 A1b-1: how the run ended comes first when someone other than this call ended it (the
+  // one "said once" rule, on the engine's own reply; a form's reply decides for itself).
+  const tail =
+    ended === undefined
+      ? ''
+      : endedRunWaysSentence(
+          ended.record,
+          definition,
+          ended.at,
+          reply === result && saysHowItEnded(result, ended.record),
+        );
   return {
     ...mcpReplyOf(withHintTail(renderReply(reply, mcpHostOf(stores)), tail)),
     continued_by:

@@ -76,12 +76,36 @@
         }
       ],
       "entryPoints": [
+        "AbandonWay",
+        "AdvanceWay",
+        "Cond",
         "EngineReply",
         "ExtensionRegistry",
+        "FactsByCode",
+        "FactsOf",
+        "InspectWay",
         "JsonFileStore",
         "LIBRARY_WORDS",
+        "NoRemedy",
+        "PARTIES",
+        "PartialWayRenderer",
+        "Party",
+        "PreconditionFacts",
+        "PresentWay",
+        "ReclaimWay",
+        "RefusedCheck",
+        "RegisterWay",
+        "RespondWay",
+        "RunStepWay",
         "STOP_KINDS",
+        "UNAVAILABLE_CODES",
+        "Unavailable",
+        "UnavailableCode",
         "UnreadableFileFacts",
+        "WAY_VERBS",
+        "WayOn",
+        "WayRenderer",
+        "WayVerb",
         "WorkflowError",
         "abandonRun",
         "advanceRun",
@@ -146,6 +170,9 @@
         "JsonFileFailedAttemptStore",
         "JsonFileStore",
         "JsonWorkflowStore",
+        "LEASE_PROBE_REASONS",
+        "LeaseFact",
+        "LeaseProbeReason",
         "OrphanSweepableStore",
         "PerRunArtifactStore",
         "ReplayStore",
@@ -199,7 +226,10 @@
         "JsonTraceBufferStore",
         "createRealmMcpServer",
         "loadPriceSource",
-        "createRealmMcpServerOnHome"
+        "createRealmMcpServerOnHome",
+        "DEFINITION_ABSENCES",
+        "DefinitionAbsence",
+        "LoadErrorCode"
       ]
     },
     {
@@ -220,7 +250,8 @@
         "outputSourceOf",
         "readSupplier",
         "armToOutcome",
-        "classifyLegacySeal"
+        "classifyLegacySeal",
+        "RunPhase"
       ]
     }
   ]

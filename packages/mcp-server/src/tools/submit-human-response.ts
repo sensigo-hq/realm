@@ -7,6 +7,7 @@ import {
   type EngineReply,
   judgedSnapshotOf,
   endedRunWaysSentence,
+  runEndingOf,
   pendingCleanupSentence,
   pendingCleanupWay,
   TERMINAL_PHASES,
@@ -213,7 +214,15 @@ export async function handleSubmitHumanResponse(
   // #715 (b) (D6-17, Amendment 4): the snapshot the engine judged its reply on — never a second load;
   // a reply that carries none gets no sentence about the ended run.
   const endedSnap = judgedSnapshotOf(reply);
-  if (endedSnap === undefined) return mcpReplyOf(renderReply(reply, host));
+  // #625 A1b-1 (correction 1): an answer refused or repeated because an earlier answer settled the
+  // question carries that answer's outcome — who answered, not how the run ended; on a run that has
+  // ended, how it ended comes first, once. Its reply is a copy the outcome words made, so the record
+  // is the one the engine judged its own reply on.
+  const earlier = reply.outcome?.by.kind === 'answer' ? judgedSnapshotOf(engineReply) : undefined;
+  const ending = earlier === undefined ? undefined : runEndingOf(earlier.record, definition);
+  const endingTail = ending === undefined ? '' : ` ${ending.sentence}`;
+  if (endedSnap === undefined)
+    return mcpReplyOf(withHintTail(renderReply(reply, host), endingTail));
   const ended = endedSnap.record;
   // #729 PR-0: the ended run's ways back in follow the door's own sentence of what comes next, as
   // before PR-0 (withPendingCleanup's rule, kept whole): the cleanup sentence once — never when the
@@ -228,7 +237,7 @@ export async function handleSubmitHumanResponse(
   const hint = reply.context_hint;
   const moved = offer !== '' && hint.endsWith(offer);
   const own = moved ? { ...reply, context_hint: hint.slice(0, hint.length - offer.length) } : reply;
-  const tail = `${named ? '' : cleanup}${moved ? offer : ''}`;
+  const tail = `${endingTail}${named ? '' : cleanup}${moved ? offer : ''}`;
   return mcpReplyOf(withHintTail(renderReply(own, host), tail));
 }
 

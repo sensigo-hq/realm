@@ -48,7 +48,7 @@ import {
 } from './pending.js';
 import { capabilityRefusalWords, requirementForStep } from './capability.js';
 import { capText, tierFor, type DisclosureSet } from '../utils/redaction.js';
-import { quotedNames } from '../utils/list-words.js';
+import { NAMES_SHOWN, quotedNames } from '../utils/list-words.js';
 import { isPastDeadline, parseStamp } from './instants.js';
 import { consumesInputMap, newRunCanChangeInput, refusedInputField } from './input-map.js';
 
@@ -3065,6 +3065,35 @@ export function progressWays(ways: readonly WayOn[]): WayOn[] {
 }
 
 /**
+ * #922 (P1, "Refusals"): the fact a reclaim refusal states — never its act (each door renders the
+ * remedy). `undefined` for a refusal the judge does not word here (`run_ended`, `gated_step`: their
+ * guards' own messages).
+ */
+export function reclaimRefusalWords(refusal: Unavailable): string | undefined {
+  const step = refusal.step ?? '';
+  switch (refusal.code) {
+    case 'not_a_step':
+      return `Step '${step}' is not a step of workflow '${(refusal.facts as FactsOf<'not_a_step'>).workflow_id}'; nothing was reclaimed.`;
+    case 'not_held':
+      return `Step '${step}' is not held; nothing to reclaim.`;
+    case 'store_keeps_no_claims':
+      return `This store keeps no claim records, so '${step}' cannot be freed by reclaim.`;
+    case 'fence_required':
+      return `Step '${step}' is claimed since ${(refusal.facts as FactsOf<'fence_required'>).current_claimed_at}.`;
+    case 'claim_changed': {
+      const facts = refusal.facts as FactsOf<'claim_changed'>;
+      const now =
+        typeof facts.current_claimed_at === 'string'
+          ? `is claimed since ${facts.current_claimed_at}`
+          : 'is held by a claim with no stamp';
+      return `Step '${step}' ${now}, not since ${facts.offered_claimed_at} as the command says; nothing was removed.`;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
  * #922 (R13): the ONE table of a reclaim condition's words, read by every place that prints a reclaim
  * (the CLI before "Reclaimed …" and in `fence_required`'s refusal; the MCP person block) — each said
  * before the command (the owner's B). `undefined` for a condition that is not a reclaim's.
@@ -3089,6 +3118,188 @@ export function reclaimConditionWords(cond: Cond): string | undefined {
     case 'client_prompt':
       return undefined;
   }
+}
+
+/**
+ * #922 P2-1 (R13): what a held step's words are keyed by — its held state, or, on a store that keeps
+ * no claims (`basis.store.persists_claims` false), `store_keeps_no_claims`, whose words win there.
+ */
+export type HeldWordsState = HeldState['state'] | 'store_keeps_no_claims';
+
+/** A held step's entry, as the held words read it: its facts, `clears_at`, and its reclaim way. */
+type HeldWordsEntry = Pick<Unavailable, 'step' | 'facts' | 'clears_at' | 'remedy'>;
+
+/** The earliest of `stamps` by instant, or `undefined` when none can be read. */
+function earliestStamp(stamps: readonly string[]): string | undefined {
+  let best: { stamp: string; ms: number } | undefined;
+  for (const stamp of stamps) {
+    const ms = parseStamp(stamp);
+    if (ms !== undefined && (best === undefined || ms < best.ms)) best = { stamp, ms };
+  }
+  return best?.stamp;
+}
+
+/**
+ * #922 P2-1 (R13): the ONE table of a held step's words, keyed by its state — the agent's clauses
+ * (one step, or a group), a by-name call's reason and the door's clause after it, the past line an
+ * operator entry leads with, and a store that keeps no claims. Every door reads it (MCP and the
+ * library; the CLI in P2-2). Facts and conditions only: no word says a program died, stopped or is
+ * gone (rule 10) — "if its program has stopped" stays a condition.
+ */
+export const HELD_WORDS = {
+  /** The agent's clause for a group of held steps in one state; `names` is the group's bounded
+   *  list, `at` the group's instant (a deadline for ahead and past, a claim's `since` otherwise). */
+  agent(state: HeldWordsState, names: string, many: boolean, at: string | undefined): string {
+    const since = at ?? 'an unknown time';
+    switch (state) {
+      case 'ahead':
+        return many
+          ? `${names} are held; their deadlines are ahead (the earliest at ${at}). Wait for them. A person can free them, but if a program is still running, its step runs twice.`
+          : `${names} is held; its deadline is ahead (${at}). Wait for it. A person can free it, but if its program is still running, the step runs twice.`;
+      case 'past':
+        return many
+          ? `${names} were claimed and their deadlines passed, the earliest at ${at}; no result is recorded for them. Tell the user: a person can free them.`
+          : `${names} was claimed and its deadline passed at ${at}; no result is recorded for it. Tell the user: a person can free it.`;
+      case 'unknown_age':
+        return many
+          ? `${names} have been held, the longest since ${since}, by claims with no deadline; wait for them. If their programs have stopped, a person can free them.`
+          : `${names} has been held since ${since} by a claim with no deadline; wait for it. If its program has stopped, a person can free it.`;
+      case 'unreadable':
+        return many
+          ? `${names} have been held, the longest since ${since}, by claims whose deadlines cannot be read; wait for them. If their programs have stopped, a person can free them.`
+          : `${names} has been held since ${since} by a claim whose deadline cannot be read; wait for it. If its program has stopped, a person can free it.`;
+      case 'no_claim_record':
+        return many
+          ? `${names} are held, since an unknown time, with no claim record; wait for them. If their programs have stopped, a person can free them.`
+          : `${names} is held, since an unknown time, with no claim record; wait for it. If its program has stopped, a person can free it.`;
+      case 'store_keeps_no_claims':
+        return many
+          ? `${names} are held; this store keeps no claim records, so a person cannot free them with reclaim. Wait for them.`
+          : `${names} is held; this store keeps no claim records, so a person cannot free it with reclaim. Wait for it.`;
+    }
+  },
+  /** The sentence after a past group's clause when running its steps again may not be safe. */
+  rerun(basis: 'not_declared' | 'definition_absent', many: boolean): string {
+    if (!many) return reclaimConditionWords({ code: 'rerun_not_idempotent', basis })!;
+    return basis === 'not_declared'
+      ? 'They are not declared idempotent, so running them again may repeat their effects.'
+      : 'Their workflow definition is not available here, so whether running them again is safe is not known.';
+  },
+  /** A by-name call's reason, after `Step '<s>' cannot be called now: ` (core's). */
+  reason(state: HeldState): string {
+    switch (state.state) {
+      case 'ahead':
+        return `it is held; its deadline is ahead (${state.deadline})`;
+      case 'past':
+        return `it was claimed and its deadline passed at ${state.deadline}; no result is recorded for it`;
+      case 'unknown_age':
+        return 'it is held by a claim with no deadline';
+      case 'unreadable':
+        return 'it is held by a claim whose deadline cannot be read';
+      case 'no_claim_record':
+        return 'it is held, with no claim record';
+    }
+  },
+  /** The door's clause after a by-name reason, joined inside its sentence (` — …`). */
+  clause(state: HeldWordsState): string {
+    switch (state) {
+      case 'ahead':
+        return ' — a person can free it, but if its program is still running, the step runs twice';
+      case 'past':
+        return ' — a person can free it';
+      case 'unknown_age':
+      case 'unreadable':
+      case 'no_claim_record':
+        return ' — if its program has stopped, a person can free it';
+      case 'store_keeps_no_claims':
+        return ' — this store keeps no claim records, so a person cannot free it with reclaim';
+    }
+  },
+  /** The line an operator's entry for a past step leads its condition words with (walk O1). */
+  pastLine(deadline: string): string {
+    return `Its deadline passed at ${deadline}; no result is recorded for it.`;
+  },
+} as const;
+
+/** #922 P2-1: a held entry's words key — its state, or `store_keeps_no_claims` on such a store. */
+export function heldWordsStateOf(entry: HeldWordsEntry, persistsClaims: boolean): HeldWordsState {
+  return persistsClaims
+    ? heldStateOf(entry as { facts: FactsOf<'held_elsewhere'>; clears_at?: string }).state
+    : 'store_keeps_no_claims';
+}
+
+/** #922 P2-1: the rerun basis a held entry's reclaim way carries, if any. */
+export function heldRerunOf(
+  entry: Pick<Unavailable, 'remedy'>,
+): 'not_declared' | 'definition_absent' | undefined {
+  const way = entry.remedy.find((w) => w.verb === 'reclaim');
+  const cond = way?.conditions.find(
+    (c): c is Extract<Cond, { code: 'rerun_not_idempotent' }> => c.code === 'rerun_not_idempotent',
+  );
+  return cond?.basis;
+}
+
+/**
+ * #922 P2-1 (D3 §6, N6): the agent's clauses for a reply's held steps — one per group of steps in the
+ * same state (and, past, the same rerun basis), past → unknown age → unreadable → no claim record →
+ * ahead, each naming at most `NAMES_SHOWN` steps and its group's instant: the earliest deadline (ahead,
+ * past), the earliest stamped `since` (unknown age, unreadable). Each clause is a full sentence;
+ * empty for no held step.
+ */
+export function heldAgentWords(
+  held: readonly (HeldWordsEntry & { facts: FactsOf<'held_elsewhere'> })[],
+  persistsClaims: boolean,
+): string {
+  const order: HeldWordsState[] = [
+    'store_keeps_no_claims',
+    'past',
+    'unknown_age',
+    'unreadable',
+    'no_claim_record',
+    'ahead',
+  ];
+  const groups = new Map<string, { state: HeldWordsState; rerun?: string; entries: typeof held }>();
+  for (const entry of held) {
+    const state = heldWordsStateOf(entry, persistsClaims);
+    const rerun = state === 'past' ? heldRerunOf(entry) : undefined;
+    const key = `${state}:${rerun ?? ''}`;
+    const group = groups.get(key) ?? {
+      state,
+      ...(rerun !== undefined ? { rerun } : {}),
+      entries: [],
+    };
+    groups.set(key, { ...group, entries: [...group.entries, entry] });
+  }
+  const sorted = [...groups.values()].sort(
+    (a, b) => order.indexOf(a.state) - order.indexOf(b.state),
+  );
+  return sorted
+    .map(({ state, rerun, entries }) => {
+      const many = entries.length > 1;
+      const names = quotedNames(
+        entries.map((e) => e.facts.step),
+        NAMES_SHOWN,
+      );
+      const at =
+        state === 'ahead' || state === 'past'
+          ? earliestStamp(
+              entries.flatMap((e) =>
+                typeof e.facts.deadline === 'string' ? [e.facts.deadline] : [],
+              ),
+            )
+          : state === 'unknown_age' || state === 'unreadable'
+            ? earliestStamp(
+                entries.flatMap((e) =>
+                  typeof e.facts.claimed_at === 'string' ? [e.facts.claimed_at] : [],
+                ),
+              )
+            : undefined;
+      const clause = HELD_WORDS.agent(state, names, many, at);
+      return rerun === 'not_declared' || rerun === 'definition_absent'
+        ? `${clause} ${HELD_WORDS.rerun(rerun, many)}`
+        : clause;
+    })
+    .join(' ');
 }
 
 /**

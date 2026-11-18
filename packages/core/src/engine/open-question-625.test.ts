@@ -357,7 +357,8 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
       'step_engine_decided: it is a cleanup step: the engine runs it when the run ends',
     );
     expect(judge({ ...base, in_progress_steps: ['a'] }, 'a')).toBe(
-      'held_elsewhere: it is in flight (claimed by another call)',
+      // #922 P2-1: the held step's state — a step in progress with no claim record.
+      'held_elsewhere: it is held, with no claim record',
     );
     expect(judge(base, 'x')).toBe("deps_unsettled: its dependencies are not settled ('b')");
     // The question members, on a real record: due (on_expiry declared, time up), the gated step,
