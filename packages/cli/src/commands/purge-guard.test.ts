@@ -95,7 +95,13 @@ function findDeclarers(): Declarer[] {
 // covered) — it just never appears in WIRED_ORDER or the array-literal check below.
 // #616 PR-2c c10a-3a: the door's stores are the SQLite home's, so the array holds the SQLite classes
 // (also WIRED THROUGH THE HOME'S PURGE below: the classification is membership-or, no conflict).
-const WIRED_ORDER = ['SqliteTraceBufferStore', 'SqliteFailedAttemptStore', 'SqliteOutboundLedger'];
+const WIRED_ORDER = [
+  'SqliteTraceBufferStore',
+  'SqliteFailedAttemptStore',
+  'SqliteOutboundLedger',
+  // Callback B1b: the run store's callback store; its row goes with the run (B1a's deleter).
+  'SqliteCallbackStore',
+];
 const ANCHOR = 'JsonFileStore';
 const EXCLUDED: Record<string, string> = {
   InMemoryTraceBufferStore: 'test-only in-memory store — never purged (no on-disk artifacts)',
@@ -126,6 +132,8 @@ const WIRED_THROUGH_HOME_PURGE: Record<string, { file: string; deleter: string }
   },
   // #597 D1c-2: the run store's outbound ledger; its rows go with the run (D1c-1's deleter).
   SqliteOutboundLedger: { file: 'outbound-ledger.ts', deleter: 'deleteOutboundRowsOfRun' },
+  // Callback B1b: the run store's callback store; B1a's deleter, called in the home's purge batch.
+  SqliteCallbackStore: { file: 'callback-store.ts', deleter: 'deleteCallbackRowsOfRun' },
 };
 
 describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration (anti-recurrence)', () => {
