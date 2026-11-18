@@ -1,0 +1,126 @@
+{
+  "id": "ticket-classifier",
+  "name": "Support Ticket Classifier",
+  "version": 1,
+  "params_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "path"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the support ticket text file"
+      }
+    }
+  },
+  "services": {
+    "tickets": {
+      "adapter": "filesystem",
+      "trust": "engine_delivered"
+    }
+  },
+  "steps": {
+    "read_ticket": {
+      "description": "Load the support ticket from disk",
+      "execution": "auto",
+      "depends_on": [],
+      "uses_service": "tickets",
+      "operation": "read",
+      "input_map": {
+        "path": "run.params.path"
+      }
+    },
+    "identify_ticket": {
+      "description": "Extract structured identity fields from the raw ticket text. Output is validated before classify_ticket starts — the classifier cannot receive incomplete or malformed extraction data.\n",
+      "execution": "agent",
+      "depends_on": [
+        "read_ticket"
+      ],
+      "prompt": "Extract identity fields from the support ticket below.\n\nRequired fields:\n- customer_id: the customer ID, format CUST-NNNN\n- product_area: the product or service area this ticket concerns\n  (e.g. \"billing\", \"payment gateway\", \"account management\", \"API\")\n- product_version: the software version mentioned, or \"unknown\" if not stated\n- reported_issue: one sentence describing the problem as reported\n  (10–300 characters)\n\nReturn exactly these four fields. Any field missing or using an invalid\nformat will be rejected before this response is accepted.\n\nTicket:\n{{ context.resources.read_ticket.content }}\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "customer_id",
+          "product_area",
+          "product_version",
+          "reported_issue"
+        ],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "pattern": "^CUST-[0-9]{4}$"
+          },
+          "product_area": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 80
+          },
+          "product_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "reported_issue": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 300
+          }
+        }
+      }
+    },
+    "classify_ticket": {
+      "description": "Classify the ticket using the identity extracted by identify_ticket. The classifier receives verified, schema-validated data — the product area and reported issue are already confirmed before this step starts.\n",
+      "execution": "agent",
+      "depends_on": [
+        "identify_ticket"
+      ],
+      "prompt": "Classify this {{ context.resources.identify_ticket.product_area }} support ticket.\n\nReported issue: {{ context.resources.identify_ticket.reported_issue }}\n\nRequired fields:\n- category: one of: bug | feature_request | billing | account | other\n- priority: one of: low | medium | high | critical\n- summary: one or two sentences for the support queue, explaining the issue\n  and suggested routing (10–300 characters)\n\nReturn exactly these three fields. Any category or priority value outside the\nallowed values will be rejected before your response is accepted.\n",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "priority",
+          "summary"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "bug",
+              "feature_request",
+              "billing",
+              "account",
+              "other"
+            ]
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 300
+          }
+        }
+      },
+      "display": "{{ priority }}: {{ category }} — {{ summary }}"
+    },
+    "record_ticket": {
+      "description": "Record the classified ticket",
+      "execution": "auto",
+      "depends_on": [
+        "classify_ticket"
+      ]
+    }
+  }
+}
