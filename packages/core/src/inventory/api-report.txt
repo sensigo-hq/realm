@@ -347,6 +347,7 @@ CACHE_STATES · value · public
       "unobservable"
   ];
 
+CALLBACK_VIEW_TABLE · value · internal
 CAPABILITY_BASES · value · public
   const CAPABILITY_BASES: readonly [
       "registry",
@@ -493,6 +494,45 @@ CacheVerdict · type · internal
 CacheabilityOptions · type · internal
 CacheabilityStep · type · internal
 CacheabilityStepInput · type · internal
+CallbackCheck · type · internal
+CallbackLastStatus · type · beta
+  type CallbackLastStatus = number | 'timeout' | 'connection' | 'redirect' | 'refused_address' | 'not_allowed' | 'expired';
+
+CallbackRegistration · type · beta
+  interface CallbackRegistration {
+      readonly url: string;
+      readonly host: string;
+      readonly webhook_id: string;
+  }
+
+CallbackRow · type · beta
+  interface CallbackRow {
+      readonly run_id: string;
+      readonly workflow_id: string;
+      readonly host: string;
+      readonly webhook_id: string;
+      readonly status: 'pending' | 'delivered' | 'failed';
+      readonly attempts: number;
+      readonly created_at: string;
+      readonly next_attempt_at: string;
+      readonly first_attempt_at?: string;
+      readonly finished_at?: string;
+      readonly last_attempt_at?: string;
+      readonly last_status?: CallbackLastStatus;
+      readonly url?: string;
+      readonly body?: string;
+      readonly claim_token?: string;
+  }
+
+CallbackStore · type · beta
+  interface CallbackStore extends PerRunArtifactStore {
+      read(runId: string): Promise<CallbackView | undefined>;
+      countPending(): Promise<number>;
+  }
+
+CallbackView · type · beta
+  type CallbackView = Omit<CallbackRow, 'run_id' | 'webhook_id' | 'url' | 'body' | 'claim_token'>;
+
 CapabilityBasis · type · public
   type CapabilityBasis = (typeof CAPABILITY_BASES)[number];
 
@@ -619,7 +659,7 @@ CreateResult · type · public
       created: boolean;
   };
 
-CreateRunOptions · type · public
+CreateRunOptions · type · public (beta: callback)
   interface CreateRunOptions {
       workflowId: string;
       workflowVersion: number;
@@ -629,6 +669,7 @@ CreateRunOptions · type · public
       onTerminalMatch?: 'reuse' | 'reject' | 'rerun_if_failed' | 'rerun';
       onLiveMatch?: 'use_existing' | 'fail';
       extensionIdentity?: ExtensionIdentityEntry[];
+      callback?: CallbackRegistration;
   }
 
 DEFAULT_CHARS_PER_TOKEN_HIGH · value · internal
@@ -2606,13 +2647,14 @@ RunStepWay · type · public
       brief: StepBrief;
   };
 
-RunStore · type · public (beta: claimStep.hold, leases, outbound)
+RunStore · type · public (beta: callbacks, claimStep.hold, leases, outbound)
   interface RunStore {
       readonly clock: Clock;
       persistsClaims: boolean;
       readonly purgesRuns: boolean;
       readonly leases?: LeasePort | null;
       readonly outbound?: OutboundLedger | null;
+      readonly callbacks?: CallbackStore | null;
       readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
       create(options: CreateRunOptions): Promise<CreateResult>;
       get(runId: string): Promise<Snapshot>;
@@ -3944,6 +3986,8 @@ buildSettlementNamespace · value · internal
 buildTrustRefusal · value · internal
 cacheVerdict · value · internal
 callableSteps · value · internal
+callbackRowOf · value · internal
+callbackViewOf · value · internal
 callsHostDispatcher · value · public
   function callsHostDispatcher(step: StepDefinition | undefined): boolean;
 
@@ -3958,6 +4002,7 @@ capabilityRefusalWords · value · internal
 capabilityWarning · value · internal
 captureEvidence · value · internal
 checkBufferBudget · value · internal
+checkCallbackRequest · value · internal
 checkFenceWithReader · value · internal
 checkOutboundRequest · value · internal
 checkPreClaim · value · internal
