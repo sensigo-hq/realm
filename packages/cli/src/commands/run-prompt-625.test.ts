@@ -1278,9 +1278,12 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       const { spawnSync } = await import('node:child_process');
       const cli = join(dirname(fileURLToPath(import.meta.url)), '../../dist/index.js');
       const env = { PATH: process.env['PATH'] ?? '', HOME: home, NO_COLOR: '1' };
+      // #922 P1b: the claim is stamped and of unknown age, so the reclaim names its stamp (the page's
+      // sentence, the old form, is P2's).
+      const since = (await store.get(created.id)).record.claims!['finish']!.since!;
       const reclaim = spawnSync(
         process.execPath,
-        [cli, 'run', 'reclaim', created.id, '--step', 'finish', '--force'],
+        [cli, 'run', 'reclaim', created.id, '--step', 'finish', '--claimed-at', since, '--force'],
         { env, encoding: 'utf8' },
       );
       const { record: after } = await store.get(created.id);

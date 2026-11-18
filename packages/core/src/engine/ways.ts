@@ -3065,6 +3065,35 @@ export function progressWays(ways: readonly WayOn[]): WayOn[] {
 }
 
 /**
+ * #922 (P1, "Refusals"): the fact a reclaim refusal states — never its act (each door renders the
+ * remedy). `undefined` for a refusal the judge does not word here (`run_ended`, `gated_step`: their
+ * guards' own messages).
+ */
+export function reclaimRefusalWords(refusal: Unavailable): string | undefined {
+  const step = refusal.step ?? '';
+  switch (refusal.code) {
+    case 'not_a_step':
+      return `Step '${step}' is not a step of workflow '${(refusal.facts as FactsOf<'not_a_step'>).workflow_id}'; nothing was reclaimed.`;
+    case 'not_held':
+      return `Step '${step}' is not held; nothing to reclaim.`;
+    case 'store_keeps_no_claims':
+      return `This store keeps no claim records, so '${step}' cannot be freed by reclaim.`;
+    case 'fence_required':
+      return `Step '${step}' is claimed since ${(refusal.facts as FactsOf<'fence_required'>).current_claimed_at}.`;
+    case 'claim_changed': {
+      const facts = refusal.facts as FactsOf<'claim_changed'>;
+      const now =
+        typeof facts.current_claimed_at === 'string'
+          ? `is claimed since ${facts.current_claimed_at}`
+          : 'is held by a claim with no stamp';
+      return `Step '${step}' ${now}, not since ${facts.offered_claimed_at} as the command says; nothing was removed.`;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
  * #922 (R13): the ONE table of a reclaim condition's words, read by every place that prints a reclaim
  * (the CLI before "Reclaimed …" and in `fence_required`'s refusal; the MCP person block) — each said
  * before the command (the owner's B). `undefined` for a condition that is not a reclaim's.
