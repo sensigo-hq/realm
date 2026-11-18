@@ -35,9 +35,10 @@ export const REALM_STORE_APPLICATION_ID = 0x5245414c;
 
 /**
  * The schema version this Realm creates and reads (`PRAGMA user_version`). #597 D1c-1: 2, version 1
- * and the `outbound` table; a version-1 file is brought to it by `realm db migrate`.
+ * and the `outbound` table. Callback B1a: 3, version 2 and the callback tables; a file at version 1
+ * or 2 is brought to it by `realm db migrate`.
  */
-export const REALM_STORE_SCHEMA_VERSION = 2;
+export const REALM_STORE_SCHEMA_VERSION = 3;
 
 /** The page size a fresh `realm.db` is created with, in bytes (design §2: 16 KiB). */
 export const REALM_STORE_PAGE_SIZE = 16384;
@@ -55,7 +56,8 @@ export const REALM_STORE_PAGE_SIZE = 16384;
  * run's failed agent attempts, one caller-serialized line per row, in `seq` order) and `replays` (B7, a
  * saved replay's record, by its id, with its `created_at`); and `trace_buffer` (B4, a step's buffered
  * trace lines) and `trace_sealed` (B4, a step's sealed lines). Frozen since 0.49.0 (its hash is pinned):
- * version 2 adds `outbound` in `store-schema-versions.ts`, never here.
+ * version 2 adds `outbound` and version 3 the callback tables in `store-schema-versions.ts`, never
+ * here.
  */
 export const REALM_STORE_SCHEMA: readonly string[] = [
   // ---- runs: the core document; the generated columns read it, never the reverse ----

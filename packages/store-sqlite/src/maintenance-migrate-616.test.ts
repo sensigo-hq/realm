@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   deriveRunPhase,
+  REALM_STORE_SCHEMA_VERSION,
   REALM_STORE_VERSIONS,
   runPhaseDerivationFingerprint,
   WorkflowError,
@@ -95,21 +96,25 @@ async function storeWithRuns(
 /** #597 D1c-1: the open's seam that makes a version-1 file (the synthetic ladder's start). */
 const V1 = { schemaVersion: 1 } as const;
 
+/** The first version above this Realm's: the synthetic ladder's lower step (callback B1a: 4). */
+const ABOVE = REALM_STORE_SCHEMA_VERSION + 1;
+
 /**
- * #597 D1c-1: the synthetic ladder moved ABOVE the real version 2, for the cell (G) whose point is a
- * file at a version this Realm does not know: core's 1 and 2, then the synthetic steps as 3 and 4,
- * each extending the real version 2's schema. `ladder()` keeps its own 2 and 3 for every other cell.
+ * #597 D1c-1: the synthetic ladder moved ABOVE the real top, for the cell (G) whose point is a file at
+ * a version this Realm does not know: core's versions, then the synthetic steps as the two versions
+ * above them (callback B1a: 4 and 5), each extending the real top's schema. `ladder()` keeps its own
+ * 2 and 3 for every other cell.
  */
 function ladderAboveReal(): StoreSchemaVersions {
-  const real = REALM_STORE_VERSIONS.get(2)!.schema;
+  const real = REALM_STORE_VERSIONS.get(REALM_STORE_SCHEMA_VERSION)!.schema;
   return new Map([
     ...REALM_STORE_VERSIONS,
-    [3, { schema: [...real, V2_TABLE, V2_TAGS], upgrade: STEP_2 }],
-    [4, { schema: [...real, V3_TABLE, V2_TAGS, V3_INDEX], upgrade: STEP_3 }],
+    [ABOVE, { schema: [...real, V2_TABLE, V2_TAGS], upgrade: STEP_2 }],
+    [ABOVE + 1, { schema: [...real, V3_TABLE, V2_TAGS, V3_INDEX], upgrade: STEP_3 }],
   ]);
 }
 
-/** Moves the home's store file up the ladder above the real version 2, from another connection. */
+/** Moves the home's store file up the ladder above the real top, from another connection. */
 async function climbForeignAbove(path: string, version: number): Promise<void> {
   const foreign = await openForeignConnection(path);
   try {
@@ -219,31 +224,32 @@ function newer(file: number, realm: number): unknown {
 }
 
 describe('#616 PR-2c c7 — the gate judges the file against the version the connection was opened under', () => {
-  it('(G) SEAMS IA-2C6-11: a connection opened under version 3 writes a version-3 file, refuses it at version 4 naming both versions, and production still refuses the version-3 file at its open', async () => {
-    // #597 D1c-1: the synthetic versions sit above the real version 2 (`ladderAboveReal`), so the
-    // version-3 file is one this Realm (at 2) does not know, as version 2 was before.
+  it(`(G) SEAMS IA-2C6-11: a connection opened under version ${ABOVE} writes a version-${ABOVE} file, refuses it at version ${ABOVE + 1} naming both versions, and production still refuses the version-${ABOVE} file at its open`, async () => {
+    // #597 D1c-1: the synthetic versions sit above the real top (`ladderAboveReal`), so the file at
+    // the lower one is one this Realm does not know, as version 2 was before.
     const live = join(tmp(), '.realm');
     await storeWithRuns(live, 1);
-    await climbForeignAbove(live, 3);
+    await climbForeignAbove(live, ABOVE);
     const production = await refusal(openRealmHome({ home: live }));
-    const opening = openHome({ home: live }, { schemaVersion: 3, versions: ladderAboveReal() });
+    const opening = openHome({ home: live }, { schemaVersion: ABOVE, versions: ladderAboveReal() });
     const openAtThree = await refusal(opening);
     const atThree = await opening.catch(() => undefined);
     if (atThree !== undefined) closers.push(() => atThree.close());
     const writeAtThree =
       atThree === undefined ? 'not opened' : await refusal(atThree.runStore.create(RUN));
-    await climbForeignAbove(live, 4);
+    await climbForeignAbove(live, ABOVE + 1);
     const writeAtFour =
       atThree === undefined ? 'not opened' : await refusal(atThree.runStore.create(RUN));
-    // (1) red when the gate compares with core's constant (the open's own reads refuse the version-3
-    //     file under realm 3, "writes version 2"), when the open does not pass its version to the
-    //     connection (the same), or when the refusal names the constant (version 4's refusal says 2);
-    //     (2) prints each outcome: its code, message and details, `resolved`, or `not opened`.
+    // (1) red when the gate compares with core's constant (the open's own reads refuse the file at
+    //     the lower synthetic version under that version, naming this Realm's), when the open does
+    //     not pass its version to the connection (the same), or when the refusal names the constant
+    //     (the higher version's refusal names this Realm's); (2) prints each outcome: its code,
+    //     message and details, `resolved`, or `not opened`.
     expect({ production, openAtThree, writeAtThree, writeAtFour }).toEqual({
-      production: newer(3, 2),
+      production: newer(ABOVE, REALM_STORE_SCHEMA_VERSION),
       openAtThree: 'resolved',
       writeAtThree: 'resolved',
-      writeAtFour: newer(4, 3),
+      writeAtFour: newer(ABOVE + 1, ABOVE),
     });
   });
 });
@@ -445,7 +451,11 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
       outcome: await codeOf(m.migrate({ backup: false, progress })),
       seen,
       file: versionOf(file),
-    }).toEqual({ outcome: 'resolved', seen: ['already at 2', 'restamped 0'], file: 2 });
+    }).toEqual({
+      outcome: 'resolved',
+      seen: [`already at ${REALM_STORE_SCHEMA_VERSION}`, 'restamped 0'],
+      file: REALM_STORE_SCHEMA_VERSION,
+    });
   });
 
   it('(D) the re-stamp: each run another derivation stamped gets the phase its record derives and the running stamp, its record and version untouched; the others are left alone; a second run counts 0', async () => {
@@ -497,8 +507,8 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
       second: second.seen,
       runs: Object.fromEntries(ids.map((id) => [id, shape(after[id], id)])),
     }).toEqual({
-      first: ['already at 2', 'restamped 2'],
-      second: ['already at 2', 'restamped 0'],
+      first: [`already at ${REALM_STORE_SCHEMA_VERSION}`, 'restamped 2'],
+      second: [`already at ${REALM_STORE_SCHEMA_VERSION}`, 'restamped 0'],
       runs: expected,
     });
   });

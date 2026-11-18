@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
+import { REALM_STORE_SCHEMA_VERSION } from '@sensigo/realm';
 import { openRealmHome, openRealmHomeForMaintenance } from '@sensigo/realm-store-sqlite';
 import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -224,7 +225,7 @@ describe('#616 R3 — realm rollback, on the built CLI', { timeout: 120_000 }, (
     const last = records().at(-1);
     const copy = String(last?.['backup']);
     const list = realm(['run', 'list']);
-    // (1) red when a step is missing (the file stays at 2), the target is wrong, the progress line or
+    // (1) red when a step is missing (the file stays above 1), the target is wrong, the progress line or
     //     the install line is not printed, a run or an entry is lost, or no record line is written;
     //     (2) prints every line, the counts, the schema's difference and the record line.
     expect({
@@ -240,16 +241,25 @@ describe('#616 R3 — realm rollback, on the built CLI', { timeout: 120_000 }, (
     }).toEqual({
       code: 0,
       stdout: [
-        ROLLING(String(forward['at']), 1, 2, String(forward['migrated_by'])),
-        `Backed up ${shown(file)} (schema version 2, ${readFileSync(copy).length} bytes) to ` +
+        ROLLING(
+          String(forward['at']),
+          1,
+          REALM_STORE_SCHEMA_VERSION,
+          String(forward['migrated_by']),
+        ),
+        `Backed up ${shown(file)} (schema version ${REALM_STORE_SCHEMA_VERSION}, ${readFileSync(copy).length} bytes) to ` +
           `${shown(copy)}; the copy passes SQLite's quick check.`,
+        // Callback B1a: version 3's step back first (its two statements), then version 2's.
+        `Stepped ${shown(file)} back from schema version 3 to 2: 2 statement(s) ran, the schema ` +
+          "matches version 2's. The callbacks and callback_keys tables were dropped; they held no " +
+          'undelivered callback and no signing key.',
         `Stepped ${shown(file)} back from schema version 2 to 1: 1 statement(s) ran, the schema ` +
           "matches version 1's. The outbound table was dropped; it held no record of a reminder or " +
           'escalation sent.',
         `Recorded this migrate in ${shown(record)}.`,
         'Every command of this Realm that uses the store, except `realm db check`, `realm db ' +
           'backup`, `realm db migrate` and `realm db restore`, now refuses the file, because it is ' +
-          'at schema version 1 and this Realm writes version 2. To use it, install a Realm that ' +
+          `at schema version 1 and this Realm writes version ${REALM_STORE_SCHEMA_VERSION}. To use it, install a Realm that ` +
           'writes schema version 1: npm install -g "@sensigo/realm-cli@0.49" (in a project that ' +
           'lists Realm packages, give every one of them the same exact version within 0.49; see ' +
           '"Upgrade every package together" in the upgrade guide).',
@@ -258,12 +268,15 @@ describe('#616 R3 — realm rollback, on the built CLI', { timeout: 120_000 }, (
       version: 1,
       kept: { runs: before.runs, evidence: before.evidence },
       schema: before.schema,
-      record: { from: 2, to: 1, lines: 2 },
-      copy: { name: join(folder, 'realm-v2-to-v1-<stamp>.db'), version: 2 },
+      record: { from: REALM_STORE_SCHEMA_VERSION, to: 1, lines: 2 },
+      copy: {
+        name: join(folder, `realm-v${REALM_STORE_SCHEMA_VERSION}-to-v1-<stamp>.db`),
+        version: REALM_STORE_SCHEMA_VERSION,
+      },
       list: {
         code: 1,
         stderr:
-          "Error: This store's file is at schema version 1; this Realm writes version 2. Run " +
+          `Error: This store's file is at schema version 1; this Realm writes version ${REALM_STORE_SCHEMA_VERSION}. Run ` +
           '`realm db migrate` with Realm stopped to upgrade it.\n',
       },
     });
@@ -280,7 +293,7 @@ describe('#616 R3 — realm rollback, on the built CLI', { timeout: 120_000 }, (
     rmSync(home, { recursive: true, force: true });
     await currentHome();
     const db = await openForeignConnection(home);
-    db.exec('PRAGMA user_version = 3');
+    db.exec(`PRAGMA user_version = ${REALM_STORE_SCHEMA_VERSION + 1}`);
     db.close();
     const newer = realm(['rollback']);
     // (1) red when a missing or empty file takes the migrate's words, a stack escapes, or the open
@@ -302,8 +315,8 @@ describe('#616 R3 — realm rollback, on the built CLI', { timeout: 120_000 }, (
         code: 1,
         stdout: '',
         stderr:
-          'Error: This store was migrated by a newer Realm: its schema is version 3 and this Realm ' +
-          'writes version 2. Upgrade Realm to read or write it.\n',
+          `Error: This store was migrated by a newer Realm: its schema is version ${REALM_STORE_SCHEMA_VERSION + 1} and this Realm ` +
+          `writes version ${REALM_STORE_SCHEMA_VERSION}. Upgrade Realm to read or write it.\n`,
       },
     });
   });
@@ -420,9 +433,14 @@ describe('#616 R3 — realm rollback, on the built CLI', { timeout: 120_000 }, (
       },
     }).toEqual({
       code: 0,
-      first: ROLLING(String(mine['at']), 1, 2, String(mine['migrated_by'])),
+      first: ROLLING(
+        String(mine['at']),
+        1,
+        REALM_STORE_SCHEMA_VERSION,
+        String(mine['migrated_by']),
+      ),
       mine: 1,
-      other: { version: 2, untouched: true },
+      other: { version: REALM_STORE_SCHEMA_VERSION, untouched: true },
     });
   });
 
@@ -436,7 +454,7 @@ describe('#616 R3 — realm rollback, on the built CLI', { timeout: 120_000 }, (
     const restoredAfter = state();
     // An invalid later line after a step back: forward, back, forward again (no copy: the same
     // second), then the last line damaged. The last VALID line is the step back, to version 1, and
-    // the file is at 2.
+    // the file is at this Realm's version.
     rmSync(root, { recursive: true, force: true });
     mkdirSync(root, { recursive: true });
     recordedHome();
@@ -458,17 +476,25 @@ describe('#616 R3 — realm rollback, on the built CLI', { timeout: 120_000 }, (
       damaged: { r: damaged, unchanged: JSON.stringify(state()) === JSON.stringify(before2) },
     }).toEqual({
       restored: {
-        r: { code: 1, stdout: '', stderr: `${MISMATCH(String(forward['at']), 1, 2, 1)}\n` },
+        r: {
+          code: 1,
+          stdout: '',
+          stderr: `${MISMATCH(String(forward['at']), 1, REALM_STORE_SCHEMA_VERSION, 1)}\n`,
+        },
         unchanged: true,
       },
       damaged: {
-        r: { code: 1, stdout: '', stderr: `${MISMATCH(String(back!['at']), 2, 1, 2)}\n` },
+        r: {
+          code: 1,
+          stdout: '',
+          stderr: `${MISMATCH(String(back!['at']), REALM_STORE_SCHEMA_VERSION, 1, REALM_STORE_SCHEMA_VERSION)}\n`,
+        },
         unchanged: true,
       },
     });
   });
 
-  it('a version-2 backup restored after the migrate: the file is at the line’s version, so it rolls back', async () => {
+  it(`a version-${REALM_STORE_SCHEMA_VERSION} backup restored after the migrate: the file is at the line’s version, so it rolls back`, async () => {
     recordedHome();
     expect(realm(['db', 'migrate']).code).toBe(0);
     const forward = records()[0]!;
@@ -481,7 +507,12 @@ describe('#616 R3 — realm rollback, on the built CLI', { timeout: 120_000 }, (
     expect({ code: rolled.code, first: lines(rolled.stdout)[0], version: versionOf(file) }).toEqual(
       {
         code: 0,
-        first: ROLLING(String(forward['at']), 1, 2, String(forward['migrated_by'])),
+        first: ROLLING(
+          String(forward['at']),
+          1,
+          REALM_STORE_SCHEMA_VERSION,
+          String(forward['migrated_by']),
+        ),
         version: 1,
       },
     );
