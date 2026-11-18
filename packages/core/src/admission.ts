@@ -49,6 +49,8 @@ export const ENGINE_ENTRIES = [
   // #729, the claim window (CW-2a): a drive's claim under its lease, and its give-back.
   'claimStepForDrive',
   'releaseDriveClaim',
+  // #729, the claim window (CW-3b): the automatic take-back of a step whose lease no program holds.
+  'takeBackStep',
 ] as const;
 
 export type EngineEntry = (typeof ENGINE_ENTRIES)[number];

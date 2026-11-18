@@ -15,6 +15,7 @@ import {
 import { abandonRun } from './abandon-run.js';
 import { reclaimStep } from './reclaim-step.js';
 import { claimStepForDrive, releaseDriveClaim } from './drive-claim.js';
+import { takeBackStep } from './reclaim-step.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { getWorkflowForRun } from '../workflow/registrar.js';
 import { declareReleaseLine } from '../release-line.js';
@@ -113,6 +114,12 @@ const BASE: Record<EngineEntry, () => Parts> = {
     stepName: 'work',
     options: { definition: AGENT, hold: { id: 'h', close: () => {} } },
   }),
+  // #729, the claim window (CW-3b).
+  takeBackStep: () => ({
+    runId: 'r',
+    stepName: 'work',
+    options: { expectToken: 't', drivenBy: { by: 'taker', by_source: 'stated', channel: 'agent' } },
+  }),
 };
 
 /** Each entry, called for real with the parts as its parameters. */
@@ -134,6 +141,8 @@ const CALL: Record<EngineEntry, (s: RunStore, p: Parts) => Promise<unknown>> = {
     claimStepForDrive(s, p['runId'] as never, p['stepName'] as never, p['options'] as never),
   releaseDriveClaim: (s, p) =>
     releaseDriveClaim(s, p['runId'] as never, p['stepName'] as never, p['options'] as never),
+  takeBackStep: (s, p) =>
+    takeBackStep(s, p['runId'] as never, p['stepName'] as never, p['options'] as never),
 };
 
 const ABSENT = Symbol('absent');
@@ -225,6 +234,11 @@ const REQUIRED: Array<[EngineEntry, string, unknown]> = [
   ['releaseDriveClaim', 'options.hold', 'x'],
   ['releaseDriveClaim', 'options.hold.id', 7],
   ['releaseDriveClaim', 'options.hold.close', 'x'],
+  // #729, the claim window (CW-3b).
+  ['takeBackStep', 'runId', 7],
+  ['takeBackStep', 'stepName', 7],
+  ['takeBackStep', 'options', 'x'],
+  ['takeBackStep', 'options.expectToken', 7],
 ];
 
 describe('issue #719 A2 — every required part: absent, null and a wrong type are refused before any read', () => {
@@ -273,6 +287,8 @@ const TYPED: Array<[EngineEntry, string, unknown]> = [
   ['reclaimStep', 'options', 'x'],
   ['reclaimStep', 'options.traceBufferStore', 'x'],
   ['releaseDriveClaim', 'options.evidence', 'x'],
+  // #729 CW-3b.
+  ['takeBackStep', 'options.traceBufferStore', 'x'],
   // #729 CW-2b: `heldClaim`, executeChain's only.
   ['executeChain', 'options.heldClaim', 'x'],
   // #625 A1a: `advanceRun`'s four step callbacks, which executeChain now takes.
@@ -294,6 +310,22 @@ describe('issue #719 A2 (R3) — every typed optional member: a wrong type is re
   });
 });
 
+// #729 CW-3b: `takeBackStep`'s `drivenBy` is handed to `admitEntry` as the driver, so the driver row
+// (before the parts row) refuses a value that is not an object; an absent one is the parts row's.
+describe('#729 CW-3b — takeBackStep’s drivenBy is refused before any read: absent as a missing part, null or not an object as a bad driver', () => {
+  it.each([
+    ['absent', ABSENT, { code: 'VALIDATION_OPTION_INVALID', invalid: ['options.drivenBy'] }],
+    ['null', null, { code: 'VALIDATION_ACTOR_INVALID', invalid: undefined }],
+    ['a wrong type', 'x', { code: 'VALIDATION_ACTOR_INVALID', invalid: undefined }],
+  ] as const)('%s', async (_name, value, want) => {
+    // (a) red when such a taker reaches the store (a call made) or is refused by another row; (b)
+    //     prints the code, the options named and the store calls.
+    expect(
+      await outcome('takeBackStep', withPart(BASE.takeBackStep(), 'options.drivenBy', value)),
+    ).toEqual({ ...want, calls: [] });
+  });
+});
+
 /** issue #719: two defects of the row, per entry — both are named, in table order. */
 const TWO: Array<[EngineEntry, [string, unknown], [string, unknown]]> = [
   ['executeStep', ['options.runId', ABSENT], ['options.stepMeta', 'x']],
@@ -307,6 +339,7 @@ const TWO: Array<[EngineEntry, [string, unknown], [string, unknown]]> = [
   ['reclaimStep', ['runId', 7], ['stepName', null]],
   ['claimStepForDrive', ['runId', 7], ['options.registry', 'x']],
   ['releaseDriveClaim', ['options.hold.id', 7], ['options.evidence', 'x']],
+  ['takeBackStep', ['options.expectToken', 7], ['options.traceBufferStore', 'x']],
 ];
 
 // #729 CW-2b: `heldClaim`, when given, an object whose `hold` has an `id` string and a `close`
@@ -658,6 +691,7 @@ describe('issue #719 C4 — a member that is not an option of the entry is refus
     ['reclaimStep', 'options.bogusOption'],
     ['claimStepForDrive', 'options.bogusOption'],
     ['releaseDriveClaim', 'options.bogusOption'],
+    ['takeBackStep', 'options.bogusOption'],
   ];
   it.each(UNKNOWN_AT)('%s: %s', async (entry, at) => {
     const parts = entry === 'reclaimStep' ? { ...BASE[entry](), options: {} } : BASE[entry]();
@@ -807,6 +841,7 @@ describe('issue #719 C4 — a step that is not an object, and a missing store', 
     getWorkflowForRun: 'a workflow store',
     claimStepForDrive: 'a run store',
     releaseDriveClaim: 'a run store',
+    takeBackStep: 'a run store',
   };
   it.each(
     (Object.keys(STORE_KIND) as EngineEntry[]).flatMap((e) => [
