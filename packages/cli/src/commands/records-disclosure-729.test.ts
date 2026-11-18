@@ -1320,10 +1320,13 @@ describe("#729 PR-3 correction 3 (H-8'') — realm's fixed words print whole at 
     });
     // (a) red when the CLI's carrier passes no writer context (`([REDACTED])`); (b) prints the
     //     exit code and the first line of the error.
-    expect([r.status, r.stderr.split('\n').find((l) => l.startsWith('Error:'))]).toEqual([
-      1,
-      `Error: Run ${runId} has already ended (abandoned): an operator ended it.`,
-    ]);
+    // #625 A1b-2: pinned up to the phase — the variable holds `abandoned`, so the writer masks that
+    // word inside the sentence that follows (`It was [REDACTED], …`).
+    const first = r.stderr.split('\n').find((l) => l.startsWith('Error:')) ?? '';
+    expect([
+      r.status,
+      first.slice(0, first.indexOf('(abandoned).') + '(abandoned).'.length),
+    ]).toEqual([1, `Error: Run ${runId} has already ended (abandoned).`]);
   }, 60_000);
 });
 
@@ -2315,7 +2318,12 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
         REALM_NOT_SECRET: 'HOME',
         ANTHROPIC_API_KEY: 'fake-key-0729',
       });
-    const reasonOf = (stderr: string) => stderr.split('\n').find((l) => l.startsWith('Reason:'));
+    // #625 A1b-2: an abandoned run's reason is inside the refusal's sentence, its polarity kept.
+    const reasonOf = (stderr: string) =>
+      stderr
+        .split('\n')
+        .find((l) => l.startsWith('Error:'))
+        ?.split('with the reason ')[1];
     const a = agent(intact.home, intact.ended);
     const g = agent(gone.home, gone.ended);
     const p = agent(plain.home, plain.ended);
@@ -2333,9 +2341,9 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
       ],
       plain: [p.status, reasonOf(p.stderr), p.stderr.includes('Values withheld')],
     }).toEqual({
-      intact: [1, 'Reason: "upstream refused key [REDACTED]"', false],
-      gone: [1, `Reason: ‹string, ${reason.length} characters›`, true],
-      plain: [1, 'Reason: "upstream still down"', false],
+      intact: [1, '"upstream refused key [REDACTED]".', false],
+      gone: [1, `‹string, ${reason.length} characters›.`, true],
+      plain: [1, '"upstream still down".', false],
     });
   }, 120_000);
 });

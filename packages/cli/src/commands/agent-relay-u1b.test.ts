@@ -623,14 +623,18 @@ describe('U1b — a program a handler starts is masked in a piped log', () => {
     }
     const text = readFileSync(log, 'utf8');
     // (a) red without the relay's sync at `noteRunManifest`'s end (the reason prints before the
-    //     relay holds the run's declared values); (b) prints the code, the Reason line and counts.
+    //     relay holds the run's declared values); (b) prints the code, the reason and counts.
+    // #625 A1b-2: an abandoned run's reason is inside the refusal's sentence.
     expect({
       code,
-      reason: text.split('\n').find((l) => l.startsWith('Reason:')),
+      reason: text
+        .split('\n')
+        .find((l) => l.includes('has already ended'))
+        ?.split('with the reason ')[1],
       fake: shown(text),
     }).toEqual({
       code: 1,
-      reason: 'Reason: "upstream refused key [REDACTED]"',
+      reason: '"upstream refused key [REDACTED]".',
       fake: { declared: 0, environment: 0 },
     });
   }, 90_000);

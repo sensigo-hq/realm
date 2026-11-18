@@ -13,7 +13,8 @@ import {
   isAnswerEntry,
   leaseFactOf,
   offeredResumeWay,
-  operatorEndingSentence,
+  runEndingOf,
+  NEW_RUN_SENTENCE,
   resumeWay,
   buildDisclosureSet,
   respondWayOfGate,
@@ -29,6 +30,7 @@ import {
   type InspectWay,
 } from '@sensigo/realm';
 import type {
+  EngineReply,
   ActorAbsentCause,
   AnswerArrival,
   AnswerView,
@@ -143,23 +145,44 @@ export function inFlightLine(
 }
 
 /**
- * decisions C202, C205: the hand-back line for a run that an engine failure ended with a failed step
- * `realm run resume` takes — `  Resume:    realm run resume <id> --from <step>` (core's
- * `offeredResumeWay`, F2); for a run an operator ended, a line of its own in the offer's place —
- * `  Ended:     An operator ended this run, with the reason "<reason>"; to run the work again, start
- * a new run.` (core's `operatorEndingSentence`); `undefined` for any other run. `realm workflow
+ * decisions C202, C205; #625 A1b-2 (the owner's one-note rule): the hand-back lines of a run that has
+ * ended. `  Ended:     <how it ended>` — the one ending composer's sentence (`runEndingOf`), its
+ * stored values through `ctx.escaped`, then for an abandoned run ` To run the work again, start a new
+ * run.` — for a run that did not complete, unless `endingSaid` (the drive already printed a line that
+ * says how the run ended: the note). Then `  Resume:    realm run resume <id> --from <step>` (core's
+ * `offeredResumeWay`, F2) when the run offers it. `undefined` when there is neither. `realm workflow
  * run`'s map and its last line, and `realm agent`'s stop, print it.
  */
 export function resumeLine(
   run: Parameters<typeof resumeWay>[0],
   workflow: Parameters<typeof resumeWay>[1],
   ctx: RenderCtx = PLAIN,
+  endingSaid = false,
 ): string | undefined {
-  const operator = operatorEndingSentence(run);
-  if (operator !== undefined) return `  Ended:     ${operator}`;
+  const lines: string[] = [];
+  const ending =
+    endingSaid || deriveRunPhase(run) === 'completed'
+      ? undefined
+      : runEndingOf(run, workflow, { quote: (escaped) => ctx.escaped(escaped) });
+  if (ending !== undefined) {
+    lines.push(
+      `  Ended:     ${ending.sentence}${ending.wayOut.kind === 'new_run' ? ` ${NEW_RUN_SENTENCE}` : ''}`,
+    );
+  }
   const resume = offeredResumeWay(run, workflow);
   // #729 PR-3 (L-2): `resumeWay`'s command, marked as one.
-  return resume === undefined ? undefined : `  Resume:    ${ctx.cmd(resume.command)}`;
+  if (resume !== undefined) lines.push(`  Resume:    ${ctx.cmd(resume.command)}`);
+  return lines.length === 0 ? undefined : lines.join('\n');
+}
+
+/**
+ * #625 A1b-2 (the one-note rule): whether the lines a drive prints for an answer's reply through
+ * `describeAnswerEnding` say how the run ended — the answer's guard-ending lines (`ended_by`), or the
+ * line of an `on_expiry: abort` the answer's own call carried out (its receipt). Such lines set the
+ * drive's note, so its `Ended:` line does not say the ending again.
+ */
+export function answerLinesSayEnding(reply: Pick<EngineReply, 'ended_by' | 'expiry'>): boolean {
+  return reply.ended_by !== undefined || reply.expiry?.on_expiry === 'abort';
 }
 
 /**

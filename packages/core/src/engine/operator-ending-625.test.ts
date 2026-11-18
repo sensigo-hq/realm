@@ -3,7 +3,8 @@
 // a run an operator ended — resuming it erases the operator's ending and its reason and records no one
 // and no reason for the undo. `resumeWay` stays the fact (what `realm run resume` takes); every offer
 // reads `offeredResumeWay` (an engine failure only); a run an operator ended is told who ended it and
-// why (`operatorEndingSentence`), its free-text reason through the escaped, bounded value renderer.
+// why (#625 A1b-2: the one ending composer, `runEndingOf`), its free-text reason through the escaped,
+// bounded value renderer.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -36,7 +37,10 @@ const SHOWN = '"wrong run\\nPhase: completed\\u001b[31m RED"';
 /** The core exports F2 adds, read without a named import so the cells can run before they exist. */
 const F2 = core as unknown as {
   offeredResumeWay?: typeof resumeWay;
-  operatorEndingSentence?: (run: RunRecord) => string | undefined;
+  runEndingOf?: (
+    run: RunRecord,
+    workflow: WorkflowDefinition,
+  ) => { sentence: string; wayOut: { kind: string } } | undefined;
 };
 const render = (redaction as { escapedBoundedValue?: (v: unknown) => string }).escapedBoundedValue;
 
@@ -139,13 +143,16 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
     //     phase; (b) prints the offer and the sentence.
     expect({
       offer: F2.offeredResumeWay?.(legacy, TWO) ?? '<none>',
-      sentence: F2.operatorEndingSentence?.(legacy),
+      ending: F2.runEndingOf?.(legacy, TWO),
     }).toEqual({
       offer: '<none>',
       // #625 A1b-1 (correction 1): an abandoned record with no seal keeps its reason, and says how
-      // it is known.
-      sentence:
-        'It was abandoned, with the reason "stopped by hand" (worked out from its record; no seal was written). To run the work again, start a new run.',
+      // it is known; #625 A1b-2: read from the one composer, the way out a part of its own.
+      ending: {
+        sentence:
+          'It was abandoned, with the reason "stopped by hand" (worked out from its record; no seal was written).',
+        wayOut: { kind: 'new_run' },
+      },
     });
   });
 });
