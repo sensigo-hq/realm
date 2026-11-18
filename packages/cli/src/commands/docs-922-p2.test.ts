@@ -143,8 +143,14 @@ const SENTENCES: readonly { page: string; sentence: string; cells: readonly Cell
   {
     page: ACTING,
     sentence:
-      "Under each step, for one past its deadline, `Its deadline passed at <time>; no result is recorded for it.` comes first; then each condition that holds, in the words listed below; then `To free it, run: <command>`, or `To free it anyway, run: <command>` while its deadline is ahead. The command carries `--claimed-at` with the time the claim was taken, when the claim records one. A step whose claim names a lease its program still holds is listed `healthy`, with nothing under it. When the run's workflow cannot be read here, each step is listed all the same, with `Its workflow definition is not available here, so whether running it again is safe is not known.` among its conditions. Added after version 0.50.0, which listed a command only for a step that was not `healthy`, as `reclaim: realm run reclaim <id> --step <step> --force`.",
+      "Under each step, for one past its deadline, `Its deadline passed at <time>; no result is recorded for it.` comes first; then each condition that holds, in the words listed below; then `To free it, run: <command>`, or `To free it anyway, run: <command>` while its deadline is ahead. The command carries `--claimed-at` with the time the claim was taken, when the claim records one. A step whose claim names a lease its program still holds is listed `healthy`, with nothing under it. The footer then leaves out `Run a step's command above to free it.` when no step above has a command (changed after version 0.50.0). When the run's workflow cannot be read here, each step is listed all the same, with `Its workflow definition is not available here, so whether running it again is safe is not known.` among its conditions. Added after version 0.50.0, which listed a command only for a step that was not `healthy`, as `reclaim: realm run reclaim <id> --step <step> --force`.",
     cells: [DRY_RUN, DRY_NO_DEF, HEADER, DRY_LEASE],
+  },
+  {
+    page: ACTING,
+    sentence:
+      "The footer then leaves out `Run a step's command above to free it.` when no step above has a command (changed after version 0.50.0).",
+    cells: [LEASE_BRANCH, GATE],
   },
   {
     page: ACTING,

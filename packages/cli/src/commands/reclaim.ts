@@ -229,7 +229,8 @@ export async function reclaimWaysOf(
 
 /**
  * #922 P2-2 (item 5): the dry run's lines for a run with steps in progress — each step's header
- * (its state from its composed entry), then the gate line, or what frees it (`heldWayLines`).
+ * (its state from its composed entry), then the gate line, or what frees it (`heldWayLines`); the
+ * footer names "a step's command above" only when one is listed (correction 1).
  */
 export function reclaimDryRunLines(
   run: RunRecord,
@@ -238,6 +239,8 @@ export function reclaimDryRunLines(
 ): string[] {
   const held = new Map(heldEntriesOf(composed).map((e) => [e.facts.step, e]));
   const lines: string[] = [];
+  // #922 P2-2 correction 1: whether a step above has a command that frees it.
+  let listed = false;
   for (const c of infos) {
     const entry = held.get(c.step);
     // MA 2 (WO922-P22-MA2-03): a claim whose lease is held reads healthy, as CW-1b's.
@@ -256,13 +259,16 @@ export function reclaimDryRunLines(
         `      open gate — answer it, not reclaim: ${cliCommandOf(respondWayOfGate(run.id, gate), undefined, writerHost())}`,
       );
     } else if (entry !== undefined) {
-      for (const line of heldWayLines(entry, writerCtx())) lines.push(`      ${line}`);
+      const under = heldWayLines(entry, writerCtx());
+      if (under.length > 0) listed = true;
+      for (const line of under) lines.push(`      ${line}`);
     }
   }
   lines.push(
-    `\nReclaim re-drives a step (at-least-once — side effects may repeat). Run a step's command ` +
-      `above to free it. realm run reclaim --all lists, across every run, the claims past their ` +
-      `deadline whose steps are idempotent; with --force it frees them.`,
+    `\nReclaim re-drives a step (at-least-once — side effects may repeat).` +
+      (listed ? ` Run a step's command above to free it.` : '') +
+      ` realm run reclaim --all lists, across every run, the claims past their deadline whose ` +
+      `steps are idempotent; with --force it frees them.`,
   );
   return lines;
 }

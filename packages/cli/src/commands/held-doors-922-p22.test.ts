@@ -37,6 +37,9 @@ const UNKNOWN = 'so whether its program still runs is not known; if it does, the
 const OTHER = { by: 'other@host', by_source: 'derived' as const, channel: 'advance' as const };
 const FOOTER =
   "Reclaim re-drives a step (at-least-once — side effects may repeat). Run a step's command above to free it. realm run reclaim --all lists, across every run, the claims past their deadline whose steps are idempotent; with --force it frees them.";
+/** #922 P2-2 correction 1: the footer when no step above has a command. */
+const FOOTER_NO_COMMAND =
+  'Reclaim re-drives a step (at-least-once — side effects may repeat). realm run reclaim --all lists, across every run, the claims past their deadline whose steps are idempotent; with --force it frees them.';
 
 /**
  * `x` an engine step not declared idempotent, `i` one declared idempotent, `a` an agent step, `z` an
@@ -358,7 +361,7 @@ describe(
       });
     });
 
-    it('the dry run: a step waiting at its question gets the answer command, not reclaim', async () => {
+    it('the dry run: a step waiting at its question gets the answer command, not reclaim; the footer names no command above (correction 1)', async () => {
       const def = loadWorkflowFromString(
         [
           'id: held-doors-922-gate',
@@ -390,12 +393,13 @@ describe(
       // The question's step is not a held step (its question holds it): its header keeps the claim's
       // own word.
       const deadline = (await runStore.get(record.id)).record.claims!['confirm']!.deadline;
-      // (a) red when the gate line changes, or a reclaim command is offered for the question's step;
-      //     (b) prints the dry run.
+      // (a) red when the gate line changes, a reclaim command is offered for the question's step,
+      //     or the footer says to run a command above that is not there (correction 1); (b) prints
+      //     the dry run.
       expect(r.out.slice(1)).toEqual([
         `  • confirm: healthy  (deadline: ${deadline})`,
         `      open gate — answer it, not reclaim: realm run respond ${record.id} --gate ${opened.gate!.gate_id} --choice <one of: approve, reject>`,
-        FOOTER,
+        FOOTER_NO_COMMAND,
       ]);
     });
   },

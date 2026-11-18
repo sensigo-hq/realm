@@ -264,24 +264,27 @@ describe('#922 P2-2 — the lease branch (MA 2, WO922-P22-MA2-03; temporary unti
     const leased = { ...CLAIMS['past']!, lease: { id: 'L' } };
     const live = await heldOn({ y: leased }, true, ['x'], 'live');
     const dead = await heldOn({ y: leased }, true, ['x'], 'dead');
-    const header = (on: Awaited<ReturnType<typeof heldOn>>): string =>
-      reclaimDryRunLines(
-        on.record,
-        [{ step: 'y', state: 'claim_stale', deadline: PAST }],
-        on.ways,
-      ).slice(0, 2)[0]!;
-    // (a) red when a held lease is offered a command or read by its deadline, or a lease not held
-    //     is waited for; (b) prints both.
+    const dryRun = (on: Awaited<ReturnType<typeof heldOn>>): string[] =>
+      reclaimDryRunLines(on.record, [{ step: 'y', state: 'claim_stale', deadline: PAST }], on.ways);
+    const header = (on: Awaited<ReturnType<typeof heldOn>>): string => dryRun(on)[0]!;
+    // correction 1: whether the footer names a command above
+    const footerNames = (on: Awaited<ReturnType<typeof heldOn>>): boolean =>
+      dryRun(on).at(-1)!.includes("Run a step's command above to free it.");
+    // (a) red when a held lease is offered a command or read by its deadline, a lease not held is
+    //     waited for, or the dry run's footer names a command above that is not there (correction
+    //     1); (b) prints both.
     expect({
       live: {
         line: heldLine(live.entries[0]!),
         under: heldWayLines(live.entries[0]!),
         header: header(live),
         goOn: goOnLine(live.entries, live.runId, '<command>'),
+        footerNames: footerNames(live),
       },
       dead: {
         line: heldLine(dead.entries[0]!).startsWith("'y' was claimed and its deadline passed"),
         header: header(dead),
+        footerNames: footerNames(dead),
       },
     }).toEqual({
       live: {
@@ -289,8 +292,9 @@ describe('#922 P2-2 — the lease branch (MA 2, WO922-P22-MA2-03; temporary unti
         under: [],
         header: `  • y: healthy  (deadline: ${PAST})`,
         goOn: "  Go on:     once 'y' is no longer in flight, <command>",
+        footerNames: false,
       },
-      dead: { line: true, header: `  • y: claim_stale  (deadline: ${PAST})` },
+      dead: { line: true, header: `  • y: claim_stale  (deadline: ${PAST})`, footerNames: true },
     });
   });
 });
