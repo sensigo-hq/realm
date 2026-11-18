@@ -151,7 +151,7 @@ const liveNotes = JSON.stringify(S.notes);
     <div data-live>
       <div class="rp-cols" data-in="B C D">
         <div>
-          <p class="rp-k">Gate message</p>
+          <p class="rp-k" data-say="formLabel" hidden></p>
           <pre class="rp-msg" data-l="gate"></pre>
         </div>
         <div>
@@ -160,12 +160,15 @@ const liveNotes = JSON.stringify(S.notes);
             <div class="rp-picks">
               {r.gate.choices.map((c) => <button type="button" class="ok" data-act="answer" data-choice={c}>{c === 'approve' ? 'Approve' : 'Request changes'}</button>)}
             </div>
+            <p class="rp-why" data-l="form-hint" hidden></p>
+            <div class="rp-picks" data-l="ask" hidden><button type="button" data-act="ask">{S.askLabel}</button></div>
             <p class="rp-k">{S.skipLabel}</p>
             <div class="rp-picks">
               {r.gate.agent_attempts.map((a) => <button type="button" data-act="skip" data-step={a.call.command}>{a.label}</button>)}
             </div>
             <div class="rp-out" aria-live="polite" data-box="skip"></div>
           </div>
+          <div class="rp-out" aria-live="polite" data-box="ask"></div>
           <p class="rp-why" data-in="C D" data-say="chose" hidden></p>
         </div>
       </div>
@@ -209,6 +212,7 @@ const liveNotes = JSON.stringify(S.notes);
         <div class="rp-cols">
           <div>
             <div class="rp-out" aria-live="polite" data-box="answer"></div>
+            <p class="rp-ev" data-say="answerLine" hidden></p>
             <div class="rp-picks" data-in="C"><button type="button" data-act="other">{S.otherLabel}</button></div>
             <div class="rp-out" aria-live="polite" data-box="other"></div>
           </div>
@@ -305,7 +309,7 @@ const liveNotes = JSON.stringify(S.notes);
   border:1px solid var(--line);background:transparent;color:var(--ink)}
 .rp-picks button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
 .rp button.ok{background:var(--c-accent);color:var(--c-on-accent);border-color:var(--c-accent)}
-.rp-nav button:disabled,.rp [data-live-try]:disabled{opacity:.45;cursor:not-allowed}
+.rp-nav button:disabled,.rp [data-live-try]:disabled,.rp[data-mode="live"] [data-act]:disabled,.rp[data-mode="live"] [data-s="1"] [data-pick]:disabled{opacity:.45;cursor:not-allowed}
 .rp-out{display:grid;gap:8px;min-width:0}
 .rp-out > div{display:grid;gap:8px;min-width:0}
 .rp-hint{color:var(--muted)}
@@ -411,14 +415,34 @@ const liveNotes = JSON.stringify(S.notes);
     };
     const tryB = q('[data-live-try]'), note = q('[data-live-note]'), ed = q('[data-l=box]'), sel = q('[data-l=step]'), hint = q('[data-l=hint]');
     const box = (k: string) => q(`[data-box=${k}]`);
-    let SS: any, M: any, E: any, rid: string, st: any, open: any, thr: any, T: any, gen = 0, busy = false, live = false, dead = false;
+    const picks = q('[data-s="1"]').querySelectorAll('[data-pick]');
+    let SS: any, M: any, E: any, rid: string, st: any, thr: any, T: any, gen = 0, busy = false, live = false, dead = false;
+    // Realm's form (engine.mjs: open, answered or withdrawn), Realm's reply after it withdrew the form,
+    // whether a call is holding the form open, and the short call in flight.
+    let form: any = null, fhint: string | null = null, held = false, pend: any = null;
     const show = (n?: number, focus?: boolean) => root.dispatchEvent(new CustomEvent('rp-show', { detail: { n, focus } }));
     // The second click of a double-click (detail 2) is ignored, so a double-click sends one call even
     // when the first call has already returned.
     const one = (f: any) => (ev: any) => ev.detail > 1 || f(ev);
+    // Which buttons work: none during a short call; while a call holds Realm's form open, all but Send,
+    // the post button, the other branch and ask-again. Stage 03's choice buttons, Realm's hint and the
+    // ask-again button follow gateView() (view.mjs).
+    const sync = () => {
+      const gv = M && live && st ? M.gateView(st, form && { ...form, hint: fhint }) : { choices: false, hint: null, askAgain: false };
+      qa('[data-act]').forEach((x: any) => {
+        const a = x.dataset.act;
+        x.disabled = busy || (held && ['send', 'post', 'other', 'ask'].includes(a)) || (a == 'answer' && !gv.choices) || (a == 'ask' && !gv.askAgain);
+      });
+      // Stage 02's presets wait with Send (live mode only: recorded mode's never turn off).
+      picks.forEach((x: any) => (x.disabled = live && (busy || held)));
+      const fh = q('[data-l=form-hint]');
+      fh.textContent = gv.hint ?? '';
+      fh.hidden = gv.hint == null;
+      q('[data-l=ask]').hidden = !gv.askAgain;
+    };
     const setBusy = (b: boolean) => {
       busy = b;
-      qa('[data-act]').forEach((x: any) => (x.disabled = b));
+      sync();
     };
     // A fallback keeps the recording, with a note in the Try button's place and no live marker.
     const fall = (m: string) => {
@@ -477,7 +501,7 @@ const liveNotes = JSON.stringify(S.notes);
     // Every live stage is a function of the run's state after the last reply.
     const render = async () => {
       const run = await E.run(rid);
-      const vs = { ...st, choice: M.answeredChoice(run), threshold: thr, version: M.version, run_id: rid };
+      const vs = { ...st, choice: M.answeredChoice(run), route: M.answeredRoute(run), threshold: thr, version: M.version, run_id: rid };
       const S = (SS = M.stageSentences('live', vs)), L = M.stateLetter(vs);
       D.liveState = L;
       D.liveGate = L == 'B' ? 'open' : L == 'C' || L == 'D' ? 'answered' : 'closed';
@@ -487,32 +511,62 @@ const liveNotes = JSON.stringify(S.notes);
       const sk = q('[data-l=skip]');
       sk.textContent = S.skipped ?? '';
       sk.hidden = S.skipped == null;
-      q('[data-l=gate]').textContent = M.gateText(open) ?? '';
+      q('[data-l=gate]').textContent = M.gateText(form) ?? '';
+      // Stage 04's answer box: the form response the page sent, once the record says it was answered.
+      if ((L == 'C' || L == 'D') && form?.response) {
+        const a = M.formAnswerView(form.response);
+        box('answer').replaceChildren(el('p', a.who, 'rp-k'), el('pre', a.call));
+      }
       q('[data-l=table]').replaceChildren(
         ...M.evidenceRows(run).map((x: any) => row(x.step, x.label, x.hash)),
         ...(st.skipped_steps ?? []).map((s: string) => row(s, 'skipped')),
       );
+      sync();
       show();
     };
-    // One call at a time; a reply from a run that was replaced meanwhile is dropped.
+    // One short call at a time; a reply from a run that was replaced meanwhile is dropped. A call that
+    // reaches the gate holds Realm's form open until it is answered or withdrawn: from the moment the
+    // form opens (onForm below) it is `held`, and no longer blocks the other calls.
     const act = async (tool: string, args: any, b: any, noCall = false, who?: string) => {
       if (busy || !live) return;
-      const g = gen, before = st;
+      const g = gen, before = st, me: any = {};
+      pend = me;
+      b.replaceChildren();
       setBusy(true);
       const r = await E.call(tool, { run_id: rid, ...args });
       if (g != gen) return;
+      if (pend === me) pend = null;
       st = await state();
-      if (r.kind == 'json') {
-        if (r.value.gate?.display) open = r;
-        thr = r.value.error_details?.threshold ?? thr;
-      }
+      if (r.kind == 'json') thr = r.value.error_details?.threshold ?? thr;
+      // Realm's own words after it withdrew the form this call held (stage 03 shows them).
+      if (me.held && form?.status == 'withdrawn') fhint = r.kind == 'json' ? r.value.context_hint ?? null : null;
       const v = M.replyView({ tool, ...args }, r, before, st);
       if (noCall) v.who = null;
       else if (who) v.who = who;
       const l = paint(b, v);
       await render();
-      setBusy(false);
+      if (me.held) held = false;
+      else busy = false;
+      sync();
       return l;
+    };
+    // Realm sent a form, or the form was answered or withdrawn (engine.mjs). When one opens, the page
+    // reads the run's state (B), moves to 03 and lets the visitor answer.
+    const onForm = (g: number) => async (f: any) => {
+      if (g != gen) return;
+      form = f;
+      if (f.status != 'open') return sync();
+      fhint = null;
+      if (pend) {
+        pend.held = true;
+        pend = null;
+        held = true;
+        busy = false;
+      }
+      st = await state();
+      if (g != gen) return;
+      await render();
+      show(2, true);
     };
     const newRun = async () => {
       const g = ++gen;
@@ -529,10 +583,13 @@ const liveNotes = JSON.stringify(S.notes);
       if (!(v && v.status == 'ok' && typeof v.run_id == 'string'))
         return fall(N.noStart.replace('{code}', v ? v.error_code ?? v.status : 'no JSON reply'));
       clearTimeout(T);
+      // The old engine goes, and with it any form it held open (its call's reply is dropped by `gen`).
       E?.close();
       E = e;
+      E.onForm(onForm(g));
       rid = v.run_id;
-      open = thr = null;
+      thr = form = fhint = pend = null;
+      held = false;
       qa('[data-box]').forEach((x: any) => x.replaceChildren());
       hint.hidden = true;
       st = await state();
@@ -578,7 +635,8 @@ const liveNotes = JSON.stringify(S.notes);
       .querySelectorAll('[data-pick]')
       .forEach((b: any) =>
         b.addEventListener('click', () => {
-          if (!live || busy) return;
+          // While a call holds Realm's form open, Send is off, so a preset would offer nothing to send.
+          if (!live || busy || held) return;
           const p = PRE[b.dataset.pick];
           sel.value = p.command;
           ed.value = JSON.stringify(p.params, null, 2);
@@ -586,25 +644,32 @@ const liveNotes = JSON.stringify(S.notes);
           hint.hidden = false;
         }),
       );
+    // A call that answered the gate (through the form it held) moves the visitor to stage 04.
+    const answered = (l: any, was?: string) => l && was != 'C' && was != 'D' && D.liveGate == 'answered';
     q('[data-act=send]').onclick = one(async () => {
-      if (!live || busy) return;
-      const p = M.parseInput(ed.value), b = box('send');
+      if (!live || busy || held) return;
+      const p = M.parseInput(ed.value), b = box('send'), was = D.liveState;
       hint.hidden = true;
       const l = p.ok
         ? await act('execute_step', { command: sel.value, params: p.value }, b)
         : paint(b, M.replyView(null, { kind: 'page', message: p.message }, st, st));
-      if (p.note) b.append(el('p', p.note, 'rp-ev'));
-      if (l) b.scrollIntoView({ block: 'nearest' });
+      // The note goes with a reply this Send painted, never into a run that replaced it meanwhile.
+      if (p.note && l) b.append(el('p', p.note, 'rp-ev'));
+      if (answered(l, was)) show(3, true);
+      else if (l) b.scrollIntoView({ block: 'nearest' });
     });
-    qa('[data-act=answer]').forEach(
-      (b: any) =>
-        (b.onclick = one(async () => {
-          const l = await act('submit_human_response', { gate_id: st.pending_gate?.gate_id, choice: b.dataset.choice }, box('answer'));
-          if (l && D.liveGate == 'answered') show(3, true);
-        })),
-    );
+    // The page plays the app: a press answers Realm's form (engine.mjs). The first press turns both
+    // buttons off; "answered" shows only once the call holding the form has returned (render).
+    qa('[data-act=answer]').forEach((b: any) => (b.onclick = one(() => live && E.answer(b.dataset.choice))));
+    // Ask again: after Realm withdrew its form, present_question sends a new one, inside that call.
+    q('[data-act=ask]').onclick = one(async () => {
+      if (!live || held) return;
+      const was = D.liveState;
+      const l = await act('present_question', { gate_id: st.pending_gate?.gate_id }, box('ask'));
+      if (answered(l, was)) show(3, true);
+    });
     qa('[data-act=skip]').forEach((b: any) => (b.onclick = one(() => act('execute_step', { command: b.dataset.step, params: {} }, box('skip')))));
-    // The run owes the chosen step to the engine (0.49.0): the button calls advance_run with run_id
+    // The run owes the chosen step to the engine (0.50.0): the button calls advance_run with run_id
     // only, and Realm runs the step. "Ran:" shows the reply without the call, as the recording does;
     // focus goes to stage 4's heading because the button that had it is gone once the step has run.
     q('[data-act=post]').onclick = one(async () => {

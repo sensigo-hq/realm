@@ -177,7 +177,10 @@ describe('resolveRunAttach', () => {
         workflowStore: makeWorkflowStore(),
         loadExtensions: loader,
       }),
-    ).rejects.toThrow(`Run ${runId} has already ended (failed).\nReason: "spawn_failed"`);
+    ).rejects.toThrow(
+      // #625 A1b-2: the record has no seal, so the sentence says its ending was worked out from it.
+      `Run ${runId} has already ended (failed). Its ending was worked out from its record (phase 'failed'); no seal was written.\nReason: "spawn_failed"`,
+    );
     expect(loader).not.toHaveBeenCalled();
     const { record: untouched } = await store.get(runId);
     expect(untouched.terminal_reason).toBe('spawn_failed');
