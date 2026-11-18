@@ -68,15 +68,6 @@ export function findDriveCall(err: unknown): DriveCallPayload | undefined {
   return undefined;
 }
 
-/**
- * Classifies a thrown error, in strict precedence order.
- *
- * 1. an attached payload — the producer knew more than the error's shape says, so it wins;
- * 2. the SDK's own error names — `APIConnectionTimeoutError` is a timeout even if a status is also
- *    somehow present, which is why the name is checked before the status;
- * 3. an HTTP status, which also carries the status VALUE forward as a discriminator;
- * 4. `other`.
- */
 const NUMERIC_PAYLOAD_FIELDS = [
   'attempts_sdk',
   'elapsed_ms',
@@ -116,6 +107,15 @@ function pickPayload(payload: DriveCallPayload): {
   return out as { error_class?: DriveFailureRecord['error_class'] };
 }
 
+/**
+ * Classifies a thrown error, in strict precedence order.
+ *
+ * 1. an attached payload — the producer knew more than the error's shape says, so it wins;
+ * 2. the SDK's own error names — `APIConnectionTimeoutError` is a timeout even if a status is also
+ *    somehow present, which is why the name is checked before the status;
+ * 3. an HTTP status, which also carries the status VALUE forward as a discriminator;
+ * 4. `other`.
+ */
 export function classifyDriveError(err: unknown): DriveCallPayload & {
   error_class: DriveFailureRecord['error_class'];
 } {

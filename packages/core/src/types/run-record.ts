@@ -1482,7 +1482,7 @@ void _everySkipKindListed;
 
 /**
  * Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`). The type
- * {@link SealArm} derives from it (the `VALID_PHASES` pattern: the const array is the runtime
+ * {@link SealArm} derives from it (the `STOP_KINDS` pattern: the const array is the runtime
  * enumeration). One value per terminal seal-site function-branch in the 21-path census.
  *
  * APPEND-ONLY (the Tekton lesson, design rev 3 §3): an arm's meaning never changes; changed seal
