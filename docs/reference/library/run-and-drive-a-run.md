@@ -250,7 +250,7 @@ optional, judged at the snapshot's `at` (#715 (b)). See the module doc above for
 (design record §1, fold B1) and the honest-admission rule.
 
 ```ts
-function classifyRunHealth(snapshot: Snapshot, opts?: ClassifyRunHealthOptions): RunHealthFinding[];
+function classifyRunHealth(snapshot: ListedSnapshot, opts?: ClassifyRunHealthOptions): RunHealthFinding[];
 ```
 
 ### classifyStop
@@ -545,7 +545,7 @@ A step is eligible if:
   - when-condition (if present) is truthy
 
 ```ts
-function findEligibleSteps(definition: WorkflowDefinition, run: RunRecord): string[];
+function findEligibleSteps(definition: WorkflowDefinition, run: ListedRecord): string[];
 ```
 
 ### getWorkflowForRun
@@ -592,7 +592,7 @@ resolution order belongs INSIDE this function — every run-context caller updat
 `'drain again'`, or the MCP-neutral `'retry'`).
 
 ```ts
-function getWorkflowForRun(store: Pick<WorkflowRegistrar, 'get'>, run: RunRecord, opts: {
+function getWorkflowForRun(store: Pick<WorkflowRegistrar, 'get'>, run: ListedRecord, opts: {
     retryVerb: string;
     verb: string;
     terminalOk?: boolean;
@@ -2890,6 +2890,10 @@ Names this job reaches whose entry is on another page.
 - [`LeasePort`](implement-a-store.md#leaseport): A store's claim leases.
 - [`LeaseProbeReason`](implement-a-store.md#leaseprobereason): Why a probe could not say whether a claim lease is held (`LeaseFact`'s `unknown` state).
 - [`LeaseUnavailableReason`](implement-a-store.md#leaseunavailablereason): Why a store could not make a claim lease, from the error the operating system or SQLite gave (`LeaseHoldResult`'s `unavailable`).
+- [`ListedRecord`](implement-a-store.md#listedrecord): A run as a listing of runs gives it: the record, with each evidence entry's `model_text` left out and the evidence read-only.
+- [`ListedScanItem`](implement-a-store.md#listedscanitem): One item of a listing of runs (`RunStore.scanListed`): a run as a `ListedSnapshot`, or a tombstone.
+- [`ListedScanPage`](implement-a-store.md#listedscanpage): One page of a listing of runs (`RunStore.scanListed`): a `'record'` scan's page, its runs without their model calls' texts.
+- [`ListedSnapshot`](implement-a-store.md#listedsnapshot): One run and the reading it is judged at, as a listing of runs gives it: a `Snapshot` whose record is a `ListedRecord`, with the model calls' texts left out.
 - [`Listing`](implement-a-store.md#listing): What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics: every record with the reading it is judged at, and the listing's own reading.
 - [`LiteralNode`](define-and-load-a-workflow.md#literalnode): A node in an input_map tree.
 - [`LoadBearingRunRecordField`](implement-a-store.md#loadbearingrunrecordfield): The `RunRecord` fields the engine relies on enough that a store must declare which of them it round-trips (`RunStore.persistedRunRecordFields`).

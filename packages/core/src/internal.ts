@@ -369,8 +369,23 @@ export {
 export type { AnswerToolName } from './workflow/author-text.js';
 // issue #729 PR-0 (D3 A-9; #715 D6-16/17/18/59): one record and the reading it is judged at.
 // #715 (b) (Amendment 4): the accessor only — the attach function stays internal to core.
-export { loadSnapshot, writtenSnapshot, stampOf, judgedSnapshotOf } from './engine/snapshot.js';
-export type { Snapshot, Stamp, Basis, EnactorBasis, DefinitionBasis } from './engine/snapshot.js';
+export {
+  loadSnapshot,
+  writtenSnapshot,
+  stampOf,
+  judgedSnapshotOf,
+  listedSnapshotOf,
+} from './engine/snapshot.js';
+export type {
+  Snapshot,
+  ListedSnapshot,
+  Stamp,
+  Basis,
+  EnactorBasis,
+  DefinitionBasis,
+} from './engine/snapshot.js';
+// Gap 1, unit A0: the one way Realm lists runs without their model calls' texts.
+export { scanListedRuns } from './store/listed-scan.js';
 // Issue #625 PR-2a (decisions C133, C151): the words each engine entry's `caller` takes.
 export { ENTRY_CALLERS } from './engine/callers.js';
 // Issue #688: whether a step receives what its input_map builds, and what a refusal of that input names.

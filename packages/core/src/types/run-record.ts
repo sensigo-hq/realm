@@ -1874,6 +1874,16 @@ export interface RunRecord {
   >;
 }
 
+/**
+ * A run as a listing of runs gives it: the record, with each evidence entry's `model_text` left
+ * out and the evidence read-only. So `update` refuses it, and a listing's record is never written
+ * back over the texts it left out. Every record fits into it.
+ * @public
+ */
+export type ListedRecord = Omit<RunRecord, 'evidence'> & {
+  readonly evidence: readonly Omit<EvidenceSnapshot, 'model_text'>[];
+};
+
 // ─── #627 W (§5.8): how a gate answer arrived ───────────────────────────────────────────────────
 
 /** #627 W: the routes this version's own doors declare (a door may declare another id). #819: the

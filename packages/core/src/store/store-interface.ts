@@ -4,7 +4,7 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { SealRunDelta, SettlementDelta, SettlementResult } from '../types/settlement.js';
 import type { Attributed } from '../engine/holder.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
-import type { Snapshot } from '../engine/snapshot.js';
+import type { ListedSnapshot, Snapshot } from '../engine/snapshot.js';
 import type { Clock } from '../utils/clock.js';
 import type { LeaseHold, LeasePort } from './lease-port.js';
 import type { LeaseFacts } from './lease-facts.js';
@@ -303,6 +303,18 @@ export interface RunStore {
   ): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
 
   /**
+   * Optional: the runs a `'record'` scan gives, each read without its model calls' texts: every
+   * evidence entry's and every drive-failure entry's `model_text` is left out, so a listing of many
+   * runs does not read them. The pages, filters, readings and lease facts are the
+   * `'record'` scan's. A store without it keeps working: Realm lists through `scan` and leaves the
+   * texts out itself.
+   */
+  scanListed?(
+    filter: ScanFilter,
+    options: Omit<ScanOptions, 'projection'>,
+  ): AsyncGenerator<ListedScanPage, void, undefined>;
+
+  /**
    * Say who holds an idempotency key: `{ state: 'held', run_id }` when a run carries it;
    * `{ state: 'purged', runs, since }` when only deleted runs did; `{ state: 'unseen', since }` when
    * none has, as far as the store's tombstones reach (#616 PR-2c c4).
@@ -571,6 +583,30 @@ export interface ScanPage<P extends 'record' | 'row'> {
    *  the page's read is done. */
   consistent_snapshot: true;
   derived_at_read: number;
+  next_after?: string;
+}
+
+/**
+ * One item of a listing of runs ({@link RunStore.scanListed}): a run as a {@link ListedSnapshot}, or
+ * a tombstone. Every `'record'` scan item fits into it.
+ * @public
+ */
+export type ListedScanItem = { kind: 'run'; run: ListedSnapshot } | PurgedItem;
+
+/**
+ * One page of a listing of runs ({@link RunStore.scanListed}): a `'record'` scan's page, its runs
+ * without their model calls' texts. Every `'record'` scan page fits into it.
+ * @public
+ */
+export interface ListedScanPage {
+  items: ListedScanItem[];
+  /** The page's one reading, as in a scan's page. */
+  read_at: Date;
+  /** The page's records were read as one cut, as in a scan's page. */
+  consistent_snapshot: true;
+  /** How many of the page's rows had their phase derived at read, as in a scan's page. */
+  derived_at_read: number;
+  /** The cursor the next page starts after, when the page is full. */
   next_after?: string;
 }
 

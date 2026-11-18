@@ -255,6 +255,8 @@ describe('issue #719 — a sweeper pass that fails is logged', () => {
     });
     const runStore = new Proxy(h.home.runStore, {
       get(target, prop) {
+        // Gap 1, unit A0: hides the store's `scanListed`, so the listing reads through this `scan` double.
+        if (prop === 'scanListed') return undefined;
         // #616 PR-2c c4: the sweep reads the store through `scan`; its first page rejects.
         if (prop === 'scan') {
           // eslint-disable-next-line require-yield -- a scan that fails on its first page
