@@ -488,7 +488,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
     claim('mcp/tools.md', ENDED_ROW);
     claim(
       'mcp/tools.md',
-      '`ok` with `agent_action: "stop"` (added after version 0.49.0, which gave none): `Run \'<id>\' is already terminal (<phase>); nothing ran.`',
+      '`ok` with `agent_action: "stop"` (added after version 0.50.0, which gave none): `Run \'<id>\' is already terminal (<phase>); nothing ran.`',
     );
     const { call, runId } = await endedRun();
     const r = await call('advance_run', { run_id: runId });
@@ -515,7 +515,8 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
     expect([r['status'], 'agent_action' in r, r['context_hint']]).toEqual([
       'ok',
       false,
-      `Not recorded: the question on step 'confirm' already had this answer — approve, through Realm's MCP answer tool, at ${givenAtOf(r)}.`,
+      // #625 A1b-1 (correction 1): on the ended run, then how it ended.
+      `Not recorded: the question on step 'confirm' already had this answer — approve, through Realm's MCP answer tool, at ${givenAtOf(r)}. It completed.`,
     ]);
   });
 
@@ -537,7 +538,8 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
         'error',
         'STATE_BLOCKED',
         'report_to_user',
-        `Not recorded: your choice '${choice}'. The question on step 'confirm' was already answered — approve, through Realm's MCP answer tool, at ${givenAtOf(r)}.`,
+        // #625 A1b-1 (correction 1): on the ended run, then how it ended.
+        `Not recorded: your choice '${choice}'. The question on step 'confirm' was already answered — approve, through Realm's MCP answer tool, at ${givenAtOf(r)}. It completed.`,
       ]);
     },
   );
@@ -545,7 +547,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
   it('C154, W4-R1 submit_human_response, another gate ID: STATE_RUN_TERMINAL, report_to_user', async () => {
     claim(
       'mcp/tools.md',
-      "Another gate ID is refused with `STATE_RUN_TERMINAL`: `Run '<id>' is terminal (<phase>); cannot submit a gate response — …`, saying how the run ended, then the way out for that kind of ending (the sentence of how it ended, and these words, added after version 0.49.0):",
+      "Another gate ID is refused with `STATE_RUN_TERMINAL`: `Run '<id>' is terminal (<phase>); cannot submit a gate response — …`, saying how the run ended, then the way out for that kind of ending (the sentence of how it ended, and these words, added after version 0.50.0):",
     );
     const { call, runId } = await endedRun();
     const r = await call('submit_human_response', {
@@ -568,7 +570,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
   it('C154 submit_human_response on the gate of a question whose abort ended the run: STATE_RUN_TERMINAL, not recorded, with what the question met (gates.md; #729 PR-6a)', async () => {
     claim(
       'mcp/tools.md',
-      'The gate of a question whose `on_expiry: abort` ended the run is refused with `STATE_RUN_TERMINAL`, `answer_recorded: false` and `outcome` carrying `by: { "kind": "timeout" }`; its `errors[0]` is `Not recorded: the question on step \'<step>\' reached its time limit, and the run ended as aborted.`, and its `context_hint` is the refusal that another gate ID gets, without the sentence of how the run ended, which its time limit already says (added after version 0.49.0). Another gate ID is refused with `STATE_RUN_TERMINAL`: `Run \'<id>\' is terminal (<phase>); cannot submit a gate response — …`, saying how the run ended, then the way out for that kind of ending (the sentence of how it ended, and these words, added after version 0.49.0):',
+      'The gate of a question whose `on_expiry: abort` ended the run is refused with `STATE_RUN_TERMINAL`, `answer_recorded: false` and `outcome` carrying `by: { "kind": "timeout" }`; its `errors[0]` is `Not recorded: the question on step \'<step>\' reached its time limit, and the run ended as aborted.`, and its `context_hint` is the refusal that another gate ID gets (added after version 0.49.0), without the sentence of how the run ended, which its time limit already says (added after version 0.50.0). Another gate ID is refused with `STATE_RUN_TERMINAL`: `Run \'<id>\' is terminal (<phase>); cannot submit a gate response — …`, saying how the run ended, then the way out for that kind of ending (the sentence of how it ended, and these words, added after version 0.50.0):',
     );
     claim(
       'workflow/gates.md',
@@ -2571,7 +2573,8 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     });
     // #729 PR-6a (B7): a person's recorded choice repeated says whose answer stands.
     expect([human['context_hint'], 'answer_recorded' in human]).toEqual([
-      `Not recorded: the question on step 'confirm' already had this answer — approve, through Realm's MCP answer tool, at ${givenAtOf(human)}.`,
+      // #625 A1b-1 (correction 1): on the ended run, then how it ended.
+      `Not recorded: the question on step 'confirm' already had this answer — approve, through Realm's MCP answer tool, at ${givenAtOf(human)}. It completed.`,
       false,
     ]);
   });
@@ -3170,7 +3173,7 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
     );
     claim(
       'mcp/tools.md',
-      '`ok` with `agent_action: "stop"` (added after version 0.49.0, which gave none): `Run \'<id>\' is already terminal (<phase>); nothing ran.`, then how the run ended (added after version 0.49.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it',
+      '`ok` with `agent_action: "stop"` (added after version 0.50.0, which gave none): `Run \'<id>\' is already terminal (<phase>); nothing ran.`, then how the run ended (added after version 0.50.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it',
     );
     const { call, runStore, workflowStore } = await connectWith(boom());
     const def = loadWorkflowFromString(
@@ -3406,7 +3409,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     );
     say(
       'mcp/tools.md',
-      '`ok` with `agent_action: "stop"`: `Run \'<id>\' is already terminal (<phase>); no steps executed.`, then how the run ended (added after version 0.49.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it',
+      '`ok` with `agent_action: "stop"`: `Run \'<id>\' is already terminal (<phase>); no steps executed.`, then how the run ended (added after version 0.50.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it',
     );
     const { call, runStore, workflowStore } = await connectWith();
     await workflowStore.register(

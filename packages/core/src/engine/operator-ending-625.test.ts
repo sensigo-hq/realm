@@ -142,9 +142,10 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
       sentence: F2.operatorEndingSentence?.(legacy),
     }).toEqual({
       offer: '<none>',
-      // #625 A1b-1: a record with no seal says its ending was worked out from its record.
+      // #625 A1b-1 (correction 1): an abandoned record with no seal keeps its reason, and says how
+      // it is known.
       sentence:
-        "Its ending was worked out from its record (phase 'abandoned'); no seal was written. To run the work again, start a new run.",
+        'It was abandoned, with the reason "stopped by hand" (worked out from its record; no seal was written). To run the work again, start a new run.',
     });
   });
 });

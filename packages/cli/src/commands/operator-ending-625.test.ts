@@ -121,7 +121,7 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
   it('realm run advance: the ended reason goes on with the operator’s ending, never the undo (discrimination)', async () => {
     claim(
       'docs/reference/cli/realm-run-acting.md',
-      'when it was abandoned, it goes on `. It was abandoned, with the reason "<reason>". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.49.0, which said an operator ended it), never with `realm run resume`, which would erase that ending and its reason)',
+      'when it was abandoned, it goes on `. It was abandoned, with the reason "<reason>". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.50.0, which said an operator ended it), never with `realm run resume`, which would erase that ending and its reason)',
     );
     const run = await abandoned();
     const r = realm('run', 'advance', run.id);
@@ -163,7 +163,7 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
   it('realm workflow run’s hand-back: `Ended:` with the operator’s ending in place of `Resume:` (discrimination); a failed run keeps `Resume:` (preservation)', async () => {
     claim(
       'docs/reference/cli/realm-workflow.md',
-      'When the run was abandoned, that line says how it ended and the way on: `  Ended:     It was abandoned, with the reason "<reason>". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.49.0, which said an operator ended it), never `realm run resume`, which would erase that ending and its reason.',
+      'When the run was abandoned, that line says how it ended and the way on: `  Ended:     It was abandoned, with the reason "<reason>". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.50.0, which said an operator ended it), never `realm run resume`, which would erase that ending and its reason.',
     );
     claim(
       'CHANGELOG.md',
@@ -198,7 +198,7 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
   it('realm agent whose run an operator ends during the drive: `Ended:` with the ending, no `Resume:` (discrimination)', async () => {
     claim(
       'docs/reference/cli/realm-agent.md',
-      'When the run was abandoned, that line says how it ended and the way on: `  Ended:     It was abandoned, with the reason "<reason>". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.49.0, which said an operator ended it), never `realm run resume`, which would erase that ending and its reason.',
+      'When the run was abandoned, that line says how it ended and the way on: `  Ended:     It was abandoned, with the reason "<reason>". To run the work again, start a new run.` (`It was abandoned; no reason was given.` when none was given; added after version 0.50.0, which said an operator ended it), never `realm run resume`, which would erase that ending and its reason.',
     );
     await workflowStore.register(TWO);
     const { record: run } = await runStore.create({

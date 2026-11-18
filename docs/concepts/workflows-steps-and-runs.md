@@ -63,14 +63,14 @@ So do not re-register a workflow in a way that changes its steps while runs of i
 
 A run is one execution of a workflow. Each run has an ID, the parameters it was started with, and a **phase**:
 
-| Phase          | Meaning                                                       |
-| -------------- | ------------------------------------------------------------- |
-| `running`      | Work remains, and nothing is waiting on a person.             |
-| `gate_waiting` | The run is stopped at a human gate.                           |
-| `completed`    | The run reached its end.                                      |
-| `failed`       | A step failed and nothing in the workflow recovered.          |
-| `aborted`      | The workflow itself stopped the run, by a rule in it.         |
-| `abandoned`    | The run was abandoned (`realm run abandon` or `abandon_run`). |
+| Phase          | Meaning                                                                            |
+| -------------- | ---------------------------------------------------------------------------------- |
+| `running`      | Work remains, and nothing is waiting on a person.                                  |
+| `gate_waiting` | The run is stopped at a human gate.                                                |
+| `completed`    | The run reached its end.                                                           |
+| `failed`       | A step failed and nothing in the workflow recovered.                               |
+| `aborted`      | The workflow itself stopped the run, by a rule in it.                              |
+| `abandoned`    | The run was abandoned (`realm run abandon`, `abandon_run` or `realm run cleanup`). |
 
 The last four are final. [Evidence](evidence.md) explains each ending.
 

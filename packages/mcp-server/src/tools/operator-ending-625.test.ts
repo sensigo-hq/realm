@@ -101,11 +101,11 @@ describe('#625 PR-2a, F2 — over MCP, a run an operator ended is never offered 
     );
     claim(
       'mcp/tools.md',
-      "`Run '<id>' is already terminal (<phase>); no steps executed.`, then how the run ended (added after version 0.49.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for an abandoned run, `To run the work again, start a new run.` in its place",
+      "`Run '<id>' is already terminal (<phase>); no steps executed.`, then how the run ended (added after version 0.50.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for an abandoned run, `To run the work again, start a new run.` in its place",
     );
     claim(
       'mcp/tools.md',
-      "`Run '<id>' is already terminal (<phase>); nothing ran.`, then how the run ended (added after version 0.49.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for an abandoned run, `To run the work again, start a new run.` in its place",
+      "`Run '<id>' is already terminal (<phase>); nothing ran.`, then how the run ended (added after version 0.50.0), and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for an abandoned run, `To run the work again, start a new run.` in its place",
     );
     claim(
       'mcp/tools.md',
@@ -113,7 +113,7 @@ describe('#625 PR-2a, F2 — over MCP, a run an operator ended is never offered 
     );
     claim(
       'mcp/tools.md',
-      'when the run was abandoned, with `To run the work again, start a new run.` When the run had ended before the call, or another program ended it during the call, how it ended comes first (added after version 0.49.0).',
+      'when the run was abandoned, with `To run the work again, start a new run.` When the run had ended before the call, or another program ended it during the call, how it ended comes first (added after version 0.50.0).',
     );
     const { call, runId } = await ended('abandoned', 'op-625-key');
     const replies = {

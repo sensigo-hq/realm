@@ -1580,8 +1580,11 @@ export function saysHowItEnded(
 ): boolean {
   if (run.terminal_state !== true || reply.outcome !== undefined) return false;
   return (
+    // `ok` with `stop`: the run was terminal at the call's first read (the chain's entry, D5), the
+    // guard found the run already ended, or a `run_ended` race met the ended run (composeAfterRaces
+    // sets `stop` exactly then).
     (reply.status === 'ok' && reply.intrinsic_action === 'stop') ||
-    (reply.races ?? []).some((r) => r.kind === 'run_ended') ||
+    // The call's own step's write was refused because another program had ended the run.
     reply.error_code === 'STATE_RUN_TERMINAL'
   );
 }

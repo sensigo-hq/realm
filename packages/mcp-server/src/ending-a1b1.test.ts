@@ -4,7 +4,7 @@
 // Before A1b-1 an abandoned run's replies said "An operator ended this run", though no record holds
 // who did it, and most other endings were named by their phase only. Now one core composer gives
 // each ending one sentence — which steps failed, which step or guard aborted it, a question's time
-// limit, 'realm cleanup', the reason an abandon was given — and the four MCP tails say it once, on a
+// limit, 'realm run cleanup', the reason an abandon was given — and the four MCP tails say it once, on a
 // reply about a run that had already ended or that another program ended during the call.
 //
 // Each ended record is written by its real writer: the step arms by running the workflow, the
@@ -276,7 +276,7 @@ const ENDINGS: Array<[string, string]> = [
     "Gate 'q' expired and the run aborted per the workflow's declared on_expiry.",
   ],
   ['abandon_requested', 'It was abandoned, with the reason "wrong customer".'],
-  ['cleanup_sweep', "'realm cleanup' marked it abandoned."],
+  ['cleanup_sweep', "'realm run cleanup' marked it abandoned."],
 ];
 
 describe('#625 A1b-1 — one sentence per ending, from the record, on the MCP reply about an ended run', () => {
@@ -439,7 +439,7 @@ function abandoningHandler(store: () => InMemoryStore, runId: () => string): Ext
 }
 
 const ABANDONED = 'It was abandoned, with the reason "another program".';
-const SWEPT = "'realm cleanup' marked it abandoned.";
+const ANSWERED = "The answer on step 'q' completed the run.";
 
 describe('#625 A1b-1 — said once, per surface', () => {
   it('check 6 — on a run already ended: execute_step, advance_run, start_run (matched) and submit_human_response each say it once', async () => {
@@ -602,7 +602,7 @@ describe('#625 A1b-1 — said once, per surface', () => {
 });
 
 describe('#625 A1b-1 — the answer form, the zombie refusal, the way out, D5', () => {
-  it('check 6 — a form that came back after another program ended the run: the sentence once, after "ended while the form was open"', async () => {
+  it('check 6 — a form that came back after another door’s answer ended the run: the sentence once, after "ended while the form was open"', async () => {
     const asks = def('e-form', {
       a: { description: 'A.', execution: 'agent', depends_on: [] },
       q: { ...GATE(), depends_on: ['a'] },
@@ -620,15 +620,9 @@ describe('#625 A1b-1 — the answer form, the zombie refusal, the way out, D5', 
     );
     let runId = '';
     client.setRequestHandler(ElicitRequestSchema, async () => {
-      // While the form is open, another program ends the run: `realm cleanup`'s sweep, as it writes it.
-      const { record } = await runStore.get(runId);
-      await runStore.settleStep!(runId, {
-        kind: 'seal_run',
-        arm: 'cleanup_sweep',
-        reason: 'Marked abandoned by realm cleanup',
-        expected_version: record.version,
-        release_claims: true,
-      });
+      // While the form is open, another door answers the question, and its answer completes the run.
+      const gate = (await runStore.get(runId)).record.pending_gate!;
+      await submitHumanResponse(runStore, asks, { runId, gateId: gate.gate_id, choice: 'ok' });
       return { action: 'decline' };
     });
     await Promise.all([server.connect(st), client.connect(ct)]);
@@ -644,9 +638,9 @@ describe('#625 A1b-1 — the answer form, the zombie refusal, the way out, D5', 
     //     (b) prints the hint.
     expect({
       opens: String(r['context_hint']).includes(
-        `Run '${runId}' ended while the form was open (phase 'abandoned'). ${SWEPT}`,
+        `Run '${runId}' ended while the form was open (phase 'completed'). ${ANSWERED}`,
       ),
-      once: occurrences(r['context_hint'], SWEPT),
+      once: occurrences(r['context_hint'], ANSWERED),
     }).toEqual({ opens: true, once: 1 });
   });
 
@@ -722,5 +716,74 @@ describe('#625 A1b-1 — the answer form, the zombie refusal, the way out, D5', 
       before: 'stop',
       own: undefined,
     });
+  });
+});
+
+describe('#625 A1b-1 correction 1 — the cells the review added', () => {
+  it('correction 1 (WK-08) — a second answer on a run an earlier answer’s guard aborted says how the run ended, once', async () => {
+    const d = def('e-second-answer', {
+      confirm: GATE(),
+      g: {
+        description: 'G.',
+        execution: 'guard',
+        depends_on: ['confirm'],
+        abort_unless: ["confirm.choice == 'ok'"],
+        abort_message: 'Said no.',
+      },
+    });
+    const w = await world([...ALL, d], handlers());
+    const id = await w.fresh(d);
+    await executeStep(w.runStore, d, {
+      runId: id,
+      command: 'confirm',
+      input: {},
+      dispatcher: echo,
+    });
+    const gate = (await w.runStore.get(id)).record.pending_gate!;
+    // The first answer: its guard aborts the run.
+    await submitHumanResponse(w.runStore, d, { runId: id, gateId: gate.gate_id, choice: 'no' });
+    const second = (await handleSubmitHumanResponse(
+      { run_id: id, gate_id: gate.gate_id, choice: 'ok' },
+      w.stores,
+    )) as unknown as Record<string, unknown>;
+    // (a) red when the refusal's outcome (who answered) is taken to say how the run ended — the
+    //     ending then left out; (b) prints the code and the hint.
+    expect({
+      code: second['error_code'],
+      already: String(second['context_hint']).startsWith("Not recorded: your choice 'ok'."),
+      once: occurrences(second['context_hint'], 'Guard step \'g\' aborted the run: "Said no.".'),
+    }).toEqual({ code: 'STATE_BLOCKED', already: true, once: 1 });
+  });
+
+  it('correction 1 — abandon_run with a blank reason: no reason was given', async () => {
+    const w = await world(ALL, handlers());
+    const id = await w.fresh(D.runLevel);
+    await handleAbandonRun({ run_id: id, reason: '' }, w.stores);
+    const r = await endedReply(w, id);
+    // (a) red when a blank reason is shown as one a person gave; (b) prints the hint.
+    expect(occurrences(r['context_hint'], 'It was abandoned; no reason was given.')).toBe(1);
+  });
+
+  it('correction 1 — a legacy abandoned record with no seal keeps its reason, and says how it is known', async () => {
+    const w = await world(ALL, handlers());
+    const id = await w.fresh(D.runLevel);
+    const { record } = await w.runStore.get(id);
+    // A record written before seals existed: abandoned by hand, with a reason, no `sealed_by`.
+    w.runStore.seed({
+      ...record,
+      terminal_state: true,
+      terminal_reason: 'stopped by hand',
+      abandoned_at: '2026-01-01T00:00:00.000Z',
+      run_phase: 'abandoned',
+    } as RunRecord);
+    const r = await endedReply(w, id);
+    // (a) red when such a record loses its reason, or says it as a fresh seal would; (b) prints the
+    //     hint.
+    expect(
+      occurrences(
+        r['context_hint'],
+        'It was abandoned, with the reason "stopped by hand" (worked out from its record; no seal was written).',
+      ),
+    ).toBe(1);
   });
 });

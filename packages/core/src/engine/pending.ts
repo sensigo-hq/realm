@@ -771,6 +771,7 @@ export function guardEndingSentence(step: string, outcome: GuardOutcome): string
 function isDefaultAbandonReason(reason: string | undefined): boolean {
   return (
     reason === undefined ||
+    reason.trim() === '' ||
     reason === 'Abandoned' ||
     (FIXED_TERMINAL_REASONS.includes(reason) && reason.startsWith('Abandoned'))
   );
@@ -859,7 +860,7 @@ function endingWords(run: EndingFacts, arm: SealArm, step: string | undefined): 
         ? 'It was abandoned; no reason was given.'
         : `It was abandoned, with the reason ${escapedBoundedValue(run.terminal_reason)}.`;
     case 'cleanup_sweep':
-      return "'realm cleanup' marked it abandoned.";
+      return "'realm run cleanup' marked it abandoned.";
   }
 }
 
@@ -889,9 +890,12 @@ export function runEndingOf(
 function runEndingSentence(run: EndingFacts): string {
   const seal = run.sealed_by;
   const ending =
-    seal === undefined
-      ? `Its ending was worked out from its record (phase '${deriveRunPhase(run)}'); no seal was written.`
-      : endingWords(run, seal.arm, sealStepOf(run));
+    seal !== undefined
+      ? endingWords(run, seal.arm, sealStepOf(run))
+      : deriveRunPhase(run) === 'abandoned'
+        ? // An abandoned record keeps its reason (by the same default rule), and says how it is known.
+          `${endingWords(run, 'abandon_requested', undefined).slice(0, -1)} (worked out from its record; no seal was written).`
+        : `Its ending was worked out from its record (phase '${deriveRunPhase(run)}'); no seal was written.`;
   // How it is known: said inside the sentence, before its last full stop.
   return seal?.classified === true ? `${ending.slice(0, -1)}${CLASSIFIED_WORDS}.` : ending;
 }
