@@ -6,6 +6,7 @@ import {
   advanceRun,
   classifyStop,
   endedRunWaysSentence,
+  saysHowItEnded,
   judgedSnapshotOf,
   composeWaysOn,
   waysStoreOf,
@@ -175,7 +176,9 @@ export function handBackHint(args: {
   if (deduped) {
     // decisions C205, C211: a matched run that has ended says the ways back in — #715 (b) (02 §A.1,
     // D6-17): judged at the snapshot's own reading.
-    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${endedRunWaysSentence(current.record, definition, current.at)}`;
+    // #625 A1b-1: a matched run that has ended says how it ended (someone other than this call
+    // ended it), then its ways back in.
+    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${endedRunWaysSentence(current.record, definition, current.at, true)}`;
   }
   return run.rerun_of !== undefined
     ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).`
@@ -472,7 +475,13 @@ export async function handleStartRun(
         finalRun?.rerun_of !== undefined
           ? ` This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`
           : afterSnap !== undefined
-            ? endedRunWaysSentence(afterSnap.record, definition, afterSnap.at)
+            ? // #625 A1b-1 (M3): another program ended the run during this call — said first.
+              endedRunWaysSentence(
+                afterSnap.record,
+                definition,
+                afterSnap.at,
+                after === ranReply && saysHowItEnded(result, afterSnap.record),
+              )
             : '';
       return {
         ...mcpReplyOf(withHintTail(renderReply(after, mcpHostOf(stores)), tail)),

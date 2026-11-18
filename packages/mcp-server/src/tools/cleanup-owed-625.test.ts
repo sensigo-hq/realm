@@ -51,8 +51,9 @@ const def = (withTidy: boolean): WorkflowDefinition => ({
   },
 });
 
+// #625 A1b-1: how the run ended ("It completed."), then the cleanup step alone as the way out.
 const PENDING_WAY = (id: string) =>
-  `it completed; cleanup step left pending: 'tidy' — 'realm run drain ${id} --force' runs it with code that has its handler.`;
+  `It completed. Cleanup step left pending: 'tidy' — 'realm run drain ${id} --force' runs it with code that has its handler.`;
 
 const handles: TempHome[] = [];
 afterEach(async () => {
@@ -79,7 +80,7 @@ describe('#625 PR-2a, F11 — the ended-run refusal never says "nothing is owed"
   it('the library’s refusal says the pending cleanup step and its command; the MCP reply says it once', async () => {
     claim(
       'docs/reference/mcp/tools.md',
-      "`it completed, and nothing is owed.` for a completed run, or, when its ending left a cleanup step pending, `it completed; cleanup step left pending: '<name>' — 'realm run drain <id> --force' runs it with code that has its handler.`, said once (added after version 0.46.0);",
+      "`Nothing is owed.` for a completed run, or, when its ending left a cleanup step pending, `Cleanup step left pending: '<name>' — 'realm run drain <id> --force' runs it with code that has its handler.`, said once (added after version 0.46.0);",
     );
     const r = await completed(true);
     const ledger = (await r.runStore.get(r.id)).record.finalizer_ledger?.['tidy']?.status;
@@ -108,7 +109,7 @@ describe('#625 PR-2a, F11 — the ended-run refusal never says "nothing is owed"
     });
   });
 
-  it('a completed run with no cleanup step pending (preservation): "it completed, and nothing is owed."', async () => {
+  it('a completed run with no cleanup step pending (preservation): "It completed. Nothing is owed."', async () => {
     const r = await completed(false);
     const lib = await submitHumanResponse(r.runStore, r.d, {
       runId: r.id,
@@ -117,7 +118,7 @@ describe('#625 PR-2a, F11 — the ended-run refusal never says "nothing is owed"
     });
     // (a) red when a completed run with nothing owed is said otherwise; (b) prints the refusal.
     expect(lib.errors[0]).toBe(
-      `Run '${r.id}' is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.`,
+      `Run '${r.id}' is terminal (completed); cannot submit a gate response — It completed. Nothing is owed.`,
     );
   });
 });

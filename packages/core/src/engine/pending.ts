@@ -6,7 +6,7 @@
 // instruction and way sentence out of it — the doors word the ways.
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definition.js';
-import type { RunRecord, PendingGate } from '../types/run-record.js';
+import type { RunRecord, PendingGate, SealArm } from '../types/run-record.js';
 import type { Snapshot } from './snapshot.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
@@ -20,6 +20,7 @@ import {
 } from './eligibility.js';
 import { RESUMABLE_PHASES } from './lifecycle.js';
 import { escapedBoundedValue } from '../utils/redaction.js';
+import { FIXED_TERMINAL_REASONS } from '../utils/disclosure-tables.js';
 import { NAMES_SHOWN, listWords, quotedNames } from '../utils/list-words.js';
 import { shellWord } from '../utils/shell-word.js';
 import { checkPreconditions, preconditionHint, preconditionRefusal } from './precondition.js';
@@ -749,36 +750,165 @@ export function offeredResumeWay(
   return deriveRunPhase(run) === 'failed' ? resumeWay(run, workflow) : undefined;
 }
 
+/** A guard's settled outcome, as `SettlementResult.guards` reports it. */
+export type GuardOutcome = 'pass' | 'abort' | 'resolution_error';
+
 /**
- * F2: what a surface says, in the resume offer's place, about a run an operator ended (derived phase
- * `abandoned`): that an operator ended it, its reason (`terminal_reason`, free text, through the
- * escaped, bounded value renderer — one line, no terminal escape), and that a new run is the way to
- * run the work again — `an operator ended this run, with the reason "<reason>"; to run the work
- * again, start a new run` (`with no reason recorded` when there is none). `undefined` for any other
- * run. A clause: {@link operatorEndingSentence} is it as a sentence.
+ * The sentence for a guard that ENDED a run — the ONE mint of the three, verbatim what the chain
+ * has always answered when a guard it settled ended the run. #625 A1b-1: moved here from
+ * execution-loop.ts, words unchanged, so the ending composer ({@link runEndingOf}) calls the same
+ * mint (execution-loop imports this module, never the reverse).
  */
-export function operatorEndingClause(
-  run: Pick<RunRecord, 'terminal_reason'> & Parameters<typeof deriveRunPhase>[0],
-): string | undefined {
-  if (deriveRunPhase(run) !== 'abandoned') return undefined;
-  const reason =
-    run.terminal_reason === undefined
-      ? 'with no reason recorded'
-      : `with the reason ${escapedBoundedValue(run.terminal_reason)}`;
-  return `an operator ended this run, ${reason}; to run the work again, start a new run`;
+export function guardEndingSentence(step: string, outcome: GuardOutcome): string {
+  return outcome === 'abort'
+    ? `Guard step '${step}' aborted the run.`
+    : outcome === 'resolution_error'
+      ? `Guard step '${step}' failed with a resolution error. Run is terminated.`
+      : `Guard step '${step}' passed and completed the run.`;
+}
+
+/** The reasons Realm writes for an abandon when no one gave one: never shown as a person's. */
+function isDefaultAbandonReason(reason: string | undefined): boolean {
+  return (
+    reason === undefined ||
+    reason === 'Abandoned' ||
+    (FIXED_TERMINAL_REASONS.includes(reason) && reason.startsWith('Abandoned'))
+  );
+}
+
+/** How a run's ending is known: a fresh seal adds nothing; a seal the migration classified says so. */
+const CLASSIFIED_WORDS = ' (classified when its record was migrated)';
+
+/**
+ * #625 A1b-1: how a run ended, from its record only. `sentence` is the ending's one sentence and how
+ * it is known; `wayOut` is the way on from the ended run, as a part of its own (a surface renders a
+ * command through its own ctx); `by` is the slot for who ended it, which nothing fills yet (the
+ * actor unit's: Realm never claims who was on the other end).
+ */
+export interface RunEnding {
+  sentence: string;
+  wayOut:
+    { kind: 'new_run' } | { kind: 'resume'; steps: string[]; command: string } | { kind: 'none' };
+  by?: Attributed;
+}
+
+/** The record facts an ending's sentence is read from — the ones its phase is derived from. */
+type EndingFacts = Parameters<typeof deriveRunPhase>[0];
+
+/** The step a seal arm names: `sealed_by.step`, or for an abort arm without it `aborted_at`'s. */
+function sealStepOf(run: Pick<RunRecord, 'sealed_by' | 'aborted_at'>): string | undefined {
+  const seal = run.sealed_by;
+  if (seal?.step !== undefined) return seal.step;
+  const abortArm =
+    seal?.arm === 'guard_abort' ||
+    seal?.arm === 'handler_abort' ||
+    seal?.arm === 'gate_expiry_abort';
+  return abortArm ? run.aborted_at?.step_id : undefined;
+}
+
+/** The ending sentence of an arm, without how it is known. */
+function endingWords(run: EndingFacts, arm: SealArm, step: string | undefined): string {
+  const failed = [...new Set(run.failed_steps)];
+  switch (arm) {
+    case 'complete':
+      return 'It completed.';
+    case 'gate_resolution_complete':
+      return step !== undefined
+        ? `The answer on step '${step}' completed the run.`
+        : 'An answer completed the run.';
+    case 'guard_pass_complete':
+      return step !== undefined
+        ? guardEndingSentence(step, 'pass')
+        : 'A guard step passed and completed the run.';
+    case 'gate_expiry_default':
+      return step !== undefined
+        ? `The question on step '${step}' reached its time limit, and its declared default completed the run.`
+        : 'A question reached its time limit, and its declared default completed the run.';
+    case 'step_failure':
+      return failed.length === 0
+        ? 'A step failed.'
+        : `${failed.length === 1 ? 'Step' : 'Steps'} ${quotedNames(failed, NAMES_SHOWN)} failed.`;
+    case 'guard_resolution_error':
+      return step !== undefined
+        ? guardEndingSentence(step, 'resolution_error')
+        : 'A guard step failed with a resolution error. Run is terminated.';
+    case 'spawn_failure':
+      return "It failed: 'realm listen' could not start the program that drives it; the error is not on the record.";
+    case 'extensions_load_failure':
+      return "It failed: the project's extensions could not be loaded when 'realm agent' attached to it.";
+    case 'handler_abort':
+      return step !== undefined
+        ? `Step '${step}''s handler aborted the run.`
+        : "A step's handler aborted the run.";
+    case 'guard_abort': {
+      const sentence =
+        step !== undefined ? guardEndingSentence(step, 'abort') : 'A guard step aborted the run.';
+      const message = run.aborted_at?.abort_message;
+      // The guard's message, said once: before the full stop (its act-time surfaces print it on a
+      // `Reason:` line instead, so the mint itself never adds it).
+      return message === undefined
+        ? sentence
+        : `${sentence.slice(0, -1)}: ${escapedBoundedValue(message)}.`;
+    }
+    case 'gate_expiry_abort':
+      return step !== undefined
+        ? `Gate '${step}' expired and the run aborted per the workflow's declared on_expiry.`
+        : "A question expired and the run aborted per the workflow's declared on_expiry.";
+    case 'abandon_requested':
+      return isDefaultAbandonReason(run.terminal_reason)
+        ? 'It was abandoned; no reason was given.'
+        : `It was abandoned, with the reason ${escapedBoundedValue(run.terminal_reason)}.`;
+    case 'cleanup_sweep':
+      return "'realm cleanup' marked it abandoned.";
+  }
 }
 
 /**
- * F2: {@link operatorEndingClause} as a sentence — `An operator ended this run, with the reason
- * "<reason>"; to run the work again, start a new run.` — the one sentence every offer site says in
- * the resume offer's place for a run an operator ended (the CLI hand-backs print it as a line of
- * their own). `undefined` for any other run.
+ * #625 A1b-1: the one ending composer — how a run that has ended ended, read from its record only:
+ * one sentence per seal arm, how it is known, and the way out as its own part. `undefined` for a run
+ * that has not ended. Every reader that says an ended run's ending takes it from here.
+ */
+export function runEndingOf(
+  run: Parameters<typeof resumeWay>[0],
+  workflow: Parameters<typeof resumeWay>[1],
+): RunEnding | undefined {
+  if (run.terminal_state !== true) return undefined;
+  const resume = offeredResumeWay(run, workflow);
+  return {
+    sentence: runEndingSentence(run),
+    wayOut:
+      deriveRunPhase(run) === 'abandoned'
+        ? { kind: 'new_run' }
+        : resume !== undefined
+          ? { kind: 'resume', steps: resume.steps, command: resume.command }
+          : { kind: 'none' },
+  };
+}
+
+/** The ending's one sentence and how it is known, for a run that has ended. */
+function runEndingSentence(run: EndingFacts): string {
+  const seal = run.sealed_by;
+  const ending =
+    seal === undefined
+      ? `Its ending was worked out from its record (phase '${deriveRunPhase(run)}'); no seal was written.`
+      : endingWords(run, seal.arm, sealStepOf(run));
+  // How it is known: said inside the sentence, before its last full stop.
+  return seal?.classified === true ? `${ending.slice(0, -1)}${CLASSIFIED_WORDS}.` : ending;
+}
+
+/** The way out of an abandoned run, as a sentence of its own. */
+export const NEW_RUN_SENTENCE = 'To run the work again, start a new run.';
+
+/**
+ * F2, #625 A1b-1: what a surface says, in the resume offer's place, about an abandoned run: the
+ * composer's ending sentence ({@link runEndingOf}), then `To run the work again, start a new run.` —
+ * the CLI hand-backs print it as a line of their own (`Ended:`). `undefined` for any other run.
  */
 export function operatorEndingSentence(
-  run: Parameters<typeof operatorEndingClause>[0],
+  run: Pick<RunRecord, 'terminal_reason'> & EndingFacts,
 ): string | undefined {
-  const clause = operatorEndingClause(run);
-  return clause === undefined ? undefined : `${clause.charAt(0).toUpperCase()}${clause.slice(1)}.`;
+  if (deriveRunPhase(run) !== 'abandoned') return undefined;
+  return `${runEndingSentence(run)} ${NEW_RUN_SENTENCE}`;
 }
 
 /**

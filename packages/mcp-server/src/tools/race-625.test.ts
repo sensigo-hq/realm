@@ -186,7 +186,7 @@ describe('#625 PR-2a, F7 — MCP advance_run and execute_step reply from the rec
         run_phase: r.reply.run_phase,
         next: r.reply.next_actions.length,
         operator: r.reply.context_hint.includes(
-          'An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
+          'It was abandoned, with the reason "another program". To run the work again, start a new run.',
         ),
       }).toEqual({
         fired: true,

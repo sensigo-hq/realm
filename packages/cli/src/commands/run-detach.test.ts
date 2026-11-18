@@ -839,7 +839,7 @@ steps:
       expect(stderr()).toContain("Run '");
       expect(stderr()).toContain(
         // #625 PR-2a, decision C170: the way out is true for the kind of ending (here completed).
-        'is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.',
+        'is terminal (completed); cannot submit a gate response — It completed. Nothing is owed.',
       );
       expect(logSpy.mock.calls.map((c: unknown[]) => shown(c[0])).join('\n')).toContain(
         'Run complete. Phase: completed',
