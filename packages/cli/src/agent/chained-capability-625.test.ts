@@ -104,7 +104,13 @@ describe('#625 PR-2a, C64 — realm agent: a chained step this runner lacks the 
     expect(Object.keys(d.run.capability_blocks ?? {})).toEqual(['compute']);
     const at = d.lines.indexOf('log: \n→ [agent] ask');
     expect(at).toBeGreaterThan(-1);
-    expect(d.lines.slice(at + 2)).toEqual(['log:   ✓ → running', BLOCKED_LINE, EXIT_LINE]);
+    // #625 A1a: the chained step's own line as it starts, after the agent step's ✓ (no second ✓).
+    expect(d.lines.slice(at + 2)).toEqual([
+      'log:   ✓ → running',
+      'log: → [auto] compute',
+      BLOCKED_LINE,
+      EXIT_LINE,
+    ]);
     expect(d.lines.join('\n')).not.toContain("Step 'ask' is blocked");
   });
 

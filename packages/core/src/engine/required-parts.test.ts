@@ -275,6 +275,11 @@ const TYPED: Array<[EngineEntry, string, unknown]> = [
   ['releaseDriveClaim', 'options.evidence', 'x'],
   // #729 CW-2b: `heldClaim`, executeChain's only.
   ['executeChain', 'options.heldClaim', 'x'],
+  // #625 A1a: `advanceRun`'s four step callbacks, which executeChain now takes.
+  ['executeChain', 'options.onStep', 'x'],
+  ['executeChain', 'options.onTaken', 'x'],
+  ['executeChain', 'options.onNotRecorded', 'x'],
+  ['executeChain', 'options.onGuard', 'x'],
 ];
 
 describe('issue #719 A2 (R3) — every typed optional member: a wrong type is refused before any read', () => {

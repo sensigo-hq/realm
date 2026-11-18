@@ -101,6 +101,8 @@ To use an older Realm again and keep every run this one stored, step the store f
 3. **Install that Realm**, and give every Realm package in a project the same exact version (section 2 below).
 4. **Start the processes again.**
 
+`realm rollback` finds the version for you: in step 2, run it instead of `realm db migrate --to 1`. It reads the last migrate recorded for this home in `~/.realm-backups/migrations.jsonl` and steps the store file back to the version before it, the same way. A home that no migrate of Realm 0.50.0 or later has touched (one created at version 2, or one whose record was deleted) has no record: there, `realm db migrate --to 1` is the way. See [`realm rollback`](../reference/cli/realm-db.md#realm-rollback).
+
 Version 2's step back drops the `outbound` table, the record of the Slack reminders and escalations `realm agent` or `realm listen --send-reminders` sent; its line says how many were recorded as sent. Without that record, an agent that restarts may send a reminder or an escalation again, as 0.49.0's agents could. When a step cannot be undone, `realm db migrate --to` refuses and changes nothing; restore a backup made before the upgrade instead, with `realm db restore <backup>`. See [`realm db migrate`](../reference/cli/realm-db.md#migrate).
 
 ## The agent no longer answers gates by default

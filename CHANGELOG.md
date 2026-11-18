@@ -10,9 +10,14 @@ All notable changes to this project are documented here.
 
 **1. On MCP, `agent_action` is `report_to_user` and `until` is never a past held deadline when every blocker is a step past its deadline.**
 
+### Added
+
+- **`realm rollback` undoes the last migrate of this home, using the record it left** (#616): it reads `~/.realm-backups/migrations.jsonl`, the record `realm db migrate` keeps, and, when the store file is at the version that migrate reached, steps it back to the version before it as `realm db migrate --to` does: a backup first, every run kept, the step back recorded, and the command that installs the older Realm printed last. A home migrated by Realm 0.50.0 or later has that record. It refuses, and changes nothing, when the home has no record, the file is at another version, or the last record is a step back. `realm rollback` takes no options (`realm rollback --help` describes it). See [`realm rollback`](docs/reference/cli/realm-db.md#realm-rollback).
+
 ### Changed
 
 - **Each held step carries a `reclaim` way for a person, with its conditions.** In the library, `WAY_VERBS` gains `reclaim`, and `WayOn` the new `ReclaimWay`; `Cond` gains the conditions `claim_deadline_ahead`, `override_claim_unknown_age` and `rerun_not_idempotent`; `UNAVAILABLE_CODES` and `FactsByCode` gain the codes `not_held`, `store_keeps_no_claims`, `fence_required` and `claim_changed`, and `held_elsewhere`'s facts gain the claim's stamp (`claimed_at`) and, for a deadline that cannot be read, `{ absent: 'unparseable_stamp' }`. `WayRenderer` and `LIBRARY_WORDS` gain `reclaim` with the list: a program that writes the full `WayRenderer` itself adds a `reclaim` function, and one built with `withLibraryWords` renders it in Realm's words.
+- **A reply that ran a chain after your step says your step was recorded.** `execute_step`, `start_run` and `executeChain` keep `status`, `errors`, `error_code`, `agent_action` and `stopped_step` as before, and add `own_act` (`EngineReply`, beta): the called step, or the run's creation, was recorded, and the reply's text opens with it. `realm agent` prints the agent step's own ✓ and the chained steps' `→ [auto]` lines, and `realm workflow run` the agent step's own ✓, after its chain. `executeChain` takes `advanceRun`'s step callbacks (`ExecuteChainOptions`). (#625)
 
 ## [0.50.0] — 2026-11-17
 

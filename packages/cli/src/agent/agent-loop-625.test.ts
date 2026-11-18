@@ -169,7 +169,10 @@ describe('#625 PR-2a — the realm agent loop', () => {
       '→ [auto] b',
       '  ✓ → running',
       '\n→ [agent] review',
-      // `c` runs inside the agent step's own call (executeChain's loop), silently, as before #625.
+      // `c` runs inside the agent step's own call (executeChain's loop). #625 A1a: the agent step's
+      // ✓ as `c` starts, `c`'s own line, and `c`'s ✓ when the chain ends (silent before A1a).
+      '  ✓ → running',
+      '→ [auto] c',
       '  ✓ → completed',
     ]);
   });

@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import type { Command } from 'commander';
 import {
   dbCommands,
+  storeTopLevelCommands,
   runCommands,
   topLevelCommands,
   workflowCommands,
@@ -30,6 +31,7 @@ describe('#715 (b) Amendment 5 — the CLI commands that print JSON', () => {
       ...commandsOf('workflow', workflowCommands),
       ...commandsOf('run', runCommands),
       ...commandsOf('db', dbCommands),
+      ...commandsOf('', storeTopLevelCommands),
       ...commandsOf('', topLevelCommands),
     ];
     const withJson = new Set(

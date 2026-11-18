@@ -454,7 +454,11 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     );
     expect(r.status).toBe('error');
     expect(r.error_code).not.toBe('ENGINE_HANDLER_NOT_REGISTERED');
-    expect(r.context_hint).not.toContain(`created for workflow`);
+    // #625 A1a: the error reply, opened with the run's creation (its own act) — never the C52
+    // creation reply, which is `ok` and says nothing failed.
+    expect(r.context_hint).toBe(
+      `Run '${r.run_id}' created for workflow 'fail-head-wf'. Step 'boom' failed. Recovery steps are available in next_actions.`,
+    );
   });
 
   it('C53: an answer on a server without the handler names the way out (registry basis)', async () => {
