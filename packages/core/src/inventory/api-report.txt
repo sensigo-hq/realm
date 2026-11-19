@@ -1842,6 +1842,7 @@ KeyAnswer · type · public
 
 KeyHolderFields · type · internal
 KeysOfUnion · type · internal
+LEASE_NOT_KNOWN_HERE · value · internal
 LEASE_PROBE_REASONS · value · public
   const LEASE_PROBE_REASONS: readonly [
       "not_checked",
@@ -1915,6 +1916,7 @@ LeaseState · type · internal
 LeaseUnavailableReason · type · beta
   type LeaseUnavailableReason = (typeof LEASE_UNAVAILABLE_REASONS)[number];
 
+LeaseWordsInput · type · internal
 LibraryHost · type · public
   type LibraryHost = Readonly<Record<string, never>>;
 
@@ -3896,6 +3898,7 @@ Unavailable · type · public
 UnavailableCode · type · public
   type UnavailableCode = keyof typeof UNAVAILABLE_CODES;
 
+UncheckedLease · type · internal
 Unleased · type · public
   type Unleased = {
       readonly absent: 'unleased';
@@ -4534,6 +4537,8 @@ keptCacheGaps · value · internal
 knownSchemaKeywords · value · internal
 lastExecutionIdentity · value · internal
 lateAnswerOutcome · value · internal
+leaseCheckCondition · value · internal
+leaseCheckPhrase · value · internal
 leaseFactOf · value · public
   function leaseFactOf(snapshot: Pick<Snapshot, 'lease_facts'>, claim: ClaimRecord | undefined): LeaseFact | Unleased;
 
@@ -4776,6 +4781,7 @@ testClockNoticeLine · value · internal
 tierFor · value · internal
 toArtifactDeleteFailedError · value · internal
 unbrandedClause · value · internal
+uncheckedLeaseOf · value · internal
 unmaskableWarning · value · internal
 unmetCapabilities · value · internal
 unreadableById · value · internal
