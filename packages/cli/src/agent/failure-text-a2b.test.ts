@@ -455,6 +455,81 @@ describe('gap 1, unit A2b — the writers that carry the step’s answered calls
     });
   }, 30_000);
 
+  it('check 7 (no text twice, at the wedge after the repair budget): a chained step’s adapter refuses after the agent step saved: the failure has requests: [] and no usage, and the texts and usage are on the evidence entry only', async () => {
+    // Correction 1 (CR-RDA2B-08): the agent step answers a relative path; the chained auto step
+    // reads it through the built-in `filesystem` adapter, which refuses it with
+    // VALIDATION_INPUT_SCHEMA ("path must be absolute") inside the same `executeChain`. The engine's
+    // reply then reaches run-agent's wedge after the repair budget, whose "already recorded" guard
+    // answers once for the usage and the texts.
+    const def = {
+      id: 'a2b-chained-adapter',
+      name: 'a2b chained adapter',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      services: { files: { adapter: 'filesystem', trust: 'engine_delivered' } },
+      steps: {
+        draft: {
+          description: 'Draft',
+          execution: 'agent',
+          output_schema: {
+            type: 'object',
+            properties: { path: { type: 'string' } },
+            required: ['path'],
+          },
+        },
+        read: {
+          description: 'Read',
+          execution: 'auto',
+          uses_service: 'files',
+          operation: 'read',
+          input_map: { path: 'context.resources.draft.path' },
+          depends_on: ['draft'],
+        },
+        // An independent agent step still to run, so the run stays open when `read` fails and
+        // the wedge's entry is written (a drive-failure entry is never written on an ended run).
+        later: { description: 'Later', execution: 'agent' },
+      },
+    } as unknown as WorkflowDefinition;
+    const provider = new (class extends LlmProvider {
+      async callStep(): Promise<Record<string, unknown>> {
+        return { path: 'notes.md' };
+      }
+      override async callStepWithMeta(): Promise<CallStepWithMetaResult> {
+        return { output: { path: 'notes.md' }, usage: [usageRecord()], modelText: [report(1)] };
+      }
+    })();
+    const { run } = await drive(def, provider);
+    const failure = lastFailure(run);
+    const draft = run.evidence.find((e) => e.step_id === 'draft');
+    const evidenceText = draft?.model_text as Extract<ModelText, { recorded: true }> | undefined;
+    // (1) red when the texts, or the usage, are attached at that wedge without the guard; (2)
+    //     prints the failure and where the texts and usage are.
+    expect({
+      completed: run.completed_steps,
+      failure: {
+        step: failure?.step,
+        class: failure?.error_class,
+        message: failure?.message,
+        model_text: failure?.model_text,
+        usage: failure?.usage,
+      },
+      evidence: {
+        requests: evidenceText?.requests.length,
+        usage: draft?.diagnostics?.cache?.requests?.length,
+      },
+    }).toEqual({
+      completed: ['draft'],
+      failure: {
+        step: 'read',
+        class: 'validation_rejected',
+        message: expect.stringContaining('path must be absolute'),
+        model_text: { recorded: true, messages: [], tools: [], requests: [] },
+        usage: undefined,
+      },
+      evidence: { requests: 1, usage: 1 },
+    });
+  }, 30_000);
+
   it('check 8: the wedge after the repair budget keeps its answered requests, under the entry’s ids', async () => {
     const { run } = await drive(ONE_STEP, new TextModule(['BAD', 'BAD', 'BAD']), {
       schemaRetries: 2,
