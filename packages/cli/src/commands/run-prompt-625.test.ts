@@ -633,7 +633,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
   describe('round 21 — C165, C167: a step’s prompt closes when another process runs the step; the gate prompt shows the question', () => {
     it('C165, W1-Y2: another process runs the step while its prompt waits — the prompt closes and names who ran it; never ✓ for that work', async () => {
       claimWorkflowPage(
-        "An `auto` step's prompt closes the same way when another process takes or runs that step while the prompt waits (`realm run advance`, `realm agent`, an `execute_step` call): it prints `This prompt is closed: step '<step>' was taken by <program>, and completed; not run here.`, or `… was taken by <program>; not run here.` while the other process still holds it (for a claim that names a lease, `…; <what the check found>; not run here.`, added after version 0.50.0), and goes on.",
+        "An `auto` step's prompt closes the same way when another process takes or runs that step while the prompt waits (`realm run advance`, `realm agent`, an `execute_step` call): it prints `This prompt is closed: step '<step>' was taken by <program>, and completed; not run here.`, or `… was taken by <program>; not run here.` while the other process still holds it, and goes on.",
       );
       let stepPrompts = 0;
       // decision C179: `finish` is an `auto` step here — an agent step's prompt holds its claim.
@@ -744,7 +744,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       'C165 (the sweep’s members): %s while the step’s prompt waits — the prompt closes and says so',
       async (kase, line) => {
         claimWorkflowPage(
-          "it prints `This prompt is closed: step '<step>' was taken by <program>, and completed; not run here.`, or `… was taken by <program>; not run here.` while the other process still holds it (for a claim that names a lease, `…; <what the check found>; not run here.`, added after version 0.50.0), and goes on.",
+          "it prints `This prompt is closed: step '<step>' was taken by <program>, and completed; not run here.`, or `… was taken by <program>; not run here.` while the other process still holds it, and goes on.",
         );
         let gateDone = false;
         mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {

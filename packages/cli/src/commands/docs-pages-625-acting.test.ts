@@ -903,7 +903,7 @@ describe(
     it('advance, L160 + L169 + L176 + blocks: when the engine can run nothing the last preview line says why and nothing runs; the way out after a refused step; a step another program holds', async () => {
       claim(
         PAGE,
-        "When another program holds an owed step, the preview says so before anything runs, once, with the program and the time: `In flight: '<step>' is in flight, taken by <program> since <time>.` For a claim that names a lease it reads `In flight: '<step>' was taken by <program> at <time>.`, and, when work is owed or a question is open, `In flight: '<step>' was taken by <program> at <time> (<what the lease check found>).`: no held line below says the lease then (added after version 0.50.0).",
+        "When another program holds an owed step, the preview says so before anything runs, once, with the program and the time: `In flight: '<step>' is in flight, taken by <program> since <time>.` For a claim that names a lease it reads `In flight: '<step>' was taken by <program> at <time>.`, and, when work is owed or a question is open, `In flight: '<step>' was taken by <program> at <time> (<what the lease check found>).`: the preview prints no held line then (a `Stopped:` held line after the work reads the record again) (added after version 0.50.0).",
       );
       claim(
         PAGE,

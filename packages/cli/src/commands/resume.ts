@@ -205,7 +205,8 @@ export async function resumeRun(
     // without --force (a held lease keeps the HEALTHY refusal below; a not-held one is stale).
     if (!('absent' in lease) && (lease.state === 'absent' || lease.state === 'unknown')) {
       throw new WorkflowError(
-        `${taken()}; ${leaseClause(lease)}, so resume does not release it, with or without --force.`,
+        // #729 CW-4b correction 1: the refusal in a sentence of its own (an absent lease's phrase has its own "so …").
+        `${taken()}; ${leaseClause(lease)}. Resume does not release it, with or without --force.`,
         {
           code: 'STATE_TRANSITION_DENIED',
           category: 'STATE',

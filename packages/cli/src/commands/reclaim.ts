@@ -302,7 +302,7 @@ export function reclaimDryRunLines(
   }
   // #729 CW-4b: `--all` also selects a claim whose lease no program held, whatever its deadline.
   const selects = infos.some((c) => c.lease !== undefined)
-    ? 'the claims past their deadline, or whose lease no program held when it was checked, whose steps are idempotent'
+    ? 'the claims past their deadline with no lease, or whose lease no program held when it was checked, whose steps are idempotent'
     : 'the claims past their deadline whose steps are idempotent';
   lines.push(
     `\nReclaim re-drives a step (at-least-once — side effects may repeat).` +

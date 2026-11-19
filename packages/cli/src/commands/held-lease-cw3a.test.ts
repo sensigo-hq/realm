@@ -339,9 +339,9 @@ describe('#729 CW-3a — check 5: resume and purge refuse a lease that cannot be
     const unknown =
       "whether its program still holds the claim's lease could not be checked: its lease file could not be opened";
     const resume = (p: string): string =>
-      `Step 'b' was ${taken}; ${p}, so resume does not release it, with or without --force.`;
+      `Step 'b' was ${taken}; ${p}. Resume does not release it, with or without --force.`;
     const purge = (p: string): string =>
-      `run carries a claim on step 'b', ${taken}; ${p}, so purge does not remove it, with or without --force`;
+      `run carries a claim on step 'b', ${taken}; ${p}. Purge does not remove it, with or without --force`;
     // (a) red when either releases or removes the claim (the old rule: --force overrides an unknown
     //     age), or offers --force; (b) prints each answer.
     expect(out).toEqual({

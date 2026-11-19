@@ -131,7 +131,8 @@ export function isPurgeEligible(
   if (unknownLease !== undefined) {
     return {
       eligible: false,
-      reason: `${takenOn(unknownLease.step)}; ${leaseClause(unknownLease.lease!)}, so purge does not remove it, with or without --force`,
+      // #729 CW-4b correction 1: the refusal in a sentence of its own (an absent lease's phrase has its own "so …").
+      reason: `${takenOn(unknownLease.step)}; ${leaseClause(unknownLease.lease!)}. Purge does not remove it, with or without --force`,
     };
   }
 

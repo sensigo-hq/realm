@@ -50,6 +50,7 @@ import { inFlightItems } from './run-advance.js';
 import { answerNotRunLine, stepClosedLine } from './run.js';
 import { resumeRun } from './resume.js';
 import { isPurgeEligible } from './purge.js';
+import { inspectRun } from './inspect.js';
 import { writerTestSeams } from '../output/writer.js';
 
 const AT = Date.parse('2031-03-04T05:06:07.000Z');
@@ -436,6 +437,9 @@ describe('#922 P2-2 — check 12 (rule 10): no held-step line says a program die
     ];
     const lines: string[] = [];
     const rules: string[] = [];
+    // inspect's holder line on a run that has ended: the one that says the lease itself (no lines
+    // under the step say it).
+    const inspected: string[] = [];
     const visible = (t: string): string => writerTestSeams.visible(t);
     for (const lease of states) {
       const leases = createLeaseDouble();
@@ -488,6 +492,10 @@ describe('#922 P2-2 — check 12 (rule 10): no held-step line says a program die
         },
       };
       declareReleaseLine(workflows);
+      // Before resume, which releases a claim no program holds.
+      const report = visible(await inspectRun(record.id, store, workflows as never));
+      const holderLine = report.split('\n').find((l) => l.startsWith('  y: '));
+      if (holderLine !== undefined) inspected.push(holderLine);
       const resumed = await resumeRun(record.id, 'x', store, workflows as never, {
         force: true,
       }).then(
@@ -498,6 +506,13 @@ describe('#922 P2-2 — check 12 (rule 10): no held-step line says a program die
       if (resumed !== undefined) lines.push(resumed);
       if (!purge.eligible) lines.push(visible(purge.reason));
     }
+    // (a) red when inspect's holder line on a run that has ended leaves out what the lease check
+    //     found (the sweep would then not reach its "; L" branch); (b) prints the lines.
+    expect(
+      inspected.map((l) => /^ {2}y: taken by other-drive .*; [^;]*lease[^;]*$/.test(l)),
+      inspected.join('\n'),
+    ).toEqual([true, true, true, true]);
+    lines.push(...inspected);
     // (a) red when a line that names a holder says a program died, is alive, presumed or likely, or
     //     names an unknown age or a deadline (the rule lines: any of them but the deadline); (b)
     //     prints each such text.
@@ -507,7 +522,8 @@ describe('#922 P2-2 — check 12 (rule 10): no held-step line says a program die
       rules: rules.filter((t) => RULE_DENY.test(t)),
     }).toEqual({ lines: lines.length, deny: [], rules: [] });
     // the four states give every line: 11 each, plus resume's and purge's refusals for held, absent
-    // and unknown (a claim no program holds is released and removed, so neither refuses it)
-    expect(lines.length, lines.join('\n')).toBe(4 * 11 + 3 * 2);
+    // and unknown (a claim no program holds is released and removed, so neither refuses it), plus
+    // inspect's holder line on the ended run (#729 CW-4b correction 1)
+    expect(lines.length, lines.join('\n')).toBe(4 * 12 + 3 * 2);
   });
 });

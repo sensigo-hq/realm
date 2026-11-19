@@ -10,9 +10,9 @@
 // process, on the cell's home.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,8 @@ import {
   createDefaultRegistry,
   describeClaimHolder,
   leaseFactOf,
+  loadWorkflowFromFile,
+  reclaimStep,
   type ClaimRecord,
   type LeaseHold,
   type RunStore,
@@ -31,7 +33,9 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
+import type { CliHome } from '../lib/home.js';
+import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import {
   answerNotRecordedLine,
   inFlightLine,
@@ -41,11 +45,17 @@ import {
 } from '../lib/holder-render.js';
 import { heldEntriesOf } from './ways-renderer.js';
 import { inFlightItems } from './run-advance.js';
-import { answerNotRunLine, stepClosedLine } from './run.js';
+import { answerNotRunLine, runCommand, setInFlightWatchForTests, stepClosedLine } from './run.js';
 import { reclaimDryRunLines } from './reclaim.js';
 import { resumeRun } from './resume.js';
 import { isPurgeEligible } from './purge.js';
 import { writerTestSeams } from '../output/writer.js';
+
+// `realm workflow run`'s prompts, answered by each cell (check 2 (g)).
+const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
+vi.mock('node:readline/promises', () => ({
+  createInterface: vi.fn(() => ({ question: mocks.question, close: mocks.close })),
+}));
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '../../dist/index.js');
@@ -181,6 +191,8 @@ describe('#729 CW-4b — check 1: each line, per lease state', { timeout: 180_00
       waiting: waitingLine('a', d, 60_000),
       watchEnd: inFlightLine(held, d, 60_000).split('; the record has not changed for 60s. ')[0],
       taken: takenLine('a', d),
+      // `realm workflow run`'s taken line: its waiting line from the same read says the lease.
+      takenHere: takenLine('a', d, undefined, false),
       answerNotRecorded: answerNotRecordedLine(read.record, 'a', true, undefined, undefined, read),
       answerHeldElsewhere: answerNotRecordedLine(
         read.record,
@@ -198,19 +210,32 @@ describe('#729 CW-4b — check 1: each line, per lease state', { timeout: 180_00
         undefined,
         read,
       ),
+      // `realm workflow run`'s not-recorded line: its waiting line from the same read says the lease.
+      outcomeHere: outcomeNotRecordedLine(
+        'held_elsewhere',
+        read.record,
+        'a',
+        true,
+        undefined,
+        read,
+        false,
+      ),
       closed: stepClosedLine(read.record, 'a', true, undefined, undefined, read),
       notRun: answerNotRunLine(read.record, 'a', true, undefined, read),
     }).toEqual({
       inFlight: [`'a' was ${A} at ${since}`],
       inFlightWithLease: [`'a' was ${A} at ${since} (${L[state]})`],
-      waiting: `• Step 'a' was ${A} at ${since}; ${L[state]}: waiting up to 60s for the run's record to change.`,
+      waiting: `• Step 'a' was ${A} at ${since}; ${L[state]}. Waiting up to 60s for the run's record to change.`,
       watchEnd: `• Step 'a' was ${A} at ${since}`,
       taken: `• Step 'a' was ${A} at ${since}; ${L[state]}; not run here.`,
+      takenHere: `• Step 'a' was ${A} at ${since}; not run here.`,
       answerNotRecorded: `• Step 'a' was ${A} at ${since}; ${L[state]}; this drive's answer was not recorded.`,
       answerHeldElsewhere: `• Step 'a' was ${A} at ${since}; ${L[state]}; this drive's answer was not recorded.`,
       outcomeNotRecorded: `• Step 'a' was ${A} at ${since}; ${L[state]}; this program's outcome for it was not recorded.`,
-      closed: `This prompt is closed: step 'a' was ${A}; ${L[state]}; not run here.`,
-      notRun: `Not run here: step 'a' was ${A}; ${L[state]}; the answer typed here was not recorded.`,
+      outcomeHere: `• Step 'a' was ${A} at ${since}; this program's outcome for it was not recorded.`,
+      // `realm workflow run`'s closed prompt and not-run line name the holder only (check 2 (g)).
+      closed: `This prompt is closed: step 'a' was ${A}; not run here.`,
+      notRun: `Not run here: step 'a' was ${A}; the answer typed here was not recorded.`,
     });
     void runId;
   });
@@ -238,15 +263,36 @@ describe('#729 CW-4b — check 1: each line, per lease state', { timeout: 180_00
         (err: unknown) => shown(err instanceof Error ? err.message : String(err)),
       );
       const purge = isPurgeEligible(read, { explicit: true });
-      const tail = state === 'held' ? '' : ', so purge does not remove it, with or without --force';
+      // Held: the refusal follows the clause with ", so …"; absent and unknown, whose phrase may carry
+      // its own "so …", in a sentence of its own (correction 1).
+      const resumes =
+        state === 'held'
+          ? ', so resume does not release it, with or without --force.'
+          : '. Resume does not release it, with or without --force.';
+      const tail = state === 'held' ? '' : '. Purge does not remove it, with or without --force';
       // (a) red when a leased claim's refusal says "a live runner" or names no holder and time; or
       //     when resume releases it or purge removes it; (b) prints both.
       expect({ resume, purge: purge.eligible ? 'purged' : shown(purge.reason) }).toEqual({
-        resume: `Step 'a' was ${A} at ${since}; ${L[state]}, so resume does not release it, with or without --force.`,
+        resume: `Step 'a' was ${A} at ${since}; ${L[state]}${resumes}`,
         purge: `run carries a claim on step 'a', ${A} at ${since}; ${L[state]}${tail}`,
       });
     },
   );
+
+  it('held, past its deadline: realm run reclaim --all does not select it (correction 1: "with no lease")', async () => {
+    // The drive's claim has no deadline; one in the past is written beside its lease, kept open here.
+    const { runId } = await leased('held', 'i', (r) => ({
+      ...r,
+      claims: { ...r.claims, i: { ...r.claims!['i']!, deadline: '2020-01-01T00:00:00.000Z' } },
+    }));
+    const r = realm(['run', 'reclaim', '--all']);
+    // (a) red when --all selects a claim past its deadline whose lease its program held (the footer
+    //     and the flag row would then be wrong to say "with no lease"); (b) prints the lines.
+    expect({ out: r.out, runId: r.out.some((l) => l.includes(runId)) }).toEqual({
+      out: ['No auto-reclaimable claims found (idempotent ∧ concrete-past-deadline ∧ non-gated).'],
+      runId: false,
+    });
+  });
 
   it('not held: realm run reclaim --all selects the claim and names when it was taken and what its lease showed', async () => {
     const { runId, since } = await leased('not_held', 'i');
@@ -377,6 +423,221 @@ describe('#729 CW-4b — check 2: the lease is said once per read', { timeout: 1
   });
 });
 
+describe(
+  '#729 CW-4b correction 1 — check 2 (g): realm workflow run says the lease once per read',
+  { timeout: 180_000 },
+  () => {
+    type Race = (runId: string) => Promise<void>;
+    /** The other program's act, which the project handler `h` performs while the command runs it. */
+    const hook = globalThis as { __cw4bWorkflowRunRace?: Race | undefined };
+    /** The project handler: runs the hook once, then returns. */
+    const EXT = `export default {
+  handlers: {
+    h: {
+      id: 'h',
+      async execute(_inputs, ctx) {
+        const race = globalThis.__cw4bWorkflowRunRace;
+        globalThis.__cw4bWorkflowRunRace = undefined;
+        if (race !== undefined) await race(ctx.run_id);
+        return { data: { by: 'here' } };
+      },
+    },
+  },
+};
+`;
+    /** A workflow of one step `s` (`execution`, and `handler: h` when `handled`). */
+    const yamlOf = (id: string, execution: 'agent' | 'auto', handled = false): string =>
+      [
+        `id: ${id}`,
+        `name: ${id}`,
+        'version: 1',
+        ...(handled ? ['extensions: ./ext.mjs'] : []),
+        'steps:',
+        '  s:',
+        '    description: S.',
+        `    execution: ${execution}`,
+        ...(handled ? ['    handler: h'] : []),
+        '',
+      ].join('\n');
+    let wf: string;
+    let savedHome: string | undefined;
+    let savedTTY: boolean | undefined;
+    let logSpy: ReturnType<typeof vi.spyOn>;
+    let exitSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      clearProjectExtensionsCache();
+      wf = realpathSync(mkdtempSync(join(tmpdir(), 'realm-cw4b-wf-')));
+      savedHome = process.env['HOME'];
+      process.env['HOME'] = h.root;
+      // Without this the non-TTY guard refuses before the loop.
+      savedTTY = process.stdin.isTTY;
+      process.stdin.isTTY = true;
+      logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
+        throw new Error('process.exit');
+      }) as never);
+    });
+    afterEach(() => {
+      hook.__cw4bWorkflowRunRace = undefined;
+      if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
+      else process.stdin.isTTY = savedTTY;
+      if (savedHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = savedHome;
+      rmSync(wf, { recursive: true, force: true });
+      mocks.question.mockReset();
+      vi.restoreAllMocks();
+    });
+
+    /** `realm workflow run <file>` in this process, its watch 1 s; the exit code (0 for a return). */
+    async function workflowRun(yaml: string): Promise<number> {
+      writeFileSync(join(wf, 'workflow.yaml'), yaml, 'utf8');
+      writeFileSync(join(wf, 'ext.mjs'), EXT, 'utf8');
+      const restore = setInFlightWatchForTests(1_000);
+      try {
+        await runCommand.parseAsync([join(wf, 'workflow.yaml')], { from: 'user' });
+        return 0;
+      } catch (err) {
+        if (!(err instanceof Error) || err.message !== 'process.exit') throw err;
+        return Number(exitSpy.mock.calls[0]?.[0]);
+      } finally {
+        restore();
+      }
+    }
+    /** Another drive takes `s` under a lease this process holds open (so its check finds it held). */
+    async function takeUnderLease(runId: string): Promise<void> {
+      const registry = createDefaultRegistry();
+      registry.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) });
+      const answer = await claimStepForDrive(h.home.runStore, runId, 's', {
+        definition: loadWorkflowFromFile(join(wf, 'workflow.yaml')),
+        registry,
+        driver: DRIVE,
+      });
+      if (answer.kind !== 'claimed')
+        throw new Error(`fixture: not claimed: ${JSON.stringify(answer)}`);
+      holds.push(answer.hold);
+    }
+    /** The engine's first claim of `s` is preceded by the other drive's (the race of #625 F7). */
+    function raceTheClaim(): () => boolean {
+      // The command opens its own handle through the door, so the spy is on the handle's prototype.
+      const proto = Object.getPrototypeOf(h.home.runStore) as CliHome['runStore'];
+      const real = proto.claimStep;
+      let raced = false;
+      vi.spyOn(proto, 'claimStep').mockImplementation(async function (
+        this: CliHome['runStore'],
+        ...a
+      ) {
+        if (!raced && a[1] === 's') {
+          raced = true;
+          await takeUnderLease(a[0]);
+        }
+        return real.apply(this, a);
+      });
+      return () => raced;
+    }
+    /** What stdout said, from the first line that starts `opening` through the waiting line. */
+    async function read(opening: string): Promise<{ lines: string[]; since: string }> {
+      const all = logSpy.mock.calls
+        .flatMap((c: unknown[]) => String(c[0]).split('\n'))
+        .filter((l: string) => l !== '');
+      const from = all.findIndex((l: string) => l.startsWith(opening));
+      const to = all.findIndex((l: string, i: number) => i > from && / waiting up to /i.test(l));
+      const id = (await runIds(h.home.runStore))[0]!;
+      const since = (await h.home.runStore.get(id)).record.claims?.['s']?.since ?? '<none>';
+      return { lines: from === -1 || to === -1 ? all : all.slice(from, to + 1), since };
+    }
+    const waiting = (since: string): string =>
+      `  • Step 's' was ${A} at ${since}; ${L.held}. Waiting up to 1s for the run's record to change.`;
+    const heldCount = (lines: readonly string[]): number =>
+      lines.join('\n').split(/program held the claim's lease when it was checked/i).length - 1;
+
+    it('the closed prompt: another drive takes the step while its prompt waits', async () => {
+      const yaml = yamlOf('cw4b-wf-closed', 'auto');
+      mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {
+        if (!prompt.startsWith('  Mock output')) return Promise.resolve('');
+        return new Promise<string>((_resolve, reject) => {
+          opts?.signal?.addEventListener(
+            'abort',
+            () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+            { once: true },
+          );
+          void (async () => takeUnderLease((await runIds(h.home.runStore))[0]!))();
+        });
+      });
+      const code = await workflowRun(yaml);
+      const { lines, since } = await read('  This prompt is closed:');
+      // (a) red when the closed prompt says the lease too (twice on one read), or the waiting line
+      //     below does not; (b) prints the lines from the prompt's close to the waiting line.
+      expect({ lines, count: heldCount(lines), code }).toEqual({
+        lines: [`  This prompt is closed: step 's' was ${A}; not run here.`, waiting(since)],
+        count: 1,
+        code: 1,
+      });
+    });
+
+    it('the taken line: another drive takes the agent step before its prompt holds it', async () => {
+      const yaml = yamlOf('cw4b-wf-taken', 'agent');
+      const raced = raceTheClaim();
+      mocks.question.mockImplementation(async () => '');
+      const code = await workflowRun(yaml);
+      const { lines, since } = await read("• Step 's' was");
+      // (a) red when the taken line says the lease too, or the waiting line below does not;
+      //     (b) prints the lines.
+      expect({ raced: raced(), lines, count: heldCount(lines), code }).toEqual({
+        raced: true,
+        lines: [`• Step 's' was ${A} at ${since}; not run here.`, waiting(since)],
+        count: 1,
+        code: 1,
+      });
+    });
+
+    it('the not-run line: another drive takes the step before the engine claims it for the typed answer', async () => {
+      const yaml = yamlOf('cw4b-wf-not-run', 'auto');
+      const raced = raceTheClaim();
+      mocks.question.mockImplementation(async () => '');
+      const code = await workflowRun(yaml);
+      const { lines, since } = await read('  Not run here:');
+      // (a) red when the not-run line says the lease too, or the waiting line below does not;
+      //     (b) prints the lines.
+      expect({ raced: raced(), lines, count: heldCount(lines), code }).toEqual({
+        raced: true,
+        lines: [
+          `  Not run here: step 's' was ${A}; the answer typed here was not recorded.`,
+          waiting(since),
+        ],
+        count: 1,
+        code: 1,
+      });
+    });
+
+    it('the not-recorded line: another drive takes the step over while the engine runs it', async () => {
+      const yaml = yamlOf('cw4b-wf-takeover', 'auto', true);
+      let raced = false;
+      hook.__cw4bWorkflowRunRace = async (id: string) => {
+        raced = true;
+        // As race-workflow-run-625's row 3: the claim is freed, then taken, here under a lease.
+        await reclaimStep(h.home.runStore, id, 's');
+        await takeUnderLease(id);
+      };
+      mocks.question.mockImplementation(async () => '');
+      const code = await workflowRun(yaml);
+      const { lines, since } = await read("  • Step 's' was");
+      // (a) red when the not-recorded line says the lease too, or the waiting line below does not;
+      //     (b) prints the lines.
+      expect({ raced, lines, count: heldCount(lines), code }).toEqual({
+        raced: true,
+        lines: [
+          `  • Step 's' was ${A} at ${since}; this program's outcome for it was not recorded.`,
+          waiting(since),
+        ],
+        count: 1,
+        code: 1,
+      });
+    });
+  },
+);
+
 describe('#729 CW-4b — check 3: a claim that names no lease keeps today’s words', () => {
   const SINCE = '2026-01-01T00:00:00.000Z';
   const PAST = '2026-01-01T00:05:00.000Z';
@@ -452,7 +713,7 @@ describe(
         plain:
           "Reclaim re-drives a step (at-least-once — side effects may repeat). Run a step's command above to free it. realm run reclaim --all lists, across every run, the claims past their deadline whose steps are idempotent; with --force it frees them.",
         leased:
-          "Reclaim re-drives a step (at-least-once — side effects may repeat). Run a step's command above to free it. realm run reclaim --all lists, across every run, the claims past their deadline, or whose lease no program held when it was checked, whose steps are idempotent; with --force it frees them.",
+          "Reclaim re-drives a step (at-least-once — side effects may repeat). Run a step's command above to free it. realm run reclaim --all lists, across every run, the claims past their deadline with no lease, or whose lease no program held when it was checked, whose steps are idempotent; with --force it frees them.",
       });
     });
 
