@@ -6,7 +6,7 @@
 // `--provider-module` provider may report the same field. run-agent joins each report to its
 // request's id, and builds the step's `model_text` through one path for every provider: the
 // canonical text of each message, then the mask, then the cut, each distinct text once.
-import type { ModelText, UsageRecord } from '@sensigo/realm';
+import type { DriveFailureModelText, ModelText, UsageRecord } from '@sensigo/realm';
 import { discloseForAgentCounted, sha256Hex } from './agent-utils.js';
 
 /**
@@ -28,11 +28,14 @@ interface CanonicalMessage {
   text: string;
 }
 
-/** A request reduced to what Realm keeps of it, not yet masked. */
+/**
+ * A request reduced to what Realm keeps of it, not yet masked. Gap 1, unit A2b: `reply` is `null` for
+ * a request that got no answer (the last send of a call that failed).
+ */
 interface CanonicalRequest {
   sent: CanonicalMessage[];
   tools?: string;
-  reply: CanonicalMessage[];
+  reply: CanonicalMessage[] | null;
 }
 
 /** The most UTF-8 bytes of one text Realm keeps; a longer text is cut at a code point and marked. */
@@ -262,7 +265,7 @@ export function pushAnswered(
 export type StepModelTexts =
   | {
       readonly reported: true;
-      readonly requests: ReadonlyArray<{ request_id: string; text: CanonicalRequest }>;
+      readonly requests: ReadonlyArray<{ request_id: string | null; text: CanonicalRequest }>;
     }
   | { readonly reported: false };
 
@@ -277,7 +280,7 @@ export type StepModelTexts =
 export function joinModelTexts(minted: readonly UsageRecord[], reports: unknown): StepModelTexts {
   try {
     if (!Array.isArray(reports) || reports.length !== minted.length) return { reported: false };
-    const requests: Array<{ request_id: string; text: CanonicalRequest }> = [];
+    const requests: Array<{ request_id: string | null; text: CanonicalRequest }> = [];
     for (let slot = 0; slot < minted.length; slot++) {
       const usage = minted[slot] as unknown;
       const id = isPlain(usage) ? usage['request_id'] : undefined;
@@ -382,8 +385,252 @@ export function modelTextOf(
       request_id,
       sent,
       ...(toolList !== undefined ? { tools: toolList } : {}),
-      reply: text.reply.map(message),
+      reply: text.reply === null ? null : text.reply.map(message),
     };
   });
   return { recorded: true, messages, tools, requests };
+}
+
+// ── Gap 1, unit A2b: a failed drive's text ──────────────────────────────────────────────────────
+//
+// A provider call that throws hands its texts to the drive-failure writer through a carrier keyed on
+// the thrown error itself (a module-level WeakMap): nothing on the error changes, so its class, its
+// message, its `cause` and every payload `findDriveCall` returns read as before, and no provider
+// module can read or set it. The writer joins the texts to the failure's usage ids, builds them
+// through `modelTextOf` (canonical form, mask, dedupe, cut) and keeps them within one 64 KB budget.
+
+/**
+ * What one provider call keeps for its failure, owned by the entry point as its `billed` is: each
+ * answered request's text, in wire order, and the text of the last send while it has no answer.
+ */
+export interface CallTexts {
+  readonly answered: ModelTextReport[];
+  unanswered: ModelTextReport | undefined;
+}
+
+/** A new, empty {@link CallTexts}, for an entry point to own. */
+export function newCallTexts(): CallTexts {
+  return { answered: [], unanswered: undefined };
+}
+
+/**
+ * Runs one send. While it has no answer, the call's unanswered request is the text of what it sent
+ * (`sentText`, read when the send throws: the body as last built, `undefined` when nothing was
+ * built); an answer clears it. A throw is passed on unchanged.
+ */
+export async function trackSend<T>(
+  call: CallTexts,
+  sentText: () => ModelTextReport | undefined,
+  send: () => Promise<T>,
+): Promise<T> {
+  try {
+    const answer = await send();
+    call.unanswered = undefined;
+    return answer;
+  } catch (err) {
+    call.unanswered = sentText();
+    throw err;
+  }
+}
+
+/** The texts a thrown error carries to the drive-failure writer. */
+export interface CarriedTexts {
+  readonly answered: readonly ModelTextReport[];
+  readonly unanswered: ModelTextReport | undefined;
+}
+
+const CARRIED = new WeakMap<object, CarriedTexts>();
+
+/**
+ * Carries `call`'s texts on `err` for the drive-failure writer, without touching `err`. A value that
+ * is not an object carries nothing. Total, like `attachBilledUsage`.
+ */
+export function carryTexts(err: unknown, call: CallTexts): void {
+  if (err === null || (typeof err !== 'object' && typeof err !== 'function')) return;
+  try {
+    CARRIED.set(err, { answered: [...call.answered], unanswered: call.unanswered });
+  } catch {
+    /* carrying never out-throws the error it rides on */
+  }
+}
+
+/** The texts `err` carries, or `undefined` when no Realm provider carried any on it. */
+export function carriedTexts(err: unknown): CarriedTexts | undefined {
+  if (err === null || (typeof err !== 'object' && typeof err !== 'function')) return undefined;
+  try {
+    return CARRIED.get(err);
+  } catch {
+    return undefined;
+  }
+}
+
+/** An Anthropic request's text as sent, for a send that got no answer. Total. */
+export function anthropicSentText(body: Record<string, unknown>): ModelTextReport {
+  try {
+    const system = body['system'];
+    const messages = body['messages'];
+    return answeredRequestText(
+      [
+        ...(system !== undefined ? [{ role: 'system', content: system }] : []),
+        ...(Array.isArray(messages) ? (messages as unknown[]) : [UNREADABLE]),
+      ],
+      body['tools'],
+      [],
+    );
+  } catch {
+    return UNREADABLE;
+  }
+}
+
+/** An OpenAI chat request's text as sent, for a send that got no answer. Total. */
+export function openAiSentText(body: Record<string, unknown>): ModelTextReport {
+  try {
+    const messages = body['messages'];
+    return answeredRequestText(
+      Array.isArray(messages) ? (messages as unknown[]) : [UNREADABLE],
+      body['tools'],
+      [],
+    );
+  } catch {
+    return UNREADABLE;
+  }
+}
+
+/**
+ * The texts of one failed provider call: its answered requests joined to `minted` (the call's usage
+ * on the failure entry, its ids minted there), then its unanswered request, with `request_id: null`
+ * and `reply: null`. `reported: false` when they cannot be joined or read. Total.
+ */
+export function joinFailedCall(
+  minted: readonly UsageRecord[],
+  carried: CarriedTexts,
+): StepModelTexts {
+  const answered = joinModelTexts(minted, carried.answered);
+  if (!answered.reported || carried.unanswered === undefined) return answered;
+  try {
+    const text = canonicalRequest(carried.unanswered);
+    if (text === undefined) return { reported: false };
+    return {
+      reported: true,
+      requests: [...answered.requests, { request_id: null, text: { ...text, reply: null } }],
+    };
+  } catch {
+    return { reported: false };
+  }
+}
+
+type RecordedText = Extract<ModelText, { recorded: true }>;
+type Slot = { text?: string; json?: string; cut?: { kept_bytes: number; full_bytes: number } };
+
+/**
+ * A failed drive's `model_text` within `cap` bytes of UTF-8 in total (the masked texts, as
+ * `modelTextOf` built them). Kept in this order, so the text that explains the failure stays:
+ * 1. the focus request's system text and first user message, each cut to fit; the focus request is
+ *    the one that got no answer, or, when every request was answered, the last one, whose reply
+ *    comes between the two (it exists nowhere else, while the prompt can be rebuilt from the run);
+ * 2. the focus request's tool list, cut to fit;
+ * 3. the other messages, newest first, each kept whole or left out;
+ * 4. the other tool lists, newest first, each kept whole or left out.
+ * A text left out keeps its slot as `''` with `cut: { kept_bytes: 0, full_bytes }`, its full size
+ * (A1's `full_bytes` when A1 had cut it), so no index points at nothing; a text cut to 0 bytes in
+ * step 1 or 2 is left out. `dropped_messages` counts the messages left out, absent when none were.
+ */
+export function budgetFailureText(
+  text: RecordedText,
+  cap = MODEL_TEXT_CAP_BYTES,
+): DriveFailureModelText {
+  const messages = text.messages.map((m) => ({ ...m }));
+  const tools = text.tools.map((t) => ({ ...t }));
+  const done = new Set<string>();
+  let left = cap;
+  let dropped = 0;
+  const bytesOf = (value: string): number => Buffer.byteLength(value, 'utf8');
+  const fullOf = (slot: Slot, value: string): number => slot.cut?.full_bytes ?? bytesOf(value);
+  /** Leaves a slot out: empty, marked with its full size; `hidden` goes with the text. */
+  const leaveOut = (kind: 'message' | 'tools', index: number): void => {
+    if (kind === 'message') {
+      const m = messages[index]!;
+      const { hidden: _hidden, ...rest } = m;
+      void _hidden;
+      messages[index] = {
+        ...rest,
+        text: '',
+        cut: { kept_bytes: 0, full_bytes: fullOf(m, m.text) },
+      };
+      dropped++;
+    } else {
+      const t = tools[index]!;
+      const { hidden: _hidden, ...rest } = t;
+      void _hidden;
+      tools[index] = { ...rest, json: '', cut: { kept_bytes: 0, full_bytes: fullOf(t, t.json) } };
+    }
+  };
+  /** Keeps a slot cut to fit what is left (steps 1 and 2). */
+  const keepCut = (kind: 'message' | 'tools', index: number | undefined): void => {
+    if (index === undefined || done.has(`${kind}:${index}`)) return;
+    done.add(`${kind}:${index}`);
+    const slot: Slot = kind === 'message' ? messages[index]! : tools[index]!;
+    const value = (kind === 'message' ? slot.text : slot.json) ?? '';
+    const size = bytesOf(value);
+    if (size <= left) {
+      left -= size;
+      return;
+    }
+    const cut = cutText(value, left);
+    if (cut.cut === undefined || cut.cut.kept_bytes === 0) {
+      leaveOut(kind, index);
+      return;
+    }
+    left -= cut.cut.kept_bytes;
+    const marked = { kept_bytes: cut.cut.kept_bytes, full_bytes: fullOf(slot, value) };
+    if (kind === 'message') messages[index] = { ...messages[index]!, text: cut.text, cut: marked };
+    else tools[index] = { ...tools[index]!, json: cut.text, cut: marked };
+  };
+  /** Keeps a slot whole, or leaves it out (steps 3 and 4). */
+  const keepWhole = (kind: 'message' | 'tools', index: number): void => {
+    if (done.has(`${kind}:${index}`)) return;
+    done.add(`${kind}:${index}`);
+    const size = bytesOf(kind === 'message' ? messages[index]!.text : tools[index]!.json);
+    if (size <= left) left -= size;
+    else leaveOut(kind, index);
+  };
+  const unanswered = text.requests.find((r) => r.reply === null);
+  const focus = unanswered ?? text.requests[text.requests.length - 1];
+  if (focus !== undefined) {
+    const system = focus.sent.find((i) => messages[i]?.role === 'system');
+    const firstUser = focus.sent.find((i) => messages[i]?.role === 'user');
+    keepCut('message', system);
+    if (focus.reply !== null) for (const i of focus.reply) keepCut('message', i);
+    keepCut('message', firstUser);
+    keepCut('tools', focus.tools);
+  }
+  for (let i = messages.length - 1; i >= 0; i--) keepWhole('message', i);
+  for (let i = tools.length - 1; i >= 0; i--) keepWhole('tools', i);
+  return {
+    recorded: true,
+    messages,
+    tools,
+    requests: text.requests,
+    ...(dropped > 0 ? { dropped_messages: dropped } : {}),
+  };
+}
+
+/**
+ * The `model_text` of a drive-failure entry this Realm writes: the `switched_off` marker when
+ * recording is off (it wins), `recorded: true` with no requests when no model request belongs to
+ * the entry (`texts` undefined), `provider_did_not_report` when the texts could not be joined, and
+ * otherwise the texts through A1's one path (`modelTextOf`: canonical form, mask, dedupe, cut),
+ * then the entry's 64 KB budget ({@link budgetFailureText}).
+ */
+export function failureModelTextOf(
+  texts: StepModelTexts | undefined,
+  record: boolean,
+): DriveFailureModelText {
+  if (!record) return { recorded: false, why: 'switched_off' };
+  if (texts === undefined) return { recorded: true, messages: [], tools: [], requests: [] };
+  const built = modelTextOf(texts, true);
+  if (built === undefined || !built.recorded) {
+    return built ?? { recorded: false, why: 'provider_did_not_report' };
+  }
+  return budgetFailureText(built);
 }

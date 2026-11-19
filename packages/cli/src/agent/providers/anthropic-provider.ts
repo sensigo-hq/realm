@@ -57,7 +57,15 @@ import {
   type CacheFieldMemory,
 } from './agent-utils.js';
 import { SUBMIT_TOOL_NAME, buildSubmitTool } from './request-layout.js';
-import { anthropicAnsweredText, pushAnswered, type ModelTextReport } from './model-text.js';
+import {
+  anthropicAnsweredText,
+  anthropicSentText,
+  carryTexts,
+  newCallTexts,
+  pushAnswered,
+  trackSend,
+  type CallTexts,
+} from './model-text.js';
 
 /**
  * Returns the maximum output tokens for the given Anthropic model.
@@ -1014,6 +1022,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     cachePrefixChars?: number,
     // Caching 3-M (D-1): this call's own choice; every request of the call, the retries included.
     call?: CallCacheChoice,
+    // Gap 1, unit A2b: owned by the entry point, as `billed` is, so its catch carries the texts.
+    callTexts: CallTexts = newCallTexts(),
   ): Promise<CallStepWithMetaResult> {
     // issue #401: counters are PER-INVOCATION, minted beside the client they count for. A
     // module-global would attribute one step's wire attempts to another's failure.
@@ -1048,8 +1058,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // the provider accumulates — a single usage object for a step that bills 1-21 requests is a
     // false number by construction.
     const requests: UsageRecord[] = billed ?? [];
-    // Gap 1, unit A1: each answered request's text, one per entry of `requests`.
-    const texts: ModelTextReport[] = [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests` (unit A2b: and the
+    // last send while it has no answer).
+    const texts = callTexts.answered;
     // Caching 3-M (B2a): this call's last checked answer id; `null` opts the call's first request in.
     let previousAnswerId: string | null = null;
     const makeRequest = async (userContent: string): Promise<CallResult> => {
@@ -1088,14 +1099,21 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         sentWithCache = withCache;
         return opts;
       };
-      const response = await createMessageWithLadder(
-        client,
-        buildOpts,
-        state,
-        clock,
-        counters,
-        { memory: this.cacheFields, endpoint: this.endpoint },
-        this.cacheAsk,
+      // Gap 1, unit A2b: while the ladder has no answer, the call's unanswered request is the body
+      // last built (`sent`: the ladder's drop-retry, a gateway re-send), each build followed by its send.
+      const response = await trackSend(
+        callTexts,
+        () => (Object.keys(sent).length > 0 ? anthropicSentText(sent) : undefined),
+        () =>
+          createMessageWithLadder(
+            client,
+            buildOpts,
+            state,
+            clock,
+            counters,
+            { memory: this.cacheFields, endpoint: this.endpoint },
+            this.cacheAsk,
+          ),
       );
       // Caching 3-M (B2a): whichever send answered (a ladder's retry included); a refused send has no id.
       previousAnswerId = checkedResponseId(response) ?? null;
@@ -1211,6 +1229,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     opts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
     const billed: UsageRecord[] = [];
+    const callTexts = newCallTexts();
     try {
       const { output } = await this.callStepInternal(
         prompt,
@@ -1219,10 +1238,15 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         undefined,
         opts?.llmClock,
         billed,
+        undefined,
+        undefined,
+        callTexts,
       );
       return output;
     } catch (err) {
       attachBilledUsage(err, billed);
+      // Gap 1, unit A2b: the call's texts ride beside the thrown error, which stays as it is.
+      carryTexts(err, callTexts);
       throw err;
     }
   }
@@ -1241,6 +1265,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     },
   ): Promise<CallStepWithMetaResult> {
     const billed: UsageRecord[] = [];
+    const callTexts = newCallTexts();
     try {
       return await this.callStepInternal(
         prompt,
@@ -1251,9 +1276,12 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         billed,
         opts?.cachePrefixChars,
         opts?.cacheChoice,
+        callTexts,
       );
     } catch (err) {
       attachBilledUsage(err, billed);
+      // Gap 1, unit A2b: the call's texts ride beside the thrown error, which stays as it is.
+      carryTexts(err, callTexts);
       throw err;
     }
   }
@@ -1285,8 +1313,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // sees every request that got an answer, whatever throws below: a wire error on a later turn,
     // an unknown tool name, or a final answer that does not parse.
     const requests: UsageRecord[] = [];
-    // Gap 1, unit A1: each answered request's text, one per entry of `requests`.
-    const texts: ModelTextReport[] = [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests` (unit A2b: and the
+    // last send while it has no answer).
+    const callTexts = newCallTexts();
     try {
       const result = await this.callStepWithToolsInternal(
         prompt,
@@ -1294,11 +1323,15 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         executor,
         options,
         requests,
-        texts,
+        callTexts,
       );
-      return requests.length > 0 ? { ...result, usage: requests, modelText: texts } : result;
+      return requests.length > 0
+        ? { ...result, usage: requests, modelText: callTexts.answered }
+        : result;
     } catch (err) {
       attachBilledUsage(err, requests);
+      // Gap 1, unit A2b: the call's texts ride beside the thrown error, which stays as it is.
+      carryTexts(err, callTexts);
       throw err;
     }
   }
@@ -1310,7 +1343,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     executor: ToolExecutor,
     options: Parameters<AnthropicProvider['callStepWithTools']>[3],
     requests: UsageRecord[],
-    texts: ModelTextReport[],
+    callTexts: CallTexts,
   ): Promise<StepWithToolsResult> {
     const clock = options.llmClock;
     // issue #401: per-invocation, minted beside the client below (never a module global).
@@ -1370,7 +1403,12 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ): Promise<any> => {
       const requestStart = new Date().toISOString();
-      const response = await send(body);
+      // Gap 1, unit A2b: while this send has no answer, it is the call's unanswered request.
+      const response = await trackSend(
+        callTexts,
+        () => anthropicSentText(body),
+        () => send(body),
+      );
       // Gap 1, unit A1: the request's text beside its record, in the same statement.
       pushAnswered(
         requests,
@@ -1378,7 +1416,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           ...facts(response, client),
           ...responseIdFacts(response),
         }),
-        texts,
+        callTexts.answered,
         anthropicAnsweredText(body, response),
       );
       // Caching 3-M (B2a): whichever send answered (#311's retry included); a refused send has no id.
