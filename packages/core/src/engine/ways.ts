@@ -3169,7 +3169,7 @@ const LEASE_UNKNOWN_WORDS: Record<LeaseProbeReason, string> = {
   permission:
     "whether its program still holds the claim's lease could not be checked: this program cannot open its lease file for writing, which checking needs",
   io_error:
-    "whether its program still holds the claim's lease could not be checked: reading its lease file failed",
+    "whether its program still holds the claim's lease could not be checked: accessing its lease file failed",
 };
 
 /**

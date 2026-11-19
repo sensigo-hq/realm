@@ -86,7 +86,7 @@ const RESULTS: Array<{ name: string; fact: LeaseFact; phrase: string }> = [
     name: 'unknown, io_error',
     fact: { state: 'unknown', basis: KERNEL, reason: 'io_error' },
     phrase:
-      "whether its program still holds the claim's lease could not be checked: reading its lease file failed",
+      "whether its program still holds the claim's lease could not be checked: accessing its lease file failed",
   },
 ];
 /** The condition form C of a phrase. */
@@ -174,6 +174,21 @@ describe('#729 CW-4a — check 1: each result of the lease check, through the MC
       byName: true,
       noDeadline: false,
     });
+  });
+});
+
+describe('#729 CW-4a — correction 1: two held steps with the same lease result', () => {
+  it('both absent: one group, the several-steps sentence', async () => {
+    const d = await door();
+    for (const step of ['c', 'd']) await d.unleased(step);
+    await d.leased('a', RESULTS[0]!.fact);
+    await d.leased('b', RESULTS[0]!.fact);
+    const hint = String((await d.call('advance_run', { run_id: d.runId }))['context_hint']);
+    // (a) red when the several-steps sentence's words change (a singular word in the plural
+    //     branch, or the phrase not said "for each"); (b) prints the reply's hint.
+    expect(hint, hint).toContain(
+      `'a', 'b' are held; for each, ${RESULTS[0]!.phrase}. Wait for them. If their programs have stopped, a person can free them.`,
+    );
   });
 });
 
