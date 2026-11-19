@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { runAgent } from './run-agent.js';
 import { LlmProvider, type CallStepWithMetaResult } from './providers/llm-provider.js';
 import { discloseForAgent, discloseForAgentSplit } from './providers/agent-utils.js';
@@ -88,7 +88,7 @@ describe('caching 3-B C2 — run-agent hands the provider the head’s length, t
     const { provider, calls } = recording(['BAD', 'OK', 'OK']);
     await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: {
           register: async () => {},
           get: async () => flow,

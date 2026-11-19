@@ -24,7 +24,7 @@ import {
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { runAgent } from '../run-agent.js';
 import { AnthropicProvider } from './anthropic-provider.js';
 import { LlmProvider } from './llm-provider.js';
@@ -174,7 +174,7 @@ async function promptSent(
   } as WorkflowDefinition;
   const result = await runAgent(
     {
-      store: new InMemoryStore(),
+      store: new InMemoryStore({ leases: createLeaseDouble() }),
       workflowStore: {
         register: async () => {},
         get: async () => definition,

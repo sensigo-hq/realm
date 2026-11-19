@@ -16,7 +16,7 @@ import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
 
 const mockCreate = vi.fn();
@@ -69,7 +69,7 @@ const outputSchemaOnlyWorkflow: WorkflowDefinition = {
 
 function makeDeps(): AgentDeps {
   return {
-    store: new InMemoryStore(),
+    store: new InMemoryStore({ leases: createLeaseDouble() }),
     workflowStore: makeWorkflowStore(outputSchemaOnlyWorkflow),
     provider: new AnthropicProvider('claude-sonnet-4-5'),
     registry: createDefaultRegistry(),

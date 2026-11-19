@@ -6,7 +6,7 @@
 // - A drive blocked by a missing handler knows how it was started: its re-attach command repeats
 //   the drive's own model flags (`AgentDeps.reattachFlags`, built by `buildReattachFlags`).
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, ExtensionRegistry } from '@sensigo/realm';
 import type { PendingView, RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
@@ -154,7 +154,7 @@ describe('a drive blocked by a missing handler repeats its own model flags (issu
 
   /** Drives the run to the block; returns the run id and the printed "is blocked" line. */
   async function blockedLine(reattachFlags?: string): Promise<{ runId: string; line: string }> {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const errors: string[] = [];
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation((m: unknown) => {
@@ -369,7 +369,7 @@ describe('the Go on: line repeats a stated --prompt-cache (issue #600 PR 2)', ()
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
       steps: { write: { description: 'Write', execution: 'agent' } },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,

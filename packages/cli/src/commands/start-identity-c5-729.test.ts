@@ -20,7 +20,7 @@ import {
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { buildRouteTable, makeListenHandler, prepareListenWorkflows } from './listen.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { runAgent } from '../agent/run-agent.js';
@@ -455,7 +455,7 @@ describe('#729 PR-3 correction 5 (J-5) — the in-process creators', () => {
       workflowStore: { register: async () => {} },
       logger,
     } as never);
-    const runStore = new InMemoryStore();
+    const runStore = new InMemoryStore({ leases: createLeaseDouble() });
     const handler = makeListenHandler(routes, {
       workflowStore: { register: async () => {} },
       runStore,
@@ -511,7 +511,9 @@ describe('#729 PR-3 correction 5 (J-5) — the in-process creators', () => {
     // them all, so the cell builds a store that leaves the field out).
     const store = new (class extends InMemoryStore {
       override readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set(
-        [...new InMemoryStore().persistedRunRecordFields].filter((f) => f !== 'extension_identity'),
+        [...new InMemoryStore({ leases: createLeaseDouble() }).persistedRunRecordFields].filter(
+          (f) => f !== 'extension_identity',
+        ),
       );
     })();
     const create = vi.spyOn(store, 'create');

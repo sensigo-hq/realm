@@ -8,7 +8,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
+import { InMemoryStore, settableClock, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -149,7 +149,7 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
       id: 'x',
       execute: async () => ({ data: { go: false } }),
     } as never);
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     await runAgent(
       { store, workflowStore: workflowStore(def), provider: provider(), registry },
       { definition: def, params: {}, pollIntervalMs: 20 },
@@ -181,7 +181,7 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
         throw new Error('kaboom');
       },
     } as never);
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -201,7 +201,10 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
 
   it('check 3 (A6) — the ⚠ line of an on_expiry abort this drive’s call carried out, then no Ended:', async () => {
     const def = gated(false);
-    const store = new InMemoryStore({ clock: settableClock(new Date(T + 5000)) });
+    const store = new InMemoryStore({
+      clock: settableClock(new Date(T + 5000)),
+      leases: createLeaseDouble(),
+    });
     const runId = await atExpiringQuestion(store, def);
     await runAgent(
       {
@@ -227,7 +230,10 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
   it('correction 1, check 2 — realm agent --run-id: the ⚠ line of an expired default whose guard then aborts says the ending, then no Ended:', async () => {
     const expiry = { on_expiry: 'settle_default', default_choice: 'reject' };
     const def = gated(true, { timeout_seconds: 1, ...expiry });
-    const store = new InMemoryStore({ clock: settableClock(new Date(T + 5000)) });
+    const store = new InMemoryStore({
+      clock: settableClock(new Date(T + 5000)),
+      leases: createLeaseDouble(),
+    });
     const runId = await atExpiringQuestion(store, def, expiry);
     await runAgent(
       {
@@ -257,7 +263,7 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
   it("check 3 — the terminal fallback's ⏰ line ends the run: no Ended:", async () => {
     const def = gated(false);
     const clock = settableClock(new Date(T));
-    const store = new InMemoryStore({ clock });
+    const store = new InMemoryStore({ clock, leases: createLeaseDouble() });
     const runId = await atExpiringQuestion(store, def);
     const drive = runAgent(
       {
@@ -296,7 +302,7 @@ describe('#625 A1b-2 — check 3: realm agent says how the run ended exactly onc
       before?: (store: RunStore, runId: string, gate: PendingGate) => Promise<void>,
       registry: ExtensionRegistry = createDefaultRegistry(),
     ): Promise<boolean | undefined> {
-      const store = new InMemoryStore();
+      const store = new InMemoryStore({ leases: createLeaseDouble() });
       let resolved: boolean | undefined;
       await runAgent(
         {

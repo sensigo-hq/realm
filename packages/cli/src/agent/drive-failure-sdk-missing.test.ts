@@ -8,7 +8,7 @@
 // module mock is what makes the path drivable. The provider's catch is BARE (`catch {}`), so
 // nothing here asserts on what it caught; what matters is what it throws NEXT.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
@@ -36,7 +36,7 @@ const WF = {
 
 describe('#401 — a missing SDK is recorded rather than fatal', () => {
   it('records sdk_missing WITH the step name, and preserves the message the exit path printed', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     // Deterministic across launch contexts: makes the sanitizer's npm-metadata exclusion the
     // thing under test, rather than whether npm happened to export the variable.
     vi.stubEnv('npm_package_name', 'realm');

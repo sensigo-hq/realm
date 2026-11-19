@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runAgent } from '../agent/run-agent.js';
 import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import type { McpClient, McpTool } from '../agent/mcp/mcp-extensions.js';
 import { AnthropicProvider } from '../agent/providers/anthropic-provider.js';
 import { OpenAIProvider } from '../agent/providers/openai-provider.js';
@@ -115,7 +115,7 @@ const def = {
 
 /** Drives the workflow with `provider`, then returns the step's `asked for` line from inspect. */
 async function cacheLineAfter(provider: LlmProvider): Promise<{ requests: number; line: string }> {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const workflowStore = {
     async register() {},
     async get() {

@@ -2,7 +2,7 @@
 // PAST its deadline is the only one said to have a dead runner; an engine step refused before its
 // claim (a precondition) is named and no model call follows.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -31,7 +31,7 @@ describe('#625 PR-2a — realm agent loop words', () => {
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
       steps: { review: { description: 'R', execution: 'agent', depends_on: [] } },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -96,7 +96,7 @@ describe('#625 PR-2a — realm agent loop words', () => {
     })();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const result = await runAgent(
       {
         store,

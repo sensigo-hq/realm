@@ -20,7 +20,7 @@ vi.mock('node:readline/promises', () => ({
   createInterface: vi.fn(() => ({ question: mocks.question, close: mocks.close })),
 }));
 
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -141,7 +141,7 @@ describe('#625 PR-2a, F16 — realm agent: a run that has not ended is never sai
   });
 
   async function drive(def: WorkflowDefinition, answer: Record<string, unknown>) {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,

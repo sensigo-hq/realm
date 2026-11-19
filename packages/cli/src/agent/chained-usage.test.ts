@@ -15,7 +15,7 @@ import type {
   WorkflowDefinition,
 } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { handleGetRunState } from '@sensigo/realm-mcp/dist/tools/get-run-state.js';
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
@@ -70,7 +70,7 @@ it('one model call is counted once: on the agent step, on both inspect and get_r
     id: 'finish_handler',
     execute: async () => ({ data: { finished: true } }),
   });
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
 
   const result = await runAgent(
     { store, workflowStore, provider, registry },
@@ -164,7 +164,7 @@ it("a chained step's REJECTED input does not re-attach the agent step's calls (c
     id: 'finish_handler',
     execute: async () => ({ data: { finished: true } }),
   });
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
 
   const result = await runAgent(
     { store, workflowStore: wf, provider: billingProvider(), registry },
@@ -209,7 +209,7 @@ function snapshotFailingStore(
     throwUsage?: UsageRecord[];
   } = {},
 ): RunStore {
-  const inner = new InMemoryStore();
+  const inner = new InMemoryStore({ leases: createLeaseDouble() });
   let snapshotWrites = 0;
   let getFailuresArmed = false;
   const update = async (record: RunRecord): Promise<Snapshot> => {

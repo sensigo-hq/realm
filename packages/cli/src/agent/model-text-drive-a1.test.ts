@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   ExtensionRegistry,
   type EvidenceSnapshot,
@@ -56,7 +56,7 @@ async function drive(
   provider: LlmProvider,
   extra: Partial<AgentDeps> = {},
 ): Promise<{ result: string; run: RunRecord }> {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const { record } = await store.create({
     workflowId: definition.id,
     workflowVersion: 1,
@@ -415,7 +415,7 @@ describe('gap 1, unit A1 — the tool path and the strict path join each text to
       ...extra,
       steps: { ask: { ...definition.steps['ask'], ...step } },
     } as unknown as WorkflowDefinition;
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
     const result = await runAgent(
       {

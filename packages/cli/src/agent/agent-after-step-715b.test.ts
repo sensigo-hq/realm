@@ -20,7 +20,7 @@ import {
   type RunStore,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
+import { InMemoryStore, settableClock, createLeaseDouble } from '@sensigo/realm-testing';
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { runsOf } from '../test-support/temp-home.js';
@@ -117,7 +117,7 @@ describe('#715 (b) §B.1-B.2 — realm agent judges what it prints on the reply�
         throw new Error('boom');
       },
     });
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     // Another program resumes the run as the drive prints its failure line — after every read the
     // engine made, before the resume line is composed. Any later read of the run waits for that
     // write, so a drive that read the run again would see it.
@@ -189,7 +189,7 @@ describe('#715 (b) §B.1-B.2 — realm agent judges what it prints on the reply�
       },
     };
     const clock = settableClock(new Date(DEADLINE - 60_000));
-    const store = new InMemoryStore({ clock });
+    const store = new InMemoryStore({ clock, leases: createLeaseDouble() });
     const { record } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
     await advanceRun(store, def, { runId: record.id });
     await clock.set(new Date(DEADLINE + 1_000));
@@ -214,7 +214,7 @@ describe('#715 (b) §B.1-B.2 — realm agent judges what it prints on the reply�
         review: { description: 'Review.', execution: 'agent', depends_on: ['s'] },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { wrapped, fired } = after(
       store,
       'get',

@@ -6,7 +6,7 @@
 // run's record keeps Anthropic's own message (AUD1122-12, -19). The key is a fake. Beside each: (a)
 // the change that turns it red; (b) what it prints when it fails — stderr's lines and the entry.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
@@ -94,7 +94,7 @@ async function drive(site: Site) {
     process.env['ANTHROPIC_BASE_URL'] = stub.baseUrl;
     process.env['ANTHROPIC_API_KEY'] = 'sk-ant-fake-print-1122-0000';
     delete process.env['ANTHROPIC_WORKSPACE_ID'];
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const errors: string[] = [];
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation((m: unknown) => {

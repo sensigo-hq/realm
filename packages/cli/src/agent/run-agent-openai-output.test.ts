@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runAgent } from './run-agent.js';
 import type { WorkflowDefinition, StructuredOutputMeta } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { OpenAIProvider } from './providers/openai-provider.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { runsOf } from '../test-support/temp-home.js';
@@ -50,7 +50,7 @@ async function drive(
   provider: LlmProvider,
   deps: { providerId?: `module:${string}` } = {},
 ): Promise<StructuredOutputMeta | undefined> {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   await runAgent(
     {
       store,
@@ -243,7 +243,7 @@ describe('runAgent — OpenAI structured output (issue #313)', () => {
         },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     await runAgent(
       {
         store,
@@ -388,7 +388,7 @@ describe('runAgent — OpenAI structured output (issue #313)', () => {
     })();
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     await runAgent(
       {
         store,

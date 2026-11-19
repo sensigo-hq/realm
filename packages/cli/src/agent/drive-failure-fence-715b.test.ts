@@ -10,7 +10,7 @@ import {
   type EvidenceSnapshot,
   type RunRecord,
 } from '@sensigo/realm';
-import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
+import { InMemoryStore, settableClock, createLeaseDouble } from '@sensigo/realm-testing';
 import { recordDriveFailure } from './drive-failure.js';
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
@@ -21,7 +21,7 @@ const T = '2026-10-30T10:00:00.000Z';
 describe('#715 (b) §D.2 — a failed drive records its fence in the write that appends it', () => {
   it('the entry carries the run’s evidence count and open question at that write; without a question, no gate_id', async () => {
     // (a) red when the write appends the entry without its fence; (b) prints both entries' fences.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const evidence: EvidenceSnapshot = {
       step_id: 'a',
       started_at: T,
@@ -73,7 +73,7 @@ describe('#715 (b) §D.2 — a drive failure’s instant is the store’s clock 
       steps: { draft: { description: 'Draft.', execution: 'agent' as const, depends_on: [] } },
     };
     const clock = settableClock(new Date('2030-01-01T00:00:00.000Z'));
-    const store = new InMemoryStore({ clock });
+    const store = new InMemoryStore({ clock, leases: createLeaseDouble() });
     const provider = new (class extends LlmProvider {
       callStep = vi
         .fn()

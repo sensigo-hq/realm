@@ -5,7 +5,7 @@
 // in the suite pinned those throws, so the cells below ARE the contract — including the re-throw,
 // which `runAgent`'s callers depend on.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { ExtensionRegistry, classifyRunHealth } from '@sensigo/realm';
 import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
@@ -36,7 +36,7 @@ class TestProvider extends LlmProvider {
 
 function makeDeps(over: Partial<AgentDeps> = {}): AgentDeps {
   return {
-    store: new InMemoryStore(),
+    store: new InMemoryStore({ leases: createLeaseDouble() }),
     workflowStore: {
       register: async () => {},
       get: async () => {
@@ -80,7 +80,7 @@ describe('#401 chokepoint (3) — the last-resort catch', () => {
     //
     // The placement mutant (narrowing the try to the `while` loop) reds this cell: the MCP-init
     // throw happens before the loop is ever entered.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps = makeDeps({ store });
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -100,7 +100,7 @@ describe('#401 chokepoint (3) — the last-resort catch', () => {
 
   it('3b — a tool-declaring workflow on a non-tool-capable provider re-throws AND records', async () => {
     // Nothing else in the suite pins this throw, so this cell is its whole contract.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const wf = {
       ...UNDECLARED_SERVER_WF,
       id: 'tool-incapable-wf',
@@ -135,7 +135,7 @@ describe('#401 chokepoint (3) — the last-resort catch', () => {
 
 describe('#401 chokepoint (2) — the LLM call', () => {
   it('records the failure with the STEP name, and returns failed without retrying', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new TestProvider(new Error('provider exploded'));
     const deps = makeDeps({ store, provider });
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -202,7 +202,7 @@ describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive
         },
       },
     );
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new TestProvider(billedThenThrown);
     const deps = makeDeps({ store, provider });
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -264,7 +264,7 @@ describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive
   });
 
   it('a throw with NO driveCall at all discloses nothing about usage — absent, not a fabricated zero', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new TestProvider(new Error('connection reset'));
     const deps = makeDeps({ store, provider });
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -316,7 +316,7 @@ describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive
 // =================================================================================================
 describe('#401 chokepoint (3) — the mid-loop throw carries the current step', () => {
   it('3c — a store read failing mid-drive records the SELECTED step, never the empty string', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const original = store.get.bind(store);
     const wf = {
       id: 'midloop-wf',
@@ -444,7 +444,7 @@ const TOOLS_WF = {
 
 describe('#401 chokepoint (1) — the tools catch', () => {
   it('a throwing tools call is recorded WITH the step name, and the printed line carries the message', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const errors: string[] = [];
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation((m: unknown) => {
@@ -492,7 +492,7 @@ function autoHandlerWorkflow(handlerName: string): WorkflowDefinition {
 
 describe('#401 chokepoint (4) — codes that mint NOTHING', () => {
   it('ENGINE_HANDLER_NOT_REGISTERED ⇒ no entry — the capability_block finding owns this', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps = makeDeps({ store, registry: new ExtensionRegistry() });
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -507,7 +507,7 @@ describe('#401 chokepoint (4) — codes that mint NOTHING', () => {
   });
 
   it('ENGINE_ADAPTER_NOT_REGISTERED ⇒ no entry, for the same reason', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const wf = {
       id: 'adapter-wf',
       name: 'Adapter WF',
@@ -541,7 +541,7 @@ describe('#401 chokepoint (4) — codes that mint NOTHING', () => {
     // second, independent step is still eligible) and the step settled — so the visibility already
     // exists and an entry would duplicate it. Two steps deliberately: a single-step construction
     // SEALS the run, and the fence's terminal-skip would then mask a mint-on-everything mutant.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const registry = new ExtensionRegistry();
     registry.register('handler', 'boom', {
       execute: async () => {
@@ -579,7 +579,7 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
     // The step omits `input_schema` deliberately: Step 2b validates INPUT before Step 2c validates
     // output, so an input schema here would make the code INPUT_SCHEMA and this cell's name a lie.
     // Recorded tool calls defeat the repair gate, so this arrives with repairsUsed === 0.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps = makeDeps({
       store,
       provider: new ToolProvider({ wrong: 'shape' }, [
@@ -603,7 +603,7 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
   });
 
   it('an INPUT_SCHEMA rejection mints too — and a huge step name is CAPPED at 500', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const wf = {
       id: 'input-validation-wf',
       name: 'Input Validation',
@@ -650,7 +650,7 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
     // The schema MUST carry `required`: runAgent passes `{}` for an auto step, and a
     // properties-only schema happily ACCEPTS `{}` — the cell would pass without validating
     // anything. Output validation is agent-only, so this is the INPUT_SCHEMA path.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const registry = new ExtensionRegistry();
     registry.register('handler', 'noop', { execute: async () => ({ ok: true }) } as never);
     const wf = {
@@ -685,7 +685,7 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
   });
 
   it('a repair-EXHAUSTED rejection mints (default schemaRetries: 2 ⇒ three rejections)', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const wf = {
       id: 'exhausted-wf',
       name: 'Exhausted',
@@ -763,7 +763,7 @@ const HOSTILE_WF = {
 
 describe('#401 — the mint survives a hostile thrown value', () => {
   it('chokepoint (2): returns failed with ONE degraded entry, rather than escalating', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps = makeDeps({ store, provider: new HostileProvider() });
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -783,7 +783,7 @@ describe('#401 — the mint survives a hostile thrown value', () => {
   it('chokepoint (3): the ORIGINAL hostile value propagates, unreplaced', async () => {
     // The point of hardening the mint: whatever reaches the caller must be the operator's actual
     // failure, not a secondary error the recording machinery generated on top of it.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const hostile = HostileProvider.hostile;
     const deps = makeDeps({
       store,
@@ -957,7 +957,7 @@ describe('#401 PR-2 — which clock the step drives under', () => {
   it('the ATTACH leg carries the clock too, not just the create leg', async () => {
     // Both `realm agent` invocation legs thread the flag; a clock wired on only one of them would
     // leave every re-attached run unbounded, which is the longer-lived half of the population.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new ClockSpyProvider();
     const deps = makeDeps({ store, provider, llmTimeoutSeconds: 45 } as Partial<AgentDeps>);
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -985,7 +985,7 @@ describe('#401 PR-2 — a fired ceiling as the operator meets it', () => {
       counters,
     ).catch((e: unknown) => e);
 
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps = makeDeps({ store, provider: new ThrowingProvider(aborted) });
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1033,7 +1033,7 @@ describe('#401 PR-2 — the print no longer out-throws the failure', () => {
   it('the TOOLS print is hardened too — the other half of the same fix', async () => {
     // Two prints, two chokepoints. Pinning only the non-tools one leaves a reversion at the tools
     // line entirely free, and that line is the one a tools-bearing step goes through.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps = makeDeps({
       store,
       provider: new HostileToolsProvider(),
@@ -1060,7 +1060,7 @@ describe('#401 PR-2 — the print no longer out-throws the failure', () => {
     // Before the prints were made total, this value took the process out at the console line —
     // ahead of the (already hardened) mint. Now both are total, so the failure is recorded and
     // the drive ends the way every other failed drive ends.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps = makeDeps({ store, provider: new FullyHostileProvider() });
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1215,7 +1215,7 @@ describe('#401 — the clock reaches all three of run-agents call sites', () => 
     // The hop every third-party provider inherits: run-agent calls callStepWithMeta, the base
     // class forwards to callStep. The double throws a NAMED error if the clock did not arrive,
     // so the drop-mutant reds fast and says exactly what went missing instead of hanging.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps = makeDeps({ store, provider: new BaseDelegationProvider() });
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1253,7 +1253,7 @@ describe('#401 DQ5 — a flag nobody passed is not a declaration', () => {
   const drive = async (
     llmTimeoutSeconds: number | undefined,
   ): Promise<{ clock: LlmClock | undefined; entry: Record<string, unknown> }> => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     // Fails through the REAL driveCreate, not a bare throw: the declared value reaches the RECORD
     // only inside a payload driveCreate builds, so a provider that just throws would make the
     // entry assertions below true for a reason that has nothing to do with provenance.
@@ -1337,7 +1337,7 @@ describe('#715 (R) — R3b: the single-shot catch records minted ids, and the pr
         });
       }
     })();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const wf = {

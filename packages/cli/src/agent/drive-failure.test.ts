@@ -14,7 +14,7 @@ import {
   lostLine,
 } from './drive-failure.js';
 import { setAdditionalRedactionValues } from './providers/agent-utils.js';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { runAgent, type AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { snap } from '../test-support/snapshot-double.js';
@@ -599,7 +599,7 @@ describe('#715 (a) — elapsed_ms is measured on the monotonic clock', () => {
           },
         },
       } as unknown as WorkflowDefinition;
-      const store = new InMemoryStore();
+      const store = new InMemoryStore({ leases: createLeaseDouble() });
       const provider = new (class extends LlmProvider {
         async callStep(): Promise<Record<string, unknown>> {
           now = 1_750;

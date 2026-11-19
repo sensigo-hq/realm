@@ -20,7 +20,7 @@ import {
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
+import { InMemoryStore, settableClock, createLeaseDouble } from '@sensigo/realm-testing';
 import { inspectRun } from './inspect.js';
 import { listRuns } from './list.js';
 import { runAgent } from '../agent/run-agent.js';
@@ -59,7 +59,7 @@ const workflowStore = {
 /** A run waiting at `q`, its question opened at T and due at T + 60 s, on a store whose clock reads `readAt`. */
 async function waitingAt(readAt: number) {
   const clock = settableClock(new Date(T));
-  const store = new InMemoryStore({ clock });
+  const store = new InMemoryStore({ clock, leases: createLeaseDouble() });
   const { record } = await store.create({ workflowId: GATED.id, workflowVersion: 1, params: {} });
   const gate: PendingGate = {
     gate_id: 'g-715b',
@@ -160,7 +160,7 @@ describe('#715 (b) 03 §B.2 E — realm agent’s question block names the deadl
     // (a) red when the block prints no deadline, or judges it at the host's clock (years later:
     //     EXPIRED); (b) prints the lines of the block.
     const clock = settableClock(new Date(T));
-    const store = new InMemoryStore({ clock });
+    const store = new InMemoryStore({ clock, leases: createLeaseDouble() });
     const lines: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
       lines.push(stripSpanMarks(a.join(' ')));

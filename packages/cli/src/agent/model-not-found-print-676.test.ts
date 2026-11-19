@@ -7,7 +7,7 @@
 // stderr exactly as it is for a provider with no such method — and the drive-failure entry must
 // never change.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
@@ -91,7 +91,7 @@ const SITES: Site[] = [
 
 /** Drives one run to its failure; returns stderr's lines and the run's drive-failure entry. */
 async function drive(site: Site, provider: FailingProvider) {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const errors: string[] = [];
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation((m: unknown) => {

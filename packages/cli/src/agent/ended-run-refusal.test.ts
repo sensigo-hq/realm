@@ -8,7 +8,7 @@
 // steps left pending end their own line with the command, no stop after it. Every cell asserts the
 // whole message.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
@@ -87,7 +87,7 @@ const completed = (run: RunRecord): void => {
 // the composer's "worked out from its record" one.
 describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
   it('E1 R1: a completed run, through the pre-attach check', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const runId = await endedRun(store, completed);
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
@@ -96,7 +96,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
   });
 
   it('E1 R1-agent: the same run, through the agent loop — the same message', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const runId = await endedRun(store, completed);
     await expect(agent(store, runId)).rejects.toHaveProperty(
       'message',
@@ -105,7 +105,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
   });
 
   it('E1 R2: a completed run with a pending finalizer keeps the drain hint after one stop', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const runId = await endedRun(store, (run) => {
       completed(run);
       run.finalizer_ledger = { fin: { status: 'pending', rank: 0 } };
@@ -117,7 +117,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
   });
 
   it('E1 R3: a reason is stored text — after its label, as written, no stop added', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const runId = await endedRun(store, (run) => {
       run.terminal_state = true;
       run.terminal_reason = 'spawn_failed';
@@ -131,7 +131,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
   // The store writes `run_phase` as derived on every update (`in-memory-store.ts:141-144`), so R4
   // cannot tell a stored phase from a derived one; R8 pins the derivation.
   it('E1 R4: no recorded reason — the phase', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const runId = await endedRun(store, (run) => {
       run.terminal_state = true;
       run.aborted_at = { step_id: 's1' };
@@ -166,7 +166,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
   });
 
   it('E1 R6: a reason that ends with a question mark is printed as written — no stop added; how the run ended from the record', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const runId = await endedRun(store, (run) => {
       run.terminal_state = true;
       run.terminal_reason = 'Held?';

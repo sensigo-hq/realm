@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { runAgent } from './run-agent.js';
 import type { RunRecord, UsageRecord, WorkflowDefinition } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { McpClient, McpTool, StepWithToolsResult } from './mcp/mcp-extensions.js';
 import { inspectRun } from '../commands/inspect.js';
@@ -110,7 +110,7 @@ function workflow(
 }
 
 async function drive(def: WorkflowDefinition, turns: Turn[]) {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const workflowStore = {
     async register() {},
     async get() {

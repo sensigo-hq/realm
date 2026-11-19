@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { RunRecord, UsageRecord, WorkflowDefinition, RunStore } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { appendRequests } from './providers/agent-utils.js';
@@ -136,7 +136,7 @@ const quiet = () => {
 describe('issue #600 — a repaired step records every call it paid for', () => {
   it('cell 1 — exit 1: the settled step evidence carries all three calls, in wire order', async () => {
     quiet();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { provider } = scriptedProvider([
       { output: 'BAD', prompt: 1000, out: 100 },
       { output: 'BAD', prompt: 2000, out: 200 },
@@ -158,7 +158,7 @@ describe('issue #600 — a repaired step records every call it paid for', () => 
 
   it('cell 2 — exit 2: a throw after two rejected calls keeps all three on the drive-failure entry', async () => {
     quiet();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { provider } = scriptedProvider([
       { output: 'BAD', prompt: 1000, out: 100 },
       { output: 'BAD', prompt: 2000, out: 200 },
@@ -176,7 +176,7 @@ describe('issue #600 — a repaired step records every call it paid for', () => 
 
   it('cell 3 — exit 3: the wedge entry carries every call of the exhausted budget and says it was a rejection', async () => {
     quiet();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { provider } = scriptedProvider([
       { output: 'BAD', prompt: 1000, out: 100 },
       { output: 'BAD', prompt: 2000, out: 200 },
@@ -195,7 +195,7 @@ describe('issue #600 — a repaired step records every call it paid for', () => 
 
   it('cell 4 — exit 3, provider reports nothing: no usage key and no usage line', async () => {
     quiet();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { provider } = scriptedProvider([
       { output: 'BAD' },
       { output: 'BAD' },
@@ -423,7 +423,7 @@ function twoRequestProvider() {
 /** The step `draft`'s stored requests' ids, whether its entry recorded a structured_output, and a re-read's ids. */
 async function idsOf(def: WorkflowDefinition) {
   quiet();
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   await drive(store, def, twoRequestProvider());
   const run = await onlyRun(store);
   const entry = (r: RunRecord) => executionEvidence(r, 'draft').at(-1);

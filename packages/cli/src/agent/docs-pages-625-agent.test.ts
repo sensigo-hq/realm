@@ -14,7 +14,7 @@ import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   abandonRun,
   createDefaultRegistry,
@@ -118,7 +118,7 @@ interface DriveOptions {
 
 /** One `realm agent` drive in-process; the run's id is written `<run>` in the lines. */
 async function drive(def: WorkflowDefinition, o: DriveOptions = {}): Promise<Drive> {
-  const store = o.store ?? new InMemoryStore();
+  const store = o.store ?? new InMemoryStore({ leases: createLeaseDouble() });
   let calls = 0;
   const provider = new (class extends LlmProvider {
     async callStep(): Promise<Record<string, unknown>> {
@@ -696,7 +696,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         '',
       ].join('\n'),
     );
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,

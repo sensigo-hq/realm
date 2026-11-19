@@ -3,7 +3,7 @@
 // listen-child notice; and one drive that prints it after `Run ID:`. On a failing CI host each cell
 // prints the line it built: no environment, header or key.
 import { describe, expect, it, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -268,7 +268,7 @@ describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () =
   // The drive prints it, between `Run ID:` and the blank line, from deps.promptCache. (a) red when
   // the drive does not pass deps.promptCache to the line; (b) prints the drive's first lines.
   it('a drive prints the line after Run ID:, with the setting realm agent resolved', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new (class extends LlmProvider {
       override capabilities(): ProviderCapabilities {
         return { jsonMode: false, providerId: 'anthropic', promptCache: { lifetime_s: 300 } };

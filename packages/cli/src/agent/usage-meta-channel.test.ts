@@ -5,7 +5,7 @@
 // declares `structured_output` in ZERO files, so every one of its steps takes the arm this section
 // pins — a step declaring nothing must still report what its wire requests cost.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '@sensigo/realm';
 import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
@@ -16,7 +16,7 @@ import { runsOf } from '../test-support/temp-home.js';
 
 function makeDeps(over: Partial<AgentDeps> = {}): AgentDeps {
   return {
-    store: new InMemoryStore(),
+    store: new InMemoryStore({ leases: createLeaseDouble() }),
     workflowStore: {
       register: async () => {},
       get: async () => {
@@ -77,7 +77,7 @@ describe('issue #600 PR 1a (D1b) — GREEN: on this branch, the same arm is re-r
   }
 
   it('the driver calls ONLY callStepWithMeta for the undeclared arm — callStep is never invoked directly', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new UsageReportingProvider();
     const deps = makeDeps({ store, provider });
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -90,7 +90,7 @@ describe('issue #600 PR 1a (D1b) — GREEN: on this branch, the same arm is re-r
   });
 
   it('the reported usage reaches the persisted step diagnostics as an ENGAGED cache — the whole point of the re-route', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new UsageReportingProvider();
     const deps = makeDeps({ store, provider });
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -122,7 +122,7 @@ describe('issue #600 PR 1a (D1b) — the composition hazard: an undeclared step 
   }
 
   it("an undeclared step's persisted diagnostics carry no structured_output stamp, even though the provider returned one", async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new MisbehavingProvider();
     const deps = makeDeps({ store, provider });
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -154,7 +154,7 @@ describe('issue #600 PR 1a (D5) — red-first: a real third-party --provider-mod
   });
 
   it("AFTER the fix: run-agent's `usage ?? []` turns that omission into an explicit empty array — cache is PRESENT as unobservable, not absent", async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new SilentThirdPartyProvider();
     const deps = makeDeps({ store, provider });
     vi.spyOn(console, 'log').mockImplementation(() => {});

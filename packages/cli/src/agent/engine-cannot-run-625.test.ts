@@ -18,7 +18,7 @@
 //     (precondition); none of those lines is true of a step that does not run.
 // Plus MR-14: with two such steps the exit names the first in definition order.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   advanceRun,
   createDefaultRegistry,
@@ -168,7 +168,7 @@ interface Drive {
  */
 async function drive(member: Member, otherBranch: boolean): Promise<Drive> {
   const def = fixture(member, otherBranch);
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const registry = createDefaultRegistry();
   let attachId: string | undefined;
   if (member === 'capability_later') {
@@ -331,7 +331,7 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
         review: { description: 'Review.', execution: 'agent', depends_on: ['zeta', 'alpha'] },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const lines: string[] = [];
     for (const kind of ['log', 'error', 'warn'] as const) {
       vi.spyOn(console, kind).mockImplementation((...a: unknown[]) => {

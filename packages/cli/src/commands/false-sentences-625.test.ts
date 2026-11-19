@@ -9,7 +9,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -59,7 +59,7 @@ describe('#625 PR-2a, F17 — the CHANGELOG and step-kinds.md quote what the CLI
         preconditions: ['run.params.ok == true'],
       } as StepDefinition,
     });
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,

@@ -4,7 +4,7 @@
 // `runAgent` in-process and reads the STORED record, never a render. On a failing CI host each cell
 // prints the stored requests' `provider` and `model` fields: test values only.
 import { describe, expect, it, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -47,7 +47,7 @@ async function drive(opts: {
   usage?: unknown[];
   throwWith?: unknown[];
 }): Promise<RunRecord> {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const provider = new (class extends LlmProvider {
     override capabilities(): ProviderCapabilities {
       return {

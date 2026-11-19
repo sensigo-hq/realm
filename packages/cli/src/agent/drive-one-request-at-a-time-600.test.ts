@@ -9,7 +9,7 @@
 // failing host a cell prints each provider's call count and call labels at each point: never a prompt
 // text.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -90,7 +90,7 @@ describe('C-4: one realm agent drive sends two ready steps in turn; runs started
   // ARM 1. (a) red when one drive sends the second step's request before the first reply is back (two
   // calls while the first is held), or never sends it; (b) prints the call count at each point.
   it('one drive: while the first reply is held the provider has been called once; the second call follows its release', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: twoReady.id,
       workflowVersion: 1,
@@ -144,7 +144,7 @@ describe('C-4: one realm agent drive sends two ready steps in turn; runs started
   // when the instrument counts after the reply; (b) prints, per point, each provider's call count and
   // labels, and the runs' completed_steps.
   it('two runs started together: their first steps are in flight together; each run sends its second step only after its own first reply', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const runs = [
       (await store.create({ workflowId: twoReady.id, workflowVersion: 1, params: {} })).record,
       (await store.create({ workflowId: twoReady.id, workflowVersion: 1, params: {} })).record,
