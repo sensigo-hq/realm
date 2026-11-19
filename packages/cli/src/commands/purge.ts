@@ -44,6 +44,9 @@ import {
   TERMINAL_PHASES,
   classifyInProgressClaims,
   deriveRunPhase,
+  describeClaimHolder,
+  leaseClause,
+  leaseFactOf,
   noLongerTerminalReason,
   resumeWay,
 } from '@sensigo/realm';
@@ -51,6 +54,7 @@ import type { PurgeReport, PurgeSelection } from '@sensigo/realm-store-sqlite';
 import { parseDuration } from '../lib/parse-duration.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
+import { takenPhrase } from '../lib/holder-render.js';
 // Gap 1, unit A0: the listing that reads no model call's text.
 import { scanListedRuns, type ListedRecord, type ListedSnapshot } from '@sensigo/realm';
 
@@ -97,14 +101,25 @@ export function isPurgeEligible(
   }
 
   const claims = classifyInProgressClaims(snapshot);
+  // #729 CW-4b: a leased claim's reason names who took the step and when (the claim exists, so the
+  // store's keeping of claims is never read).
+  const takenOn = (step: string): string => {
+    const claim = run.claims?.[step];
+    const described = describeClaimHolder(claim, true, leaseFactOf(snapshot, claim));
+    const at = described.since !== undefined ? ` at ${described.since}` : '';
+    return `run carries a claim on step '${step}', ${takenPhrase(described, writerCtx())}${at}`;
+  };
 
   const healthyClaim = claims.find((c) => c.state === 'healthy');
   if (healthyClaim !== undefined) {
     return {
       eligible: false,
+      // #729 CW-4b: a held lease says what its check found, never that a runner may still work it.
       reason:
-        `run carries a future-deadline claim on step '${healthyClaim.step}' ` +
-        `(deadline: ${healthyClaim.deadline}) — a live runner may still be working it`,
+        healthyClaim.lease !== undefined
+          ? `${takenOn(healthyClaim.step)}; ${leaseClause(healthyClaim.lease)}`
+          : `run carries a future-deadline claim on step '${healthyClaim.step}' ` +
+            `(deadline: ${healthyClaim.deadline}) — a live runner may still be working it`,
     };
   }
 
@@ -116,9 +131,7 @@ export function isPurgeEligible(
   if (unknownLease !== undefined) {
     return {
       eligible: false,
-      reason:
-        `run carries a claim on step '${unknownLease.step}' under a lease, and whether its program ` +
-        `still holds it is not known; purge does not remove it, with or without --force`,
+      reason: `${takenOn(unknownLease.step)}; ${leaseClause(unknownLease.lease!)}, so purge does not remove it, with or without --force`,
     };
   }
 

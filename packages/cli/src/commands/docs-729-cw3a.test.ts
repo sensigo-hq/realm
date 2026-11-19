@@ -40,7 +40,7 @@ const NOT_HELD: Cell = [MCP, 'report_to_user; the operator entry leads with the 
 describe('#729 CW-3a — resume’s refusal of a lease that cannot be checked', () => {
   it('the reference’s row and its --force line, and the command’s help, each with its cell', () => {
     const row =
-      "| A step is in progress under a lease whose state cannot be checked, also with `--force` (added after version 0.50.0) | `Step '<step>' is claimed under a lease, and whether its program still holds it is not known; resume does not release it, with or without --force.` |";
+      "| A step is in progress under a lease whose state cannot be checked, also with `--force` (added after version 0.50.0) | `Step '<step>' was taken by <program> at <time>; <what the lease check found>, so resume does not release it, with or without --force.` |";
     const flag =
       'Resumes even though another step of the run is marked in progress and Realm cannot tell how long it has been; never for a step claimed under a lease whose state cannot be checked (added after version 0.50.0).';
     const help = resumeCommand.options.find((o) => o.long === '--force')?.description;

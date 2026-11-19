@@ -22,6 +22,7 @@ import {
   heldIsPast,
   heldStateOf,
   instantText,
+  leaseClause,
   parseStamp,
   quoteStatedName,
   UNSHOWABLE_NAME,
@@ -39,6 +40,7 @@ import type {
   ClaimHolderAbsentCause,
   ClaimProofAbsentCause,
   GateClaimVerdict,
+  LeaseFact,
   NotRecordedKind,
   OutcomeDoorWords,
   PendingGate,
@@ -93,8 +95,8 @@ export function describeProgram(a: Attributed, ctx: RenderCtx = PLAIN): string {
  */
 export function takenPhrase(
   described:
-    | { holder: Attributed; since?: string }
-    | { by: null; absent_cause: ClaimHolderAbsentCause; since?: string },
+    | { holder: Attributed; since?: string; lease?: LeaseFact }
+    | { by: null; absent_cause: ClaimHolderAbsentCause; since?: string; lease?: LeaseFact },
   ctx: RenderCtx = PLAIN,
 ): string {
   if ('holder' in described) return `taken by ${describeProgram(described.holder, ctx)}`;
@@ -125,7 +127,15 @@ export function takenLine(
   ctx: RenderCtx = PLAIN,
 ): string {
   const at = described.since !== undefined ? ` at ${described.since}` : '';
-  return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}; not run here.`;
+  return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}${leaseTail(described)}; not run here.`;
+}
+
+/**
+ * #729 CW-4b: `; <what the claim's lease check found>` (core's `leaseClause`) after the holder, for a
+ * claim that names a lease; nothing for one that names none.
+ */
+export function leaseTail(described: { lease?: LeaseFact }): string {
+  return described.lease !== undefined ? `; ${leaseClause(described.lease)}` : '';
 }
 
 /**
@@ -140,8 +150,15 @@ export function inFlightLine(
   watchMs: number,
   ctx: RenderCtx = PLAIN,
 ): string {
+  const unchanged = `the record has not changed for ${Math.round(watchMs / 1000)}s. ${heldLine(held, ctx)}`;
+  // #729 CW-4b: a claim that names a lease is not "in flight": its holder and when, then the held
+  // line, whose tail says what the lease check found.
+  if (described.lease !== undefined) {
+    const at = described.since !== undefined ? ` at ${described.since}` : '';
+    return `• Step '${held.facts.step}' was ${takenPhrase(described, ctx)}${at}; ${unchanged}`;
+  }
   const since = described.since ?? 'an unrecorded time';
-  return `• Step '${held.facts.step}' has been in flight since ${since}, ${takenPhrase(described, ctx)}; the record has not changed for ${Math.round(watchMs / 1000)}s. ${heldLine(held, ctx)}`;
+  return `• Step '${held.facts.step}' has been in flight since ${since}, ${takenPhrase(described, ctx)}; ${unchanged}`;
 }
 
 /**
@@ -230,8 +247,14 @@ export function waitingLine(
   watchMs: number,
   ctx: RenderCtx = PLAIN,
 ): string {
+  const waiting = `waiting up to ${Math.round(watchMs / 1000)}s for the run's record to change.`;
+  // #729 CW-4b: a claim that names a lease — its holder and when, and what this read's check found.
+  if (described.lease !== undefined) {
+    const at = described.since !== undefined ? ` at ${described.since}` : '';
+    return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}${leaseTail(described)}: ${waiting}`;
+  }
   const since = described.since !== undefined ? ` since ${described.since}` : '';
-  return `• Step '${step}' is in flight, ${takenPhrase(described, ctx)}${since}: waiting up to ${Math.round(watchMs / 1000)}s for the run's record to change.`;
+  return `• Step '${step}' is in flight, ${takenPhrase(described, ctx)}${since}: ${waiting}`;
 }
 
 /**
@@ -290,7 +313,7 @@ export function answerNotRecordedLine(
       leaseFactOf(snapshot, run.claims?.[step]),
     );
     const at = described.since !== undefined ? ` at ${described.since}` : '';
-    return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}; ${notRecorded}.`;
+    return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}${leaseTail(described)}; ${notRecorded}.`;
   };
   const endedArm = `• Step '${step}' was not run: the run ended (${ctx.word(deriveRunPhase(run), RUN_PHASE_WORDS)}) before this drive's answer reached it; the answer was not recorded.`;
   if (kind !== undefined) {
@@ -347,7 +370,7 @@ export function outcomeNotRecordedLine(
         leaseFactOf(snapshot, run.claims?.[step]),
       );
       const at = described.since !== undefined ? ` at ${described.since}` : '';
-      return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}; ${notRecorded}.`;
+      return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}${leaseTail(described)}; ${notRecorded}.`;
     }
     case 'step_settled':
       return `• Step '${step}' was ${ranElsewherePhrase(run, step, ctx) ?? takenPhrase({ by: null, absent_cause: 'no_claim' })}; ${notRecorded}.`;

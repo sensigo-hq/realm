@@ -46,6 +46,7 @@ import {
   recordedArrival,
   questionLines,
   takenPhrase,
+  leaseTail,
   takenLine,
   inFlightLine,
   waitingLine,
@@ -487,7 +488,9 @@ function elsewherePhrase(
 ): string | undefined {
   const claim = run.claims?.[step];
   if (claim !== undefined && (ownClaimToken === undefined || claim.token !== ownClaimToken)) {
-    return `was ${takenPhrase(describeClaimHolder(claim, storeKeepsClaims, leaseFactOf(snapshot, claim)), ctx)}`;
+    // #729 CW-4b: for a claim that names a lease, what its lease check found after the holder.
+    const described = describeClaimHolder(claim, storeKeepsClaims, leaseFactOf(snapshot, claim));
+    return `was ${takenPhrase(described, ctx)}${leaseTail(described)}`;
   }
   const ran = ranElsewherePhrase(run, step, ctx);
   return ran !== undefined ? `was ${ran}` : undefined;

@@ -16,6 +16,7 @@ import {
   describePending,
   judgedSnapshotOf,
   leaseFactOf,
+  leaseClause,
   stepsThatCannotRun,
   describeRunDriver,
   judgeProgramFit,
@@ -142,6 +143,9 @@ export function inFlightItems(
   snap: Snapshot,
   keepsClaims: boolean,
   ctx: RenderCtx = PLAIN,
+  // #729 CW-4b: whether no held line follows from this read (work is owed, or a question is open),
+  // so a leased claim's item says what its lease check found itself.
+  saysLease = false,
 ): string[] {
   const run = snap.record;
   return inFlightSteps(run).map((step) => {
@@ -150,6 +154,12 @@ export function inFlightItems(
       keepsClaims,
       leaseFactOf(snap, run.claims?.[step]),
     );
+    // #729 CW-4b: a claim that names a lease is not "in flight": its holder and when.
+    if (described.lease !== undefined) {
+      const at = described.since !== undefined ? ` at ${described.since}` : '';
+      const lease = saysLease ? ` (${leaseClause(described.lease)})` : '';
+      return `'${step}' was ${takenPhrase(described, ctx)}${at}${lease}`;
+    }
     const since = described.since !== undefined ? ` since ${described.since}` : '';
     return `'${step}' is in flight, ${takenPhrase(described, ctx)}${since}`;
   });
@@ -481,7 +491,11 @@ export async function advanceRunFromShell(
   print(`Last recorded driver: ${driverWords(run, workflow, writerCtx())}.`);
   // decision C37: a step another process holds is named before anything runs — so a second program
   // is told why it may find nothing to run.
-  const inFlight = run.terminal_state ? [] : inFlightItems(read, keepsClaims, writerCtx());
+  // #729 CW-4b: with nothing owed and no question open, the held line below says each lease.
+  const heldLineFollows = pending.owed.length === 0 && run.pending_gate === undefined;
+  const inFlight = run.terminal_state
+    ? []
+    : inFlightItems(read, keepsClaims, writerCtx(), !heldLineFollows);
   if (inFlight.length > 0) print(`In flight: ${withFullStop(inFlight.join('; '))}`);
   if (pending.owed.length === 0) {
     // decision C43: "Nothing is owed" only when nothing is; owed work none of which can run now

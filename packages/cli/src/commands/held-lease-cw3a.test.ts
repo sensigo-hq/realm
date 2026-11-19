@@ -132,7 +132,8 @@ describe(
         code: 1,
         last: `Nothing is owed to the engine: 'a' was claimed, and no program held the claim's lease when it was checked; no result is recorded for it. ${NOT_DECLARED} To free it, run: ${command(runId, since)}`,
         dry: [
-          '  • a: claim_stale  (deadline: none (unknown age))',
+          // #729 CW-4b: a leased claim is listed by when it was taken, not its deadline.
+          `  • a: claim_stale  (taken at ${since})`,
           `      ${NOT_HELD}`,
           `      ${NOT_DECLARED}`,
           `      To free it, run: ${command(runId, since)}`,
@@ -331,17 +332,23 @@ describe('#729 CW-3a — check 5: resume and purge refuse a lease that cannot be
       const purge = isPurgeEligible(await store.get(runId), { explicit: true });
       out[`purge/${name}`] = purge.eligible ? 'purged' : purge.reason;
     }
-    const resume =
-      "Step 'b' is claimed under a lease, and whether its program still holds it is not known; resume does not release it, with or without --force.";
-    const purge =
-      "run carries a claim on step 'b' under a lease, and whether its program still holds it is not known; purge does not remove it, with or without --force";
+    // #729 CW-4b: who took the step and when, then what the lease check found (CW-4a's phrase).
+    const taken = 'taken by a program whose name was not recorded at 2030-01-01T00:00:00.000Z';
+    const absent =
+      'this home has no lease file the claim names, so whether its program still holds it is not known';
+    const unknown =
+      "whether its program still holds the claim's lease could not be checked: its lease file could not be opened";
+    const resume = (p: string): string =>
+      `Step 'b' was ${taken}; ${p}, so resume does not release it, with or without --force.`;
+    const purge = (p: string): string =>
+      `run carries a claim on step 'b', ${taken}; ${p}, so purge does not remove it, with or without --force`;
     // (a) red when either releases or removes the claim (the old rule: --force overrides an unknown
     //     age), or offers --force; (b) prints each answer.
     expect(out).toEqual({
-      'resume/absent': resume,
-      'purge/absent': purge,
-      'resume/unknown': resume,
-      'purge/unknown': purge,
+      'resume/absent': resume(absent),
+      'purge/absent': purge(absent),
+      'resume/unknown': resume(unknown),
+      'purge/unknown': purge(unknown),
     });
   });
 });
