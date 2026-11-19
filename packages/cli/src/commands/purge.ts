@@ -759,11 +759,13 @@ export const purgeCommand = new Command('purge')
       // purgeRuns as the separate anchorStore argument, and purgeRuns's own control
       // flow guarantees it is only ever deleted after every entry below has succeeded — it is
       // deliberately ABSENT from this array. purge-guard.test.ts's ANCHOR check asserts this
-      // absence via source-text; do not re-add it here.
+      // absence via source-text; do not re-add it here. Callback B1b: the callback store is in it,
+      // so the preview counts the run's callback row, as the purge deletes it.
       const artifactStores: PerRunArtifactStore[] = [
         traceBufferStore, // SqliteTraceBufferStore
         failedAttemptStore, // SqliteFailedAttemptStore
         home.runStore.outbound, // SqliteOutboundLedger
+        home.runStore.callbacks, // SqliteCallbackStore
       ];
 
       const dryRun = opts.force !== true;

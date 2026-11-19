@@ -107,6 +107,7 @@ describe('release-line witnesses', () => {
       'packages/cli/src/store-contracts/json-file-store.contract.test.ts',
       'packages/cli/src/store-contracts/json-trace-buffer-store-fenced.contract.test.ts',
       'packages/cli/src/store-contracts/json-trace-buffer-store.contract.test.ts',
+      'packages/store-sqlite/src/callback-store.contract.test.ts',
       'packages/store-sqlite/src/contract-artifact-616.test.ts',
       'packages/store-sqlite/src/contract-fidelity-616.test.ts',
       'packages/store-sqlite/src/contract-settlement-616.test.ts',

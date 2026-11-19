@@ -154,6 +154,46 @@ describe('#616 PR-2c c9 — realm run purge on a SQLite home', () => {
     });
   });
 
+  it('callback B1b: a run with a callback row — the dry run’s figure counts the row, and --force frees exactly that figure', async () => {
+    const { handle } = await sqliteHome();
+    const url = 'https://hooks.example/callback/ünïcode';
+    const { record } = await handle.runStore.create({
+      ...BARE,
+      callback: {
+        url,
+        host: 'hooks.example:443',
+        webhook_id: '00000000-0000-4000-8000-000000000001',
+      },
+    });
+    await handle.runStore.update({
+      ...record,
+      terminal_state: true,
+      sealed_by: { arm: 'complete' },
+      terminal_reason: 'Workflow completed.',
+    });
+    // The stores `realm run purge` previews, in its order (purge-guard pins the command's list).
+    const stores = [
+      handle.traceBufferStore,
+      handle.failedAttemptStore,
+      handle.runStore.outbound,
+      handle.runStore.callbacks,
+    ];
+    // Measured before the purge: the run's own rows, and the row's address (no body yet).
+    const expected = printed(
+      (await handle.runStore.statAllForRun(record.id)).bytes + Buffer.byteLength(url, 'utf8'),
+    );
+    const run = (dryRun: boolean) =>
+      purgeRuns({ dryRun, workflows: handle.workflowStore }, handle.runStore, stores, handle.purge);
+    const preview = render(await run(true), true).out[0];
+    const freed = render(await run(false), false).out[0];
+    // (1) red when the preview leaves the callback store out (its figure lacks the address's UTF-8
+    //     bytes) or the purge frees another figure than it previewed; (2) prints both lines.
+    expect({ preview, freed: freed?.split(' freed,')[0] }).toEqual({
+      preview: `1 run(s) WOULD be purged (${expected} to free):`,
+      freed: `Purged 1/1 run(s) (${expected}`,
+    });
+  });
+
   it('K: --force purges through the home’s purge and prints the freed bytes, the file’s shrink and the backups sentence; gone, changed, resumed and draining runs are worded as today, with no partial-free suffix', async () => {
     const { handle } = await sqliteHome();
     const purged = await finished(handle);

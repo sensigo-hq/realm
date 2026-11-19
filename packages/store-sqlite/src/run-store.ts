@@ -40,6 +40,7 @@ import {
   assertSealIntegrity,
   brandClass,
   canonicalJson,
+  checkCallbackRequest,
   computeClaimDeadline,
   decideIdempotencyPolicy,
   deriveRunPhase,
@@ -60,6 +61,8 @@ import {
   writtenSnapshot,
   type ArtifactDeletionReport,
   type Attributed,
+  type CallbackRegistration,
+  type CallbackRow,
   type Clock,
   type CreateResult,
   type CreateRunOptions,
@@ -91,6 +94,12 @@ import { REALM_STORE_SQLITE_BRAND } from './brand.js';
 import { guardRefusalError, VerifyInconclusive, type RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
 import { SqliteCallbackKeys } from './callback-keys.js';
+import {
+  callbackRowFor,
+  callbackRowLanded,
+  SqliteCallbackStore,
+  storeCallbackRow,
+} from './callback-store.js';
 import { SqliteOutboundLedger } from './outbound-ledger.js';
 import {
   assertRunRecordWithinLimits,
@@ -182,14 +191,36 @@ function freshRecord(
  * true when the stored run is the record written (as `get()` reads it), false when no run has its id.
  * A run with its id that holds something else was written and then changed by another writer:
  * whether this write landed cannot be told from it, so the check throws {@link VerifyInconclusive}.
+ * Callback B1b: a create that wrote a callback row landed only with that row as written, too.
  */
-function verifyCreated(db: DatabaseLike, record: RunRecord): boolean {
+function verifyCreated(db: DatabaseLike, record: RunRecord, row?: CallbackRow): boolean {
   const stored = readRunInTransaction(db, record.id);
   if (stored === null) return false;
-  if (JSON.stringify(stored) === JSON.stringify(record)) return true;
+  if (
+    JSON.stringify(stored) === JSON.stringify(record) &&
+    (row === undefined || callbackRowLanded(db, row))
+  )
+    return true;
   throw new VerifyInconclusive(
     `The stored run ${record.id} is not the record its write stored: another writer changed it.`,
   );
+}
+
+/**
+ * Callback B1b: a create's writes, in its transaction: the run, and its callback row when it is
+ * registered with one (checked before either is written), stamped `at`, the run's own `created_at`.
+ * Returns the row written, for the COMMIT-outcome check.
+ */
+function insertCreated(
+  db: DatabaseLike,
+  record: RunRecord,
+  callback: CallbackRegistration | undefined,
+  at: Date,
+): CallbackRow | undefined {
+  const row = callbackRowFor(db, record, callback, at);
+  insertRunRecord(db, record);
+  if (row !== undefined) storeCallbackRow(db, row);
+  return row;
 }
 
 /**
@@ -553,6 +584,13 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
   readonly outbound: SqliteOutboundLedger;
 
   /**
+   * Callback B1b: the home's callback store (core's `CallbackStore`): the `callbacks` table beside the
+   * runs, with {@link keys} as its signing keys, over the same primitive. `create` writes a run's row
+   * with the run.
+   */
+  readonly callbacks: SqliteCallbackStore;
+
+  /**
    * Callback B1a: the home's signing keys (`callback_keys`, store format 3), over the same primitive.
    * Package-internal and not on `RunStore` yet: callback B1b puts them on the home's callback store.
    */
@@ -570,6 +608,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
     this.leases = leases;
     this.outbound = new SqliteOutboundLedger(db);
     this.keys = new SqliteCallbackKeys(db);
+    this.callbacks = new SqliteCallbackStore(db, this.keys);
   }
 
   /**
@@ -614,16 +653,20 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
    * is taken. A keyed create (an empty key is a key) is {@link #createKeyed}.
    */
   async create(options: CreateRunOptions): Promise<CreateResult> {
+    // Callback B1b: a malformed callback throws before any reading.
+    if (options.callback !== undefined)
+      checkCallbackRequest({ kind: 'register', callback: options.callback });
     if (options.idempotencyKey !== undefined)
       return this.#withFacts(await this.#createKeyed(options, options.idempotencyKey));
     assertRunRecordWithinLimits(freshRecord(options, PROVISIONAL_ID, PROVISIONAL_STAMP));
+    let row: CallbackRow | undefined;
     const written = await this.#db.immediate(
       (db, reading) => {
         const record = freshRecord(options, randomUUID(), reading.toISOString());
-        insertRunRecord(db, record);
+        row = insertCreated(db, record, options.callback, reading);
         return writtenSnapshot(record, reading);
       },
-      (db, snapshot) => verifyCreated(db, snapshot.record),
+      (db, snapshot) => verifyCreated(db, snapshot.record, row),
     );
     return this.#withFacts({ ...written, created: true });
   }
@@ -1064,12 +1107,14 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
     assertRunRecordWithinLimits(
       freshRecord(options, PROVISIONAL_ID, PROVISIONAL_STAMP, PROVISIONAL_ID),
     );
+    let row: CallbackRow | undefined;
     return this.#db.immediate(
       (db, reading): CreateResult => {
+        row = undefined;
         const holder = findKeyHolder(db, options.workflowId, key);
         if (holder === undefined) {
           const record = freshRecord(options, randomUUID(), reading.toISOString());
-          insertRunRecord(db, record);
+          row = insertCreated(db, record, options.callback, reading);
           return { ...writtenSnapshot(record, reading), created: true };
         }
         const held = readRunInTransaction(db, holder.id);
@@ -1082,10 +1127,11 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
         }
         const at = floorAtHolder(reading, held.created_at);
         const record = freshRecord(options, randomUUID(), at.toISOString(), held.id);
-        insertRunRecord(db, record);
+        // The row is stamped with the run's own floored `created_at`, never the raw reading.
+        row = insertCreated(db, record, options.callback, at);
         return { ...writtenSnapshot(record, at), created: true };
       },
-      (db, result) => (result.created ? verifyCreated(db, result.record) : true),
+      (db, result) => (result.created ? verifyCreated(db, result.record, row) : true),
     );
   }
 
