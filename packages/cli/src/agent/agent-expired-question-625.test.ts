@@ -9,7 +9,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   executeChain,
@@ -60,7 +60,7 @@ function gated(onExpiry: 'settle_default' | 'abort'): WorkflowDefinition {
 
 /** A run at the question; `expired` moves its deadline into the past. */
 async function atQuestion(def: WorkflowDefinition, expired: boolean) {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const { record: run } = await store.create({
     workflowId: def.id,
     workflowVersion: 1,

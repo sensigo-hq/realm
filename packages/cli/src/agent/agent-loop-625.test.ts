@@ -3,7 +3,7 @@
 // name reclaim — "its runner likely died" only past a deadline), and D4.2/L7 (the engine's work runs
 // at the loop top through advanceRun; an engine step that fails is named and no model call follows).
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   submitHumanResponse,
@@ -37,7 +37,7 @@ const agentOnly: WorkflowDefinition = {
 
 describe('#625 PR-2a — the realm agent loop', () => {
   it('D6.1: a step another process took is said as a fact (holder, since) — never "✓ → running"', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: agentOnly.id,
       workflowVersion: 1,
@@ -88,7 +88,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
   });
 
   it('D6.2: a healthy claim in flight — the loop watches and re-enters on change, then exits naming reclaim', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: agentOnly.id,
       workflowVersion: 1,
@@ -153,7 +153,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
         c: { description: 'C.', execution: 'auto', depends_on: ['review'] },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new (class extends LlmProvider {
       callStep = vi.fn().mockResolvedValue({});
     })();
@@ -198,7 +198,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
         throw new Error('handler blew up');
       },
     });
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new (class extends LlmProvider {
       callStep = vi.fn().mockResolvedValue({});
     })();
@@ -228,7 +228,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
         review: { description: 'Review.', execution: 'agent', depends_on: [] },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -287,7 +287,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
         review: { description: 'Review.', execution: 'agent', depends_on: [] },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -356,7 +356,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
         review: { description: 'Review.', execution: 'agent', depends_on: ['x'] },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new (class extends LlmProvider {
       callStep = vi.fn().mockResolvedValue({});
     })();
@@ -388,7 +388,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
         review: { description: 'Review.', execution: 'agent', depends_on: ['x'] },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -439,7 +439,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
         review: { description: 'Review.', execution: 'agent', depends_on: ['x'] },
       },
     } as WorkflowDefinition;
-    const inner = new InMemoryStore();
+    const inner = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await inner.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -510,7 +510,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
   for (const guard of [false, true]) {
     it(`L7 attended: gate→${guard ? 'guard→auto' : 'auto'} — the agent answers, advances and finishes`, async () => {
       const def = gated(guard);
-      const store = new InMemoryStore();
+      const store = new InMemoryStore({ leases: createLeaseDouble() });
       const provider = new (class extends LlmProvider {
         callStep = vi.fn().mockResolvedValue({ done: true });
       })();
@@ -564,7 +564,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
         return { data: { ok: true } };
       },
     });
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,

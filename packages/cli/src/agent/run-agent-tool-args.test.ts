@@ -8,7 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { runAgent } from './run-agent.js';
 import type { WorkflowDefinition, StructuredOutputMeta } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type {
   McpClient,
@@ -118,7 +118,7 @@ async function drive(
   provider: ToolCapableLlmProvider,
   opts: { schemaRetries?: number } = {},
 ): Promise<{ meta: StructuredOutputMeta | undefined; result: string }> {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const result = await runAgent(
     {
       store,
@@ -540,7 +540,7 @@ describe('runAgent — strict tool-call arguments (issue #311)', () => {
         meta: { requested: true, sent: true } as StructuredOutputMeta,
       }));
     })();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
 
     await runAgent(
       {

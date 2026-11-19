@@ -16,7 +16,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { startOpenAiStub } from './test-support/openai-stub.js';
@@ -69,7 +69,7 @@ describe("#417 — an agent_profile's content reaches the model request", () => 
       vi.spyOn(console, 'error').mockImplementation(() => {});
       await runAgent(
         {
-          store: new InMemoryStore(),
+          store: new InMemoryStore({ leases: createLeaseDouble() }),
           workflowStore: {
             register: async () => {},
             get: async () => definition,

@@ -16,7 +16,7 @@ import {
   applyResume,
   createDefaultRegistry,
 } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { runAgent } from './run-agent.js';
 import { ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { McpClient, McpTool, StepWithToolsResult } from './mcp/mcp-extensions.js';
@@ -246,7 +246,7 @@ const lastFailureRequests = (run: RunRecord, step: string): UsageRecord[] =>
 
 describe('caching 3-M A-1 — a drive re-attached after a drive failed the step', () => {
   it('check 1: its first request carries the stored request as `reference`, `from: run`; its second request carries none', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const def = workflow('single');
     const failed = await drive(store, def, [{ throw: true, usage: [billed(1, 2000)] }]);
     const before = lastFailureRequests(failed.run, 'draft')[0]!;
@@ -267,7 +267,7 @@ describe('caching 3-M A-1 — a drive re-attached after a drive failed the step'
   });
 
   it('check 1: a repair on that drive — the second call’s first request carries none', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const def = workflow('single');
     const failed = await drive(store, def, [{ throw: true, usage: [billed(1, 2000)] }]);
     const before = lastFailureRequests(failed.run, 'draft')[0]!;
@@ -297,7 +297,7 @@ describe('caching 3-M A-1 — a drive re-attached after a drive failed the step'
 
 describe('caching 3-M A-1 — a resumed step', () => {
   it('check 2: settled failed with its request on the evidence entry, resumed, driven again — its first request references that request', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const def = workflow('tools', FAILS_AT_ONCE);
     const settled = await drive(store, def, [
       { output: {}, toolCalls: 1, usage: [billed(1, 2000)] },
@@ -329,7 +329,7 @@ describe('caching 3-M A-1 — a resumed step', () => {
 
 describe('caching 3-M A-1 — both an evidence entry and a drive failure on the record', () => {
   it('check 3: settled failed, resumed, then a drive failed it mid-call — the next drive references the drive failure’s request', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const def = workflow('tools', FAILS_AT_ONCE);
     const settled = await drive(store, def, [
       { output: {}, toolCalls: 1, usage: [billed(1, 2000)] },
@@ -365,7 +365,7 @@ describe('caching 3-M A-1 — both an evidence entry and a drive failure on the 
   });
 
   it('check 3, the mirror: a drive failed the step, a re-attach settled it failed, resumed — the next drive references the evidence entry’s request', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const def = workflow('tools', FAILS_AT_ONCE);
     const failed = await drive(store, def, [{ throw: true, usage: [billed(1, 2000)] }]);
     const settled = await drive(
@@ -407,7 +407,7 @@ describe('caching 3-M A-1 — a failed first call on a re-attached drive', () =>
         ? 'chokepoint (1), the tools catch'
         : 'chokepoint (2), the single-shot catch';
     it(`check 4: ${which} — the new drive-failure entry's first request carries the earlier failure's request`, async () => {
-      const store = new InMemoryStore();
+      const store = new InMemoryStore({ leases: createLeaseDouble() });
       const def = workflow(kind);
       const failed = await drive(store, def, [{ throw: true, usage: [billed(1, 2000)] }]);
       const before = lastFailureRequests(failed.run, step)[0]!;
@@ -433,7 +433,7 @@ describe('caching 3-M A-1 — a failed first call on a re-attached drive', () =>
 
 describe('caching 3-M A-1 — a re-attached drive on a step that declares strict structured output', () => {
   it('check 1 on a strict step (S2): its first request carries the drive failure’s request as `reference`', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const def = workflow('single', { structured_output: 'strict' });
     const failed = await drive(store, def, [{ throw: true, usage: [billed(1, 2000)] }]);
     const before = lastFailureRequests(failed.run, 'draft')[0]!;
@@ -480,7 +480,7 @@ function twoSteps(): WorkflowDefinition {
 
 describe('caching 3-M A-1 — a multi-step run: the copy comes from the same step', () => {
   it('the same step only: after a drive failed the first step, the re-attached drive’s first request on that step references it, and the second step’s first request carries none', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const def = twoSteps();
     const failed = await drive(store, def, [{ throw: true, usage: [billed(1, 2000)] }]);
     const before = lastFailureRequests(failed.run, 'draft')[0]!;
@@ -518,7 +518,7 @@ const places = (requests: UsageRecord[]) =>
 
 describe('caching 3-M A-1b — the copy across drives is the first request of the step’s last call', () => {
   it('check 3 (a): a tool step whose drive failed after two turns and its final request — the re-attached drive references the FIRST turn', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const def = workflow('tools');
     // One call's three requests: two main turns, then the final request (one array, one call),
     // numbered as a provider numbers its own array (on a drive's first call no append re-bases them).
@@ -553,7 +553,7 @@ describe('caching 3-M A-1b — the copy across drives is the first request of th
   });
 
   it('check 3 (b): an earlier drive whose list holds two calls (a repair, then a failure) — the reference is the SECOND call’s first request', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const def = workflow('tools');
     const failed = await drive(store, def, [
       // The first call runs no tool and its answer is rejected (a call that ran a tool is never
@@ -583,7 +583,7 @@ describe('caching 3-M A-1b — the copy across drives is the first request of th
   });
 
   it('check 3 (c): a recorded list with no `request_in_call` anywhere (recorded before A-1b) — no reference', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const def = workflow('tools');
     const failed = await drive(store, def, [{ throw: true, usage: [billed(1, 2000)] }]);
     // The stored entry's requests lose `request_in_call`, as a request recorded before this piece

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -137,7 +137,7 @@ const errorWorkflow: WorkflowDefinition = {
 function makeDeps(
   overrides: Omit<Partial<AgentDeps>, 'store'> = {},
 ): AgentDeps & { store: InMemoryStore } {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   return {
     store,
     workflowStore: makeWorkflowStore(),

@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runAgent } from './run-agent.js';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import type { McpClient, McpTool } from './mcp/mcp-extensions.js';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
 import { OpenAIProvider } from './providers/openai-provider.js';
@@ -75,7 +75,7 @@ const def = {
 } as unknown as WorkflowDefinition;
 
 async function driveWithNoRetries(provider: LlmProvider): Promise<void> {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const workflowStore = {
     async register() {},
     async get() {

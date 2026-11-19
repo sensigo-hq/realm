@@ -7,7 +7,7 @@
 // once, the drive goes on with any ready agent step, and the exit names the blocked step and what it
 // needs.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -59,7 +59,7 @@ function fixture(secondAgentStep: boolean): WorkflowDefinition {
 
 async function drive(secondAgentStep: boolean) {
   const def = fixture(secondAgentStep);
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const provider = new (class extends LlmProvider {
     callStep = vi.fn().mockResolvedValue({});
   })();
@@ -143,7 +143,7 @@ describe('#625 PR-2a, C174 — realm-agent.md: when a drive attempts a step whos
         classify: { description: 'Classify.', execution: 'agent', depends_on: [] },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const provider = new (class extends LlmProvider {
       callStep = vi.fn().mockResolvedValue({});
     })();

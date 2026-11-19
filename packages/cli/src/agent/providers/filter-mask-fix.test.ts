@@ -16,7 +16,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { changelogAbove } from '../../test-support/changelog.js';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { runAgent } from '../run-agent.js';
 import { LlmProvider } from './llm-provider.js';
 import { serializeToolResult, setAdditionalRedactionValues } from './agent-utils.js';
@@ -52,7 +52,7 @@ async function promptSent(template: string, params: Record<string, unknown>): Pr
   vi.spyOn(console, 'log').mockImplementation(() => {});
   const result = await runAgent(
     {
-      store: new InMemoryStore(),
+      store: new InMemoryStore({ leases: createLeaseDouble() }),
       workflowStore: {
         register: async () => {},
         get: async () => definition,

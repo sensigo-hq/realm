@@ -10,7 +10,7 @@
 // Driven in-process through the real `runAgent`, a real engine and an `InMemoryStore`. Every
 // assertion carries (a) the change that turns it red and (b) what it prints.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   advanceRun,
   createDefaultRegistry,
@@ -77,7 +77,7 @@ async function drive(
     gateHandler?: (store: RunStore) => (runId: string, gate: PendingGate) => Promise<void>;
   } = {},
 ) {
-  const inner = new InMemoryStore();
+  const inner = new InMemoryStore({ leases: createLeaseDouble() });
   const store = opts.store?.(inner, def) ?? inner;
   const lines: string[] = [];
   for (const kind of ['log', 'error', 'warn'] as const) {

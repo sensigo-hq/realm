@@ -12,7 +12,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   executeStep,
@@ -72,7 +72,7 @@ async function drive(
   answer: Record<string, unknown> = {},
   during?: (store: InMemoryStore) => Promise<void>,
 ): Promise<Drive> {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   let calls = 0;
   const provider = new (class extends LlmProvider {
     async callStep(): Promise<Record<string, unknown>> {
@@ -178,7 +178,7 @@ describe('#625 PR-2a, C82 (4) — the cannot-go-on exit, never while a step is i
     // `ask` reads `a`'s answer; another program is running `a` when the drive starts. Stopping with
     // "nothing else can run … correct the workflow" would be false: `a` completes with `ok: true`.
     const def = wf({ a: agent(), ask: agent({ preconditions: ['a.ok == true'] }) });
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,

@@ -15,7 +15,7 @@ import {
   findEligibleSteps,
   validationListOf,
 } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { McpClient, McpTool } from './mcp/mcp-extensions.js';
 import { agentCommand } from '../commands/agent.js';
@@ -119,7 +119,7 @@ describe('runAgent — MCP tools integration', () => {
       steps: { research },
     };
     const deps: AgentDeps = {
-      store: new InMemoryStore(),
+      store: new InMemoryStore({ leases: createLeaseDouble() }),
       workflowStore: makeWorkflowStore(noTimeoutWorkflow),
       provider,
       registry: createDefaultRegistry(),
@@ -149,7 +149,7 @@ describe('runAgent — MCP tools integration', () => {
       callStep = vi.fn();
       callStepWithTools = vi.fn().mockResolvedValue({ output: { summary: 'done' }, toolCalls });
     })();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps: AgentDeps = {
       store,
       workflowStore: makeWorkflowStore(mcpWorkflow),
@@ -186,7 +186,7 @@ describe('runAgent — MCP tools integration', () => {
       callStep = vi.fn();
       callStepWithTools = vi.fn().mockResolvedValue({ output: { summary: 'analysed' }, toolCalls });
     })();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps: AgentDeps = {
       store,
       workflowStore: makeWorkflowStore(mcpWorkflow),
@@ -212,7 +212,7 @@ describe('runAgent — MCP tools integration', () => {
       callStep = vi.fn();
       callStepWithTools = vi.fn().mockResolvedValue({ output: { summary: 'done' }, toolCalls: [] });
     })();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps: AgentDeps = {
       store,
       workflowStore: makeWorkflowStore(mcpWorkflow),
@@ -233,7 +233,7 @@ describe('runAgent — MCP tools integration', () => {
       callStep = vi.fn();
       callStepWithTools = vi.fn().mockRejectedValue(new Error('LLM crashed'));
     })();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps: AgentDeps = {
       store,
       workflowStore: makeWorkflowStore(mcpWorkflow),
@@ -260,7 +260,7 @@ describe('runAgent — MCP tools integration', () => {
       callStep = vi.fn();
       callStepWithTools = vi.fn();
     })();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps: AgentDeps = {
       store,
       workflowStore: makeWorkflowStore(mcpWorkflow),
@@ -318,7 +318,7 @@ describe('runAgent — MCP tools integration', () => {
       callStep = vi.fn();
       callStepWithTools = vi.fn();
     })();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps: AgentDeps = {
       store,
       workflowStore: makeWorkflowStore(collisionWorkflow),
@@ -339,7 +339,7 @@ describe('runAgent — MCP tools integration', () => {
 
   it('--run-id attaches to a persisted run and drives it to completion', async () => {
     // Create the run first using the normal path.
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: initialRecord } = await store.create({
       workflowId: 'agent-only',
       workflowVersion: 1,
@@ -388,7 +388,7 @@ describe('runAgent — MCP tools integration', () => {
   });
 
   it('--run-id on a terminal run throws error containing run id and terminal state', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: initialRecord } = await store.create({
       workflowId: 'agent-only',
       workflowVersion: 1,
@@ -433,7 +433,7 @@ describe('runAgent — MCP tools integration', () => {
   });
 
   it('existingRunId and workflowPath are mutually exclusive — throws immediately', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const deps: AgentDeps = {
       store,
       workflowStore: makeWorkflowStore(),
@@ -463,7 +463,7 @@ describe('runAgent — wedge detection on attach (#101, detect-only)', () => {
   };
 
   it('prints the claim state + reclaim remediation before exiting on a wedged run (no execution)', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: 'wedge-wf',
       workflowVersion: 1,
@@ -529,7 +529,7 @@ describe('runAgent — traceBufferStore threading (issue #207 PR-2, mixed-wiring
   };
 
   it('deps.traceBufferStore threads all the way into executeChain — a pre-seeded WAL entry is adopted into evidence (was silently dropped pre-#207)', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: initialRecord } = await store.create({
       workflowId: 'wal-thread-wf',
       workflowVersion: 1,
@@ -567,7 +567,7 @@ describe('runAgent — traceBufferStore threading (issue #207 PR-2, mixed-wiring
   });
 
   it('omitting deps.traceBufferStore is unchanged — no trace adoption, no error (backward compatible)', async () => {
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: initialRecord } = await store.create({
       workflowId: 'wal-thread-wf',
       workflowVersion: 1,
@@ -610,7 +610,7 @@ describe('runAgent — capability recovery (#134)', () => {
 
   it('not-registered handler → capability-aware guidance (not ✗ Step failed), then RECOVERS on re-attach with a fixed registry', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: 'handler-agent',
       workflowVersion: 1,
@@ -688,7 +688,7 @@ describe('runAgent — effective output schema routing (#robust-anthropic-provid
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -733,7 +733,7 @@ describe('runAgent — effective output schema routing (#robust-anthropic-provid
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -862,7 +862,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -900,7 +900,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -935,7 +935,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -963,7 +963,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
       callStep = vi.fn().mockResolvedValue({}); // always invalid — missing 'alpha' every time
     })();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: def.version,
@@ -1016,7 +1016,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     const errorSpyWarn = vi.spyOn(console, 'error').mockImplementation(() => {});
     await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(defLowThreshold),
         provider: providerAlwaysValid,
         registry: createDefaultRegistry(),
@@ -1035,7 +1035,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     const errorSpyNoWarn = vi.spyOn(console, 'error').mockImplementation(() => {});
     await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(defDefault),
         provider: providerAlwaysValid,
         registry: createDefaultRegistry(),
@@ -1061,7 +1061,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
       callStep = vi.fn().mockResolvedValue({}); // always invalid — missing 'alpha' every time
     })();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
 
     const result = await runAgent(
       { store, workflowStore: makeWorkflowStore(def), provider, registry: createDefaultRegistry() },
@@ -1131,7 +1131,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -1171,7 +1171,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -1215,7 +1215,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -1276,7 +1276,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -1306,7 +1306,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -1339,7 +1339,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -1380,7 +1380,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     })();
     const mockClient = makeMockMcpClient();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: def.version,
@@ -1414,7 +1414,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     })();
     const mockClient = makeMockMcpClient();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: def.version,
@@ -1466,7 +1466,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -1542,7 +1542,7 @@ describe('the agent step prompt hides declared secrets (GHSA-gxfq cell 15)', () 
           });
           const result = await runAgent(
             {
-              store: new InMemoryStore(),
+              store: new InMemoryStore({ leases: createLeaseDouble() }),
               workflowStore: makeWorkflowStore(definition),
               provider: new AnthropicProvider('claude-sonnet-4-5'),
               registry,
@@ -1587,7 +1587,7 @@ describe('issue #759 — the repair prompt carries the reply’s ten, in order, 
       },
     });
     // The reply an agent gets for `{}` — the list the wire carries (core's one reader).
-    const replyStore = new InMemoryStore();
+    const replyStore = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await replyStore.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1609,7 +1609,7 @@ describe('issue #759 — the repair prompt carries the reply’s ten, in order, 
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store: new InMemoryStore({ leases: createLeaseDouble() }),
         workflowStore: makeWorkflowStore(def),
         provider,
         registry: createDefaultRegistry(),
@@ -1655,7 +1655,7 @@ describe('runAgent — the in-flight watch window is monotonic (issue #715 (a))'
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
       steps: { review: { description: 'Agent step', execution: 'agent', depends_on: [] } },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: 'watch-715a',
       workflowVersion: 1,

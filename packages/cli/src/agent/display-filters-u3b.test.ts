@@ -20,7 +20,7 @@ vi.mock('node:readline/promises', () => ({
   createInterface: vi.fn(() => ({ question: mocks.question, close: mocks.close })),
 }));
 
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
@@ -128,7 +128,7 @@ async function drive(
   def: WorkflowDefinition,
   output: Record<string, unknown>,
 ): Promise<{ result: string | undefined; gate: string | undefined; all: string }> {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   await runAgent(
     {
       store,

@@ -6,7 +6,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
+import { InMemoryStore, settableClock, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -29,7 +29,7 @@ describe('#715 (b) §B.1 — the in-flight watch judges a held claim at its late
       steps: { review: { description: 'R', execution: 'agent', depends_on: [] } },
     };
     const clock = settableClock(new Date(DEADLINE - 1_000));
-    const store = new InMemoryStore({ clock });
+    const store = new InMemoryStore({ clock, leases: createLeaseDouble() });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,

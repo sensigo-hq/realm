@@ -26,7 +26,7 @@ import {
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { createTestHome, InMemoryStore } from '@sensigo/realm-testing';
+import { createTestHome, InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { runAgent } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
 import { addDeclaredValues, installWriter, writerCtx, writerTestSeams } from '../output/writer.js';
@@ -260,7 +260,7 @@ async function drive(
   for (const [name, value] of Object.entries(route.env ?? {})) vi.stubEnv(name, value);
   installWriter('default');
   if (route.declared !== undefined) addDeclaredValues(route.declared);
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const provider = new (class extends LlmProvider {
     async callStep(): Promise<Record<string, unknown>> {
       return {};
@@ -745,7 +745,7 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
   it('listen.ts — `webhook: deduplicated` (a run the store matched) — `run_phase` whole, the line JSON', async () => {
     vi.stubEnv('STATUS_X', 'abandoned');
     installWriter('broadcast');
-    const runStore = new InMemoryStore();
+    const runStore = new InMemoryStore({ leases: createLeaseDouble() });
     const handler = handlerWith(async () => ({ pid: 4242 }), runStore);
     const first = await deliver(handler);
     await abandonRun(runStore, first['run_id'] as string, 'Held.');
@@ -758,7 +758,7 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
   it('listen.ts — `webhook: deduplicated` (a run its failed start sealed; the declared route: `failed`)', async () => {
     installWriter('broadcast');
     addDeclaredValues({ C5_PIN: 'failed' });
-    const runStore = new InMemoryStore();
+    const runStore = new InMemoryStore({ leases: createLeaseDouble() });
     const handler = handlerWith(async () => {
       throw new Error('fake spawn failure');
     }, runStore);

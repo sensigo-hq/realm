@@ -15,7 +15,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   abandonRun,
   createDefaultRegistry,
@@ -85,7 +85,7 @@ async function drive(
     attach?: { store: InMemoryStore; runId: string };
   } = {},
 ): Promise<Drive> {
-  const store = o.attach?.store ?? new InMemoryStore();
+  const store = o.attach?.store ?? new InMemoryStore({ leases: createLeaseDouble() });
   const run =
     o.attach !== undefined
       ? (await store.get(o.attach.runId)).record

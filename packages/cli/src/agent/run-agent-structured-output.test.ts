@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runAgent } from './run-agent.js';
 import type { WorkflowDefinition, StructuredOutputMeta } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { McpClient, McpTool } from './mcp/mcp-extensions.js';
@@ -106,7 +106,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
   it('eligible + opted-in: strict is sent, evidence discloses sent:true', async () => {
     mockCreate.mockResolvedValueOnce(makeToolUseResponse({ category: 'billing' }));
     const def = eligibleDef();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const result = await runAgent(
       {
         store,
@@ -127,7 +127,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
   it('ineligible + opted-in: strict is NEVER sent, the run still completes (degrade loudly, not strand), evidence discloses gate_ineligible', async () => {
     mockCreate.mockResolvedValueOnce(makeToolUseResponse({ category: 'billing' }));
     const def = ineligibleDef();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const result = await runAgent(
       {
         store,
@@ -152,7 +152,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
 
   it('a third-party provider (base LlmProvider, callStep only) ⇒ provider_unsupported, NEVER external_agent [R2-3 synthesis rule]', async () => {
     const def = eligibleDef();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const thirdPartyProvider = new (class extends LlmProvider {
       callStep = vi.fn().mockResolvedValue({ category: 'billing' });
     })();
@@ -196,7 +196,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     // WITHIN-drive stickiness (the 2-attempt callStep boundary + #217 repair loop) is exercised
     // directly below via the outer-attempt-count assertion.
     const def = eligibleDef();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     mockCreate
       .mockRejectedValueOnce(
         httpError(
@@ -238,7 +238,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
     // consulted BEFORE calling the provider again — so this attempt's raw call never re-attempts
     // strict, and needs no second 400 to arrive at the same disclosed reason.
     const def = eligibleDef();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     mockCreate
       .mockRejectedValueOnce(
         httpError(
@@ -291,7 +291,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
       },
     };
     mockCreate.mockResolvedValueOnce(makeToolUseResponse({ category: 'billing' }));
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const result = await runAgent(
       {
         store,
@@ -336,7 +336,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
         },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     const result = await runAgent(
       {
         store,
@@ -380,7 +380,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
         },
       },
     };
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
     mockCreate
       .mockRejectedValueOnce(
         httpError(
@@ -468,7 +468,7 @@ describe('runAgent — structured_output orchestration (issue #236)', () => {
         .fn()
         .mockResolvedValue({ output: { category: 'billing' }, toolCalls: [] });
     })();
-    const store = new InMemoryStore();
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
 
     const result = await runAgent(
       {

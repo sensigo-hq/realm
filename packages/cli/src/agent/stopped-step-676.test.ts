@@ -8,7 +8,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
@@ -75,7 +75,7 @@ async function drive(
     schemaRetries?: number;
   } = {},
 ): Promise<{ store: InMemoryStore; runId: string; lines: string[] }> {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const errors: string[] = [];
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation((m: unknown) => {

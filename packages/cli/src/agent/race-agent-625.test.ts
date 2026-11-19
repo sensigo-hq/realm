@@ -15,7 +15,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   ExtensionRegistry,
   WorkflowError,
@@ -84,7 +84,7 @@ interface Hooks {
 
 /** One `realm agent` drive on a fresh run of `def`, with the hooks' acts of another program. */
 async function drive(def: WorkflowDefinition, h: Hooks = {}) {
-  const store = new InMemoryStore();
+  const store = new InMemoryStore({ leases: createLeaseDouble() });
   const { record: run } = await store.create({
     workflowId: def.id,
     workflowVersion: 1,
