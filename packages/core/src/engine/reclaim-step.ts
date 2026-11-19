@@ -1014,7 +1014,7 @@ function takeBackEntry(snap: Snapshot, stepName: string, drivenBy: Attributed): 
  * and only while the step has not been taken back since a person last reclaimed it
  * (`AUTOMATIC_TAKEBACKS_PER_STEP`). It shares a reclaim's write: the trace buffer's fenced seal and
  * the whole-record write at the read's version. On a write race it reads the run again and judges
- * that read; a second race is thrown. Nothing in Realm calls it yet (CW-5 will). It does not read the
+ * that read; a second race is thrown. `realm agent` calls it from its watch. It does not read the
  * step's kind: its caller passes only the steps it may take back.
  */
 export async function takeBackStep(

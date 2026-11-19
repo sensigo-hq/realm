@@ -79,13 +79,15 @@ describe('#729 CW-3b — the take-back laws’ words', () => {
   it("testing-package.md: the contract's section, its laws and its types", () => {
     // "taken back once, never while its lease is held, gone or cannot be checked, and never twice
     // before a person reclaims it": TB_TAKES_NOT_HELD, the three TB_KEEPS_* laws, the three races and
-    // TB_CAP. "No Realm command takes a step back yet": core's take-back-cw3b witness (the published
-    // law family is its one caller). The adapter's parts are the contract's `TakeBackTestStore`; the
+    // TB_CAP. #729 CW-5b: "`realm agent` takes back an agent step whose claim's lease is not held, if
+    // it has a program name (once, until a person reclaims it)": core's take-back-cw3b witness (its
+    // callers: `realm agent`'s watch and the published law family) and the cli's take-back-watch-cw5b
+    // (W1, W5, check 7's no-driver and not-an-agent-step cells). The adapter's parts are the contract's `TakeBackTestStore`; the
     // leases come from the store's port (take-back-contract.ts's `holdOf`) and their states are set
     // through the double (`leasedClaim`).
     claim(
       TESTING,
-      "The laws a store keeps for the engine's automatic take-back of a step whose claim's lease no program holds (added after version 0.50.0): the step is taken back once, never while its lease is held, gone or cannot be checked, and never twice before a person reclaims it. No Realm command takes a step back yet. Each case builds its own store through the adapter's `makeStore()`, which gives the store the lease double as its lease port and returns that double as `leases`, beside `store`. A case takes its claims' leases from the store's port (`store.leases.hold()`) and sets each lease's state through the double.",
+      "The laws a store keeps for the engine's automatic take-back of a step whose claim's lease no program holds (added after version 0.50.0): the step is taken back once, never while its lease is held, gone or cannot be checked, and never twice before a person reclaims it. `realm agent` takes back an agent step whose claim's lease is not held, if it has a program name (once, until a person reclaims it). Each case builds its own store through the adapter's `makeStore()`, which gives the store the lease double as its lease port and returns that double as `leases`, beside `store`. A case takes its claims' leases from the store's port (`store.leases.hold()`) and sets each lease's state through the double.",
     );
     // Each law's line is the law the contract checks (take-back-contract.ts, run in both files).
     for (const law of TAKE_BACK_LAWS) claim(TESTING, ROWS[law]);
@@ -105,9 +107,10 @@ describe('#729 CW-3b — the take-back laws’ words', () => {
   it('the CHANGELOG line', () => {
     // "exactly once, never … held, absent or cannot be checked, and never twice before a person
     // reclaims it": the take-back laws, as above. "internal to the engine": core's API report (its
-    // rows are internal). "no Realm command uses it yet": core's take-back-cw3b source witness.
+    // rows are internal). #729 CW-5b: "`realm agent`'s watch uses it": core's take-back-cw3b source
+    // witness (its callers) and the cli's take-back-watch-cw5b W1.
     claimChangelog(
-      '- **`@sensigo/realm-testing` adds `takeBackContract` and `TAKE_BACK_LAWS`**: the laws a store keeps so that the engine takes back a step whose lease no program holds exactly once, never one whose lease is held, absent or cannot be checked, and never twice before a person reclaims it. The take-back itself is internal to the engine, and no Realm command uses it yet. (#729)',
+      "- **`@sensigo/realm-testing` adds `takeBackContract` and `TAKE_BACK_LAWS`**: the laws a store keeps so that the engine takes back a step whose lease no program holds exactly once, never one whose lease is held, absent or cannot be checked, and never twice before a person reclaims it. The take-back itself is internal to the engine, and `realm agent`'s watch uses it. (#729)",
     );
   });
 });
