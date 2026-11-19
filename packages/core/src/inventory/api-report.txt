@@ -2065,6 +2065,13 @@ ModelText · type · public
       why: 'switched_off' | 'provider_did_not_report';
   };
 
+ModelTextCheckOutcome · type · internal
+ModelTextMark · type · internal
+ModelTextMessageView · type · internal
+ModelTextRequestCheck · type · internal
+ModelTextRequestView · type · internal
+ModelTextToolListView · type · internal
+ModelTextView · type · internal
 Money · type · internal
 MoneySource · type · internal
 MoneySourceTotal · type · internal
@@ -4446,6 +4453,7 @@ escapedBoundedValue · value · internal
 evaluateAllPreconditions · value · internal
 evaluateFence · value · internal
 evaluatePrecondition · value · internal
+evidenceModelTextView · value · internal
 executeChain · value · public
   function executeChain(store: RunStore, definition: WorkflowDefinition, options: ExecuteChainOptions): Promise<EngineReply>;
 
@@ -4459,6 +4467,7 @@ expiryCarriedOutLine · value · internal
 expiryReceiptLine · value · internal
 expiryReceiptOf · value · internal
 extensionIdentityDiffers · value · internal
+failureModelTextView · value · internal
 fenceReaderMissingError · value · internal
 fileClock · value · internal
 finalizerOutcomeLines · value · internal

@@ -797,8 +797,9 @@ describe('gap 1, unit A2b — the words (check 13)', () => {
     const source = flat('packages/core/src/types/run-record.ts').replace(/ \* /g, ' ');
     // (1) red when a line or row is missing or reworded; (2) prints each check.
     expect({
+      // Gap 1, unit B: gap 1's two Added lines became one, which names the failure's texts.
       added: unreleased.includes(
-        "- Drive failures keep their model calls' text: when a drive fails under `realm agent` or `realm listen`, its entry's `model_text` holds the answered requests whose usage is on the entry and, when the last request got no answer, that request as sent, masked, at most 64 KB per entry, or a marker saying why there is none; `--no-record-model-text` turns it off.",
+        "- **The text of each model call is kept on the run's record** (gap 1). Under `realm agent` and `realm listen`, each model request a step makes that gets an answer keeps the text Realm sent, its tool list and the reply, on the step's evidence entry (`model_text`). A drive that fails keeps, on its drive-failure entry, the requests its failure covers, including a last request that got no answer. Known secret values are replaced by `[REDACTED]`. Each text is cut at 64 KB, and a failure keeps at most 64 KB in all, each cut marked with the text's full size. `realm run inspect --verbose` prints the texts under each step and failure, says why there are none, and checks each request's system text, tool list and prompt against the hashes Realm kept when it sent it (for a prompt built from a template, its text up to the first value the run fills in). On by default; `realm agent --no-record-model-text` or `realm listen --no-record-model-text` turns it off. `get_run_state` never shows the texts, and a listing of runs leaves them out.",
       ),
       a2aLine: unreleased.includes(
         '- In the library, `DriveFailureRecord` gains an optional `model_text`, a `DriveFailureModelText`. Stores list runs',
