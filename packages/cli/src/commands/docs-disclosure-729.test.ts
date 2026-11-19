@@ -138,7 +138,11 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
     }
     // #616 PR-1a unit 5: names core reads that the page does not document yet, each with its
     // reason. An entry is deleted with the row that documents it (c10a-3a wrote REALM_STORE_FS's).
-    const NOT_YET_ON_THE_PAGE: ReadonlyMap<string, string> = new Map();
+    const NOT_YET_ON_THE_PAGE: ReadonlyMap<string, string> = new Map([
+      // Callback K1: the master key and its file, read by no command yet.
+      ['REALM_ENCRYPTION_KEY', 'documented by K2'],
+      ['REALM_ENCRYPTION_KEY_FILE', 'documented by K2'],
+    ]);
     // (a) red when a row is added or removed without the count, or the table's REALM_ names part
     //     from the variables realm's code reads (core's two lists and REALM_NOT_SECRET, less the
     //     names not yet documented), or a name not yet documented is on the page (its entry here
