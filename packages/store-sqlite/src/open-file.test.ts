@@ -1257,7 +1257,7 @@ describe("#616 unit 7b — the mapper's guard slice", () => {
       ),
       evidence: refused(
         'STATE_EVIDENCE_REWRITTEN',
-        "The store refused a write that would change or remove a run's stored evidence, which is append-only.",
+        "The store refused a write that would change or remove a run's stored evidence, which is append-only, or the model text kept on one of its drive failures.",
       ),
       writeOnce: refused(
         'STATE_WRITE_ONCE_REWRITTEN',

@@ -440,6 +440,8 @@ const DRIVE_FAILURE_TABLE = {
   last_observed_status: 'fact',
   retry_after_observed_ms: 'fact',
   usage: { nested: USAGE_RECORD_TABLE },
+  // Gap 1, unit A2a: the model calls' texts a drive failure keeps, masked as values for the file.
+  model_text: 'value',
 } as const satisfies Row<DriveFailureRecord>;
 
 const DRIVE_FAILURES_TABLE = {

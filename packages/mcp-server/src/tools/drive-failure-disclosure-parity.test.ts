@@ -2,10 +2,12 @@
 //
 // The sibling of the inspect guard, same trigger and same rule: add a field to
 // `DriveFailureRecord` and BOTH surface packages stop compiling until someone routes it. This
-// surface carries the record VERBATIM, so every probe reads the field off the emitted object
-// rather than out of prose — which is the point of routing it verbatim for an agent consumer.
+// surface carries the record as stored, so every probe reads the field off the emitted object
+// rather than out of prose — which is the point of routing it as stored for an agent consumer.
 //
-// v1 waives NOTHING.
+// Gap 1, unit A2a: it waives one field, `model_text` (the model calls' texts), which get_run_state
+// never shows; get-run-state-drive-failure-text-a2a.test.ts asserts its absence directly, because a
+// waiver skips its field's probe.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { DriveFailureRecord, RunRecord, RunStore, UsageRecord } from '@sensigo/realm';
@@ -49,6 +51,10 @@ const ENTRY: DriveFailureRecord = {
   usage: USAGE,
 };
 
+/** Gap 1, unit A2a: why get_run_state does not show a drive failure's `model_text`. */
+const MODEL_TEXT_WAIVER =
+  "the model calls' texts a drive failure keeps (gap 1, unit A2a): get_run_state never shows them, and a listing of runs leaves them out; `realm run export` carries them, masked as values";
+
 const DRIVE_FAILURE_DISCLOSURE = {
   at: { surface: 'rendered', probe: (e) => expect(e.at).toBe(ENTRY.at) },
   step: { surface: 'rendered', probe: (e) => expect(e.step).toBe('classify') },
@@ -73,12 +79,13 @@ const DRIVE_FAILURE_DISCLOSURE = {
     surface: 'rendered',
     probe: (e) => expect(e.retry_after_observed_ms).toBe(30000),
   },
-  // issue #600 PR 1a (D9): this surface passes `drive_failures` VERBATIM (the doc comment on
-  // `DriveFailureRecord.usage` says so), so `usage` needs no new plumbing here — only the row
-  // that proves it, same as every field above.
+  // issue #600 PR 1a (D9): this surface passes `drive_failures` as stored, but for `model_text` and
+  // the bound on `usage` (the doc comment on `DriveFailureRecord.usage` says so), so `usage` needs
+  // no new plumbing here — only the row that proves it, same as every field above.
   usage: { surface: 'rendered', probe: (e) => expect(e.usage).toEqual(USAGE) },
   evidence_count: { surface: 'rendered', probe: (e) => expect(e.evidence_count).toBe(2) },
   gate_id: { surface: 'rendered', probe: (e) => expect(e.gate_id).toBe('gate-parity') },
+  model_text: { surface: 'waived', reason: MODEL_TEXT_WAIVER },
 } satisfies Record<keyof DriveFailureRecord, DisclosureRoute>;
 
 function makeStore(run: RunRecord): RunStore {
@@ -136,14 +143,15 @@ describe('#401 — every DriveFailureRecord field reaches a get_run_state consum
     }
   });
 
-  it('the registry covers every field, and v1 waives none', () => {
-    // #715 (b) (02 §D.2): + evidence_count and gate_id, passed verbatim like the rest.
-    expect(Object.keys(DRIVE_FAILURE_DISCLOSURE)).toHaveLength(14);
+  it('the registry covers every field, and waives only model_text, for its written reason', () => {
+    // #715 (b) (02 §D.2): + evidence_count and gate_id, passed as stored like the rest. Gap 1, unit
+    // A2a: + model_text, waived.
+    expect(Object.keys(DRIVE_FAILURE_DISCLOSURE)).toHaveLength(15);
     expect(
-      Object.values(DRIVE_FAILURE_DISCLOSURE as Record<string, DisclosureRoute>).filter(
-        (r) => r.surface === 'waived',
-      ),
-    ).toEqual([]);
+      Object.entries(DRIVE_FAILURE_DISCLOSURE as Record<string, DisclosureRoute>)
+        .filter(([, r]) => r.surface === 'waived')
+        .map(([key, r]) => [key, (r as { reason: string }).reason]),
+    ).toEqual([['model_text', MODEL_TEXT_WAIVER]]);
   });
 
   it('ABSENT, never null, when the run has had no drive failures', async () => {
