@@ -703,12 +703,15 @@ function elsewhereWords(entry: Unavailable, host: McpHost, held: readonly HeldEn
   const way = entry.remedy[0];
   if (way?.verb === 'register') return registerWords(way, host);
   if (way?.verb === 'reclaim') {
-    // #922 (B, b7f72a42): the conditions' words come before any command that frees the step.
-    const words = way.conditions.flatMap((c) => reclaimConditionWords(c) ?? []);
     // #922 P2-1 (walk O1): a step whose deadline passed says so first — its entry has no deadline of
     // its own (`door_cannot_enact`), so the state is read off the reply's held entry for the step.
     // #729 CW-3a: a claim whose lease no program held leads with the not-held line.
     const heldEntry = held.find((u) => u.step === way.step);
+    // #922 (B, b7f72a42): the conditions' words come before any command that frees the step; #729
+    // CW-4a: a leased claim's, with what its lease check found (the held entry's fact).
+    const words = way.conditions.flatMap(
+      (c) => reclaimConditionWords(c, heldEntry?.facts.lease) ?? [],
+    );
     const lead = heldEntry !== undefined ? HELD_WORDS.leadLine(heldStateOf(heldEntry)) : undefined;
     const past = lead !== undefined ? [lead] : [];
     return [

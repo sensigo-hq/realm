@@ -93,6 +93,19 @@ const KILLED_PROMPT: Cell = [
   'C179: a claim the prompt left behind (the command killed outright)',
 ];
 const SERVE_CUT: Cell = ['packages/cli/src/commands/serve-stop-960.test.ts', 'B13'];
+// #729 CW-4a: a lease the check could not answer for (the lease file absent; each result on the MCP).
+const CW4A_ADVANCE: Cell = [
+  'packages/cli/src/commands/lease-words-cw4a.test.ts',
+  'realm run advance: the held line says what the check found',
+];
+const CW4A_UNDER: Cell = [
+  'packages/cli/src/commands/lease-words-cw4a.test.ts',
+  'the dry run and inspect: the lines under the step carry the condition',
+];
+const CW4A_RULE_10: Cell = [
+  'packages/cli/src/commands/held-line-922-p22.test.ts',
+  '#729 CW-4a: the CLI’s held line and the lines under a held step',
+];
 
 /** A sentence a page or the CHANGELOG says, with the cells that execute it. */
 const SENTENCES: readonly { page: string; sentence: string; cells: readonly Cell[] }[] = [
@@ -129,8 +142,18 @@ const SENTENCES: readonly { page: string; sentence: string; cells: readonly Cell
   {
     page: ACTING,
     sentence:
-      "The command is the one [`reclaim`](#reclaim) takes: `realm run reclaim <id> --step <step> --claimed-at <time> --force`, with the time the claim was taken, or with no `--claimed-at` when the claim records none. A step whose claim names a lease is read by that lease, as it was when checked. One whose program held it reads `'<step>' is held; wait for it.`, then `Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.`, and `To free it anyway, run:` before the command. One whose lease no program held reads `'<step>' was claimed, and no program held the claim's lease when it was checked; no result is recorded for it.`, and `To free it, run:` before the command; for the exit code it counts as a step past its deadline. One whose lease cannot be checked reads as a claim of unknown age. No line says that the program holding a step has stopped.",
-    cells: [STATES, AS_PRINTED, LEASE_BRANCH, LEASE_ADVANCE, LEASE_NOT_HELD, WATCH_LEASE, RULE_10],
+      "The command is the one [`reclaim`](#reclaim) takes: `realm run reclaim <id> --step <step> --claimed-at <time> --force`, with the time the claim was taken, or with no `--claimed-at` when the claim records none. A step whose claim names a lease is read by that lease, as it was when checked. One whose program held it reads `'<step>' is held; wait for it.`, then `Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.`, and `To free it anyway, run:` before the command. One whose lease no program held reads `'<step>' was claimed, and no program held the claim's lease when it was checked; no result is recorded for it.`, and `To free it, run:` before the command; for the exit code it counts as a step past its deadline. One whose lease is absent, or could not be checked, reads `'<step>' is held since <time>; wait for it, or free it if its program has stopped.`, then what the check found among its conditions (the words listed under [`reclaim`](#reclaim)), and `To free it, run:` before the command. No line says that the program holding a step has stopped.",
+    cells: [
+      STATES,
+      AS_PRINTED,
+      LEASE_BRANCH,
+      LEASE_ADVANCE,
+      LEASE_NOT_HELD,
+      WATCH_LEASE,
+      RULE_10,
+      CW4A_ADVANCE,
+      CW4A_RULE_10,
+    ],
   },
   {
     page: ACTING,
@@ -147,8 +170,8 @@ const SENTENCES: readonly { page: string; sentence: string; cells: readonly Cell
   {
     page: ACTING,
     sentence:
-      "Under each step, for one past its deadline, `Its deadline passed at <time>; no result is recorded for it.` comes first; then each condition that holds, in the words listed below; then `To free it, run: <command>`, or `To free it anyway, run: <command>` while its deadline is ahead. The command carries `--claimed-at` with the time the claim was taken, when the claim records one. A step whose claim names a lease is listed by that lease: `healthy` when its program held it when it was checked, with `Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.` among its conditions and `To free it anyway, run:` before its command; `claim_stale` when no program held it, led by `No program held the claim's lease when it was checked; no result is recorded for it.`; `claim_unknown_age` when it cannot be checked. The footer leaves out `Run a step's command above to free it.` when no step above has a command, as for a run whose only step in progress waits at its question (changed after version 0.50.0). When the run's workflow cannot be read here, each step is listed all the same, with `Its workflow definition is not available here, so whether running it again is safe is not known.` among its conditions. Added after version 0.50.0, which listed a command only for a step that was not `healthy`, as `reclaim: realm run reclaim <id> --step <step> --force`.",
-    cells: [DRY_RUN, DRY_NO_DEF, HEADER, DRY_LEASE, LEASE_NOT_HELD, GATE],
+      "Under each step, for one past its deadline, `Its deadline passed at <time>; no result is recorded for it.` comes first; then each condition that holds, in the words listed below; then `To free it, run: <command>`, or `To free it anyway, run: <command>` while its deadline is ahead. The command carries `--claimed-at` with the time the claim was taken, when the claim records one. A step whose claim names a lease is listed by that lease: `healthy` when its program held it when it was checked, with `Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.` among its conditions and `To free it anyway, run:` before its command; `claim_stale` when no program held it, led by `No program held the claim's lease when it was checked; no result is recorded for it.`; `claim_unknown_age` when it is absent or cannot be checked, with what the check found among its conditions. The footer leaves out `Run a step's command above to free it.` when no step above has a command, as for a run whose only step in progress waits at its question (changed after version 0.50.0). When the run's workflow cannot be read here, each step is listed all the same, with `Its workflow definition is not available here, so whether running it again is safe is not known.` among its conditions. Added after version 0.50.0, which listed a command only for a step that was not `healthy`, as `reclaim: realm run reclaim <id> --step <step> --force`.",
+    cells: [DRY_RUN, DRY_NO_DEF, HEADER, DRY_LEASE, LEASE_NOT_HELD, GATE, CW4A_UNDER],
   },
   {
     page: ACTING,
@@ -183,8 +206,8 @@ const SENTENCES: readonly { page: string; sentence: string; cells: readonly Cell
   {
     page: READING,
     sentence:
-      "Under a step another program holds come the lines [`realm run reclaim <run-id>`](realm-run-acting.md#reclaim) prints for it, indented four spaces: for a step past its deadline `Its deadline passed at <time>; no result is recorded for it.` first, then each condition that holds, then `To free it, run: <command>` (`To free it anyway, run:` while its deadline is ahead), the command with the time the claim was taken, to the millisecond. A step whose claim names a lease is read by that lease: one whose lease no program held when it was checked leads with `No program held the claim's lease when it was checked; no result is recorded for it.`, and one whose program held it has `Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.` among its conditions, then `To free it anyway, run:`. When the run's workflow cannot be read, one line takes their place: `Its workflow definition cannot be read here; realm run reclaim <run-id> lists each held step's command.` Added after version 0.50.0.",
-    cells: [INSPECT, NO_DEF, LEASE_BRANCH],
+      "Under a step another program holds come the lines [`realm run reclaim <run-id>`](realm-run-acting.md#reclaim) prints for it, indented four spaces: for a step past its deadline `Its deadline passed at <time>; no result is recorded for it.` first, then each condition that holds, then `To free it, run: <command>` (`To free it anyway, run:` while its deadline is ahead), the command with the time the claim was taken, to the millisecond. A step whose claim names a lease is read by that lease: one whose lease no program held when it was checked leads with `No program held the claim's lease when it was checked; no result is recorded for it.`, one whose program held it has `Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.` among its conditions, then `To free it anyway, run:`; and one whose lease is absent, or could not be checked, has what the check found among its conditions (in the words [`realm run reclaim`](realm-run-acting.md#reclaim) lists), then `To free it, run:`. When the run's workflow cannot be read, one line takes their place: `Its workflow definition cannot be read here; realm run reclaim <run-id> lists each held step's command.` Added after version 0.50.0.",
+    cells: [INSPECT, NO_DEF, LEASE_BRANCH, CW4A_UNDER],
   },
   {
     page: READING,
