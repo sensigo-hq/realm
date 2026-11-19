@@ -223,10 +223,10 @@ describe('#729 CW-4b — check 1: each line, per lease state', { timeout: 180_00
       lease_facts: read.lease_facts,
     });
     const header = reclaimDryRunLines(read.record, classifyInProgressClaims(read), ways)[0];
-    // (a) red when a leased claim is listed by its deadline; (b) prints the header.
-    expect(header).toMatch(
-      new RegExp(`^ {2}• a: [a-z_]+ {2}\\(taken at ${since.replace(/\./g, '\\.')}\\)$`),
-    );
+    // (a) red when a leased claim is listed by its deadline, or by another time than its claim's;
+    //     (b) prints the header.
+    const taken = /^ {2}• a: [a-z_]+ {2}\(taken at (.+)\)$/.exec(header ?? '');
+    expect({ header, at: taken?.[1] }).toEqual({ header, at: since });
   });
 
   it.each(['held', 'absent', 'unknown'] as const)(
