@@ -349,6 +349,7 @@ CACHE_STATES · value · public
   ];
 
 CALLBACK_CLAIM_SECONDS · value · internal
+CALLBACK_DELIVERY_WINDOW_SECONDS · value · internal
 CALLBACK_KEY_KEEP_MAX_SECONDS · value · internal
 CALLBACK_KEY_SLOTS · value · beta
   const CALLBACK_KEY_SLOTS: readonly [
@@ -366,6 +367,7 @@ CALLBACK_LAST_STATUS_WORDS · value · beta
       "expired"
   ];
 
+CALLBACK_PURGE_GRACE_SECONDS · value · internal
 CALLBACK_RETRY_MAX_SECONDS · value · internal
 CALLBACK_STATUSES · value · beta
   const CALLBACK_STATUSES: readonly [
