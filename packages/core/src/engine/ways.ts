@@ -3183,6 +3183,17 @@ export function leaseCheckPhrase(lease: UncheckedLease): string {
     : LEASE_UNKNOWN_WORDS[lease.reason];
 }
 
+/**
+ * #729 CW-4b (R13): the ONE clause of what a claim's lease check found, for the lines that name the
+ * step's holder — no capital letter, no final stop: held, not held, or (absent or unknown)
+ * {@link leaseCheckPhrase}. Facts only (rule 10).
+ */
+export function leaseClause(lease: LeaseFact | UncheckedLease): string {
+  if (lease.state === 'held') return "its program held the claim's lease when it was checked";
+  if (lease.state === 'not_held') return "no program held the claim's lease when it was checked";
+  return leaseCheckPhrase(uncheckedLeaseOf({ lease })!);
+}
+
 /** #729 CW-4a: the phrase as a reclaim condition — its own sentence, and the cost of freeing it. */
 export function leaseCheckCondition(lease: UncheckedLease): string {
   const phrase = leaseCheckPhrase(lease);

@@ -4551,6 +4551,7 @@ lastExecutionIdentity · value · internal
 lateAnswerOutcome · value · internal
 leaseCheckCondition · value · internal
 leaseCheckPhrase · value · internal
+leaseClause · value · internal
 leaseFactOf · value · public
   function leaseFactOf(snapshot: Pick<Snapshot, 'lease_facts'>, claim: ClaimRecord | undefined): LeaseFact | Unleased;
 

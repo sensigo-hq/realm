@@ -487,6 +487,8 @@ function elsewherePhrase(
 ): string | undefined {
   const claim = run.claims?.[step];
   if (claim !== undefined && (ownClaimToken === undefined || claim.token !== ownClaimToken)) {
+    // #729 CW-4b correction 1: the holder only; the waiting line this command prints next, from the
+    // same read, says what the claim's lease check found.
     return `was ${takenPhrase(describeClaimHolder(claim, storeKeepsClaims, leaseFactOf(snapshot, claim)), ctx)}`;
   }
   const ran = ranElsewherePhrase(run, step, ctx);
@@ -1250,7 +1252,7 @@ export const runCommand = new Command('run')
               const ran = ranElsewherePhrase(run, stepName, writerCtx());
               if (run.in_progress_steps.includes(stepName)) {
                 console.log(
-                  `${takenLine(stepName, describeClaimHolder(run.claims?.[stepName], keeps, leaseFactOf(runSnap, run.claims?.[stepName])), writerCtx())}\n`,
+                  `${takenLine(stepName, describeClaimHolder(run.claims?.[stepName], keeps, leaseFactOf(runSnap, run.claims?.[stepName])), writerCtx(), false)}\n`,
                 );
               } else if (ran !== undefined) {
                 console.log(`• Step '${stepName}' was ${ran}; not run here.\n`);
@@ -1377,6 +1379,8 @@ export const runCommand = new Command('run')
                     leaseFactOf(judged, replyRecord!.claims?.[stepName]),
                   ),
                   writerCtx(),
+                  // #729 CW-4b correction 1: the waiting line from the same read says the lease.
+                  false,
                 ))
               : undefined;
           // The `✓` line of a step this call finished, with its entry's hash and duration. #729 PR-3
@@ -1416,7 +1420,8 @@ export const runCommand = new Command('run')
             holdSnapshot(judged);
             if (stop.ran_here) {
               console.log(
-                `  ${outcomeNotRecordedLine(stop.kind as NotRecordedKind, run, stepName, keeps, writerCtx(), runSnap)}\n`,
+                // #729 CW-4b correction 1: the waiting line from the same read says the lease.
+                `  ${outcomeNotRecordedLine(stop.kind as NotRecordedKind, run, stepName, keeps, writerCtx(), runSnap, false)}\n`,
               );
             }
           } else if (result.status === 'ok') {

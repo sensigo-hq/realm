@@ -34,6 +34,7 @@ import {
   formatInstantWords,
   getWorkflowForRun,
   heldStateOf,
+  leaseClause,
   leaseFactOf,
   overdueOf,
   reclaimConditionWords,
@@ -278,7 +279,14 @@ export function reclaimDryRunLines(
   for (const c of infos) {
     const entry = held.get(c.step);
     const state = entry !== undefined ? CLAIM_STATE_OF[heldStateOf(entry).state] : c.state;
-    lines.push(`  • ${c.step}: ${state}  (deadline: ${c.deadline ?? 'none (unknown age)'})`);
+    // #729 CW-4b: a claim that names a lease is listed by when it was taken (the lines under it say
+    // what its lease check found), never by a deadline its lease overrules.
+    const since = run.claims?.[c.step]?.since;
+    const tail =
+      c.lease !== undefined
+        ? `taken at ${typeof since === 'string' ? since : 'an unrecorded time'}`
+        : `deadline: ${c.deadline ?? 'none (unknown age)'}`;
+    lines.push(`  • ${c.step}: ${state}  (${tail})`);
     const gate = run.pending_gate;
     if (gate !== undefined && gate.step_name === c.step) {
       // #729 PR-0 (Table row 43): the respond-path text — the answer command is the CLI renderer's,
@@ -292,13 +300,44 @@ export function reclaimDryRunLines(
       for (const line of under) lines.push(`      ${line}`);
     }
   }
+  // #729 CW-4b: `--all` also selects a claim whose lease no program held, whatever its deadline.
+  const selects = infos.some((c) => c.lease !== undefined)
+    ? 'the claims past their deadline with no lease, or whose lease no program held when it was checked, whose steps are idempotent'
+    : 'the claims past their deadline whose steps are idempotent';
   lines.push(
     `\nReclaim re-drives a step (at-least-once — side effects may repeat).` +
       (listed ? ` Run a step's command above to free it.` : '') +
-      ` realm run reclaim --all lists, across every run, the claims past their deadline whose ` +
-      `steps are idempotent; with --force it frees them.`,
+      ` realm run reclaim --all lists, across every run, ${selects}; with --force it frees them.`,
   );
   return lines;
+}
+
+/**
+ * `--all`'s dry-run header: how many claims it would free, and by which rule. #729 CW-4b: a selected
+ * claim that names a lease was selected by its lease, not its deadline.
+ */
+export function autoReclaimHeader(selected: readonly Pick<AutoReclaimPick, 'claim'>[]): string {
+  const rule = selected.some((p) => p.claim.lease !== undefined)
+    ? 'idempotent ∧ (past its deadline with no lease, or no program held its lease) ∧ non-gated'
+    : 'idempotent ∧ past-deadline ∧ non-gated';
+  return `${selected.length} claim(s) WOULD be auto-reclaimed (${rule}):`;
+}
+
+/**
+ * `--all`'s dry-run line for one selected claim. #715 (b) (03 §B.2 A13): how far past its deadline,
+ * through the one formatter at this row's reading (a selected claim's deadline is concrete and past);
+ * the stored string stays beside the words. #729 CW-4b: a leased claim — when it was taken and what
+ * its lease check found.
+ */
+export function autoReclaimLine(
+  pick: Pick<AutoReclaimPick, 'runId' | 'claim' | 'at' | 'claimedAt'>,
+): string {
+  const { runId: rid, claim, at, claimedAt } = pick;
+  if (claim.lease !== undefined) {
+    return `  • ${rid} / ${claim.step}  (taken at ${claimedAt ?? 'an unrecorded time'}; ${leaseClause(claim.lease)})`;
+  }
+  const pastWords = formatInstantWords(claim.deadline!, 'deadline', at);
+  return `  • ${rid} / ${claim.step}  (deadline ${claim.deadline}${pastWords !== undefined ? `, ${pastWords}` : ''})`;
 }
 
 /** #922 P2-2 (item 6): one `--all` pick — the claim selected, the definition and stamp read then. */
@@ -502,18 +541,8 @@ export const reclaimCommand = new Command('reclaim')
 
         if (opts.force !== true) {
           // DRY-RUN (default): report what WOULD be reclaimed; mutate nothing.
-          console.log(
-            `${selected.length} claim(s) WOULD be auto-reclaimed (idempotent ∧ past-deadline ∧ non-gated):`,
-          );
-          for (const { runId: rid, claim, at } of selected) {
-            // #715 (b) (03 §B.2 A13): how far past its deadline, through the one formatter at this
-            // row's reading (a selected claim's deadline is concrete and past); the stored string
-            // stays beside the words.
-            const pastWords = formatInstantWords(claim.deadline!, 'deadline', at);
-            console.log(
-              `  • ${rid} / ${claim.step}  (deadline ${claim.deadline}${pastWords !== undefined ? `, ${pastWords}` : ''})`,
-            );
-          }
+          console.log(autoReclaimHeader(selected));
+          for (const pick of selected) console.log(autoReclaimLine(pick));
           console.log(
             `\nRe-run with --force to reclaim them. WARNING: each re-executes its handler ` +
               `at-least-once with NO per-step human judgment — enable only for genuinely idempotent handlers.`,
