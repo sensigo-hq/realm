@@ -9,6 +9,8 @@
 export { openRealmHome, type OpenRealmHomeOptions, type RealmHome } from './open-realm-home.js';
 // Callback B1a: what seals a home's signing keys, given to `openRealmHome` as `sealer`.
 export type { CallbackKeySealer } from './callback-keys.js';
+// Callback K1: the AES-256-GCM sealer under the master key, and the master key's fingerprint.
+export { createCallbackKeySealer, masterKeyFingerprint } from './callback-key-seal.js';
 export {
   openRealmHomeForMaintenance,
   // #616 R2: `realm db migrate --to`'s value, read before the store is opened.
