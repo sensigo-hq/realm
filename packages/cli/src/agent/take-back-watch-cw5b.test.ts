@@ -626,6 +626,40 @@ describe('#729 CW-5b — check 7: no program name, and a step that is not an age
     });
   });
 
+  it('no driver, the lease turns not held during the watch: the no-driver line on the poll that reads it, after the waiting line; nothing taken back', async () => {
+    const f = await fixture();
+    const a = await take(f, A);
+    const d = await drive(f, {
+      driver: null,
+      onLine: (line) => {
+        // A is killed once B says it waits.
+        if (line.includes('its program held')) f.double.set(a.hold.id, 'dead');
+      },
+    });
+    const run = await record(f);
+    // (1) red when the watch checks a drive with no program name only before its waiting line (the
+    //     line never comes), or that drive takes the step back; (2) prints the lines.
+    expect(
+      {
+        result: d.result,
+        calls: tb.calls,
+        bullets: bullets(d.lines).slice(0, 2),
+        takeBacks: takeBacks(run).length,
+        claim: run.claims?.['s']?.token,
+      },
+      d.lines.join('\n'),
+    ).toEqual({
+      result: 'failed',
+      calls: 0,
+      bullets: [
+        `• Step 's' was taken by ${words(A)} at ${a.since}; its program held the claim's lease when it was checked. Waiting up to 1s for the run's record to change.`,
+        `• Step 's' was taken by ${words(A)} at ${a.since}; ${NOT_HELD}, but this drive has no program name, so it cannot take the step back (set REALM_OPERATOR to name it). Waiting up to 1s for the run's record to change.`,
+      ],
+      takeBacks: 0,
+      claim: a.token,
+    });
+  });
+
   it('no driver, at the cap: the at-cap line, never the REALM_OPERATOR advice', async () => {
     const f = await fixture();
     const a = await take(f, A);
