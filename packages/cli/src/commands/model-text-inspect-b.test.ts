@@ -715,6 +715,54 @@ describe('gap 1, unit B — check 6: drive failures', () => {
       ],
     });
   }, 30_000);
+
+  it('the marks beside a size, in order (left out, cut, secret values replaced), and a left-out text not printed', async () => {
+    const d = await embedded({
+      recorded: true,
+      messages: [
+        {
+          role: 'system',
+          text: 'S'.repeat(10),
+          cut: { kept_bytes: 10, full_bytes: 20 },
+          hidden: 2,
+        },
+        { role: 'user', text: '', cut: { kept_bytes: 0, full_bytes: 30 } },
+        { role: 'assistant', text: '{"answer":"x"}', hidden: 1 },
+      ],
+      tools: [],
+      requests: [{ request_id: 'req-marks-1', sent: [0, 1], reply: [2] }],
+    });
+    const lines = trimmed(await inspect(d));
+    const at = lines.findIndex((l) => l.startsWith('Message 2 · user'));
+    script = [reply([text(ANSWER)])];
+    const cutMasked = await drive(
+      profiled('b-cut-masked', `Keep the key ${SECRET} private. ${'P'.repeat(70 * KB)}`),
+      new AnthropicProvider('claude-x'),
+      { redactionValues: [SECRET] },
+    );
+    const out = await inspect(cutMasked);
+    // Breaks: the marks in another order (secret values before the cut); a left-out text printed.
+    // Prints the message heads, the line after the left-out one, and the cut-and-masked check.
+    expect({
+      heads: messageHeadsOf(lines.join('\n')),
+      afterLeftOut: lines[at + 1],
+      cutMasked: messageHeadsOf(out)[0]!.replace(/\d+ bytes/g, 'N bytes'),
+      check: checksOf(out),
+    }).toEqual({
+      heads: [
+        'Message 1 · system · 10 bytes · cut: kept 10 bytes of 20 bytes · 2 known secret values replaced by [REDACTED]',
+        'Message 2 · user · 0 bytes · left out to fit 64 KB (30 bytes)',
+        'Message 3 · assistant · 14 bytes · 1 known secret value replaced by [REDACTED]',
+      ],
+      afterLeftOut:
+        'Message 3 · assistant · 14 bytes · 1 known secret value replaced by [REDACTED]',
+      cutMasked:
+        'Message 1 · system · N bytes · cut: kept N bytes of N bytes · 1 known secret value replaced by [REDACTED]',
+      check: [
+        'Checked against what was sent: system text not checkable (cut), prompt matches, tool list matches.',
+      ],
+    });
+  }, 30_000);
 });
 
 /** A run of BARE whose one entry holds `modelText` as a program that embeds the engine passed it. */
