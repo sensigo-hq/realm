@@ -25,6 +25,7 @@ import {
   leaseClause,
   parseStamp,
   quoteStatedName,
+  readDrivenBy,
   UNSHOWABLE_NAME,
   type DisclosureAudience,
   type DisclosureSet,
@@ -32,6 +33,7 @@ import {
 } from '@sensigo/realm';
 import type {
   EngineReply,
+  ActorAbsent,
   ActorAbsentCause,
   AnswerArrival,
   AnswerView,
@@ -49,7 +51,13 @@ import type {
 } from '@sensigo/realm';
 import { accountLabelOf } from '@sensigo/realm-mcp';
 import { PLAIN, RUN_PHASE_WORDS, writerSetFor, type RenderCtx } from '../output/writer.js';
-import { cliCommandOf, heldLine, respondLines, type HeldEntry } from '../commands/ways-renderer.js';
+import {
+  cliCommandOf,
+  heldFreeingParts,
+  heldLine,
+  respondLines,
+  type HeldEntry,
+} from '../commands/ways-renderer.js';
 
 /** The one phrase for a recorded name that cannot be printed; defined in core (#729 PR-6a c1). */
 export { UNSHOWABLE_NAME };
@@ -261,6 +269,106 @@ export function waitingLine(
   }
   const since = described.since !== undefined ? ` since ${described.since}` : '';
   return `• Step '${step}' is in flight, ${takenPhrase(described, ctx)}${since}: ${waiting}`;
+}
+
+/** ` at <since>` after a holder, for a claim that records when it was taken. */
+function atSince(described: { since?: string }): string {
+  return described.since !== undefined ? ` at ${described.since}` : '';
+}
+
+/**
+ * #729 CW-5b: an act's recorded program in {@link takenPhrase}'s words — the program, or why none can
+ * be named.
+ */
+function programWords(read: Attributed | ActorAbsent, ctx: RenderCtx): string {
+  if (read.by !== null) return describeProgram(read, ctx);
+  return read.absent_cause === 'name_unreadable'
+    ? UNSHOWABLE_NAME
+    : 'a program whose name was not recorded';
+}
+
+/**
+ * #729 CW-5b, line (i): `realm agent`'s watch took back a step whose claim's lease no program held —
+ * the claim it took back (its holder and when, read before the take-back) and what its check found,
+ * said before the step runs here.
+ */
+export function takenBackLine(
+  step: string,
+  described: Parameters<typeof takenPhrase>[0],
+  ctx: RenderCtx = PLAIN,
+): string {
+  return `• Step '${step}' was ${takenPhrase(described, ctx)}${atSince(described)}${leaseTail(described)}, so this drive took it back (this step's one automatic take-back until a person reclaims it). Its model and tools run here, so any side effects of the first program's calls may repeat.`;
+}
+
+/**
+ * #729 CW-5b: the watch found the step's claim's lease not held, but the step was already taken back
+ * automatically since a person last reclaimed it (`last`: when, and by whom), so a person decides —
+ * then what frees it, the held entry's own words ({@link heldFreeingParts}).
+ */
+export function takeBackAtCapLine(
+  step: string,
+  described: Parameters<typeof takenPhrase>[0],
+  last: { readonly at: string; readonly driven_by: Attributed | ActorAbsent },
+  held: HeldEntry | undefined,
+  ctx: RenderCtx = PLAIN,
+): string {
+  const opening = `• Step '${step}' was ${takenPhrase(described, ctx)}${atSince(described)}${leaseTail(described)}, and it was already taken back automatically once (at ${last.at}, by ${programWords(last.driven_by, ctx)}), so a person decides.`;
+  return [opening, ...(held !== undefined ? heldFreeingParts(held, ctx) : [])].join(' ');
+}
+
+/**
+ * #729 CW-5b, line (iii): the watch read the step's claim, but before its take-back the step was
+ * taken by someone else — from the step's entries added after that read (`before`) to the take-back's
+ * own (`after`): the newest automatic take-back (by its `driven_by`) or a person's reclaim, and the
+ * step's new claim when there is one; with no such entry, the new claim alone (its program let the
+ * step go). `undefined` when there is no new entry and no claim (the holder settled the step
+ * meanwhile).
+ */
+export function takenFirstLine(
+  step: string,
+  before: RunRecord,
+  after: Pick<Snapshot, 'record' | 'lease_facts'>,
+  keepsClaims: boolean,
+  ctx: RenderCtx = PLAIN,
+): string | undefined {
+  const added = after.record.evidence
+    .slice(before.evidence.length)
+    .filter((e) => e.step_id === step && e.output_summary?.['reclaimed'] === true);
+  const entry = added[added.length - 1];
+  const claim = after.record.in_progress_steps.includes(step)
+    ? after.record.claims?.[step]
+    : undefined;
+  const now =
+    claim !== undefined && claim.token !== before.claims?.[step]?.token
+      ? describeClaimHolder(claim, keepsClaims, leaseFactOf(after, claim))
+      : undefined;
+  const nowTaken = (d: Parameters<typeof takenPhrase>[0]): string =>
+    `${takenPhrase(d, ctx)}${atSince(d)}`;
+  if (entry === undefined) {
+    return now === undefined
+      ? undefined
+      : `• Step '${step}' was let go by its program and is now ${nowTaken(now)}, not by this drive.`;
+  }
+  const atField = entry.output_summary['reclaimed_at'];
+  const at = typeof atField === 'string' ? atField : entry.completed_at;
+  const then = now !== undefined ? `; it is now ${nowTaken(now)}` : '';
+  return entry.output_summary['reason'] === 'lease_not_held'
+    ? `• Step '${step}' was taken back by ${programWords(readDrivenBy(entry), ctx)} at ${at}${then}, not by this drive.`
+    : `• Step '${step}' was reclaimed at ${at}${then}, not by this drive.`;
+}
+
+/**
+ * #729 CW-5b: the watch found the step's claim's lease not held, but this drive has no program name
+ * to take it back under (the take-back's audit entry names its taker) — said in place of the waiting
+ * line, with how to give it one.
+ */
+export function noDriverTakeBackLine(
+  step: string,
+  described: Parameters<typeof takenPhrase>[0],
+  watchMs: number,
+  ctx: RenderCtx = PLAIN,
+): string {
+  return `• Step '${step}' was ${takenPhrase(described, ctx)}${atSince(described)}${leaseTail(described)}, but this drive has no program name, so it cannot take the step back (set REALM_OPERATOR to name it). Waiting up to ${Math.round(watchMs / 1000)}s for the run's record to change.`;
 }
 
 /**

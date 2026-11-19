@@ -2,8 +2,8 @@
 // conditions of `takeBackStep` that the published take-back laws (@sensigo/realm-testing's
 // `takeBackContract`) do not hold — a claim with another token or none, a run that ended, a step not in
 // progress — on `InMemoryStore` with the lease double, each claim's lease not held, so that each
-// condition alone stops the take-back. And the source witness behind the CHANGELOG's "no Realm command
-// uses it yet".
+// condition alone stops the take-back. And the source witness behind the CHANGELOG's "`realm agent`'s
+// watch uses it" (#729 CW-5b): its one caller in Realm's commands.
 //
 // Each assertion carries the two questions of `~/.claude/TESTING-RULES.md` rule 8 next to it.
 import { readdirSync, readFileSync } from 'node:fs';
@@ -154,7 +154,7 @@ describe('#729 CW-3b — item 3: a second write race is thrown', () => {
   });
 });
 
-describe('#729 CW-3b — the CHANGELOG’s "no Realm command uses it yet"', () => {
+describe('#729 CW-3b, CW-5b — the CHANGELOG’s "`realm agent`’s watch uses it"', () => {
   const HERE = dirname(fileURLToPath(import.meta.url));
   const PACKAGES = join(HERE, '..', '..', '..');
   const productionFiles = (dir: string): string[] =>
@@ -165,7 +165,7 @@ describe('#729 CW-3b — the CHANGELOG’s "no Realm command uses it yet"', () =
       return /\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [p] : [];
     });
 
-  it('no production file outside the function’s own file calls takeBackStep, but the published law family', () => {
+  it('the production files outside the function’s own file that call takeBackStep: realm agent’s watch and the published law family', () => {
     const callers = readdirSync(PACKAGES)
       .flatMap((pkg) => {
         const src = join(PACKAGES, pkg, 'src');
@@ -184,9 +184,13 @@ describe('#729 CW-3b — the CHANGELOG’s "no Realm command uses it yet"', () =
       })
       .map((f) => relative(PACKAGES, f).split(sep).join('/'))
       .filter((f) => f !== 'core/src/engine/reclaim-step.ts');
-    // (1) red when a command, a door or any other production file starts calling the take-back (the
-    //     CHANGELOG then says something false); the testing package's law family is the one caller,
-    //     the laws a store keeps. (2) prints the callers.
-    expect(callers).toEqual(['testing/src/store/take-back-contract.ts']);
+    // (1) red when a command, a door or any other production file starts calling the take-back, or
+    //     `realm agent`'s watch stops calling it (the CHANGELOG then says something false); the
+    //     testing package's law family is the other caller, the laws a store keeps. (2) prints the
+    //     callers.
+    expect(callers.sort()).toEqual([
+      'cli/src/agent/run-agent.ts',
+      'testing/src/store/take-back-contract.ts',
+    ]);
   });
 });

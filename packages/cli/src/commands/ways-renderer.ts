@@ -439,6 +439,15 @@ function freeingParts(entry: HeldEntry, way: WayOf<'reclaim'>, ctx: RenderCtx): 
 }
 
 /**
+ * #729 CW-5b: what frees a held step, without its opening ({@link freeingParts}) — `realm agent`'s
+ * line for a step it may not take back again ends with it. Empty on a store that keeps no claims.
+ */
+export function heldFreeingParts(entry: HeldEntry, ctx: RenderCtx = PLAIN): string[] {
+  const way = reclaimWayIn(entry);
+  return way === undefined ? [] : freeingParts(entry, way, ctx);
+}
+
+/**
  * #922 P2-2 (R13): the ONE CLI line for a held step, read by every CLI door that names one — its
  * state's opening (core's `HELD_WORDS.cli`), then what frees it ({@link freeingParts}); on a store
  * that keeps no claims, the opening alone. Facts and conditions only (rule 10).

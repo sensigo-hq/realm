@@ -924,8 +924,10 @@ function definitionSaysAgent(
 /**
  * One `StepView` per `step_id` that has at least one EXECUTION entry (rule 3) — or at least one
  * ANSWER (issue #625): a `gate_response` entry is never an attempt, but it is a fact the step's view
- * must carry, so it creates the step's view with `attempts: []` when no execution entry exists. An
- * entry that is not an object, or has no string `step_id`, is skipped entirely (rule 1's totality).
+ * must carry, so it creates the step's view with `attempts: []` when no execution entry exists. A
+ * reclaim's audit entry (`output_summary.reclaimed`, #729 CW-5b) is never an attempt either, and
+ * creates no view: a step whose only entries are reclaims has none. An entry that is not an object,
+ * or has no string `step_id`, is skipped entirely (rule 1's totality).
  *
  * Cost comes from `cache` alone, never from classification (rule 4) — this holds whatever the
  * definition says, and whether or not one exists at all: an `execution: 'auto'` step whose entry
@@ -955,6 +957,15 @@ export function composeStepViews(
     }
     const isExecution = kind === undefined || kind === 'execution';
     if (!isExecution) continue; // any other kind — never an attempt.
+    // #729 CW-5b: a reclaim's audit entry (a person's reclaim, or an automatic take-back) records
+    // that a claim was removed, not an attempt: out of the step's attempts and its cost count.
+    const output = entry['output_summary'];
+    if (
+      typeof output === 'object' &&
+      output !== null &&
+      (output as Record<string, unknown>)['reclaimed'] === true
+    )
+      continue;
 
     const view = (result[stepId] ??= { attempts: [] });
     const statusRaw = entry['status'];

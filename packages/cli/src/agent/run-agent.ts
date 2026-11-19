@@ -53,6 +53,9 @@ import {
   validationListOf,
   persistsField,
   startIdentityEntry,
+  takeBackStep,
+  automaticTakebacksOf,
+  AUTOMATIC_TAKEBACKS_PER_STEP,
 } from '@sensigo/realm';
 import type {
   RunRecord,
@@ -134,7 +137,11 @@ import {
   goOnLine,
   inFlightLine,
   NO_SNAPSHOT,
+  noDriverTakeBackLine,
   outcomeNotRecordedLine,
+  takeBackAtCapLine,
+  takenBackLine,
+  takenFirstLine,
   takenLine,
   waitingLine,
   resumeLine,
@@ -927,6 +934,109 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       // this drive's exit only when nothing else can run.
       const heldCapabilityReplies = new Map<string, Awaited<ReturnType<typeof advanceRun>>>();
       const keepsClaims = deps.store.persistsClaims === true;
+      // #729 CW-5b: the claims whose lease no program held that this drive has said it cannot take
+      // back — with no program name, or at the cap (`capSaid`, which only a person frees) — each said
+      // once, in place of its waiting line.
+      const takeBackSaid = new Set<string>();
+      const capSaid = new Set<string>();
+      // #729 CW-5b: the held entry of `step` on `snap`, for the lines that end with what frees it.
+      const heldEntryAt = (snap: Snapshot, step: string) =>
+        heldEntriesOf(
+          composeWaysAt(snap.record, snap.at, {
+            definition,
+            registry: deps.registry,
+            persistsClaims: keepsClaims,
+            lease_facts: snap.lease_facts,
+          }),
+        ).find((e) => e.facts.step === step);
+      /**
+       * #729 CW-5b: the watch's take-back of `step`, judged on the read the drive holds. An agent step
+       * whose claim names a lease that read found not held, and that carries a token, is taken back
+       * once (`takeBackStep`, under this drive's name; the function's own fresh read decides). The
+       * answer: `'loop'` — back to the loop's top (the step was taken back, someone else took it, or
+       * the run ended); `'capped'` — only a person can free it, and its line is said; `'watch'` — keep
+       * watching it, as before.
+       */
+      const takeBackMove = async (
+        step: string,
+        watchMs: number,
+      ): Promise<'watch' | 'loop' | 'capped'> => {
+        if (definition.steps[step]?.execution !== 'agent') return 'watch';
+        const read = currentSnap;
+        const claim = read.record.claims?.[step];
+        const token = claim?.token;
+        if (claim === undefined || token === undefined) return 'watch';
+        const key = `${step}\u0000${token}`;
+        if (capSaid.has(key)) return 'capped';
+        const described = describeClaimHolder(claim, keepsClaims, leaseFactOf(read, claim));
+        if (described.lease?.state !== 'not_held') return 'watch';
+        const atCap = (
+          last: ReturnType<typeof automaticTakebacksOf>['last'],
+          snap: Snapshot,
+        ): 'capped' => {
+          capSaid.add(key);
+          waitingSaid.add(key);
+          console.log(
+            takeBackAtCapLine(step, described, last!, heldEntryAt(snap, step), writerCtx()),
+          );
+          return 'capped';
+        };
+        if (deps.driver === undefined) {
+          // No program name: nothing is taken back (its audit entry names its taker). The cap is read
+          // once per claim, so the line names no REALM_OPERATOR advice where it would not help.
+          if (takeBackSaid.has(key)) return 'watch';
+          takeBackSaid.add(key);
+          const taken = automaticTakebacksOf(read.record, step);
+          if (taken.automatic >= AUTOMATIC_TAKEBACKS_PER_STEP) return atCap(taken.last, read);
+          waitingSaid.add(key);
+          console.log(noDriverTakeBackLine(step, described, watchMs, writerCtx()));
+          return 'watch';
+        }
+        let outcome: Awaited<ReturnType<typeof takeBackStep>>;
+        try {
+          outcome = await takeBackStep(deps.store, runId, step, {
+            expectToken: token,
+            drivenBy: deps.driver,
+            ...(deps.traceBufferStore !== undefined
+              ? { traceBufferStore: deps.traceBufferStore }
+              : {}),
+          });
+        } catch (err) {
+          if (!(err instanceof WorkflowError) || err.code !== 'STATE_SNAPSHOT_MISMATCH') throw err;
+          // The function's second race (the record moved under both its writes): the loop's top
+          // judges the run again, on a fresh read.
+          hold(await deps.store.get(runId));
+          return 'loop';
+        }
+        if (outcome.kind === 'taken_back') {
+          console.log(takenBackLine(step, described, writerCtx()));
+          hold(outcome.snapshot);
+          return 'loop';
+        }
+        if (
+          outcome.kind === 'changed' ||
+          (outcome.kind === 'not_taken' && outcome.reason === 'not_in_progress')
+        ) {
+          // Someone else took the step between this drive's read and the function's own. #729 PR-3
+          // (L-2): the writer's context only inside the print call.
+          if (takenFirstLine(step, read.record, outcome.snapshot, keepsClaims) !== undefined)
+            console.log(
+              takenFirstLine(step, read.record, outcome.snapshot, keepsClaims, writerCtx()),
+            );
+          hold(outcome.snapshot);
+          return 'loop';
+        }
+        if (outcome.reason === 'run_ended') {
+          hold(outcome.snapshot);
+          return 'loop';
+        }
+        if (outcome.reason === 'at_cap') {
+          return atCap(automaticTakebacksOf(outcome.snapshot.record, step).last, outcome.snapshot);
+        }
+        // The lease held, absent or unknown on the function's own read, an open question, or a
+        // claim with no lease: watched as before.
+        return 'watch';
+      };
 
       // decision C159: the questions whose due expiry this drive has handed to `advanceRun` — each
       // once, so a question the call could not carry out is announced (and timed) as before.
@@ -1303,9 +1413,35 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           if (inFlight.length > 0) {
             const pollMs = options.inFlightPollMs ?? IN_FLIGHT_POLL_MS;
             const watchMs = options.inFlightWatchMs ?? IN_FLIGHT_WATCH_MS;
+            // #729 CW-5b: the steps only a person can free now (said at the cap); the watch goes on
+            // while another step is still watched.
+            const capped = new Set<string>();
+            const watching = (): boolean => inFlight.some((step) => !capped.has(step));
+            // #729 CW-5b: the take-back check of every watched step on the read the drive holds —
+            // `true` when one goes back to the loop's top.
+            const checkTakeBacks = async (): Promise<boolean> => {
+              for (const step of inFlight) {
+                if (capped.has(step)) continue;
+                const move = await takeBackMove(step, watchMs);
+                if (move === 'loop') return true;
+                if (move === 'capped') capped.add(step);
+              }
+              return false;
+            };
             // decision C182: what the drive waits for and who holds it, said once for each claim it
-            // waits on — `realm workflow run`'s line.
+            // waits on — `realm workflow run`'s line. #729 CW-5b: each step's take-back check first,
+            // on the same read.
+            let back = false;
             for (const step of inFlight) {
+              const move = await takeBackMove(step, watchMs);
+              if (move === 'loop') {
+                back = true;
+                break;
+              }
+              if (move === 'capped') {
+                capped.add(step);
+                continue;
+              }
               const claim = currentRun.claims?.[step];
               const key = `${step}\u0000${claim?.token ?? claim?.since ?? ''}`;
               if (waitingSaid.has(key)) continue;
@@ -1319,10 +1455,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 ),
               );
             }
+            if (back) continue;
             const startVersion = currentRun.version;
             const watchStarted = performance.now();
             let changed = false;
-            while (performance.now() - watchStarted < watchMs) {
+            while (watching() && performance.now() - watchStarted < watchMs) {
               await new Promise((resolve) => setTimeout(resolve, pollMs));
               // #715 (b) (D6-19): every poll REPLACES the held snapshot, changed or not — the same
               // record at a newer reading, so a claim's staleness is judged at the latest one.
@@ -1331,8 +1468,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 changed = true;
                 break;
               }
+              // #729 CW-5b: a lease no program holds any more is seen on the poll that reads it.
+              if (await checkTakeBacks()) {
+                back = true;
+                break;
+              }
             }
-            if (changed) continue;
+            if (changed || back) continue;
             // #922 P2-2: each held step's state and what frees it, from the ways composed at the
             // watch's last reading.
             const held = heldEntriesOf(
@@ -1344,6 +1486,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               }),
             );
             for (const entry of held) {
+              // #729 CW-5b: a step said at the cap — its line already said what frees it.
+              if (capped.has(entry.facts.step)) continue;
               const claim = currentRun.claims?.[entry.facts.step];
               const described = describeClaimHolder(
                 claim,
