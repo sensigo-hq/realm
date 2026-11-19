@@ -27,7 +27,16 @@ import {
   sendUnderGatewayRule,
   type CacheFieldMemory,
 } from './agent-utils.js';
-import { openAiAnsweredText, pushAnswered, type ModelTextReport } from './model-text.js';
+import {
+  carryTexts,
+  newCallTexts,
+  openAiAnsweredText,
+  openAiSentText,
+  pushAnswered,
+  trackSend,
+  type CallTexts,
+  type ModelTextReport,
+} from './model-text.js';
 
 /**
  * issue #600 PR 1a — the response's `usage` block, typed LOCALLY (same discipline as the other two
@@ -168,6 +177,8 @@ export class OpenAIReasoningProvider extends LlmProvider {
     callOpts?: { llmClock?: LlmClock; cachePrefixChars?: number },
     // issue #600 PR 1a (D9): owned by the entry point so one `catch` there sees everything billed.
     billed?: UsageRecord[],
+    // Gap 1, unit A2b: owned by the entry point, as `billed` is, so its catch carries the texts.
+    callTexts: CallTexts = newCallTexts(),
   ): Promise<{
     output: Record<string, unknown>;
     usage?: UsageRecord[];
@@ -226,8 +237,9 @@ export class OpenAIReasoningProvider extends LlmProvider {
     // issue #600 PR 1a: ONE entry per WIRE REQUEST, in wire order.
     const requests: UsageRecord[] = billed ?? [];
     // Gap 1, unit A1: each answered request's text, one per entry of `requests`. Its system text is
-    // folded into the user message, so its messages are that one user message, as sent.
-    const texts: ModelTextReport[] = [];
+    // folded into the user message, so its messages are that one user message, as sent (unit A2b:
+    // and the last send while it has no answer).
+    const texts = callTexts.answered;
     const makeRequest = async (msgs: Message[]): Promise<string> => {
       const requestStart = new Date().toISOString();
       const base = {
@@ -238,10 +250,16 @@ export class OpenAIReasoningProvider extends LlmProvider {
       // caching 3-B (E3): under the gateway rule — a custom endpoint that refuses the key gets the
       // request once more without it.
       let body: Record<string, unknown> = base;
-      const response = await sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
-        body = withCache ? withCacheKey(base, plan) : base;
-        return bounded(body);
-      });
+      // Gap 1, unit A2b: while it has no answer, the call's unanswered request is the body last built.
+      const response = await trackSend(
+        callTexts,
+        () => openAiSentText(body),
+        () =>
+          sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
+            body = withCache ? withCacheKey(base, plan) : base;
+            return bounded(body);
+          }),
+      );
       // Gap 1, unit A1: the request's text beside its record, in the same statement.
       pushAnswered(
         requests,
@@ -291,6 +309,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
     callOpts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
     const billed: UsageRecord[] = [];
+    const callTexts = newCallTexts();
     try {
       const { output } = await this.callStepInternal(
         prompt,
@@ -298,10 +317,13 @@ export class OpenAIReasoningProvider extends LlmProvider {
         agentProfileInstructions,
         callOpts,
         billed,
+        callTexts,
       );
       return output;
     } catch (err) {
       attachBilledUsage(err, billed);
+      // Gap 1, unit A2b: the call's texts ride beside the thrown error, which stays as it is.
+      carryTexts(err, callTexts);
       throw err;
     }
   }
@@ -320,6 +342,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
     opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock; cachePrefixChars?: number },
   ): Promise<CallStepWithMetaResult> {
     const billed: UsageRecord[] = [];
+    const callTexts = newCallTexts();
     try {
       return await this.callStepInternal(
         prompt,
@@ -332,9 +355,12 @@ export class OpenAIReasoningProvider extends LlmProvider {
             : {}),
         },
         billed,
+        callTexts,
       );
     } catch (err) {
       attachBilledUsage(err, billed);
+      // Gap 1, unit A2b: the call's texts ride beside the thrown error, which stays as it is.
+      carryTexts(err, callTexts);
       throw err;
     }
   }
