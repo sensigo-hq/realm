@@ -1834,13 +1834,20 @@ export function defaultSpawnAgent(
     };
     try {
       const realmBin = process.argv[1] ?? '';
+      // Callback K1: an agent never gets the master key the callback keys are sealed under, nor the
+      // path of its file; every other variable is kept.
+      const {
+        REALM_ENCRYPTION_KEY: _masterKey,
+        REALM_ENCRYPTION_KEY_FILE: _masterKeyFile,
+        ...inherited
+      } = process.env;
       const child = spawnFn(process.execPath, [realmBin, ...buildAgentArgv(runId, opts)], {
         detached: true,
         stdio: 'inherit',
         cwd,
         // CP-W (W3): the deprecation ids listen has said, so a flag it forwards is warned once per
         // `realm listen`, not once per delivery.
-        env: { ...process.env, [DEPRECATIONS_SAID_ENV]: `${process.pid}:${saidIds().join(',')}` },
+        env: { ...inherited, [DEPRECATIONS_SAID_ENV]: `${process.pid}:${saidIds().join(',')}` },
       });
       // R1.2: made here, at the spawn, so an exit before any wait begins is still seen: a listener
       // added after the child has exited never fires.

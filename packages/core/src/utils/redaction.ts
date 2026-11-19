@@ -479,6 +479,7 @@ const EXCLUDED_LAUNCHER_METADATA = new Set([
  */
 export const REALM_SETTING_VARIABLES: ReadonlySet<string> = new Set([
   'REALM_DEV', // a flag ('1')
+  'REALM_ENCRYPTION_KEY_FILE', // a path: the file holding the master key (callback K1), not the key
   'REALM_MCP_FORM_WAIT_SECONDS', // a number of seconds
   'REALM_MCP_GATE_ANSWERS', // an enum: asked, offered, withheld
   'REALM_NO_NUDGE', // a flag ('1')
@@ -487,7 +488,11 @@ export const REALM_SETTING_VARIABLES: ReadonlySet<string> = new Set([
   'REALM_STORE_FS', // an enum: 'local' (#616 PR-1a unit 5, the filesystem gate's escape)
 ]);
 /** D-14: realm's own variables that hold a credential: never excluded. */
-export const REALM_CREDENTIAL_VARIABLES: ReadonlySet<string> = new Set(['REALM_SERVE_TOKEN']);
+export const REALM_CREDENTIAL_VARIABLES: ReadonlySet<string> = new Set([
+  'REALM_SERVE_TOKEN',
+  // Callback K1: the master key the callback signing keys are sealed under.
+  'REALM_ENCRYPTION_KEY',
+]);
 /**
  * U1b: names realm's own processes pass to each other and delete at their init — a relay to its
  * worker, and (CP-W) `realm listen` to the agents it starts. Never a setting (no exemption from the environment sweep: a
