@@ -33,7 +33,7 @@ import {
   type Snapshot,
 } from './snapshot.js';
 import { renderTemplateWithBoundary, type StableBoundary } from './render-template.js';
-import type { LeaseFact } from '../store/lease-port.js';
+import type { LeaseFact, LeaseProbeReason } from '../store/lease-port.js';
 import { isLeaseFact, leaseFactOf, type LeaseFacts } from '../store/lease-facts.js';
 import { clockBasis, type Clock } from '../utils/clock.js';
 import { buildEvidenceByStep, deriveRunPhase, findEligibleSteps } from './eligibility.js';
@@ -3143,22 +3143,86 @@ export function reclaimRefusalWords(refusal: Unavailable): string | undefined {
 }
 
 /**
+ * #729 CW-4a: a claim's lease that the check could not answer for — its file absent, or the check's
+ * result unknown, with why.
+ */
+export type UncheckedLease =
+  { readonly state: 'absent' } | { readonly state: 'unknown'; readonly reason: LeaseProbeReason };
+
+/** #729 CW-4a: the claim's lease, when the check could not answer for it (absent, or unknown). */
+export function uncheckedLeaseOf(facts: {
+  readonly lease?: LeaseFact | UncheckedLease;
+}): UncheckedLease | undefined {
+  const lease = facts.lease;
+  if (lease === undefined) return undefined;
+  if (lease.state === 'absent') return { state: 'absent' };
+  return lease.state === 'unknown' ? { state: 'unknown', reason: lease.reason } : undefined;
+}
+
+/** #729 CW-4a: why the check could not answer, one phrase per probe reason (a missing one fails the build). */
+const LEASE_UNKNOWN_WORDS: Record<LeaseProbeReason, string> = {
+  not_checked: "whether its program still holds the claim's lease was not checked on this read",
+  cannot_open:
+    "whether its program still holds the claim's lease could not be checked: its lease file could not be opened",
+  not_a_lease:
+    "whether its program still holds the claim's lease could not be checked: the file the claim names is not a lease file",
+  permission:
+    "whether its program still holds the claim's lease could not be checked: this program cannot open its lease file for writing, which checking needs",
+  io_error:
+    "whether its program still holds the claim's lease could not be checked: reading its lease file failed",
+};
+
+/**
+ * #729 CW-4a (R13): the ONE phrase of what the lease check found, for a claim whose lease is absent or
+ * could not be checked — no capital letter, no final stop. Facts only (rule 10): whether the claim's
+ * program still holds it, never that it runs or stopped.
+ */
+export function leaseCheckPhrase(lease: UncheckedLease): string {
+  return lease.state === 'absent'
+    ? 'this home has no lease file the claim names, so whether its program still holds it is not known'
+    : LEASE_UNKNOWN_WORDS[lease.reason];
+}
+
+/** #729 CW-4a: the phrase as a reclaim condition — its own sentence, and the cost of freeing it. */
+export function leaseCheckCondition(lease: UncheckedLease): string {
+  const phrase = leaseCheckPhrase(lease);
+  return `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}; if the claim's program still holds it, the step runs twice.`;
+}
+
+/**
+ * #729 CW-4a: the condition's words when the lease seen here is not the judged claim's (the reclaim
+ * command's two reads raced).
+ */
+export const LEASE_NOT_KNOWN_HERE =
+  "Whether its program still holds the claim's lease is not known here; if the claim's program still holds it, the step runs twice.";
+
+/**
+ * #729 CW-4a: what a reclaim condition's words read of the claim's lease — its fact, or that the
+ * lease seen here is not the judged claim's (`not_known_here`).
+ */
+export type LeaseWordsInput = LeaseFact | UncheckedLease | 'not_known_here';
+
+/**
  * #922 (R13): the ONE table of a reclaim condition's words, read by every place that prints a reclaim
  * (the CLI before "Reclaimed …" and in `fence_required`'s refusal; the MCP person block) — each said
  * before the command (the owner's B). `undefined` for a condition that is not a reclaim's.
  */
-export function reclaimConditionWords(cond: Cond): string | undefined {
+export function reclaimConditionWords(cond: Cond, lease?: LeaseWordsInput): string | undefined {
   const unknown =
     'so whether its program still runs is not known; if it does, the step runs twice.';
   switch (cond.code) {
     case 'claim_deadline_ahead':
       return `Its deadline is ahead (${cond.deadline}); if its program is still running, the step runs twice.`;
-    case 'override_claim_unknown_age':
-      return cond.state === 'unreadable'
-        ? `Its claim's deadline cannot be read, ${unknown}`
-        : cond.state === 'no_claim_record'
-          ? `It is held with no claim record, ${unknown}`
-          : `Its claim has no deadline, ${unknown}`;
+    case 'override_claim_unknown_age': {
+      if (cond.state === 'unreadable') return `Its claim's deadline cannot be read, ${unknown}`;
+      if (cond.state === 'no_claim_record') return `It is held with no claim record, ${unknown}`;
+      // #729 CW-4a: a leased claim says what its lease check found, never that it has no deadline.
+      if (lease === 'not_known_here') return LEASE_NOT_KNOWN_HERE;
+      const unchecked = lease !== undefined ? uncheckedLeaseOf({ lease }) : undefined;
+      return unchecked !== undefined
+        ? leaseCheckCondition(unchecked)
+        : `Its claim has no deadline, ${unknown}`;
+    }
     case 'lease_held':
       return "Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.";
     case 'rerun_not_idempotent':
@@ -3200,8 +3264,21 @@ function earliestStamp(stamps: readonly string[]): string | undefined {
 export const HELD_WORDS = {
   /** The agent's clause for a group of held steps in one state; `names` is the group's bounded
    *  list, `at` the group's instant (a deadline for ahead and past, a claim's `since` otherwise). */
-  agent(state: HeldWordsState, names: string, many: boolean, at: string | undefined): string {
+  agent(
+    state: HeldWordsState,
+    names: string,
+    many: boolean,
+    at: string | undefined,
+    lease?: UncheckedLease,
+  ): string {
     const since = at ?? 'an unknown time';
+    // #729 CW-4a: a leased claim the check could not answer for says what it found, not "no deadline".
+    if (state === 'unknown_age' && lease !== undefined) {
+      const phrase = leaseCheckPhrase(lease);
+      return many
+        ? `${names} are held; for each, ${phrase}. Wait for them. If their programs have stopped, a person can free them.`
+        : `${names} is held; ${phrase}. Wait for it. If its program has stopped, a person can free it.`;
+    }
     switch (state) {
       case 'ahead':
         return many
@@ -3246,7 +3323,11 @@ export const HELD_WORDS = {
       : 'Their workflow definition is not available here, so whether running them again is safe is not known.';
   },
   /** A by-name call's reason, after `Step '<s>' cannot be called now: ` (core's). */
-  reason(state: HeldState): string {
+  reason(state: HeldState, lease?: UncheckedLease): string {
+    // #729 CW-4a: as `agent`, the lease check's phrase in place of "a claim with no deadline".
+    if (state.state === 'unknown_age' && lease !== undefined) {
+      return `it is held; ${leaseCheckPhrase(lease)}`;
+    }
     switch (state.state) {
       case 'ahead':
         return `it is held; its deadline is ahead (${state.deadline})`;
@@ -3359,14 +3440,22 @@ export function heldAgentWords(
     'ahead',
     'lease_held',
   ];
-  const groups = new Map<string, { state: HeldWordsState; rerun?: string; entries: typeof held }>();
+  const groups = new Map<
+    string,
+    { state: HeldWordsState; rerun?: string; lease?: UncheckedLease; entries: typeof held }
+  >();
   for (const entry of held) {
     const state = heldWordsStateOf(entry, persistsClaims);
     const rerun = heldIsPast(state) ? heldRerunOf(entry) : undefined;
-    const key = `${state}:${rerun ?? ''}`;
+    // #729 CW-4a: within a state, one group per lease result — no lease, absent, each unknown reason.
+    const lease = state === 'unknown_age' ? uncheckedLeaseOf(entry.facts) : undefined;
+    const leaseKey =
+      lease === undefined ? '' : lease.state === 'absent' ? 'absent' : `unknown:${lease.reason}`;
+    const key = `${state}:${leaseKey}:${rerun ?? ''}`;
     const group = groups.get(key) ?? {
       state,
       ...(rerun !== undefined ? { rerun } : {}),
+      ...(lease !== undefined ? { lease } : {}),
       entries: [],
     };
     groups.set(key, { ...group, entries: [...group.entries, entry] });
@@ -3375,7 +3464,7 @@ export function heldAgentWords(
     (a, b) => order.indexOf(a.state) - order.indexOf(b.state),
   );
   return sorted
-    .map(({ state, rerun, entries }) => {
+    .map(({ state, rerun, lease, entries }) => {
       const many = entries.length > 1;
       const names = quotedNames(
         entries.map((e) => e.facts.step),
@@ -3395,7 +3484,7 @@ export function heldAgentWords(
                 ),
               )
             : undefined;
-      const clause = HELD_WORDS.agent(state, names, many, at);
+      const clause = HELD_WORDS.agent(state, names, many, at, lease);
       return rerun === 'not_declared' || rerun === 'definition_absent'
         ? `${clause} ${HELD_WORDS.rerun(rerun, many)}`
         : clause;

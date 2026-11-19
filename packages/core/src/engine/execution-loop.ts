@@ -30,6 +30,7 @@ import {
   heldFacts,
   heldStateOf,
   HELD_WORDS,
+  uncheckedLeaseOf,
   isHeldUnder,
   waysStoreOf,
   isRaceStop,
@@ -1046,7 +1047,8 @@ export function notCallableWords(refusal: Unavailable): string {
       return `it waits on ${openQuestionWords({ step: refusal.facts.question_step, gate_id: refusal.facts.gate_id, choices: [...refusal.facts.choices] })}`;
     case 'held_elsewhere':
       // #922 P2-1 (R13): the held step's state, from the one held-words table.
-      return HELD_WORDS.reason(heldStateOf(refusal));
+      // #729 CW-4a: a leased claim the check could not answer for says what it found.
+      return HELD_WORDS.reason(heldStateOf(refusal), uncheckedLeaseOf(refusal.facts));
     case 'upstream_cannot_run':
       return `a step it depends on cannot run (${refusal.facts.upstream.map((s) => `'${s}'`).join(', ')})`;
     case 'deps_unsettled':

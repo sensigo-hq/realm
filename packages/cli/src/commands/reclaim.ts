@@ -15,6 +15,7 @@ import type {
   RunStore,
   StepDefinition,
   InProgressClaimInfo,
+  LeaseWordsInput,
   ReclaimResult,
   Snapshot,
   TraceBufferStore,
@@ -33,6 +34,7 @@ import {
   formatInstantWords,
   getWorkflowForRun,
   heldStateOf,
+  leaseFactOf,
   overdueOf,
   reclaimConditionWords,
   reclaimRefusalWords,
@@ -92,6 +94,8 @@ export function reclaimResultLines(
   >,
   runId: string,
   definition: Pick<WorkflowDefinition, 'steps'> | undefined,
+  // #729 CW-4a: what the command's own read showed of the claim's lease ({@link leaseWordsOf}).
+  lease?: LeaseWordsInput,
 ): string[] {
   const step = result.step;
   if (result.outcome === 'already_settled' || result.outcome === 'no_active_claim') {
@@ -110,7 +114,9 @@ export function reclaimResultLines(
     ];
   }
   if (result.outcome !== 'reclaimed') return [renderReclaimOutcome(result).message];
-  const words = (result.conditionsDischarged ?? []).flatMap((c) => reclaimConditionWords(c) ?? []);
+  const words = (result.conditionsDischarged ?? []).flatMap(
+    (c) => reclaimConditionWords(c, lease) ?? [],
+  );
   const renamed = definition !== undefined && definition.steps[step] === undefined;
   return [
     ...words,
@@ -121,17 +127,46 @@ export function reclaimResultLines(
 }
 
 /**
+ * #729 CW-4a: what `--step … --force` says of the claim's lease, from the command's own read before
+ * the call (the judge reads again; its refusal's facts carry only the stamp). The claim is the step's
+ * in that read whose `since` is `since` (the refusal's `current_claimed_at`, or the `--claimed-at`
+ * passed), or the step's claim whatever its `since` when none was passed. Undefined (today's words)
+ * when that claim names no lease; its fact when the lease was absent or could not be checked; and
+ * `not_known_here` when the two reads raced (no such claim, or a lease held or not held there).
+ */
+export function leaseWordsOf(
+  read: Snapshot,
+  step: string,
+  since: string | undefined,
+): LeaseWordsInput | undefined {
+  const run = read.record;
+  const claim = run.in_progress_steps.includes(step) ? run.claims?.[step] : undefined;
+  if (claim === undefined || (since !== undefined && claim.since !== since))
+    return 'not_known_here';
+  if (claim.lease === undefined) return undefined;
+  const fact = leaseFactOf(read, claim);
+  return 'state' in fact && (fact.state === 'absent' || fact.state === 'unknown')
+    ? fact
+    : 'not_known_here';
+}
+
+/**
  * #922 (P1 item 12): a judged refusal — core's fact, then its act through the CLI's one renderer: a
  * fence names each condition, then the command to reclaim the claim shown; a changed claim, where to
  * read it; any other, its ways on.
  */
-export function reclaimRefusalText(message: string, refusal: Unavailable): string {
+export function reclaimRefusalText(
+  message: string,
+  refusal: Unavailable,
+  // #729 CW-4a: what the command's own read showed of the claim's lease ({@link leaseWordsOf}).
+  lease?: LeaseWordsInput,
+): string {
   const host = writerHost();
   const lines = refusal.remedy.flatMap((way) => {
     const command = cliCommandOf(way, undefined, host);
     if (command === null) return [];
     if (way.verb === 'reclaim') {
-      const words = way.conditions.flatMap((c) => reclaimConditionWords(c) ?? []);
+      const words = way.conditions.flatMap((c) => reclaimConditionWords(c, lease) ?? []);
       return [[...words, `To reclaim this claim, run: ${command}`].join(' ')];
     }
     if (way.verb === 'respond') return [`To go on, answer its question first: ${command}`];
@@ -555,12 +590,28 @@ export const reclaimCommand = new Command('reclaim')
             });
           } catch (err) {
             if (err instanceof WorkflowError && err.refusal !== undefined) {
-              console.error(reclaimRefusalText(err.message, err.refusal));
+              // #729 CW-4a: the claim the refusal names is the one whose stamp it carries.
+              const stamped = (err.refusal.facts as { current_claimed_at?: unknown })
+                .current_claimed_at;
+              const current = typeof stamped === 'string' ? stamped : opts.claimedAt;
+              console.error(
+                reclaimRefusalText(
+                  err.message,
+                  err.refusal,
+                  leaseWordsOf(read, opts.step, current),
+                ),
+              );
               process.exit(1);
             }
             throw err;
           }
-          for (const line of reclaimResultLines(result, runId, definition)) console.log(line);
+          for (const line of reclaimResultLines(
+            result,
+            runId,
+            definition,
+            leaseWordsOf(read, opts.step, opts.claimedAt),
+          ))
+            console.log(line);
           if (result.gateAdvisory !== undefined) {
             console.log(`  ⚠ ${result.gateAdvisory}`);
           }

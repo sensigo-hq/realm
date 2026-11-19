@@ -432,7 +432,8 @@ function reclaimWayIn(entry: HeldEntry): WayOf<'reclaim'> | undefined {
 function freeingParts(entry: HeldEntry, way: WayOf<'reclaim'>, ctx: RenderCtx): string[] {
   const anyway = heldIsAhead(heldStateOf(entry).state) ? ' anyway' : '';
   return [
-    ...way.conditions.flatMap((c) => reclaimConditionWords(c) ?? []),
+    // #729 CW-4a: a leased claim's condition says what its lease check found (the entry's own fact).
+    ...way.conditions.flatMap((c) => reclaimConditionWords(c, entry.facts.lease) ?? []),
     `To free it${anyway}, run: ${CLI_COMMANDS.reclaim(way, undefined, hostOf(ctx))}`,
   ];
 }
