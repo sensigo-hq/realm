@@ -67,6 +67,7 @@ import {
 } from '../output/writer.js';
 import { relayIfLogged } from '../output/relay.js';
 import { openCliHome } from '../lib/home.js';
+import { claimLeasesFolder } from '@sensigo/realm-store-sqlite';
 
 /**
  * Builds the Slack gate handler from the deployment manifest's `notifiers.slack_gate`
@@ -699,6 +700,8 @@ export const agentCommand = new Command('agent')
               ...(moduleProviderId !== undefined ? { providerId: moduleProviderId } : {}),
               registry: loaded.registry,
               traceBufferStore,
+              // #729 CW-5a: named when a lease cannot be taken there.
+              leaseFolder: claimLeasesFolder(home.path),
               ...(driver !== undefined ? { driver } : {}),
               // issue #197 PR-2: default OFF; the strict-flip (REALM_REQUIRE_WRITER_NONCE) force-
               // enables minting even without the flag — resolved once in run-agent.ts's loop.
@@ -788,6 +791,8 @@ export const agentCommand = new Command('agent')
               ...(moduleProviderId !== undefined ? { providerId: moduleProviderId } : {}),
               registry: loaded.registry,
               traceBufferStore,
+              // #729 CW-5a: named when a lease cannot be taken there.
+              leaseFolder: claimLeasesFolder(home.path),
               ...(driver !== undefined ? { driver } : {}),
               // issue #197 PR-2: default OFF; the strict-flip (REALM_REQUIRE_WRITER_NONCE) force-
               // enables minting even without the flag — resolved once in run-agent.ts's loop.

@@ -1043,7 +1043,7 @@ describe(
     it('round 25, C198 (walk c10, W3-1): `realm workflow run` cannot join a run it did not start — it has no option that names a run, and each call starts a new run; the page says so beside C190’s sentence', async () => {
       claim(
         WF_PAGE,
-        '`realm agent` holds nothing while its model works on a step, so on a run this command started (it cannot join a run it did not start), a prompt opened during that call takes the step with no word of the call:',
+        '`realm agent` holds an agent step while its model works on it. So on a run this command started (it cannot join a run it did not start), when it reaches a step a `realm agent` drive holds, it prints',
       );
       mocks.question.mockImplementation(async () => {
         throw Object.assign(new Error('The operation was aborted'), {

@@ -21,7 +21,9 @@ import {
   createDefaultRegistry,
   executeChain,
   executeStep,
+  reclaimStep,
   submitHumanResponse,
+  WorkflowError,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type Attributed,
   type StepDefinition,
@@ -177,6 +179,24 @@ async function promptAnswers(
   expect(r.status, JSON.stringify(r)).toBe('ok');
 }
 
+/**
+ * #729 CW-5a: a person frees the drive's claim of `step` (`realm run reclaim <run> --step <step>
+ * --claimed-at <stamp> --force`): the drive holds it under a lease while its model works.
+ */
+async function forceReclaim(
+  store: InMemoryStore,
+  def: WorkflowDefinition,
+  runId: string,
+  step: string,
+): Promise<void> {
+  const since = (await store.get(runId)).record.claims?.[step]?.since;
+  await reclaimStep(store, runId, step, {
+    definition: def,
+    force: true,
+    ...(since !== undefined ? { claimed_at: since } : {}),
+  });
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -231,12 +251,16 @@ describe(
       });
     });
 
-    it('the model call began first and the person’s answer reached the engine first (the run then ended): taken, and completed; not recorded — never ✓', async () => {
+    it('the model call began first, a person freed the drive’s claim with --force, and their answer reached the engine first (the run then ended): taken, and completed; not recorded — never ✓', async () => {
       claim(AGENT_PAGE, NOT_RECORDED_SENTENCE);
       const def = wf({ write: agent() });
       const d = await drive(def, {
+        // #729 CW-5a (claim-after cell rewritten): the drive holds the step while its model works, so
+        // another answer reaches it only after a person frees the claim (`realm run reclaim --force`).
         during: async (store, runId, call) => {
-          if (call === 1) await promptAnswers(store, def, runId, 'write');
+          if (call !== 1) return;
+          await forceReclaim(store, def, runId, 'write');
+          await promptAnswers(store, def, runId, 'write');
         },
       });
       const at = d.lines.indexOf('log: \n→ [agent] write');
@@ -254,12 +278,15 @@ describe(
       expect(d.lines.filter((l) => l.includes('✓'))).toEqual([]);
     });
 
-    it('the model call began first and the person’s answer reached the engine first (the run goes on): the same line, then the next step', async () => {
+    it('the model call began first, a person freed the drive’s claim with --force, and their answer reached the engine first (the run goes on): the same line, then the next step', async () => {
       claim(AGENT_PAGE, NOT_RECORDED_SENTENCE);
       const def = wf({ write: agent(), more: agent(['write']) });
       const d = await drive(def, {
+        // #729 CW-5a (claim-after cell rewritten): as above.
         during: async (store, runId, call) => {
-          if (call === 1) await promptAnswers(store, def, runId, 'write');
+          if (call !== 1) return;
+          await forceReclaim(store, def, runId, 'write');
+          await promptAnswers(store, def, runId, 'write');
         },
       });
       const at = d.lines.indexOf('log: \n→ [agent] write');
@@ -275,12 +302,15 @@ describe(
       ]);
     });
 
-    it('the model’s answer came back while the prompt held the step: taken (with the time); not recorded; then the waiting line', async () => {
+    it('the model’s answer came back while the prompt held the step (a person freed the drive’s claim with --force, then the prompt took it): taken (with the time); not recorded; then the waiting line', async () => {
       claim(AGENT_PAGE, NOT_RECORDED_SENTENCE);
       const def = wf({ write: agent() });
       const d = await drive(def, {
+        // #729 CW-5a (claim-after cell rewritten): as above.
         during: async (store, runId, call) => {
-          if (call === 1) await store.claimStep(runId, 'write', def, PROMPT);
+          if (call !== 1) return;
+          await forceReclaim(store, def, runId, 'write');
+          await store.claimStep(runId, 'write', def, PROMPT);
         },
         watching: async (store, runId) => {
           const { record: held } = await store.get(runId);
@@ -690,55 +720,48 @@ describe(
 );
 
 describe(
-  '#625 PR-2a, C190 — realm agent holds nothing while its model works',
+  '#625 PR-2a, C190 — #729 CW-5a: realm agent holds the step while its model works',
   { timeout: 30_000 },
   () => {
-    it('a prompt opened during the model call takes the step: the answer is not recorded, the drive waits, and when the prompt lets the step go unanswered the model is asked again', async () => {
+    it('a prompt opened during the model call finds the step held by the drive: the prompt takes nothing, and the drive’s answer is recorded (one model call)', async () => {
+      // #729 CW-5a (claim-after cell rewritten): the drive claims the step under a lease before its
+      // model is called and holds it until the save. The prompt's other half (it finds the step held,
+      // waits up to 60 s, then hands the run back) is `realm workflow run`'s, executed by
+      // holder-lines-cw4b check 2 (g) "the taken line" (a drive's claimStepForDrive claim: the taken
+      // line, the waiting line, exit 1).
       claim(
         AGENT_PAGE,
-        "The drive itself holds nothing while its model works on a step: on a run that `realm workflow run` started (it cannot join a run it did not start), a prompt it opens during the model call takes the step; if the prompt still holds it when the model answers, the model's answer is not recorded (`• Step '<step>' was taken by <program> at <time>; this drive's answer was not recorded.`), and the drive then waits for the step as for any step another process holds — when the prompt lets it go unanswered, the model is asked for it again.",
+        "The drive holds the agent step it works on, too: before it calls the model, it claims the step under a lease in the home's `claim-leases/` folder, and it keeps the claim until it saves the step's answer, so a second `realm agent`, or a prompt `realm workflow run` opens for the step, waits for it instead of running it beside the drive (added after version 0.50.0, which held nothing while the model worked: a prompt opened during the model call took the step, and the model's answer was not recorded).",
       );
       claim(
         WORKFLOW_PAGE,
-        "`realm agent` holds nothing while its model works on a step, so on a run this command started (it cannot join a run it did not start), a prompt opened during that call takes the step with no word of the call: if the prompt still holds the step when the model answers, the model's answer is not recorded, and if you then leave the prompt while that drive still waits for the step, its model is asked again.",
+        "`realm agent` holds an agent step while its model works on it. So on a run this command started (it cannot join a run it did not start), when it reaches a step a `realm agent` drive holds, it prints `• Step '<step>' was taken by <program> at <time>; not run here.`, waits up to 60 seconds for the run's record to change, then hands the run back as for any step another process holds (added after version 0.50.0, before which `realm agent` held nothing while its model worked: a prompt opened during that call took the step with no word of the call, and the model's answer was not recorded; a drive killed during its model call left no claim, so the prompt ran the step at once).",
       );
       const def = wf({ write: agent() });
-      const during: Array<{ claimed: boolean; inFlight: boolean }> = [];
+      const during: Array<{ inFlight: boolean; leased: boolean; promptRefused: string }> = [];
       const d = await drive(def, {
-        during: async (store, runId, call) => {
-          // What the record shows while the model works: nothing — no claim, no step in flight.
+        during: async (store, runId) => {
+          // What the record shows while the model works: the drive's own leased claim.
           const { record: r } = await store.get(runId);
-          during.push({
-            claimed: r.claims?.['write'] !== undefined,
-            inFlight: r.in_progress_steps.includes('write'),
-          });
-          // The prompt opens during the first call and takes the step.
-          if (call === 1) await store.claimStep(runId, 'write', def, PROMPT);
-        },
-        watching: async (store, runId) => {
-          // The prompt is left (Ctrl+D): it lets its claim go, unanswered.
-          const { record: held } = await store.get(runId);
-          await store.settleStep!(
-            runId,
-            { kind: 'release_step', step: 'write', claimToken: held.claims!['write']!.token! },
-            def,
+          // The prompt opens during the call: its claim (`holdStepClaim`'s) is refused.
+          const refused = await store.claimStep(runId, 'write', def, PROMPT).then(
+            () => 'took it',
+            (err: unknown) => (err instanceof WorkflowError ? err.code : String(err)),
           );
+          during.push({
+            inFlight: r.in_progress_steps.includes('write'),
+            leased: r.claims?.['write']?.lease !== undefined,
+            promptRefused: refused,
+          });
         },
       });
-      // (a) red when the drive holds the step during its model call, prints `✓` for the dropped answer,
-      //     does not wait, or does not ask again once the prompt lets the step go; (b) prints the screen.
+      // (a) red when the drive holds nothing during its model call (the prompt then takes the step
+      //     and the answer is not recorded), or its answer is not recorded; (b) prints the screen.
       expect({ during, calls: d.calls, result: d.result, lines: d.lines.slice(4) }).toEqual({
-        during: [
-          { claimed: false, inFlight: false },
-          { claimed: false, inFlight: false },
-        ],
-        calls: 2,
+        during: [{ inFlight: true, leased: true, promptRefused: 'STATE_STEP_ALREADY_CLAIMED' }],
+        calls: 1,
         result: 'completed',
         lines: [
-          'log: \n→ [agent] write',
-          'log:   An agent step.',
-          `log: • Step 'write' was taken by ${PROMPT_WORDS} at <t>; this drive's answer was not recorded.`,
-          `log: • Step 'write' is in flight, taken by ${PROMPT_WORDS} since <t>: waiting up to 2s for the run's record to change.`,
           'log: \n→ [agent] write',
           'log:   An agent step.',
           'log:   ✓ → completed',

@@ -5,8 +5,11 @@
 // `openRealmHomeForMaintenance` (PR-2c c6), the entry of the verbs that act on the store file
 // (`realm db backup`, `realm db migrate`, its check, c8a1, and `realm db restore`, #616 R1b), with its
 // handles', its verbs' and its reports' types; and `readRegisteredWorkflows` (PR-2c c10a-3b-i, DELTAS 56), the separation check's
-// one read-only look at the registered workflows, with its result types. Every other module is internal.
+// one read-only look at the registered workflows, with its result types; and `claimLeasesFolder`
+// (#729 CW-5a), where a home keeps its claim leases. Every other module is internal.
 export { openRealmHome, type OpenRealmHomeOptions, type RealmHome } from './open-realm-home.js';
+// #729 CW-5a: the folder a home's claim leases are kept in, for the line that names it.
+export { claimLeasesFolder } from './claim-lease.js';
 // Callback B1a: what seals a home's signing keys, given to `openRealmHome` as `sealer`.
 export type { CallbackKeySealer } from './callback-keys.js';
 // Callback K1: the AES-256-GCM sealer under the master key, and the master key's fingerprint.

@@ -318,7 +318,10 @@ export const COST_UNRECORDED_CAUSES = ['tool_calling_step', 'not_measured_by_rea
 export type CostUnrecordedCause = (typeof COST_UNRECORDED_CAUSES)[number];
 
 export interface AttemptView {
-  /** 1-based position among the step's EXECUTION entries (gate_response entries are never attempts). */
+  /**
+   * 1-based position among the step's EXECUTION entries (gate_response entries, and since #729 CW-5b
+   * reclaim entries, are never attempts).
+   */
   attempt: number;
   /** The entry's `status`, verbatim when a string, else `'unknown'`. */
   status: string;
