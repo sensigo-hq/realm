@@ -1972,9 +1972,9 @@ export async function inspectRun(
       s.kind === undefined || s.kind === 'execution';
     const stepEntries = stepSnapshots.get(stepId)!;
     // #922 P2-2 (item 7, walk N4): a reclaim's audit entry is its own line in the step's history —
-    // out of the step's entries before either branch (the single branch prints `snaps[0]`), and out
-    // of its view's attempts by the same index, so every later attempt keeps its program line and
-    // cost, and it is never printed as an attempt or as the step's result.
+    // out of the step's entries before either branch (the single branch prints `snaps[0]`), so it is
+    // never printed as an attempt or as the step's result. #729 CW-5b: core's step view leaves it out
+    // of the attempts itself, so every attempt keeps its program line and cost as the view has them.
     const isReclaim = (s: EvidenceSnapshot | undefined): boolean =>
       s?.output_summary?.['reclaimed'] === true;
     const reclaimLines = stepEntries.filter(isReclaim).map((s) => {
@@ -2002,8 +2002,7 @@ export async function inspectRun(
     const isMultiAttempt = executionSnaps.length >= 2;
     const totalAttempts = executionSnaps.length;
     const view = stepViews[stepId];
-    const allExecution = stepEntries.filter(isExecution);
-    const attempts = (view?.attempts ?? []).filter((_, i) => !isReclaim(allExecution[i]));
+    const attempts = view?.attempts ?? [];
 
     lines.push('');
 

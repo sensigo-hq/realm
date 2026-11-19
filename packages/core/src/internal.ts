@@ -555,7 +555,8 @@ export {
 export type { ClaimState, InProgressClaimInfo } from './engine/claim-liveness.js';
 export { reclaimStep } from './engine/reclaim-step.js';
 export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine/reclaim-step.js';
-// #729, the claim window (CW-3b): the automatic take-back, internal (no caller until CW-5).
+// #729, the claim window (CW-3b): the automatic take-back, internal (`realm agent`'s watch
+// calls it).
 export {
   takeBackStep,
   automaticTakebacksOf,
