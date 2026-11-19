@@ -11,7 +11,11 @@ import { describe, it, expect } from 'vitest';
 import {
   HELD_WORDS,
   LEASE_NOT_KNOWN_HERE,
+  classifyInProgressClaims,
+  declareReleaseLine,
   composeWaysAt,
+  describeClaimHolder,
+  leaseFactOf,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type ClaimRecord,
   type RunRecord,
@@ -33,8 +37,21 @@ import {
   waitsOnlyOnPastHeld,
   type HeldEntry,
 } from './ways-renderer.js';
-import { goOnLine } from '../lib/holder-render.js';
-import { reclaimDryRunLines } from './reclaim.js';
+import {
+  answerNotRecordedLine,
+  goOnLine,
+  inFlightLine,
+  outcomeNotRecordedLine,
+  takenLine,
+  waitingLine,
+} from '../lib/holder-render.js';
+import { autoReclaimHeader, autoReclaimLine, reclaimDryRunLines } from './reclaim.js';
+import { inFlightItems } from './run-advance.js';
+import { answerNotRunLine, stepClosedLine } from './run.js';
+import { resumeRun } from './resume.js';
+import { isPurgeEligible } from './purge.js';
+import { inspectRun } from './inspect.js';
+import { writerTestSeams } from '../output/writer.js';
 
 const AT = Date.parse('2031-03-04T05:06:07.000Z');
 const iso = (ms: number): string => new Date(AT + ms).toISOString();
@@ -402,5 +419,111 @@ describe('#922 P2-2 — check 12 (rule 10): no held-step line says a program die
       deny: texts.filter((t) => DENY.test(t)),
       // per result: the held line, and under the step its condition, the rerun sentence, the command
     }).toEqual({ lines: 1 + 6 * 4, deny: [] });
+  });
+
+  it('#729 CW-4b: every line that names a held step’s holder, for each lease state, holds no word of the deny-list', async () => {
+    const DENY =
+      /\b(died|dead|alive|live runner|live driver|presumed|probably|likely|unknown age|deadline)\b/i;
+    // The --all header and the dry run's footer state the selection rule for every claim, and an
+    // unleased claim is selected by its deadline: they are swept without the word "deadline".
+    const RULE_DENY =
+      /\b(died|dead|alive|live runner|live driver|presumed|probably|likely|unknown age)\b/i;
+    const holder = { by: 'other-drive', by_source: 'stated' as const, channel: 'agent' as const };
+    const states: LeaseDoubleState[] = [
+      'live',
+      'dead',
+      'removed',
+      { forced: { state: 'unknown', basis: 'kernel_lock', reason: 'cannot_open' } },
+    ];
+    const lines: string[] = [];
+    const rules: string[] = [];
+    // inspect's holder line on a run that has ended: the one that says the lease itself (no lines
+    // under the step say it).
+    const inspected: string[] = [];
+    const visible = (t: string): string => writerTestSeams.visible(t);
+    for (const lease of states) {
+      const leases = createLeaseDouble();
+      leases.set('L', lease);
+      const store = new InMemoryStore({ clock: settableClock(new Date(AT)), leases });
+      const { record } = await store.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+      const claim: ClaimRecord = { ...CLAIMS['past']!, lease: { id: 'L' }, holder };
+      await store.update({ ...record, in_progress_steps: ['y'], claims: { y: claim } });
+      const read = await store.get(record.id);
+      const d = describeClaimHolder(read.record.claims?.['y'], true, leaseFactOf(read, claim));
+      const ways = composeWaysAt(read.record, read.at, {
+        definition: DEF,
+        persistsClaims: true,
+        lease_facts: read.lease_facts,
+      });
+      const held = heldEntriesOf(ways)[0]!;
+      const dry = reclaimDryRunLines(read.record, classifyInProgressClaims(read), ways);
+      const info = classifyInProgressClaims(read)[0]!;
+      const pick = { runId: record.id, claim: info, at: read.at, claimedAt: SINCE };
+      lines.push(
+        ...inFlightItems(read, true),
+        ...inFlightItems(read, true, undefined, true),
+        waitingLine('y', d, 60_000),
+        inFlightLine(held, d, 60_000).split('; the record has not changed for 60s. ')[0]!,
+        takenLine('y', d),
+        answerNotRecordedLine(read.record, 'y', true, undefined, undefined, read)!,
+        outcomeNotRecordedLine('held_elsewhere', read.record, 'y', true, undefined, read),
+        stepClosedLine(read.record, 'y', true, undefined, undefined, read),
+        answerNotRunLine(read.record, 'y', true, undefined, read)!,
+        dry[0]!,
+        autoReclaimLine(pick),
+      );
+      rules.push(dry[dry.length - 1]!, autoReclaimHeader([pick]));
+      // resume's and purge's refusals, on a run that has ended while the claim stays.
+      await store.update({
+        ...read.record,
+        run_phase: 'failed',
+        failed_steps: ['x'],
+        terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
+      });
+      const ended = await store.get(record.id);
+      const workflows = {
+        async register() {},
+        async get() {
+          return DEF;
+        },
+        async list() {
+          return [DEF];
+        },
+      };
+      declareReleaseLine(workflows);
+      // Before resume, which releases a claim no program holds.
+      const report = visible(await inspectRun(record.id, store, workflows as never));
+      const holderLine = report.split('\n').find((l) => l.startsWith('  y: '));
+      if (holderLine !== undefined) inspected.push(holderLine);
+      const resumed = await resumeRun(record.id, 'x', store, workflows as never, {
+        force: true,
+      }).then(
+        () => undefined,
+        (err: unknown) => (err instanceof Error ? visible(err.message) : String(err)),
+      );
+      const purge = isPurgeEligible(ended, { explicit: true });
+      if (resumed !== undefined) lines.push(resumed);
+      if (!purge.eligible) lines.push(visible(purge.reason));
+    }
+    // (a) red when inspect's holder line on a run that has ended leaves out what the lease check
+    //     found (the sweep would then not reach its "; L" branch); (b) prints the lines.
+    expect(
+      inspected.map((l) => /^ {2}y: taken by other-drive .*; [^;]*lease[^;]*$/.test(l)),
+      inspected.join('\n'),
+    ).toEqual([true, true, true, true]);
+    lines.push(...inspected);
+    // (a) red when a line that names a holder says a program died, is alive, presumed or likely, or
+    //     names an unknown age or a deadline (the rule lines: any of them but the deadline); (b)
+    //     prints each such text.
+    expect({
+      lines: lines.length,
+      deny: lines.filter((t) => DENY.test(t)),
+      rules: rules.filter((t) => RULE_DENY.test(t)),
+    }).toEqual({ lines: lines.length, deny: [], rules: [] });
+    // the four states give every line: 11 each, plus resume's and purge's refusals for held, absent
+    // and unknown (a claim no program holds is released and removed, so neither refuses it), plus
+    // inspect's holder line on the ended run (#729 CW-4b correction 1)
+    expect(lines.length, lines.join('\n')).toBe(4 * 12 + 3 * 2);
   });
 });

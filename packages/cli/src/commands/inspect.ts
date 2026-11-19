@@ -105,6 +105,7 @@ import {
   ABSENCE_WORDS,
   UNSHOWABLE_NAME,
   describeProgram,
+  leaseTail,
   renderAnswerLine,
   quotedForTerminal,
   viewSetFor,
@@ -1733,8 +1734,11 @@ export async function inspectRun(
         : described.absent_cause === 'name_unreadable'
           ? `${verb} ${ABSENCE_WORDS.name_unreadable}`
           : ABSENCE_WORDS[described.absent_cause];
-    lines.push(`  ${step}: ${body}${age}`);
     const held = heldSteps.get(step);
+    // #729 CW-4b: a claim that names a lease says what its lease check found here only when no lines
+    // under it say it (a run that has ended, or no workflow definition read).
+    const lease = held === undefined && described.lease !== undefined ? leaseTail(described) : '';
+    lines.push(`  ${step}: ${body}${age}${lease}`);
     if (held !== undefined) {
       for (const line of heldWayLines(held, writerCtx())) lines.push(`    ${line}`);
     }

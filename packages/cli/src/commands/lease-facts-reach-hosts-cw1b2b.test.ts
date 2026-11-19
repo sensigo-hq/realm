@@ -183,7 +183,11 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
       );
       // (1) red when resume judges the claim without the read's facts (claim_unknown_age, which
       //     --force overrides: the run is resumed and the claim released); (2) prints the outcome.
-      expect(outcome).toMatch(/^Step 'other-step' has a HEALTHY claim/);
+      // #729 CW-4b: a held lease's refusal names who took the step and when, then what its lease
+      //     check found — never "a live runner is presumed".
+      expect(outcome).toMatch(
+        /^Step 'other-step' was taken by .+ at 2020-01-02T03:04:05\.000Z; its program held the claim's lease when it was checked, so resume does not release it, with or without --force\.$/,
+      );
     });
 
     it('(d) realm run reclaim: a claim whose lease the home holds reads healthy, past its deadline', async () => {
@@ -206,7 +210,8 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
         // (1) red when reclaim's dry run judges its read without the read's facts (the claim then
         //     reads claim_unknown_age); (2) prints the claim lines it printed.
         expect(lines.filter((l) => l.startsWith('  • '))).toEqual([
-          `  • a: healthy  (deadline: ${PAST})`,
+          // #729 CW-4b: a leased claim is listed by when it was taken, not its deadline.
+          `  • a: healthy  (taken at ${PAST})`,
         ]);
         // #729 CW-3a: under a claim whose lease is held, lease_held's words first and the command
         //     after "To free it anyway". (1) red when the held lease is offered no command, or read by
@@ -293,7 +298,11 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
           rmSync(dir, { recursive: true, force: true });
         }
         const errLines = errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-        const inFlight = errLines.filter((l) => l.startsWith("• Step 'sleep' has been in flight"));
+        // #729 CW-4b: a leased claim's in-flight line names its holder and when, not "in flight".
+        const inFlight = errLines.filter(
+          (l) =>
+            l.startsWith("• Step 'sleep' was taken by") && l.includes('the record has not changed'),
+        );
         // #922 P2-2 (item 4): the hand-back's way on — wait while the lease is held; free it once not.
         const goOn = errLines.flatMap((l) => l.split('\n')).find((l) => l.startsWith('  Go on:'));
         expect(goOn).toBe(
@@ -354,7 +363,10 @@ describe('#729 CW-1b part 2b — the lease facts reach the CLI’s judges', () =
     );
     const inFlight = logSpy.mock.calls
       .map((c: unknown[]) => String(c[0]))
-      .filter((l) => l.startsWith("• Step 'a' has been in flight"));
+      // #729 CW-4b: a leased claim's in-flight line names its holder and when, not "in flight".
+      .filter(
+        (l) => l.startsWith("• Step 'a' was taken by") && l.includes('the record has not changed'),
+      );
     // (1) red when the watch's last read is judged without its facts (the claim then reads past its
     //     deadline); (2) prints the in-flight lines.
     expect(

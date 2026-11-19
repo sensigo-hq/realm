@@ -65,6 +65,8 @@ export async function resumeRun(
     RESUMABLE_PHASES,
     classifyClaim,
     leaseFactOf,
+    leaseClause,
+    describeClaimHolder,
     DRAIN_LEASE_MAX,
     deriveRunPhase,
     getWorkflowForRun,
@@ -180,6 +182,8 @@ export async function resumeRun(
     );
   }
 
+  // #729 CW-4b: a leased claim's refusal names who took the step, when, and what its lease showed.
+  const { takenPhrase } = await import('../lib/holder-render.js');
   // §5.4 — claims: classifyClaim three-way. healthy ⇒ refuse (no override); claim_unknown_age ⇒
   // refuse UNLESS --force; stale/absent ⇒ released inside applyResume, no refusal here.
   for (const step of run.in_progress_steps) {
@@ -187,12 +191,22 @@ export async function resumeRun(
     if (claim === undefined) continue; // absent — released inside applyResume
     const lease = leaseFactOf(read, claim);
     const state = classifyClaim(claim, now, lease);
+    // #729 CW-4b: the claim's holder and when it was taken, for a leased claim's refusal.
+    const taken = (): string => {
+      const described = describeClaimHolder(
+        claim,
+        runStore.persistsClaims === true,
+        leaseFactOf(read, claim),
+      );
+      const at = described.since !== undefined ? ` at ${described.since}` : '';
+      return `Step '${step}' was ${takenPhrase(described, writerCtx())}${at}`;
+    };
     // #729 CW-3a (§4.4): a claim under a lease whose state is not known is never released, with or
     // without --force (a held lease keeps the HEALTHY refusal below; a not-held one is stale).
     if (!('absent' in lease) && (lease.state === 'absent' || lease.state === 'unknown')) {
       throw new WorkflowError(
-        `Step '${step}' is claimed under a lease, and whether its program still holds it is not ` +
-          `known; resume does not release it, with or without --force.`,
+        // #729 CW-4b correction 1: the refusal in a sentence of its own (an absent lease's phrase has its own "so …").
+        `${taken()}; ${leaseClause(lease)}. Resume does not release it, with or without --force.`,
         {
           code: 'STATE_TRANSITION_DENIED',
           category: 'STATE',
@@ -204,8 +218,11 @@ export async function resumeRun(
     }
     if (state === 'healthy') {
       throw new WorkflowError(
-        `Step '${step}' has a HEALTHY claim (deadline ${claim.deadline}) — a live runner is ` +
-          `presumed on it. Resume refuses to disturb live work.`,
+        // #729 CW-4b: a held lease says what its check found, never that a runner is presumed live.
+        !('absent' in lease)
+          ? `${taken()}; ${leaseClause(lease)}, so resume does not release it, with or without --force.`
+          : `Step '${step}' has a HEALTHY claim (deadline ${claim.deadline}) — a live runner is ` +
+              `presumed on it. Resume refuses to disturb live work.`,
         {
           code: 'STATE_TRANSITION_DENIED',
           category: 'STATE',

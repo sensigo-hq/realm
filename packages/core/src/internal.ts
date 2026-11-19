@@ -297,6 +297,8 @@ export {
   leaseCheckPhrase,
   leaseCheckCondition,
   LEASE_NOT_KNOWN_HERE,
+  // #729 CW-4b: the one clause of what a claim's lease check found, for the holder lines.
+  leaseClause,
 } from './engine/ways.js';
 export type { UncheckedLease, LeaseWordsInput } from './engine/ways.js';
 export type {
