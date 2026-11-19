@@ -327,6 +327,55 @@ describe('#729 CW-5b — W1, W2: a lease no program holds is taken back once, an
   });
 });
 
+describe('#729 CW-5b — the function’s second write race', () => {
+  it('another write lands under both of the function’s writes: it throws, the drive reads the run again from the loop’s top, and its next take-back runs the step', async () => {
+    const f = await fixture();
+    const a = await take(f, A);
+    f.double.set(a.hold.id, 'dead');
+    const realUpdate = f.store.update.bind(f.store);
+    tb.before = async (call) => {
+      if (call !== 1) return;
+      // Another program's write (the record as it stands, written again) lands just before each of
+      // the function's two writes, so each is at a version that moved: a second mismatch is thrown.
+      let races = 0;
+      f.store.update = async (...args: Parameters<typeof realUpdate>) => {
+        if (races < 2) {
+          races += 1;
+          await realUpdate((await f.store.get(f.runId)).record);
+        }
+        return realUpdate(...args);
+      };
+    };
+    tb.after = () => {
+      f.store.update = realUpdate;
+    };
+    const d = await drive(f);
+    const run = await record(f);
+    // (1) red when the thrown race is not caught (the drive fails) or the drive does not read the run
+    //     again (no second take-back); (2) prints the answers and the lines.
+    expect(
+      {
+        calls: tb.calls,
+        answers: tb.answers,
+        result: d.result,
+        model: d.calls,
+        bullets: bullets(d.lines),
+        takeBacks: takeBacks(run).length,
+        completed: run.completed_steps,
+      },
+      d.lines.join('\n'),
+    ).toEqual({
+      calls: 2,
+      answers: [{ kind: 'taken_back' }],
+      result: 'completed',
+      model: 1,
+      bullets: [takenBack(A, a.since)],
+      takeBacks: 1,
+      completed: ['s'],
+    });
+  });
+});
+
 describe('#729 CW-5b — W3, W4: no take-back unless the function’s own read finds the lease not held', () => {
   it('W3: the watch reads the lease not held, the function’s own read absent, then unknown (permission) — nothing taken back; B stops at the watch time, the step still A’s', async () => {
     const f = await fixture();
