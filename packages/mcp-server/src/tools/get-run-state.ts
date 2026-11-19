@@ -562,8 +562,9 @@ export interface RunStateSummary {
   sealed_by_step?: string;
 
   /**
-   * Failed drive attempts for this run (issue #401), carried verbatim. Absent — never null — when
-   * the run has had none.
+   * Failed drive attempts for this run (issue #401), as stored, except that each entry's `usage`
+   * shows at most three records (`usage_more` counts the rest) and its `model_text` is left out.
+   * Absent — never null — when the run has had none.
    */
   drive_failures?: DriveFailuresView;
   completed_steps: string[];

@@ -778,7 +778,8 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
    * fields are added. Returns the record as `get()` returns it, with the reading.
    *
    * Before `BEGIN`: the limits ({@link assertRunRecordWithinLimits}) and the record's split into the
-   * texts and hashes the store keeps, so no text is made or hashed under the write lock. No `await`
+   * texts and hashes the store keeps, so no evidence text is made or hashed under the write lock;
+   * only the drive-failure text check (`driveFailureTextLoss`) compares texts inside it. No `await`
    * comes before the write, so with the lock free the write lands before the call returns.
    */
   async update(record: RunRecord): Promise<Snapshot> {
