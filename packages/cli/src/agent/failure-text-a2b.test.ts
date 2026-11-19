@@ -393,42 +393,61 @@ describe('gap 1, unit A2b — the writers that carry the step’s answered calls
     });
   }, 30_000);
 
-  it('check 7: a step that saved, then a following step refused in the same chain: the failure has requests: [], and the texts are on the evidence entry only', async () => {
+  it('check 7 (no text twice, in one executeChain): a step that saved, then a step run after it throws: the failure has requests: [], and the texts are on the evidence entry only', async () => {
+    // As chained-usage's chokepoint-3 cell: a store that drops `workflow_context_snapshots` (so each
+    // step re-takes the snapshot) and throws on the second snapshot write, the chained `finish`'s,
+    // after `draft` saved with its call. The throw leaves `executeChain` and reaches chokepoint 3,
+    // whose "already recorded" guard answers once for the usage and the texts.
+    // Pinned as the real code goes (CR-IAA2B-07): since #625 PR-2a a chained step refused on its
+    // input is refused before its claim and recorded at the drive's exit, and a chained auto step's
+    // output schema is not enforced, so this is where a failure after a save is written.
     const def = {
-      id: 'a2b-chained-reject',
-      name: 'a2b chained reject',
+      id: 'a2b-chained-throw',
+      name: 'a2b chained throw',
       version: 1,
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      workflow_context: { doc: { source: { path: '/nonexistent/realm-a2b-context.md' } } },
       steps: {
         draft: { description: 'Draft', execution: 'agent', output_schema: OUTPUT_SCHEMA },
-        check: {
-          description: 'Check',
+        finish: {
+          description: 'Finish',
           execution: 'auto',
           handler: 'finish_handler',
           depends_on: ['draft'],
-          input_schema: {
-            type: 'object',
-            required: ['needed'],
-            properties: { needed: { type: 'string' } },
-          },
         },
       },
-    } as WorkflowDefinition;
+    } as unknown as WorkflowDefinition;
+    class SnapshotFailingStore extends InMemoryStore {
+      private snapshotWrites = 0;
+      override async update(record: RunRecord): Promise<Snapshot> {
+        if (record.workflow_context_snapshots === undefined) return super.update(record);
+        this.snapshotWrites += 1;
+        if (this.snapshotWrites >= 2) throw new Error('snapshot write failed');
+        const { workflow_context_snapshots: _dropped, ...rest } = record;
+        void _dropped;
+        return super.update(rest as RunRecord);
+      }
+    }
     const registry = createDefaultRegistry();
     registry.register('handler', 'finish_handler', {
       id: 'finish_handler',
       execute: async () => ({ data: { finished: true } }),
     });
-    const { run } = await drive(def, new TextModule(['OK']), { registry });
+    const { result, run } = await drive(def, new TextModule(['OK']), {
+      registry,
+      store: new SnapshotFailingStore(),
+    });
     const evidence = run.evidence.find((e) => e.step_id === 'draft')?.model_text as
       Extract<ModelText, { recorded: true }> | undefined;
     // (1) red when the texts are attached without the "already recorded" guard; (2) prints both.
     expect({
+      threw: (result as Error).message,
       completed: run.completed_steps,
       failure: lastFailure(run)?.model_text,
       failureUsage: lastFailure(run)?.usage,
       evidenceRequests: evidence?.requests.length,
     }).toEqual({
+      threw: 'snapshot write failed',
       completed: ['draft'],
       failure: { recorded: true, messages: [], tools: [], requests: [] },
       failureUsage: undefined,
@@ -471,26 +490,28 @@ const keptBytes = (t: Recorded) =>
 describe('gap 1, unit A2b — the 64 KB budget', () => {
   it('check 9 (over 64 KB): the failed request’s system text, prompt and tool list first, then the newest other messages; left-out slots marked; no index points at nothing', () => {
     // A #217 repair call that got no answer after an answered one: its prompt (B) is not the entry's
-    // first prompt (A), so keeping the entry's first prompt instead is told apart.
+    // first prompt (A), so keeping the entry's first prompt instead is told apart. After the failed
+    // request's system text, prompt and tool list, 37 KB are left: the newest other message (5,
+    // 15 KB) and the next (2, 20 KB) fit, the older prompt A (1, 20 KB) then does not; oldest first
+    // would keep A and leave 2 out. Message 3 is a text A1 had cut (its full size 200,000 bytes).
     const text: Extract<ModelText, { recorded: true }> = {
       recorded: true,
       messages: [
         msg('system', 4 * KB, 's'),
-        msg('user', 40 * KB, 'a'),
-        msg('assistant', 10 * KB, 'r'),
-        msg('user', 40 * KB, 'b'),
+        msg('user', 20 * KB, 'a'),
+        msg('assistant', 20 * KB, 'r'),
         {
           role: 'tool',
           text: fill('t', 64 * KB),
           cut: { kept_bytes: 64 * KB, full_bytes: 200_000 },
         },
-        msg('assistant', 2 * KB, 'n'),
+        msg('user', 20 * KB, 'b'),
+        msg('user', 15 * KB, 'n'),
       ],
       tools: [{ json: fill('j', 3 * KB) }],
       requests: [
-        { request_id: 'r-1', sent: [0, 1, 4], tools: 0, reply: [2] },
-        { request_id: 'r-2', sent: [0, 1, 2, 4, 5], tools: 0, reply: [5] },
-        { request_id: null, sent: [0, 3], tools: 0, reply: null },
+        { request_id: 'r-1', sent: [0, 1, 3], tools: 0, reply: [2] },
+        { request_id: null, sent: [0, 4, 5], tools: 0, reply: null },
       ],
     };
     const kept = budgetFailureText(text) as Recorded;
@@ -514,7 +535,7 @@ describe('gap 1, unit A2b — the 64 KB budget', () => {
           (r.tools === undefined || kept.tools[r.tools] !== undefined),
       ),
     }).toEqual({
-      state: ['whole', `out:${40 * KB}`, 'whole', 'whole', 'out:200000', 'whole'],
+      state: ['whole', `out:${20 * KB}`, 'whole', 'out:200000', 'whole', 'whole'],
       tools: ['whole'],
       dropped: 2,
       withinCap: true,
