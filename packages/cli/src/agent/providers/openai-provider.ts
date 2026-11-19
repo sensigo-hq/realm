@@ -49,7 +49,16 @@ import {
   attachBilledUsage,
   passedSnippet,
 } from './agent-utils.js';
-import { openAiAnsweredText, pushAnswered, type ModelTextReport } from './model-text.js';
+import {
+  carryTexts,
+  newCallTexts,
+  openAiAnsweredText,
+  openAiSentText,
+  pushAnswered,
+  trackSend,
+  type CallTexts,
+  type ModelTextReport,
+} from './model-text.js';
 
 /**
  * Short alias so every `rawCreate` fits on ONE line — the issue-#401 source rail greps providers
@@ -467,6 +476,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     callOpts?: { llmClock?: LlmClock; cachePrefixChars?: number; cacheChoice?: CallCacheChoice },
     // issue #600 PR 1a (D9): owned by the entry point so one `catch` there sees everything billed.
     billed?: UsageRecord[],
+    // Gap 1, unit A2b: owned by the entry point, as `billed` is, so its catch carries the texts.
+    callTexts: CallTexts = newCallTexts(),
   ): Promise<{
     output: Record<string, unknown>;
     usage?: UsageRecord[];
@@ -529,8 +540,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // (the non-JSON retry is a second wire request), so a single usage object here would be a
     // false number by construction the moment the retry fires.
     const requests: UsageRecord[] = billed ?? [];
-    // Gap 1, unit A1: each answered request's text, one per entry of `requests`.
-    const texts: ModelTextReport[] = [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests` (unit A2b: and the
+    // last send while it has no answer).
+    const texts = callTexts.answered;
     const makeRequest = async (msgs: Message[]): Promise<string> => {
       const base: Record<string, unknown> = {
         model: this.model,
@@ -543,12 +555,18 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       // caching 3-B (E3): under the gateway rule — a custom endpoint that refuses the key gets the
       // request once more without it.
       let opts = base;
-      const response = await sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
-        opts = withCache ? withCacheKey(base, plan) : base;
-        // #896 (A1, A2): in the explicit set, the marks and the mode (the retry carries the same).
-        if (explicit) opts = withExplicitCache(opts, plan, off);
-        return bounded(opts);
-      });
+      // Gap 1, unit A2b: while it has no answer, the call's unanswered request is the body last built.
+      const response = await trackSend(
+        callTexts,
+        () => openAiSentText(opts),
+        () =>
+          sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
+            opts = withCache ? withCacheKey(base, plan) : base;
+            // #896 (A1, A2): in the explicit set, the marks and the mode (the retry carries the same).
+            if (explicit) opts = withExplicitCache(opts, plan, off);
+            return bounded(opts);
+          }),
+      );
       // Gap 1, unit A1: the request's text beside its record, in the same statement.
       pushAnswered(
         requests,
@@ -597,6 +615,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     callOpts?: { llmClock?: LlmClock },
   ): Promise<Record<string, unknown>> {
     const billed: UsageRecord[] = [];
+    const callTexts = newCallTexts();
     try {
       const { output } = await this.callStepInternal(
         prompt,
@@ -604,10 +623,13 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         agentProfileInstructions,
         callOpts,
         billed,
+        callTexts,
       );
       return output;
     } catch (err) {
       attachBilledUsage(err, billed);
+      // Gap 1, unit A2b: the call's texts ride beside the thrown error, which stays as it is.
+      carryTexts(err, callTexts);
       throw err;
     }
   }
@@ -658,6 +680,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // clock dropped here unbounds that first class entirely.
     if (opts?.structuredOutputStrict !== true || inputSchema === undefined) {
       const billed: UsageRecord[] = [];
+      const callTexts = newCallTexts();
       try {
         return await this.callStepInternal(
           prompt,
@@ -671,12 +694,41 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
             ...(opts?.cacheChoice !== undefined ? { cacheChoice: opts.cacheChoice } : {}),
           },
           billed,
+          callTexts,
         );
       } catch (err) {
         attachBilledUsage(err, billed);
+        // Gap 1, unit A2b: the call's texts ride beside the thrown error, which stays as it is.
+        carryTexts(err, callTexts);
         throw err;
       }
     }
+    // Gap 1, unit A2b: the strict path's texts, carried by the catch around ALL of it below, so
+    // `sdk_missing` (thrown before the inner `try`) carries them too, empty before the first send.
+    const callTexts = newCallTexts();
+    try {
+      return await this.strictCall(prompt, inputSchema, agentProfileInstructions, opts, callTexts);
+    } catch (err) {
+      // Gap 1, unit A2b: the call's texts ride beside the thrown error, which stays as it is.
+      carryTexts(err, callTexts);
+      throw err;
+    }
+  }
+
+  /** Issue #313's strict path, behind `callStepWithMeta` (gap 1, unit A2b: which owns its texts). */
+  private async strictCall(
+    prompt: string,
+    inputSchema: Record<string, unknown>,
+    agentProfileInstructions: string | undefined,
+    opts: { llmClock?: LlmClock; cachePrefixChars?: number; cacheChoice?: CallCacheChoice },
+    callTexts: CallTexts,
+  ): Promise<{
+    output: Record<string, unknown>;
+    meta?: StructuredOutputMeta;
+    usage?: UsageRecord[];
+    modelText?: ModelTextReport[];
+  }> {
+    const clock = opts.llmClock;
     // Per-invocation counters, minted beside the client below.
     const counters: WireCounters = { attempts: 0 };
 
@@ -754,12 +806,18 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // comes back — a billed-but-unparseable response (readContent below can still throw on it)
     // must not lose the money that was already spent (D9: "money burned on a call that threw").
     const requests: UsageRecord[] = [];
-    // Gap 1, unit A1: each answered request's text, one per entry of `requests`.
-    const texts: ModelTextReport[] = [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests` (unit A2b: and the
+    // last send while it has no answer).
+    const texts = callTexts.answered;
     try {
       const timedCreate = async (o: Rec): Promise<Record<string, unknown>> => {
         const requestStart = new Date().toISOString();
-        const response = await create(o);
+        // Gap 1, unit A2b: while this send has no answer, it is the call's unanswered request.
+        const response = await trackSend(
+          callTexts,
+          () => openAiSentText(o),
+          () => create(o),
+        );
         // Gap 1, unit A1: the request's text beside its record, in the same statement.
         pushAnswered(
           requests,
@@ -868,8 +926,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // sees every request that got an answer, whatever throws below: a wire error on a later turn,
     // an unknown tool name, arguments that do not parse, or a final answer that does not parse.
     const requests: UsageRecord[] = [];
-    // Gap 1, unit A1: each answered request's text, one per entry of `requests`.
-    const texts: ModelTextReport[] = [];
+    // Gap 1, unit A1: each answered request's text, one per entry of `requests` (unit A2b: and the
+    // last send while it has no answer).
+    const callTexts = newCallTexts();
     try {
       const result = await this.callStepWithToolsInternal(
         prompt,
@@ -877,11 +936,15 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         executor,
         options,
         requests,
-        texts,
+        callTexts,
       );
-      return requests.length > 0 ? { ...result, usage: requests, modelText: texts } : result;
+      return requests.length > 0
+        ? { ...result, usage: requests, modelText: callTexts.answered }
+        : result;
     } catch (err) {
       attachBilledUsage(err, requests);
+      // Gap 1, unit A2b: the call's texts ride beside the thrown error, which stays as it is.
+      carryTexts(err, callTexts);
       throw err;
     }
   }
@@ -893,7 +956,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     executor: ToolExecutor,
     options: Parameters<OpenAIProvider['callStepWithTools']>[3],
     requests: UsageRecord[],
-    texts: ModelTextReport[],
+    callTexts: CallTexts,
   ): Promise<StepWithToolsResult> {
     const clock = options.llmClock;
     // issue #401: per-invocation counters, minted beside the client below.
@@ -943,7 +1006,12 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const bounded = async (body: Rec): Promise<any> => {
       const requestStart = new Date().toISOString();
-      const response = await send(body);
+      // Gap 1, unit A2b: while this send has no answer, it is the call's unanswered request.
+      const response = await trackSend(
+        callTexts,
+        () => openAiSentText(body),
+        () => send(body),
+      );
       // Gap 1, unit A1: the request's text beside its record, in the same statement.
       pushAnswered(
         requests,
@@ -953,7 +1021,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           ...openAiSplitFacts(body, plan, systemText, prompt),
           ...this.rejectedFact(),
         }),
-        texts,
+        callTexts.answered,
         openAiAnsweredText(body, response),
       );
       return response;

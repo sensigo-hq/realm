@@ -1753,8 +1753,9 @@ export interface DriveFailureRecord {
   usage?: UsageRecord[];
   /**
    * Gap 1, unit A2: the text of the model requests this failure covers
-   * ({@link DriveFailureModelText}), or a marker saying why there is none. `get_run_state` never
-   * shows it, and a listing of runs leaves it out.
+   * ({@link DriveFailureModelText}), or a marker saying why there is none. `realm agent` and
+   * `realm listen` write it on every drive-failure entry they write. `get_run_state` never shows
+   * it, and a listing of runs leaves it out.
    */
   model_text?: DriveFailureModelText;
 }

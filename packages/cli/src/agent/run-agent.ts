@@ -84,6 +84,9 @@ import {
 } from './providers/agent-utils.js';
 import {
   appendModelTexts,
+  carriedTexts,
+  failureModelTextOf,
+  joinFailedCall,
   joinModelTexts,
   modelTextOf,
   type StepModelTexts,
@@ -741,6 +744,32 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   let usageForStep: UsageRecord[] | undefined;
   // Gap 1, unit A1: the texts of the step's calls, gathered where `usageForStep` gathers their usage.
   let textsForStep: StepModelTexts | undefined;
+  // Gap 1, unit A2b: a drive-failure entry's `model_text`, from the texts of exactly the requests
+  // its usage lists (and any unanswered one): `undefined` when no model request belongs to it.
+  const failureText = (texts: StepModelTexts | undefined) =>
+    failureModelTextOf(texts, deps.recordModelText !== false);
+  // Gap 1, unit A2b: at a provider-call catch, the failing call's texts (joined to `callUsage`, the
+  // call's own requests on the entry, their ids minted there) after the step's earlier calls, which
+  // ride along whenever their usage does (`usageForStep` non-empty). A call that carries no texts
+  // is a module provider's (`provider_did_not_report`) once the provider was called, and no model
+  // request at all before (an MCP start, a tool-name refusal).
+  const failedCallTexts = (
+    err: unknown,
+    callUsage: readonly UsageRecord[] | undefined,
+    providerCalled: boolean,
+  ): StepModelTexts | undefined => {
+    const carried = carriedTexts(err);
+    const call: StepModelTexts | undefined =
+      carried !== undefined
+        ? joinFailedCall(callUsage ?? [], carried)
+        : providerCalled
+          ? { reported: false }
+          : undefined;
+    const earlier =
+      usageForStep !== undefined && usageForStep.length > 0 ? textsForStep : undefined;
+    if (earlier === undefined) return call;
+    return call === undefined ? earlier : appendModelTexts(earlier, call);
+  };
   let stepUsageSaved = false;
   // #600: whether the driven step's calls are ALREADY on its record. Chokepoints 3 and 4 attach
   // `usageForStep` to a drive-failure entry; when the failure belongs to a step `executeChain` ran
@@ -1222,17 +1251,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // with the engine's own message and the step; trust and precondition record nothing, as
               // before #625. No model call was made, so no usage rides along.
               if (exitReply.error_code === 'VALIDATION_INPUT_SCHEMA') {
-                await recordDriveFailure(
-                  deps.store,
-                  runId,
-                  validationWedgeEntry(
+                await recordDriveFailure(deps.store, runId, {
+                  ...validationWedgeEntry(
                     first,
                     providerForEvidence ?? 'unknown',
                     exitReply.errors,
                     attemptStartedAt,
                     deps.store.clock.now(),
                   ),
-                );
+                  // Gap 1, unit A2b: no model request belongs to it (or the switch's marker).
+                  model_text: failureText(undefined),
+                });
               }
               hold(await deps.store.get(runId));
               // F7 (e): the way out is said only of a run that is still open — a run another program
@@ -1588,6 +1617,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               let toolsResult;
               // issue #311: hoisted so the evidence assembly below the try/catch can read them.
               const toolArgsEntries: NonNullable<StructuredOutputMeta['tool_args']>['tools'] = [];
+              // Gap 1, unit A2b: whether the throw below is the provider call's (a module provider's
+              // call that carries no texts is `provider_did_not_report`) or came before it.
+              let toolsProviderCalled = false;
               try {
                 const toolDefs: ToolDefinition[] = [];
                 const barenameOwner = new Map<string, string>(); // bareName → serverId of first registration
@@ -1827,6 +1859,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 const toolsEffectiveOutputSchema =
                   (stepDef.output_schema as Record<string, unknown> | undefined) ??
                   (stepDef.input_schema as Record<string, unknown> | undefined);
+                // Gap 1, unit A2b: from here on a throw is the provider call's.
+                toolsProviderCalled = true;
                 toolsResult = await deps.provider.callStepWithTools(
                   promptForAttempt,
                   toolDefs,
@@ -1886,6 +1920,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     recordedBefore(stepName),
                   );
                 }
+                // Gap 1, unit A2b: the texts of the requests this entry's usage lists, and any
+                // unanswered one, joined before the step's earlier calls are put in front.
+                entry.model_text = failureText(
+                  failedCallTexts(err, entry.usage, toolsProviderCalled),
+                );
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
                 }
@@ -1982,12 +2021,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // transient failures by calling again — which is exactly why a failing drive left
               // no trace: the first failure was swallowed and the second one exited. A single
               // attempt now, with the failure RECORDED; re-attaching is the retry.
+              // Gap 1, unit A2b: whether the throw below is the provider call's, as on the tools path.
+              let bareProviderCalled = false;
               try {
                 if (structuredOutputPlan !== undefined) {
                   // issue #236: the declared-step path — always call callStepWithMeta so the
                   // synthesis rule (design §5 [R2-3]) can distinguish a genuinely-absent meta
                   // (third-party provider ⇒ provider_unsupported) from a gate/sticky decision
                   // that never even attempted a call.
+                  // Gap 1, unit A2b: from here on a throw is the provider call's.
+                  bareProviderCalled = true;
                   const { output, meta, usage, modelText } = await deps.provider.callStepWithMeta(
                     promptForAttempt,
                     inputSchema,
@@ -2056,6 +2099,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // `structuredOutputStrict`, which is not passed here. `meta` is DELIBERATELY not
                   // destructured: a third-party provider that overrides callStepWithMeta must not
                   // be able to stamp a structured_output disclosure on a step that declared none.
+                  // Gap 1, unit A2b: from here on a throw is the provider call's.
+                  bareProviderCalled = true;
                   const { output, usage, modelText } = await deps.provider.callStepWithMeta(
                     promptForAttempt,
                     inputSchema,
@@ -2107,6 +2152,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     recordedBefore(stepName),
                   );
                 }
+                // Gap 1, unit A2b: as at chokepoint (1).
+                entry.model_text = failureText(
+                  failedCallTexts(err, entry.usage, bareProviderCalled),
+                );
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
                 }
@@ -2456,6 +2505,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ||
               result.error_code === 'VALIDATION_INPUT_SCHEMA'
             ) {
+              // issue #600: a wedge carries every call of the exhausted repair budget. Nothing is
+              // attached when no call reported usage — the same rule as `attachBilledUsage`. Nor
+              // when the rejection belongs to a step `executeChain` ran AFTER this one: this step
+              // then saved first, with its calls, and attaching them here would count them twice.
+              // Gap 1, unit A2b: the guard is asked once, and its one answer decides the usage and
+              // the texts alike; a step that saved keeps its texts on its evidence entry only.
+              const callsSaved =
+                usageForStep !== undefined &&
+                usageForStep.length > 0 &&
+                (await callsAlreadyRecorded(stepName, usageForStep));
               await recordDriveFailure(deps.store, runId, {
                 ...validationWedgeEntry(
                   stoppedStep,
@@ -2464,15 +2523,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   attemptStartedAt,
                   deps.store.clock.now(),
                 ),
-                // issue #600: a wedge carries every call of the exhausted repair budget. Nothing is
-                // attached when no call reported usage — the same rule as `attachBilledUsage`. Nor
-                // when the rejection belongs to a step `executeChain` ran AFTER this one: this step
-                // then saved first, with its calls, and attaching them here would count them twice.
-                ...(usageForStep !== undefined &&
-                usageForStep.length > 0 &&
-                !(await callsAlreadyRecorded(stepName, usageForStep))
+                ...(usageForStep !== undefined && usageForStep.length > 0 && !callsSaved
                   ? { usage: usageForStep }
                   : {}),
+                model_text: failureText(callsSaved ? undefined : textsForStep),
               });
             }
           }
@@ -2643,15 +2697,20 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     // `workflow_context_snapshots`, re-takes the snapshot, and that write is unguarded. So a throw
     // inside the loop does not prove "nothing was saved": attach the calls only when they are not
     // already on the step's record.
-    if (
+    // Gap 1, unit A2b: the guard is asked once; its one answer decides the usage and the texts. The
+    // step's texts ride along exactly when its calls do; a step whose calls are on its record, or a
+    // throw before any step, has no model request on this entry.
+    const owned = currentStepName !== undefined && !stepUsageSaved;
+    const callsSaved =
+      owned &&
       currentStepName !== undefined &&
-      !stepUsageSaved &&
       usageForStep !== undefined &&
       usageForStep.length > 0 &&
-      !(await callsAlreadyRecorded(currentStepName, usageForStep))
-    ) {
+      (await callsAlreadyRecorded(currentStepName, usageForStep));
+    if (owned && usageForStep !== undefined && usageForStep.length > 0 && !callsSaved) {
       entry.usage = appendRequests(usageForStep, entry.usage);
     }
+    entry.model_text = failureText(owned && !callsSaved ? textsForStep : undefined);
     await recordDriveFailure(deps.store, runId, entry);
     // RE-THROWS, never returns: `runAgent`'s public contract is that these propagate, and
     // commands/agent.ts stays the console floor for anything that happens before a run exists.

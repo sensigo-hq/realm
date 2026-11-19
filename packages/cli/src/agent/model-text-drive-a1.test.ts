@@ -272,7 +272,7 @@ describe('gap 1, unit A1 — a provider module, and the switch', () => {
     });
   }, 30_000);
 
-  it('check 8: a drive that fails after an answered call writes a drive-failure entry with no text key, and no usage record carries one', async () => {
+  it('check 8: a drive that fails after an answered call writes a drive-failure entry whose model_text is the marker (the module error carries no texts), and no usage record carries one', async () => {
     // Call 1 answers with an output the schema refuses (the #217 repair), call 2 throws.
     const provider = new ModuleProvider(
       () => [readable('{"wrong":1}')],
@@ -282,18 +282,21 @@ describe('gap 1, unit A1 — a provider module, and the switch', () => {
     const { result, run } = await drive(provider, { schemaRetries: 1 });
     const failure = run.drive_failures?.entries[0];
     // (1) red when a text is put on a usage record (it then rides the failure's usage); (2) prints
-    //     the result, the calls, the failure's usage count and the text keys counted.
+    //     the result, the calls, the failure's usage count and the text keys counted. Gap 1, unit
+    //     A2b: call 2's module error carries no texts, so the failure records the marker.
     expect({
       result,
       calls: provider.calls,
       failureUsage: failure?.usage?.length,
       textKeysOnFailures: textKeys(run.drive_failures),
+      failureText: failure?.model_text,
       textKeysOnUsage: textKeys(usageRecordsOf(run)),
     }).toEqual({
       result: 'failed',
       calls: 2,
       failureUsage: 2,
-      textKeysOnFailures: 0,
+      textKeysOnFailures: 1,
+      failureText: { recorded: false, why: 'provider_did_not_report' },
       textKeysOnUsage: 0,
     });
   }, 30_000);

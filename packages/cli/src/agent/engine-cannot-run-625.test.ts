@@ -115,6 +115,8 @@ const BASE_DRIVE_FAILURES: Record<Member, unknown[]> = {
       provider: 'unknown',
       error_class: 'validation_rejected',
       message: "Invalid input for step 'x'",
+      // Gap 1, unit A2b: no model request belongs to the pre-claim wedge.
+      model_text: { recorded: true, messages: [], tools: [], requests: [] },
     },
   ],
   capability_first: [],
