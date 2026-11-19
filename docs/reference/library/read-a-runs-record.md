@@ -56,6 +56,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`CacheRequestSource`](#cacherequestsource) | type | One of the words in `CACHE_REQUEST_SOURCES`: whether a request's cache setting was stated with `--prompt-cache` or was the runner's default (`UsageRecord.cache_requested_source`). |
 | [`CacheState`](#cachestate) | type | One of the words in `CACHE_STATES`: a step's cache state, judged per direction from what the provider reported (`StepCacheDetail.state`). |
 | [`ClassifiableRun`](#classifiablerun) | type | The record shape both legacy classifiers read. |
+| [`DriveFailureModelText`](#drivefailuremodeltext) | type | The text of the model requests one drive failure covers, on its entry (`DriveFailureRecord.model_text`). |
 | [`GateClaimVerdict`](#gateclaimverdict) | type | A verdict with a cause that does not belong to it does not compile. |
 | [`ModelText`](#modeltext) | type | The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`). |
 | [`OutputSource`](#outputsource) | type | One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`). |
@@ -333,6 +334,7 @@ interface DriveFailureRecord {
     last_observed_status?: number;
     retry_after_observed_ms?: number;
     usage?: UsageRecord[];
+    model_text?: DriveFailureModelText;
 }
 ```
 
@@ -998,6 +1000,26 @@ The record shape both legacy classifiers read.
 
 ```ts
 type ClassifiableRun = Pick<RunRecord, 'terminal_state' | 'failed_steps' | 'terminal_reason' | 'aborted_at' | 'abandoned_at'>;
+```
+
+### DriveFailureModelText
+
+type · public
+
+The text of the model requests one drive failure covers, on its entry
+(`DriveFailureRecord.model_text`). It is the evidence entry's `ModelText`, with
+`dropped_messages`: the number of messages left out to keep the entry within its budget. A
+request that got no answer has `request_id: null` and `reply: null`; an answered request's
+`request_id` is the id of its record in the entry's `usage`.
+
+```ts
+type DriveFailureModelText = (Extract<ModelText, {
+    recorded: true;
+}> & {
+    dropped_messages?: number;
+}) | Extract<ModelText, {
+    recorded: false;
+}>;
 ```
 
 ### GateClaimVerdict

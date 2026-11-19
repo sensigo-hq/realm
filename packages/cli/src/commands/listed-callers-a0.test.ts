@@ -157,7 +157,7 @@ describe('gap 1, unit A0 — the words (check 9)', () => {
         "| `scanListed(filter, { pageSize, after? })` | No | The runs a `'record'` scan gives, each without its model calls' texts (each evidence entry's and each failed drive's entry's `model_text`), with the same pages, readings and lease facts. Without it, Realm lists through `scan` and leaves the texts out itself. |",
       ),
       law: flat('docs/reference/testing-package.md').includes(
-        "| `LISTING_LEAVES_MODEL_TEXT` | On a store with `scanListed`, a listing gives a run without its model calls' texts (the `model_text` of each evidence entry and of each failed drive's entry), with every other value as `get` reads it; an `update` with that listed record, on a run that holds an evidence text, is refused, and the stored texts stay. Its cases are registered as skipped for a store without `scanListed`, which Realm lists through `scan`. Added after version 0.50.0. |",
+        "| `LISTING_LEAVES_MODEL_TEXT` | On a store with `scanListed`, a listing gives a run without its model calls' texts (the `model_text` of each evidence entry and of each failed drive's entry), with every other value as `get` reads it; an `update` with that listed record, on a run that holds an evidence text or a drive-failure text, is refused, and the stored texts stay. Its cases are registered as skipped for a store without `scanListed`, which Realm lists through `scan`. Added after version 0.50.0. |",
       ),
     }).toEqual({ changelog: true, rows: true, member: true, law: true });
   });
