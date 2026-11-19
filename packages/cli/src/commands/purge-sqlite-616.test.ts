@@ -13,12 +13,15 @@
 // (correction 1).
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   artifactDeleteFailedError,
+  CALLBACK_DELIVERY_WINDOW_SECONDS,
+  CALLBACK_PURGE_GRACE_SECONDS,
   REALM_STORE_SCHEMA_VERSION,
   WorkflowError,
   type Clock,
@@ -26,6 +29,7 @@ import {
   type RunRecord,
 } from '@sensigo/realm';
 import { openRealmHome, type PurgeReport, type RealmHome } from '@sensigo/realm-store-sqlite';
+import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';
 import { printPurgeReport, purgeRuns, type HomePurge, type PurgeRunsResult } from './purge.js';
 
 const T = '2030-05-06T07:08:09.000Z';
@@ -183,7 +187,12 @@ describe('#616 PR-2c c9 — realm run purge on a SQLite home', () => {
       (await handle.runStore.statAllForRun(record.id)).bytes + Buffer.byteLength(url, 'utf8'),
     );
     const run = (dryRun: boolean) =>
-      purgeRuns({ dryRun, workflows: handle.workflowStore }, handle.runStore, stores, handle.purge);
+      purgeRuns(
+        { dryRun, runId: record.id, workflows: handle.workflowStore },
+        handle.runStore,
+        stores,
+        handle.purge,
+      );
     const preview = render(await run(true), true).out[0];
     const freed = render(await run(false), false).out[0];
     // (1) red when the preview leaves the callback store out (its figure lacks the address's UTF-8
@@ -459,5 +468,365 @@ describe('#616 PR-2c c10a-3b-ii — the purge says when the free pages were not 
     // (1) red when the page's sentence or the printed line changes without the other; (2) prints
     //     whether the page holds it.
     expect({ onThePage: page.includes(sentence) }, sentence).toEqual({ onThePage: true });
+  });
+});
+
+// ---- callback B2: a run whose callback is still pending is held from a batch purge ----
+
+const T0 = Date.parse('2030-05-06T07:00:00.000Z');
+const HOLD_MS = (CALLBACK_DELIVERY_WINDOW_SECONDS + CALLBACK_PURGE_GRACE_SECONDS) * 1000;
+const iso = (ms: number): string => new Date(ms).toISOString();
+const CB_HOST = 'hooks.example:443';
+
+/** A fresh SQLite home on a clock the cell moves, and how many readings the home took. */
+async function movableHome(): Promise<{
+  home: string;
+  handle: RealmHome;
+  at: (ms: number) => void;
+  reads: () => number;
+}> {
+  const dir = mkdtempSync(join(tmpdir(), 'realm-b2-purge-'));
+  dirs.push(dir);
+  const home = join(dir, '.realm');
+  let now = T0;
+  let reads = 0;
+  const moving: Clock = {
+    now: () => {
+      reads += 1;
+      return new Date(now);
+    },
+    at: () => () => undefined,
+  };
+  const handle = await openRealmHome({ home, clock: moving });
+  handles.push(handle);
+  return { home, handle, at: (ms) => (now = ms), reads: () => reads };
+}
+
+/** Writes run `runId`'s callback row on a foreign connection (a pending row keeps its address). */
+async function plantCallback(
+  home: string,
+  runId: string,
+  row: { status: string; finished_at?: string },
+): Promise<void> {
+  const c = await openForeignConnection(home);
+  try {
+    c.prepare(
+      'INSERT INTO callbacks (run_id, workflow_id, host, webhook_id, status, attempts, created_at, ' +
+        'next_attempt_at, finished_at, url) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)',
+    ).run(
+      runId,
+      'wf',
+      CB_HOST,
+      randomUUID(),
+      row.status,
+      iso(T0),
+      iso(T0),
+      row.finished_at ?? null,
+      row.status === 'pending' ? 'https://hooks.example/callback/b2' : null,
+    );
+  } finally {
+    c.close();
+  }
+}
+
+/** How many callback rows the runs have, read on a foreign connection. */
+async function callbackRows(home: string, ids: readonly string[]): Promise<number> {
+  const c = await openForeignConnection(home);
+  try {
+    return ids.reduce(
+      (n, id) =>
+        n +
+        Number(c.prepare('SELECT count(*) AS n FROM callbacks WHERE run_id = ?').get(id)?.['n']),
+      0,
+    );
+  } finally {
+    c.close();
+  }
+}
+
+/** The stores `realm run purge` previews, in its order. */
+const storesOf = (handle: RealmHome) => [
+  handle.traceBufferStore,
+  handle.failedAttemptStore,
+  handle.runStore.outbound,
+  handle.runStore.callbacks,
+];
+
+/** A batch sweep, as `realm run purge --older-than 1m` runs it (a duration is d, h or m). */
+const sweep = (handle: RealmHome, dryRun: boolean, olderThan = '1m') =>
+  purgeRuns(
+    { dryRun, olderThan, workflows: handle.workflowStore },
+    handle.runStore,
+    storesOf(handle),
+    handle.purge,
+  );
+
+/** A single-id purge, as `realm run purge <id>` runs it. */
+const single = (handle: RealmHome, runId: string, dryRun: boolean, purge = handle.purge) =>
+  purgeRuns(
+    { dryRun, runId, workflows: handle.workflowStore },
+    handle.runStore,
+    storesOf(handle),
+    purge,
+  );
+
+const held = (id: string, release: string): string =>
+  `⚠ skipping ${id}: its callback to ${CB_HOST} is still waiting to be delivered; the run is kept until ${release}`;
+const wouldDrop = (id: string): string =>
+  `  ⚠ ${id}: callback to ${CB_HOST} not delivered; would be dropped with the run`;
+const dropped = (id: string): string =>
+  `  ⚠ ${id}: callback to ${CB_HOST} not delivered; dropped with the run`;
+const NONE = 'No eligible runs found to purge.';
+
+describe('callback B2 — a run whose callback is still pending is held from a batch purge', () => {
+  it('a run that finished two minutes ago (the sweep: --older-than 1m): the preview and --force both skip it with the line, keep the run and its row, and print that no run is eligible', async () => {
+    const { home, handle, at } = await movableHome();
+    const run = await finished(handle);
+    await plantCallback(home, run.id, { status: 'pending' });
+    at(T0 + 120_000);
+    const preview = render(await sweep(handle, true), true);
+    const force = render(await sweep(handle, false), false);
+    const line = held(run.id, iso(Date.parse(run.updated_at) + HOLD_MS));
+    // (1) red when the sweep does not hold the run (it is previewed, then purged with its row), or
+    //     the line names another time or the address; (2) prints both outputs and what is left.
+    expect({
+      preview,
+      force,
+      run: (await handle.runStore.get(run.id)).record.id,
+      row: (await handle.runStore.callbacks.read(run.id))?.status,
+    }).toEqual({
+      preview: { out: [NONE], err: [line] },
+      force: { out: [NONE], err: [line] },
+      run: run.id,
+      row: 'pending',
+    });
+  });
+
+  it('a held run is not counted: beside it another run is purged, and the receipt counts that one only', async () => {
+    const { home, handle, at } = await movableHome();
+    const kept = await finished(handle);
+    const gone = await finished(handle);
+    await plantCallback(home, kept.id, { status: 'pending' });
+    at(T0 + 120_000);
+    const { out, err } = render(await sweep(handle, false), false);
+    // (1) red when a held run enters the selection or the count; (2) prints the receipt and the
+    //     warning.
+    expect({ first: out[0]?.split(' (')[0], err }).toEqual({
+      first: 'Purged 1/1 run(s)',
+      err: [held(kept.id, iso(Date.parse(kept.updated_at) + HOLD_MS))],
+    });
+    void gone;
+  });
+
+  it('a run younger than --older-than prints no line: the age rule keeps it first', async () => {
+    const { home, handle, at } = await movableHome();
+    const run = await finished(handle);
+    await plantCallback(home, run.id, { status: 'pending' });
+    at(T0 + 120_000);
+    // (1) red when the hold is judged before the age test (a "kept until" line for a run the age
+    //     rule keeps anyway); (2) prints the output.
+    expect(render(await sweep(handle, true, '30d'), true)).toEqual({ out: [NONE], err: [] });
+  });
+
+  it('the boundary: 1 ms before the anchor plus 3 days and 1 hour the run is held; at that instant it is purged', async () => {
+    const { home, handle, at } = await movableHome();
+    const run = await finished(handle);
+    const anchor = T0 + 5_000;
+    await plantCallback(home, run.id, { status: 'pending', finished_at: iso(anchor) });
+    at(anchor + HOLD_MS - 1);
+    const before = render(await sweep(handle, true), true);
+    at(anchor + HOLD_MS);
+    const atRelease = render(await sweep(handle, true), true);
+    // (1) red when the release compares with `>` (held at the instant) or the window is shorter;
+    //     (2) prints both outputs.
+    expect({ before, atRelease: { first: atRelease.out[0], err: atRelease.err } }).toEqual({
+      before: { out: [NONE], err: [held(run.id, iso(anchor + HOLD_MS))] },
+      atRelease: { first: expect.stringMatching(/^1 run\(s\) WOULD be purged/), err: [] },
+    });
+  });
+
+  it('the anchor is the row’s finished_at when set, otherwise the run’s updated_at', async () => {
+    const { home, handle, at } = await movableHome();
+    const fromRow = await finished(handle);
+    const fromRun = await finished(handle);
+    const later = T0 + 86_400_000;
+    await plantCallback(home, fromRow.id, { status: 'pending', finished_at: iso(later) });
+    await plantCallback(home, fromRun.id, { status: 'pending' });
+    // Past the run's own release, before the row's.
+    at(Date.parse(fromRun.updated_at) + HOLD_MS + 60_000);
+    const result = await sweep(handle, true);
+    // (1) red when the hold always counts from updated_at (the first run is then purged) or never
+    //     falls back to it (the second is then kept); (2) prints the selection and the warning.
+    expect({
+      selected: result.selected.map((c) => c.run.id),
+      err: render(result, true).err,
+    }).toEqual({ selected: [fromRun.id], err: [held(fromRow.id, iso(later + HOLD_MS))] });
+  });
+
+  it('a finished_at that cannot be read holds the run, and the line names the way out', async () => {
+    const { home, handle, at } = await movableHome();
+    const run = await finished(handle);
+    await plantCallback(home, run.id, { status: 'pending', finished_at: 'garbage' });
+    at(T0 + HOLD_MS * 10);
+    // (1) red when an unreadable end counts as past (the run is purged); (2) prints the output.
+    expect(render(await sweep(handle, true), true)).toEqual({
+      out: [NONE],
+      err: [
+        `⚠ skipping ${run.id}: its callback to ${CB_HOST} is still waiting to be delivered and its end time cannot be read; run 'realm run purge ${run.id} --force' to purge it anyway`,
+      ],
+    });
+  });
+
+  it('a delivered row, a failed row and no row: each run is purged, and its row goes with it', async () => {
+    const { home, handle, at } = await movableHome();
+    const runs = [await finished(handle), await finished(handle), await finished(handle)];
+    await plantCallback(home, runs[0]!.id, { status: 'delivered' });
+    await plantCallback(home, runs[1]!.id, { status: 'failed' });
+    at(T0 + 120_000);
+    const result = await sweep(handle, false);
+    // (1) red when a row that is not pending holds its run; (2) prints the purged ids, the warnings
+    //     and the rows left.
+    expect({
+      purged: [...result.purged].sort(),
+      skipped: result.skipped,
+      rows: await callbackRows(
+        home,
+        runs.map((r) => r.id),
+      ),
+    }).toEqual({ purged: runs.map((r) => r.id).sort(), skipped: [], rows: 0 });
+  });
+
+  it('single-id on a pending row: the preview says it would be dropped, the receipt that it was; on a delivered row nothing is said', async () => {
+    const { home, handle, at } = await movableHome();
+    const pending = await finished(handle);
+    const delivered = await finished(handle);
+    await plantCallback(home, pending.id, { status: 'pending' });
+    await plantCallback(home, delivered.id, { status: 'delivered' });
+    at(T0 + 120_000);
+    const preview = render(await single(handle, pending.id, true), true).out;
+    const receipt = render(await single(handle, pending.id, false), false).out;
+    const quiet = render(await single(handle, delivered.id, false), false).out;
+    // (1) red when the disclosure is missing, worded otherwise, or printed for a delivered row;
+    //     (2) prints the three outputs.
+    expect({
+      preview: preview.slice(1, 3),
+      receipt: receipt.filter((l) => l.includes('not delivered')),
+      quiet: quiet.filter((l) => l.includes('not delivered')),
+    }).toEqual({
+      preview: [expect.stringMatching(new RegExp(`^  • ${pending.id}  `)), wouldDrop(pending.id)],
+      receipt: [dropped(pending.id)],
+      quiet: [],
+    });
+  });
+
+  it('single-id on a pending row older than the hold: the phrase too; and a blocked single-id purge claims no drop', async () => {
+    const { home, handle, at } = await movableHome();
+    const old = await finished(handle);
+    const blocked = await finished(handle);
+    await plantCallback(home, old.id, { status: 'pending' });
+    await plantCallback(home, blocked.id, { status: 'pending' });
+    at(T0 + HOLD_MS * 2);
+    const oldReceipt = render(await single(handle, old.id, false), false).out;
+    const refusing = stubPurge((selection) => ({
+      runs: selection.map(({ runId }) => ({
+        runId,
+        outcome: 'blocked' as const,
+        error: new WorkflowError('blocked by the stub', {
+          code: 'STATE_RUN_BUSY',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: true,
+        }),
+      })),
+      stored_bytes_deleted: 0,
+      file_bytes_reclaimed: 0,
+    }));
+    const blockedReceipt = render(await single(handle, blocked.id, false, refusing), false).out;
+    // (1) red when the phrase depends on the row's age, or a run that was not purged claims its
+    //     callback was dropped; (2) prints the disclosure lines of both receipts.
+    expect({
+      old: oldReceipt.filter((l) => l.includes('not delivered')),
+      blocked: blockedReceipt.filter((l) => l.includes('not delivered')),
+    }).toEqual({ old: [dropped(old.id)], blocked: [] });
+  });
+
+  it('a claim override and a pending row show both disclosures; claim-held and callback-held in a sweep shows the claim reason', async () => {
+    const { home, handle, at } = await movableHome();
+    const claim = { in_progress_steps: ['charge'], claims: { charge: { deadline: null } } };
+    const named = await finished(handle, claim as Partial<RunRecord>);
+    const swept = await finished(handle, claim as Partial<RunRecord>);
+    await plantCallback(home, named.id, { status: 'pending' });
+    await plantCallback(home, swept.id, { status: 'pending' });
+    at(T0 + 120_000);
+    const preview = render(await single(handle, named.id, true), true).out;
+    const sweepErr = render(await sweep(handle, true), true).err;
+    // (1) red when one disclosure hides the other, or the sweep reports the callback hold before
+    //     the claim's; (2) prints the preview's lines and the sweep's warnings.
+    expect({
+      bullet: preview[1]?.includes('despite an indeterminate-age claim'),
+      callback: preview[2],
+      sweep: sweepErr.map((l) => l.includes('no deadline recorded')),
+    }).toEqual({ bullet: true, callback: wouldDrop(named.id), sweep: [true, true] });
+  });
+
+  it('a callback read that throws stops the purge before anything is deleted', async () => {
+    const { home, handle, at } = await movableHome();
+    const run = await finished(handle);
+    await plantCallback(home, run.id, { status: 'pending' });
+    at(T0 + 120_000);
+    const failing = new Proxy(handle.runStore, {
+      get(target, property) {
+        if (property === 'callbacks')
+          return {
+            read: async () => {
+              throw new Error('planted read failure');
+            },
+          };
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === 'function' ? (value as () => unknown).bind(target) : value;
+      },
+    });
+    const outcome = await purgeRuns(
+      { dryRun: false, olderThan: '1m', workflows: handle.workflowStore },
+      failing,
+      storesOf(handle),
+      handle.purge,
+    ).then(
+      () => 'resolved',
+      (err: Error) => err.message,
+    );
+    // (1) red when a failed read is taken for "no hold" (the run is purged); (2) prints the outcome
+    //     and what is left.
+    expect({
+      outcome,
+      run: (await handle.runStore.get(run.id)).record.id,
+      rows: await callbackRows(home, [run.id]),
+    }).toEqual({ outcome: 'planted read failure', run: run.id, rows: 1 });
+  });
+
+  it('the purge takes as many readings with callback rows as without', async () => {
+    const plain = await movableHome();
+    const withRows = await movableHome();
+    for (const h of [plain, withRows]) {
+      for (let i = 0; i < 3; i++) {
+        const run = await finished(h.handle);
+        if (h === withRows) await plantCallback(h.home, run.id, { status: 'pending' });
+      }
+      // Past the hold: every run is judged by it and selected, so both sweeps select the same runs.
+      h.at(T0 + HOLD_MS * 2);
+    }
+    const readings = async (h: typeof plain): Promise<number> => {
+      const before = h.reads();
+      await sweep(h.handle, true);
+      return h.reads() - before;
+    };
+    // (1) red when the hold takes a reading of its own per run; (2) prints both counts.
+    expect({
+      withRows: await readings(withRows),
+      selected: (await sweep(withRows.handle, true)).selected.length,
+    }).toEqual({
+      withRows: await readings(plain),
+      selected: 3,
+    });
   });
 });

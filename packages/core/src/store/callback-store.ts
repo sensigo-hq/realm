@@ -195,6 +195,13 @@ export interface CallbackStore extends PerRunArtifactStore {
 export const CALLBACK_CLAIM_SECONDS = 60;
 /** The longest wait a `retry` may ask for, in seconds. */
 export const CALLBACK_RETRY_MAX_SECONDS = 86_400;
+/**
+ * Callback B2: how long a callback may wait to be delivered after its run finished, in seconds
+ * (3 days). A purge keeps a run whose callback is still pending for this long, plus the grace below.
+ */
+export const CALLBACK_DELIVERY_WINDOW_SECONDS = 259_200;
+/** Callback B2: what a purge adds to the delivery window before it takes such a run, in seconds. */
+export const CALLBACK_PURGE_GRACE_SECONDS = 3_600;
 
 const WORDS = new Set<string>(CALLBACK_LAST_STATUS_WORDS);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
