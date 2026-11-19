@@ -17,8 +17,12 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   HELD_WORDS,
   InMemoryTraceBufferStore,
+  LEASE_NOT_KNOWN_HERE,
+  leaseCheckCondition,
+  leaseCheckPhrase,
   reclaimConditionWords,
   type HeldState,
+  type UncheckedLease,
   type HeldWordsState,
   type WayOn,
   type WorkflowDefinition,
@@ -556,6 +560,31 @@ describe('#922 P2-1 — check 10, rule 10: no liveness verdict', () => {
       deny: [...held, ...notHeld].filter((t) => DENY.test(t)),
       wait: notHeld.filter((t) => /wait for it/i.test(t)),
     }).toEqual({ deny: [], wait: [] });
+  });
+
+  it('#729 CW-4a: the lease-check words — the six phrases, their condition form, the fixed sentence and each door’s sentence built from them — hold no word of the deny-list', () => {
+    const DENY =
+      /\b(died|dead|alive|live runner|live driver|presumed|probably|likely|unknown age|deadline)\b/i;
+    const unchecked: UncheckedLease[] = [
+      { state: 'absent' },
+      ...(['not_checked', 'cannot_open', 'not_a_lease', 'permission', 'io_error'] as const).map(
+        (reason) => ({ state: 'unknown' as const, reason }),
+      ),
+    ];
+    const texts = unchecked.flatMap((lease) => [
+      leaseCheckPhrase(lease),
+      leaseCheckCondition(lease),
+      HELD_WORDS.agent('unknown_age', "'a'", false, SINCE, lease),
+      HELD_WORDS.agent('unknown_age', "'a', 'b'", true, SINCE, lease),
+      `${HELD_WORDS.reason({ state: 'unknown_age' }, lease)}${HELD_WORDS.clause('unknown_age')}`,
+      reclaimConditionWords({ code: 'override_claim_unknown_age', state: 'unknown_age' }, lease)!,
+    ]);
+    // (a) red when one of these says a program died, is alive, presumed or likely, or names an
+    //     unknown age or a deadline; (b) prints each such text. None of them is a not-held sentence.
+    expect({
+      count: texts.length,
+      deny: [...texts, LEASE_NOT_KNOWN_HERE].filter((t) => DENY.test(t)),
+    }).toEqual({ count: 36, deny: [] });
   });
 
   it('the definition_absent past sentences, pinned at the table (no reply reaches them: advance_run loads the definition first)', () => {

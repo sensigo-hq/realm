@@ -292,7 +292,13 @@ export {
   heldAgentWords,
   // #922: the fact a reclaim refusal states (each door renders its act).
   reclaimRefusalWords,
+  // #729 CW-4a: the one table of what a claim's lease check found when it could not answer.
+  uncheckedLeaseOf,
+  leaseCheckPhrase,
+  leaseCheckCondition,
+  LEASE_NOT_KNOWN_HERE,
 } from './engine/ways.js';
+export type { UncheckedLease, LeaseWordsInput } from './engine/ways.js';
 export type {
   Party,
   Slot,

@@ -10,13 +10,19 @@
 import { describe, it, expect } from 'vitest';
 import {
   HELD_WORDS,
+  LEASE_NOT_KNOWN_HERE,
   composeWaysAt,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type ClaimRecord,
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { InMemoryStore, createLeaseDouble, settableClock } from '@sensigo/realm-testing';
+import {
+  InMemoryStore,
+  createLeaseDouble,
+  settableClock,
+  type LeaseDoubleState,
+} from '@sensigo/realm-testing';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,7 +69,7 @@ async function heldOn(
   persistsClaims = true,
   completed: string[] = [],
   // a lease double's state for the lease `L` a claim may name
-  lease?: 'live' | 'dead',
+  lease?: LeaseDoubleState,
 ): Promise<{
   runId: string;
   record: RunRecord;
@@ -365,5 +371,36 @@ describe('#922 P2-2 — check 12 (rule 10): no held-step line says a program die
       deny: [...held, ...notHeld].filter((t) => DENY.test(t)),
       wait: notHeld.filter((t) => /wait for it/i.test(t)),
     }).toEqual({ deny: [], wait: [] });
+  });
+
+  it('#729 CW-4a: the CLI’s held line and the lines under a held step, for each lease the check could not answer for, and the fixed sentence, hold no word of the deny-list', async () => {
+    const DENY =
+      /\b(died|dead|alive|live runner|live driver|presumed|probably|likely|unknown age|deadline)\b/i;
+    const results: LeaseDoubleState[] = [
+      'removed',
+      ...(['not_checked', 'cannot_open', 'not_a_lease', 'permission', 'io_error'] as const).map(
+        (reason) => ({
+          forced: { state: 'unknown' as const, basis: 'kernel_lock' as const, reason },
+        }),
+      ),
+    ];
+    const texts: string[] = [LEASE_NOT_KNOWN_HERE];
+    for (const lease of results) {
+      // a claim with no deadline, so the deny-list's "deadline" cannot come from the claim itself
+      const on = await heldOn(
+        { y: { ...CLAIMS['unknown_age']!, lease: { id: 'L' } } },
+        true,
+        ['x'],
+        lease,
+      );
+      texts.push(heldLine(on.entries[0]!), ...heldWayLines(on.entries[0]!));
+    }
+    // (a) red when one of these lines says a program died, is alive, presumed or likely, or names an
+    //     unknown age or a deadline; (b) prints each such text. None of them is a not-held line.
+    expect({
+      lines: texts.length,
+      deny: texts.filter((t) => DENY.test(t)),
+      // per result: the held line, and under the step its condition, the rerun sentence, the command
+    }).toEqual({ lines: 1 + 6 * 4, deny: [] });
   });
 });
