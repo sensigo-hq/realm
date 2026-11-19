@@ -259,7 +259,7 @@ describe('#616 unit 12b — update', () => {
     const evidenceRefused = {
       code: 'STATE_EVIDENCE_REWRITTEN',
       message:
-        "The store refused a write that would change or remove a run's stored evidence, which is append-only.",
+        "The store refused a write that would change or remove a run's stored evidence, which is append-only, or the model text kept on one of its drive failures.",
       details: {},
     };
     const fieldRefused = {

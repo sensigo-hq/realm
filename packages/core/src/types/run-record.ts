@@ -1645,6 +1645,18 @@ export interface SealedBy {
 }
 
 /**
+ * The text of the model requests one drive failure covers, on its entry
+ * (`DriveFailureRecord.model_text`). It is the evidence entry's {@link ModelText}, with
+ * `dropped_messages`: the number of messages left out to keep the entry within its budget. A
+ * request that got no answer has `request_id: null` and `reply: null`; an answered request's
+ * `request_id` is the id of its record in the entry's `usage`.
+ * @public
+ */
+export type DriveFailureModelText =
+  | (Extract<ModelText, { recorded: true }> & { dropped_messages?: number })
+  | Extract<ModelText, { recorded: false }>;
+
+/**
  * One failed attempt to drive a step: when, which step and provider, what kind of failure, and its
  * message (`DriveFailuresField.entries`).
  * A "drive attempt" is realm trying to advance a step —
@@ -1721,13 +1733,14 @@ export interface DriveFailureRecord {
    */
   retry_after_observed_ms?: number;
   /**
-   * Issue #600 PR 1a (D9) — what the provider said each billed wire request cost, before the
-   * drive ended. Populated from the throwing error's driveCall payload and from the driver's
-   * earlier schema-repair calls for the same step (in wire order); a `validation_rejected` entry
-   * — a wedge after the repair budget ran out, not a throw — carries every call of the exhausted
-   * budget. An operator must be able to see, on the screen, that money was spent on a failed
-   * drive — a number on the record that renders nowhere does not discharge that (get_run_state
-   * already passes `drive_failures` verbatim; the CLI render is this same field, per D9).
+   * Issue #600 PR 1a (D9) — what the provider said each billed wire request cost, before the drive
+   * ended. Populated from the throwing error's driveCall payload and from the driver's earlier
+   * schema-repair calls for the same step (in wire order); a `validation_rejected` entry — a wedge
+   * after the repair budget ran out, not a throw — carries every call of the exhausted budget. An
+   * operator must be able to see, on the screen, that money was spent on a failed drive — a number
+   * on the record that renders nowhere does not discharge that (get_run_state shows each drive
+   * failure without its `model_text`, and at most three of its `usage` records, with `usage_more`
+   * counting the rest; the CLI render is this same field, per D9).
    *
    * ABSENT until a request returns: a failure before any request left the process (`sdk_missing`)
    * and a first request that failed on the wire (a 5xx, a timeout, a dropped connection) both
@@ -1738,6 +1751,12 @@ export interface DriveFailureRecord {
    * requests.
    */
   usage?: UsageRecord[];
+  /**
+   * Gap 1, unit A2: the text of the model requests this failure covers
+   * ({@link DriveFailureModelText}), or a marker saying why there is none. `get_run_state` never
+   * shows it, and a listing of runs leaves it out.
+   */
+  model_text?: DriveFailureModelText;
 }
 
 /** Every {@link DriveFailureRecord} `error_class`, in the type's order; checked both ways. */
