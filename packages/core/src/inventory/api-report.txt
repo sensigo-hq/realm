@@ -575,6 +575,14 @@ CallbackKeyEndResult · type · beta
       readonly reason: 'no_previous';
   };
 
+CallbackKeyListing · type · beta
+  interface CallbackKeyListing {
+      readonly workflow_id: string;
+      readonly host: string;
+      readonly current?: CallbackKeySlotInfo;
+      readonly previous?: CallbackKeySlotInfo;
+  }
+
 CallbackKeyMakeResult · type · beta
   interface CallbackKeyMakeResult {
       readonly created: boolean;
@@ -629,6 +637,21 @@ CallbackKeySlot · type · beta
       readonly expires_at?: string;
   };
 
+CallbackKeySlotInfo · type · beta
+  type CallbackKeySlotInfo = {
+      readonly slot: CallbackKeySlotName;
+      readonly state: 'readable';
+      readonly key_fp: string;
+      readonly created_at: string;
+      readonly expires_at?: string;
+  } | {
+      readonly slot: CallbackKeySlotName;
+      readonly state: 'unreadable';
+      readonly master_fp: string;
+      readonly created_at: string;
+      readonly expires_at?: string;
+  };
+
 CallbackKeySlotName · type · beta
   type CallbackKeySlotName = (typeof CALLBACK_KEY_SLOTS)[number];
 
@@ -640,6 +663,7 @@ CallbackKeyStore · type · beta
       endPrevious(workflowId: string, host: string): Promise<CallbackKeyEndResult>;
       replace(workflowId: string, host: string, candidate: string): Promise<CallbackKeyReplaceResult>;
       delete(workflowId: string, host: string): Promise<CallbackKeyDeleteResult>;
+      list(): Promise<readonly CallbackKeyListing[]>;
   }
 
 CallbackKeyWrite · type · internal
@@ -4259,6 +4283,7 @@ buildTrustRefusal · value · internal
 cacheVerdict · value · internal
 callableSteps · value · internal
 callbackKeyFingerprint · value · internal
+callbackKeyListingAt · value · internal
 callbackKeyPairAt · value · internal
 callbackPreviousIsLive · value · internal
 callbackRowOf · value · internal

@@ -73,6 +73,7 @@ import {
   type CallbackKeyDecision,
   type CallbackKeyDeleteResult,
   type CallbackKeyEndResult,
+  type CallbackKeyListing,
   type CallbackKeyMakeResult,
   type CallbackKeyPair,
   type CallbackKeyReplaceResult,
@@ -81,6 +82,7 @@ import {
   type CallbackKeySlot,
   type CallbackKeySlotName,
   type CallbackKeyStore,
+  callbackKeyListingAt,
   callbackKeyPairAt,
   checkCallbackKeyRequest,
   decideCallbackKeyEndPrevious,
@@ -330,6 +332,29 @@ export class InMemoryCallbackKeys implements CallbackKeyStore {
     this.slots.delete(current);
     this.slots.delete(InMemoryCallbackKeys.at(workflowId, host, 'previous'));
     return { had_current: had };
+  }
+
+  /**
+   * Callback K2a-1: every pair with a live slot (core's `callbackKeyListingAt`) at one reading, in
+   * UTF-8 byte order (`Buffer.compare`; a JS string comparison is UTF-16 order, which differs).
+   */
+  async list(): Promise<readonly CallbackKeyListing[]> {
+    const at = takeRawReading(this.clock);
+    const pairs = new Map<string, readonly [workflowId: string, host: string]>();
+    for (const key of this.slots.keys()) {
+      const [workflowId, host] = JSON.parse(key) as [string, string, string];
+      pairs.set(JSON.stringify([workflowId, host]), [workflowId, host]);
+    }
+    const bytes = (text: string): Buffer => Buffer.from(text, 'utf8');
+    const listing: CallbackKeyListing[] = [];
+    for (const [workflowId, host] of [...pairs.values()].sort(
+      (a, b) =>
+        Buffer.compare(bytes(a[0]), bytes(b[0])) || Buffer.compare(bytes(a[1]), bytes(b[1])),
+    )) {
+      const entry = callbackKeyListingAt(workflowId, host, this.pairOf(workflowId, host), at);
+      if (entry !== undefined) listing.push(entry);
+    }
+    return listing;
   }
 
   /**
