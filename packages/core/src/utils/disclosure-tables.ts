@@ -315,6 +315,12 @@ export const EVIDENCE_TABLE = {
   effective_timeout_seconds: 'fact',
   clipped_to_ms: 'fact',
   exhausted_by: 'fact',
+  // Q1 (#592) unit a: a failed attempt's words — its error's code, category and action word, and
+  // why retrying stopped. Closed vocabularies the engine writes, never a value.
+  error_code: 'fact',
+  error_category: 'fact',
+  agent_action: 'fact',
+  stop_reason: 'fact',
   // #627 W: how an answer arrived (a door's route id, a renderer's name), whether the client was asked
   // to have its user approve, and what the door's transport authenticated (an API key's id, a kind).
   answer: 'fact',
@@ -692,6 +698,10 @@ export const EVIDENCE_FACTS = {
   agent_profile_hash: 'hash',
   trace_summary: 'enum',
   exhausted_by: 'enum',
+  error_code: 'enum',
+  error_category: 'enum',
+  agent_action: 'enum',
+  stop_reason: 'enum',
   answer: 'id',
   principal: 'id',
 } as const satisfies FactProducers<typeof EVIDENCE_TABLE, EvidenceSnapshot>;

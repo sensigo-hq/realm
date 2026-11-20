@@ -1311,9 +1311,10 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
       .slice(0, body.indexOf('\n}'))
       .split('\n')
       .filter((l) => /^ {2}[a-z_]+\??:/.test(l)).length;
-    // (a) red when the page's count is not the type's; (b) prints both.
+    // (a) red when the page's count is not the type's, or its rows are not the fields less the
+    //     two rows that hold two fields each; (b) prints both.
     expect(page('docs/reference/run-record-and-export.md')).toContain(
-      `the ${fields} fields of an evidence entry (34 rows below: two rows hold two fields each),`,
+      `the ${fields} fields of an evidence entry (${fields - 2} rows below: two rows hold two fields each),`,
     );
   });
 });

@@ -3,6 +3,7 @@ import type { ToolCallRecord } from './mcp-types.js';
 import type { ExtensionIdentityEntry } from './extension-identity.js';
 import type { TriggerRule } from './workflow-definition.js';
 import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
+import type { AgentAction, ErrorCategory, ErrorCode } from './workflow-error.js';
 
 /**
  * A single trace entry submitted by the agent. Submitted as-is; the engine
@@ -1232,6 +1233,30 @@ export interface EvidenceSnapshot {
    * truthfully. Any OTHER error still exhausts the cap by the elapsed-budget comparison.
    */
   exhausted_by?: 'attempts' | 'total_timeout';
+  /**
+   * On a failed attempt's entry (a step's, a cleanup step's or a guard's; never a guard that fired,
+   * which is a skip): the error's code.
+   */
+  error_code?: ErrorCode;
+  /**
+   * On a failed attempt's entry: the code's category (`NETWORK`, `SERVICE`, `STATE`, `VALIDATION`,
+   * `ENGINE`, `RESOURCE`).
+   */
+  error_category?: ErrorCategory;
+  /**
+   * On a failed attempt's entry: the error's action word (`report_to_user`, `stop`,
+   * `wait_for_service`, …); on the last entry of a step that failed, where the reply wraps the
+   * failure as `STEP_RETRY_EXHAUSTED`, the wrap's `report_to_user`.
+   */
+  agent_action?: AgentAction;
+  /**
+   * On the last entry of a step that failed, and on the entry of a step handed back because this
+   * runner has no handler or adapter for it (the step is not failed): why Realm stopped retrying —
+   * `no_retry_policy` (the step has no `retry` block), `total_timeout` (its `total_timeout_seconds`
+   * ran out), `non_retryable` (the error is not retried), or `attempts` (its `max_attempts` were
+   * used).
+   */
+  stop_reason?: 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
 }
 
 /** Every evidence entry status (`EvidenceSnapshot['status']`); compile-checked both ways. */
@@ -1262,10 +1287,11 @@ void _everyExhaustedByListed;
 
 /**
  * Q1 (#592): why a step's retrying stopped — no retry policy, the total-time cap, an error that is
- * not retried, or the attempts used up. Nothing writes or reads a stop reason yet: the record's
- * field comes with a later unit; the words exist now so the docs and the schema can name them.
+ * not retried, or the attempts used up. The engine writes it on the last entry of a step that
+ * failed (`EvidenceSnapshot.stop_reason`, unit a); the type is that field's words, as
+ * {@link ExhaustedBy} is `exhausted_by`'s.
  */
-export type StopReason = 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
+export type StopReason = NonNullable<EvidenceSnapshot['stop_reason']>;
 
 /** Every {@link StopReason}, in judging order; compile-checked both ways, ⊇ {@link ExhaustedBy}. */
 export const STOP_REASONS = [
