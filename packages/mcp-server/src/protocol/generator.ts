@@ -111,7 +111,7 @@ const ERROR_HANDLING = {
   provide_input:
     'The engine rejected your input. Read the error details — they tell you exactly what was wrong. Fix the input and call the step again.',
   report_to_user:
-    'Something failed that you cannot fix automatically. Show the error message to the user and wait for their guidance. It also comes on an `ok` reply when nothing can be called and only a person can change that: a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or every step it waits on is held by a claim whose deadline has passed (a person can free each one) — tell the user.',
+    'Something failed that you cannot fix automatically. Show the error message to the user and wait for their guidance. It also comes on an `ok` reply when nothing can be called and only a person can change that: a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or every step it waits on is held by a claim whose deadline has passed, or whose lease no program held when it was checked (a person can free each one) — tell the user.',
   resolve_precondition:
     'A prerequisite step has not completed. The error includes which precondition failed and what step to call. Follow the suggestion.',
   stop: 'A critical error occurred. Report it to the user and do not attempt any further steps.',
@@ -120,7 +120,7 @@ const ERROR_HANDLING = {
   wait_and_proceed:
     'The upstream service returned a rate-limit response. retry_after in the envelope gives the number of seconds to wait. After that delay, follow next_actions without human involvement — the step has already failed; if a recovery branch exists it will appear in next_actions. This action only appears when engine-level retry is not configured for the step; when retry is configured, the engine retries internally and surfaces STEP_RETRY_EXHAUSTED (report_to_user) on exhaustion of attempts or total-time budget.',
   await:
-    "The run is waiting on someone else — a person's answer or another program's step; the reply names which. Tell the user what it waits on, and do not call a step until next_actions offers one. Call get_run_state no sooner than poll_after_ms; when until passes, tell the user. A step whose claim's deadline has passed is never waited on: it never sets until, and when every step a reply waits on is past its deadline, the reply says report_to_user.",
+    "The run is waiting on someone else — a person's answer or another program's step; the reply names which. Tell the user what it waits on, and do not call a step until next_actions offers one. Call get_run_state no sooner than poll_after_ms; when until passes, tell the user. A step whose claim's deadline has passed, or whose claim's lease no program held when it was checked, is never waited on: it never sets until, and when every step a reply waits on is so, the reply says report_to_user. A step whose claim's lease its program held is waited on.",
 } satisfies Record<AgentAction, string>;
 
 /**

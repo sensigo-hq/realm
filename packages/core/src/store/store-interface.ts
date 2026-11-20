@@ -206,9 +206,9 @@ export interface RunStore {
    * operating system keeps while the program holding it runs and lets go of when that program ends;
    * `probe` says whether one is held, as a fact with how it is known. The engine's admission refuses a
    * `leases` that is present and neither `null` nor an object with `hold` and `probe` functions
-   * (`store_leases`). The SQLite store keeps leases; `InMemoryStore` leaves it unset unless it is given a lease port. No Realm
-   * command takes a lease yet: core's `claimStepForDrive` takes one (CW-2a), and CW-5's `realm agent`
-   * will call it.
+   * (`store_leases`). The SQLite store keeps leases; `InMemoryStore` leaves it unset unless it is given a lease port.
+   * Core's `claimStepForDrive` takes one (CW-2a), and `realm agent` calls it for every agent step it
+   * drives (CW-5a).
    * @beta
    */
   readonly leases?: LeasePort | null;

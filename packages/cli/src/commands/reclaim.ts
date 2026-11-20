@@ -453,7 +453,7 @@ export const reclaimCommand = new Command('reclaim')
   )
   .option(
     '--claimed-at <stamp>',
-    "With --step: the claim's stamp, as the offered command shows it (required for a claim whose deadline is ahead or unknown)",
+    "With --step: the claim's stamp, as the offered command shows it (required for a claim whose deadline is ahead or unknown, unless no program held its lease)",
   )
   .option('--force', 'Actually reclaim — re-drives the step(s); side effects may repeat')
   .option(

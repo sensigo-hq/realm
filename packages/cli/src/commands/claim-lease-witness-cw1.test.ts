@@ -10,18 +10,16 @@
 //      `claimStepForDrive` (the one engine entry that takes a lease) and realm-testing's leased-claim
 //      laws (which take their holds from the store's port, as a drive does). The list is checked both
 //      ways: a call in another file is refused, and so is a listed file that no longer calls it (the
-//      list would then be wider than the code). No Realm command takes a lease yet (the CHANGELOG and
-//      the core library's reference say so; CW-5 is the unit that will).
+//      list would then be wider than the code). `realm agent` takes its leases through
+//      `claimStepForDrive` (#729 CW-5a), so no command calls `hold(` itself.
 //   4. only the files of a closed list call core's `claimStepForDrive(` or `releaseDriveClaim(` (#729
-//      CW-2a, correction 1), checked both ways as rule 3 is. The list is empty: the sentences "No Realm
-//      command calls them yet" (the CHANGELOG) and "No Realm command takes a lease yet" (the CHANGELOG
-//      and the core library's reference) hold while no production file calls either. Their
+//      CW-2a, correction 1), checked both ways as rule 3 is: `realm agent`'s drive (#729 CW-5a). Their
 //      definitions in `drive-claim.ts` are not calls; the cell also checks that it read them, so a
 //      walk that misses the file cannot pass for an empty one.
 //   5. only the files of a closed list pass `executeChain` a `heldClaim` (#729 CW-2b), checked both
 //      ways: an `executeChain(` call whose arguments hold a property named `heldClaim`, or any object
-//      literal with that property (options built beside the call). The list is empty: "No Realm
-//      command passes it yet" (the CHANGELOG) holds while no production file does. The cell also
+//      literal with that property (options built beside the call): `realm agent`'s drive (#729
+//      CW-5a). The cell also
 //      checks it read the option's declaration in `ExecuteChainOptions`. It cannot see an options
 //      object built with a computed key, or passed through a spread of one built elsewhere.
 //
@@ -43,13 +41,17 @@ const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const LEASE_MODULE = 'store-sqlite/src/claim-lease.ts';
 
 /** #729 CW-2a (correction 1): the production files that may call `claimStepForDrive(` or
- *  `releaseDriveClaim(`, each with its reason. Empty: no Realm command calls them yet (CW-5's
- *  `realm agent` will be the first entry here). */
-const DRIVE_ENTRY_CALLERS: Readonly<Record<string, string>> = {};
+ *  `releaseDriveClaim(`, each with its reason. */
+const DRIVE_ENTRY_CALLERS: Readonly<Record<string, string>> = {
+  'cli/src/agent/run-agent.ts':
+    '#729 CW-5a: realm agent claims an agent step under a lease before its model is called, and gives the claim back when it stops without saving it',
+};
 
-/** #729 CW-2b: the production files that may pass `executeChain` a `heldClaim`, each with its reason.
- *  Empty: no Realm command passes it yet (CW-5's `realm agent` will be the first entry here). */
-const HELD_CLAIM_PASSERS: Readonly<Record<string, string>> = {};
+/** #729 CW-2b: the production files that may pass `executeChain` a `heldClaim`, each with its reason. */
+const HELD_CLAIM_PASSERS: Readonly<Record<string, string>> = {
+  'cli/src/agent/run-agent.ts':
+    '#729 CW-5a: realm agent saves the agent step it claimed under the claim it holds',
+};
 
 /** #729 CW-2a: the two engine entries a drive takes and gives back its claim through. */
 const DRIVE_ENTRIES = ['claimStepForDrive', 'releaseDriveClaim'];

@@ -47,11 +47,11 @@ const CHANGED =
 
 /** P1b's CHANGELOG lines, word for word (the Upgrading item without its number). */
 const UPGRADING_P1B =
-  '`realm run reclaim` asks for `--claimed-at <stamp>` when the claim carries a stamp and its deadline is ahead or unknown, and prints the command to run; on a claim past its deadline the old form still works. `not_a_step` and `claim_changed` exit 1.';
+  '`realm run reclaim` asks for `--claimed-at <stamp>` when the claim carries a stamp and its deadline is ahead or unknown, unless no program holds its lease, and prints the command to run; on a claim past its deadline, or whose lease no program holds, the old form still works. `not_a_step` and `claim_changed` exit 1.';
 const ADDED_P1B =
   "**`realm run reclaim --claimed-at`** `<stamp>`: with `--step`, the time the step's claim was taken. The step is freed only while that is still its claim, and a reclaim refused for want of it prints the command to run.";
 const CHANGED_P1B =
-  "**`reclaimStep` takes optional `definition`, `force` and `claimed_at` (beta), and judges a reclaim as the reply offered it.** With `force: true` it frees a step only as its `reclaim` way was offered: a stamped claim whose deadline is ahead or unknown needs its `claimed_at`, a stamp that is not the claim's is refused and nothing is removed, and the reclaim record names the `conditions_discharged`. Every refusal but a step not held is thrown as a `WorkflowError` carrying `refusal` (beta, also on `WorkflowErrorOptions`); `ReclaimResult` gains `conditionsDischarged` and `refusal` (beta), and `ReclaimStepOptions` the three members. A call without them behaves as before.";
+  "**`reclaimStep` takes optional `definition`, `force` and `claimed_at` (beta), and judges a reclaim as the reply offered it.** With `force: true` it frees a step only as its `reclaim` way was offered: a stamped claim whose deadline is ahead or unknown needs its `claimed_at`, unless no program held its lease when it was checked, a stamp that is not the claim's is refused and nothing is removed, and the reclaim record names the `conditions_discharged`. Every refusal but a step not held is thrown as a `WorkflowError` carrying `refusal` (beta, also on `WorkflowErrorOptions`); `ReclaimResult` gains `conditionsDischarged` and `refusal` (beta), and `ReclaimStepOptions` the three members. A call without them behaves as before.";
 
 /** A cell, by its file and (part of) its title. */
 type Cell = readonly [file: string, title: string];
@@ -245,7 +245,7 @@ describe('#922 P1b — the CHANGELOG lines and realm-run-acting.md’s reclaim s
         [OLD_CALL],
       ],
       [
-        'A claim that records when it was taken, and whose deadline is ahead or of unknown age, is freed only with `--claimed-at` set to that time: inside its window, its program may still be running. Without it, nothing is freed, and the command says what holds and the command to run:',
+        'A claim that records when it was taken, and whose deadline is ahead or of unknown age, or whose lease its program held when it was checked, is freed only with `--claimed-at` set to that time: inside its window, its program may still be running. Without it, nothing is freed, and the command says what holds and the command to run:',
         [WINDOW],
       ],
       [
@@ -261,7 +261,7 @@ describe('#922 P1b — the CHANGELOG lines and realm-run-acting.md’s reclaim s
         [WRONG_STAMP],
       ],
       [
-        'A claim past its deadline, or one that records no time it was taken, is freed without `--claimed-at`.',
+        'A claim past its deadline, one whose lease no program held when it was checked (added after version 0.50.0), or one that records no time it was taken, is freed without `--claimed-at`.',
         [PAST, UNSTAMPED],
       ],
       [

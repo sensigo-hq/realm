@@ -592,6 +592,72 @@ describe(
       });
     });
 
+    // #729 CW-5a correction 1 (realm-workflow.md): the command reaches a step a `realm agent` drive
+    // already holds, its program still running (held) or killed (not held).
+    const twoAgentSteps = (id: string): string =>
+      [
+        `id: ${id}`,
+        `name: ${id}`,
+        'version: 1',
+        'steps:',
+        '  a:',
+        '    description: A.',
+        '    execution: agent',
+        '  b:',
+        '    description: B.',
+        '    execution: agent',
+        '',
+      ].join('\n');
+    for (const state of ['held', 'not_held'] as const)
+      it(`a step a realm agent drive holds when the command reaches it (${state}): the waiting line, then the run handed back`, async () => {
+        const yaml = twoAgentSteps(`cw5a-wf-reach-${state}`);
+        let taken = false;
+        mocks.question.mockImplementation(async () => {
+          if (!taken) {
+            // While `a`'s prompt waits, a drive takes `b` under a lease (as realm agent claims).
+            taken = true;
+            const runId = (await runIds(h.home.runStore))[0]!;
+            const answer = await claimStepForDrive(h.home.runStore, runId, 'b', {
+              definition: loadWorkflowFromFile(join(wf, 'workflow.yaml')),
+              registry: createDefaultRegistry(),
+              driver: DRIVE,
+            });
+            if (answer.kind !== 'claimed')
+              throw new Error(`fixture: not claimed: ${JSON.stringify(answer)}`);
+            if (state === 'held') holds.push(answer.hold);
+            else answer.hold.close((await h.home.runStore.get(runId)).record);
+          }
+          return '';
+        });
+        const code = await workflowRun(yaml);
+        // stdout and stderr (the line at the watch's end), in that order.
+        const all = [...logSpy.mock.calls, ...vi.mocked(console.error).mock.calls]
+          .flatMap((c: unknown[]) => String(c[0]).split('\n'))
+          .filter((l: string) => l !== '');
+        const runId = (await runIds(h.home.runStore))[0]!;
+        const since = (await h.home.runStore.get(runId)).record.claims?.['b']?.since;
+        const end = all.find(
+          (l: string) => l.startsWith("• Step 'b' was") && l.includes('the record has not changed'),
+        );
+        // (1) red when the command says it did not run the step (`…; not run here.`), the waiting
+        //     line does not say the lease, or a killed drive's step is handed back with no command
+        //     that frees it; (2) prints the lines.
+        expect(
+          {
+            code,
+            waiting: all.find((l: string) => l.startsWith("  • Step 'b' was")),
+            notRunHere: all.filter((l: string) => l.includes('not run here')),
+            frees: end?.includes(`To free it, run: realm run reclaim ${runId} --step b`) ?? false,
+          },
+          all.join('\n'),
+        ).toEqual({
+          code: 1,
+          waiting: `  • Step 'b' was ${A} at ${since}; ${L[state]}. Waiting up to 1s for the run's record to change.`,
+          notRunHere: [],
+          frees: state === 'not_held',
+        });
+      });
+
     it('the not-run line: another drive takes the step before the engine claims it for the typed answer', async () => {
       const yaml = yamlOf('cw4b-wf-not-run', 'auto');
       const raced = raceTheClaim();

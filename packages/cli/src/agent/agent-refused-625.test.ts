@@ -54,7 +54,7 @@ const TRUST_LINE =
 // decision C179 (round 23): for the agent step whose answer the model gave, the line says the
 // answer was not recorded (it said `not run here`, the line an engine step another process took gets).
 const TAKEN_IN_FLIGHT =
-  "log: • Step 'ask' was taken by a program whose name was not recorded at <since>; this drive's answer was not recorded.";
+  "log: • Step 'ask' is in flight, taken by a program whose name was not recorded since <since>: waiting up to 0s for the run's record to change.";
 const stopLine = (check: string, step = 'ask'): string =>
   `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <run> — or end it: realm run abandon <run>`;
 
@@ -66,13 +66,29 @@ interface Drive {
   store: InMemoryStore;
 }
 
-/** One `realm agent` drive; `answer` is what the counting provider returns, `during` runs inside each call. */
+/**
+ * One `realm agent` drive; `answer` is what the counting provider returns, `during` runs inside each
+ * call. `atClaim` runs once, just before the drive's own claim of its first step reaches the store
+ * (#729 CW-5a: the drive claims before its model is called).
+ */
 async function drive(
   def: WorkflowDefinition,
   answer: Record<string, unknown> = {},
   during?: (store: InMemoryStore) => Promise<void>,
+  atClaim?: (store: InMemoryStore, runId: string) => Promise<void>,
 ): Promise<Drive> {
   const store = new InMemoryStore({ leases: createLeaseDouble() });
+  if (atClaim !== undefined) {
+    const realClaim = store.claimStep.bind(store);
+    let fired = false;
+    store.claimStep = async (...args: Parameters<InMemoryStore['claimStep']>) => {
+      if (!fired) {
+        fired = true;
+        await atClaim(store, args[0]);
+      }
+      return realClaim(...args);
+    };
+  }
   let calls = 0;
   const provider = new (class extends LlmProvider {
     async callStep(): Promise<Record<string, unknown>> {
@@ -261,25 +277,28 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
     const d = await drive(def, {}, async () => {
       def.steps['ask']!.preconditions = ['nothing.ok == true'];
     });
-    // (a) red when the arm prints `✓ → running` (and the loop goes on); (b) prints the screen.
-    expect({ result: d.result, calls: d.calls, tail: d.lines.slice(-2) }).toEqual({
+    // (a) red when the arm prints `✓ → running` (and the loop goes on); #729 CW-5a: red when the
+    //     drive's own held claim is read as another program's (the line then names this drive as
+    //     the holder and the drive waits on it), or the claim is not given back (class (c): the
+    //     give-back line before the reason); (b) prints the screen.
+    expect({ result: d.result, calls: d.calls, tail: d.lines.slice(-3) }).toEqual({
       result: 'failed',
       calls: 1,
-      tail: ['log:   An agent step.', "error: \n✗ Precondition failed for step 'ask'."],
+      tail: [
+        'log:   An agent step.',
+        "log: • Step 'ask': this drive let its claim go (the engine refused the step's result), so the step can run again.",
+        "error: \n✗ Precondition failed for step 'ask'.",
+      ],
     });
     expect(d.lines.filter((l) => l.includes('✓'))).toEqual([]);
   });
 
-  it('a step another process took between this drive’s read and the engine’s: said as taken, never ✓', async () => {
-    // `more` keeps the run live after `ask` settles (on a run the other process ENDED, the engine's
-    // reply is `ok` "already terminal; no steps executed" — not a blocked reply; see the report).
+  it('a step another process completed between this drive’s read and its claim: never asked, never ✓, the drive goes on', async () => {
+    // #729 CW-5a (claim-after cell rewritten): the drive claims `ask` before its model is called, so
+    // the other process's completion lands at that claim, not during the call. `more` keeps the run
+    // live after `ask` settles.
     const def = wf({ ask: agent(), more: agent({}, ['ask']) });
-    let once = false;
-    const d = await drive(def, {}, async (store) => {
-      // Another process completes `ask` while this drive's model answers (the first call only).
-      if (once) return;
-      once = true;
-      const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
+    const d = await drive(def, {}, undefined, async (store, runId) => {
       const r = await executeStep(store, def, {
         runId,
         command: 'ask',
@@ -288,51 +307,49 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
       });
       expect(r.status).toBe('ok');
     });
-    // (a) red when the not-eligible reply of a taken step prints `✓` or stops the drive; (b) prints
-    // the result and the lines after the attempt.
-    const after = d.lines.slice(d.lines.indexOf('log: \n→ [agent] ask') + 2);
-    expect({ result: d.result, calls: d.calls, taken: after[0], next: after[1] }).toEqual({
-      result: 'completed',
-      calls: 2,
-      taken:
-        "log: • Step 'ask' was taken by another process, whose claim is no longer on the record, and completed; this drive's answer was not recorded.",
-      next: 'log: \n→ [agent] more',
-    });
-    expect(d.lines.filter((l) => l.startsWith('log:   ✓')).length).toBe(1);
-  });
-
-  it('the member "in flight": another process claimed the step and has not settled it — said as taken, never ✓', async () => {
-    const def = wf({ ask: agent(), more: agent({}, ['ask']) });
-    let once = false;
-    const d = await drive(def, {}, async (store) => {
-      if (once) return;
-      once = true;
-      const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
-      await store.claimStep(runId, 'ask', def);
-    });
-    // (a) red when the in-flight member is dropped (the reply then prints its hint and stops);
-    // (b) prints the line after the attempt and the result.
-    const after = d.lines.slice(d.lines.indexOf('log: \n→ [agent] ask') + 2);
+    // (a) red when the claim the other process's completion refused asks the model for `ask`, prints
+    //     `✓` for it, or stops the drive; (b) prints the result, the calls and the agent lines.
     expect({
       result: d.result,
       calls: d.calls,
-      taken: after[0]?.replace(/ at \S+Z;/, ' at <since>;'),
+      agentLines: d.lines.filter((l) => l.includes('→ [agent]')),
+      ticks: d.lines.filter((l) => l.startsWith('log:   ✓')).length,
+    }).toEqual({
+      result: 'completed',
+      calls: 1,
+      agentLines: ['log: \n→ [agent] more'],
+      ticks: 1,
+    });
+  });
+
+  it('the member "in flight": another process claimed the step at this drive’s claim and has not settled it — the waiting line, never asked, never ✓', async () => {
+    // #729 CW-5a (claim-after cell rewritten; class (d)): the other process's claim lands at this
+    // drive's own, before its model is called, so the drive waits on it instead.
+    const def = wf({ ask: agent(), more: agent({}, ['ask']) });
+    const d = await drive(def, {}, undefined, async (store, runId) => {
+      await store.claimStep(runId, 'ask', def);
+    });
+    // (a) red when the drive's claim does not answer `held_by` (it then asks the model, or stops on
+    //     a refusal); (b) prints the result, the calls and the waiting line.
+    expect({
+      result: d.result,
+      calls: d.calls,
+      waiting: d.lines
+        .find((l) => l.includes('Waiting up to') || l.includes('waiting up to'))
+        ?.replace(/ since \S+Z:/, ' since <since>:'),
     }).toEqual({
       result: 'failed',
-      calls: 1,
-      taken: TAKEN_IN_FLIGHT,
+      calls: 0,
+      waiting: TAKEN_IN_FLIGHT,
     });
     expect(d.lines.filter((l) => l.includes('✓'))).toEqual([]);
   });
 
-  it('the member "failed": another process ran the step and it failed — said as taken, never ✓', async () => {
+  it('the member "failed": another process ran the step at this drive’s claim and it failed — never asked, never ✓, the drive goes on', async () => {
+    // #729 CW-5a (claim-after cell rewritten): the other process's run lands at this drive's claim.
     // `side` keeps the run live after `ask` fails.
     const def = wf({ ask: agent(), side: agent() });
-    let once = false;
-    const d = await drive(def, {}, async (store) => {
-      if (once) return;
-      once = true;
-      const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
+    const d = await drive(def, {}, undefined, async (store, runId) => {
       const r = await executeStep(store, def, {
         runId,
         command: 'ask',
@@ -343,12 +360,13 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
       });
       expect(r.status).toBe('error');
     });
-    const after = d.lines.slice(d.lines.indexOf('log: \n→ [agent] ask') + 2);
-    expect({ calls: d.calls, taken: after[0], next: after[1] }).toEqual({
-      calls: 2,
-      taken:
-        "log: • Step 'ask' was taken by another process, whose claim is no longer on the record, and failed; this drive's answer was not recorded.",
-      next: 'log: \n→ [agent] side',
+    // (a) red when the refused claim asks the model for `ask`; (b) prints the calls and agent lines.
+    expect({
+      calls: d.calls,
+      agentLines: d.lines.filter((l) => l.includes('→ [agent]')),
+    }).toEqual({
+      calls: 1,
+      agentLines: ['log: \n→ [agent] side'],
     });
     expect((await d.store.get(d.runId)).record.failed_steps).toEqual(['ask']);
   });
