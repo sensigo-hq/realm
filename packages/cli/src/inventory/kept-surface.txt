@@ -251,6 +251,7 @@ realm workflow watch --ratio — option, takes a value
 exit code 0 — success; also `--help` and `--version`
 exit code 1 — a failure of any kind, a usage error included (an unknown command or flag, a missing argument or value)
 exit code 2 — `realm run migrate --detailed-exitcode` only: it succeeded, and a finished run is left whose ending cannot be worked out or whose record disagrees with its stored ending
+exit site cli/src/agent/run-agent.ts — 1 call with a computed code
 exit site cli/src/commands/agent.ts — 1 call with a computed code
 exit site cli/src/commands/run-advance.ts — 1 call with a computed code
 exit site cli/src/commands/run-import.ts — 1 call with a computed code

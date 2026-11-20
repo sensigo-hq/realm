@@ -128,7 +128,7 @@ describe('#729 CW-5b — the take-back’s words', () => {
     // and says how to name it": check 7. "only a program calling `claimStepForDrive` (`@beta`) makes
     // such a claim": no production file calls it (claim-lease-witness-cw1's DRIVE_ENTRY_CALLERS).
     claimChangelog(
-      "- **`realm agent` takes back, once, a step whose claim's lease no program holds.** When the agent step `realm agent` waits on was taken under a lease that no program holds any more (for example, because its drive was killed), `realm agent` takes it back and runs it, saying so first, instead of waiting 60 s and stopping. It does this once per step until a person reclaims it. After that, it stops and prints the reclaim command with its conditions. A drive with no program name takes nothing back and says how to name it. Until `realm agent` claims under a lease itself, only a program calling `claimStepForDrive` (`@beta`) makes such a claim. (#729)",
+      "- **`realm agent` takes back, once, a step whose claim's lease no program holds.** When the agent step `realm agent` waits on was taken under a lease that no program holds any more (for example, because its drive was killed), `realm agent` takes it back and runs it, saying so first, instead of waiting 60 s and stopping. It does this once per step until a person reclaims it. After that, it stops and prints the reclaim command with its conditions. A drive with no program name takes nothing back and says how to name it. `realm agent` now claims under a lease itself (the line below). (#729)",
     );
     // mcp-server's reclaim-not-attempt-cw5b and take-back-watch-cw5b check 8.
     claimChangelog(

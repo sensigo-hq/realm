@@ -485,13 +485,16 @@ describe('#922 P2-1 — check 8, walk O1: the past line on an elsewhere entry an
 describe('#922 P2-1 — check 9, the protocol texts', () => {
   it('report_to_user and await name the held step past its deadline', () => {
     const text = generateProtocol(workflow('p21-c9', { a: agent() })).error_handling;
+    // #729 CW-5a: and the lease's two cases, now every `realm agent` drive's claim names a lease —
+    // not held reads as past its deadline (report_to_user), held is waited on: their replies are
+    // held-lease-cw3a's cells (a claim taken through claimStepForDrive, as realm agent takes it).
     // (a) red when either text is the old one; (b) prints which is found.
     expect({
       report: text['report_to_user']?.includes(
-        'It also comes on an `ok` reply when nothing can be called and only a person can change that: a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or every step it waits on is held by a claim whose deadline has passed (a person can free each one) — tell the user.',
+        'It also comes on an `ok` reply when nothing can be called and only a person can change that: a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or every step it waits on is held by a claim whose deadline has passed, or whose lease no program held when it was checked (a person can free each one) — tell the user.',
       ),
       await: text['await']?.endsWith(
-        "A step whose claim's deadline has passed is never waited on: it never sets until, and when every step a reply waits on is past its deadline, the reply says report_to_user.",
+        "A step whose claim's deadline has passed, or whose claim's lease no program held when it was checked, is never waited on: it never sets until, and when every step a reply waits on is so, the reply says report_to_user. A step whose claim's lease its program held is waited on.",
       ),
     }).toEqual({ report: true, await: true });
   });
@@ -609,7 +612,7 @@ describe('#922 P2-1 — check 10, rule 10: no liveness verdict', () => {
     claim('glossary.md', "such as a step whose claim's deadline has passed.");
     claim(
       'mcp/run-state-and-health.md',
-      'A step was started, did not finish, and is past its time. |',
+      "A step was started, did not finish, and is past its time, or no program held its claim's lease when it was checked (added after version 0.50.0). |",
     );
     // (a) red when one of these pages calls a holder dead or gone again; (b) prints the page and
     //     the matching words.

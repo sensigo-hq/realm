@@ -334,7 +334,12 @@ it('CONTROL: the DRIVEN step claimed but did not save — its calls ARE attached
   // the calls were never saved. A version test would drop them here; the content test keeps them.
   const run = await driveContext(snapshotFailingStore(1));
   expect(run.completed_steps).toEqual([]);
-  expect(run.in_progress_steps).toEqual(['draft']);
+  // #729 CW-5a (class (a)): after the throw the drive gives back the claim it took before its model
+  // call (item 3), after chokepoint 3's entry, so the step is no longer in progress.
+  expect({ inProgress: run.in_progress_steps, claim: run.claims?.['draft'] }).toEqual({
+    inProgress: [],
+    claim: undefined,
+  });
   const entry = run.drive_failures!.entries[0]!;
   expect(entry.usage?.map((r) => r.prompt_tokens)).toEqual([1234]);
 });

@@ -80,9 +80,11 @@ describe('#625 PR-2a — the realm agent loop', () => {
     const out = logSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
     const since = (await store.get(run.id)).record.claims?.['review']?.since;
+    // #729 CW-5a (class (d)): the drive claims before its model is called, so the step another
+    // process took at that claim gets the waiting line, and the model is never asked.
+    expect({ calls: provider.callStep.mock.calls.length, out }).toMatchObject({ calls: 0 });
     expect(out).toContain(
-      // decision C179 (round 23): the agent step the model answered says its answer was not recorded.
-      `• Step 'review' was taken by other@host (from the OS user, via agent) at ${since}; this drive's answer was not recorded.`,
+      `• Step 'review' is in flight, taken by other@host (from the OS user, via agent) since ${since}: waiting up to 0s for the run's record to change.`,
     );
     expect(out).not.toContain('✓ → running');
   });
