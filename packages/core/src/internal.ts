@@ -262,6 +262,8 @@ export {
   stopAbout,
   renderDefinitionAbsent,
   readSupplier,
+  // Q1 (#592) unit a: a failed step's words, as its entry records them.
+  readFailureWords,
   cannotGoOnFrom,
   cannotGoOnUntilCorrected,
   LIBRARY_WORDS,
@@ -301,6 +303,7 @@ export {
   leaseClause,
 } from './engine/ways.js';
 export type { UncheckedLease, LeaseWordsInput } from './engine/ways.js';
+export type { FailureWordField, FailureWordsAbsentCause, FailureWordsRead } from './engine/ways.js';
 export type {
   Party,
   Slot,

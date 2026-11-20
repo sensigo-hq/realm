@@ -79,7 +79,10 @@ import {
  * back exactly as written, its marker too, and one written without it reads back without; a listing
  * leaves the texts out at every ring position, and lists a run with no drive failures, or an empty
  * ring, as `get` reads it (its listing cases are skipped for a store with no `scanListed`). It also
- * extends `LISTING_LEAVES_MODEL_TEXT`'s write-back cases to a drive failure's text.
+ * extends `LISTING_LEAVES_MODEL_TEXT`'s write-back cases to a drive failure's text. Q1 (#592) unit a
+ * adds `EVIDENCE_KEEPS_FAILURE_WORDS`: an evidence entry's `error_code`, `error_category`,
+ * `agent_action` and `stop_reason` read back unchanged, and an entry written without them reads back
+ * without them, never with a word the store made up.
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -103,6 +106,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'LISTING_LEAVES_MODEL_TEXT',
   'EVIDENCE_KEEPS_MODEL_TEXT',
   'DRIVE_FAILURE_KEEPS_MODEL_TEXT',
+  'EVIDENCE_KEEPS_FAILURE_WORDS',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -2135,6 +2139,67 @@ export function runStoreFidelityContract(
       },
     ),
   );
+
+  // Q1 (#592) unit a — EVIDENCE_KEEPS_FAILURE_WORDS. Always active: every store round-trips evidence.
+  // A failed attempt's four words read back exactly as written; an entry written without them reads
+  // back without them — a store never makes a word up (an older entry's absence is its reader's cue).
+  cases.push({
+    law: 'EVIDENCE_KEEPS_FAILURE_WORDS',
+    name: 'an entry written with error_code, error_category, agent_action and stop_reason reads back with all four unchanged, and one written without them reads back without them',
+    run: async () => {
+      const { record: run } = await adapter.store.create({
+        workflowId: `tck-failure-words-${Math.random().toString(36).slice(2)}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const base: EvidenceSnapshot = {
+        step_id: adapter.stepName,
+        started_at: '2026-01-01T00:00:00.000Z',
+        completed_at: '2026-01-01T00:00:01.000Z',
+        duration_ms: 1,
+        input_summary: {},
+        output_summary: {},
+        status: 'error',
+        error: 'tck failure',
+        evidence_hash: 'tck-failure-words',
+      };
+      const words = {
+        error_code: 'STEP_TIMEOUT',
+        error_category: 'ENGINE',
+        agent_action: 'report_to_user',
+        stop_reason: 'total_timeout',
+      } as const satisfies Pick<
+        EvidenceSnapshot,
+        'error_code' | 'error_category' | 'agent_action' | 'stop_reason'
+      >;
+      await adapter.store.update({
+        ...run,
+        evidence: [{ ...base, ...words }, { ...base }],
+      });
+      const { record: reread } = await adapter.store.get(run.id);
+      const pick = (e: EvidenceSnapshot | undefined) =>
+        Object.fromEntries(
+          (['error_code', 'error_category', 'agent_action', 'stop_reason'] as const)
+            .filter((k) => e !== undefined && k in e)
+            .map((k) => [k, e![k]]),
+        );
+      const wrote = JSON.stringify(words);
+      const read = JSON.stringify(pick(reread.evidence[0]));
+      if (read !== wrote) {
+        throw new Error(
+          `EVIDENCE_KEEPS_FAILURE_WORDS: a store must round-trip a failed entry's four words: wrote ` +
+            `${wrote}, read back ${read}`,
+        );
+      }
+      const without = JSON.stringify(pick(reread.evidence[1]));
+      if (without !== '{}') {
+        throw new Error(
+          `EVIDENCE_KEEPS_FAILURE_WORDS: an entry written without the four words must read back ` +
+            `without them; read back ${without}`,
+        );
+      }
+    },
+  });
 
   cases.push({
     law: 'STORE_RELEASE_LINE_TRUE',

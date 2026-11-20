@@ -1249,6 +1249,10 @@ EvidenceSnapshot · type · public
       effective_timeout_seconds?: number;
       clipped_to_ms?: number;
       exhausted_by?: 'attempts' | 'total_timeout';
+      error_code?: ErrorCode;
+      error_category?: ErrorCategory;
+      agent_action?: AgentAction;
+      stop_reason?: 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
   }
 
 ExecuteChainOptions · type · public (beta: heldClaim)
@@ -1587,6 +1591,9 @@ FailedAttemptStore · type · public
       read(runId: string): Promise<FailedAttemptReadResult>;
   }
 
+FailureWordField · type · internal
+FailureWordsAbsentCause · type · internal
+FailureWordsRead · type · internal
 FencePredicate · type · public
   type FencePredicate = {
       kind: 'step_open_for_trace';
@@ -4666,6 +4673,7 @@ quotedNames · value · internal
 raceClausesOf · value · internal
 readAttributed · value · internal
 readDrivenBy · value · internal
+readFailureWords · value · internal
 readGateClaimVerdict · value · internal
 readIfExists · value · internal
 readInstant · value · internal

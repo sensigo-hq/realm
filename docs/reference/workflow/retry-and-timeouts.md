@@ -126,7 +126,7 @@ The longest all attempts may take together, counting the waits between them. Whe
 STEP_RETRY_EXHAUSTED: Step 'fetch' failed after 2 attempts
 ```
 
-That step had `max_attempts: 5`, a wait of 600 ms, and `total_timeout_seconds: 1`. It stopped after two attempts, because a third could not start within the second. The run's record marks the last attempt with `"exhausted_by": "total_timeout"`.
+That step had `max_attempts: 5`, a wait of 600 ms, and `total_timeout_seconds: 1`. It stopped after two attempts, because a third could not start within the second. The run's record marks the last attempt with `"exhausted_by": "total_timeout"` and, after version 0.50.0, `"stop_reason": "total_timeout"`.
 
 Each attempt is also cut to the time that is left. In the same record, the second attempt has `"clipped_to_ms": 397`: it was given 397 ms, not its full timeout.
 
