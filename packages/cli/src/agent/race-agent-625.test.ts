@@ -127,12 +127,14 @@ async function drive(def: WorkflowDefinition, h: Hooks = {}) {
   }
   if (h.claim !== undefined) {
     const original = store.claimStep.bind(store);
-    store.claimStep = async (id, step, d, by) => {
+    // #729 CW-5a: every argument passes through, the drive's lease (the fifth) included.
+    store.claimStep = async (...a: Parameters<InMemoryStore['claimStep']>) => {
+      const [id, step] = a;
       if (step === h.claim!.step && !fired) {
         const thrown = await once(() => h.claim!.act(store, id));
         if (thrown instanceof WorkflowError) throw thrown;
       }
-      return original(id, step, d, by);
+      return original(...a);
     };
   }
   let handlerRuns = 0;
@@ -277,31 +279,33 @@ describe(
       });
     });
 
-    it('row 7: another process ends the run at the drive’s claim (STATE_STEP_NOT_ELIGIBLE) — the run-ended line, no `✗`', async () => {
+    it('row 7: another process ends the run at the drive’s claim — no model call, no `✗`, the run’s end said once', async () => {
       const d = await drive(WRITE, {
         claim: {
           step: 'write',
           act: (store, id) => abandonRun(store, id, 'another program').then(() => undefined),
         },
       });
-      // (a) red when the claim's refusal prints `✗ Step 'write' failed: … not eligible …`; (b) prints
-      //     the lines.
+      // #729 CW-5a (claim-after cell rewritten): the drive claims before its model is called, so the
+      // run ends before the drive has an answer: no not-recorded line, only the run's end.
+      // (a) red when the claim's refusal prints `✗ Step 'write' failed: … not eligible …`, or the
+      //     model is asked; (b) prints the lines.
       expect({
         fired: d.fired,
+        calls: d.calls,
         ended: d.lines.filter((l) => l.includes('the run ended (abandoned) before')),
         failed: d.lines.filter((l) => l.includes('✗')),
         end: d.lines.filter((l) => l.includes('Run ended in phase')),
       }).toEqual({
         fired: true,
-        ended: [
-          "log: • Step 'write' was not run: the run ended (abandoned) before this drive's answer reached it; the answer was not recorded.",
-        ],
+        calls: 0,
+        ended: [],
         failed: [],
         end: ['error: \nRun ended in phase: abandoned'],
       });
     });
 
-    it('row 8: another process opens a question at the drive’s claim — no `✗`; the drive waits at the question, then asks again', async () => {
+    it('row 8: another process opens a question at the drive’s claim — no `✗`; the drive waits at the question, then asks (once)', async () => {
       const def = wf('race-agent-q', {
         write: agent(),
         ask: agent({
@@ -330,6 +334,8 @@ describe(
           await submitHumanResponse(store, def, { runId: id, gateId: gate.gate_id, choice: 'ok' });
         },
       });
+      // #729 CW-5a (claim-after cell rewritten): the claim comes before the model call, so the
+      // question opens before the model is asked: one call, after the question.
       // (a) red when the claim's refusal prints `✗ Step 'write' failed: …` and stops the drive;
       //     (b) prints the result, the model calls and any `✗` line.
       expect({
@@ -338,13 +344,15 @@ describe(
         calls: d.calls,
         failed: d.lines.filter((l) => l.includes('✗')),
         gate: d.lines.some((l) => l.includes('⏸  Gate: ask')),
-      }).toEqual({ fired: true, result: 'completed', calls: 2, failed: [], gate: true });
+      }).toEqual({ fired: true, result: 'completed', calls: 1, failed: [], gate: true });
     });
 
-    it('row 9: the claim’s re-check refuses with nothing on the record to say why — no `✗`; the drive goes on and asks again', async () => {
+    it('row 9: the claim’s re-check refuses with nothing on the record to say why — no `✗`; the drive goes on and asks (once)', async () => {
       const d = await drive(WRITE, {
         claim: { step: 'write', act: async () => notEligible('write') },
       });
+      // #729 CW-5a (claim-after cell rewritten): the refusal lands at the claim, before the model
+      // call: the drive claims again on its next pass and asks once.
       // (a) red when the refusal prints `✗ Step 'write' failed: …` and stops the drive; (b) prints
       //     the result, the calls and any `✗` line.
       expect({
@@ -352,7 +360,7 @@ describe(
         result: d.result,
         calls: d.calls,
         failed: d.lines.filter((l) => l.includes('✗')),
-      }).toEqual({ fired: true, result: 'completed', calls: 2, failed: [] });
+      }).toEqual({ fired: true, result: 'completed', calls: 1, failed: [] });
     });
 
     it('row 2d: a precondition the engine’s own read refuses (preservation) — the reply’s reason, and the drive stops', async () => {

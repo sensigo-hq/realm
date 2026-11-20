@@ -1,7 +1,7 @@
 // drive-claim.ts — issue #729, the claim window, unit CW-2a (design record C5 §4.3): the two engine
 // entries a drive uses to take a step's claim under a lease it holds, before the step's paid work
-// starts, and to give that claim back without settling the step. No Realm command calls them yet
-// (CW-5's `realm agent` will).
+// starts, and to give that claim back without settling the step. `realm agent` calls them for every
+// agent step it drives (CW-5a).
 //
 // `claimStepForDrive` judges the step as `executeChain` does — `admitWay('run_step')` on the loaded
 // run, then the store's own `claimStep`, re-judging a fresh read when the store refuses the claim — and

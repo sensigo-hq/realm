@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, createLeaseDouble } from '@sensigo/realm-testing';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
@@ -138,7 +138,8 @@ async function drive(
   provider: LlmProvider,
   extra: Partial<AgentDeps> & { store?: InMemoryStore } = {},
 ): Promise<{ result: unknown; run: RunRecord }> {
-  const store = extra.store ?? new InMemoryStore();
+  // #729 CW-5a: the store has the lease double, as every CLI drive's store has a lease port.
+  const store = extra.store ?? new InMemoryStore({ leases: createLeaseDouble() });
   const { record } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
   const result = await runAgent(
     {

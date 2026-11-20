@@ -2818,12 +2818,14 @@ Names this job reaches whose entry is on another page.
 - [`CallbackItem`](implement-a-store.md#callbackitem): A row ready to send, as `due` returns it: for the sender only, never rendered.
 - [`CallbackKeyDeleteResult`](implement-a-store.md#callbackkeydeleteresult): What `delete` answers: whether the pair had a current key, readable or not.
 - [`CallbackKeyEndResult`](implement-a-store.md#callbackkeyendresult): What `endPrevious` answers: whether a live previous was there to remove.
+- [`CallbackKeyListing`](implement-a-store.md#callbackkeylisting): One (workflow, host) of a store's listing (`list`), with its live slots.
 - [`CallbackKeyMakeResult`](implement-a-store.md#callbackkeymakeresult): What `make` answers: the current key, and whether this call wrote it.
 - [`CallbackKeyPair`](implement-a-store.md#callbackkeypair): The keys of one (workflow, host).
 - [`CallbackKeyReplaceResult`](implement-a-store.md#callbackkeyreplaceresult): What `replace` answers: the new current key, or why it wrote nothing.
 - [`CallbackKeyRotateRequest`](implement-a-store.md#callbackkeyrotaterequest): A rotation: the new key's text, how long the old key stays as the previous (1–604,800 seconds), and whether a live previous may be dropped to make room.
 - [`CallbackKeyRotateResult`](implement-a-store.md#callbackkeyrotateresult): What `rotate` answers: the pair it wrote, or why it wrote nothing.
 - [`CallbackKeySlot`](implement-a-store.md#callbackkeyslot): One slot of a pair, as the store holds it.
+- [`CallbackKeySlotInfo`](implement-a-store.md#callbackkeyslotinfo): One slot as `list` gives it: what `read` answers, without the key's text.
 - [`CallbackKeySlotName`](implement-a-store.md#callbackkeyslotname): The name of a slot: `current` signs; `previous` is the key a rotation replaced, kept for a while.
 - [`CallbackKeyStore`](implement-a-store.md#callbackkeystore): The signing keys of a callback store (`CallbackStore.keys`): for each (workflow, host), a current key and, for a while after a rotation, a previous one.
 - [`CallbackLastStatus`](implement-a-store.md#callbacklaststatus): The last answer a try got: an HTTP status (100–599), or a word for a try that got none.

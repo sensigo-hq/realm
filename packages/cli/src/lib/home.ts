@@ -13,6 +13,7 @@ import {
 } from '@sensigo/realm';
 import {
   openRealmHome,
+  type CallbackKeySealer,
   type PurgeReport,
   type PurgeSelection,
   type RealmHome,
@@ -61,18 +62,21 @@ export interface CliHome {
  *   another clock rejects. `close()` ends the handle for every caller; a second `close()` does
  *   nothing.
  * - `clock` is for tests, never a flag or a setting.
+ * - `sealer` (callback K2a-1) seals the home's callback signing keys; without one every key reads
+ *   `unreadable`. A second call with another sealer, on a home still open, rejects.
  * Every refusal is a rejected promise. Every `realm` command opens its stores through this door; the
  * only other opens in the CLI's source are the maintenance handle of `realm db backup` / `realm db
  * migrate` (`openRealmHomeForMaintenance`, the verbs that act on the store file) — the opener scan in
  * `store-door-616.test.ts` names them and no other.
  */
 export async function openCliHome(
-  options: { home?: string; clock?: Clock } = {},
+  options: { home?: string; clock?: Clock; sealer?: CallbackKeySealer } = {},
 ): Promise<CliHome> {
   const path = realmHomePath(options.home);
   const realmHome = await openRealmHome({
     home: path,
     ...(options.clock !== undefined ? { clock: options.clock } : {}),
+    ...(options.sealer !== undefined ? { sealer: options.sealer } : {}),
   });
   // The store's clock is the home's clock file when one exists; on a test clock the run store says
   // so once on stderr (#715 (b)). On any other clock the wrap returns the store itself.

@@ -170,7 +170,7 @@ describe('#729 PR-0 — T-22 on W2’s workflow: an ok reply on a run that canno
 
   it('the protocol’s report_to_user sentence, claim by claim, on the reply that produces it', async () => {
     const sentence =
-      'It also comes on an `ok` reply when nothing can be called and only a person can change that: a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or every step it waits on is held by a claim whose deadline has passed (a person can free each one) — tell the user.';
+      'It also comes on an `ok` reply when nothing can be called and only a person can change that: a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or every step it waits on is held by a claim whose deadline has passed, or whose lease no program held when it was checked (a person can free each one) — tell the user.';
     // (a) red when the protocol drops the sentence; (b) prints whether it is there.
     expect(generateProtocol(W2).error_handling['report_to_user']?.includes(sentence)).toBe(true);
     const h = await connect();

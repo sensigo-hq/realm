@@ -13,12 +13,13 @@
 // The store re-implements no rule of the keys: each method checks the request (core's
 // `checkCallbackKeyRequest`) before its transaction, so a malformed one takes no reading. Then ONE
 // write transaction reads the pair's rows, unseals each, calls core's pure decider with the
-// transaction's one reading, and writes the slots it returns, sealing each key it writes. `read` is
-// one read transaction with its one reading; `delete` takes none.
+// transaction's one reading, and writes the slots it returns, sealing each key it writes. `read` and
+// `list` (callback K2a-1) are each one read transaction with its one reading; `delete` takes none.
 import { isDeepStrictEqual } from 'node:util';
 import {
   brandClass,
   callbackKeyFingerprint,
+  callbackKeyListingAt,
   callbackKeyPairAt,
   checkCallbackKeyRequest,
   decideCallbackKeyEndPrevious,
@@ -28,6 +29,7 @@ import {
   type CallbackKeyDecision,
   type CallbackKeyDeleteResult,
   type CallbackKeyEndResult,
+  type CallbackKeyListing,
   type CallbackKeyMakeResult,
   type CallbackKeyPair,
   type CallbackKeyReplaceResult,
@@ -255,6 +257,37 @@ export class SqliteCallbackKeys implements CallbackKeyStore {
     return this.#decide(workflowId, host, (pair, at) =>
       decideCallbackKeyReplace(pair, candidate, at),
     );
+  }
+
+  /**
+   * Every pair with a live slot (core's `callbackKeyListingAt`), in one read transaction with its one
+   * reading. The rows come in UTF-8 byte order: the columns' BINARY collation, on a UTF-8 file.
+   */
+  async list(): Promise<readonly CallbackKeyListing[]> {
+    const sealer = this.#db.sealer;
+    return this.#db.snapshot((db, reading) => {
+      const listing: CallbackKeyListing[] = [];
+      const rows = db
+        .prepare(
+          'SELECT workflow_id, host, slot, sealed, key_fp, master_fp, created_at, expires_at ' +
+            'FROM callback_keys ORDER BY workflow_id, host',
+        )
+        .all();
+      for (let i = 0; i < rows.length;) {
+        const workflowId = String(rows[i]!['workflow_id']);
+        const host = String(rows[i]!['host']);
+        const pair: { current?: CallbackKeySlot; previous?: CallbackKeySlot } = {};
+        for (; i < rows.length; i += 1) {
+          const row = rows[i]!;
+          if (row['workflow_id'] !== workflowId || row['host'] !== host) break;
+          const slot = slotOf(row, sealer, workflowId, host);
+          if (slot.slot === 'current' || slot.slot === 'previous') pair[slot.slot] = slot;
+        }
+        const entry = callbackKeyListingAt(workflowId, host, pair, reading);
+        if (entry !== undefined) listing.push(entry);
+      }
+      return listing;
+    });
   }
 
   /** Removes both slots of the pair, in one write that takes no reading. */

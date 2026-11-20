@@ -50,6 +50,14 @@ import { openDatabase, type DatabaseLike } from './driver.js';
 /** The folder in a Realm home that holds the claim leases (framework row 25: one of Realm's own names). */
 export const CLAIM_LEASES_FOLDER = 'claim-leases';
 
+/**
+ * #729 CW-5a: where the claim leases of the Realm home at `home` are kept (the entry exports it, so a
+ * command can name the folder without spelling it).
+ */
+export function claimLeasesFolder(home: string): string {
+  return join(home, CLAIM_LEASES_FOLDER);
+}
+
 /** A lease file's name ends with this; what comes before it is the lease's id. */
 export const LEASE_FILE_SUFFIX = '.lease';
 
@@ -315,7 +323,7 @@ async function probeLease(folder: string, id: string): Promise<LeaseFact> {
  * `hold()` and `probe()` never reject.
  */
 export function createLeasePort(home: string, seams: LeaseSeams = {}): LeasePort {
-  const folder = join(home, CLAIM_LEASES_FOLDER);
+  const folder = claimLeasesFolder(home);
   return {
     hold: () => {
       try {
