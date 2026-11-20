@@ -448,19 +448,29 @@ describe('Q1 (#592) unit a — check 3: the cross cells', () => {
     });
   });
 
-  it('the not-registered carve-out: the entry keeps the inner action (stop); the step settles recoverably as today', async () => {
+  it('the not-registered carve-out: the entry keeps the inner action (stop), on the record as on the reply; the step settles recoverably as today', async () => {
     const { stored, reply } = await run(
       oneStep({ handler: 'missing', retry: { max_attempts: 1 } }),
       async () => ({}),
       new ExtensionRegistry(),
     );
     const replyEntry = reply.evidence.filter((e) => e.step_id === 'work').at(-1);
-    // (a) red when the wrap's line reaches the carve-out, or the step is failed; (b) prints them.
+    const storedEntry = entriesOf(stored, 'work').at(-1);
+    // (a) red when the wrap's line reaches the carve-out, the record's entry does not carry the
+    //     words (the hand-back writes it to the record), or the step is failed; (b) prints the
+    //     record's entry's words, the reply's and whether the step failed.
     expect({
-      entry: [replyEntry?.error_code, replyEntry?.agent_action, replyEntry?.stop_reason],
+      record: [
+        storedEntry?.error_code,
+        storedEntry?.agent_action,
+        storedEntry?.stop_reason,
+        storedEntry?.exhausted_by,
+      ],
+      reply: [replyEntry?.error_code, replyEntry?.agent_action, replyEntry?.stop_reason],
       failed: stored.failed_steps.includes('work'),
     }).toEqual({
-      entry: ['ENGINE_HANDLER_NOT_REGISTERED', 'stop', 'non_retryable'],
+      record: ['ENGINE_HANDLER_NOT_REGISTERED', 'stop', 'non_retryable', 'attempts'],
+      reply: ['ENGINE_HANDLER_NOT_REGISTERED', 'stop', 'non_retryable'],
       failed: false,
     });
   });

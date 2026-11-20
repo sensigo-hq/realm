@@ -1250,9 +1250,11 @@ export interface EvidenceSnapshot {
    */
   agent_action?: AgentAction;
   /**
-   * On the last entry of a step that failed: why Realm stopped retrying — `no_retry_policy` (the
-   * step has no `retry` block), `total_timeout` (its `total_timeout_seconds` ran out),
-   * `non_retryable` (the error is not retried), or `attempts` (its `max_attempts` were used).
+   * On the last entry of a step that failed, and on the entry of a step handed back because this
+   * runner has no handler or adapter for it (the step is not failed): why Realm stopped retrying —
+   * `no_retry_policy` (the step has no `retry` block), `total_timeout` (its `total_timeout_seconds`
+   * ran out), `non_retryable` (the error is not retried), or `attempts` (its `max_attempts` were
+   * used).
    */
   stop_reason?: 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
 }
