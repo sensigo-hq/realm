@@ -46,13 +46,24 @@ const LINE =
   "Or let realm agent --run-id <run> --provider <provider> --model <model> take it back and run it (this step's one automatic take-back until a person reclaims it).";
 const SCREENS = `For an agent step that \`realm agent\` has not taken back since a person last reclaimed it, the lines end with \`${LINE}\` (added after version 0.50.0).`;
 
+/** The dry run's and inspect's form, which names the lease (#1269's wording slips). */
+const SCREENS_LEASE = `For an agent step whose claim's lease no program held, and which \`realm agent\` has not taken back since a person last reclaimed it, the lines end with \`${LINE}\` (added after version 0.50.0).`;
+
 describe('#729 CW-5c — the screens', () => {
   it('realm-run-acting.md (advance, the dry run) and realm-run-reading.md (inspect): the line, after the not-held lead', () => {
     // below-cap-words-cw5c check 2: advance (both places), the dry run and inspect, below the cap the
     // line and at the cap today's words; held-lease-cw3a check 2 (advance and the dry run); check 6
     // (inspect and advance on real leases, the command run as printed).
-    claim('docs/reference/cli/realm-run-acting.md', SCREENS, 2);
-    claim('docs/reference/cli/realm-run-reading.md', SCREENS);
+    // advance (:223) says it after the not-held lead; the dry run (:399) and inspect (:182) name the
+    // lease in the sentence itself (MA 2's wording slips on #1269).
+    claim('docs/reference/cli/realm-run-acting.md', SCREENS);
+    claim('docs/reference/cli/realm-run-acting.md', SCREENS_LEASE);
+    claim('docs/reference/cli/realm-run-reading.md', SCREENS_LEASE);
+    // :216: the held line's ending names the sentence for a step whose lease no program held.
+    claim(
+      'docs/reference/cli/realm-run-acting.md',
+      "ending with the command that frees it (for an agent step whose claim's lease no program held, then the `realm agent` sentence below; added after version 0.50.0,",
+    );
   });
 
   it('the line the pages quote, its placeholder filled in, is the line the screens print', async () => {
@@ -101,7 +112,7 @@ describe('#729 CW-5c — realm workflow run and realm agent', () => {
     );
     claim(
       'docs/reference/cli/realm-workflow.md',
-      "and `realm run reclaim <run>` prints its command; for an agent step `realm agent` has not taken back since a person last reclaimed it, the line opens `let realm agent --run-id <run> --provider <provider> --model <model> take '<step>' back, or` (added after version 0.50.0).",
+      "and `realm run reclaim <run>` prints its command; for an agent step whose claim's lease no program held, and which `realm agent` has not taken back since a person last reclaimed it, the line opens `let realm agent --run-id <run> --provider <provider> --model <model> take '<step>' back, or` (added after version 0.50.0).",
     );
   });
 
