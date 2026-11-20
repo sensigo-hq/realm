@@ -226,14 +226,17 @@ function startRelay(deps: RelayDeps): void {
 
   // Every byte of each piped stream through this process's writer (U1's pass, its carry), with the
   // reader paused while the destination cannot take more (inert while the destination is blocking).
-  // #729 CW-5a correction 1: a destination whose reader is gone (`realm agent … | tee log`, the tee
-  // ended by the same Ctrl-C) is written no more, the worker is still read, and the relay ends as the
-  // worker ends. The relay's own lines to it (the drain line, the receipt) are dropped the same way.
-  // Any other write error ends the relay as before.
+  // #729 CW-5a correction 2: once the relay is forwarding a signal (a person's Ctrl-C, which also
+  // ended `… | tee log`), a destination whose reader is gone is written no more, the worker is still
+  // read, and the relay ends as the worker ends, by the signal. The relay's own lines to it (the drain
+  // line, the receipt) are dropped the same way. With no signal received (`… | head -1`), a closed
+  // pipe stays U1b's fatal (R3-M5): exit 1, and the exit hook stops the worker's group. Any other
+  // write error ends the relay as before.
+  const received = new Set<NodeJS.Signals>();
   const relayStream = (source: Readable | null, destination: Writable): void => {
     let gone = false;
     destination.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code !== 'EPIPE') throw err;
+      if (err.code !== 'EPIPE' || received.size === 0) throw err;
       gone = true;
       source?.resume();
     });
@@ -250,7 +253,6 @@ function startRelay(deps: RelayDeps): void {
 
   // S5: signals, as received, to the worker's group; the same signal twice, or 10 s after the first,
   // kills it.
-  const received = new Set<NodeJS.Signals>();
   let killTimer: NodeJS.Timeout | undefined;
   const forward = new Map<NodeJS.Signals, () => void>();
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {

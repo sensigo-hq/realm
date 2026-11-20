@@ -479,6 +479,62 @@ describe('#729 CW-5a correction 1, check 4 — the drive’s output through a pi
   }, 90_000);
 });
 
+describe('#729 CW-5a correction 2, check 3 — SIGHUP through a pipe, as a closing terminal sends it', () => {
+  it('the shell, the relay and tee get SIGHUP: the relay ends by SIGHUP, never exit 1; one model call; the step given back', async () => {
+    const runId = await home();
+    const ready = join(project, 'ready');
+    const calls = join(project, 'calls');
+    const log = join(project, 'drive.log');
+    // The shell traps SIGHUP, so it lives to print how the relay ended (128 + n for a signal's death).
+    // A trapped signal, unlike an ignored one, is reset in the shell's children: the relay and tee
+    // get SIGHUP as at a closing terminal.
+    const pipeline = `${JSON.stringify(process.execPath)} ${JSON.stringify(CLI)} agent --run-id ${runId} --provider-module ./p.mjs | tee -a ${JSON.stringify(log)}`;
+    const bash = spawn(
+      'bash',
+      ['-c', `trap 'echo shell-hup' HUP; ${pipeline}; echo "relay=\${PIPESTATUS[0]}"`],
+      {
+        cwd: project,
+        env: env('drive-b', { CW5A_READY: ready, CW5A_CALLS: calls }),
+        detached: true,
+      },
+    );
+    children.push(bash);
+    let out = '';
+    let err = '';
+    bash.stdout!.on('data', (d: Buffer) => (out += d.toString()));
+    bash.stderr!.on('data', (d: Buffer) => (err += d.toString()));
+    const ended = new Promise<void>((resolve) => bash.on('exit', () => resolve()));
+    await until(() => existsSync(ready));
+    process.kill(-bash.pid!, 'SIGHUP');
+    await Promise.race([ended, new Promise((r) => setTimeout(r, 30_000))]);
+    const run = await record(runId);
+    const callCount = existsSync(calls)
+      ? readFileSync(calls, 'utf8').split('\n').filter(Boolean).length
+      : 0;
+    // (1) red when a closed pipe after the signal is the relay's fatal (it then exits 1, and the
+    //     exit hook's SIGTERM ends the worker), or a stack trace is printed; (2) prints the shell's
+    //     output and errors and the record.
+    expect(
+      {
+        relay: /relay=(\d+)/.exec(out)?.[1],
+        calls: callCount,
+        claim: run.claims?.['s'],
+        inProgress: run.in_progress_steps,
+        completed: run.completed_steps,
+        stack: err.split('\n').filter((l) => /EPIPE|^\s+at /.test(l)),
+      },
+      `stdout:\n${out}\nstderr:\n${err}\nrecord: ${JSON.stringify(run.claims)}`,
+    ).toEqual({
+      relay: '129',
+      calls: 1,
+      claim: undefined,
+      inProgress: [],
+      completed: [],
+      stack: [],
+    });
+  }, 90_000);
+});
+
 describe('#729 CW-5a check 10 — a drive killed during its model call, then the next drive', () => {
   it('A is SIGKILLed during its model call: the next drive prints line (i) after its own claim, and completes the step with one model call', async () => {
     const runId = await home();
