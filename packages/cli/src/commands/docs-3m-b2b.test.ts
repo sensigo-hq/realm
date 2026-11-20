@@ -43,7 +43,7 @@ describe('caching 3-M B2b — realm-agent.md', () => {
   it('the page opening and --provider-module', () => {
     // The count: 17 rows; the one refusal: `prompt-cache-600.test.ts`, G18 and the B2b
     // `--provider-module` cell.
-    claim(AGENT, 'This page lists its 17 flags,');
+    claim(AGENT, 'This page lists its 18 flags,');
     claim(
       AGENT,
       'Cannot be combined with `--provider`, `--model`, `--base-url`, `--strict-base-url`, `--prompt-cache` or `--cache-diagnostics on`.',
@@ -99,7 +99,7 @@ describe('caching 3-M B2b — realm-listen.md', () => {
       LISTEN,
       '| `--cache-diagnostics <on\\|off>` | not passed | Passed to each `realm agent` it starts, only when stated (added after version 0.48.0). An agent that cannot ask (another provider, another address) simply does not. |',
     );
-    claim(LISTEN, 'This page lists its argument and 18 flags (13 in version 0.49.0),');
+    claim(LISTEN, 'This page lists its argument and 19 flags (13 in version 0.49.0),');
   });
 
   it('the parser refusal', () => {
@@ -114,7 +114,7 @@ describe('caching 3-M B2b — realm-listen.md', () => {
     // The same WIRED cell.
     claim(
       LISTEN,
-      '`--llm-timeout`, `--prompt-cache` and `--cache-diagnostics` when `realm listen` was given them',
+      '`--llm-timeout`, `--prompt-cache`, `--cache-diagnostics` and `--no-record-model-text` when `realm listen` was given them',
     );
     claim(
       LISTEN,

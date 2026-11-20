@@ -17,6 +17,7 @@
 // mcp-server) covers `CostView`/`CostFigure`/`AttemptView`/`StepView`/`CostUnrecordedCause` on
 // BOTH `realm run inspect` and `get_run_state`'s `include_steps` — this file's `cache` row proves
 // the segment reaches the screen at all; the composed view's own fields are that guard's job.
+import { createHash } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import type { PriceSource, RunRecord, StepDiagnostics, UsageRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
@@ -259,12 +260,26 @@ const SPLIT_FACTS = {
   prefix_parts: { system: 'b'.repeat(64), prompt: 'a'.repeat(64) },
   request_strict_sent: false,
 };
+/** Gap 1, unit B: the texts the split shape's first request kept, and their digests as sent. */
+const SPLIT_SYSTEM = 'A fake system text for the split shape.';
+const SPLIT_PROMPT = 'A fake prompt.';
+const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 const splitRun = {
   ...(run as unknown as RunRecord),
   id: 'run_diag4',
   evidence: [
     {
       ...(run as unknown as RunRecord).evidence[0]!,
+      model_text: {
+        recorded: true,
+        messages: [
+          { role: 'system', text: SPLIT_SYSTEM },
+          { role: 'user', text: SPLIT_PROMPT },
+          { role: 'assistant', text: '{"answer":"fake"}' },
+        ],
+        tools: [],
+        requests: [{ request_id: 'req-split-1', sent: [0, 1], reply: [2] }],
+      },
       diagnostics: {
         ...DIAG,
         cache: {
@@ -277,6 +292,8 @@ const splitRun = {
               ...SPLIT_FACTS,
               cache_marked: ['key'],
               cache_key_sent: true,
+              request_id: 'req-split-1',
+              prefix_parts: { system: sha256(SPLIT_SYSTEM), prompt: sha256(SPLIT_PROMPT) },
             },
             {
               request_index: 1,
@@ -514,11 +531,12 @@ const USAGE_DISCLOSURE = {
         '90 uncached input tokens (measured, first request; whole prompt not reported)',
       ),
   },
-  // #715 (R): the fourth waiver — this file's own decision, named in the cell below.
+  // Gap 1, unit B: `inspect --verbose` names each request by its id, on the line that says what it
+  // sent and got back (it was #715 (R)'s waiver).
   request_id: {
-    surface: 'waived',
-    reason:
-      "No reader renders it: it exists so the driver can tell two requests apart when it decides whether a request is already on the step's record.",
+    surface: 'rendered',
+    probe: (_out, _partial, _mismatch, split) =>
+      expect(split).toContain('Request 1 (req-split-1): sent 1, 2; reply 3'),
   },
   // caching 3-B (A6): the split's facts. Four are rendered on the step's cache line (read on the
   // split shape; the conforming shape, which carries none, shows none of their words); three are
@@ -560,9 +578,14 @@ const USAGE_DISCLOSURE = {
     surface: 'waived',
     reason: "a digest for 3-M's comparison and the export; never operator words",
   },
+  // Gap 1, unit B: `inspect --verbose` checks each request's kept texts against these digests (it
+  // was caching 3-B's waiver).
   prefix_parts: {
-    surface: 'waived',
-    reason: "a digest for 3-M's comparison and the export; never operator words",
+    surface: 'rendered',
+    probe: (_out, _partial, _mismatch, split) =>
+      expect(split).toContain(
+        'Checked against what was sent: system text matches, prompt matches.',
+      ),
   },
   request_strict_sent: {
     surface: 'waived',
@@ -614,7 +637,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     }
   });
 
-  it('the registry covers every UsageRecord field, and the waiver set is exactly the eleven named above', () => {
+  it('the registry covers every UsageRecord field, and the waiver set is exactly the nine named above', () => {
     expect(Object.keys(USAGE_DISCLOSURE).sort()).toEqual([
       'cache_auto',
       'cache_controls_rejected',
@@ -669,13 +692,13 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     // which the reference lookup and A-2a's comparison read. Piece B1 makes the tenth:
     // `response_id`, the provider's answer id, which no reader renders until B2 sends it back. Piece
     // B3a makes the eleventh: `cache_diagnostics`, which B3b's `cost.misses` reads for the operator.
+    // Gap 1, unit B renders two of them under `--verbose`: `request_id` (each request's line) and
+    // `prefix_parts` (the check against what was sent), which leaves nine.
     expect(waived).toEqual([
       'cache_diagnostics',
       'cache_split_offered',
-      'prefix_parts',
       'prefix_sha256',
       'reference',
-      'request_id',
       'request_in_call',
       'request_index',
       'request_start',
