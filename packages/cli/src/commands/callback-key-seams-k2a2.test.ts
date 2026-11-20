@@ -10,9 +10,16 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openRealmHome } from '@sensigo/realm-store-sqlite';
+import { DatabaseSync } from 'node:sqlite';
+import { callbackKeyFingerprint } from '@sensigo/realm';
+import {
+  createCallbackKeySealer,
+  masterKeyFingerprint,
+  openRealmHome,
+} from '@sensigo/realm-store-sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installWriter, writerTestSeams } from '../output/writer.js';
+import { openCliHome } from '../lib/home.js';
 import { CALLBACK_KEY_DEPS, callbackKey, type CallbackKeyDeps } from './callback-key.js';
 
 const WORKFLOW = `id: refunds\nname: refunds\nversion: 1\ntrigger:\n  type: webhook\n  path: /refunds\n  auth:\n    mode: shared_secret\n    header: X-Token\n    secret_from: K2A2_SECRET\n  params_map:\n    approved: body.approved\n  result_map:\n    approved: context.resources.record.approved\nsteps:\n  record:\n    description: Record.\n    execution: auto\n`;
@@ -145,6 +152,75 @@ describe('callback K2a-2 — the master key file cannot be made', () => {
       ],
       out: [],
       pairs: [],
+    });
+  });
+});
+
+describe('callback K2a-2 — another process makes the master key and a pair while this one runs', () => {
+  it('a pair listed with no master key read: the master key is read once more, and used', async () => {
+    // Another process A, between this process's read of the master key (none) and its listing: A
+    // places the master file, then commits its own pair (A places the file BEFORE it commits any
+    // pair). The injected opener does what A does, on its first open; the pair goes in on a
+    // foreign connection, sealed with A's master key.
+    const master = Buffer.from(MASTER, 'hex');
+    let first = true;
+    const openHome: CallbackKeyDeps['openHome'] = async (options) => {
+      const home = await openCliHome(options);
+      if (first) {
+        first = false;
+        writeFileSync(masterFile(), `${MASTER}\n`, { mode: 0o600 });
+        const text = 'd4'.repeat(32);
+        const ctx = {
+          workflow_id: 'other-flow',
+          host: 'h.example.com:443',
+          slot: 'current' as const,
+        };
+        const db = new DatabaseSync(join(realm(), 'realm.db'));
+        try {
+          db.prepare(
+            'INSERT INTO callback_keys (workflow_id, host, slot, sealed, key_fp, master_fp, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)',
+          ).run(
+            ctx.workflow_id,
+            ctx.host,
+            ctx.slot,
+            createCallbackKeySealer(master).seal(text, ctx),
+            callbackKeyFingerprint(text),
+            masterKeyFingerprint(master),
+            '2026-11-20T00:00:00.000Z',
+          );
+        } finally {
+          db.close();
+        }
+      }
+      return home;
+    };
+    const maker = vi.fn((): 'placed' => 'placed');
+    const code = await callbackKey(
+      args(),
+      { ...CALLBACK_KEY_DEPS, openHome, placeMasterKeyFile: maker },
+      {},
+    );
+    // (1) red when the command, seeing another process's pair with no master key read, does not
+    //     read the master key again (it then refuses with Words 4, "this shell has no master key"),
+    //     or makes a second master file; (2) prints the lines the command wrote.
+    expect({
+      code,
+      maker: maker.mock.calls.length,
+      err: said.err,
+      out: said.out.map((l) => /^[0-9a-f]{64}$/.test(l)),
+      pairs: (await listed()).length,
+    }).toEqual({
+      code: 0,
+      maker: 0,
+      err: [
+        expect.stringMatching(
+          new RegExp(
+            `^Made a key for refunds → n8n\\.example\\.com:443 \\(key [0-9a-f]{8}\\), sealed with encryption key ${fpOfMaster(MASTER)}\\.$`,
+          ),
+        ),
+      ],
+      out: [true],
+      pairs: 2,
     });
   });
 });
