@@ -19,6 +19,7 @@ import {
   takenBackNotRunLine,
 } from '../lib/holder-render.js';
 import { writerTestSeams } from '../output/writer.js';
+import { reclaimCommand } from './reclaim.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const AGENT = 'docs/reference/cli/realm-agent.md';
@@ -222,6 +223,15 @@ describe('#729 CW-5a — the other pages', () => {
     claim(
       ACTING,
       "| `claim_unknown_age` | No time was recorded, and the claim names no lease, or its lease file is gone or could not be checked. This is so for an agent step a prompt or an MCP call took (`realm agent`'s own claims name a lease, added after version 0.50.0), and for every step of a workflow that has cleanup steps.",
+    );
+  });
+
+  it('realm run reclaim --help: --claimed-at', () => {
+    // "unless no program held its lease": held-lease-cw3a "lease_not_held: freed with the old form";
+    // the rest is docs-922-p1's (its WINDOW cells).
+    // (1) red when the option's help no longer says it; (2) prints the help.
+    expect(reclaimCommand.options.find((o) => o.long === '--claimed-at')?.description).toBe(
+      "With --step: the claim's stamp, as the offered command shows it (required for a claim whose deadline is ahead or unknown, unless no program held its lease)",
     );
   });
 

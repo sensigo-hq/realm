@@ -227,9 +227,11 @@ describe('#729 CW-5a — check 1, check 2: the claim comes first, and the model 
 
   it('check 2: of two ready steps, the model gets the brief of the one claimed — never the other’s', async () => {
     const f = await fixture(
+      // Each step has its own prompt (a step with only a description is sent its own description,
+      // whatever the brief).
       wf('claim-first-brief', {
-        a: agent({ description: 'Write the A part.' }),
-        b: agent({ description: 'Write the B part.' }),
+        a: agent({ prompt: 'Write the A part.' } as Partial<StepDefinition>),
+        b: agent({ prompt: 'Write the B part.' } as Partial<StepDefinition>),
       }),
     );
     const d = await captured(() => drive(f));
@@ -654,6 +656,99 @@ describe('#729 CW-5a — check 6: H1, a sibling’s gate during the held call', 
       },
       d.lines.join('\n'),
     ).toEqual({ calls: 1, gaveBack: [], b: [['success', B]], result: 'completed' });
+  });
+});
+
+const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+
+describe('#729 CW-5a — check 3 in memory: the hold closes at the save, before the drive waits', () => {
+  it('the step’s answer opens its question: while the drive waits at it, the lease is removed and the signal listeners are as before the drive', async () => {
+    const f = await fixture(wf('claim-first-close', { s: gated() }));
+    const before = SIGNALS.map((s) => process.listenerCount(s));
+    const atQuestion: Array<{ lease: unknown; listeners: number[] }> = [];
+    const d = await captured(() =>
+      drive(f, {
+        gateHandler: async (runId, gate) => {
+          atQuestion.push({
+            lease: f.double.state('lease-double-1'),
+            listeners: SIGNALS.map((s) => process.listenerCount(s)),
+          });
+          await submitHumanResponse(f.store, f.def, { runId, gateId: gate.gate_id, choice: 'ok' });
+        },
+      }),
+    );
+    // (1) red when the hold stays open after the save until the drive's next claim or its end (the
+    //     lease stays live, and the drive's three listeners stay, while it waits at the question);
+    //     (2) prints the state at the question and the lines.
+    expect({ atQuestion, result: d.result }, d.lines.join('\n')).toEqual({
+      atQuestion: [{ lease: 'removed', listeners: before }],
+      result: 'completed',
+    });
+  });
+});
+
+describe('#729 CW-5a — check 8 in process: a signal while the model works', () => {
+  it('SIGINT during the model call, whose call then fails: one give-back line, no drive-failure entry, the signal raised again, then the exit fallback', async () => {
+    const f = await fixture();
+    const raised: unknown[] = [];
+    const exits: unknown[] = [];
+    const lines: string[] = [];
+    // The worker's own listeners are set aside, so the emitted signal reaches only the drive's.
+    const others = SIGNALS.map((s) => [s, process.listeners(s)] as const);
+    for (const s of SIGNALS) process.removeAllListeners(s);
+    const keep =
+      (prefix: string) =>
+      (...a: unknown[]): void => {
+        lines.push(prefix + shown(a.map(String).join(' ')));
+      };
+    vi.spyOn(console, 'log').mockImplementation(keep(''));
+    vi.spyOn(console, 'error').mockImplementation(keep('err: '));
+    vi.spyOn(console, 'warn').mockImplementation(keep('warn: '));
+    // The re-raise and the exit are recorded, not carried out: this process is the test's.
+    vi.spyOn(process, 'kill').mockImplementation(((_pid: number, signal?: string | number) => {
+      raised.push(signal);
+      return true;
+    }) as typeof process.kill);
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      exits.push(code);
+      return undefined as never;
+    }) as typeof process.exit);
+    try {
+      // The drive never returns: after the stop cause it waits for its handler to end the process.
+      void drive(f, {
+        answer: async () => {
+          process.emit('SIGINT', 'SIGINT');
+          throw new Error('the call was interrupted');
+        },
+      });
+      const until = Date.now() + 5000;
+      while (exits.length === 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
+      const run = await record(f);
+      // (1) red when the failed call writes a drive-failure entry after the signal, the claim is
+      //     given back twice (a line each), the line names the step's failure, or the drive exits
+      //     without raising the signal again; (2) prints the lines and the record.
+      expect(
+        {
+          gaveBack: lines.filter((l) => l.includes('claim go') || l.includes('claim was removed')),
+          failures: run.drive_failures?.entries.length ?? 0,
+          claim: run.claims?.['s'],
+          lease: f.double.state('lease-double-1'),
+          raised,
+          exits,
+        },
+        lines.join('\n'),
+      ).toEqual({
+        gaveBack: [GAVE_BACK('s', 'it was stopped by SIGINT')],
+        failures: 0,
+        claim: undefined,
+        lease: 'removed',
+        raised: ['SIGINT'],
+        exits: [130],
+      });
+    } finally {
+      vi.restoreAllMocks();
+      for (const [s, listeners] of others) for (const l of listeners) process.on(s, l);
+    }
   });
 });
 

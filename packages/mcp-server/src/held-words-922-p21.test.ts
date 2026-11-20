@@ -612,7 +612,7 @@ describe('#922 P2-1 — check 10, rule 10: no liveness verdict', () => {
     claim('glossary.md', "such as a step whose claim's deadline has passed.");
     claim(
       'mcp/run-state-and-health.md',
-      'A step was started, did not finish, and is past its time. |',
+      "A step was started, did not finish, and is past its time, or no program held its claim's lease when it was checked (added after version 0.50.0). |",
     );
     // (a) red when one of these pages calls a holder dead or gone again; (b) prints the page and
     //     the matching words.
