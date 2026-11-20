@@ -18,6 +18,7 @@ import {
   WorkflowError,
   type CallbackClaimResult,
   type CallbackKeySlot,
+  type CallbackKeySlotInfo,
   type CallbackKeySlotName,
   type CallbackKeyStore,
   type CallbackMarkRequest,
@@ -114,10 +115,15 @@ import { settableClock } from '../clock/settable-clock.js';
  *   an `endPrevious` that is not a boolean: each throws, takes no reading, writes nothing, and its
  *   message does not repeat the candidate; 1- and 255-character labels, and a `keepSeconds` of 1 and
  *   604,800, are accepted.
- * - `CBK_CLOCK_READINGS` — `read`, `make`, `rotate`, `endPrevious` and `replace` take one reading,
- *   applied or refused; `delete` takes none.
+ * - `CBK_CLOCK_READINGS` — `read`, `make`, `rotate`, `endPrevious`, `replace` and `list` take one
+ *   reading, applied or refused; `delete` takes none.
  * - `CBK_KEYS_APART` — a key's text appears in no run, scan page, callback row or callback result;
  *   a run's purge leaves the key, and `delete` of the pair leaves the row.
+ * - `CBK_LIST` (callback K2a-1) — an empty store lists nothing; `list` gives every pair holding a
+ *   live key, in UTF-8 byte order of `workflow_id`, then of `host` (a name of U+FFFF before one of
+ *   U+10000), each slot as `read` answers it with `key_fp` and no `key`; a previous is listed 1 ms
+ *   before its `expires_at` and not at it; no made key's text is in the listing; it changes no pair,
+ *   and two calls at one instant agree.
  */
 export const CALLBACK_STORE_LAWS = [
   'CB_CREATE_BOTH_OR_NEITHER',
@@ -144,6 +150,7 @@ export const CALLBACK_STORE_LAWS = [
   'CBK_MALFORMED_THROWS',
   'CBK_CLOCK_READINGS',
   'CBK_KEYS_APART',
+  'CBK_LIST',
 ] as const;
 
 export type CallbackStoreLaw = (typeof CALLBACK_STORE_LAWS)[number];
@@ -570,6 +577,20 @@ function family(adapter: CallbackStoreContractAdapter) {
     slot,
     state: 'unreadable',
     master_fp: MASTER,
+    created_at: T(createdMs),
+    ...(expiresMs !== undefined ? { expires_at: T(expiresMs) } : {}),
+  });
+
+  /** A readable slot as `list` must give it (callback K2a-1): its fingerprint, never its text. */
+  const listed = (
+    slot: CallbackKeySlotName,
+    text: string,
+    createdMs: number,
+    expiresMs?: number,
+  ): CallbackKeySlotInfo => ({
+    slot,
+    state: 'readable',
+    key_fp: fp(text),
     created_at: T(createdMs),
     ...(expiresMs !== undefined ? { expires_at: T(expiresMs) } : {}),
   });
@@ -1834,6 +1855,7 @@ function family(adapter: CallbackStoreContractAdapter) {
           const law = 'CBK_CLOCK_READINGS';
           const none = at443('none');
           const got = {
+            listEmpty: await readingsOf(b, () => b.keys.list()),
             read: await readingsOf(b, () => b.keys.read(WORKFLOW, HOST)),
             make: await readingsOf(b, () => b.keys.make(WORKFLOW, HOST, KEY('1'))),
             makeKept: await readingsOf(b, () => b.keys.make(WORKFLOW, HOST, KEY('2'))),
@@ -1844,10 +1866,12 @@ function family(adapter: CallbackStoreContractAdapter) {
             endNone: await readingsOf(b, () => b.keys.endPrevious(WORKFLOW, HOST)),
             replaceNoCurrent: await readingsOf(b, () => b.keys.replace(WORKFLOW, none, KEY('3'))),
             replaceReadable: await readingsOf(b, () => b.keys.replace(WORKFLOW, HOST, KEY('3'))),
+            list: await readingsOf(b, () => b.keys.list()),
             delete: await readingsOf(b, () => b.keys.delete(WORKFLOW, HOST)),
             deleteEmpty: await readingsOf(b, () => b.keys.delete(WORKFLOW, HOST)),
           };
           same(law, 'one reading each, refused or applied; delete none', got, {
+            listEmpty: 1,
             read: 1,
             make: 1,
             makeKept: 1,
@@ -1858,6 +1882,7 @@ function family(adapter: CallbackStoreContractAdapter) {
             endNone: 1,
             replaceNoCurrent: 1,
             replaceReadable: 1,
+            list: 1,
             delete: 0,
             deleteEmpty: 0,
           });
@@ -1918,6 +1943,82 @@ function family(adapter: CallbackStoreContractAdapter) {
         const other = await b.create(reg(2, HOST));
         same(law, 'delete of the pair', await b.keys.delete(WORKFLOW, HOST), { had_current: true });
         same(law, 'leaves the row', (await b.callbacks.read(other))?.status, 'pending');
+      }),
+    ),
+    L('CBK_LIST', 'list gives every pair holding a live key, in byte order, without a key', () =>
+      on('CBK_LIST', async (b) => {
+        const law = 'CBK_LIST';
+        same(law, 'an empty store lists nothing', await b.keys.list(), []);
+        // Five pairs, made out of their listed order. UTF-8 puts U+FFFF (EF BF BF) before U+10000
+        // (F0 90 80 80); a JS string sort compares UTF-16 units and puts U+10000 (D800 DC00) first.
+        const MAX = '￿';
+        const HIGH = '\u{10000}';
+        const ENDED = at443('ended');
+        await b.keys.make(OTHER_WORKFLOW, HOST, KEY('1'));
+        await b.keys.make(WORKFLOW, HIGH, KEY('2'));
+        await b.keys.make(WORKFLOW, HOST, KEY('3'));
+        await b.keys.make(WORKFLOW, MAX, KEY('4'));
+        await b.keys.make(WORKFLOW, ENDED, KEY('5'));
+        await rotate(b, ENDED, 60, KEY('6')); // KEY('5') is its previous until T0 + 60 s
+        await b.at(MIN / 2);
+        await rotate(b, HOST, 60, PLANT); // KEY('3') is its previous until T0 + 90 s
+        await b.at(MIN - 1);
+        const justBefore = (await b.keys.list()).find((entry) => entry.host === ENDED);
+        same(
+          law,
+          '1 ms before its end a previous is listed',
+          justBefore?.previous,
+          listed('previous', KEY('5'), 0, MIN),
+        );
+        await b.at(MIN);
+        const pairs: [string, string][] = [
+          [OTHER_WORKFLOW, HOST],
+          [WORKFLOW, HIGH],
+          [WORKFLOW, HOST],
+          [WORKFLOW, MAX],
+          [WORKFLOW, ENDED],
+        ];
+        const before = await Promise.all(pairs.map(([w, h]) => b.keys.read(w, h)));
+        const first = await b.keys.list();
+        same(
+          law,
+          'every pair holding a live key, in UTF-8 byte order; at its end a previous is gone',
+          first,
+          [
+            { workflow_id: WORKFLOW, host: ENDED, current: listed('current', KEY('6'), 0) },
+            {
+              workflow_id: WORKFLOW,
+              host: HOST,
+              current: listed('current', PLANT, MIN / 2),
+              previous: listed('previous', KEY('3'), 0, MIN / 2 + MIN),
+            },
+            { workflow_id: WORKFLOW, host: MAX, current: listed('current', KEY('4'), 0) },
+            { workflow_id: WORKFLOW, host: HIGH, current: listed('current', KEY('2'), 0) },
+            { workflow_id: OTHER_WORKFLOW, host: HOST, current: listed('current', KEY('1'), 0) },
+          ],
+        );
+        const slots = first.flatMap((entry) => [entry.current, entry.previous]);
+        same(
+          law,
+          'no listed slot has a key, enumerable or not',
+          slots.filter((s) => s !== undefined && Object.getOwnPropertyNames(s).includes('key')),
+          [],
+        );
+        const text = JSON.stringify(first);
+        const made = [KEY('1'), KEY('2'), KEY('3'), KEY('4'), KEY('5'), KEY('6'), PLANT];
+        same(
+          law,
+          'no made key’s text is in the listing',
+          made.filter((k) => text.includes(k)),
+          [],
+        );
+        same(
+          law,
+          'it changes no pair',
+          await Promise.all(pairs.map(([w, h]) => b.keys.read(w, h))),
+          before,
+        );
+        same(law, 'two calls at one instant agree', await b.keys.list(), first);
       }),
     ),
   ];

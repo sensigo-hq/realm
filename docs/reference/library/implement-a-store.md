@@ -35,6 +35,7 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`BufferedEntry`](#bufferedentry) | interface | An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce that carried it, if any. |
 | [`CallbackClaimRequest`](#callbackclaimrequest) | interface | A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters). |
 | [`CallbackKeyDeleteResult`](#callbackkeydeleteresult) | interface | What `delete` answers: whether the pair had a current key, readable or not. |
+| [`CallbackKeyListing`](#callbackkeylisting) | interface | One (workflow, host) of a store's listing (`list`), with its live slots. |
 | [`CallbackKeyMakeResult`](#callbackkeymakeresult) | interface | What `make` answers: the current key, and whether this call wrote it. |
 | [`CallbackKeyPair`](#callbackkeypair) | interface | The keys of one (workflow, host). |
 | [`CallbackKeyRotateRequest`](#callbackkeyrotaterequest) | interface | A rotation: the new key's text, how long the old key stays as the previous (1–604,800 seconds), and whether a live previous may be dropped to make room. |
@@ -99,6 +100,7 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`CallbackKeyReplaceResult`](#callbackkeyreplaceresult) | type | What `replace` answers: the new current key, or why it wrote nothing. |
 | [`CallbackKeyRotateResult`](#callbackkeyrotateresult) | type | What `rotate` answers: the pair it wrote, or why it wrote nothing. |
 | [`CallbackKeySlot`](#callbackkeyslot) | type | One slot of a pair, as the store holds it. |
+| [`CallbackKeySlotInfo`](#callbackkeyslotinfo) | type | One slot as `list` gives it: what `read` answers, without the key's text. |
 | [`CallbackKeySlotName`](#callbackkeyslotname) | type | The name of a slot: `current` signs; `previous` is the key a rotation replaced, kept for a while. |
 | [`CallbackLastStatus`](#callbacklaststatus) | type | The last answer a try got: an HTTP status (100–599), or a word for a try that got none. |
 | [`CallbackMarkRequest`](#callbackmarkrequest) | type | A try's outcome: delivered (a 2xx status), another try after a wait in seconds, or failed. |
@@ -656,6 +658,21 @@ interface CallbackKeyDeleteResult {
 }
 ```
 
+### CallbackKeyListing
+
+interface · beta: may change in a minor release until it settles
+
+One (workflow, host) of a store's listing (`list`), with its live slots. An absent slot is omitted.
+
+```ts
+interface CallbackKeyListing {
+    readonly workflow_id: string;
+    readonly host: string;
+    readonly current?: CallbackKeySlotInfo;
+    readonly previous?: CallbackKeySlotInfo;
+}
+```
+
 ### CallbackKeyMakeResult
 
 interface · beta: may change in a minor release until it settles
@@ -718,6 +735,7 @@ interface CallbackKeyStore {
     endPrevious(workflowId: string, host: string): Promise<CallbackKeyEndResult>;
     replace(workflowId: string, host: string, candidate: string): Promise<CallbackKeyReplaceResult>;
     delete(workflowId: string, host: string): Promise<CallbackKeyDeleteResult>;
+    list(): Promise<readonly CallbackKeyListing[]>;
 }
 ```
 
@@ -1898,6 +1916,29 @@ type CallbackKeySlot = {
     readonly slot: CallbackKeySlotName;
     readonly state: 'readable';
     readonly key: string;
+    readonly key_fp: string;
+    readonly created_at: string;
+    readonly expires_at?: string;
+} | {
+    readonly slot: CallbackKeySlotName;
+    readonly state: 'unreadable';
+    readonly master_fp: string;
+    readonly created_at: string;
+    readonly expires_at?: string;
+};
+```
+
+### CallbackKeySlotInfo
+
+type · beta: may change in a minor release until it settles
+
+One slot as `list` gives it: what `read` answers, without the key's text. `readable` carries the
+key's fingerprint, `unreadable` the fingerprint of the master key that sealed it.
+
+```ts
+type CallbackKeySlotInfo = {
+    readonly slot: CallbackKeySlotName;
+    readonly state: 'readable';
     readonly key_fp: string;
     readonly created_at: string;
     readonly expires_at?: string;
