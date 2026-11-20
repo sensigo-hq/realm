@@ -2,8 +2,8 @@
 // `DESIGN-CALLBACK-rev4.md` §1): the signing keys of the callback store (`CallbackStore.keys`). For
 // each (workflow, host), up to two keys: `current`, and for a while after a rotation `previous`.
 //
-// Core declares the port, its request check, the fingerprint, ONE liveness function and ONE pure
-// decider per write method; a store does the I/O around them, as `callback-store.ts` and
+// Core declares the port, its request check, the fingerprint, ONE liveness function, ONE pure
+// decider per write method and (callback K2a-1) ONE listing entry; a store does the I/O around them, as `callback-store.ts` and
 // `outbound-ledger.ts`: it checks the request (`checkCallbackKeyRequest`), takes its ONE raw reading,
 // reads the pair, calls the decider and applies the writes it returns, slot by slot, with nothing
 // that yields between the read and the last write. The port is storage-neutral: key text goes in and
@@ -116,6 +116,38 @@ export interface CallbackKeyDeleteResult {
 }
 
 /**
+ * One slot as `list` gives it: what `read` answers, without the key's text. `readable` carries the
+ * key's fingerprint, `unreadable` the fingerprint of the master key that sealed it.
+ * @beta
+ */
+export type CallbackKeySlotInfo =
+  | {
+      readonly slot: CallbackKeySlotName;
+      readonly state: 'readable';
+      readonly key_fp: string;
+      readonly created_at: string;
+      readonly expires_at?: string;
+    }
+  | {
+      readonly slot: CallbackKeySlotName;
+      readonly state: 'unreadable';
+      readonly master_fp: string;
+      readonly created_at: string;
+      readonly expires_at?: string;
+    };
+
+/**
+ * One (workflow, host) of a store's listing (`list`), with its live slots. An absent slot is omitted.
+ * @beta
+ */
+export interface CallbackKeyListing {
+  readonly workflow_id: string;
+  readonly host: string;
+  readonly current?: CallbackKeySlotInfo;
+  readonly previous?: CallbackKeySlotInfo;
+}
+
+/**
  * The signing keys of a callback store (`CallbackStore.keys`): for each (workflow, host), a current
  * key and, for a while after a rotation, a previous one.
  * `workflowId` and `host` are each 1–255 characters, compared byte for byte; a key's text is 64
@@ -143,6 +175,11 @@ export interface CallbackKeyStore {
   replace(workflowId: string, host: string, candidate: string): Promise<CallbackKeyReplaceResult>;
   /** Removes both slots, an expired one included. Takes no reading. */
   delete(workflowId: string, host: string): Promise<CallbackKeyDeleteResult>;
+  /**
+   * Every pair that holds a live key, in UTF-8 byte order of `workflow_id`, then of `host`: each slot
+   * as `read` answers it, without the key's text. Changes nothing.
+   */
+  list(): Promise<readonly CallbackKeyListing[]>;
 }
 
 /** The longest a rotated-out key may stay as the previous, in seconds (7 days). */
@@ -218,6 +255,35 @@ export function callbackKeyPairAt(pair: CallbackKeyPair, at: Date): CallbackKeyP
   return {
     ...(pair.current !== undefined ? { current: pair.current } : {}),
     ...(callbackPreviousIsLive(pair.previous, at) ? { previous: pair.previous } : {}),
+  };
+}
+
+/** A slot without its key's text: the fields are copied one by one, so the text cannot ride along. */
+function slotInfo(slot: CallbackKeySlot): CallbackKeySlotInfo {
+  const ends = slot.expires_at !== undefined ? { expires_at: slot.expires_at } : {};
+  const { slot: name, created_at } = slot;
+  return slot.state === 'readable'
+    ? { slot: name, state: 'readable', key_fp: slot.key_fp, created_at, ...ends }
+    : { slot: name, state: 'unreadable', master_fp: slot.master_fp, created_at, ...ends };
+}
+
+/**
+ * The listing entry of one pair at `at` (`list`): its live slots as `read` answers them, without any
+ * key's text, or `undefined` when no slot is live. The ONE place a listing is made: every store uses it.
+ */
+export function callbackKeyListingAt(
+  workflowId: string,
+  host: string,
+  pair: CallbackKeyPair,
+  at: Date,
+): CallbackKeyListing | undefined {
+  const { current, previous } = callbackKeyPairAt(pair, at);
+  if (current === undefined && previous === undefined) return undefined;
+  return {
+    workflow_id: workflowId,
+    host,
+    ...(current !== undefined ? { current: slotInfo(current) } : {}),
+    ...(previous !== undefined ? { previous: slotInfo(previous) } : {}),
   };
 }
 
