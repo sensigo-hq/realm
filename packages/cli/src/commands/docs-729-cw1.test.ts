@@ -40,7 +40,7 @@ describe('#729 CW-1 — the claim lease’s words', () => {
     // (the owner's compatibility policy, e531209a).
     claim(
       CORE,
-      "| `leases` | No | Without it, or `null`, the store keeps no claim leases. Otherwise its lease port, an object with `hold()` and `probe(id)`. A claim lease is a lock the operating system keeps while the program holding it runs, and lets go of when that program ends. `probe` says whether a lease is held: `held`, `not_held`, `absent`, or `unknown` with a reason; it never throws. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. No Realm command takes a lease yet. The lease port may still change until the claim window's last unit ships. Added after version 0.49.0. |",
+      "| `leases` | No | Without it, or `null`, the store keeps no claim leases. Otherwise its lease port, an object with `hold()` and `probe(id)`. A claim lease is a lock the operating system keeps while the program holding it runs, and lets go of when that program ends. `probe` says whether a lease is held: `held`, `not_held`, `absent`, or `unknown` with a reason; it never throws. Realm refuses a `leases` that is neither `null` nor a lease port with `VALIDATION_OPTION_INVALID`, naming `store.leases`. `realm agent` takes one for each agent step it drives (added after version 0.50.0). The lease port may still change until the claim window's last unit ships. Added after version 0.49.0. |",
     );
   });
 

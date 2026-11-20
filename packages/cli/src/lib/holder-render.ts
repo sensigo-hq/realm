@@ -43,6 +43,7 @@ import type {
   ClaimProofAbsentCause,
   GateClaimVerdict,
   LeaseFact,
+  LeaseUnavailableReason,
   NotRecordedKind,
   OutcomeDoorWords,
   PendingGate,
@@ -369,6 +370,110 @@ export function noDriverTakeBackLine(
   ctx: RenderCtx = PLAIN,
 ): string {
   return `• Step '${step}' was ${takenPhrase(described, ctx)}${atSince(described)}${leaseTail(described)}, but this drive has no program name, so it cannot take the step back (set REALM_OPERATOR to name it). Waiting up to ${Math.round(watchMs / 1000)}s for the run's record to change.`;
+}
+
+/** #729 CW-5a: line (i)'s first part, up to the take-back's parenthesis. */
+function tookBackPart(
+  step: string,
+  described: Parameters<typeof takenPhrase>[0],
+  ctx: RenderCtx,
+): string {
+  return `• Step '${step}' was ${takenPhrase(described, ctx)}${atSince(described)}${leaseTail(described)}, so this drive took it back (this step's one automatic take-back until a person reclaims it)`;
+}
+
+/**
+ * #729 CW-5a: line (i) when this drive's own claim of the step it took back did not land — another
+ * program took the step first (`held_by`, its holder and when, when the answer names them).
+ */
+export function takenBackNotLandedLine(
+  step: string,
+  described: Parameters<typeof takenPhrase>[0],
+  now: { readonly holder?: Attributed; readonly since?: string },
+  ctx: RenderCtx = PLAIN,
+): string {
+  const taker =
+    now.holder !== undefined
+      ? `${takenPhrase({ holder: now.holder }, ctx)}${atSince(now)}`
+      : 'taken by another program';
+  return `${tookBackPart(step, described, ctx)}, but it is now ${taker}; not run here.`;
+}
+
+/** #729 CW-5a: line (i) when this drive stopped before it claimed the step it took back. */
+export function takenBackNotRunLine(
+  step: string,
+  described: Parameters<typeof takenPhrase>[0],
+  ctx: RenderCtx = PLAIN,
+): string {
+  return `${tookBackPart(step, described, ctx)}; it was not run here.`;
+}
+
+/** #729 CW-5a: why a drive gave a step's claim back — a closed table, the signal by its name. */
+export type GiveBackCause = 'step_failed' | 'engine_refused' | 'error' | NodeJS.Signals;
+const GIVE_BACK_CAUSE_WORDS: Record<Exclude<GiveBackCause, NodeJS.Signals>, string> = {
+  step_failed: 'its step failed',
+  engine_refused: "the engine refused the step's result",
+  error: 'this drive stopped on an error',
+};
+function causeWords(cause: GiveBackCause): string {
+  return cause in GIVE_BACK_CAUSE_WORDS
+    ? GIVE_BACK_CAUSE_WORDS[cause as keyof typeof GIVE_BACK_CAUSE_WORDS]
+    : `it was stopped by ${cause}`;
+}
+
+/** #729 CW-5a: the give-back's line, by `releaseDriveClaim`'s answer (`removed`: not this drive's act). */
+export function giveBackLine(
+  step: string,
+  outcome:
+    | { readonly kind: 'released'; readonly cause: GiveBackCause }
+    | { readonly kind: 'removed'; readonly byReclaim: boolean },
+): string {
+  return outcome.kind === 'released'
+    ? `• Step '${step}': this drive let its claim go (${causeWords(outcome.cause)}), so the step can run again.`
+    : `• Step '${step}': its claim was removed while this drive held it${outcome.byReclaim ? ' (a reclaim)' : ''}.`;
+}
+
+/**
+ * #729 CW-5a: the give-back threw, so the claim stays with a lease no program holds once this drive
+ * ends. Below the cap the next drive can take the step back; at the cap a person decides — what frees
+ * it (the held entry's own words, from a read after the hold closed), or the command that lists it.
+ */
+export function giveBackThrownLine(
+  step: string,
+  reason: string,
+  atCap: { readonly held: HeldEntry | undefined; readonly runId: string } | undefined,
+  ctx: RenderCtx = PLAIN,
+): string {
+  const head = `• Step '${step}': this drive could not let its claim go (${ctx.value(reason)})`;
+  if (atCap === undefined)
+    return `${head}; the next drive of this run can take the step back, once.`;
+  const opening = `${head}, and it was already taken back automatically once, so a person decides.`;
+  return atCap.held !== undefined
+    ? [opening, ...heldFreeingParts(atCap.held, ctx)].join(' ')
+    : `${opening} Run ${ctx.cmd(`realm run reclaim ${atCap.runId}`)} to see how to free it.`;
+}
+
+/** #729 CW-5a (item 3): the run ended while this drive held the step, and nothing else said so. */
+export function endedWhileHeldLine(step: string, run: RunRecord, ctx: RenderCtx = PLAIN): string {
+  return `• Step '${step}' was not run: the run ended (${ctx.word(deriveRunPhase(run), RUN_PHASE_WORDS)}) while this drive held it.`;
+}
+
+/** #729 CW-5a: why the lease port could not make a lease, as words. */
+const LEASE_UNAVAILABLE_WORDS: Record<LeaseUnavailableReason, string> = {
+  permission: 'this program cannot write there',
+  no_space: 'the disk is full',
+  too_many_files: 'too many files are open',
+  io_error: 'writing there failed',
+};
+
+/** #729 CW-5a: the drive could not take a lease for the step, so it claimed nothing and called no model. */
+export function leaseUnavailableLine(
+  step: string,
+  reason: LeaseUnavailableReason,
+  folder: string | undefined,
+  ctx: RenderCtx = PLAIN,
+): string {
+  const where = folder !== undefined ? ` in ${ctx.value(folder)}` : '';
+  return `• Step '${step}' was not started: this drive could not take a lease${where} (${LEASE_UNAVAILABLE_WORDS[reason]}); nothing was claimed and the model was not called.`;
 }
 
 /**

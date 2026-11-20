@@ -176,7 +176,7 @@ const SENTENCES: readonly { page: string; sentence: string; cells: readonly Cell
   {
     page: ACTING,
     sentence:
-      "| `healthy`           | The step's time has not passed; its program may still be running it.",
+      "| `healthy`           | The step's time has not passed, or its program held the claim's lease when it was checked; its program may still be running it.",
     cells: [HEADER],
   },
   {

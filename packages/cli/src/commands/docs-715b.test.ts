@@ -515,7 +515,7 @@ describe('#715 (b) 04 §E — the other pages', () => {
     // and no claim are swept"; selectors-715b (the command, each run at its own reading).
     claim(
       ACTING,
-      'It leaves runs that are waiting at a gate, and a run whose step is held by a claim whose deadline has not passed; a claim past its deadline, or one with no recorded deadline, keeps nothing (added after version 0.48.0). Each run is judged at the time of the read that found it.',
+      "It leaves runs that are waiting at a gate, a run whose step is held by a claim whose deadline has not passed, and a run whose step's claim names a lease that its program held when it was checked, or that could not be checked (added after version 0.50.0); a claim past its deadline, one with no recorded deadline and no lease, or one whose lease no program held, keeps nothing (added after version 0.48.0). Each run is judged at the time of the read that found it.",
     );
   });
 });

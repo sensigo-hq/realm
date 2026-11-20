@@ -20,6 +20,7 @@ import {
   createDefaultRegistry,
   executeChain,
   executeStep,
+  reclaimStep,
   type RealmWorkflowRegistrar,
   loadWorkflowFromString,
   submitHumanResponse,
@@ -114,11 +115,28 @@ interface DriveOptions {
   gateHandler?: (store: InMemoryStore, runId: string, gate: PendingGate) => Promise<void>;
   store?: InMemoryStore;
   existingRunId?: string;
+  /**
+   * #729 CW-5a: runs once, just before the drive's own claim of its first step reaches the store —
+   * another process acting between the drive's read and its claim (the drive claims before its
+   * model is called).
+   */
+  atClaim?: (store: InMemoryStore, runId: string) => Promise<void>;
 }
 
 /** One `realm agent` drive in-process; the run's id is written `<run>` in the lines. */
 async function drive(def: WorkflowDefinition, o: DriveOptions = {}): Promise<Drive> {
   const store = o.store ?? new InMemoryStore({ leases: createLeaseDouble() });
+  if (o.atClaim !== undefined) {
+    const realClaim = store.claimStep.bind(store);
+    let fired = false;
+    store.claimStep = async (...args: Parameters<InMemoryStore['claimStep']>) => {
+      if (!fired) {
+        fired = true;
+        await o.atClaim!(store, args[0]);
+      }
+      return realClaim(...args);
+    };
+  }
   let calls = 0;
   const provider = new (class extends LlmProvider {
     async callStep(): Promise<Record<string, unknown>> {
@@ -541,13 +559,21 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
     const SENTENCE =
       "A `blocked` reply is never followed by `✓`: an `auto` step another process took between the drive's read and the engine's is said as taken (`• Step '<step>' was taken by …; not run here.`), and an agent step as below; when another process opened a gate or ended the run in that moment, the drive goes on as it does at any gate or end (it waits at the gate, or prints `Run ended in phase: <phase>`); any other `blocked` reply prints its own reason (`✗ Precondition failed for step 'ask'.`) and stops the drive with exit code 1.";
 
-    it('taken: another process completed the step while the model answered — said as taken, no ✓', async () => {
+    it('taken: a person freed the drive’s claim with --force and another process completed the step while the model answered — said as taken, no ✓', async () => {
       claim(AGENT_PAGE, SENTENCE);
       const def = wf({ ask: agent(), more: agent({}, ['ask']) });
       const d = await drive(def, {
+        // #729 CW-5a (claim-after cell rewritten): the drive holds `ask` while its model works, so
+        // another process completes it only after a person frees the claim (`--force`).
         during: async (store, call) => {
           if (call !== 1) return;
           const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
+          const since = (await store.get(runId)).record.claims?.['ask']?.since;
+          await reclaimStep(store, runId, 'ask', {
+            definition: def,
+            force: true,
+            ...(since !== undefined ? { claimed_at: since } : {}),
+          });
           const r = await executeStep(store, def, {
             runId,
             command: 'ask',
@@ -568,13 +594,14 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       expect(after[1]).toBe('log: \n→ [agent] more');
     });
 
-    it('a gate another process opened in that moment: the drive waits at the gate, no ✗, no ✓ for the refused step', async () => {
+    it('a gate another process opened at the drive’s claim: the drive waits at the gate, no ✗, no ✓ for the refused step', async () => {
       claim(AGENT_PAGE, SENTENCE);
       const def = wf({ ask: agent(), review: agent({ trust: 'human_confirmed' } as never) });
       const d = await drive(def, {
-        during: async (store, call) => {
-          if (call !== 1) return;
-          const runId = (await runsOf(store)).map((s) => s.record)[0]!.id;
+        // #729 CW-5a (claim-after cell rewritten): the drive claims `ask` before its model is called;
+        // a sibling's gate that opens during the call no longer refuses the held save (check 6, H1),
+        // so the gate opens at the claim.
+        atClaim: async (store, runId) => {
           const r = await executeStep(store, def, {
             runId,
             command: 'review',
@@ -592,13 +619,18 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         },
       });
       const firstAsk = d.lines.indexOf('log: \n→ [agent] ask');
-      // (a) red when the refused attempt prints `✓` or `✗`, or the drive does not wait at the gate;
-      //     (b) prints the line after the attempt and the result.
-      expect({
-        next: d.lines[firstAsk + 2]?.startsWith('log: \n⏸  Gate: review | ID: '),
-        crosses: d.lines.filter((l) => l.includes('✗')),
-        result: d.result,
-      }).toEqual({ next: true, crosses: [], result: 'completed' });
+      const gate = d.lines.findIndex((l) => l.startsWith('log: \n⏸  Gate: review | ID: '));
+      // (a) red when the refused claim prints `✓` or `✗`, asks the model before the gate is
+      //     answered, or the drive does not wait at the gate; (b) prints the lines and the result.
+      expect(
+        {
+          gateFirst: gate >= 0 && firstAsk > gate,
+          calls: d.calls,
+          crosses: d.lines.filter((l) => l.includes('✗')),
+          result: d.result,
+        },
+        d.lines.join('\n'),
+      ).toEqual({ gateFirst: true, calls: 1, crosses: [], result: 'completed' });
     });
 
     it('the run another process ended in that moment: `Run ended in phase: <phase>`, no ✓', async () => {
