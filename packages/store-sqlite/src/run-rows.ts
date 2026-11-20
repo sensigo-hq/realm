@@ -539,12 +539,17 @@ export function writeRunUpdate(
  * type), the key removed from it, and the entries put back in their order in the ring's own place.
  * The `json_type` guard keeps a run with no ring as it is stored: without it, `json_set` would add
  * `drive_failures: { entries: [] }` to a run that never failed.
+ *
+ * The rebuilt entries reach `json_set` through `json()`. SQLite takes a value as JSON only when it
+ * comes straight from a JSON function (sqlite.org/json1.html §4.11), and from SQLite 3.54.1 a
+ * subquery's result no longer counts as one, so without `json()` the entries were put back as one
+ * quoted string. The `json()` sits around the subquery: inside it, the mark is lost the same way.
  */
 const LISTED_CORE =
   "SELECT CASE WHEN json_type(record, '$.drive_failures.entries') = 'array' " +
   "THEN json_set(record, '$.drive_failures.entries', " +
-  "(SELECT json_group_array(json_remove(record -> fullkey, '$.model_text') ORDER BY key) " +
-  "FROM json_each(record, '$.drive_failures.entries'))) " +
+  "json((SELECT json_group_array(json_remove(record -> fullkey, '$.model_text') ORDER BY key) " +
+  "FROM json_each(record, '$.drive_failures.entries')))) " +
   'ELSE record END AS record FROM runs WHERE id = ?';
 
 /** Gap 1, unit A0: a run's evidence rows as a listing reads them, each entry's `model_text` removed. */
