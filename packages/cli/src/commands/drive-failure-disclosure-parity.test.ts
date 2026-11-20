@@ -8,14 +8,17 @@
 //
 // v1 waived NOTHING; #715 (b) (02 §D.2) waives the two fields the `drive_failing` finding fences on
 // (`evidence_count`, `gate_id`): they are what the run held when the entry was appended, read by the
-// finding — not a fact about the failure an operator acts on.
+// finding — not a fact about the failure an operator acts on. Gap 1, unit B: `model_text` renders
+// under `--verbose`, so its waiver is gone.
 import { describe, it, expect } from 'vitest';
 import type { DriveFailureRecord, RunRecord, UsageRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import { snap, neverPurges, scanning } from '../test-support/snapshot-double.js';
 
+/** A rendered field's probe reads the output without `--verbose` (`out`) and with it (`verbose`). */
 type DisclosureRoute =
-  { surface: 'rendered'; probe: (out: string) => void } | { surface: 'waived'; reason: string };
+  | { surface: 'rendered'; probe: (out: string, verbose: string) => void }
+  | { surface: 'waived'; reason: string };
 
 const USAGE: UsageRecord[] = [
   {
@@ -43,6 +46,16 @@ const ENTRY: DriveFailureRecord = {
   last_observed_status: 429,
   retry_after_observed_ms: 30000,
   usage: USAGE,
+  // Gap 1, unit B: the one request the failure covers, which got no answer.
+  model_text: {
+    recorded: true,
+    messages: [
+      { role: 'system', text: 'A fake system text.' },
+      { role: 'user', text: 'A fake prompt for the parity cell.' },
+    ],
+    tools: [],
+    requests: [{ request_id: null, sent: [0, 1], reply: null }],
+  },
 };
 
 /**
@@ -51,10 +64,6 @@ const ENTRY: DriveFailureRecord = {
  */
 const FENCE_WAIVER =
   "the fence against a stale drive-failure entry (the run's evidence count and open question when the entry was appended), consumed by the drive_failing finding; visible verbatim on the MCP door (get_run_state, so an agent can reason about staleness) and as record fields in `realm run export`; inspect shows the finding itself when the fence holds, and nothing of the fence when it does not";
-
-/** Gap 1, unit A2a: why `inspect` does not print a drive failure's `model_text` yet. */
-const MODEL_TEXT_WAIVER =
-  "the model calls' texts a drive failure keeps (gap 1, unit A2a): unit B renders them in inspect; until then `realm run export` carries them, masked as values";
 
 const DRIVE_FAILURE_DISCLOSURE = {
   at: { surface: 'rendered', probe: (out) => expect(out).toContain(ENTRY.at) },
@@ -89,7 +98,16 @@ const DRIVE_FAILURE_DISCLOSURE = {
   // prompt` — the D2 truth rule fires on the failure line too, not only the step line.
   evidence_count: { surface: 'waived', reason: FENCE_WAIVER },
   gate_id: { surface: 'waived', reason: FENCE_WAIVER },
-  model_text: { surface: 'waived', reason: MODEL_TEXT_WAIVER },
+  // Gap 1, unit B: under `--verbose` only; the output without it is unchanged.
+  model_text: {
+    surface: 'rendered',
+    probe: (out, verbose) => {
+      expect(verbose).toContain('Model text: 1 request');
+      expect(verbose).toContain('Request 1 (got no answer): sent 1, 2');
+      expect(verbose).toContain('A fake prompt for the parity cell.');
+      expect(out).not.toContain('Model text');
+    },
+  },
   usage: {
     surface: 'rendered',
     probe: (out) => {
@@ -134,10 +152,11 @@ const workflowStore = {
 describe('#401 — every DriveFailureRecord field reaches an inspect reader', () => {
   it('runs each field OWN probe against the real rendered output', async () => {
     const out = await inspectRun('run_test1', store, workflowStore);
+    const verbose = await inspectRun('run_test1', store, workflowStore, { verbose: true });
     for (const [field, route] of Object.entries(DRIVE_FAILURE_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
-      if (route.surface === 'rendered') route.probe(out);
+      if (route.surface === 'rendered') route.probe(out, verbose);
       else
         expect(
           route.reason.trim().length,
@@ -146,7 +165,7 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
     }
   });
 
-  it('the registry covers every field, and waives only the two fence fields and model_text, for their written reasons', () => {
+  it('the registry covers every field, and waives only the two fence fields, for their written reason', () => {
     expect(Object.keys(DRIVE_FAILURE_DISCLOSURE).sort()).toEqual(
       [
         'at',
@@ -177,7 +196,6 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
     ).toEqual([
       ['evidence_count', FENCE_WAIVER],
       ['gate_id', FENCE_WAIVER],
-      ['model_text', MODEL_TEXT_WAIVER],
     ]);
   });
 });
