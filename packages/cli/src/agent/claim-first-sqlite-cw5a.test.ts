@@ -28,7 +28,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  ExtensionRegistry,
+  advanceRun,
+  claimStepForDrive,
   createDefaultRegistry,
+  executeStep,
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -70,8 +74,10 @@ const PROVIDER =
   "import { closeSync, openSync, readdirSync, writeFileSync } from 'node:fs';\n" +
   "import { join } from 'node:path';\n" +
   'const wait = () => new Promise((r) => setTimeout(r, 120000));\n' +
+  "import { appendFileSync } from 'node:fs';\n" +
   'class P extends ToolCapableLlmProvider {\n' +
   '  async callStep() {\n' +
+  "    if (process.env.CW5A_CALLS) appendFileSync(process.env.CW5A_CALLS, 'call\\n');\n" +
   "    if (process.env.CW5A_TOUCH) { const dir = join(process.env.HOME, '.realm', 'claim-leases'); for (const f of readdirSync(dir)) closeSync(openSync(join(dir, f), 'r')); }\n" +
   '    if (process.env.CW5A_READY) { writeFileSync(process.env.CW5A_READY, String(process.pid)); await wait(); }\n' +
   '    return { ok: true };\n' +
@@ -353,18 +359,21 @@ describe('#729 CW-5a check 8 — the signals', () => {
       './ext.mjs',
     ]);
     await until(() => existsSync(save));
+    const at = Date.now();
     a.child.kill('SIGINT');
-    // The save goes on: the chained step finishes, and the save returns.
-    await new Promise((r) => setTimeout(r, 200));
-    writeFileSync(go, 'go');
+    // Correction 1: the drive waits only for s's own save, never for the step the chain runs after
+    // it, so it dies while `x` still runs; `x` keeps its claim to its deadline, as on 0.50.0.
     const end = await a.ended;
+    const tookMs = Date.now() - at;
+    writeFileSync(go, 'go');
     const run = await record(runId);
-    // (1) red when the drive gives back a step it saved (a removed-claim line), claims the next
-    //     step after the signal (its claim then stays, or its model is asked), or exits 128+n;
-    //     (2) prints the output and the record.
+    // (1) red when the drive waits for the chain (it then dies only when `x` returns), gives back
+    //     a step it saved (a removed-claim line), claims the next step after the signal, or exits
+    //     128+n; (2) prints the output and the record.
     expect(
       {
         end,
+        within5s: tookMs < 5_000,
         giveBack: a
           .out()
           .split('\n')
@@ -376,9 +385,10 @@ describe('#729 CW-5a check 8 — the signals', () => {
       a.out(),
     ).toEqual({
       end: { code: null, signal: 'SIGINT' },
+      within5s: true,
       giveBack: [],
-      completed: ['s', 'x'],
-      inFlight: [],
+      completed: ['s'],
+      inFlight: ['x'],
       tClaim: undefined,
     });
   }, 90_000);
@@ -414,6 +424,61 @@ describe('#729 CW-5a check 8 — the signals', () => {
   }, 90_000);
 });
 
+describe('#729 CW-5a correction 1, check 4 — the drive’s output through a pipe', () => {
+  it('a shell loop over two runs, each drive piped to tee: Ctrl-C stops the loop, one model call, no stack trace', async () => {
+    const r1 = await home();
+    const { record: second } = await h.home.runStore.create({
+      workflowId: ONE.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const ready = join(project, 'ready');
+    const calls = join(project, 'calls');
+    const log = join(project, 'drive.log');
+    // The drive's stdout is a pipe, so its relay runs; tee is a reader the same Ctrl-C ends.
+    const drive = `${JSON.stringify(process.execPath)} ${JSON.stringify(CLI)} agent --run-id "$r" --provider-module ./p.mjs | tee -a ${JSON.stringify(log)}`;
+    const bash = spawn(
+      'bash',
+      ['-c', `for r in ${r1} ${second.id}; do ${drive}; echo "next-$r"; done`],
+      {
+        cwd: project,
+        env: env('drive-b', { CW5A_READY: ready, CW5A_CALLS: calls }),
+        detached: true,
+      },
+    );
+    children.push(bash);
+    let out = '';
+    let err = '';
+    bash.stdout!.on('data', (d: Buffer) => (out += d.toString()));
+    bash.stderr!.on('data', (d: Buffer) => (err += d.toString()));
+    const ended = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+      bash.on('exit', (code, signal) => resolve({ code, signal })),
+    );
+    await until(() => existsSync(ready));
+    // As a terminal's Ctrl-C: to the foreground process group (the shell, the relay and tee).
+    process.kill(-bash.pid!, 'SIGINT');
+    const end = await Promise.race([
+      ended,
+      new Promise<'still running'>((r) => setTimeout(() => r('still running'), 30_000)),
+    ]);
+    const callCount = existsSync(calls)
+      ? readFileSync(calls, 'utf8').split('\n').filter(Boolean).length
+      : 0;
+    // (1) red when the relay dies on the closed pipe (its exit is then an ordinary one, so the
+    //     shell starts the next run's drive and pays for its call), or prints a stack trace;
+    //     (2) prints the shell's end, its output and its errors.
+    expect(
+      {
+        end,
+        next: out.includes('next-'),
+        calls: callCount,
+        stack: err.split('\n').filter((l) => /EPIPE|^\s+at /.test(l)),
+      },
+      `stdout:\n${out}\nstderr:\n${err}`,
+    ).toEqual({ end: { code: null, signal: 'SIGINT' }, next: false, calls: 1, stack: [] });
+  }, 90_000);
+});
+
 describe('#729 CW-5a check 10 — a drive killed during its model call, then the next drive', () => {
   it('A is SIGKILLed during its model call: the next drive prints line (i) after its own claim, and completes the step with one model call', async () => {
     const runId = await home();
@@ -442,6 +507,8 @@ describe('#729 CW-5a check 10 — a drive killed during its model call, then the
         ranAfter: out.slice(back).some((l) => l.includes('→ [agent] s')),
         takeBacks: takeBacks(run).map((e) => e.driven_by),
         completed: run.completed_steps,
+        // Correction 1 (environment-and-files.md): the killed drive's file stays after the take-back.
+        leaseFiles: leaseFiles().length,
       },
       `${r.stdout}\n${r.stderr}`,
     ).toEqual({
@@ -450,6 +517,7 @@ describe('#729 CW-5a check 10 — a drive killed during its model call, then the
       ranAfter: true,
       takeBacks: [{ by: 'drive-b', by_source: 'ambient', channel: 'agent' }],
       completed: ['s'],
+      leaseFiles: 1,
     });
   }, 150_000);
 });
@@ -489,6 +557,93 @@ describe('#729 CW-5a — realm-agent.md: a provider module that opens a lease fi
       `${r.stdout}\n${r.stderr}`,
     ).toEqual({ code: 0, aStillWorks: true, takeBacks: ['drive-b'], completedBy: ['drive-b'] });
   }, 150_000);
+});
+
+describe('#729 CW-5a correction 1 — environment-and-files.md: the lease files that stay', () => {
+  it('a run that ended while a drive held its step: the file stays, named as realm run export shows the lease id, also after realm run purge; then, named by no claim, deleting it changes nothing', async () => {
+    // `s` held by a drive; `p` another program's; `f`, after `p`, a handler that aborts the run: an
+    // end does not clear another step's claim, so `s`'s claim (and its lease) stays on the record.
+    const def = wf('claim-first-files', {
+      s: agent(),
+      p: agent(),
+      f: { description: 'f', execution: 'auto', depends_on: ['p'], handler: 'ends' },
+    });
+    const runId = await home(def);
+    const answer = await claimStepForDrive(h.home.runStore, runId, 's', {
+      definition: def,
+      registry: createDefaultRegistry(),
+      driver: { by: 'drive-a', by_source: 'stated', channel: 'agent' },
+    });
+    if (answer.kind !== 'claimed') throw new Error(`fixture: ${JSON.stringify(answer)}`);
+    const ending = new ExtensionRegistry();
+    ending.register('handler', 'ends', {
+      id: 'ends',
+      execute: async () => ({ data: {}, abort: { message: 'the other branch ended the run' } }),
+    } as never);
+    const p = await executeStep(h.home.runStore, def, {
+      runId,
+      command: 'p',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    if (p.status !== 'ok') throw new Error(`fixture: ${JSON.stringify(p)}`);
+    await advanceRun(h.home.runStore, def, { runId, registry: ending });
+    const ended = await record(runId);
+    if (ended.terminal_state !== true) throw new Error('fixture: the run did not end');
+    // As the drive closes its hold on an ended run: with the record it has, which names the lease.
+    answer.hold.close(ended);
+    const realm = (args: string[]) =>
+      spawnSync(process.execPath, [CLI, ...args], {
+        cwd: project,
+        env: env('operator'),
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+    const bundlePath = join(project, 'bundle.json');
+    // This run was made in the store, with no project, so the export needs the flag that writes it
+    // masked with what is known (a run started from a project needs none).
+    const exported = realm([
+      'run',
+      'export',
+      runId,
+      '--out',
+      bundlePath,
+      '--accept-partial-disclosure',
+    ]);
+    const id = (JSON.parse(readFileSync(bundlePath, 'utf8')) as { run: RunRecord }).run.claims?.[
+      's'
+    ]?.lease?.id;
+    const atEnd = leaseFiles();
+    const purge = realm(['run', 'purge', runId, '--force']);
+    const purged = await h.home.runStore.get(runId).then(
+      () => false,
+      () => true,
+    );
+    const afterPurge = leaseFiles();
+    unlinkSync(join(h.path, 'claim-leases', `${id}.lease`));
+    const cleanup = realm(['run', 'cleanup', '--older-than', '0m', '--dry-run']);
+    // (1) red when the file is not named `<id>.lease` for the id the export shows, purge removes the
+    //     file (or keeps the run), or a command fails once the file no claim names is gone;
+    //     (2) prints the outputs.
+    expect(
+      {
+        exportCode: exported.status,
+        atEnd,
+        purgeCode: purge.status,
+        purged,
+        afterPurge,
+        cleanup: [cleanup.status, cleanup.stdout.split('\n')[0]],
+      },
+      [exported.stderr, purge.stdout, purge.stderr, cleanup.stdout, cleanup.stderr].join('\n---\n'),
+    ).toEqual({
+      exportCode: 0,
+      atEnd: [`${id}.lease`],
+      purgeCode: 0,
+      purged: true,
+      afterPurge: [`${id}.lease`],
+      cleanup: [0, 'Would mark 0 run(s) as abandoned.'],
+    });
+  }, 120_000);
 });
 
 describe('#729 CW-5a check 13 — cleanup while a drive holds its step', () => {

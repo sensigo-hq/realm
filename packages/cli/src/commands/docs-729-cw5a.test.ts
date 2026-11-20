@@ -43,14 +43,17 @@ function claimChangelog(sentence: string): void {
 }
 
 const GIVE_BACK_PARAGRAPH =
-  "When the drive stops without saving an agent step it holds (its model call or tools failed, the engine refused the step's result, a store failed, or it was stopped by Ctrl-C, SIGTERM or SIGHUP), it gives the step's claim back first and says so: `• Step '<step>': this drive let its claim go (<why>), so the step can run again.`, where `<why>` is `its step failed`, `the engine refused the step's result`, `this drive stopped on an error` or `it was stopped by SIGINT` (or `SIGTERM`, `SIGHUP`). When the claim was already gone, the line is `• Step '<step>': its claim was removed while this drive held it.`, with ` (a reclaim)` before the full stop when a person reclaimed it; when the run ended meanwhile, it is `• Step '<step>' was not run: the run ended (<phase>) while this drive held it.`, unless a line already said how the run ended. When giving the claim back fails, the claim stays, with a lease no program holds once the drive ends: `• Step '<step>': this drive could not let its claim go (<reason>); the next drive of this run can take the step back, once.`, or, when the step was already taken back automatically once, `• Step '<step>': this drive could not let its claim go (<reason>), and it was already taken back automatically once, so a person decides.` followed by each condition and the command that frees it. When the drive cannot take a lease in the home's `claim-leases/` folder, it claims nothing and does not call the model: `• Step '<step>' was not started: this drive could not take a lease in <folder> (<why>); nothing was claimed and the model was not called.`, on stderr, where `<why>` is `this program cannot write there`, `the disk is full`, `too many files are open` or `writing there failed`; the drive stops with exit code 1. A step the drive took back whose claim another program takes before this drive's own claim lands gets `… so this drive took it back (this step's one automatic take-back until a person reclaims it), but it is now taken by <program> at <time>; not run here.` in place of the take-back line, and the drive waits for that claim; when the drive stops before it claims the step, the line ends `…; it was not run here.` All added after version 0.50.0.";
+  "When the drive stops without saving an agent step it holds (its model call or tools failed, the engine refused the step's result, a store failed, or it was stopped by Ctrl-C, SIGTERM or SIGHUP), it gives the step's claim back first and says so: `• Step '<step>': this drive let its claim go (<why>), so the step can run again.`, where `<why>` is `its step failed`, `the engine refused the step's result`, `this drive stopped on an error` or `it was stopped by SIGINT` (or `SIGTERM`, `SIGHUP`). During the save, it waits for the step's save, at most 5 seconds, then gives the claim back if the step was not saved. A second signal ends it at once, and the step is left for the next drive to take back. When the claim was already gone, the line is `• Step '<step>': its claim was removed while this drive held it.`, with ` (a reclaim)` before the full stop when a person reclaimed it; when the run ended meanwhile, it is `• Step '<step>' was not run: the run ended (<phase>) while this drive held it.`, unless a line already said how the run ended. When giving the claim back fails, the claim stays, with a lease no program holds once the drive ends: `• Step '<step>': this drive could not let its claim go (<reason>); the next drive of this run can take the step back, once.`, or, when the step was already taken back automatically once, `• Step '<step>': this drive could not let its claim go (<reason>), and it was already taken back automatically once, so a person decides.` followed by each condition and the command that frees it. When the drive cannot take a lease in the home's `claim-leases/` folder, it claims nothing and does not call the model: `• Step '<step>' was not started: this drive could not take a lease in <folder> (<why>); nothing was claimed and the model was not called.`, on stderr, where `<why>` is `this program cannot write there`, `the disk is full`, `too many files are open` or `writing there failed`; the drive stops with exit code 1. A step the drive took back whose claim another program takes before this drive's own claim lands gets `… so this drive took it back (this step's one automatic take-back until a person reclaims it), but it is now taken by <program> at <time>; not run here.` in place of the take-back line, and the drive waits for that claim; when the drive stops before it claims the step, the line ends `…; it was not run here.` All added after version 0.50.0.";
 
 describe('#729 CW-5a — realm-agent.md', () => {
   it('the give-back paragraph', () => {
     // "its model call or tools failed": claim-first-cw5a G2 and claim-first-sqlite's MCP arm; "the
     // engine refused the step's result": agent-refused-625's precondition cell and G3; "this drive
     // stopped on an error": "a store read that fails after the claim"; "it was stopped by SIGINT"
-    // (SIGTERM, SIGHUP): claim-first-sqlite check 8. "its claim was removed … (a reclaim)": the two
+    // (SIGTERM, SIGHUP): claim-first-sqlite check 8. Correction 1's "During the save … at most 5
+    // seconds … A second signal ends it at once": claim-first-cw5a correction 1's check 1 cells (the
+    // chain not waited for, the 5 s bound, the second SIGINT) and claim-first-sqlite's "SIGINT during
+    // the save". "its claim was removed … (a reclaim)": the two
     // removed cells. "the run ended (<phase>) while this drive held it … unless a line already said":
     // check 12. The two thrown lines: G4, below and at the cap. `lease_unavailable`: check 7 (a
     // wrapped port, and the SQLite folder at 0500, exit 1). The not-landed line and "…; it was not run
@@ -82,10 +85,11 @@ describe('#729 CW-5a — realm-agent.md', () => {
       AGENT,
       "| A lease cannot be taken in the home's `claim-leases/` folder | `• Step 'classify' was not started: this drive could not take a lease in /home/dana/.realm/claim-leases (this program cannot write there); nothing was claimed and the model was not called.` |",
     );
-    // claim-first-sqlite check 8: each signal's death, and the shell loop that stops.
+    // claim-first-sqlite check 8: each signal's death, and the shell loop that stops; correction 1:
+    // the pipe loop (check 4) and the save's bound and second signal (claim-first-cw5a check 1).
     claim(
       AGENT,
-      "| 128 + n | The drive was ended by SIGINT (130), SIGTERM (143) or SIGHUP (129). When it held an agent step, it gave the step's claim back first, then ended by that signal, so a shell running it in a loop stops (added after version 0.50.0). |",
+      "| 128 + n | The drive was ended by SIGINT (130), SIGTERM (143) or SIGHUP (129). When it held an agent step, it gave the step's claim back first, then ended by that signal, so a shell running it in a loop stops (added after version 0.50.0). During the save, it waits for the step's save, at most 5 seconds, then gives the claim back if the step was not saved. A second signal ends it at once, and the step is left for the next drive to take back. |",
     );
     // claim-first-sqlite "a provider module that opens a lease file".
     claim(
@@ -237,12 +241,18 @@ describe('#729 CW-5a — the other pages', () => {
 
   it('environment-and-files.md: the claim-leases/ row', () => {
     // "deletes it when it saves the step or gives it back": claim-first-sqlite check 3 (G1) and its
-    // signal cells (the folder empty); "a drive that was killed leaves it, and the next drive takes
-    // the step back": check 10; "Deleting a file there … no lease file": check 13. The mount clause is
-    // the design's caution about file locks (not executed: no such mount here).
+    // signal cells (the folder empty); "a drive that was killed leaves its file; the next drive takes
+    // the step back, and the file stays after that": check 10 (one file left after the take-back).
+    // Correction 1, claim-first-sqlite "the lease files that stay": a run that ended while held keeps
+    // its file, named `<id>.lease` for the id `realm run export` shows, also after `realm run purge`;
+    // once no claim names it, deleting it changes nothing (cleanup's dry run). "Deleting a file … no
+    // lease file": check 13. "only a person can recover it": take-back-watch-cw5b W3 (a lease file
+    // gone is not taken back). "purge refuses that run, with or without --force": held-lease-cw3a
+    // "resume and purge, absent and unknown". The mount clause is the design's caution about file
+    // locks (not executed: no such mount here).
     claim(
       FILES,
-      '| `claim-leases/` | One small file per agent step a `realm agent` drive holds, which the operating system keeps locked while that drive runs. The drive deletes it when it saves the step or gives it back; a drive that was killed leaves it, and the next drive takes the step back. Deleting a file there while its drive runs makes the step read "no lease file" to every other program; if that drive is then killed before it finishes the step, only a person can recover it. The leases rely on the operating system\'s file locks: on a mount that does not keep them as a local disk does (some network and synchronised folders), the words that say a program held the claim\'s lease can name a program that is gone. Made by the first `realm agent` drive (added after version 0.50.0). |',
+      "| `claim-leases/` | One small file per agent step a `realm agent` drive holds, which the operating system keeps locked while that drive runs. The drive deletes it when it saves the step or gives it back. Two cases leave it. A drive that was killed leaves its file; the next drive takes the step back, and the file stays after that. A run that ended while a drive held its step keeps the claim, so the file stays, also after `realm run purge`. A file that no run's claim names is safe to delete. `realm run export` shows the lease id a claim names, and the file is named `<id>.lease`. Deleting a file that a run's claim still names makes the step read \"no lease file\" to every other program. If its drive is still running and is then killed before it finishes the step, only a person can recover it, and `realm run purge` refuses that run, with or without `--force`. The leases rely on the operating system's file locks: on a mount that does not keep them as a local disk does (some network and synchronised folders), the words that say a program held the claim's lease can name a program that is gone. Made by the first `realm agent` drive (added after version 0.50.0). |",
     );
   });
 
@@ -252,7 +262,7 @@ describe('#729 CW-5a — the other pages', () => {
     // check 10 (a killed drive taken back once); check 7 (the folder); store-sqlite's index exports
     // `claimLeasesFolder` (agent.ts imports it).
     claimChangelog(
-      "- **`realm agent` holds its step under a lease while its model works.** A drive now claims an agent step before it calls the model, under a kernel lease in the home's `claim-leases/` folder, and holds it until it saves the result. A second `realm agent`, or a `realm workflow run` prompt, waits instead of running the step beside it; before, both could call the model. A drive that stops without finishing the step gives the claim back first and says so. That covers a failed step, a result the engine refused, and Ctrl-C, SIGTERM or SIGHUP. On a signal, it then ends by that signal, so a script loop over runs stops. A killed drive leaves a lease no program holds, which `realm agent` takes back once (see the line above). A drive whose `claim-leases/` folder cannot be written stops before the model call, saying why. `@sensigo/realm-store-sqlite` exports the folder's location (`claimLeasesFolder`). (#729)",
+      "- **`realm agent` holds its step under a lease while its model works.** A drive now claims an agent step before it calls the model, under a kernel lease in the home's `claim-leases/` folder, and holds it until it saves the result. A second `realm agent`, or a `realm workflow run` prompt, waits instead of running the step beside it; before, both could call the model. A drive that stops without finishing the step gives the claim back first and says so. That covers a failed step, a result the engine refused, and Ctrl-C, SIGTERM or SIGHUP. On a signal, it then ends by that signal (a second one ends it at once), so a script loop over runs stops, also when its output goes through a pipe. A killed drive leaves a lease no program holds, which `realm agent` takes back once (see the line above). A drive whose `claim-leases/` folder cannot be written stops before the model call, saying why. `@sensigo/realm-store-sqlite` exports the folder's location (`claimLeasesFolder`). (#729)",
     );
   });
 });

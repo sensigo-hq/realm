@@ -226,8 +226,19 @@ function startRelay(deps: RelayDeps): void {
 
   // Every byte of each piped stream through this process's writer (U1's pass, its carry), with the
   // reader paused while the destination cannot take more (inert while the destination is blocking).
+  // #729 CW-5a correction 1: a destination whose reader is gone (`realm agent … | tee log`, the tee
+  // ended by the same Ctrl-C) is written no more, the worker is still read, and the relay ends as the
+  // worker ends. The relay's own lines to it (the drain line, the receipt) are dropped the same way.
+  // Any other write error ends the relay as before.
   const relayStream = (source: Readable | null, destination: Writable): void => {
+    let gone = false;
+    destination.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code !== 'EPIPE') throw err;
+      gone = true;
+      source?.resume();
+    });
     source?.on('data', (chunk: Buffer) => {
+      if (gone) return;
       if (!destination.write(chunk)) {
         source.pause();
         destination.once('drain', () => source.resume());

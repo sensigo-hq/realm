@@ -915,9 +915,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   let givingBack: Promise<Snapshot | undefined> | undefined = undefined;
   /** The signal that stopped the drive, recorded before any await; from then on it ends by it. */
   let stopCause: NodeJS.Signals | undefined = undefined;
-  /** The held step's save in flight (`executeChain`), which a signal waits for. */
-  let saving: Promise<EngineReply | undefined> | undefined = undefined;
-  let endSave: (reply: EngineReply | undefined) => void = () => {};
+  /**
+   * The held step's own save in flight, which a signal waits for: settled once that save is done (the
+   * chain's first callback, or `executeChain`'s return), never waiting for the steps the chain runs
+   * after it (correction 1).
+   */
+  let saving: Promise<void> | undefined = undefined;
+  let endSave: () => void = () => {};
+  /** Correction 1: how long a signal waits for that save, inside the relay's 10 s SIGKILL. */
+  const SAVE_WAIT_MS = 5_000;
   /** CW-5b's line (i), per step, until this drive's claim of that step answers. */
   const pendingTakeBack = new Map<string, ReturnType<typeof describeClaimHolder>>();
   /** A claim refused on the record's version: a second refusal there stops the drive (C85's bound). */
@@ -928,6 +934,18 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     stopCause === undefined ? recordDriveFailure(deps.store, runId, entry) : Promise.resolve();
   const namesHeldLease = (record: RunRecord, h: NonNullable<typeof held>): boolean =>
     record.in_progress_steps.includes(h.step) && record.claims?.[h.step]?.lease?.id === h.hold.id;
+  /** A snapshot whose record no longer has this drive's claim on `step`: judged as no program's. */
+  const withoutOwnClaim = (snap: Snapshot, step: string): Snapshot => {
+    const { [step]: _own, ...others } = snap.record.claims ?? {};
+    return {
+      ...snap,
+      record: {
+        ...snap.record,
+        in_progress_steps: snap.record.in_progress_steps.filter((s) => s !== step),
+        claims: others,
+      },
+    };
+  };
   /** Closes the hold, with the newest record (its file is kept while that record names it). */
   const closeHold = (record: RunRecord | undefined): void => {
     const h = held;
@@ -971,14 +989,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       closeHold(record);
       if (answer.kind === 'released') {
         console.log(giveBackLine(h.step, { kind: 'released', cause: stopCause ?? h.cause }));
+      } else if (
+        answer.kind === 'not_ours' &&
+        (record.completed_steps.includes(h.step) || record.failed_steps.includes(h.step))
+      ) {
+        // The step has a settled entry (this drive's save, which a signal waited for, or another
+        // program's): nothing was given back, and nothing is said.
       } else if (record.terminal_state === true) {
         // Item 3: nothing can be written to an ended run; its ending is said once on this screen.
         if (!endingSaid) console.log(endedWhileHeldLine(h.step, record, writerCtx()));
         endingSaid = true;
-      } else if (
-        answer.kind === 'not_released' ||
-        (!record.completed_steps.includes(h.step) && !record.failed_steps.includes(h.step))
-      ) {
+      } else {
         const newest = record.evidence.filter((e) => e.step_id === h.step).at(-1);
         const byReclaim =
           answer.kind === 'not_ours' && newest?.output_summary?.['reclaimed'] === true;
@@ -995,26 +1016,38 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       setInterval(() => {}, 1 << 30);
     });
   };
+  /** Removes the drive's listeners and dies by `signal`, as the relay does. */
+  const raiseAgain = (signal: NodeJS.Signals): void => {
+    for (const s of SIGNALS) process.removeListener(s, onSignal);
+    process.kill(process.pid, signal);
+    // Reached only if the signal did not end this process.
+    setTimeout(() => exitProcess(128 + (osConstants.signals[signal] ?? 0)), 1000);
+  };
   /**
-   * SIGINT, SIGTERM, SIGHUP while the drive holds a step: give the claim back (after a save in flight,
-   * only when the step was not saved), then die by the same signal, so a shell sees it.
+   * SIGINT, SIGTERM, SIGHUP while the drive holds a step: give the claim back by the record (after the
+   * held step's own save in flight, at most SAVE_WAIT_MS), then die by the same signal, so a shell
+   * sees it. A second signal of the same kind ends the drive at once, with no give-back: the claim
+   * then keeps a lease no program holds, which the next drive takes back once.
    */
   function onSignal(signal: NodeJS.Signals): void {
-    if (stopCause !== undefined) return;
+    if (stopCause !== undefined) {
+      if (signal === stopCause) raiseAgain(signal);
+      return;
+    }
     stopCause = signal;
     void (async () => {
       const inFlight = saving;
       if (inFlight !== undefined) {
-        const reply = await inFlight;
-        const saved = reply !== undefined ? judgedSnapshotOf(reply) : undefined;
-        if (saved !== undefined && held !== undefined && !namesHeldLease(saved.record, held))
-          closeHold(saved.record);
+        let bound: NodeJS.Timeout | undefined;
+        await Promise.race([
+          inFlight,
+          new Promise<void>((resolve) => (bound = setTimeout(resolve, SAVE_WAIT_MS))),
+        ]);
+        clearTimeout(bound);
       }
+      // `releaseDriveClaim` reads the run: a step its save settled gives nothing back, and no line.
       await giveBack();
-      for (const s of SIGNALS) process.removeListener(s, onSignal);
-      process.kill(process.pid, signal);
-      // Reached only if the signal did not end this process.
-      setTimeout(() => exitProcess(128 + (osConstants.signals[signal] ?? 0)), 1000);
+      raiseAgain(signal);
     })();
   }
   try {
@@ -1770,6 +1803,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             result = engineReply;
             break;
           }
+          // #729 CW-5a correction 1: from a signal's stop cause on, no model call (a repair attempt's
+          // included): the drive waits for its handler to end it.
+          if (stopCause !== undefined) await halt();
           // issue #401: re-stamped per repair attempt, so `elapsed_ms` measures THIS attempt
           // rather than the whole step.
           attemptStartedAt = performance.now();
@@ -2514,11 +2550,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // recorded as sent — and said so.
           const sentBack = markersIn(stepInput);
           if (sentBack.length > 0) console.warn(`  ⚠ ${inboundMarkerWarning(sentBack)}`);
+          // #729 CW-5a correction 1: from a signal's stop cause on, no save either (once the handler
+          // has given the claim back, a save would take the step again, under no claim of this drive).
+          if (stopCause !== undefined) await halt();
           // #625 A1a: re-seeded for each call, each repair attempt included.
           chainStartedNotDone = stepName;
-          // #729 CW-5a: the save in flight, which a signal waits for (it resolves with the reply, or
-          // with nothing from the outer `finally` when the save throws).
-          saving = new Promise<EngineReply | undefined>((resolve) => (endSave = resolve));
+          // #729 CW-5a: the held step's own save in flight, which a signal waits for. It settles at
+          // the chain's first callback (the step's save is done before the chain runs anything after
+          // it), at the call's return, or from the outer `finally` when the call throws.
+          saving = new Promise<void>((resolve) => (endSave = resolve));
           result = await executeChain(deps.store, definition, {
             runId,
             command: stepName,
@@ -2530,12 +2570,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // prints them. `currentStepName` and `attemptStartedAt` stay this step's: chokepoint 3
             // attaches this step's billed calls by them.
             onStep: (step) => {
+              endSave();
               if (chainStartedNotDone !== undefined)
                 console.log(`  ✓ → ${writerCtx().word('running', RUN_PHASE_WORDS)}`);
               chainStartedNotDone = step;
               console.log(`→ [auto] ${step}`);
             },
             onTaken: (step, record, snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT) => {
+              endSave();
               chainStartedNotDone = undefined;
               console.log(
                 takenLine(
@@ -2555,6 +2597,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               record,
               snapshot: Pick<Snapshot, 'lease_facts'> = NO_SNAPSHOT,
             ) => {
+              endSave();
               chainStartedNotDone = undefined;
               console.log(
                 outcomeNotRecordedLine(kind, record, step, keepsClaims, writerCtx(), snapshot),
@@ -2608,7 +2651,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // this call sits inside the repair loop.
             ...(shouldMintWriterNonce(deps) ? { writerNonce: crypto.randomUUID() } : {}),
           });
-          endSave(result);
+          endSave();
           saving = undefined;
 
           // The follow-up to #625 PR-2a round 20's finding 3: `executeChain` answers a run it cannot read
@@ -2724,22 +2767,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             closeHold(judged.record);
             // An ended run keeps this drive's claim (nothing can be written to it): the reply is
             // judged without it, so no line names this drive as the step's holder.
-            if (own) {
-              const { [stepName]: _own, ...others } = judged.record.claims ?? {};
-              gaveBackFor = {
-                reply: result,
-                snapshot: {
-                  ...judged,
-                  record: {
-                    ...judged.record,
-                    in_progress_steps: judged.record.in_progress_steps.filter(
-                      (s) => s !== stepName,
-                    ),
-                    claims: others,
-                  },
-                },
-              };
-            }
+            if (own) gaveBackFor = { reply: result, snapshot: withoutOwnClaim(judged, stepName) };
           } else {
             held.cause = 'engine_refused';
             // Not a validation wedge (a precondition the save refused, a question opened on another
@@ -2752,7 +2780,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 result.error_code === 'VALIDATION_INPUT_SCHEMA');
             if (!wedge) {
               const released = await giveBack();
-              if (released !== undefined) gaveBackFor = { reply: result, snapshot: released };
+              // Correction 1: a give-back that threw leaves the claim, held by no program once this
+              // drive ends; the reply is judged without it, as for an ended run, so no line names
+              // this drive as the step's holder and the drive does not wait on itself.
+              gaveBackFor = {
+                reply: result,
+                snapshot: released ?? withoutOwnClaim(judged, stepName),
+              };
               // A question open on another step refused the save (open_gate's `gate_mismatch`, "wait
               // for its resolution"): the drive waits at that question (the loop's top), then runs the
               // step again, as when its claim was refused there before CW-5a.
@@ -3118,7 +3152,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   } finally {
     // #729 CW-5a: after chokepoint 3's entry, on every return and throw: a hold still open is given
     // back by the record. After a signal, the handler gives back and ends the process.
-    endSave(undefined);
+    endSave();
     if (stopCause !== undefined) await halt();
     if (held !== undefined) await giveBack();
     for (const [step, described] of pendingTakeBack)

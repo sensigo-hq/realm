@@ -727,15 +727,16 @@ describe(
       // #729 CW-5a (claim-after cell rewritten): the drive claims the step under a lease before its
       // model is called and holds it until the save. The prompt's other half (it finds the step held,
       // waits up to 60 s, then hands the run back) is `realm workflow run`'s, executed by
-      // holder-lines-cw4b check 2 (g) "the taken line" (a drive's claimStepForDrive claim: the taken
-      // line, the waiting line, exit 1).
+      // holder-lines-cw4b check 2 (g) "a step a realm agent drive holds when the command reaches it"
+      // (held: the leased waiting line, exit 1; not_held, a killed drive: the same wait, then the
+      // command that frees the step) — #729 CW-5a correction 1.
       claim(
         AGENT_PAGE,
         "The drive holds the agent step it works on, too: before it calls the model, it claims the step under a lease in the home's `claim-leases/` folder, and it keeps the claim until it saves the step's answer, so a second `realm agent`, or a prompt `realm workflow run` opens for the step, waits for it instead of running it beside the drive (added after version 0.50.0, which held nothing while the model worked: a prompt opened during the model call took the step, and the model's answer was not recorded).",
       );
       claim(
         WORKFLOW_PAGE,
-        "`realm agent` holds an agent step while its model works on it. So on a run this command started (it cannot join a run it did not start), when it reaches a step a `realm agent` drive holds, it prints `• Step '<step>' was taken by <program> at <time>; not run here.`, waits up to 60 seconds for the run's record to change, then hands the run back as for any step another process holds (added after version 0.50.0, before which `realm agent` held nothing while its model worked: a prompt opened during that call took the step with no word of the call, and the model's answer was not recorded; a drive killed during its model call left no claim, so the prompt ran the step at once).",
+        "`realm agent` holds an agent step while its model works on it. So on a run this command started (it cannot join a run it did not start), when it reaches a step a `realm agent` drive holds, it prints `• Step '<step>' was taken by <program> at <time>; its program held the claim's lease when it was checked. Waiting up to 60s for the run's record to change.`, then hands the run back as for any step another process holds. When that drive was killed, the line says no program held the claim's lease; the command waits the same 60 seconds and hands the run back with the command that frees the step (only `realm agent` takes such a step back) (added after version 0.50.0, before which `realm agent` held nothing while its model worked: a prompt opened during that call took the step with no word of the call, and the model's answer was not recorded; a drive killed during its model call left no claim, so the prompt ran the step at once).",
       );
       const def = wf({ write: agent() });
       const during: Array<{ inFlight: boolean; leased: boolean; promptRefused: string }> = [];

@@ -10,7 +10,7 @@
 //
 // Each assertion carries the two questions of `~/.claude/TESTING-RULES.md` rule 8 next to it: (1) the
 // change that turns it red; (2) what it prints when it fails.
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 
 const hooks = vi.hoisted(() => ({
   /**
@@ -23,6 +23,9 @@ const hooks = vi.hoisted(() => ({
   afterTakeBack: undefined as undefined | (() => Promise<void>),
   /** Runs after the real claim answered. */
   afterClaim: undefined as undefined | ((answer: { kind: string }) => void),
+  /** Correction 1: the drive's `executeChain` calls, and what runs just before each one. */
+  executeChainCalls: 0,
+  beforeSave: undefined as undefined | (() => void),
 }));
 vi.mock('@sensigo/realm', async (importOriginal) => {
   const real = await importOriginal<typeof import('@sensigo/realm')>();
@@ -40,6 +43,11 @@ vi.mock('@sensigo/realm', async (importOriginal) => {
       const answer = await real.takeBackStep(...args);
       if (answer.kind === 'taken_back') await hooks.afterTakeBack?.();
       return answer;
+    },
+    executeChain: async (...args: Parameters<typeof real.executeChain>) => {
+      hooks.executeChainCalls += 1;
+      hooks.beforeSave?.();
+      return real.executeChain(...args);
     },
   };
 });
@@ -101,6 +109,8 @@ async function fixture(def: WorkflowDefinition = S, store?: InMemoryStore): Prom
   hooks.claimCalls = 0;
   hooks.afterTakeBack = undefined;
   hooks.afterClaim = undefined;
+  hooks.executeChainCalls = 0;
+  hooks.beforeSave = undefined;
   return { store: s, double: (s.leases as LeaseDouble | null) ?? double, runId: record.id, def };
 }
 const record = async (f: Fixture): Promise<RunRecord> => (await f.store.get(f.runId)).record;
@@ -749,6 +759,333 @@ describe('#729 CW-5a — check 8 in process: a signal while the model works', ()
       vi.restoreAllMocks();
       for (const [s, listeners] of others) for (const l of listeners) process.on(s, l);
     }
+  });
+});
+
+/**
+ * Correction 1: an InMemoryStore whose writes a cell can hold — the held step's save (every write but
+ * a release) until `saveGate` settles, or the release itself (delayed, or failing).
+ */
+class GatedStore extends InMemoryStore {
+  saveGate: Promise<void> | undefined;
+  releaseDelayMs = 0;
+  releaseThrows = false;
+  async settleStep(...a: Parameters<InMemoryStore['settleStep']>) {
+    if (a[1].kind === 'release_step') {
+      if (this.releaseThrows) throw new Error('the release write failed');
+      if (this.releaseDelayMs > 0) await new Promise((r) => setTimeout(r, this.releaseDelayMs));
+    } else if (this.saveGate !== undefined) await this.saveGate;
+    return super.settleStep(...a);
+  }
+  async update(...a: Parameters<InMemoryStore['update']>) {
+    if (this.saveGate !== undefined) await this.saveGate;
+    return super.update(...a);
+  }
+}
+const gated2 = (): GatedStore => new GatedStore({ leases: createLeaseDouble() });
+
+/**
+ * Correction 1's signal cells. The drive's re-raise (`process.kill` on itself) and its exit fallback
+ * are recorded, with when, and never carried out: this process is the test's. The worker's own
+ * listeners are set aside while a cell runs. The guard stays for the whole describe, so a late raise
+ * from a broken build cannot end the test process either.
+ */
+const realKill = process.kill.bind(process);
+const realExit = process.exit.bind(process);
+let signalLog: { raised: Array<{ signal: unknown; at: number }>; exits: unknown[] } | undefined;
+const waitFor = async (test: () => boolean, ms: number): Promise<void> => {
+  const by = Date.now() + ms;
+  while (!test() && Date.now() < by) await new Promise((r) => setTimeout(r, 20));
+};
+/** Runs `body` with the signals recorded; at the end waits for `raises` raises and their exits. */
+async function signalled(
+  raises: number,
+  body: (log: NonNullable<typeof signalLog>, lines: string[]) => Promise<void>,
+): Promise<void> {
+  const log = { raised: [] as Array<{ signal: unknown; at: number }>, exits: [] as unknown[] };
+  signalLog = log;
+  const lines: string[] = [];
+  const others = SIGNALS.map((s) => [s, process.listeners(s)] as const);
+  for (const s of SIGNALS) process.removeAllListeners(s);
+  const keep =
+    (prefix: string) =>
+    (...a: unknown[]): void => {
+      lines.push(prefix + shown(a.map(String).join(' ')));
+    };
+  vi.spyOn(console, 'log').mockImplementation(keep(''));
+  vi.spyOn(console, 'error').mockImplementation(keep('err: '));
+  vi.spyOn(console, 'warn').mockImplementation(keep('warn: '));
+  try {
+    await body(log, lines);
+  } finally {
+    await waitFor(() => log.raised.length >= raises && log.exits.length >= raises, 12_000);
+    vi.restoreAllMocks();
+    for (const s of SIGNALS) process.removeAllListeners(s);
+    for (const [s, listeners] of others) for (const l of listeners) process.on(s, l);
+  }
+}
+
+describe('#729 CW-5a correction 1 — a signal while the drive holds a step', () => {
+  beforeAll(() => {
+    process.kill = ((pid: number, signal?: string | number) => {
+      if (pid === process.pid && signal !== undefined && signal !== 0) {
+        signalLog?.raised.push({ signal, at: Date.now() });
+        return true;
+      }
+      return realKill(pid, signal);
+    }) as typeof process.kill;
+    process.exit = ((code?: number) => {
+      signalLog?.exits.push(code);
+      return undefined as never;
+    }) as typeof process.exit;
+  });
+  afterAll(() => {
+    process.kill = realKill as typeof process.kill;
+    process.exit = realExit as typeof process.exit;
+    signalLog = undefined;
+  });
+
+  it('check 1: SIGINT while the chain runs a slow auto step after the saved agent step — raised at once; the agent step saved, no give-back line', async () => {
+    let started = false;
+    let finish: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (finish = resolve));
+    registry.register('handler', 'cw5a-c1-slow', {
+      id: 'cw5a-c1-slow',
+      execute: async () => {
+        started = true;
+        await gate;
+        return { data: {} };
+      },
+    });
+    const f = await fixture(
+      wf('claim-first-c1-chain', {
+        s: agent(),
+        x: {
+          description: 'x',
+          execution: 'auto',
+          depends_on: ['s'],
+          handler: 'cw5a-c1-slow',
+        } as never,
+      }),
+    );
+    await signalled(1, async (log, lines) => {
+      void drive(f);
+      await waitFor(() => started, 5_000);
+      const at = Date.now();
+      process.emit('SIGINT', 'SIGINT');
+      await waitFor(() => log.raised.length > 0, 7_000);
+      const run = await record(f);
+      // (1) red when the handler waits for the whole chain (no raise while `x` runs) or gives a saved
+      //     step back (a line); (2) prints the raises and the lines.
+      expect(
+        {
+          raisedWithin1s: log.raised.length > 0 && log.raised[0]!.at - at < 1_000,
+          raised: log.raised.map((r) => r.signal),
+          gaveBack: lines.filter((l) => l.includes('claim go') || l.includes('claim was removed')),
+          completed: run.completed_steps,
+          lease: f.double.state('lease-double-1'),
+        },
+        lines.join('\n'),
+      ).toEqual({
+        raisedWithin1s: true,
+        raised: ['SIGINT'],
+        gaveBack: [],
+        completed: ['s'],
+        lease: 'removed',
+      });
+      finish();
+    });
+  });
+
+  it('check 1: SIGINT while the held step’s own save still writes — at most 5 s, then the claim given back by the record and the signal raised again', async () => {
+    const store = gated2();
+    let release: () => void = () => {};
+    const f = await fixture(S, store);
+    await signalled(1, async (log, lines) => {
+      let at = 0;
+      void drive(f, {
+        answer: async () => {
+          store.saveGate = new Promise<void>((resolve) => (release = resolve));
+          setTimeout(() => {
+            at = Date.now();
+            process.emit('SIGINT', 'SIGINT');
+          }, 50);
+          return { ok: true };
+        },
+      });
+      await waitFor(() => log.raised.length > 0, 9_000);
+      const waited = log.raised.length > 0 ? log.raised[0]!.at - at : -1;
+      // (1) red when the handler waits for the save with no bound (no raise while it writes), or does
+      //     not wait at all; (2) prints how long it waited and the lines.
+      expect(
+        {
+          boundedAt5s: waited >= 4_500 && waited < 6_500,
+          raised: log.raised.map((r) => r.signal),
+          gaveBack: lines.filter((l) => l.includes('claim go')),
+        },
+        `waited ${waited} ms\n${lines.join('\n')}`,
+      ).toEqual({
+        boundedAt5s: true,
+        raised: ['SIGINT'],
+        gaveBack: [GAVE_BACK('s', 'it was stopped by SIGINT')],
+      });
+      store.saveGate = undefined;
+      release();
+    });
+  }, 20_000);
+
+  it('check 1: a second SIGINT 1 s after the first, while the save still writes — raised at once, with no give-back', async () => {
+    const store = gated2();
+    let release: () => void = () => {};
+    const f = await fixture(S, store);
+    await signalled(2, async (log, lines) => {
+      let second = 0;
+      void drive(f, {
+        answer: async () => {
+          store.saveGate = new Promise<void>((resolve) => (release = resolve));
+          setTimeout(() => process.emit('SIGINT', 'SIGINT'), 50);
+          setTimeout(() => {
+            second = Date.now();
+            process.emit('SIGINT', 'SIGINT');
+          }, 1_050);
+          return { ok: true };
+        },
+      });
+      await waitFor(() => log.raised.length > 0, 9_000);
+      const first = log.raised[0];
+      const gaveBackThen = lines.filter((l) => l.includes('claim go')).length;
+      // (1) red when the second signal is dropped (the raise then comes at the 5 s bound) or the
+      //     drive gives back first; (2) prints when it raised and the lines.
+      expect(
+        {
+          withinHalfASecondOfTheSecond:
+            first !== undefined && second > 0 && first.at - second < 500 && first.at >= second,
+          signal: first?.signal,
+          gaveBackThen,
+        },
+        `raised ${first !== undefined ? first.at - second : 'never'} ms after the second\n${lines.join('\n')}`,
+      ).toEqual({ withinHalfASecondOfTheSecond: true, signal: 'SIGINT', gaveBackThen: 0 });
+      // The first signal's wait ends at its bound; this process lives on, so let it finish.
+      store.saveGate = undefined;
+      release();
+    });
+  }, 25_000);
+
+  it('check 2: SIGINT during the model call, whose answer comes before the give-back is done — no save, the give-back line true', async () => {
+    const store = gated2();
+    store.releaseDelayMs = 300;
+    const f = await fixture(S, store);
+    await signalled(1, async (log, lines) => {
+      void drive(f, {
+        answer: async () => {
+          process.emit('SIGINT', 'SIGINT');
+          return { ok: true };
+        },
+      });
+      await waitFor(() => log.raised.length > 0, 5_000);
+      const run = await record(f);
+      // (1) red when the drive saves after the stop cause (executeChain called; the step saved after
+      //     the line said it can run again); (2) prints the record's state and the lines.
+      expect(
+        {
+          saves: hooks.executeChainCalls,
+          completed: run.completed_steps,
+          claim: run.claims?.['s'],
+          gaveBack: lines.filter((l) => l.includes('claim go') || l.includes('claim was removed')),
+          raised: log.raised.map((r) => r.signal),
+        },
+        lines.join('\n'),
+      ).toEqual({
+        saves: 0,
+        completed: [],
+        claim: undefined,
+        gaveBack: [GAVE_BACK('s', 'it was stopped by SIGINT')],
+        raised: ['SIGINT'],
+      });
+    });
+  });
+
+  it('check 2: SIGINT during a save the engine rejects as repairable — no second model call', async () => {
+    const f = await fixture(
+      wf('claim-first-c1-repair', {
+        s: agent({
+          output_schema: {
+            type: 'object',
+            required: ['category'],
+            properties: { category: { type: 'string' } },
+          },
+        } as never),
+      }),
+    );
+    await signalled(1, async (log, lines) => {
+      let calls = 0;
+      hooks.beforeSave = () => {
+        hooks.beforeSave = undefined;
+        process.emit('SIGINT', 'SIGINT');
+      };
+      void drive(f, {
+        answer: async () => {
+          calls += 1;
+          return { nope: 1 };
+        },
+      });
+      await waitFor(() => log.raised.length > 0, 7_000);
+      await new Promise((r) => setTimeout(r, 200));
+      // (1) red when the repair attempt after the signal calls the model again; (2) prints the
+      //     calls and the lines.
+      expect(
+        {
+          calls,
+          raised: log.raised.map((r) => r.signal),
+          gaveBack: lines.filter((l) => l.includes('claim go')),
+        },
+        lines.join('\n'),
+      ).toEqual({
+        calls: 1,
+        raised: ['SIGINT'],
+        gaveBack: [GAVE_BACK('s', 'it was stopped by SIGINT')],
+      });
+    });
+  });
+});
+
+describe('#729 CW-5a correction 1 — check 3: a give-back that throws after a refused save', () => {
+  it('a precondition the engine refuses, and the give-back throws: the thrown line, no line naming this drive as the holder, no wait', async () => {
+    const store = gated2();
+    store.releaseThrows = true;
+    // Its own workflow: the cell changes the definition the engine reads.
+    const f = await fixture(wf('claim-first-c1-thrown', { s: agent() }), store);
+    const d = await captured(() =>
+      drive(f, {
+        answer: async () => {
+          f.def.steps['s']!.preconditions = ['nothing.ok == true'];
+          return { ok: true };
+        },
+      }),
+    );
+    // (1) red when the reply is judged on its own snapshot, where the claim is still this drive's
+    //     (the line then names this drive as the holder and the drive waits on itself); (2) prints
+    //     the lines.
+    expect(
+      {
+        result: d.result,
+        thrown: d.lines.filter((l) => l.includes('could not let its claim go')),
+        selfHolder: d.lines.filter((l) => l.includes(`taken by ${words(B)}`)),
+        waits: d.lines.filter((l) => /waiting up to/i.test(l)),
+        last: d.lines.at(-1),
+        lease: f.double.state('lease-double-1'),
+      },
+      d.lines.join('\n'),
+    ).toEqual({
+      result: 'failed',
+      thrown: [
+        "• Step 's': this drive could not let its claim go (the store failed); the next drive of this run can take the step back, once.",
+      ],
+      selfHolder: [],
+      waits: [],
+      last: "err: \n✗ Precondition failed for step 's'.",
+      lease: 'closed_kept',
+    });
   });
 });
 
