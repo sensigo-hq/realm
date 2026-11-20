@@ -4,9 +4,11 @@
 //
 // Every stored text and tool list reaches the terminal through the writer's value path, as a tool
 // call's result does: masked for stdout's audience at print, a shape under broadcast, its type and
-// size while values are withheld. Before that, every control character but `\n` and `\t`, the C1
-// controls and U+2028/U+2029 are escaped (inspect's own spelling, `controlEscape`), so a stored text
-// can neither move the cursor nor overwrite a line.
+// size while values are withheld. The value path is given the stored text itself, so a shape
+// describes it, never its escaped form (the writer's rule for `escaped`). What it returns then has
+// every control character but `\n` and `\t`, the C1 controls and U+2028/U+2029 escaped (inspect's
+// own spelling, `controlEscape`), still before stdout's masking pass, so a stored text can neither
+// move the cursor nor overwrite a line.
 import {
   controlEscape,
   type ModelTextCheckOutcome,
@@ -76,10 +78,14 @@ function checkText(check: ModelTextRequestCheck): string {
 
 const numbers = (list: readonly number[]): string => (list.length === 0 ? 'none' : list.join(', '));
 
-/** A stored text's lines, escaped, through the writer's value path, each under `indent`. */
+/**
+ * A stored text's lines, each under `indent`: the writer's value path for the stored text, then
+ * escaped. A shape names no character of the text, so the escape leaves it as it is; on the plain
+ * path the value path only strips span marks, a set the escape never touches, so the order changes
+ * no plain line.
+ */
 function textLines(text: string, indent: string): string[] {
-  return writerCtx()
-    .value(escapeStoredText(text))
+  return escapeStoredText(writerCtx().value(text))
     .split('\n')
     .map((line) => `${indent}${line}`);
 }

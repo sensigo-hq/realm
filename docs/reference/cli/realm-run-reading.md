@@ -337,6 +337,7 @@ An agent step that `realm agent` drove with `--provider openai`, with `--verbose
 
 ```text
   1. classify               success   0ms   hash: 28a2171c
+     Taken by: ops@server-1 (from the OS user, via agent)
      Input:  {"category":"billing","urgent":true}
      Output: {"category":"billing","urgent":true}
      Diagnostics: ~9 tokens (estimate, step input) | 10 prompt tokens (measured, first request) | 1 output tokens | model gpt-test-1 | no preconditions | cache: not reported by the provider (1 request); asked for nothing but a cache key, a hint (the provider's own caching applies); cached head: 22 characters (marked: key)

@@ -310,8 +310,11 @@ function blankLines(text: string): number[] {
 
 /**
  * The reasoning provider folds the system text into the user message: the system text, a blank
- * line, then the prompt. Each part is found on its own, at any blank line its hash agrees with; a
- * part no blank line agrees with takes the message's reason, or differs.
+ * line, then the prompt. The system text is found at the blank line whose left side its hash agrees
+ * with, and the prompt is then read only after that blank line, so text added between the two is a
+ * difference. Only when no blank line agrees with the system hash (a masked or cut system text) is
+ * the prompt searched after every blank line. A part with no agreement takes the message's reason,
+ * or differs.
  */
 function checkFolded(
   slot: Slot,
@@ -320,17 +323,18 @@ function checkFolded(
   prefixChars: number | undefined,
 ): { system?: ModelTextCheckOutcome; prompt?: ModelTextCheckOutcome } {
   const splits = blankLines(slot.text);
-  const system: ModelTextCheckOutcome | undefined =
+  const systemEnd =
     systemHash === undefined
       ? undefined
-      : splits.some((p) => sha256(slot.text.slice(0, p)) === systemHash)
-        ? MATCHES
-        : disagreement(slot);
+      : splits.find((p) => sha256(slot.text.slice(0, p)) === systemHash);
+  const system: ModelTextCheckOutcome | undefined =
+    systemHash === undefined ? undefined : systemEnd !== undefined ? MATCHES : disagreement(slot);
   let prompt: ModelTextCheckOutcome;
   if (promptHash === undefined) prompt = NO_HASH;
   else if (prefixChars === 0) prompt = EMPTY_HEAD;
   else {
-    const found = splits
+    const starts = systemEnd !== undefined ? [systemEnd] : splits;
+    const found = starts
       .map((p) => slot.text.slice(p + 2))
       .find((right) =>
         prefixChars === undefined

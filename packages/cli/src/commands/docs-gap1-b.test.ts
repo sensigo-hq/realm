@@ -48,6 +48,13 @@ describe('gap 1, unit B — the words (check 11)', () => {
       READING,
       'An agent step that `realm agent` drove with `--provider openai`, with `--verbose` (added after version 0.50.0). Its prompt is a template, `Classify this ticket: {{ run.params.ticket }}`, so its text up to the first value is its first 22 characters:',
     );
+    // The example's step line, its `Taken by:` line and its Input line, as a `realm agent` drive
+    // prints them, under the page's fake name as in its other examples (CR-MA4-B-08). Check 11's run
+    // records no driver, so its page cell compares the model-text block only.
+    claim(
+      READING,
+      '  1. classify               success   0ms   hash: 28a2171c\n     Taken by: ops@server-1 (from the OS user, via agent)\n     Input:  {"category":"billing","urgent":true}',
+    );
   });
 
   it('realm-agent.md: the flag row, the count and the re-attach sentence', () => {

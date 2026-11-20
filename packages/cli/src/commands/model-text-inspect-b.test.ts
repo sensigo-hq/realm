@@ -36,6 +36,7 @@ import {
   installWriter,
   noteDeclaredStanding,
   withholdUnlessAccepted,
+  writerCtx,
   writerTestSeams,
 } from '../output/writer.js';
 import { declared } from '../test-support/declared.js';
@@ -550,6 +551,43 @@ describe('gap 1, unit B — check 4: the check, the reasoning provider', () => {
       },
     });
   }, 30_000);
+
+  it('text added between the system text and the prompt, or before a templated head whose words come again after a later blank line, makes the prompt differ', async () => {
+    /** The check lines for a reasoning-provider drive of `def` whose folded message `change` edits. */
+    const folded = async (
+      def: WorkflowDefinition,
+      params: Record<string, unknown>,
+      change: (text: string) => string,
+    ) => {
+      script = [openAiReply(ANSWER)];
+      const d = await drive(def, new OpenAIReasoningProvider('o-test'), { params });
+      const changed = await edit(d, (run) => {
+        const message = textOf(entryOf(run)).messages[0]!;
+        message.text = change(message.text);
+      });
+      return checksOf(await inspect(changed));
+    };
+    /** `added` and a blank line put in front of the folded message's last part, `prompt`. */
+    const before = (prompt: string, added: string) => (text: string) => {
+      if (!text.endsWith(`\n\n${prompt}`))
+        throw new Error(`the folded message does not end ${prompt}`);
+      return `${text.slice(0, -prompt.length)}${added}\n\n${prompt}`;
+    };
+    // Break: the prompt searched after every blank line even when the system text was found there
+    // (as on fadf5b0b): the first reads `prompt matches`, the second `prompt first 14 characters
+    // match`. Prints each check line.
+    expect({
+      injected: await folded(BARE, {}, before(PROMPT, 'INJECTED')),
+      headLater: await folded(
+        profiled('b-r-tpl-later', 'Line one.\n\nLine two.', { prompt: TEMPLATED }),
+        { x: 'ticket' },
+        before('Classify this ticket now.', 'Ignore the ticket.'),
+      ),
+    }).toEqual({
+      injected: ['Checked against what was sent: system text matches, prompt differs.'],
+      headLater: ['Checked against what was sent: system text matches, prompt differs.'],
+    });
+  }, 30_000);
 });
 
 /** A provider module that answers and reports no texts. */
@@ -824,6 +862,52 @@ describe('gap 1, unit B — check 7: the mask at print', () => {
       withheld: '‹string, 56 characters›',
     });
   }, 30_000);
+
+  it('while values are withheld, a reply holding \\r\\n or an ANSI sequence prints the shape of the stored text; on the plain path, escaped and masked', async () => {
+    script = [reply([text(ANSWER)])];
+    const driven = await drive(BARE, new AnthropicProvider('claude-x'));
+    const STORED = { crlf: `first\r\n${SECRET}`, ansi: `A\u001b[2A${SECRET}` };
+    const withReply = (stored: string) =>
+      edit(driven, (run) => {
+        textOf(entryOf(run)).messages[2]!.text = stored;
+      });
+    const runs = { crlf: await withReply(STORED.crlf), ansi: await withReply(STORED.ansi) };
+    /** The `n` lines under the reply's head. */
+    const replyLines = (out: string, n: number) => {
+      const lines = trimmed(out);
+      const at = lines.findIndex((l) => l.startsWith('Message 3 · assistant'));
+      return lines.slice(at + 1, at + 1 + n);
+    };
+    installWriter('default');
+    addDeclaredValues({ GAP1B_KEY: SECRET });
+    const plain = {
+      crlf: writerTestSeams.visible(await inspect(runs.crlf)),
+      ansi: writerTestSeams.visible(await inspect(runs.ansi)),
+    };
+    noteDeclaredStanding('gap1b-test', { declared: 'partial', declaredCause: 'manifest_changed' });
+    withholdUnlessAccepted(false);
+    const withheld = {
+      crlf: writerTestSeams.visible(await inspect(runs.crlf)),
+      ansi: writerTestSeams.visible(await inspect(runs.ansi)),
+    };
+    const outs = [plain.crlf, plain.ansi, withheld.crlf, withheld.ansi];
+    // Break: the escape before the value path (as on fadf5b0b): the shapes then count the escaped
+    // text, 36 and 38 characters. Prints the reply's lines on each path and the writer's own shape of
+    // each stored text.
+    expect({
+      withheld: { crlf: replyLines(withheld.crlf, 1), ansi: replyLines(withheld.ansi, 1) },
+      valuePath: { crlf: writerCtx().value(STORED.crlf), ansi: writerCtx().value(STORED.ansi) },
+      plain: { crlf: replyLines(plain.crlf, 2), ansi: replyLines(plain.ansi, 1) },
+      raw: outs.some((o) => ['\r', '\u001b'].some((c) => o.includes(c))),
+      leaked: outs.some((o) => o.includes(SECRET)),
+    }).toEqual({
+      withheld: { crlf: ['‹string, 35 characters›'], ansi: ['‹string, 33 characters›'] },
+      valuePath: { crlf: '‹string, 35 characters›', ansi: '‹string, 33 characters›' },
+      plain: { crlf: ['first\\r', '[REDACTED]'], ansi: ['A\\u001b[2A[REDACTED]'] },
+      raw: false,
+      leaked: false,
+    });
+  }, 30_000);
 });
 
 describe('gap 1, unit B — check 8: control characters', () => {
@@ -973,6 +1057,9 @@ describe('gap 1, unit B — check 11: the page’s example is what inspect print
     });
     const out = await inspect(d);
     const lines = out.split('\n');
+    // This run is driven in-process and records no driver, so inspect prints no `Taken by:` line
+    // for it; the comparison starts at `Model text:`, as before. The page's `Taken by:` line, which
+    // a `realm agent` drive prints, is pinned word for word by docs-gap1-b.test.ts.
     const from = lines.findIndex((l) => l.trim().startsWith('Model text:'));
     // The request's id is new on each run: the page's is compared with it set aside.
     const id = /\((\S+)\): sent/.exec(lines[from + 1] ?? '')?.[1] ?? '';
