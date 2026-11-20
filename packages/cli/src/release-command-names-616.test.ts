@@ -20,9 +20,9 @@
 // `realm` and the run of words `[a-z][a-z-]*` after it, up to the first word that is not one (a flag, a
 // placeholder, a path, a word with a digit or a dot, punctuation).
 //
-// THE REGISTRY: `commands-registry.ts`'s five exports, read as Commander objects (`.name()`), never a
-// hand-written list (#616 R3: `storeTopLevelCommands`, top-level like `topLevelCommands`); the groups are `workflow`, `run` and `db`, as the CLI's `index.ts` names the
-// commands that hold `workflowCommands`, `runCommands` and `dbCommands`. Valid: `realm` alone; `realm
+// THE REGISTRY: `commands-registry.ts`'s six exports, read as Commander objects (`.name()`), never a
+// hand-written list (#616 R3: `storeTopLevelCommands`, top-level like `topLevelCommands`); the groups are `workflow`, `run`, `db` and `callback`, as `buildRealmProgram` names the
+// commands that hold `workflowCommands`, `runCommands`, `dbCommands` and `callbackCommands` (callback K2a-2). Valid: `realm` alone; `realm
 // <top>` (words after it are arguments); `realm <group>` alone; `realm <group> <sub>` (words after it are
 // arguments). Anything else is red.
 //
@@ -41,6 +41,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import {
+  callbackCommands,
   dbCommands,
   runCommands,
   storeTopLevelCommands,
@@ -55,6 +56,8 @@ const GROUPS = new Map<string, Set<string>>([
   ['workflow', new Set(workflowCommands.map((c) => c.name()))],
   ['run', new Set(runCommands.map((c) => c.name()))],
   ['db', new Set(dbCommands.map((c) => c.name()))],
+  // Commander's implicit help command
+  ['callback', new Set([...callbackCommands.map((c) => c.name()), 'help'])],
 ]);
 
 interface Phrase {

@@ -1989,7 +1989,7 @@ function openaiCachingWords(
     : "sends a cache key on OpenAI's own endpoint";
 }
 
-function resolveWorkflowFile(input: string): string {
+export function resolveWorkflowFile(input: string): string {
   return input.endsWith('.yaml') || input.endsWith('.yml') ? input : join(input, 'workflow.yaml');
 }
 
