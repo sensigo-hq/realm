@@ -104,7 +104,7 @@ export const topLevelCommands = [
   listenCommand,
 ];
 
-// issue #920: the option-value guard, on every command object in the five lists. Attached BEFORE the
+// issue #920: the option-value guard, on every command object in the six lists. Attached BEFORE the
 // writer's hook (a command's hooks run in the order they were added): a refusal is printed before the
 // writer is installed.
 attachOptionValueGuard([
@@ -115,7 +115,7 @@ attachOptionValueGuard([
   callbackCommands,
   topLevelCommands,
 ]);
-// #729 PR-3 (L-1): every command object in the five lists — nested ones included — carries the
+// #729 PR-3 (L-1): every command object in the six lists — nested ones included — carries the
 // writer's `preAction` hook, so the one writer is installed in any program that reuses realm's
 // commands (cli-cloud attaches the exported hook to its own commands too).
 attachWriterHook([

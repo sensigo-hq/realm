@@ -26,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { createCallbackKeySealer, openRealmHome } from '@sensigo/realm-store-sqlite';
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -335,7 +336,9 @@ describe.runIf(POSIX)('callback K2a-2 — realm callback key, on the built CLI',
     const noneMasterFile = existsSync(b.masterFile);
     const kA = printed(b.key([], { REALM_ENCRYPTION_KEY: MASTER_A }));
     printed(b.key(['--rotate'], { REALM_ENCRYPTION_KEY: MASTER_A }));
+    const beforeReadable = await b.stored(MASTER_A);
     const readable = b.key(['--replace'], { REALM_ENCRYPTION_KEY: MASTER_A });
+    const afterReadable = await b.stored(MASTER_A);
     const underB = b.key(['--replace'], { REALM_ENCRYPTION_KEY: MASTER_B });
     const kB = printed(underB);
     const pairB = await b.stored(MASTER_B);
@@ -350,7 +353,12 @@ describe.runIf(POSIX)('callback K2a-2 — realm callback key, on the built CLI',
     //     first; (2) prints each answer and the pairs.
     expect({
       none: { code: none.code, out: none.out, err: none.err, noneMasterFile },
-      readable: { code: readable.code, out: readable.out, err: readable.err },
+      readable: {
+        code: readable.code,
+        out: readable.out,
+        err: readable.err,
+        unchanged: isDeepStrictEqual(afterReadable, beforeReadable),
+      },
       underB: {
         err: underB.err,
         current: pairB.current?.state === 'readable' ? pairB.current.key : 'unreadable',
@@ -373,6 +381,7 @@ describe.runIf(POSIX)('callback K2a-2 — realm callback key, on the built CLI',
         err: lines(
           `Error: the key for ${PAIR} can be read, so it was not replaced (--replace is for a key that cannot be read). ${NOTHING} To change a working key, use --rotate.`,
         ),
+        unchanged: true,
       },
       underB: {
         err: lines(
@@ -781,6 +790,21 @@ describe.runIf(POSIX)('callback K2a-2 — realm callback key, on the built CLI',
       hex: bytes.includes(Buffer.from(master, 'utf8')),
       raw: bytes.includes(Buffer.from(master, 'hex')),
     }).toEqual({ code: 0, folder: [], hex: false, raw: false });
+  });
+
+  it('a workflow that cannot be loaded: Words 12, as realm listen says it; no home is made', () => {
+    const b = bench();
+    const r = b.run(['callback', 'key', 'missing', '--host', HOST]);
+    // (1) red when a load failure escapes unworded, or the home is opened before the workflow is
+    //     read; (2) prints the answer.
+    expect({ code: r.code, out: r.out, err: r.err, home: existsSync(b.realm) }).toEqual({
+      code: 1,
+      out: '',
+      err: lines(
+        "Error: failed to load workflow 'missing/workflow.yaml': Failed to read workflow file: ENOENT: no such file or directory, open 'missing/workflow.yaml'",
+      ),
+      home: false,
+    });
   });
 
   it('a --host value that begins -- is refused by the option-value guard, on the real command', () => {
