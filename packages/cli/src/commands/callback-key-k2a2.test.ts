@@ -925,6 +925,34 @@ describe.runIf(POSIX)(
         ),
       }).toEqual({ codes: Array(8).fill(0), keys: 8, saysNoMaster: 0, files: ['encryption.key'] });
     }, 90_000);
+
+    it('correction 1: four processes, one workflow and host, 20 rounds on fresh homes: one key each round, none says "no master key"', async () => {
+      const rounds: unknown[] = [];
+      for (let round = 0; round < 20; round += 1) {
+        const b = bench();
+        const results = await together(b, () => ['callback', 'key', 'wf', '--host', HOST], 4);
+        const keys = new Set(results.map((r) => r.out));
+        rounds.push({
+          codes: results.map((r) => r.code),
+          oneKey: keys.size === 1 && KEY_FORM.test([...keys][0]!.trim()),
+          saysNoMaster: results.filter((r) => r.err.includes('has no master key')).length,
+          files: readdirSync(b.realm).filter(
+            (n) => n.startsWith('encryption') || n.startsWith('.encryption'),
+          ),
+        });
+      }
+      // (1) red when a process that reads no master key, then finds this pair's key made by another
+      //     process (sealed, so unreadable to it), does not read the master key once more: it says
+      //     "this shell has no master key" (14 of 40 rounds on 8a17a468); (2) prints every round.
+      expect(rounds).toEqual(
+        Array.from({ length: 20 }, () => ({
+          codes: [0, 0, 0, 0],
+          oneKey: true,
+          saysNoMaster: 0,
+          files: ['encryption.key'],
+        })),
+      );
+    }, 300_000);
   },
 );
 

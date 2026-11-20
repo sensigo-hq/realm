@@ -318,7 +318,19 @@ export async function callbackKey(
     };
     const sealedWith = (): string => (res.state === 'found' ? res.fp : '?');
 
-    const first = await keys!.read(W, H);
+    let first = await keys!.read(W, H);
+    // Correction 1: another process may have made the master key and this pair's key since step 2.
+    // It places the file before it commits any pair, so a key here that cannot be read, with no
+    // master key read, means the master key is read once more; found, the pair is read again.
+    if (res.state === 'none' && first.current?.state === 'unreadable') {
+      res = resolveMasterKey({ env, homeDir });
+      if (res.state === 'invalid') return fail(invalidLine(res, env, homeFile));
+      if (res.state === 'found') {
+        await reopenWith(res);
+        if (keys === undefined) return fail(noKeys);
+        first = await keys!.read(W, H);
+      }
+    }
     const current = first.current;
 
     // ---- --rotate ----
