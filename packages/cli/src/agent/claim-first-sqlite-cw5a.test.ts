@@ -455,6 +455,11 @@ describe('#729 CW-5a correction 1, check 4 — the drive’s output through a pi
       bash.on('exit', (code, signal) => resolve({ code, signal })),
     );
     await until(() => existsSync(ready));
+    // A person presses Ctrl-C during the model call, after the step's lines are on the screen: the
+    // relay has passed them on (they are in tee's log). Earlier, a line still on its way through the
+    // relay meets the closed pipe before the relay's own handler has run (correction 2's accepted
+    // window), and the relay ends as on main.
+    await until(() => existsSync(log) && readFileSync(log, 'utf8').includes('An agent step.'));
     // As a terminal's Ctrl-C: to the foreground process group (the shell, the relay and tee).
     process.kill(-bash.pid!, 'SIGINT');
     const end = await Promise.race([
@@ -505,6 +510,8 @@ describe('#729 CW-5a correction 2, check 3 — SIGHUP through a pipe, as a closi
     bash.stderr!.on('data', (d: Buffer) => (err += d.toString()));
     const ended = new Promise<void>((resolve) => bash.on('exit', () => resolve()));
     await until(() => existsSync(ready));
+    // As above: the signal comes during the model call, once the step's lines are on the screen.
+    await until(() => existsSync(log) && readFileSync(log, 'utf8').includes('An agent step.'));
     process.kill(-bash.pid!, 'SIGHUP');
     await Promise.race([ended, new Promise((r) => setTimeout(r, 30_000))]);
     const run = await record(runId);
