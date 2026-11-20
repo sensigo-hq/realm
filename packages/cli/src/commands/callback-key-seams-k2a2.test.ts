@@ -10,13 +10,13 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { callbackKeyFingerprint } from '@sensigo/realm';
 import {
   createCallbackKeySealer,
   masterKeyFingerprint,
   openRealmHome,
 } from '@sensigo/realm-store-sqlite';
+import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installWriter, writerTestSeams } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
@@ -175,7 +175,7 @@ describe('callback K2a-2 — another process makes the master key and a pair whi
           host: 'h.example.com:443',
           slot: 'current' as const,
         };
-        const db = new DatabaseSync(join(realm(), 'realm.db'));
+        const db = await openForeignConnection(realm());
         try {
           db.prepare(
             'INSERT INTO callback_keys (workflow_id, host, slot, sealed, key_fp, master_fp, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)',
