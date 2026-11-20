@@ -675,6 +675,26 @@ describe('#729 CW-5b — check 7: no program name, and a step that is not an age
     });
   });
 
+  it('#729 CW-5c check 4: no driver, below the cap — its in-flight line and its Go-on line name no realm agent take-back, as on the base', async () => {
+    const f = await fixture();
+    const a = await take(f, A);
+    f.double.set(a.hold.id, 'dead');
+    const d = await drive(f, { driver: null });
+    // (1) red when realm agent passes its own in-flight line or Go-on the steps a drive takes back (a
+    //     drive with no program name takes nothing back, so the sentence or the Go-on's first part
+    //     would promise what it cannot do); (2) prints the lines.
+    expect(
+      {
+        inFlight: d.lines.find((l) => l.includes('the record has not changed for')),
+        goOn: d.lines.at(-1),
+      },
+      d.lines.join('\n'),
+    ).toEqual({
+      inFlight: `• Step 's' was taken by ${words(A)} at ${a.since}; the record has not changed for 1s. 's' was claimed, and ${NOT_HELD}; no result is recorded for it. It is not declared idempotent, so running it again may repeat its effects. To free it, run: realm run reclaim ${f.runId} --step s --claimed-at ${a.since} --force`,
+      goOn: `  Go on:     once 's' is freed (realm run reclaim ${f.runId} prints its command), realm agent --run-id ${f.runId} --provider <provider> --model <model>`,
+    });
+  });
+
   it('no driver, the lease turns not held during the watch: the no-driver line on the poll that reads it, after the waiting line; nothing taken back', async () => {
     const f = await fixture();
     const a = await take(f, A);

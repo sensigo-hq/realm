@@ -7,6 +7,7 @@
 // carrying a concrete past-deadline (`claim_stale`), non-gated. Everything else stays per-step-only.
 import { Command } from 'commander';
 import { cliCommandOf, heldEntriesOf, heldWayLines, writerHost } from './ways-renderer.js';
+import { stepsTakenBack } from '../lib/holder-render.js';
 import type {
   ClaimState,
   ComposedWays,
@@ -233,32 +234,35 @@ const CLAIM_STATE_OF: Record<HeldState['state'], ClaimState> = {
 /**
  * #922 P2-2 (item 5; m-I): a run's ways as the reclaim dry run composes them — its definition read
  * as the per-step path reads it, and on a refusal to read it (a `WorkflowError`) the definition-absent
- * composition, whose held entries need only the store. Any other error is thrown.
+ * composition, whose held entries need only the store. Any other error is thrown. #729 CW-5c: with
+ * the definition it read (none on a refusal), for the steps a `realm agent` drive takes back.
  */
 export async function reclaimWaysOf(
   workflowStore: WorkflowRegistrar,
   snap: Snapshot,
   persistsClaims: boolean,
-): Promise<ComposedWays> {
+): Promise<{ composed: ComposedWays; definition: WorkflowDefinition | undefined }> {
   try {
     const definition = await getWorkflowForRun(workflowStore, snap.record, {
       retryVerb: 'reclaim',
       verb: 'reclaim',
       terminalOk: true,
     });
-    return composeWaysAt(snap.record, snap.at, {
+    const composed = composeWaysAt(snap.record, snap.at, {
       definition,
       persistsClaims,
       lease_facts: snap.lease_facts,
     });
+    return { composed, definition };
   } catch (err) {
     const absent = definitionAbsenceOf(err, snap.record);
     if (absent === undefined) throw err;
-    return composeWaysOn(snap, {
+    const composed = composeWaysOn(snap, {
       definition: absent,
       enactor: { kind: 'observer' },
       store: { persistsClaims },
     });
+    return { composed, definition: undefined };
   }
 }
 
@@ -271,6 +275,8 @@ export function reclaimDryRunLines(
   run: RunRecord,
   infos: readonly InProgressClaimInfo[],
   composed: ComposedWays,
+  // #729 CW-5c: the steps a `realm agent` drive takes back (the caller's `stepsTakenBack`).
+  takesBack?: ReadonlySet<string>,
 ): string[] {
   const held = new Map(heldEntriesOf(composed).map((e) => [e.facts.step, e]));
   const lines: string[] = [];
@@ -295,7 +301,7 @@ export function reclaimDryRunLines(
         `      open gate — answer it, not reclaim: ${cliCommandOf(respondWayOfGate(run.id, gate), undefined, writerHost())}`,
       );
     } else if (entry !== undefined) {
-      const under = heldWayLines(entry, writerCtx());
+      const under = heldWayLines(entry, writerCtx(), takesBack);
       if (under.length > 0) listed = true;
       for (const line of under) lines.push(`      ${line}`);
     }
@@ -665,8 +671,9 @@ export const reclaimCommand = new Command('reclaim')
           `Run '${runId}' (${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}) — in-progress claims:`,
         );
         // #922 P2-2 (item 5): each held step from the run's composed ways.
-        const composed = await reclaimWaysOf(home.workflowStore, read, true);
-        for (const line of reclaimDryRunLines(run, infos, composed)) console.log(line);
+        const { composed, definition } = await reclaimWaysOf(home.workflowStore, read, true);
+        const takesBack = stepsTakenBack(run, definition, heldEntriesOf(composed));
+        for (const line of reclaimDryRunLines(run, infos, composed, takesBack)) console.log(line);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
