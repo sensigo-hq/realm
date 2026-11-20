@@ -21,7 +21,9 @@ import type {
   SupplierAbsentCause,
   SupplierRole,
 } from '../types/run-record.js';
+import { STOP_REASONS } from '../types/run-record.js';
 import type { AgentAction, ErrorCode } from '../types/workflow-error.js';
+import { AGENT_ACTIONS, ERROR_CATEGORIES, ERROR_CODES } from '../types/workflow-error.js';
 import type { WorkflowDefinition, ContextWrapperFormat } from '../types/workflow-definition.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { isBuiltInRequirement } from '../extensions/built-in-requirements.js';
@@ -3025,6 +3027,53 @@ export function readSupplier(
   if (entry.supplied_by !== undefined) return { role: entry.supplied_by };
   const agentStep = definition?.steps[entry.step_id]?.execution === 'agent';
   return { absent: agentStep && entry.kind !== 'gate_response' ? 'not_recorded' : 'engine_input' };
+}
+
+// ─── A failed step's words (Q1 #592, unit a) ────────────────────────────────────────────────────
+
+/** Why a failed entry has no words: Realm did not write them when it wrote the entry. */
+export type FailureWordsAbsentCause = 'written_before_failure_words';
+
+/** The four failure-word fields of an evidence entry. */
+export type FailureWordField = 'error_code' | 'error_category' | 'agent_action' | 'stop_reason';
+
+/**
+ * A failed entry's words exactly as recorded. A word outside its list (a newer Realm's word) is
+ * returned as it is and named in `unknown`, never refused or replaced.
+ */
+export interface FailureWordsRead {
+  error_code: string;
+  error_category?: string;
+  agent_action?: string;
+  stop_reason?: string;
+  unknown: FailureWordField[];
+}
+
+const FAILURE_WORD_LISTS: Readonly<Record<FailureWordField, readonly string[]>> = {
+  error_code: ERROR_CODES,
+  error_category: ERROR_CATEGORIES,
+  agent_action: AGENT_ACTIONS,
+  stop_reason: STOP_REASONS,
+};
+
+/**
+ * The words on a failed step's entry: its input is the LAST `status: 'error'` entry of a step in
+ * `failed_steps` (the caller picks it; never a skipped step's entry). An entry with no `error_code`
+ * was written before Realm wrote the words — by an older Realm, before or beside this one — and
+ * reads as that absence, never a guess.
+ */
+export function readFailureWords(
+  entry: Pick<EvidenceSnapshot, FailureWordField>,
+): { words: FailureWordsRead } | { absent: FailureWordsAbsentCause } {
+  if (entry.error_code === undefined) return { absent: 'written_before_failure_words' };
+  const words: FailureWordsRead = { error_code: entry.error_code, unknown: [] };
+  for (const field of Object.keys(FAILURE_WORD_LISTS) as FailureWordField[]) {
+    const word: string | undefined = entry[field];
+    if (word === undefined) continue;
+    if (field !== 'error_code') words[field] = word;
+    if (!FAILURE_WORD_LISTS[field].includes(word)) words.unknown.push(field);
+  }
+  return { words };
 }
 
 // ─── When a run cannot go on (C44, C64, C82) — read from a composition ──────────────────────────

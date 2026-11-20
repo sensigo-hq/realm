@@ -77,6 +77,21 @@ type FinalizerLedger = NonNullable<RunRecord['finalizer_ledger']>;
 // §2 normative helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Q1 (#592) unit a: the words on the entry of a guard whose condition cannot be evaluated (an
+ * unresolvable path, or a `when`/`abort_unless` that threw). An authoring error: the workflow must
+ * be corrected, so a person acts. A guard is never retried.
+ */
+const GUARD_FAILURE_WORDS = {
+  error_code: 'GUARD_RESOLUTION_ERROR',
+  error_category: 'ENGINE',
+  agent_action: 'report_to_user',
+  stop_reason: 'no_retry_policy',
+} as const satisfies Pick<
+  EvidenceSnapshot,
+  'error_code' | 'error_category' | 'agent_action' | 'stop_reason'
+>;
+
 /** `isTerminal(fresh) := fresh.terminal_state === true` — BU-blocking adjudication; F1 preserved
  *  (abandon/abort SET terminal_state, so this reads correctly for both). */
 function isTerminal(fresh: RunRecord): boolean {
@@ -1731,22 +1746,25 @@ export function buildGuardDelta(
       kind: 'settle_guard',
       step: stepName,
       outcome: 'resolution_error',
-      evidence: captureEvidence({
-        stepId: stepName,
-        startedAt: now,
-        completedAt: now,
-        input: {},
-        output: { error: `Unresolvable path: ${outcome.unresolvable_path}` },
-        // issue #373 correction: the path is the DIAGNOSTIC, and it used to live only in
-        // `output_summary` + a transient seal-time overlay — so the post-drain re-render, which
-        // rebuilds the cause from evidence alone, replaced it with the generic condition text.
-        // Carrying it here makes every downstream read of this failure lossless.
-        //
-        // The path goes FIRST, the orienting part. A message over the per-message cap is replaced
-        // whole by its marker (#729 PR-3 B0: no start of the condition's literal is kept), and the
-        // path goes with it: an over-cap diagnostic shows its shape (the design's residual (g)).
-        error: `Guard resolution error: unresolvable path '${outcome.unresolvable_path}' (condition: ${outcome.condition})`,
-      }),
+      evidence: {
+        ...captureEvidence({
+          stepId: stepName,
+          startedAt: now,
+          completedAt: now,
+          input: {},
+          output: { error: `Unresolvable path: ${outcome.unresolvable_path}` },
+          // issue #373 correction: the path is the DIAGNOSTIC, and it used to live only in
+          // `output_summary` + a transient seal-time overlay — so the post-drain re-render, which
+          // rebuilds the cause from evidence alone, replaced it with the generic condition text.
+          // Carrying it here makes every downstream read of this failure lossless.
+          //
+          // The path goes FIRST, the orienting part. A message over the per-message cap is replaced
+          // whole by its marker (#729 PR-3 B0: no start of the condition's literal is kept), and the
+          // path goes with it: an over-cap diagnostic shows its shape (the design's residual (g)).
+          error: `Guard resolution error: unresolvable path '${outcome.unresolvable_path}' (condition: ${outcome.condition})`,
+        }),
+        ...GUARD_FAILURE_WORDS,
+      },
       resolutionError: {
         condition: outcome.condition,
         unresolvable_path: outcome.unresolvable_path,
@@ -1878,14 +1896,17 @@ function unevaluableGuardDelta(
     kind: 'settle_guard',
     step: stepName,
     outcome: 'resolution_error',
-    evidence: captureEvidence({
-      stepId: stepName,
-      startedAt: now,
-      completedAt: now,
-      input: {},
-      output: { error: cause },
-      error: cause,
-    }),
+    evidence: {
+      ...captureEvidence({
+        stepId: stepName,
+        startedAt: now,
+        completedAt: now,
+        input: {},
+        output: { error: cause },
+        error: cause,
+      }),
+      ...GUARD_FAILURE_WORDS,
+    },
     resolutionError: { condition: `${key}: ${rendered}`, unresolvable_path: rendered, cause },
     evaluatedAtVersion,
   };

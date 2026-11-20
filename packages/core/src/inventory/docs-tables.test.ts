@@ -234,9 +234,12 @@ describe('Q1 (#592) d1 — the reference pages the script keeps', () => {
         'the 8 values of `next_actions_status`',
         'all eight values of `next_actions_status`',
       );
+      // The count as the page holds it now (Q1 #592 unit a moved it 15 → 14: the edit needs the
+      // sentence, not a number).
+      const unraised = /These (\d+) are in the `ErrorCode` type/.exec(committed(ERROR_PAGE))?.[1];
       const u = edited(
         ERROR_PAGE,
-        'These 15 are in the `ErrorCode` type',
+        `These ${unraised} are in the \`ErrorCode\` type`,
         'These are in the `ErrorCode` type',
       );
       // (a) red when a reworded count is skipped silently; (b) prints the exit code and stderr.

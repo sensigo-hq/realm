@@ -94,6 +94,7 @@ import type {
   ReleaseStepDelta,
 } from '../types/settlement.js';
 import { captureEvidence } from '../evidence/snapshot.js';
+import { failureWordsOf, stopReasonOf } from './failure-words.js';
 import { validateOutputSchema, validateTraceSchema } from '../validation/input-schema.js';
 import { validationFactsOfError } from '../validation/validation-problems.js';
 import { normalizeTrace } from './trace-normalizer.js';
@@ -3847,8 +3848,13 @@ async function executeStepBody(
       // entry records the supplier's role, the door's party, at its mint and nowhere else.
       const baseSnap: EvidenceSnapshot =
         stepDef?.execution === 'agent' ? { ...capturedSnap, supplied_by: 'agent' } : capturedSnap;
-      const snap: EvidenceSnapshot =
-        retryConfig !== undefined ? { ...baseSnap, attempt: attemptNum } : baseSnap;
+      // Q1 (#592) unit a: every attempt's entry says which attempt it is (`1` without a `retry`
+      // block), and a failed one carries its error's words — whatever the error, as normalised above.
+      const snap: EvidenceSnapshot = {
+        ...baseSnap,
+        attempt: attemptNum,
+        ...(attemptError !== null ? failureWordsOf(attemptError) : {}),
+      };
       allEvidence.push(snap);
 
       if (attemptError === null) {
@@ -4040,7 +4046,33 @@ async function executeStepBody(
           : { trace: options.trace ?? [] }
         : {}),
     });
-    allEvidence.push(exhaustedSnap);
+    // Q1 (#592) unit a: the exhaustion's own words, written at this site only — the budget's
+    // rejections were its attempts, the number its diagnostics record.
+    allEvidence.push({
+      ...exhaustedSnap,
+      attempt: exhaustion!.details['rejections'] as number,
+      ...failureWordsOf(exhaustion!),
+      stop_reason: 'attempts',
+    });
+  }
+
+  // Q1 (#592) unit a: why Realm stopped retrying, on the last entry of a step whose dispatch failed,
+  // under its own gate, before the settle delta. It reads the facts the retry decision above read and
+  // decides nothing: the decision is not repeated, and the wrap below keeps its own gate.
+  if (!bypassDispatch && dispatchError !== null) {
+    const lastEntry = allEvidence[allEvidence.length - 1];
+    if (lastEntry !== undefined) {
+      lastEntry.stop_reason = stopReasonOf({
+        hasRetryBlock: retryConfig !== undefined,
+        capExhausted,
+        retryable: dispatchError.retryable,
+        optedInTimeout:
+          dispatchError.code === 'STEP_TIMEOUT' &&
+          capMs !== undefined &&
+          retryConfig?.on_timeout === true &&
+          stepDef?.idempotent === true,
+      });
+    }
   }
 
   if (
@@ -4087,6 +4119,7 @@ async function executeStepBody(
           },
         },
       );
+      if (lastSnap !== undefined) lastSnap.agent_action = dispatchError.agentAction;
     }
   }
 
@@ -6635,15 +6668,23 @@ export async function drainFinalizers(
       );
       if (callResult.kind === 'abort') {
         markResult = 'failed';
-        evidenceSnapshot = captureEvidence({
-          stepId: finalizerName,
-          ...(driver !== undefined ? { drivenBy: driver } : {}),
-          startedAt,
-          completedAt: store.clock.now(),
-          input: {},
-          output: { aborted: true, abort_message: callResult.message },
-          error: `Finalizer '${finalizerName}' returned abort: ${callResult.message}`,
-        });
+        evidenceSnapshot = {
+          ...captureEvidence({
+            stepId: finalizerName,
+            ...(driver !== undefined ? { drivenBy: driver } : {}),
+            startedAt,
+            completedAt: store.clock.now(),
+            input: {},
+            output: { aborted: true, abort_message: callResult.message },
+            error: `Finalizer '${finalizerName}' returned abort: ${callResult.message}`,
+          }),
+          // Q1 (#592) unit a: the handler declared the cleanup cannot be done — a person must act.
+          // A cleanup step is never retried.
+          error_code: 'ENGINE_HANDLER_FAILED',
+          error_category: 'ENGINE',
+          agent_action: 'report_to_user',
+          stop_reason: 'no_retry_policy',
+        };
       } else {
         markResult = 'completed';
         evidenceSnapshot = captureEvidence({
@@ -6659,15 +6700,28 @@ export async function drainFinalizers(
     } catch (err) {
       markResult = 'failed';
       const message = err instanceof Error ? err.message : String(err);
-      evidenceSnapshot = captureEvidence({
-        stepId: finalizerName,
-        ...(driver !== undefined ? { drivenBy: driver } : {}),
-        startedAt,
-        completedAt: store.clock.now(),
-        input: {},
-        output: {},
-        error: `Finalizer '${finalizerName}' failed: ${message}`,
-      });
+      evidenceSnapshot = {
+        ...captureEvidence({
+          stepId: finalizerName,
+          ...(driver !== undefined ? { drivenBy: driver } : {}),
+          startedAt,
+          completedAt: store.clock.now(),
+          input: {},
+          output: {},
+          error: `Finalizer '${finalizerName}' failed: ${message}`,
+        }),
+        // Q1 (#592) unit a: the thrown error's words (`callHandler` wraps an ordinary throw,
+        // `withTimeout` throws `STEP_TIMEOUT`); anything else is the engine's own fault. A cleanup
+        // step is never retried.
+        ...(err instanceof WorkflowError
+          ? failureWordsOf(err)
+          : ({
+              error_code: 'ENGINE_INTERNAL',
+              error_category: 'ENGINE',
+              agent_action: 'stop',
+            } as const)),
+        stop_reason: 'no_retry_policy',
+      };
     }
 
     // mark_finalizer — same lease token; bounded retry on a THROWN STATE_RUN_BUSY only.

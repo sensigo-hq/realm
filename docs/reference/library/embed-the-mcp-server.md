@@ -693,6 +693,7 @@ Names this job reaches whose entry is on another page.
 - [`AbandonWay`](run-and-drive-a-run.md#abandonway): End the run.
 - [`AdmittedBy`](read-a-runs-record.md#admittedby): How an answer's sender was let through, or why it was not compared (`EvidenceSnapshot.admitted_by`).
 - [`AdvanceWay`](run-and-drive-a-run.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
+- [`AgentAction`](write-a-handler.md#agentaction): What an agent does next, decided by the engine (`WorkflowError.agentAction`).
 - [`AgentTraceEntry`](implement-a-store.md#agenttraceentry): A single trace entry submitted by the agent.
 - [`AnswerFacts`](read-a-runs-record.md#answerfacts): A recorded answer's route as its door declared it, and what showed a form (`EvidenceSnapshot.answer`).
 - [`AnswerOnRecord`](read-a-runs-record.md#answeronrecord): What an answer's entry holds about its route: the facts, or the absence a library caller leaves (`EvidenceSnapshot.answer`).
@@ -784,6 +785,7 @@ Names this job reaches whose entry is on another page.
 - [`DriveFailureRecord`](read-a-runs-record.md#drivefailurerecord): One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`).
 - [`DriveFailuresField`](read-a-runs-record.md#drivefailuresfield): A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`).
 - [`DueExpiry`](write-a-handler.md#dueexpiry): An open question whose time is up and whose `on_expiry` the engine can carry out (`expiry_due`).
+- [`ErrorCategory`](write-a-handler.md#errorcategory): The broad kind of failure a `WorkflowError` reports: network, an outside service, the run's state, invalid input, the engine itself, or a resource (`WorkflowError.category`).
 - [`ErrorCode`](define-and-load-a-workflow.md#errorcode): Every code a `WorkflowError` can carry, grouped by its category; a reply's error and the error catalogue name it (`WorkflowError.code`).
 - [`EvidenceSnapshot`](read-a-runs-record.md#evidencesnapshot): One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered question recorded, with its times, its input and output, its status and its hash.
 - [`ExecutionMode`](define-and-load-a-workflow.md#executionmode): The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer` (`StepDefinition.execution`).
