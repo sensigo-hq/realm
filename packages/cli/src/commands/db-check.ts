@@ -14,12 +14,17 @@
 // cross in process only; the writer is given them too, so a value that reached a printed line would be
 // masked. A folder with no `realm.yaml`, a manifest that cannot be read or is invalid, or a secret it
 // names that cannot be resolved is refused before the store is opened: nothing is scanned.
+//
+// Callback K2b: the check counts the stored callback keys and, given this shell's master key
+// fingerprint, how many were recorded under another. The master key is resolved after the store
+// opened and is declared to the writer; a setting that gives no key only means nothing is compared.
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Command } from 'commander';
 import {
   collectManifestSecretRefs,
   parseDeploymentManifest,
+  realmHomePath,
   WorkflowError,
   type DisclosureClass,
 } from '@sensigo/realm';
@@ -33,6 +38,8 @@ import {
 } from '@sensigo/realm-store-sqlite';
 import { addDeclaredDisclosure, printJsonByTable } from '../output/writer.js';
 import { resolveManifestSecrets } from '../extensions/manifest-secrets.js';
+import { declareMasterKey } from '../lib/callback/declare-master-key.js';
+import { resolveMasterKey } from '../lib/callback/master-key.js';
 
 /**
  * The class of every key of the report. A key added to the store's report and left out here fails
@@ -61,6 +68,8 @@ const CHECK_JSON_TABLE = {
       tombstones_since: 'fact',
       tombstones_through_seq: 'fact',
       purged_ids: 'fact',
+      callback_keys: 'fact',
+      callback_keys_other_master: 'fact',
     } satisfies Record<keyof CheckFacts, DisclosureClass>,
   },
   findings: {
@@ -158,6 +167,18 @@ function walLine(facts: CheckFacts): string | undefined {
     : `WAL: ${facts.wal_bytes} bytes, ${frames}.`;
 }
 
+/** The callback keys' line (K2b): only when the store holds any. */
+function keysLine(facts: CheckFacts): string | undefined {
+  const n = facts.callback_keys ?? 0;
+  if (n === 0) return undefined;
+  const other = facts.callback_keys_other_master;
+  if (other === undefined)
+    return `Callback keys: ${n} stored; this shell has no usable master key, so none were compared.`;
+  return other === 0
+    ? `Callback keys: ${n} stored, all recorded as sealed under this shell's master key.`
+    : `Callback keys: ${n} stored, ${other} sealed under another master key than this shell's.`;
+}
+
 /** The facts' lines: a part only when its fact is present, and no line with none. */
 function factLines(facts: CheckFacts): string[] {
   const stamped = facts.phase_other_stamps ?? 0;
@@ -172,6 +193,7 @@ function factLines(facts: CheckFacts): string[] {
     facts.tombstones_since === undefined || facts.tombstones_through_seq === undefined
       ? undefined
       : `Every run purged after ${facts.tombstones_since} keeps its tombstone (compacted through seq ${facts.tombstones_through_seq}).`,
+    keysLine(facts),
   ].filter((line) => line !== undefined);
 }
 
@@ -265,9 +287,13 @@ export const dbCheckCommand = new Command('check')
     const home = await openRealmHomeForMaintenance({ verb: 'check' });
     let status: CheckReport['status'];
     try {
-      const report = await home.check(
-        declared === undefined ? undefined : { declaredValues: Object.values(declared) },
-      );
+      // After the open, so a refusal of the store is not held up by the master key's command.
+      const master = resolveMasterKey({ env: process.env, homeDir: realmHomePath() });
+      if (master.state === 'found') declareMasterKey(master.key);
+      const report = await home.check({
+        ...(declared === undefined ? {} : { declaredValues: Object.values(declared) }),
+        masterFp: master.state === 'found' ? master.fp : null,
+      });
       status = report.status;
       if (opts.json === true) printJsonByTable(report, CHECK_JSON_TABLE);
       else for (const line of reportLines(report)) console.log(line);

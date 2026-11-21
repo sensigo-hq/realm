@@ -219,6 +219,12 @@ export interface CheckFacts {
   readonly tombstones_through_seq?: number;
   /** Every id ever purged (never compacted). */
   readonly purged_ids?: number;
+  /** The callback keys stored (K2b): every slot, an expired previous one included; counted by the
+   *  data pass, a count of 0 included; absent when it did not run. */
+  readonly callback_keys?: number;
+  /** Of those, the ones recorded as sealed under another master key than `masterFp`: present only
+   *  when a fingerprint was given. A key damaged under that fingerprint is not told apart. */
+  readonly callback_keys_other_master?: number;
 }
 
 /** The report `check()` resolves to: the published contract (DELTAS 51). */
@@ -245,6 +251,11 @@ export interface CheckOptions {
    * values are not stored, logged or put in any error.
    */
   readonly declaredValues?: readonly string[];
+  /**
+   * The fingerprint of the caller's master key, for `callback_keys_other_master` (K2b). `null`: the
+   * caller asked and has no usable master key; absent: not asked. Either way nothing is compared.
+   */
+  readonly masterFp?: string | null;
 }
 
 /** What the check needs besides the open's: the facts it does not read from the file. */
@@ -855,6 +866,7 @@ async function onTheConnection(
   platform: string,
   records: boolean,
   declared: readonly string[] | undefined,
+  masterFp: string | null | undefined,
 ): Promise<{
   readonly read:
     | {
@@ -900,7 +912,7 @@ async function onTheConnection(
   }
   // 3. The data pass (c8b1), when no finding of the file stopped it: one read transaction.
   const pass = records
-    ? await readRecords(db, runPhaseDerivationFingerprint(), declared)
+    ? await readRecords(db, runPhaseDerivationFingerprint(), declared, masterFp)
     : undefined;
   // 4. The WAL's frames, outside any read transaction: NOOP copies and writes nothing.
   const wal = await measured(() =>
@@ -933,7 +945,7 @@ export async function runCheck(
   const measuredOn =
     file.db === undefined
       ? undefined
-      : await onTheConnection(file.db, context.platform, records, declared);
+      : await onTheConnection(file.db, context.platform, records, declared, options.masterFp);
   const read = measuredOn?.read;
   const wal = measuredOn?.wal;
   const pass = measuredOn?.pass;
@@ -964,6 +976,11 @@ export async function runCheck(
     ...(typeof horizon?.since === 'string' ? { tombstones_since: horizon.since } : {}),
     ...optional('tombstones_through_seq', integerFact(horizon?.throughSeq)),
     ...optional('purged_ids', integerFact(horizon?.purgedIds)),
+    ...optional('callback_keys', pass?.keys.done === true ? pass.callbackKeys : undefined),
+    ...optional(
+      'callback_keys_other_master',
+      pass?.keys.done === true ? pass.callbackKeysOtherMaster : undefined,
+    ),
   };
   return {
     status: findings.length === 0 && notRun.length === 0 ? 'ok' : 'findings',

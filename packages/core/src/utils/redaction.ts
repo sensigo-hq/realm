@@ -492,6 +492,8 @@ export const REALM_CREDENTIAL_VARIABLES: ReadonlySet<string> = new Set([
   'REALM_SERVE_TOKEN',
   // Callback K1: the master key the callback signing keys are sealed under.
   'REALM_ENCRYPTION_KEY',
+  // Callback K2b: a command that prints that key; its words may hold a token.
+  'REALM_ENCRYPTION_KEY_COMMAND',
 ]);
 /**
  * U1b: names realm's own processes pass to each other and delete at their init — a relay to its

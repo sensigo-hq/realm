@@ -648,7 +648,7 @@ describe.runIf(POSIX)(
           code: 1,
           out: '',
           err: lines(
-            `Error: this shell has no master key, and this home holds keys sealed with encryption key ${fpOfMaster(MASTER_A)}: ${shownPairs} and 1 more. Set REALM_ENCRYPTION_KEY or REALM_ENCRYPTION_KEY_FILE to the key they were sealed with, or restore ${b.shown(b.masterFile)}. If it is lost, make a new master key by running this command with --replace for one of them (the workflow file whose id is ${W}, if it still takes callbacks, with --host h1.example.com:443), or remove them with --delete; every key made under the old one then needs its own --replace. ${NOTHING}`,
+            `Error: this shell has no master key, and this home holds keys sealed with encryption key ${fpOfMaster(MASTER_A)}: ${shownPairs} and 1 more. Set REALM_ENCRYPTION_KEY, REALM_ENCRYPTION_KEY_FILE or REALM_ENCRYPTION_KEY_COMMAND to the key they were sealed with, or restore ${b.shown(b.masterFile)}. If it is lost, make a new master key by running this command with --replace for one of them (the workflow file whose id is ${W}, if it still takes callbacks, with --host h1.example.com:443), or remove them with --delete; every key made under the old one then needs its own --replace. ${NOTHING}`,
           ),
         },
         fileAfter: false,

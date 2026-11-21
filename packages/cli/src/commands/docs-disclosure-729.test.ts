@@ -142,6 +142,7 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       // Callback K1: the master key and its file, read by no command yet.
       ['REALM_ENCRYPTION_KEY', 'documented by K2'],
       ['REALM_ENCRYPTION_KEY_FILE', 'documented by K2'],
+      ['REALM_ENCRYPTION_KEY_COMMAND', 'documented by K2c'],
     ]);
     // (a) red when a row is added or removed without the count, or the table's REALM_ names part
     //     from the variables realm's code reads (core's two lists and REALM_NOT_SECRET, less the
