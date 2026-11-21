@@ -16,11 +16,10 @@
 // refusal. The body is `callbackKey`, a function taking its collaborators, so a cell can inject them.
 import { randomBytes } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import {
   loadWorkflowFromFile,
   realmHomePath,
-  shellWord,
   type CallbackKeySlot,
   type CallbackKeyStore,
 } from '@sensigo/realm';
@@ -29,10 +28,15 @@ import { Command, InvalidArgumentError } from 'commander';
 import { openCliHome, type CliHome } from '../lib/home.js';
 import { parseCallbackEntry } from '../lib/callback/allow-list.js';
 import { declareMasterKey } from '../lib/callback/declare-master-key.js';
-import { entryRefusalPhrase } from '../lib/callback/entry-words.js';
+import { entryRefusalPhrase, quotedEntry } from '../lib/callback/entry-words.js';
 import { callbackEntryLabel } from '../lib/callback/host-label.js';
 import { placeMasterKeyFile } from '../lib/callback/master-key-file.js';
-import { commandSourceWords } from '../lib/callback/master-key-words.js';
+import {
+  invalidMasterKeyWords,
+  masterKeyClash,
+  masterKeyOpenWarning,
+  typedWord as typed,
+} from '../lib/callback/master-key-words.js';
 import {
   MASTER_KEY_FILE,
   parseMasterKey,
@@ -83,46 +87,14 @@ function parseKeepHours(value: string): number {
   return n;
 }
 
-/**
- * A word a person typed, as a printed command carries it: through `shellWord`, and quoted when it
- * would end the line in a full stop (`n8n.example.com.` is its own host, and a closing dot reads as
- * the sentence's).
- */
-function typed(value: string): string {
-  const word = shellWord(value);
-  return word.endsWith('.') && !word.startsWith("'") ? `'${value}'` : word;
-}
-
-/** The clause naming where an invalid master key came from. */
-function sourceName(source: 'env' | 'env_file' | 'home_file', homeFile: string): string {
-  if (source === 'env') return 'REALM_ENCRYPTION_KEY';
-  if (source === 'env_file') return 'the file REALM_ENCRYPTION_KEY_FILE names';
-  return homeFile;
-}
-
-/** Words 5: an invalid master key source, with its own reason. */
+/** Words 5: an invalid master key source, with its own reason (`master-key-words.ts`). */
 function invalidLine(
   res: Extract<MasterKeyResolution, { state: 'invalid' }>,
   env: Readonly<Record<string, string | undefined>>,
   homeFile: string,
 ): string {
-  if (res.source === 'command') {
-    const { reason, tail } = commandSourceWords(res);
-    return `Error: REALM_ENCRYPTION_KEY_COMMAND did not give a master key: ${reason}. ${NOTHING} ${tail}`;
-  }
-  const named = env['REALM_ENCRYPTION_KEY_FILE'];
-  const reason =
-    res.source === 'env_file' && named !== undefined && !isAbsolute(named)
-      ? 'its path is not absolute'
-      : res.reason === 'empty'
-        ? 'it is empty'
-        : res.reason === 'unreadable_file'
-          ? 'it cannot be read'
-          : 'it is not 64 hexadecimal characters';
-  return (
-    `Error: ${sourceName(res.source, homeFile)} is not a master key: ${reason}. ${NOTHING} ` +
-    'A master key is 64 hexadecimal characters. Make one with: openssl rand -hex 32'
-  );
+  const { head, closing } = invalidMasterKeyWords(res, env, homeFile);
+  return `Error: ${head}. ${NOTHING} ${closing.join(' ')}`;
 }
 
 /** The fingerprint of the master key the home file holds (it parses: the resolver said so). */
@@ -162,7 +134,7 @@ export async function callbackKey(
   // ---- the entry, the workflow, and whether it takes callbacks ----
   const parsed = parseCallbackEntry(args.host);
   if (!parsed.ok) {
-    const quoted = parsed.word === 'userinfo' ? '' : ` ${JSON.stringify(args.host)}`;
+    const quoted = quotedEntry(args.host, parsed.word);
     return fail(
       `Error: --host${quoted} is not a receiver address: ${entryRefusalPhrase(parsed.word)}. ` +
         'Give a host name or address, with a port if it is not 443: n8n.example.com, or ' +
@@ -238,22 +210,14 @@ export async function callbackKey(
     if (found.mode_wider_than_owner === true) {
       const path = found.source === 'env_file' ? env['REALM_ENCRYPTION_KEY_FILE']! : homeFile;
       const mode = (statSync(path).mode & 0o7777).toString(8).padStart(4, '0');
-      say(
-        `Warning: ${path} is open to other users (mode ${mode}). Fix that with: chmod 600 ${typed(path)}`,
-      );
+      say(`Warning: ${masterKeyOpenWarning(path, mode)}`);
     }
   };
   if (res.state === 'found') take(res);
   /** Words 7 / 9: the setting and the home file hold different master keys. */
   const disagree = (): string | undefined => {
     if (res.state !== 'found' || res.differs_from_home_file !== true) return undefined;
-    const src =
-      res.source === 'env'
-        ? 'REALM_ENCRYPTION_KEY'
-        : res.source === 'command'
-          ? 'REALM_ENCRYPTION_KEY_COMMAND'
-          : 'the file REALM_ENCRYPTION_KEY_FILE names';
-    return `${src} gives encryption key ${res.fp}, but ${homeFile} holds encryption key ${homeFileFp(homeFile)}.`;
+    return `${masterKeyClash(res.source, res.fp, homeFile, homeFileFp(homeFile))}.`;
   };
   const refuseDisagree = (): 1 | undefined => {
     const clash = disagree();

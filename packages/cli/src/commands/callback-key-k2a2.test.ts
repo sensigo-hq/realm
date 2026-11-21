@@ -547,7 +547,7 @@ describe.runIf(POSIX)(
           },
         ],
         entries: [
-          { code: 1, err: refused('n8n.example.com/hook', 'it has a path, query or fragment') },
+          { code: 1, err: refused('n8n.example.com', 'it has a path, query or fragment') },
           { code: 1, err: refused(undefined, 'it has a user name or password') },
           { code: 1, err: refused('*.example.com', 'it has a wildcard') },
           {
@@ -560,7 +560,7 @@ describe.runIf(POSIX)(
             err: refused('n8n.example.com:99999', 'its port is not a whole number from 1 to 65535'),
           },
           { code: 1, err: refused('https://n8n.example.com', 'only http:// may start it') },
-          { code: 1, err: refused('', 'it has no host') },
+          { code: 1, err: refused(undefined, 'it has no host') },
           { code: 1, err: refused('ex ample.com', 'it is not a valid host name') },
         ],
         missing: { code: 1, err: "error: required option '--host <entry>' not specified\n" },
