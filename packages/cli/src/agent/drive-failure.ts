@@ -12,11 +12,12 @@
 // `update()` bumps `version`/`updated_at`, it resets the idle clock — so the run stops looking
 // untouched at exactly the moment it stopped being driven.
 import {
-  ERROR_CLASSES,
+  CLAIMABLE_ERROR_CLASSES,
   WorkflowError,
   boundRequestFacts,
   type DriveFailureRecord,
   type DriveFailuresField,
+  type RunRecord,
   type RunStore,
   type UsageRecord,
 } from '@sensigo/realm';
@@ -83,7 +84,9 @@ const NUMERIC_PAYLOAD_FIELDS = [
  * The payload is an UNTYPED boundary into a record realm persists, so a raw spread would let any
  * key a provider happened to attach land in the store forever. Filtering is per FIELD, not
  * whole-payload: the numbers are measurements and are kept when they are numbers, while the class
- * is a CLAIM — an out-of-union value is dropped and shape classification decides instead.
+ * is a CLAIM — an out-of-union value is dropped and shape classification decides instead. Q1 (#592)
+ * unit c: so is `startup_failure`, which only Realm's startup writers mint
+ * (`CLAIMABLE_ERROR_CLASSES`, the list core's `closeModelAttempts` closes against too).
  */
 function pickPayload(payload: DriveCallPayload): {
   error_class?: DriveFailureRecord['error_class'];
@@ -95,7 +98,7 @@ function pickPayload(payload: DriveCallPayload): {
     if (typeof value === 'number' && Number.isFinite(value)) out[field] = value;
   }
   const cls = (payload as Record<string, unknown>)['error_class'];
-  if (typeof cls === 'string' && (ERROR_CLASSES as readonly string[]).includes(cls))
+  if (typeof cls === 'string' && (CLAIMABLE_ERROR_CLASSES as readonly string[]).includes(cls))
     out['error_class'] = cls;
   // issue #600 PR 1a (D9): an ARRAY, not a number — picked separately from the numeric loop above.
   // Length-0 is kept, as exactly what it is: a payload that carried a `usage` key with no requests
@@ -255,6 +258,36 @@ export function stampRequestProvider<T>(requests: readonly T[], provider: string
 }
 
 /**
+ * Q1 (#592) unit c: what {@link recordDriveFailure} did with the entry — `written`; `run_ended` (the
+ * run had a terminal state: nothing written); `not_found` (no such run in the store); `not_written`
+ * (lost to contention, or the store failed: its `lostLine` was printed).
+ */
+export type DriveFailureOutcome = 'written' | 'run_ended' | 'not_found' | 'not_written';
+
+/**
+ * The run with `entry` appended to its drive-failure ring: the entry stamped with the run's
+ * evidence count and open gate, read from `run` (#715 (b), 02 §D.2: `drive_failing` fires while
+ * nothing was recorded since — counts, never stamps); `first_failed_at` kept from the first entry,
+ * `total` counted outside the ring, the ring the last five. Q1 (#592) unit c: one function, used by
+ * {@link recordDriveFailure} and by `realm listen`'s startup mark, so both append the same way.
+ */
+export function appendDriveFailure(run: RunRecord, entry: DriveFailureRecord): RunRecord {
+  const prev: DriveFailuresField | undefined = run.drive_failures;
+  const fenced: DriveFailureRecord = {
+    ...entry,
+    evidence_count: run.evidence.length,
+    ...(run.pending_gate !== undefined ? { gate_id: run.pending_gate.gate_id } : {}),
+  };
+  const field: DriveFailuresField = {
+    first_failed_at: prev?.first_failed_at ?? entry.at,
+    // Monotonic and OUTSIDE the ring: a run that failed forty times must not read as five.
+    total: (prev?.total ?? 0) + 1,
+    entries: [...(prev?.entries ?? []), fenced].slice(-RING_CAP),
+  };
+  return { ...run, drive_failures: field };
+}
+
+/**
  * THE FENCE. Appends one entry to the run's drive-failure ring, and never lets its own failure
  * become the operator's problem.
  *
@@ -266,12 +299,15 @@ export function stampRequestProvider<T>(requests: readonly T[], provider: string
  * That line lands BESIDE the original, not always after it: chokepoints (1), (2) and (4) print
  * their error first, so the lost line follows — but chokepoint (3) mints BEFORE its re-throw
  * reaches the CLI's printer, so there the lost line comes first. Either way the operator has both.
+ *
+ * Q1 (#592) unit c: it returns what it did ({@link DriveFailureOutcome}); `realm agent`'s startup
+ * refusal says it in its closing sentence, and the drive's own callers ignore it.
  */
 export async function recordDriveFailure(
   store: Pick<RunStore, 'get' | 'update'>,
   runId: string,
   entry: DriveFailureRecord,
-): Promise<void> {
+): Promise<DriveFailureOutcome> {
   try {
     // issue #600 PR 2 (C4, A3 b): the requests this failure billed carry the provider that served
     // them (none when it is 'unknown'), and their names are bounded before the write. Both are
@@ -292,40 +328,27 @@ export async function recordDriveFailure(
       const { record: run } = await store.get(runId);
       // A sealed run already tells its story; adding to it would be noise, and writing to it
       // would reopen a settled record.
-      if (run.terminal_state) return;
-
-      const prev: DriveFailuresField | undefined = run.drive_failures;
-      // #715 (b) (02 §D.2): what the run held when this entry is appended, read in this write — the
-      // `drive_failing` finding fires while nothing was recorded since (counts, never stamps).
-      const fenced: DriveFailureRecord = {
-        ...stored,
-        evidence_count: run.evidence.length,
-        ...(run.pending_gate !== undefined ? { gate_id: run.pending_gate.gate_id } : {}),
-      };
-      const field: DriveFailuresField = {
-        first_failed_at: prev?.first_failed_at ?? entry.at,
-        // Monotonic and OUTSIDE the ring: a run that failed forty times must not read as five.
-        total: (prev?.total ?? 0) + 1,
-        entries: [...(prev?.entries ?? []), fenced].slice(-RING_CAP),
-      };
+      if (run.terminal_state) return 'run_ended';
 
       try {
-        // The record carries its own CAS version, read a few lines above. `update()` bumps
-        // version and updated_at — the latter is what resets the idle clock.
-        await store.update({ ...run, drive_failures: field });
-        return;
+        // #715 (b) (02 §D.2): stamped with what the run held, read in this write. The record carries
+        // its own CAS version, read a few lines above. `update()` bumps version and updated_at — the
+        // latter is what resets the idle clock.
+        await store.update(appendDriveFailure(run, stored));
+        return 'written';
       } catch (err) {
         const code = workflowErrorCode(err);
         // Contention, either flavour: re-read and re-apply against the newer record.
         if (code === 'STATE_SNAPSHOT_MISMATCH' || code === 'STATE_RUN_BUSY') continue;
-        if (code === 'STATE_RUN_NOT_FOUND') return; // concurrently purged — disposal is visibility
+        if (code === 'STATE_RUN_NOT_FOUND') return 'not_found'; // concurrently purged — disposal is visibility
         throw err;
       }
     }
     // Lost to contention after every retry.
     console.error(lostLine(runId, entry));
+    return 'not_written';
   } catch (err) {
-    if (workflowErrorCode(err) === 'STATE_RUN_NOT_FOUND') return;
+    if (workflowErrorCode(err) === 'STATE_RUN_NOT_FOUND') return 'not_found';
     // issue #719: a typed store error says why the record was lost, so its message rides the one
     // line, unchanged.
     // An untyped error is not echoed: its text is not Realm's to vouch for. issue #719 (C6): when the
@@ -342,5 +365,6 @@ export async function recordDriveFailure(
           ? lostLine(runId, { ...entry, message: err.message })
           : `${lostLine(runId, entry)} — ${err.message}`,
     );
+    return 'not_written';
   }
 }
