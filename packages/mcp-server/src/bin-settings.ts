@@ -5,14 +5,18 @@
 // `--check`'s value line (W-s6), and the gate-answers default's line for a session without forms
 // (2026-11-14); whether the old name `offered` was given, which the programs raise as REALM-D001. Correction 2 (4.1): ONE home for the three
 // programs' words — `realm mcp`, `realm serve` (the CLI re-exports these) and this package's own
-// `realm-mcp` bin.
+// `realm-mcp` bin. Gap 2, unit (iv-b1): the failure-text setting's refusal, start line and `--check`
+// line too.
 import {
   alsoSetClause,
   formWaitInert,
+  judgeFailureText,
   judgeFormWait,
   judgeGateAnswers,
+  FAILURE_TEXT_ENV,
   FORM_WAIT_ENV,
   GATE_ANSWERS_ENV,
+  type FailureTextSetting,
   type FormWaitSetting,
   type GateAnswers,
   type GateAnswersSetting,
@@ -32,6 +36,13 @@ function programOf(bin: BinName): string {
 export function gateAnswersBinRefusal(bin: BinName, kind: SetKind, raw: string): string {
   const where = kind === 'env' ? GATE_ANSWERS_ENV : '--gate-answers';
   return `${programOf(bin)}: invalid ${where} value '${raw}': expected asked, permitted or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.`;
+}
+
+/** Gap 2, unit (iv-b1): a failure-text value a bin was given that is neither word — the server does
+ *  not start (W-s4's form). */
+export function failureTextBinRefusal(bin: BinName, kind: SetKind, raw: string): string {
+  const where = kind === 'env' ? FAILURE_TEXT_ENV : '--failure-text';
+  return `${programOf(bin)}: invalid ${where} value '${raw}': expected shown or hidden — refused at start: this server does not start while it is set, because a misspelt value would show an assistant a failure's words when you believe they are hidden. Fix the value or remove it. The server starts as soon as it is valid.`;
 }
 
 /** W-s8 (bins): a form-wait value out of bounds — the server does not start. */
@@ -67,10 +78,12 @@ export function formWaitNoFormsRefusal(
 export interface BinDoorFlags {
   gateAnswers?: string | undefined;
   formWaitSeconds?: string | undefined;
+  /** Gap 2, unit (iv-b1): `--failure-text`. */
+  failureText?: string | undefined;
 }
 
 /**
- * The two settings as this bin will start with them, or the one line that refuses the start. A
+ * The settings as this bin will start with them, or the one line that refuses the start. A
  * form-wait value where no form is sent refuses the start (correction 2, 4.2: `formWaitInert` — under
  * `withheld` or `permitted`, and on `realm serve`, which sends no forms: W-s9), tested for its presence
  * before W-s8 judges it.
@@ -80,7 +93,12 @@ export function readBinDoorSettings(
   flags: BinDoorFlags,
   env: Record<string, string | undefined>,
 ):
-  | { ok: true; answers: GateAnswersSetting; formWait: FormWaitSetting }
+  | {
+      ok: true;
+      answers: GateAnswersSetting;
+      formWait: FormWaitSetting;
+      failureText: FailureTextSetting;
+    }
   | { ok: false; line: string } {
   const answers = judgeGateAnswers({ flag: flags.gateAnswers, env: env[GATE_ANSWERS_ENV] });
   if (!answers.ok)
@@ -105,7 +123,16 @@ export function readBinDoorSettings(
   const formWait = judgeFormWait({ flag: flags.formWaitSeconds, env: env[FORM_WAIT_ENV] });
   if (!formWait.ok)
     return { ok: false, line: formWaitBinRefusal(bin, formWait.kind, formWait.raw) };
-  return { ok: true, answers: answers.setting, formWait: formWait.setting };
+  // Gap 2, unit (iv-b1): the failure-text value, judged as the server will judge it.
+  const failureText = judgeFailureText({ flag: flags.failureText, env: env[FAILURE_TEXT_ENV] });
+  if (!failureText.ok)
+    return { ok: false, line: failureTextBinRefusal(bin, failureText.kind, failureText.raw) };
+  return {
+    ok: true,
+    answers: answers.setting,
+    formWait: formWait.setting,
+    failureText: failureText.setting,
+  };
 }
 
 /** Whether the source the value in force came from gave it as `offered` (its old name). */
@@ -114,7 +141,7 @@ function givenAsOffered(setting: GateAnswersSetting): boolean {
 }
 
 /** `from <source>` with the "also set" clause, as the start lines and `--check` print it. */
-function fromClause(setting: GateAnswersSetting): string {
+function fromClause(setting: GateAnswersSetting | FailureTextSetting): string {
   return `from ${setting.source.ref}${alsoSetClause(setting)}`;
 }
 
@@ -211,6 +238,21 @@ export function gateAnswersConnectLine(
   setting: GateAnswersSetting,
 ): string {
   return `Gate answers over MCP: this app shows no forms, so the agent cannot answer gates on this server and the person cannot answer in the app. A person answers in a terminal on this machine with realm run respond; to let the agent answer, ${permittedRemedy(setting, bin)}.`;
+}
+
+/**
+ * Gap 2, unit (iv-b1): the failure-text start line, printed under `hidden` only, where the program
+ * prints its gate-answers line (`realm mcp` and `realm-mcp`: stderr; `realm serve`: stdout); none
+ * under `shown`.
+ */
+export function failureTextStartLine(setting: FailureTextSetting): string | undefined {
+  if (setting.value !== 'hidden') return undefined;
+  return `Failure text over MCP: hidden (${fromClause(setting)}). In get_run_state an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.`;
+}
+
+/** Gap 2, unit (iv-b1): `--check`'s failure-text line, printed after the gate-answers value line. */
+export function failureTextCheckLine(setting: FailureTextSetting): string {
+  return `Failure text over MCP: ${setting.value} (${fromClause(setting)}) — as read from this shell's environment and flags.`;
 }
 
 /** W-s5: dev mode's warning, printed when the value is `permitted` (the answer tool is listed). */

@@ -98,6 +98,7 @@ realm listen --sweep-expired-gates — option, takes a value
 realm mcp — command
 realm mcp --check — option, no value
 realm mcp --extensions-module — option, takes a value
+realm mcp --failure-text — option, takes a value
 realm mcp --form-wait-seconds — option, takes a value
 realm mcp --gate-answers — option, takes a value
 realm mcp --help — option, short -h, no value
@@ -202,6 +203,7 @@ realm serve — command
 realm serve --check — option, no value
 realm serve --dev — option, no value
 realm serve --extensions-module — option, takes a value
+realm serve --failure-text — option, takes a value
 realm serve --form-wait-seconds — option, takes a value
 realm serve --gate-answers — option, takes a value
 realm serve --help — option, short -h, no value
