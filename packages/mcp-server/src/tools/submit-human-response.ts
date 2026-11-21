@@ -238,6 +238,18 @@ export async function handleSubmitHumanResponse(
   if (endedSnap === undefined)
     return mcpReplyOf(withHintTail(renderReply(reply, host), endingTail));
   const ended = endedSnap.record;
+  // #625 PR-2b A2a correction 1 (C205): a reply that carried the run on is the continuation's, so its
+  // ended-run tail is advance_run's — how the run ended when someone else ended it, the cleanup step
+  // left pending, and the way back in, each said once. Core's hint holds none of them: its resume
+  // offer rides only the answer's own reply, composed while the run was still open.
+  if (engineReply.gate_claim?.carried_on === true) {
+    return mcpReplyOf(
+      withHintTail(
+        renderReply(reply, host),
+        endedRunWaysSentence(ended, definition, endedSnap.at, saysHowItEnded(engineReply, ended)),
+      ),
+    );
+  }
   // #729 PR-0: the ended run's ways back in follow the door's own sentence of what comes next, as
   // before PR-0 (withPendingCleanup's rule, kept whole): the cleanup sentence once — never when the
   // hint already names its command (F11) — and, when core's hint ends with the resume offer, the
@@ -251,18 +263,9 @@ export async function handleSubmitHumanResponse(
   const hint = reply.context_hint;
   const moved = offer !== '' && hint.endsWith(offer);
   const own = moved ? { ...reply, context_hint: hint.slice(0, hint.length - offer.length) } : reply;
-  // #625 A1b-1's rule, as advance_run and execute_step apply it (#625 PR-2b A2a): how the run ended
-  // comes first when someone other than this call ended it — on a reply that carried the run on,
-  // whose continuation met another program ending it. Never on a refused answer: core's refusal of
-  // an answer to an ended run already says how it ended (A1b-1), so the tail would say it twice.
-  const howEnded =
-    earlier === undefined &&
-    engineReply.gate_claim?.carried_on === true &&
-    saysHowItEnded(engineReply, ended)
-      ? runEndingOf(ended, definition)
-      : undefined;
-  const endedFirst = howEnded === undefined ? '' : ` ${howEnded.sentence}`;
-  const tail = `${endingTail}${endedFirst}${named ? '' : cleanup}${moved ? offer : ''}`;
+  // An answer that did not carry the run on: core's refusal of an answer to an ended run already says
+  // how it ended (A1b-1), so the tail never says it again.
+  const tail = `${endingTail}${named ? '' : cleanup}${moved ? offer : ''}`;
   return mcpReplyOf(withHintTail(renderReply(own, host), tail));
 }
 

@@ -352,16 +352,18 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   // --- answering, then advanceRun (lines 82, 101, 102) ----------------------------------------
   it('C163 lines 82, 101: submitHumanResponse runs no auto step — ok, running, the owed sentence, advance_run offered; advanceRun then runs it', async () => {
     // #625 PR-2b A2a: the sentence now says which answer runs them — this cell's passes no token;
-    // one that passes it back, with a registry: carry-on-a2a-625.test.ts check 2 (and check 1, row 4).
+    // one that passes it back, with a registry: carry-on-a2a-625.test.ts check 2 (and check 1, row 4);
+    // on a store that keeps no claims a passed-back token is `unverifiable` and the run is not carried
+    // on: carry-on-a2a-625 check 1, "row 3 on a store that keeps no claims".
     claim(
-      "An answer that passes back the opening reply's `claimToken`, with a registry, on a run whose recorded code identity matches the registry's, or where neither has one, runs the `auto` steps after it in the same call, up to the next pause; without `budget` nothing bounds it. Any other answer runs none: call `advanceRun`. Say the workflow",
+      "An answer that passes back the opening reply's `claimToken`, with a registry, on a store that keeps claims, on a run whose recorded code identity matches the registry's, or where neither has one, runs the `auto` steps after it in the same call, up to the next pause; without `budget` nothing bounds it. Any other answer runs none: call `advanceRun`. Say the workflow",
     );
     claim('Then `submitHumanResponse` replies `status: ok` with `run_phase: running`.');
     claim(
       "Its `context_hint` says `Gate 'decide' resolved with choice 'approve'.`, and its `ways` hold an `advance` way whose `owed` names `file`.",
     );
     claim(
-      "An answer that passes back the opening reply's `claimToken`, with a registry, on a run whose recorded code identity matches the registry's, or where neither has one, runs the `auto` steps after it in the same call, up to the next pause; without `budget` nothing bounds it. Any other answer runs none: call `advanceRun`. Added after version 0.50.0, which ran none.",
+      "An answer that passes back the opening reply's `claimToken`, with a registry, on a store that keeps claims, on a run whose recorded code identity matches the registry's, or where neither has one, runs the `auto` steps after it in the same call, up to the next pause; without `budget` nothing bounds it. Any other answer runs none: call `advanceRun`. Added after version 0.50.0, which ran none.",
     );
     claim(
       'The replies are `EngineReply`: the fields of an MCP tool reply (see [MCP tools](mcp/tools.md)) without `next_actions`, `agent_action` and `blocked_reason.suggestion`, and with what can be done next as data',

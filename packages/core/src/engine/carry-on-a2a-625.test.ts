@@ -287,6 +287,37 @@ describe('#625 PR-2b A2a check 1 — D-8, row by row, through the engine', () =>
     });
   });
 
+  it('row 3 on a store that keeps no claims (correction 1): a passed-back token cannot be checked, so the run is not carried on', async () => {
+    const def = wf();
+    const noClaims = new InMemoryStore({ clock });
+    Object.defineProperty(noClaims, 'persistsClaims', { value: false });
+    const o = await open(noClaims, def);
+    // The fixture is a real InMemoryStore, which writes the gate step's claim: remove it, as a store
+    // that keeps none would never have written it (holder-proof-625's store_keeps_no_claims cell).
+    const { record: planted } = await noClaims.get(o.runId);
+    const { confirm: _gone, ...claims } = planted.claims ?? {};
+    await noClaims.update({ ...planted, claims });
+    const reply = await submitHumanResponse(noClaims, def, {
+      runId: o.runId,
+      gateId: o.gateId,
+      choice: 'approve',
+      claimToken: 'a-token-passed-back',
+      driver: HOST,
+      registry: createDefaultRegistry(),
+    });
+    // (a) red when a store with no claims carries the run on (the proof read as matched); (b) prints
+    //     the verdict, the reason and the steps done.
+    expect({
+      proof: [reply.gate_claim?.proof, reply.gate_claim?.cause],
+      because: reason(reply),
+      done: (await noClaims.get(o.runId)).record.completed_steps,
+    }).toEqual({
+      proof: ['unverifiable', 'store_keeps_no_claims'],
+      because: 'proof_unverifiable',
+      done: ['confirm'],
+    });
+  });
+
   it('row 4 (no_registry): the token matches, the call has no step registry', async () => {
     const def = wf();
     const o = await open(store, def);
@@ -508,11 +539,14 @@ describe('#625 PR-2b A2a checks 3 and 4 — the late answer', () => {
     });
   });
 
-  it('check 3: the late arm stopped by the budget — the refusal’s remedy is this reply’s advance way', async () => {
+  it('check 3: the late arm stopped by the budget after `a` — the refusal’s remedy is this reply’s advance way (owing `b`), not the answer’s (owing `a`)', async () => {
     const def = wf(undefined, EXPIRING);
     const o = await open(store, def);
     await clock.set(o.afterExpiry);
-    const reply = await answer(def, o, { budget: { remainingMs: () => 0 } });
+    let reads = 0;
+    const reply = await answer(def, o, {
+      budget: { remainingMs: () => (reads++ === 0 ? 5_000 : 0) },
+    });
     // (a) red when the remedy is the answer's own ways (judged before the chain) or `no_remedy`
     //     stays beside a remedy; (b) prints the remedy and the reply's advance ways.
     expect({
@@ -525,6 +559,12 @@ describe('#625 PR-2b A2a checks 3 and 4 — the late answer', () => {
       stopped: 'budget',
     });
     expect(reply.refusal?.remedy).toHaveLength(1);
+    // (a) red when the remedy still owes `a`, which the call ran; (b) prints the owed steps.
+    expect(
+      (reply.refusal?.remedy ?? []).flatMap(
+        (w) => (w as unknown as { owed?: { step?: string }[] }).owed?.map((x) => x.step) ?? [],
+      ),
+    ).toEqual(['b']);
   });
 
   it('check 4: a late answer whose choice the expiry did not record (STATE_BLOCKED) never carries on', async () => {

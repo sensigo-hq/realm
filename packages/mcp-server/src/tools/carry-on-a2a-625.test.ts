@@ -19,6 +19,7 @@ import {
   createDefaultRegistry,
   judgeFormWait,
   judgeGateAnswers,
+  WorkflowError,
   type Attributed,
   type StepDefinition,
   type WorkflowDefinition,
@@ -26,6 +27,7 @@ import {
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { McpDoor } from '../door.js';
+import { handleAdvanceRun } from './advance-run.js';
 import { handleStartRun } from './start-run.js';
 import { handleSubmitHumanResponse } from './submit-human-response.js';
 
@@ -320,5 +322,86 @@ describe('#625 PR-2b A2a checks 5 and 6 — the answer tool', () => {
       phase: reply.run_phase,
       carried: reply.gate_claim?.['carried_on'],
     }).toEqual({ said: 1, phase: 'abandoned', carried: true });
+  });
+
+  // #625 PR-2b A2a correction 1 (C205): a reply that carried the run on is the continuation's, so an
+  // ending the chain met ends with the way back in, as advance_run's reply on the same chain does.
+  const failing = () => {
+    const registry = createDefaultRegistry();
+    registry.register('handler', 'always_fail', {
+      id: 'always_fail',
+      execute: async () => {
+        throw new WorkflowError('Handler deliberately failed', {
+          code: 'ENGINE_HANDLER_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+      },
+    } as never);
+    return registry;
+  };
+  /** The answer with the token (carried on), and the same chain answered without it, then advanced. */
+  const bothWays = async (def: WorkflowDefinition) => {
+    const o = await opened(def, failing());
+    const carried = (await handleSubmitHumanResponse(
+      { run_id: o.runId, gate_id: o.gateId, choice: 'approve', claim_token: o.token },
+      o.stores,
+    )) as unknown as Reply;
+    const p = await opened(def, failing());
+    await handleSubmitHumanResponse(
+      { run_id: p.runId, gate_id: p.gateId, choice: 'approve' },
+      p.stores,
+    );
+    const advanced = (await handleAdvanceRun({ run_id: p.runId }, p.stores)) as unknown as Reply;
+    return { o, carried, p, advanced };
+  };
+  const offer = (runId: string, step: string) =>
+    `To make the failed step runnable again: realm run resume ${runId} --from ${step}`;
+
+  it('correction 1, check 1: a carried-on answer whose chained step fails ends with the resume command, once, as advance_run does', async () => {
+    const def = wf('carry-on-fails', {
+      confirm: gate([]),
+      a: { description: 'A.', execution: 'auto', depends_on: ['confirm'], handler: 'always_fail' },
+      finish: { description: 'Finish.', execution: 'agent', depends_on: ['a'] },
+    });
+    const { o, carried, p, advanced } = await bothWays(def);
+    // (a) red when the answer tool's tail drops the way back in on a carried-on reply (it only moved
+    //     an offer core's hint already held), or says it twice; (b) prints the counts and phases.
+    expect({
+      carried: [
+        carried.gate_claim?.['carried_on'],
+        carried.run_phase,
+        occurrences(carried.context_hint ?? '', offer(o.runId, 'a')),
+        (carried.context_hint ?? '').endsWith(offer(o.runId, 'a')),
+      ],
+      advanced: [advanced.run_phase, (advanced.context_hint ?? '').endsWith(offer(p.runId, 'a'))],
+    }).toEqual({ carried: [true, 'failed', 1, true], advanced: ['failed', true] });
+  });
+
+  it('correction 1, check 2: a chained step’s guard that ends the run with a resolution error — the same way back in, once', async () => {
+    const def = wf('carry-on-guard-error', {
+      confirm: gate([]),
+      a: auto(['confirm']),
+      g: {
+        description: 'G.',
+        execution: 'guard',
+        depends_on: ['a'],
+        abort_unless: ['$.nope.field == true'],
+      },
+      finish: { description: 'Finish.', execution: 'agent', depends_on: ['g'] },
+    });
+    const { o, carried, p, advanced } = await bothWays(def);
+    // (a) red when the guard's ending loses the way back in on a carried-on reply, or says it twice;
+    //     (b) prints the counts and phases.
+    expect({
+      carried: [
+        carried.gate_claim?.['carried_on'],
+        carried.run_phase,
+        occurrences(carried.context_hint ?? '', offer(o.runId, 'g')),
+        (carried.context_hint ?? '').endsWith(offer(o.runId, 'g')),
+      ],
+      advanced: [advanced.run_phase, (advanced.context_hint ?? '').endsWith(offer(p.runId, 'g'))],
+    }).toEqual({ carried: [true, 'failed', 1, true], advanced: ['failed', true] });
   });
 });
