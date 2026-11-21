@@ -384,7 +384,11 @@ export async function handleExecuteStep(
     // #625 A1b-1: how the run ended comes first when someone other than this call ended it (the
     // one "said once" rule, on the engine's own reply; a form's reply decides for itself).
     if (ended !== undefined) {
-      const saysEnding = reply === result && saysHowItEnded(result, ended.record);
+      // #625 PR-2b A2b: or a form's answer that carried the run on, whose continuation met another
+      // program ending the run (A2a's answer tool's rule).
+      const saysEnding =
+        (reply === result && saysHowItEnded(result, ended.record)) ||
+        (reply.gate_claim?.carried_on === true && saysHowItEnded(reply, ended.record));
       tail = endedRunWaysSentence(ended.record, definition, ended.at, saysEnding);
     }
   }

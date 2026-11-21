@@ -143,7 +143,10 @@ export async function handleAdvanceRun(
           ended.record,
           definition,
           ended.at,
-          reply === result && saysHowItEnded(result, ended.record),
+          // #625 PR-2b A2b: or a form's answer that carried the run on, whose continuation met
+          // another program ending the run (A2a's answer tool's rule).
+          (reply === result && saysHowItEnded(result, ended.record)) ||
+            (reply.gate_claim?.carried_on === true && saysHowItEnded(reply, ended.record)),
         );
   return {
     ...mcpReplyOf(withHintTail(renderReply(reply, mcpHostOf(stores)), tail)),

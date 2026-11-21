@@ -38,6 +38,7 @@ import {
   type Principal,
   type RunRecord,
   type RunStore,
+  type TraceBufferStore,
   type WorkflowDefinition,
   buildDisclosureSet,
   composeQuestionView,
@@ -95,6 +96,8 @@ export interface FormDeps {
    *  reply (a `run_step` prompt masks each value before its filters) — when it is not `disclosure`
    *  (`present_question` passes it alone: its form's question is composed as before). */
   waysDisclosure?: DisclosureSet;
+  /** #625 PR-2b A2b: the trace buffer store for the steps a form's answer carries the run on to. */
+  traceBufferStore?: TraceBufferStore;
 }
 
 /** The filter-mask fix (B2): the set a form path's ways are composed with. */
@@ -149,15 +152,14 @@ export type FormResult =
 /**
  * Correction 2 (1.5): the ONE predicate for "the form's answer was recorded" — the answer's own reply
  * is neither an error nor a refusal, no expiry turned it away, and no other answer had settled the
- * question first. Anything else counts as the form coming back.
+ * question first. Anything else counts as the form coming back. #625 PR-2b A2b: a reply that carried
+ * the run on is the continuation's — its `status` says how the steps after the answer went — so it is
+ * judged on the answer's own facts alone (`answer_recorded`, `outcome`), whatever `status` says.
  */
 export function formAnswerRecorded(reply: EngineReply): boolean {
-  return (
-    reply.status !== 'error' &&
-    reply.status !== 'blocked' &&
-    reply.answer_recorded !== false &&
-    reply.outcome === undefined
-  );
+  const own = reply.answer_recorded !== false && reply.outcome === undefined;
+  if (reply.gate_claim?.carried_on === true) return own;
+  return reply.status !== 'error' && reply.status !== 'blocked' && own;
 }
 
 /** The SDK's own check of a form's content against its schema (an `accept` with no choice, or one not
@@ -184,6 +186,10 @@ export async function sendQuestionForm(
   gateId: string,
   call: FormCall,
   firstOnly: boolean,
+  // #625 PR-2b A2b: the question's claim token, when THIS call opened it (the opening reply's
+  // `respond` way holds it) — kept in this request's state and passed to the answer; never sent in the
+  // form. `present_question` and every later call pass none.
+  claimToken?: string,
 ): Promise<FormResult> {
   const snap = await loadSnapshot(deps.runStore, runId);
   const gate = snap.record.pending_gate;
@@ -337,7 +343,10 @@ export async function sendQuestionForm(
     // The fence is the engine's write (correction 1, B4): the answer is submitted for the REQUEST
     // STATE's gate — the gate this form was sent for — never a gate re-read after the wait, which would
     // let a stale form answer a NEW question. The engine refuses it when that gate is no longer open.
-    // No claim token: the binding is the request state.
+    // #625 PR-2b A2b: the form of the call that opened the question passes that question's claim token
+    // from this request's state (never from the form), so its answer carries the run on in this call,
+    // as the answer tool's does — within what is left of the form wait, from the same start and cap.
+    // Any other form passes none: its answer is recorded, and the steps are left to `advance_run`.
     const evidence = shownViewEvidence(gate, MCP_FORM_RENDERER);
     const waysSet = waysSetOf(deps);
     const reply = await submitHumanResponse(deps.runStore, deps.definition, {
@@ -351,6 +360,9 @@ export async function sendQuestionForm(
       ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
       // The filter-mask fix (Amendment 1): the door's set, for the reply's ways.
       ...(waysSet !== undefined ? { disclosure: waysSet } : {}),
+      ...(claimToken !== undefined ? { claimToken } : {}),
+      ...(deps.traceBufferStore !== undefined ? { traceBufferStore: deps.traceBufferStore } : {}),
+      budget: { remainingMs: () => capMs - (deps.door.monotonicNow() - call.started) },
     });
     // Correction 1 (B5): answered only when the reply RECORDED it; else the form came back.
     answered = formAnswerRecorded(reply);
@@ -745,7 +757,16 @@ export async function withQuestionForm(
   const respond = reply.ways.find((w) => w.verb === 'respond');
   if (respond === undefined || respond.verb !== 'respond') return reply;
   if (deps.door.formFacts(respond.gate_id).sent > 0) return reply;
-  const result = await sendQuestionForm(deps, reply.run_id, respond.gate_id, call, true);
+  // #625 PR-2b A2b: the opening reply's `respond` way holds the question's claim token (the door
+  // strips it only when it renders); a reply that did not open the question holds none.
+  const result = await sendQuestionForm(
+    deps,
+    reply.run_id,
+    respond.gate_id,
+    call,
+    true,
+    respond.proof?.claim_token,
+  );
   if (result.kind === 'not_sent') return reply;
   return replyAfterForm(reply, result, deps, opening);
 }

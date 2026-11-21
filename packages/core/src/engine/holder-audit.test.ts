@@ -156,8 +156,8 @@ describe('the OS user is read at exactly two production sites', () => {
   });
 });
 
-describe('the claim token is passed back at exactly one non-test host site', () => {
-  it('only the MCP tool passes claimToken into submitHumanResponse; no CLI surface does (it never passes one)', () => {
+describe("the claim token is passed back at exactly two non-test host sites (the MCP answer tool; the opening call's form)", () => {
+  it('only the MCP answer tool and the form path pass claimToken into submitHumanResponse; no CLI surface does (it never passes one)', () => {
     const hostFiles = FILES.filter((f) => /^(cli|mcp-server)\//.test(rel(f)));
     const answering = hostFiles
       .filter((f) =>
@@ -167,8 +167,12 @@ describe('the claim token is passed back at exactly one non-test host site', () 
       )
       .map(rel);
     // (a) red when the CLI (respond, the run prompt, the Slack attendant) starts passing a token,
-    //     or a second tool does; (b) prints the files.
-    expect(answering).toEqual(['mcp-server/src/tools/submit-human-response.ts']);
+    //     or a third MCP site does; (b) prints the files. #625 PR-2b A2b: the form path passes the
+    //     token of the call that opened the question, from that request's state.
+    expect(answering).toEqual([
+      'mcp-server/src/form-path.ts',
+      'mcp-server/src/tools/submit-human-response.ts',
+    ]);
     // decision C179 (round 23): the one other host use is `realm workflow run`'s own claim — the
     // claim its agent step's prompt holds, let go with `release_step` — never an answer's proof.
     // (a) red when a CLI file uses a claim token anywhere else; (b) prints the lines.
