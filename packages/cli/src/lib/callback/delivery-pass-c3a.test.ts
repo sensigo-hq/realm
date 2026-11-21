@@ -675,6 +675,30 @@ describe('callback C3a — the signed delivery pass', { timeout: 60_000 }, () =>
     });
   });
 
+  it('a status above 599 counts as connection in all three columns: retried as connection, and its host skipped for the rest of the pass', async () => {
+    const w = await world();
+    const odd = await receiver(() => ({ status: 699 }));
+    const o = at(odd.port);
+    await w.callbacks.keys.make(W, o.host, KEY_A);
+    const ids = [await w.run(o.url, o.host), await w.run(o.url, o.host)];
+    await w.pass({ lists: o.lists })(live);
+    const rows = await Promise.all(
+      ids.map(async (id) => {
+        const v = await w.view(id);
+        return `${v?.status} ${v?.attempts} ${v?.last_status ?? '-'}`;
+      }),
+    );
+    // (1) red when such a host is kept alive (its second row is tried too) or the status is handed to
+    //     the store; (2) prints the rows, the POSTs and the lines.
+    expect({ rows: rows.sort(), posts: odd.posts.length, said: w.said() }).toEqual({
+      rows: ['pending 0 -', 'pending 1 connection'],
+      posts: 1,
+      said: [
+        `warn callbacks: ${W} → ${o.host}: attempt 1 failed (last answer connection); it will try again`,
+      ],
+    });
+  });
+
   it('a mark that does not apply (another claimant took the row during the try) changes nothing and says nothing', async () => {
     const w = await world();
     let id = '';
