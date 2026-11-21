@@ -378,7 +378,7 @@ const MEANINGS: Record<string, string> = {
   'realm listen 400 refuse':
     'an HTTP/1.1 request without a `Host` header, or a body that broke off while it was read',
   'realm listen 400 respond':
-    'the body is not JSON, the event ID cannot be found with `on_missing_id: reject`, or the parameters do not fit `params_schema`',
+    'the body is not JSON, the event ID cannot be found with `on_missing_id: reject`, the parameters do not fit `params_schema`, or a callback address is not accepted (callback_not_enabled, or callback_refused with its reason)',
   'realm listen 403 refuse': 'no workflow is mounted at the address',
   'realm listen 403 respond': 'the `auth` check failed',
   'realm listen 405 refuse': 'the method is not POST, and the request is not a read request',
@@ -393,8 +393,10 @@ const MEANINGS: Record<string, string> = {
   'realm listen 500 spawnFailedReply':
     "the run's agent failed to start; every retry of that delivery gets it again",
   'realm listen 503 refuse': 'as many requests are being handled as `--max-concurrent` allows',
+  'realm listen 503 respond':
+    'a request that named a callback address was refused because 1,000 callbacks are waiting to be sent (callback_backlog)',
   'realm listen read 200 sendRead':
-    "the run's phase and, once it has completed, its result; also the answer to a request that waited for its run to end",
+    "the run's phase and, once it has completed, its result; also the answer to a request that waited for its run to end; and, for a run no longer running that was given a callback address, how that callback stands",
   'realm listen read 403 sendRead': 'a refused read, whatever the reason',
   'realm listen read 503 sendRead':
     'the store cannot be read, or the values cannot be checked for secrets',

@@ -136,6 +136,7 @@ import { openCliHome, type CliHome } from '../lib/home.js';
 import type { CallbackLists } from '../lib/callback/allow-list.js';
 import { declareMasterKey } from '../lib/callback/declare-master-key.js';
 import {
+  CALLBACK_BACKLOG_CAP,
   CALLBACK_HEADER,
   callbackKeyCommand,
   judgeCallbackAddress,
@@ -484,20 +485,26 @@ export function makeListenHandler(
     disclosureProvider: deps.disclosureProvider ?? cliDisclosureProvider,
     logger: deps.logger,
     cache: new PhaseCache(),
+    // R1.3 C3b1: the read address says how a finished run's callback stands.
+    ...(deps.runStore.callbacks ? { callbacks: deps.runStore.callbacks } : {}),
   };
   // R1.3 C2: the (workflow, host, state, master fingerprint) whose no-key fix this process has said.
   const fixesSaid = new Set<string>();
 
   /**
    * R1.3 C2 (the door), step 9b: a request that names a callback address is refused (the reply) or
-   * may register it (the registration). It reads the stored keys and nothing else.
+   * may register it (the registration). It reads the stored keys and, last (C3b1), how many
+   * callbacks are waiting: at the cap it is refused `'backlog'` (the 503).
    */
   const callbackDoor = async (
     entry: WorkflowEntry,
     path: string,
     value: string,
   ): Promise<
-    { registration: CallbackRegistration } | { refused: Record<string, unknown> } | 'store_failed'
+    | { registration: CallbackRegistration }
+    | { refused: Record<string, unknown> }
+    | 'backlog'
+    | 'store_failed'
   > => {
     const workflow = entry.definition.id;
     const callbacks = deps.runStore.callbacks ?? undefined;
@@ -546,6 +553,28 @@ export function makeListenHandler(
         key,
         cmd: callbackKeyCommand(entry.workflowDir, address.host),
       });
+    }
+    // C3b1: the cap, judged last; every pending row counts, a running run's too.
+    let pending: number;
+    try {
+      pending = await callbacks.countPending();
+    } catch (err) {
+      deps.logger.error('webhook: callback backlog could not be counted', {
+        path,
+        workflow,
+        host: address.host,
+        error: String(err),
+      });
+      return 'store_failed';
+    }
+    if (pending >= CALLBACK_BACKLOG_CAP) {
+      deps.logger.warn('webhook: callback backlog full', {
+        path,
+        workflow,
+        host: address.host,
+        pending,
+      });
+      return 'backlog';
     }
     return { registration: { url: value, host: address.host, webhook_id: randomUUID() } };
   };
@@ -905,6 +934,10 @@ export function makeListenHandler(
         const door = await callbackDoor(entry, path, callbackValue);
         if (door === 'store_failed') {
           respond(res, 500, { error: 'store_error', status: 'failed' });
+          return;
+        }
+        if (door === 'backlog') {
+          respond(res, 503, { error: 'callback_backlog' });
           return;
         }
         if ('refused' in door) {
