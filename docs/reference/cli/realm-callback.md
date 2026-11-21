@@ -90,7 +90,7 @@ Realm gives the command the environment it runs in, whole (so `VAULT_ADDR` or `A
 
 The command is an error, and Realm goes no further, when it exits with a status other than 0 or is ended by a signal, takes longer than 30 seconds, cannot be started, prints nothing or anything but the key, or has a value with an unclosed quote or no program. A command that exits 0 but leaves a process running that holds its output counts as having taken too long. The line names the exit status, the signal, the error code or the reason in words; it never shows what the command printed, or its arguments.
 
-Realm runs the command each time `realm callback key` looks for the key (not for `--delete` or `--end-previous`, nor when the arguments or the workflow are refused first), and every time `realm db check` opens a store file, whether or not it holds callback keys. A tool that asks for a password or a fingerprint asks each time, and each run can take up to 30 seconds. A `.env` file in the folder you run `realm` from can set `REALM_ENCRYPTION_KEY_COMMAND`, and Realm then runs what it names.
+Realm runs the command each time `realm callback key` looks for the key (not for `--delete` or `--end-previous`, nor when the arguments or the workflow are refused first), and every time `realm db check` opens a store file, whether or not it holds callback keys. `realm listen` runs it once, when it starts, and waits for it (up to 30 seconds) before it listens. A tool that asks for a password or a fingerprint asks each time, and each run can take up to 30 seconds. A `.env` file in the folder you run `realm` from can set `REALM_ENCRYPTION_KEY_COMMAND`, and Realm then runs what it names.
 
 ## Keeping the master key
 

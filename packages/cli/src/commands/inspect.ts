@@ -145,6 +145,7 @@ import {
 import { readRunManifest, type RunManifest } from '../lib/read-run-manifest.js';
 import { openCliHome } from '../lib/home.js';
 import { outboundWords, readOutboundRows, rowsOfOneQuestion } from '../lib/outbound-words.js';
+import { callbackLine, readCallbackView } from '../lib/callback/inspect-line.js';
 
 /**
  * Renders one skipped step's reason inline (issue #111) — kind plus the salient detail.
@@ -1886,6 +1887,10 @@ export async function inspectRun(
     if (words.reminders !== undefined) lines.push(`Reminders: ${words.reminders}`);
     if (words.escalation !== undefined) lines.push(`Escalation: ${words.escalation}`);
   }
+  // R1.3 C2: the run's callback, from its view only; no row, no callback store, or a read that
+  // throws: no line.
+  const callbackView = await readCallbackView(store, runId);
+  if (callbackView !== undefined) lines.push(callbackLine(callbackView, run.terminal_state, runAt));
 
   // issue #221: typed run-health findings — the SAME shared classifyRunHealth predicate the three
   // READ surfaces (get_run_state, list --stuck, inspect) derive from. Definition-aware when
