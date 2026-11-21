@@ -127,7 +127,8 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
         'r1',
         entry({ error_class: 'api_status', message: 'rate limit' }),
       ),
-    ).resolves.toBeUndefined();
+      // Q1 (#592) unit c: the fence now says what it did; lost to contention is `not_written`.
+    ).resolves.toBe('not_written');
 
     expect(errors).toHaveLength(2);
     expect(errors[0]).toContain("Step 'classify' LLM call failed");
@@ -146,14 +147,16 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
         throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
       },
     };
-    await expect(recordDriveFailure(store, 'r1', entry())).resolves.toBeUndefined();
+    // Q1 (#592) unit c: a store that failed is `not_written`.
+    await expect(recordDriveFailure(store, 'r1', entry())).resolves.toBe('not_written');
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('drive-failure record LOST');
   });
 
   it('a run that is already terminal is a SILENT skip — the seal is the visibility', async () => {
     const h = makeStore(makeRun({ terminal_state: true }));
-    await recordDriveFailure(h.store, 'r1', entry());
+    // Q1 (#592) unit c: an ended run is `run_ended`.
+    await expect(recordDriveFailure(h.store, 'r1', entry())).resolves.toBe('run_ended');
     expect(h.calls.update).toBe(0);
     expect(errors).toEqual([]);
   });
@@ -170,7 +173,8 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
       },
       update: async (): Promise<Snapshot> => snap(makeRun()),
     };
-    await expect(recordDriveFailure(store, 'r1', entry())).resolves.toBeUndefined();
+    // Q1 (#592) unit c: no such run is `not_found`.
+    await expect(recordDriveFailure(store, 'r1', entry())).resolves.toBe('not_found');
     expect(errors).toEqual([]);
   });
 
@@ -349,6 +353,34 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
     expect(Object.keys(built)).not.toContain('wire_secret');
     // The string elapsed_ms did not survive, so the computed span is what is recorded.
     expect(built.elapsed_ms).toBeGreaterThanOrEqual(1234);
+  });
+
+  it("Q1 (#592) unit c, check 7: a provider's payload cannot claim startup_failure (dropped, as made_up_class); the other seven words are kept", () => {
+    const seven = [
+      'connection_timeout',
+      'connection_error',
+      'api_status',
+      'sdk_missing',
+      'validation_rejected',
+      'aborted_by_budget',
+      'other',
+    ];
+    const classOf = (claimed: string): string =>
+      buildEntry(
+        Object.assign(new Error('refused'), { status: 503, driveCall: { error_class: claimed } }),
+        's',
+        'anthropic',
+        performance.now(),
+        new Date(),
+      ).error_class;
+    // (a) red when the payload reader closes against ERROR_CLASSES (startup_failure then kept) or
+    //     drops one of the seven; (b) prints each claim and the class recorded for it. A dropped
+    //     claim falls to the error's shape: a status, so `api_status`.
+    expect([...seven, 'startup_failure', 'made_up_class'].map((c) => [c, classOf(c)])).toEqual([
+      ...seven.map((c) => [c, c]),
+      ['startup_failure', 'api_status'],
+      ['made_up_class', 'api_status'],
+    ]);
   });
 
   it('issue #600 PR 1a (D9): usage is an ARRAY-typed field — a real array survives, a non-array is dropped', () => {

@@ -31,6 +31,7 @@ import {
 } from './layout.js';
 import { snap } from '../test-support/snapshot-double.js';
 import { jsonAsRunStore } from '../test-support/json-as-run-store.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 type Core = typeof import('@sensigo/realm');
 type Mcp = typeof import('@sensigo/realm-mcp');
@@ -798,6 +799,57 @@ describe('10 — control: a copy of another release is not recognised (issue #62
       );
       const mod = (await import(pathToFileURL(toolCapable).href)) as { default: object };
       expect(llm.isToolCapable(mod.default as never)).toBe(false);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    '5 (Q1 #592 unit c, check 1): with --run-id, the refusal is recorded on the run as startup_failure, and its last line says so',
+    async () => {
+      const { plain } = await writeProviders(await codeDir(layout.otherDir, 'providers'));
+      const h = await makeTempHome();
+      try {
+        const { record: run } = await h.home.runStore.create({
+          workflowId: 'agent-provider',
+          workflowVersion: 1,
+          params: {},
+        });
+        const dir = await tempDir('agent-run-id');
+        const r = runNode(
+          [
+            layout.file(layout.cli.cli, 'dist/index.js'),
+            'agent',
+            '--run-id',
+            run.id,
+            '--provider-module',
+            plain,
+          ],
+          { cwd: dir, home: h.root },
+        );
+        const line = `Error: the provider module's LlmProvider comes from @sensigo/realm-cli ${layout.otherVersion} (${layout.other.cli.dir}); this realm command is @sensigo/realm-cli ${layout.version} (${layout.cli.cli.dir}). Realm objects do not cross versions. Run realm ${layout.otherVersion} in the project: 'npm install --save-dev @sensigo/realm-cli@${layout.otherVersion}', then 'npx realm'; or install @sensigo/realm-cli@${layout.version} and @sensigo/realm@${layout.version} in the project.`;
+        const after = (await h.home.runStore.get(run.id)).record;
+        // (a) red when the foreign-copy refusal is not a member of the set (no entry, no sentence), or
+        //     its line changed; (b) prints the exit, the output and the entries.
+        expect(
+          {
+            status: r.status,
+            stderr: r.stderr,
+            entries: (after.drive_failures?.entries ?? []).map((e) => [
+              e.step,
+              e.provider,
+              e.error_class,
+              e.message,
+            ]),
+          },
+          describeSpawn(r),
+        ).toEqual({
+          status: 1,
+          stderr: `${line}\nRun ${run.id} keeps this failure under Drive failures; realm run list --stuck lists it until the run next records a step or a question, or ends.\n`,
+          entries: [['', 'unknown', 'startup_failure', line.slice('Error: '.length)]],
+        });
+      } finally {
+        await h.cleanup();
+      }
     },
     TEST_TIMEOUT,
   );

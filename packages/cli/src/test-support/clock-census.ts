@@ -107,6 +107,17 @@ export const CENSUS: Record<string, Entry> = {
     "the failed-attempt sidecar line's own stamp (a log), compared with nothing on the run",
   ],
   'cli/src/agent/run-agent.ts#validationWedgeEntry#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/agent/startup-failure.ts#markSignalDeath#clock.now()': [
+    1,
+    'event',
+    "Q1 (#592) unit c: listen's startup mark's instant (drive_failures[].at), written with the entry (02 §D.2)",
+  ],
+  'cli/src/agent/startup-failure.ts#markSignalDeath#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/agent/startup-failure.ts#recordStartupFailure#clock.now()': [
+    1,
+    'event',
+    "Q1 (#592) unit c: the worker's startup mark's instant (drive_failures[].at), written with the entry (02 §D.2)",
+  ],
   'cli/src/agent/step-cache-choices.ts#chooseStepCaches#Date.now()': [
     1,
     'outside',
@@ -143,6 +154,7 @@ export const CENSUS: Record<string, Entry> = {
     'event',
     "agent_started_at, on the store's clock (03 §A.4)",
   ],
+  'cli/src/commands/listen.ts#handle#performance.now()': [1, 'duration', MONOTONIC],
   'cli/src/commands/run.ts#recordChange#performance.now()': [2, 'duration', MONOTONIC],
   'cli/src/commands/watch.ts#registerFile#new Date()': [1, 'outside', "a watch log line's stamp"],
   'cli/src/commands/watch.ts#renderProfilesGone#new Date()': [
@@ -164,6 +176,17 @@ export const CENSUS: Record<string, Entry> = {
     1,
     'outside',
     "validate sizes a step's prompt with no run store; the instant only fills a context snapshot the render discards",
+  ],
+  'cli/src/lib/callback/delivery-pass.ts#makeCallbackPass#performance.now()': [
+    1,
+    'duration',
+    MONOTONIC,
+  ],
+  'cli/src/lib/callback/delivery-pass.ts#spent#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/lib/callback/signature.ts#webhookTimestamp#Date.now()': [
+    1,
+    'outside',
+    "callback C3a: a callback try's webhook-timestamp, whole seconds at the send, compared by the receiver with its own clock; reads no RunRecord instant; nothing is stored with it",
   ],
   'cli/src/lib/dedup-store.ts#FileDedupStore.check#Date.now()': [
     1,
