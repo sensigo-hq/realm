@@ -134,9 +134,15 @@ import { classifyInProgressClaims } from './claim-liveness.js';
 import { findCapabilityBlockedSteps } from './capability.js';
 import { findEligibleSteps, findEligibleGuardSteps, deriveRunPhase } from './eligibility.js';
 import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definition.js';
-import { cannotGoOnUntilCorrected, composeWaysAt, type Unavailable } from './ways.js';
+import {
+  cannotGoOnUntilCorrected,
+  composeWaysAt,
+  type AdvanceWay,
+  type Unavailable,
+} from './ways.js';
 import { CLOCK_SKEW_EPSILON_MS, parseStamp, recordStampedAheadSentence } from './instants.js';
 import { formatInstantWords } from '../utils/duration.js';
+import { NAMES_SHOWN, quotedNames } from '../utils/list-words.js';
 
 /**
  * Default age threshold for the `never_claimed_idle` finding (issue #221) — 24 hours. Engine-
@@ -146,6 +152,14 @@ import { formatInstantWords } from '../utils/duration.js';
  * inspect take no override by design (agents don't tune detectors).
  */
 export const DEFAULT_IDLE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Q1 (#592) unit f1: default age threshold for the `owed_undriven` finding — one minute (GitHub
+ * Actions' own pick-up window for a queued job). A run whose next work is the engine's and that has
+ * not changed for this long is listed by `realm run list --stuck`; `--older-than` overrides it
+ * together with {@link DEFAULT_IDLE_THRESHOLD_MS} (`opts.owedThresholdMs`).
+ */
+export const DEFAULT_OWED_THRESHOLD_MS = 60 * 1000;
 
 /**
  * A single, typed run-health observation: the shared vocabulary every surface renders from.
@@ -188,6 +202,10 @@ export interface RunHealthFinding {
     // corrected — a step it must run next is refused before its claim and nothing else can move
     // it. Definition-gated; found at any age. See item 5c in the branch-conditioning table above.
     | 'cannot_go_on'
+    // Q1 (#592) unit f1 (G11): the run is in `running`, no step is in progress, the engine owes work
+    // — a guard to decide or an `auto` step to run — and the run has not changed for the owed
+    // threshold. Definition-gated, like `cannot_go_on`; a `--stuck` member.
+    | 'owed_undriven'
     // issue #558 PR-T: this run's registered workflow copy cannot be read — missing, permission-
     // denied, a directory, empty, corrupt JSON, a legacy record, or a registry directory that
     // itself cannot be read. Fires on ANY run, live or terminal: the class is about the COPY, not
@@ -210,15 +228,16 @@ export interface RunHealthFinding {
    *  tracked anywhere in the run record — only a deadline, which is carried in `evidence`
    *  instead). REQUIRED for kind `never_claimed_idle`. */
   since?: string;
-  /** Milliseconds idle, computed at the snapshot's `at`. REQUIRED (together with `since`) for kind
-   *  `never_claimed_idle`; absent otherwise. */
+  /** Milliseconds idle, computed at the snapshot's `at`. REQUIRED (together with `since`) for kinds
+   *  `never_claimed_idle` and `owed_undriven`; absent otherwise. */
   idle_ms?: number;
   /** Kind-specific supporting data — label-sufficient for every surface to render without
    *  reaching back into the run record: claim findings carry `{state, deadline}`; capability
    *  findings carry `{requirement, code}`; `never_claimed_idle` carries `{idle_threshold_ms}` and,
    *  when `opts.definition` was supplied, `{eligible_steps}`; `cannot_go_on` carries `{refused}` —
    *  each refused step's facts (`step`, `check`, `refusal`, and `param` / `precondition` when the
-   *  engine has them) — nothing else. */
+   *  engine has them) — nothing else; `owed_undriven` carries `{owed, owed_threshold_ms}` — the
+   *  names of what the engine owes and the threshold applied. */
   evidence?: Record<string, unknown>;
 }
 
@@ -431,6 +450,9 @@ function findDriveFailing(snapshot: ListedSnapshot): RunHealthFinding | undefine
  */
 export interface ClassifyRunHealthOptions {
   idleThresholdMs?: number;
+  /** Q1 (#592) unit f1: the `owed_undriven` finding's age threshold; absent ⇒
+   *  `DEFAULT_OWED_THRESHOLD_MS` (one minute). */
+  owedThresholdMs?: number;
   definition?: WorkflowDefinition;
   /** issue #558 PR-T — the failure the CALLER got when it tried to resolve this run's
    *  workflow copy. Additive to the existing bag; absent ⇒ zero `definition_unresolvable`
@@ -524,6 +546,7 @@ export const RUN_HEALTH_KINDS = [
   'structured_output_downgraded',
   'trust_value_invalid',
   'cannot_go_on',
+  'owed_undriven',
   'definition_unresolvable',
   'record_stamped_ahead',
 ] as const satisfies readonly RunHealthFinding['kind'][];
@@ -646,6 +669,7 @@ function classifyRecordHealth(
   }
 
   const idleThresholdMs = opts?.idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
+  const owedThresholdMs = opts?.owedThresholdMs ?? DEFAULT_OWED_THRESHOLD_MS;
   const findings: RunHealthFinding[] = [];
 
   // Branch 2 — claim findings (subsumes list.ts's pre-#221 wedgedNonGatedClaims).
@@ -807,6 +831,28 @@ function classifyRecordHealth(
         reason: first.facts.check,
         since: run.updated_at,
         evidence: { refused: refused.map((u) => ({ ...u.facts })) },
+      });
+    }
+    // Q1 (#592) unit f1 (G11): owed_undriven — the same composition decides. Its `advance` way is
+    // offered iff `describePending(…).owed` is non-empty (ways.ts `advanceWayOf`), with the caller's
+    // registry: a step whose handler that registry lacks is not owed (capability), and a step
+    // `realm agent` must run never is. A `running` run owes no expiry (an expiry is owed only while a
+    // question is open, which derives `gate_waiting`), so every owed item names a step. No command in
+    // the reason: the act pointer is the CLI's label, as for `cannot_go_on`.
+    const advance = composed.ways.find((w): w is AdvanceWay => w.verb === 'advance');
+    const owed = (advance?.owed ?? []).flatMap((o) => ('step' in o ? [o.step] : []));
+    const unchangedMs = now.getTime() - (parseStamp(run.updated_at) ?? NaN);
+    if (owed.length > 0 && unchangedMs >= owedThresholdMs) {
+      const agoWords = formatInstantWords(run.updated_at, 'past_event', now);
+      findings.push({
+        kind: 'owed_undriven',
+        step: owed[0]!,
+        reason:
+          `the engine owes ${quotedNames(owed, NAMES_SHOWN)}` +
+          (agoWords !== undefined ? `, and the run last changed ${agoWords}` : ''),
+        since: run.updated_at,
+        idle_ms: unchangedMs,
+        evidence: { owed, owed_threshold_ms: owedThresholdMs },
       });
     }
   }

@@ -595,6 +595,8 @@ export type {
 export {
   classifyRunHealth,
   DEFAULT_IDLE_THRESHOLD_MS,
+  // Q1 (#592) unit f1: the owed_undriven finding's default age threshold.
+  DEFAULT_OWED_THRESHOLD_MS,
   // #715 (b) (02 §D.1, Amendment 7): every kind, the kinds that never select a run for --stuck, and
   // the stamped-ahead finding on its own.
   RUN_HEALTH_KINDS,
