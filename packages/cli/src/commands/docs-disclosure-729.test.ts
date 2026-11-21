@@ -123,10 +123,10 @@ const shown = (text: string, audience: DisclosureAudience, set = setFor(audience
 
 describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
   it('the count of the variables Realm reads by name matches its table, and its REALM_ names are the ones the code reads', () => {
-    claim(ENV_PAGE, "Realm's own code reads 13 variables by name:");
+    claim(ENV_PAGE, "Realm's own code reads 16 variables by name:");
     const lines = read(ENV_PAGE).split('\n');
     const start = lines.findIndex((l) =>
-      l.includes("Realm's own code reads 13 variables by name:"),
+      l.includes("Realm's own code reads 16 variables by name:"),
     );
     let rows = 0;
     const names: string[] = [];
@@ -136,40 +136,30 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       rows++;
       names.push(lines[i]!.split('`')[1]!);
     }
-    // #616 PR-1a unit 5: names core reads that the page does not document yet, each with its
-    // reason. An entry is deleted with the row that documents it (c10a-3a wrote REALM_STORE_FS's).
-    const NOT_YET_ON_THE_PAGE: ReadonlyMap<string, string> = new Map([
-      // Callback K1: the master key and its file, read by no command yet.
-      ['REALM_ENCRYPTION_KEY', 'documented by K2'],
-      ['REALM_ENCRYPTION_KEY_FILE', 'documented by K2'],
-      ['REALM_ENCRYPTION_KEY_COMMAND', 'documented by K2c'],
-    ]);
     // (a) red when a row is added or removed without the count, or the table's REALM_ names part
-    //     from the variables realm's code reads (core's two lists and REALM_NOT_SECRET, less the
-    //     names not yet documented), or a name not yet documented is on the page (its entry here
-    //     must then go); (b) prints the row count and the names.
+    //     from the variables realm's code reads (core's two lists and REALM_NOT_SECRET); (b) prints
+    //     the row count and the names.
     expect({
       rows,
       realm: names.filter((n) => n.startsWith('REALM_')).sort(),
-      exemptOnThePage: [...NOT_YET_ON_THE_PAGE.keys()].filter((n) => read(ENV_PAGE).includes(n)),
     }).toEqual({
-      rows: 13,
-      realm: [...REALM_SETTING_VARIABLES, ...REALM_CREDENTIAL_VARIABLES, 'REALM_NOT_SECRET']
-        .filter((n) => !NOT_YET_ON_THE_PAGE.has(n))
-        .sort(),
-      exemptOnThePage: [],
+      rows: 16,
+      realm: [...REALM_SETTING_VARIABLES, ...REALM_CREDENTIAL_VARIABLES, 'REALM_NOT_SECRET'].sort(),
     });
   });
 
-  it("realm's own settings, the shell's PWD, OLDPWD and _, and npm's three, are not treated as secrets; REALM_SERVE_TOKEN is (D-14, D-6)", () => {
+  it("realm's own settings, the shell's PWD, OLDPWD and _, and npm's three, are not treated as secrets; REALM_SERVE_TOKEN, REALM_ENCRYPTION_KEY and REALM_ENCRYPTION_KEY_COMMAND are (D-14, D-6)", () => {
     claim(
       ENV_PAGE,
-      "Realm's own settings in this table (`REALM_DEV`, `REALM_NO_NUDGE`, `REALM_REQUIRE_WRITER_NONCE`, `REALM_OPERATOR`, `REALM_MCP_GATE_ANSWERS`, `REALM_MCP_FORM_WAIT_SECONDS` and `REALM_STORE_FS`) are not treated as secrets, and neither are `PWD`, `OLDPWD` and `_`, which the shell sets to paths, nor `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`, which npm sets; `REALM_SERVE_TOKEN`, a credential, is.",
+      "Realm's own settings in this table (`REALM_DEV`, `REALM_NO_NUDGE`, `REALM_REQUIRE_WRITER_NONCE`, `REALM_OPERATOR`, `REALM_MCP_GATE_ANSWERS`, `REALM_MCP_FORM_WAIT_SECONDS`, `REALM_STORE_FS` and `REALM_ENCRYPTION_KEY_FILE`) are not treated as secrets, and neither are `PWD`, `OLDPWD` and `_`, which the shell sets to paths, nor `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`, which npm sets; `REALM_SERVE_TOKEN`, `REALM_ENCRYPTION_KEY` and `REALM_ENCRYPTION_KEY_COMMAND`, which are credentials, are.",
     );
     const env = {
       REALM_OPERATOR: 'fake-operator-0729',
       REALM_MCP_GATE_ANSWERS: 'withheld',
       REALM_SERVE_TOKEN: 'FAKEservetoken0729',
+      REALM_ENCRYPTION_KEY: 'fa'.repeat(32),
+      REALM_ENCRYPTION_KEY_COMMAND: 'fake-keycmd-0729 --token FAKEtoken0729',
+      REALM_ENCRYPTION_KEY_FILE: '/srv/fake-master-0729.key',
       PWD: '/srv/fake-work-0729',
       OLDPWD: '/srv/fake-old-0729',
       _: '/usr/bin/fake-cmd-0729',
@@ -177,13 +167,20 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       npm_package_version: '0.0.0-fake0729',
       npm_lifecycle_event: 'fake-script-0729',
     };
-    // (a) red when a setting, a shell path or an npm value is hidden, or the serve token shows;
-    //     (b) prints the variable names that are members (names only).
+    // (a) red when a setting (the master key file's path among them), a shell path or an npm value
+    //     is hidden, or a credential (the serve token, the master key, its command) shows; (b) prints
+    //     the variable names that are members (names only).
     expect(
       ['log', 'agent'].map((audience) =>
         environmentEntries(env, { audience: audience as DisclosureAudience }).map((e) => e.source),
       ),
-    ).toEqual([['env:REALM_SERVE_TOKEN'], ['env:REALM_SERVE_TOKEN']]);
+    ).toEqual(
+      ['log', 'agent'].map(() => [
+        'env:REALM_SERVE_TOKEN',
+        'env:REALM_ENCRYPTION_KEY',
+        'env:REALM_ENCRYPTION_KEY_COMMAND',
+      ]),
+    );
   });
 
   it('a value another variable holds is still hidden; a path under the home folder is hidden in a log, except inside a printed command (correction 2, R31)', async () => {
