@@ -262,6 +262,8 @@ export {
   stopAbout,
   renderDefinitionAbsent,
   readSupplier,
+  // Q1 (#592) unit a: a failed step's words, as its entry records them.
+  readFailureWords,
   cannotGoOnFrom,
   cannotGoOnUntilCorrected,
   LIBRARY_WORDS,
@@ -301,6 +303,7 @@ export {
   leaseClause,
 } from './engine/ways.js';
 export type { UncheckedLease, LeaseWordsInput } from './engine/ways.js';
+export type { FailureWordField, FailureWordsAbsentCause, FailureWordsRead } from './engine/ways.js';
 export type {
   Party,
   Slot,
@@ -669,6 +672,18 @@ export { isTestLocationClock } from './store/test-clock-file.js';
 export { withTestClockNotice, testClockNoticeLine } from './store/test-clock-notice.js';
 // issue #616 PR-2a (i): realm's home (`~/.realm`), the one place that asks the system for it.
 export { realmHomePath } from './store/realm-home.js';
+// Gap 1, unit B: the reader of a stored `model_text` for `realm run inspect --verbose`, beside the
+// step-view composer and never part of it (its views reach get_run_state; the texts must not).
+export { evidenceModelTextView, failureModelTextView } from './engine/model-text-view.js';
+export type {
+  ModelTextView,
+  ModelTextMessageView,
+  ModelTextToolListView,
+  ModelTextRequestView,
+  ModelTextRequestCheck,
+  ModelTextCheckOutcome,
+  ModelTextMark,
+} from './engine/model-text-view.js';
 // issue #600 PR 1b: one cost view per step, derived once and rendered by inspect + get_run_state.
 export {
   composeCostView,

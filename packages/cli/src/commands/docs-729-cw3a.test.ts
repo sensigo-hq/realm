@@ -63,7 +63,7 @@ describe('#729 CW-3a — resume’s refusal of a lease that cannot be checked', 
 describe('#729 CW-3a — the CHANGELOG’s line', () => {
   it('Added, under [Unreleased], with its cells', () => {
     const line =
-      "**A held step's state reads its claim's lease.** `Cond` gains `lease_held`: a claim whose lease its program holds, which `force` discharges. A claim whose lease no program holds is reported like a claim past its deadline. `realm run cleanup` keeps, and `realm run resume` and `realm run purge` refuse even with `--force`, a run whose leased claim's lease cannot be checked. `realm agent` takes a leased claim for every agent step it drives (see \"`realm agent` holds its step under a lease while its model works\"). (#729)";
+      "**A held step's state reads its claim's lease.** `Cond` gains `lease_held`: a claim whose lease its program holds, which `force` discharges. A claim whose lease no program holds is reported like a claim past its deadline; on the CLI, an agent step's lines also name `realm agent` (see below). `realm run cleanup` keeps, and `realm run resume` and `realm run purge` refuse even with `--force`, a run whose leased claim's lease cannot be checked. `realm agent` takes a leased claim for every agent step it drives (see \"`realm agent` holds its step under a lease while its model works\"). (#729)";
     // (a) red when the line is dropped, reworded or moved out of [Unreleased], or a cell is gone;
     //     (b) prints the line's presence and the cells missing.
     expect({

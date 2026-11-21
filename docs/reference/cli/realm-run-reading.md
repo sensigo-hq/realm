@@ -99,11 +99,11 @@ Prints the run's record: where it stands, then one entry for each step that ran.
 
 The outputs in this section are from version 0.46.0, except the lines marked as added after it and the `Answer:` line of an answer the gate's expiry wrote, which 0.46.0 prints as `(no one answered)`. Version 0.45.0 prints the `Diagnostics` line as `~10 tokens | no preconditions`: it has no `(estimate, step input)`, no measured token figures and no cache part. It also prints no `cost` line, and no `usage` line under a drive failure.
 
-| Flag                          | What it does                                                                                                                                   |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--verbose`                   | Under each tool call, also prints the arguments it was given and what it returned.                                                             |
-| `--check-drift`               | Compares the project's code files as they are now with the hashes recorded when the run last loaded them.                                      |
-| `--accept-partial-disclosure` | Prints the run's stored values when Realm cannot read every declared secret of the run, masked with what is known. Added after version 0.47.1. |
+| Flag                          | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--verbose`                   | Under each tool call, also prints the arguments it was given and what it returned. Under each attempt of an agent step and under each drive failure, prints the text of its model requests: each message once, numbered, what each request sent and got back, its tool list, the cut and masking marks, and whether its system text, prompt and tool list are the ones that were sent, as far as Realm's hashes reach (a prompt built from a template, up to its first run value); or says why there is no text (added after version 0.50.0). |
+| `--check-drift`               | Compares the project's code files as they are now with the hashes recorded when the run last loaded them.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `--accept-partial-disclosure` | Prints the run's stored values when Realm cannot read every declared secret of the run, masked with what is known. Added after version 0.47.1.                                                                                                                                                                                                                                                                                                                                                                                                |
 
 This example comes from a separate run of the `triage` workflow, so its run ID is not the one in the other examples on this page.
 
@@ -179,7 +179,7 @@ For a claim that names a lease, the line ends `; <what the lease check found>` w
 
 The name is the program's, not a person's: `from the OS user` is the OS user and host name, `from REALM_OPERATOR` is that variable, `as stated` is a name an embedding program gave. `via` names the door the program came through: `agent`, `run`, `advance`, `mcp-stdio`, `mcp-http`. A step whose question is open reads `question opened through`, and says nothing about anyone working on it now. When a claim has no name, the line says why instead: `no program name was recorded on this claim`, `claimed before program names were recorded`, `no claim is recorded for this step` or `this run store keeps no claims`. A name that cannot be shown keeps the verb: `taken by a recorded name that cannot be printed (control characters, or not a name with its source)`. A name longer than 200 characters is shown cut at 200 characters, ending in `…[truncated]`.
 
-Under a step another program holds come the lines [`realm run reclaim <run-id>`](realm-run-acting.md#reclaim) prints for it, indented four spaces: for a step past its deadline `Its deadline passed at <time>; no result is recorded for it.` first, then each condition that holds, then `To free it, run: <command>` (`To free it anyway, run:` while its deadline is ahead), the command with the time the claim was taken, to the millisecond. A step whose claim names a lease is read by that lease: one whose lease no program held when it was checked leads with `No program held the claim's lease when it was checked; no result is recorded for it.`, one whose program held it has `Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.` among its conditions, then `To free it anyway, run:`; and one whose lease is absent, or could not be checked, has what the check found among its conditions (in the words [`realm run reclaim`](realm-run-acting.md#reclaim) lists), then `To free it, run:`. When the run's workflow cannot be read, one line takes their place: `Its workflow definition cannot be read here; realm run reclaim <run-id> lists each held step's command.` Added after version 0.50.0.
+Under a step another program holds come the lines [`realm run reclaim <run-id>`](realm-run-acting.md#reclaim) prints for it, indented four spaces: for a step past its deadline `Its deadline passed at <time>; no result is recorded for it.` first, then each condition that holds, then `To free it, run: <command>` (`To free it anyway, run:` while its deadline is ahead), the command with the time the claim was taken, to the millisecond. A step whose claim names a lease is read by that lease: one whose lease no program held when it was checked leads with `No program held the claim's lease when it was checked; no result is recorded for it.`, one whose program held it has `Its program held the claim's lease when it was checked; if that program is still running, the step runs twice.` among its conditions, then `To free it anyway, run:`; and one whose lease is absent, or could not be checked, has what the check found among its conditions (in the words [`realm run reclaim`](realm-run-acting.md#reclaim) lists), then `To free it, run:`. For an agent step whose claim's lease no program held, and which `realm agent` has not taken back since a person last reclaimed it, the lines end with `Or let realm agent --run-id <run> --provider <provider> --model <model> take it back and run it (this step's one automatic take-back until a person reclaims it).` (added after version 0.50.0). When the run's workflow cannot be read, one line takes their place: `Its workflow definition cannot be read here; realm run reclaim <run-id> lists each held step's command.` Added after version 0.50.0.
 
 A skipped step's reason looks like this:
 
@@ -332,6 +332,29 @@ A step that called a tool, with `--verbose`:
 ```
 
 Without `--verbose`, only the `[notes:list_directory]  7ms` line is printed.
+
+An agent step that `realm agent` drove with `--provider openai`, with `--verbose` (added after version 0.50.0). Its prompt is a template, `Classify this ticket: {{ run.params.ticket }}`, so its text up to the first value is its first 22 characters:
+
+```text
+  1. classify               success   0ms   hash: 28a2171c
+     Taken by: ops@server-1 (from the OS user, via agent)
+     Input:  {"category":"billing","urgent":true}
+     Output: {"category":"billing","urgent":true}
+     Diagnostics: ~9 tokens (estimate, step input) | 10 prompt tokens (measured, first request) | 1 output tokens | model gpt-test-1 | no preconditions | cache: not reported by the provider (1 request); asked for nothing but a cache key, a hint (the provider's own caching applies); cached head: 22 characters (marked: key)
+     Model text: 1 request
+       Request 1 (71cd2b73-96d1-46df-b4f4-ee5115323cf5): sent 1, 2; reply 3
+         Checked against what was sent: system text matches, prompt first 22 characters match.
+       Message 1 · system · 318 bytes
+         You are an AI agent executing a step in a structured workflow.
+         Your task is described below. Respond with a JSON object only — no markdown, no explanation.
+         The JSON must conform to this schema: {"type":"object","properties":{"category":{"type":"string"},"urgent":{"type":"boolean"}},"required":["category","urgent"]}
+       Message 2 · user · 64 bytes
+         Classify this ticket: The customer was charged twice this month.
+       Message 3 · assistant · 36 bytes
+         {"category":"billing","urgent":true}
+```
+
+A part that `matches` is the part Realm sent: Realm keeps a hash of each answered request's system text, tool list and prompt, taken as it sent it (Anthropic's last request in a tool loop has none), and inspect hashes the stored text again. For a prompt built from a template, Realm hashed only its text up to the first value the run fills in, so inspect says `first <n> characters match`, or `not checked (only its empty start was hashed)` when the template starts with a value: the rest, which holds the run's values, has no hash. Replies and a tool loop's later messages have no hash either. `differs` means the text on the record is not the text that was sent. The hashes are kept on the same record, so an edit that changes both a text and its hash is not caught by this check.
 
 A step that `realm agent` drives also names the model and what the drive asked the provider to cache. Here Anthropic was asked for 5 minutes by `realm agent`'s default, `auto`, and wrote the fixed part of the request to its cache:
 

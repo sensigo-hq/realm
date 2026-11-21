@@ -402,6 +402,10 @@ interface EvidenceSnapshot {
     effective_timeout_seconds?: number;
     clipped_to_ms?: number;
     exhausted_by?: 'attempts' | 'total_timeout';
+    error_code?: ErrorCode;
+    error_category?: ErrorCategory;
+    agent_action?: AgentAction;
+    stop_reason?: 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
 }
 ```
 
@@ -1645,6 +1649,7 @@ const SUPPLIER_ROLES: readonly [
 
 Names this job reaches whose entry is on another page.
 
+- [`AgentAction`](write-a-handler.md#agentaction): What an agent does next, decided by the engine (`WorkflowError.agentAction`).
 - [`AuthGithub`](define-and-load-a-workflow.md#authgithub): GitHub HMAC-SHA256 hex body signature (header 'X-Hub-Signature-256').
 - [`AuthHmac`](define-and-load-a-workflow.md#authhmac): Generic HMAC body signature with a configurable header / algorithm / encoding.
 - [`AuthNone`](define-and-load-a-workflow.md#authnone): Documented, discouraged escape hatch — accept without verification (trusted network / localhost only).
@@ -1653,6 +1658,8 @@ Names this job reaches whose entry is on another page.
 - [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
 - [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the `run_phase` from the run record's fields.
+- [`ErrorCategory`](write-a-handler.md#errorcategory): The broad kind of failure a `WorkflowError` reports: network, an outside service, the run's state, invalid input, the engine itself, or a resource (`WorkflowError.category`).
+- [`ErrorCode`](define-and-load-a-workflow.md#errorcode): Every code a `WorkflowError` can carry, grouped by its category; a reply's error and the error catalogue name it (`WorkflowError.code`).
 - [`ExecutionMode`](define-and-load-a-workflow.md#executionmode): The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer` (`StepDefinition.execution`).
 - [`ExtensionIdentityEntry`](write-a-handler.md#extensionidentityentry): One point-in-time identity of the extension code executing a run.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.

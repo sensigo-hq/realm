@@ -6,6 +6,8 @@
 // opened through"), with how its name is known. Never "is running", "is driving", "attended by".
 import {
   answerArrivalOf,
+  automaticTakebacksOf,
+  AUTOMATIC_TAKEBACKS_PER_STEP,
   composeStepViews,
   controlEscape,
   deriveRunPhase,
@@ -49,6 +51,8 @@ import type {
   PendingGate,
   RunRecord,
   Snapshot,
+  Unleased,
+  WorkflowDefinition,
 } from '@sensigo/realm';
 import { accountLabelOf } from '@sensigo/realm-mcp';
 import { PLAIN, RUN_PHASE_WORDS, writerSetFor, type RenderCtx } from '../output/writer.js';
@@ -162,8 +166,10 @@ export function inFlightLine(
   described: Parameters<typeof takenPhrase>[0],
   watchMs: number,
   ctx: RenderCtx = PLAIN,
+  takesBack?: ReadonlySet<string>,
 ): string {
-  const unchanged = `the record has not changed for ${Math.round(watchMs / 1000)}s. ${heldLine(held, ctx)}`;
+  // #729 CW-5c: `takesBack` (the steps a `realm agent` drive takes back) reaches the held line.
+  const unchanged = `the record has not changed for ${Math.round(watchMs / 1000)}s. ${heldLine(held, ctx, takesBack)}`;
   // #729 CW-4b: a claim that names a lease is not "in flight": its holder and when, then the held
   // line, whose tail says what the lease check found.
   if (described.lease !== undefined) {
@@ -222,13 +228,16 @@ export function answerLinesSayEnding(reply: Pick<EngineReply, 'ended_by' | 'expi
  * (realm run reclaim <id> prints its command), <command>` (`are freed (… prints their commands)` for
  * several), and beside steps that can still finish `once '<b>' is no longer in flight and '<a>' is
  * freed (…), <command>`. `realm workflow run` gives `realm run advance <run>`; `realm agent` gives
- * itself again, with the flags it was started with.
+ * itself again, with the flags it was started with. #729 CW-5c: when there are steps to be freed
+ * and a `realm agent` drive takes back every one of them (all in `takesBack`), the line opens `let
+ * realm agent --run-id <run> --provider <provider> --model <model> take '<a>' back, or `.
  */
 export function goOnLine(
   held: readonly HeldEntry[],
   runId: string,
   command: string,
   ctx: RenderCtx = PLAIN,
+  takesBack?: ReadonlySet<string>,
 ): string {
   const group = (entries: readonly HeldEntry[]): string =>
     `${entries.map((e) => `'${e.facts.step}'`).join(', ')} ${entries.length === 1 ? 'is' : 'are'}`;
@@ -245,7 +254,13 @@ export function goOnLine(
       `${group(past)} freed (${ctx.cmd(`realm run reclaim ${runId}`)} prints ${commands})`,
     );
   }
-  return `  Go on:     once ${parts.join(' and ')}, ${command}`;
+  const agentTakes =
+    past.length > 0 && takesBack !== undefined && past.every((e) => takesBack.has(e.facts.step));
+  const steps = past.map((e) => `'${e.facts.step}'`).join(', ');
+  const lead = agentTakes
+    ? `let ${ctx.cmd(`realm agent --run-id ${runId} --provider <provider> --model <model>`)} take ${steps} back, or `
+    : '';
+  return `  Go on:     ${lead}once ${parts.join(' and ')}, ${command}`;
 }
 
 /**
@@ -286,6 +301,54 @@ function programWords(read: Attributed | ActorAbsent, ctx: RenderCtx): string {
   return read.absent_cause === 'name_unreadable'
     ? UNSHOWABLE_NAME
     : 'a program whose name was not recorded';
+}
+
+/**
+ * #729 CW-5c: whether a `realm agent` drive takes `step` back (the one automatic take-back since a
+ * person last reclaimed it), or the first condition that fails, in this order: not an `agent` step
+ * of a definition that was read; the run ended; not in progress with a claim that carries a token;
+ * a lease fact other than `not_held` (the one the caller judged: a door's held entry's
+ * `facts.lease`, `realm agent`'s `leaseFactOf(read, claim)`); at the cap. The drive's program name
+ * is no condition: a screen cannot know a later drive's.
+ */
+export type TakeBackAnswer =
+  | { readonly kind: 'takes_back' }
+  | { readonly kind: 'not_an_agent_step' }
+  | { readonly kind: 'run_ended' }
+  | { readonly kind: 'not_claimed' }
+  | { readonly kind: 'lease_not_free' }
+  | { readonly kind: 'at_cap'; readonly last: ReturnType<typeof automaticTakebacksOf>['last'] };
+export function takeBackAnswer(
+  record: RunRecord,
+  definition: Pick<WorkflowDefinition, 'steps'> | undefined,
+  step: string,
+  lease: LeaseFact | Unleased | undefined,
+): TakeBackAnswer {
+  if (definition?.steps[step]?.execution !== 'agent') return { kind: 'not_an_agent_step' };
+  if (record.terminal_state === true) return { kind: 'run_ended' };
+  if (!record.in_progress_steps.includes(step) || record.claims?.[step]?.token === undefined)
+    return { kind: 'not_claimed' };
+  if (lease === undefined || !('state' in lease) || lease.state !== 'not_held')
+    return { kind: 'lease_not_free' };
+  const taken = automaticTakebacksOf(record, step);
+  if (taken.automatic >= AUTOMATIC_TAKEBACKS_PER_STEP) return { kind: 'at_cap', last: taken.last };
+  return { kind: 'takes_back' };
+}
+
+/** #729 CW-5c: of a door's own held entries, the steps a `realm agent` drive takes back. */
+export function stepsTakenBack(
+  record: RunRecord,
+  definition: Pick<WorkflowDefinition, 'steps'> | undefined,
+  held: readonly HeldEntry[],
+): ReadonlySet<string> {
+  return new Set(
+    held
+      .filter(
+        (e) =>
+          takeBackAnswer(record, definition, e.facts.step, e.facts.lease).kind === 'takes_back',
+      )
+      .map((e) => e.facts.step),
+  );
 }
 
 /**

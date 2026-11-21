@@ -2144,7 +2144,7 @@ export const listenCommand = new Command('listen')
   // Gap 1, unit A1: Commander's negated flag, passed to each `realm agent` it starts when given.
   .option(
     '--no-record-model-text',
-    "Do not keep the text of each model call on the run's record. The step notes that recording was off.",
+    "Do not keep the text of each model call on the run's record. The step notes that recording was off. Passed to each `realm agent` it starts.",
   )
   .option(
     '--sweep-expired-gates <seconds>',

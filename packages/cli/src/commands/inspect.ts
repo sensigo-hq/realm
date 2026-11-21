@@ -36,6 +36,8 @@ import {
   getWorkflowForRun,
   composeStepViews,
   composeDriveFailureCosts,
+  evidenceModelTextView,
+  failureModelTextView,
   composeRunCost,
   describeClaimHolder,
   answerArrivalOf,
@@ -100,6 +102,7 @@ import type {
   RunCost,
 } from '@sensigo/realm';
 import { recomputeIdentity } from '../extensions/extension-identity.js';
+import { modelTextLines } from './model-text-lines.js';
 import { autoEvidence, autoPricesText, lifetimeText } from '../agent/prompt-cache.js';
 import {
   ABSENCE_WORDS,
@@ -108,6 +111,7 @@ import {
   leaseTail,
   renderAnswerLine,
   quotedForTerminal,
+  stepsTakenBack,
   viewSetFor,
 } from '../lib/holder-render.js';
 import {
@@ -1686,6 +1690,9 @@ export async function inspectRun(
         // caching 3-M A-2b1: each request that missed the cache, beneath the usage line.
         for (const line of missLines(cost)) lines.push(`      ${line}`);
       }
+      // Gap 1, unit B: under --verbose, the model calls' text this failure covers (core's reader).
+      if (options?.verbose)
+        lines.push(...modelTextLines(failureModelTextView(entry), 'failure', '    '));
     });
     // Only when the ring has ROLLED — otherwise this line would restate a count the entries
     // themselves already show.
@@ -1708,6 +1715,8 @@ export async function inspectRun(
         ).map((e) => [e.facts.step, e])
       : [],
   );
+  // #729 CW-5c: the held steps a `realm agent` drive takes back, from this read.
+  const takesBack = stepsTakenBack(run, definition, [...heldSteps.values()]);
   // issue #625 (holder slice): one line per in-progress step — the program that took it, how its
   // name is known, the door it came through, how long ago; or why there is no name. A step whose
   // question is open or answered reads "question opened through": that claim names the program
@@ -1740,7 +1749,7 @@ export async function inspectRun(
     const lease = held === undefined && described.lease !== undefined ? leaseTail(described) : '';
     lines.push(`  ${step}: ${body}${age}${lease}`);
     if (held !== undefined) {
-      for (const line of heldWayLines(held, writerCtx())) lines.push(`    ${line}`);
+      for (const line of heldWayLines(held, writerCtx(), takesBack)) lines.push(`    ${line}`);
     }
   }
   // #922 P2-2 (m-I): with no definition read, the dry run lists each held step's command.
@@ -2041,6 +2050,12 @@ export async function inspectRun(
           supplierClause(snap, definition),
         );
         if (programLine !== undefined) lines.push(`       ${programLine}`);
+        // Gap 1, unit B: under --verbose, each attempt's own model calls' text (core's reader).
+        if (options?.verbose) {
+          lines.push(
+            ...modelTextLines(evidenceModelTextView(snap, definition), 'evidence', '       '),
+          );
+        }
       });
       // Show Input/Output/Trace/Tool calls for the last attempt.
       lines.push(`     Input:  ${formatSummary(lastSnap.input_summary)}`);
@@ -2212,6 +2227,12 @@ export async function inspectRun(
         if (sentence !== undefined) {
           lines.push(chalk.dim(`     ${sentence}`));
         }
+        // Gap 1, unit B: under --verbose, the step's model calls' text (core's reader).
+        if (options?.verbose) {
+          lines.push(
+            ...modelTextLines(evidenceModelTextView(snap, definition), 'evidence', '     '),
+          );
+        }
       }
     }
     // issue #625 (holder slice): the step's answers, on every layout, in entry order — each as the
@@ -2333,7 +2354,10 @@ export function inspectReceiptLine(receipt: InspectSurfaceReceipt): string {
 export const inspectCommand = new Command('inspect')
   .argument('<run-id>', 'ID of the run to inspect')
   .description('Display the full evidence chain and diagnostics for a run')
-  .option('--verbose', 'Show full tool call args and results')
+  .option(
+    '--verbose',
+    'Show full tool call args and results, and the text of each model call with its check against what was sent',
+  )
   .option(
     '--check-drift',
     'Recompute the last recorded extension identity against current disk state (pure hashing — never loads code)',

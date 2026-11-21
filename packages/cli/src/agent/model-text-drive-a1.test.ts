@@ -354,8 +354,9 @@ describe('gap 1, unit A1 — the words (check 13)', () => {
     expect({
       agent: flat(agentCommand.helpInformation()).includes(HELP),
       listen: flat(listenCommand.helpInformation()).includes(HELP),
+      // Gap 1, unit B: gap 1's two Added lines became one, which names both flags.
       added: unreleased.includes(
-        '- `EvidenceSnapshot.model_text` (optional): the text of each model call Realm sends and receives under `realm agent` and `realm listen`, masked, each text capped at 64 KB, on by default; `realm agent --no-record-model-text` and `realm listen --no-record-model-text` turn it off.',
+        "- **The text of each model call is kept on the run's record** (gap 1). Under `realm agent` and `realm listen`, each model request a step makes that gets an answer keeps the text Realm sent, its tool list and the reply, on the step's evidence entry (`model_text`). A drive that fails keeps, on its drive-failure entry, the requests its failure covers, including a last request that got no answer. Known secret values are replaced by `[REDACTED]`. Each text is cut at 64 KB, and a failure keeps at most 64 KB in all, each cut marked with the text's full size. `realm run inspect --verbose` prints the texts under each step and failure, says why there are none, and checks each request's system text, tool list and prompt against the hashes Realm kept when it sent it (for a prompt built from a template, its text up to the first value the run fills in). On by default; `realm agent --no-record-model-text` or `realm listen --no-record-model-text` turns it off. `get_run_state` never shows the texts, and a listing of runs leaves them out.",
       ),
       rows: unreleased.includes(
         "- In the library, `EvidenceSnapshot` gains `model_text`, a `ModelText`: the texts of each model call of the attempt, or a marker saying why there are none. `StepMeta` gains `modelText`, which the engine writes on the attempt's entry as `model_text`.",

@@ -1273,6 +1273,10 @@ EvidenceSnapshot · type · public
       effective_timeout_seconds?: number;
       clipped_to_ms?: number;
       exhausted_by?: 'attempts' | 'total_timeout';
+      error_code?: ErrorCode;
+      error_category?: ErrorCategory;
+      agent_action?: AgentAction;
+      stop_reason?: 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
   }
 
 ExecuteChainOptions · type · public (beta: heldClaim)
@@ -1611,6 +1615,9 @@ FailedAttemptStore · type · public
       read(runId: string): Promise<FailedAttemptReadResult>;
   }
 
+FailureWordField · type · internal
+FailureWordsAbsentCause · type · internal
+FailureWordsRead · type · internal
 FencePredicate · type · public
   type FencePredicate = {
       kind: 'step_open_for_trace';
@@ -2089,6 +2096,13 @@ ModelText · type · public
       why: 'switched_off' | 'provider_did_not_report';
   };
 
+ModelTextCheckOutcome · type · internal
+ModelTextMark · type · internal
+ModelTextMessageView · type · internal
+ModelTextRequestCheck · type · internal
+ModelTextRequestView · type · internal
+ModelTextToolListView · type · internal
+ModelTextView · type · internal
 Money · type · internal
 MoneySource · type · internal
 MoneySourceTotal · type · internal
@@ -4471,6 +4485,7 @@ escapedBoundedValue · value · internal
 evaluateAllPreconditions · value · internal
 evaluateFence · value · internal
 evaluatePrecondition · value · internal
+evidenceModelTextView · value · internal
 executeChain · value · public
   function executeChain(store: RunStore, definition: WorkflowDefinition, options: ExecuteChainOptions): Promise<EngineReply>;
 
@@ -4484,6 +4499,7 @@ expiryCarriedOutLine · value · internal
 expiryReceiptLine · value · internal
 expiryReceiptOf · value · internal
 extensionIdentityDiffers · value · internal
+failureModelTextView · value · internal
 fenceReaderMissingError · value · internal
 fileClock · value · internal
 finalizerOutcomeLines · value · internal
@@ -4691,6 +4707,7 @@ quotedNames · value · internal
 raceClausesOf · value · internal
 readAttributed · value · internal
 readDrivenBy · value · internal
+readFailureWords · value · internal
 readGateClaimVerdict · value · internal
 readIfExists · value · internal
 readInstant · value · internal
