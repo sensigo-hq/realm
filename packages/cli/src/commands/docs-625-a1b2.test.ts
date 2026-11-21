@@ -81,8 +81,19 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
   {
     page: 'docs/reference/cli/realm-listen.md',
     words:
-      "`realm agent --run-id` refuses it with `Error: Run <run-id> has already ended (<phase>).`, then one sentence of how it ended, read from the run's record only — `Steps '<a>', '<b>' failed.`, `Guard step '<step>' aborted the run: \"<message>\".`, `It was abandoned, with the reason \"<reason>\".`, and so on, none for a run that simply completed (added after version 0.50.0, which said who ended it instead, such as `: an operator ended it`)",
-    cells: [REFUSAL_ABANDON, REFUSAL_CLEANUP, REFUSAL_FAILED, REFUSAL_GUARD, REFUSAL_EXPIRY],
+      "`realm agent --run-id` refuses it with `Error: Run <run-id> has already ended (<phase>).`, then one sentence of how it ended, read from the run's record only — `Steps '<a>', '<b>' failed.`, `Guard step '<step>' aborted the run: \"<message>\".`, `It was abandoned, with the reason \"<reason>\".` (`It was abandoned with 'realm run abandon', by <name> (<how>), with the reason \"<reason>\".` or `It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as <name> (<how>), with the reason \"<reason>\".` when the record names the program that ended it, added after version 0.50.0), and so on, none for a run that simply completed (added after version 0.50.0, which said who ended it instead, such as `: an operator ended it`)",
+    cells: [
+      REFUSAL_ABANDON,
+      REFUSAL_CLEANUP,
+      REFUSAL_FAILED,
+      REFUSAL_GUARD,
+      REFUSAL_EXPIRY,
+      // #625 PR-2b, the actor unit: the refusal of a run abandoned with a command or the tool.
+      [
+        'packages/cli/src/commands/actor-who-ended-625.test.ts',
+        'realm agent --run-id on a run abandoned with a command or the tool',
+      ],
+    ],
   },
   {
     page: 'docs/reference/cli/realm-listen.md',

@@ -317,6 +317,16 @@ The third line, a line of its own so it copies cleanly, is a command that starts
 
 Abandoning a run that is already abandoned changes nothing, and the first line says so: `… Already abandoned (no change this call). …`
 
+**Who ended the run** (added after version 0.50.0). `realm run abandon` records on the run the program that ended it: its name, how the name is known, and the command. The name is `REALM_OPERATOR`'s value when it is set, and otherwise the OS user and host name, as on the steps `realm run advance` takes. Every sentence that says how the run ended then names them, such as `It was abandoned with 'realm run abandon', by ops@server-1 (from the OS user), with the reason "upstream still down".` (`It was abandoned with 'realm run abandon', by ops@server-1 (from the OS user); no reason was given.` with the default reason), and `realm run inspect` prints `Ended by: realm run abandon, by ops@server-1 (from the OS user)` under `Sealed by:`. Realm names a program, never a person. The name is plain text: your terminal shows it whole, and in piped output the OS user name in it is masked, as every OS user name is there. With neither `REALM_OPERATOR` nor an OS user name, nothing is recorded, and the sentence reads as before: `It was abandoned, with the reason "upstream still down".` When the OS user name is known but the host name is not, or the other way round, one line says `this program's name cannot be recorded on the runs it ends: <reason>` and no name is recorded.
+
+A `REALM_OPERATOR` it cannot use (longer than 200 characters, or with a control character) does not stop the command: no name is recorded, the run is abandoned, and then one line goes to stderr:
+
+```text
+⚠ REALM_OPERATOR: longer than 200 characters; this ending names no program. Unset it or give it a name of at most 200 characters with no control characters.
+```
+
+A refused abandon and a run that was already abandoned print no such line.
+
 **Exit code:** 0 if the run is abandoned, otherwise 1:
 
 | Case                                                          | Message                                                                                                                                                                                                                                                                                           |
@@ -356,6 +366,14 @@ abandon is a kill — declared finalizers (if any) did NOT run and will not for 
 ```
 
 Without `--dry-run`, the first line reads `Marked 4 run(s) as abandoned.` A run it abandons shows `Sealed by: cleanup_sweep` and `Cause: Marked abandoned by realm cleanup` in `realm run inspect`.
+
+`realm run cleanup` records the program that ran it on each run it abandons, with its name read as `realm run abandon` reads it (added after version 0.50.0). The sentence of how such a run ended then reads `'realm run cleanup', run by ops@server-1 (from the OS user), marked it abandoned.`, and `realm run inspect` prints `Ended by: realm run cleanup, run by ops@server-1 (from the OS user)`. With no name known, it reads `'realm run cleanup' marked it abandoned.` as before. A `REALM_OPERATOR` it cannot use does not stop the sweep: no name is recorded, and after the sweep marked at least one run, one line goes to stderr:
+
+```text
+⚠ REALM_OPERATOR: longer than 200 characters; the runs this cleanup marked abandoned name no program. Unset it or give it a name of at most 200 characters with no control characters.
+```
+
+A dry run and a sweep that marks no run print no such line.
 
 **Exit code:** 0, also when no run matches. 1 for a duration that cannot be read.
 

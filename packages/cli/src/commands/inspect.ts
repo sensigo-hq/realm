@@ -11,6 +11,7 @@ import {
   describePending,
   lastExecutionIdentity,
   pendingCleanupLine,
+  endedByLine,
   pendingGateQuestion,
   composeQuestionView,
   discloseGate,
@@ -1542,6 +1543,10 @@ export async function inspectRun(
     // arm was RECOVERED from a legacy record rather than asserted by the writer that sealed it.
     const classifiedSuffix = run.sealed_by.classified === true ? ' (recovered by classifier)' : '';
     lines.push(`Sealed by: ${arm}${stepSuffix}${classifiedSuffix}`);
+    // #625 PR-2b, the actor unit: the program that ended the run and the command or tool, as plain
+    // text (the framework's §3 exception: core writes the same words without this renderer).
+    const endedBy = endedByLine(run.sealed_by);
+    if (endedBy !== undefined) lines.push(endedBy);
     // issue #367 (part 5): an operator's ruling on this run, on the surface operators actually
     // use. Shipping a ruling channel whose rulings were invisible here was the defect this closes.
     const ruling = run.sealed_by.adjudicated;

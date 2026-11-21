@@ -27,7 +27,7 @@ export function osLogin(): { name: string; uid: number; home: string } | undefin
 
 /**
  * Makes this program's identity once, for `channel` (a short word naming the command: `agent`,
- * `run`, `mcp-stdio`, `mcp-http`, `respond`, `drain`).
+ * `run`, `mcp-stdio`, `mcp-http`, `respond`, `drain`, `abandon`, `cleanup`).
  *
  *  - A name that cannot be USED (`REALM_OPERATOR` is over-long or carries a control character)
  *    prints ONE line to stderr and exits 1 before any other output — never a stack, never a
@@ -40,6 +40,23 @@ export function resolveProgramIdentity(
   channel: string,
   consequence: string = 'nothing was started',
 ): Attributed | undefined {
+  try {
+    const composed = composeProgramIdentity(identityFacts(), channel);
+    if (composed.driver === undefined && composed.reason !== undefined) {
+      console.error(
+        `this program's name cannot be recorded on the steps it takes: ${composed.reason}`,
+      );
+    }
+    return composed.driver;
+  } catch (err) {
+    console.error(identityRefusalLine('REALM_OPERATOR', err, consequence));
+    // U1b: in a relay's worker its end message goes first; elsewhere `process.exit(1)`.
+    exitProcess(1);
+  }
+}
+
+/** The facts this program's name is made from: `REALM_OPERATOR`, the OS user and the host name. */
+function identityFacts(): { ambient?: string; osUser?: string; osHost?: string } {
   let osUser: string | undefined;
   try {
     osUser = userInfo().username;
@@ -53,24 +70,37 @@ export function resolveProgramIdentity(
     osHost = undefined;
   }
   const ambient = process.env['REALM_OPERATOR'];
+  return {
+    ...(ambient !== undefined ? { ambient } : {}),
+    ...(osUser !== undefined ? { osUser } : {}),
+    ...(osHost !== undefined ? { osHost } : {}),
+  };
+}
+
+/**
+ * #625 PR-2b, the actor unit: this program's identity for a command that ENDS runs (`realm run
+ * abandon`, `realm run cleanup`), recorded on each run it ends. As {@link resolveProgramIdentity},
+ * except that a `REALM_OPERATOR` it cannot use never stops the command: it records no name, does the
+ * work as before, and `warning(consequence)` is the one line to print after a write that ended a run
+ * (`⚠ REALM_OPERATOR: <reason>; <consequence>. <remedy>`). A name that cannot be derived prints its
+ * notice and records none, as there.
+ */
+export function endingProgramIdentity(channel: string): {
+  driver: Attributed | undefined;
+  warning?: (consequence: string) => string;
+} {
   try {
-    const composed = composeProgramIdentity(
-      {
-        ...(ambient !== undefined ? { ambient } : {}),
-        ...(osUser !== undefined ? { osUser } : {}),
-        ...(osHost !== undefined ? { osHost } : {}),
-      },
-      channel,
-    );
+    const composed = composeProgramIdentity(identityFacts(), channel);
     if (composed.driver === undefined && composed.reason !== undefined) {
       console.error(
-        `this program's name cannot be recorded on the steps it takes: ${composed.reason}`,
+        `this program's name cannot be recorded on the runs it ends: ${composed.reason}`,
       );
     }
-    return composed.driver;
+    return { driver: composed.driver };
   } catch (err) {
-    console.error(identityRefusalLine('REALM_OPERATOR', err, consequence));
-    // U1b: in a relay's worker its end message goes first; elsewhere `process.exit(1)`.
-    exitProcess(1);
+    return {
+      driver: undefined,
+      warning: (consequence) => `⚠ ${identityRefusalLine('REALM_OPERATOR', err, consequence)}`,
+    };
   }
 }

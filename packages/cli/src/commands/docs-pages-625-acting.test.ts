@@ -985,8 +985,9 @@ describe(
           .at(-1);
       // (a) red when a reason or its opening words change; (b) prints the three lines.
       expect([last(ended), last(ida), last(q.id)]).toEqual([
-        // F2: a run an operator ended says that ending and its reason, never the undo.
-        'Nothing is owed to the engine: the run has ended (abandoned). It was abandoned; no reason was given. To run the work again, start a new run.',
+        // F2: a run an operator ended says that ending and its reason, never the undo. #625 PR-2b,
+        // the actor unit: `realm run abandon` now records this program (REALM_OPERATOR, `tester`).
+        "Nothing is owed to the engine: the run has ended (abandoned). It was abandoned with 'realm run abandon', by tester (from REALM_OPERATOR); no reason was given. To run the work again, start a new run.",
         `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${ida} --provider <provider> --model <model>`,
         `Nothing is owed to the engine: a question is open — realm run respond ${q.id} --gate ${q.gateId} --choice <one of: approve, reject>`,
       ]);

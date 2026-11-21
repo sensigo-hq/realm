@@ -4,6 +4,8 @@
 // tier 2's (a string is never checked for emptiness here); this row checks presence and type only.
 import { WorkflowError } from '../types/workflow-error.js';
 import { OUTPUT_SOURCES, PRINCIPAL_ABSENCES } from '../types/run-record.js';
+import type { SealDoor } from '../types/run-record.js';
+import type { abandonRun } from './abandon-run.js';
 import {
   runRecordFieldProblems,
   runRecordProblemClause,
@@ -42,7 +44,12 @@ type PartKind =
   | 'principal'
   | 'route'
   // #922: the literal `true` (`reclaimStep`'s `force`).
-  | 'true';
+  | 'true'
+  // #625 PR-2b, the actor unit: the doors `abandonRun` itself ends a run through.
+  | 'abandon_door';
+
+/** #625 PR-2b, the actor unit: the doors `abandonRun` ends a run through (`actor.door`). */
+const ABANDON_DOORS = ['realm_run_abandon', 'abandon_run'] as const satisfies readonly SealDoor[];
 
 const EXPECTED: Record<PartKind, string> = {
   object: 'an object',
@@ -60,6 +67,7 @@ const EXPECTED: Record<PartKind, string> = {
   principal: `a principal: { kind: 'api_key', id: <a non-empty string> }, { kind: 'shared_token' } or { absent: <one of: ${PRINCIPAL_ABSENCES.join(', ')}> }`,
   route: 'a non-empty string',
   true: 'true',
+  abandon_door: `one of ${ABANDON_DOORS.join(', ')}`,
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -129,6 +137,8 @@ function holds(kind: PartKind, value: unknown): boolean {
       return typeof value === 'string' && value.length > 0;
     case 'true':
       return value === true;
+    case 'abandon_door':
+      return (ABANDON_DOORS as readonly unknown[]).includes(value);
   }
 }
 
@@ -288,7 +298,15 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('object', 'options', 'budget'),
     need('function', 'options', 'budget', 'remainingMs'),
   ],
-  abandonRun: [need('string', 'runId'), typed('string', 'reason')],
+  // #625 PR-2b, the actor unit: `actor.by` is the `driver_shape` row's too (handed as `driver`); its
+  // door is abandon's own, and it has no other member (OPTION_MEMBERS).
+  abandonRun: [
+    need('string', 'runId'),
+    typed('string', 'reason'),
+    typed('object', 'actor'),
+    need('object', 'actor', 'by'),
+    typed('abandon_door', 'actor', 'door'),
+  ],
   drainFinalizers: [...DEFINITION, typed('registry', 'registry'), need('string', 'runId')],
   getWorkflowForRun: [
     need('run', 'run'),
@@ -457,6 +475,9 @@ const RELEASE_DRIVE_CLAIM_MEMBERS = [
   'evidence',
 ] as const satisfies readonly (keyof ReleaseDriveClaimOptions)[];
 
+type AbandonActor = NonNullable<Parameters<typeof abandonRun>[3]>;
+const ABANDON_ACTOR_MEMBERS = ['by', 'door'] as const satisfies readonly (keyof AbandonActor)[];
+
 const TAKE_BACK_STEP_MEMBERS = [
   'expectToken',
   'drivenBy',
@@ -474,7 +495,8 @@ const _membersExhaustive: [
   ListsEveryKey<ClaimStepForDriveOptions, typeof CLAIM_STEP_FOR_DRIVE_MEMBERS>,
   ListsEveryKey<ReleaseDriveClaimOptions, typeof RELEASE_DRIVE_CLAIM_MEMBERS>,
   ListsEveryKey<TakeBackStepOptions, typeof TAKE_BACK_STEP_MEMBERS>,
-] = [true, true, true, true, true, true, true, true, true, true];
+  ListsEveryKey<AbandonActor, typeof ABANDON_ACTOR_MEMBERS>,
+] = [true, true, true, true, true, true, true, true, true, true, true];
 void _membersExhaustive;
 
 /**
@@ -497,6 +519,7 @@ export const OPTION_MEMBERS: Readonly<
   claimStepForDrive: { container: 'options', members: CLAIM_STEP_FOR_DRIVE_MEMBERS },
   releaseDriveClaim: { container: 'options', members: RELEASE_DRIVE_CLAIM_MEMBERS },
   takeBackStep: { container: 'options', members: TAKE_BACK_STEP_MEMBERS },
+  abandonRun: { container: 'actor', members: ABANDON_ACTOR_MEMBERS },
 };
 
 /** One defect, as the error's details name it: names and type words only. */

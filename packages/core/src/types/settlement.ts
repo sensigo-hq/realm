@@ -12,7 +12,7 @@
 // MORE delta kinds — `open_gate`, `settle_gate`, `settle_guard`, `release_step` — but stays
 // engine-inert for them: no engine or MCP call site constructs one yet (enforced by a source-text
 // guard, deleted when PR-D migrates the five remaining legacy write sites).
-import type { EvidenceSnapshot, PendingGate, SealArm } from './run-record.js';
+import type { EvidenceSnapshot, PendingGate, SealArm, SealDoor } from './run-record.js';
 import type { ExtensionIdentityEntry } from './extension-identity.js';
 import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
 
@@ -263,6 +263,10 @@ export interface SealRunDelta {
   expected_version: number;
   release_claims: boolean;
   identity_entry?: ExtensionIdentityEntry;
+  /** #625 PR-2b, the actor unit: the program that ended the run, written as `sealed_by.by`. */
+  by?: Attributed;
+  /** #625 PR-2b, the actor unit: the command or tool that ended it, written as `sealed_by.door`. */
+  door?: SealDoor;
 }
 
 /**

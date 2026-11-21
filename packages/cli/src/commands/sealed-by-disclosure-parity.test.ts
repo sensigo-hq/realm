@@ -75,6 +75,10 @@ const RULED_RUN: RunRecord = {
     arm: 'guard_abort',
     step: 'g',
     classified: true,
+    // #625 PR-2b, the actor unit (ACT-AUR-01): the program and the door, on a `guard_abort` arm —
+    // inspect's line shows the record as stored.
+    by: { by: 'tester', by_source: 'ambient', channel: 'abandon' },
+    door: 'realm_run_abandon',
     adjudicated: {
       by: 'mihai',
       at: '2026-08-21T00:00:00.000Z',
@@ -103,6 +107,16 @@ const SEALED_BY_DISCLOSURE = {
       expect(out).toContain('Ruled: mihai at 2026-08-21T00:00:00.000Z (was complete)');
       expect(out).toContain('— the guard is what stopped this run');
     },
+  },
+  // #625 PR-2b, the actor unit: one line carries both — the program, and the command it used.
+  by: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain('Ended by: realm run abandon, by tester (from REALM_OPERATOR)'),
+  },
+  door: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain('Ended by: realm run abandon, by '),
   },
 } satisfies Record<keyof SealedBy, DisclosureRoute>;
 
@@ -160,7 +174,9 @@ describe('#367 — every SealedBy field reaches an operator through `realm run i
     expect(Object.keys(SEALED_BY_DISCLOSURE).sort()).toEqual([
       'adjudicated',
       'arm',
+      'by',
       'classified',
+      'door',
       'step',
     ]);
     const waived = Object.values(SEALED_BY_DISCLOSURE as Record<string, DisclosureRoute>).filter(

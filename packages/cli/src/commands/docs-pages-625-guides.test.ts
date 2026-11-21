@@ -278,9 +278,11 @@ describe(
     });
 
     it('environment-and-files.md: realm run advance reads REALM_OPERATOR — the name on the step it takes, ambient; without it, derived', async () => {
+      // #625 PR-2b, the actor unit: the row's `realm run abandon` and `realm run cleanup` are
+      // executed by actor-who-ended-625.test.ts, check 2; this cell executes `realm run advance`.
       claim(
         'docs/reference/environment-and-files.md',
-        '| `REALM_OPERATOR` | `realm agent`, `realm workflow run`, `realm mcp`, `realm serve`, the `realm-mcp` command, `realm run respond`, `realm run drain`, `realm run advance` (added after version 0.46.0) |',
+        '| `REALM_OPERATOR` | `realm agent`, `realm workflow run`, `realm mcp`, `realm serve`, the `realm-mcp` command, `realm run respond`, `realm run drain`, `realm run advance` (added after version 0.46.0), `realm run abandon`, `realm run cleanup` (added after version 0.50.0) |',
       );
       registered();
       const named = await owedRun();
