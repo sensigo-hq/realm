@@ -242,6 +242,8 @@ describe('gap 2, unit (i-b) — check 9 at the drive: every try fails', () => {
       attemptsSdk: 1,
       line: [
         // The recorded ceiling is the request's derived cap: 2 × 600 s + the 1 ms wait + 60 s.
+        // The step declares no llm_timeout_seconds and the drive no --llm-timeout, so the cap's
+        // per-attempt term is the 600 s default (red when the cap loses it: 60001ms).
         expect.stringMatching(/\(status 503\) \(ceiling 1260001ms\) \(attempt 2\)$/),
         '    Failed tries: 2 (transient 503, transient 503)',
       ],

@@ -610,7 +610,7 @@ const MAX_TIMEOUT_MS = 2 ** 31 - 1;
  * can ask for hours; the ceiling outranks it on purpose, which is the point of the bound rather
  * than a gap in it.
  */
-export function deriveLlmClock(perAttemptMs: number): LlmClock {
+export function deriveLlmClock(perAttemptMs: number): LlmClock & { declaredPerAttemptMs: number } {
   let backoffMarginMs = 0;
   for (let n = 0; n < MAX_RETRIES; n++) backoffMarginMs += Math.min(0.5 * 2 ** n, 8) * 1000;
   // Clamped BEFORE the arithmetic and again after it, because both numbers arm a real timer. The

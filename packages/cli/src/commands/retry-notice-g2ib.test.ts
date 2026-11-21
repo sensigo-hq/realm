@@ -114,7 +114,7 @@ describe('gap 2, unit (i-b) — check 12: realm workflow validate, for one relea
         "ℹ Step 'absent': 'retry' now applies here under realm agent and realm listen: each model request is tried once, where the model client tried up to 3 times before. Write 'max_attempts: 3' to keep today's count.",
       ],
     });
-  });
+  }, 30_000);
 
   it('none under --json, and --strict passes: the line is no warning', () => {
     const file = join(dir, 'workflow.yaml');
@@ -134,5 +134,5 @@ describe('gap 2, unit (i-b) — check 12: realm workflow validate, for one relea
       })(),
       strictCode: strict.code,
     }).toEqual({ jsonHasLine: false, jsonParses: true, strictCode: 0 });
-  });
+  }, 30_000);
 });

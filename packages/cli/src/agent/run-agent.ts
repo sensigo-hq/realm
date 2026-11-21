@@ -1757,10 +1757,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             ? undefined
             : makeModelRetryPolicy({
                 retry: retryBlock,
-                ...deriveRetryCap(
-                  retryBlock,
-                  (stepDef.llm_timeout_seconds ?? fallbackLlmTimeoutSeconds) * 1000,
-                ),
+                // The per-attempt timeout the try's own timer uses (the step's, the flag's, or
+                // the 600 s default), read once above.
+                ...deriveRetryCap(retryBlock, derivedClock.declaredPerAttemptMs),
                 mayResend: async () => {
                   if (stopCause !== undefined) return false;
                   const { record } = await deps.store.get(runId);

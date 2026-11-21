@@ -44,15 +44,24 @@ export const CENSUS: Record<string, Entry> = {
     'outside',
     "Slack's request-signature window (Slack's clock against the host's)",
   ],
-  'cli/src/agent/providers/agent-utils.ts#driveCreate#performance.now()': [
-    2,
+  // Gap 2, unit (i-b): createOnce is driveCreate's former body (its two reads); the retry loop's
+  // reads time the cap of one model request with its tries and waits.
+  'cli/src/agent/providers/agent-utils.ts#beforeDeadline#performance.now()': [
+    1,
     'duration',
     MONOTONIC,
   ],
+  'cli/src/agent/providers/agent-utils.ts#capFired#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/agent/providers/agent-utils.ts#createOnce#performance.now()': [2, 'duration', MONOTONIC],
   'cli/src/agent/providers/agent-utils.ts#parseRetryAfterMs#Date.now()': [
     1,
     'outside',
     "Retry-After's HTTP date, against the host's clock",
+  ],
+  'cli/src/agent/providers/agent-utils.ts#tryModelRequest#performance.now()': [
+    3,
+    'duration',
+    MONOTONIC,
   ],
   'cli/src/agent/providers/anthropic-provider.ts#AnthropicProvider.callStepWithToolsInternal#performance.now()':
     [3, 'duration', MONOTONIC],
