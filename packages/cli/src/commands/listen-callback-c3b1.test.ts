@@ -520,14 +520,15 @@ describe('C3b1 — nothing leaks, nothing else changes', { timeout: 120_000 }, (
     const port = await readServer(ctx);
     const viaAnswer = json((await read(port, PATH, runId, bearer(s.code(PATH, runId)))).body);
     const direct = await readReplyBody(s.routes.get(PATH)!, (await store.get(runId)).record, ctx);
-    // The wait: an agent that completes the run 50 ms after it is spawned.
+    // The wait: an agent that completes the run 50 ms after it is spawned, then exits.
+    // Q1 (#592) unit c: `exited` gives how the process ended (a code: never marked).
     const waitStore = await keyedStore();
     const agent = vi.fn(async (id: string): Promise<SpawnResult> => {
       const exited = new Promise<void>((resolve) => setTimeout(resolve, 50))
         .then(() => complete(waitStore, id))
         .then(
-          () => undefined,
-          () => undefined,
+          () => ({ code: 0, signal: null }),
+          () => ({ code: 0, signal: null }),
         );
       return { pid: 4242, exited };
     });
