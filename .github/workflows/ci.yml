@@ -22,7 +22,14 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+          # The newest Node 24, not the one the runner has cached: a new Node reaches the runner
+          # image 5-13 days after its release, and Node 24.22.3's SQLite 3.54.1 let a listing bug
+          # pass a PR on 24.22.2 and fail main later (2026-11-20).
+          check-latest: true
           cache: 'npm'
+      # If the version lookup fails, setup-node falls back to the cached Node without failing, so
+      # print what this run actually tests: the Node version and the SQLite it bundles.
+      - run: node -e "console.log('node', process.version, 'sqlite', process.versions.sqlite)"
       # issue #326 — the action-pin truth guard: every `uses:` SHA must match the tag its trailing
       # comment names (never just resolve — mismatch, imprecision, and cross-file non-uniformity
       # all fail). Placed BEFORE `npm ci`, unlike the audit-allowlist guard below it: this script
