@@ -45,6 +45,7 @@ import {
 } from '@sensigo/realm';
 import { boundedLines, boundedRefusal, moreUnknownKeys } from './refusal-format.js';
 import { ASSISTANT_DOOR_WORDS, renderOutcome } from '../form-path.js';
+import { noRunState } from './no-run-state.js';
 
 /** The answer tool's description: the server lists the tool under `permitted` only. */
 export const SUBMIT_HUMAN_RESPONSE_DESCRIPTION =
@@ -377,12 +378,14 @@ export function registerSubmitHumanResponse(
               ? `Run '${args.run_id}' not found.`
               : `An error occurred before gate response could be submitted.`;
         const rendered = renderReply(
-          buildPreExecutionErrorEnvelope(
-            'submit_human_response',
-            args.run_id,
-            0,
-            workflowErr,
-            contextHint,
+          noRunState(
+            buildPreExecutionErrorEnvelope(
+              'submit_human_response',
+              args.run_id,
+              0,
+              workflowErr,
+              contextHint,
+            ),
           ),
           mcpHostOf(opts),
         );

@@ -154,6 +154,7 @@ import {
   type Requirement,
 } from '@sensigo/realm';
 import { boundedLines, boundedRefusal, moreUnmetSteps } from './refusal-format.js';
+import { noRunState } from './no-run-state.js';
 
 /**
  * The hint of a reply that hands back a run on which this call ran nothing (decisions C45, C57, C64,
@@ -628,7 +629,7 @@ export function registerStartRun(
             ? `Workflow '${args.workflow_id}' not found.`
             : `An error occurred before the run could be started.`;
         const rendered = renderReply(
-          buildPreExecutionErrorEnvelope('start_run', '', 0, workflowErr, contextHint),
+          noRunState(buildPreExecutionErrorEnvelope('start_run', '', 0, workflowErr, contextHint)),
           mcpHostOf(opts),
         );
         return toolContentOf(mcpReplyOf(rendered), {

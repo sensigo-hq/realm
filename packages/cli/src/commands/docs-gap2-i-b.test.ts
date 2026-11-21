@@ -114,8 +114,9 @@ describe('gap 2, unit (i-b) — check 13: the words', () => {
         ),
         added.includes('Realm fills none of them in yet'),
       ],
+      // The Upgrading item without its number, which a merge moves (as docs-922-p1.test.ts).
       upgrading: upgrading.includes(
-        "**6. `retry` on an agent step now takes effect under `realm agent` and `realm listen`.** A step that declares it is tried up to `max_attempts` times per model request (once when `max_attempts` is absent) on a failure another try can fix (a 408, 409, 429 or 5xx, a timeout or a lost connection), in place of the model client's own up to 3 tries.",
+        "`retry` on an agent step now takes effect under `realm agent` and `realm listen`.** A step that declares it is tried up to `max_attempts` times per model request (once when `max_attempts` is absent) on a failure another try can fix (a 408, 409, 429 or 5xx, a timeout or a lost connection), in place of the model client's own up to 3 tries.",
       ),
       grammar: upgrading.includes(
         'A strict request answered "503 grammar compilation unavailable" is sent without strict after one try, where the model client tried it up to 3 times with strict first.',

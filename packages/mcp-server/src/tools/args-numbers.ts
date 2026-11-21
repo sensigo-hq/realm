@@ -9,6 +9,7 @@ import { brandClass } from '@sensigo/realm';
 import { REALM_MCP_BRAND } from '../brand.js';
 import type { McpEnvelope } from '../render-reply.js';
 import { boundedLines, MAX_SUMMARY_LINE } from './refusal-format.js';
+import { noRunState } from './no-run-state.js';
 
 /** The numbers a walk found, each by its path. */
 export interface NumbersFound {
@@ -142,7 +143,8 @@ export function argsNumbersEnvelope(
   refusal: ArgsNumbersRefusal,
   runId = '',
 ): McpEnvelope {
-  return {
+  // Q1 (#592) unit e1: an argument refused before any run was read names no run's state.
+  return noRunState({
     command,
     run_id: runId,
     run_version: 0,
@@ -154,5 +156,5 @@ export function argsNumbersEnvelope(
     agent_action: 'provide_input',
     context_hint: `Invalid ${command} input. Fix the errors and retry.`,
     next_actions: [],
-  };
+  });
 }

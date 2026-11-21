@@ -12,6 +12,8 @@
 //   a folder a handle in this process already holds open, whose stores it then returns (one handle
 //   per home per process). It removes nothing.
 // - `clock`: passed to the door, for a test that must give the home its own clock object.
+// - `sealer` (R1.3 C2): passed to the door, so the home's callback keys can be read. Every opener of
+//   one home in a process must pass the SAME sealer object: the door refuses a second, different one.
 //
 // The door's open creates the home: the folder, the fence files `runs`, `workflows`, `replays` and
 // `dedup`, and `realm.db`. `cleanup()` closes the handle first, for every caller that shares it.
@@ -19,6 +21,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { Clock, RunStore, Snapshot } from '@sensigo/realm';
+import type { CallbackKeySealer } from '@sensigo/realm-store-sqlite';
 import { openCliHome, type CliHome } from '../lib/home.js';
 
 /** A realm home opened through the CLI's door for one test. */
@@ -40,14 +43,20 @@ export interface TempHome {
 /** A fresh temp folder of the helper's own, and the CLI's door on `<root>/.realm`. */
 export function makeTempHome(options?: {
   readonly clock?: Clock;
+  readonly sealer?: CallbackKeySealer;
 }): Promise<TempHome & { readonly root: string }>;
 /** The CLI's door on the given folder, as given; the helper owns nothing. */
 export function makeTempHome(options: {
   readonly home: string;
   readonly clock?: Clock;
+  readonly sealer?: CallbackKeySealer;
 }): Promise<TempHome>;
 export async function makeTempHome(
-  options: { readonly home?: string; readonly clock?: Clock } = {},
+  options: {
+    readonly home?: string;
+    readonly clock?: Clock;
+    readonly sealer?: CallbackKeySealer;
+  } = {},
 ): Promise<TempHome> {
   // The helper owns a root only when it made one.
   let owned: string | undefined;
@@ -62,6 +71,7 @@ export async function makeTempHome(
   const home = await openCliHome({
     home: path,
     ...(options.clock !== undefined ? { clock: options.clock } : {}),
+    ...(options.sealer !== undefined ? { sealer: options.sealer } : {}),
   });
   return {
     root,
