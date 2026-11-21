@@ -70,6 +70,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`RequestEndpoint`](#requestendpoint) | type | One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`). |
 | [`RunPhase`](#runphase) | type | Derived phase of a workflow run. |
 | [`SealArm`](#sealarm) | type | Which code path sealed a run, named as a fact about the code, never a verdict on the run (`SealedBy.arm`). |
+| [`SealDoor`](#sealdoor) | type | The command or tool that ended a run on request: `realm_run_abandon`, `abandon_run` or `realm_run_cleanup` (`SealedBy.door`). |
 | [`SkipDetail`](#skipdetail) | type | Why a step was skipped, keyed by step name (`RunRecord.skip_details`). |
 | [`SupplierAbsentCause`](#supplierabsentcause) | type | One of the words in `SUPPLIER_ABSENT_CAUSES`: why an evidence entry names no supplier (`readSupplier`'s `absent`). |
 | [`SupplierRole`](#supplierrole) | type | One of the words in `SUPPLIER_ROLES`: who supplied a step's input or output, as an evidence entry records it (`EvidenceSnapshot.supplied_by`). |
@@ -92,6 +93,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`PRINCIPAL_ABSENCES`](#principal_absences) | const | Why a door names no principal (`Principal`'s `absent`). |
 | [`REQUEST_ENDPOINTS`](#request_endpoints) | const | Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`). |
 | [`SEAL_ARMS`](#seal_arms) | const | Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`). |
+| [`SEAL_DOORS`](#seal_doors) | const | The commands and tools that end a run on request: `realm run abandon`, the MCP `abandon_run` tool and `realm run cleanup` (`SealedBy.door`). |
 | [`SUPPLIER_ABSENT_CAUSES`](#supplier_absent_causes) | const | Why an evidence entry names no supplier. |
 | [`SUPPLIER_ROLES`](#supplier_roles) | const | The parties that supply a step's input or output, as an evidence entry records them (`EvidenceSnapshot.supplied_by`). |
 
@@ -607,6 +609,8 @@ interface SealedBy {
     arm: SealArm;
     step?: string;
     classified?: true;
+    by?: Attributed;
+    door?: SealDoor;
     adjudicated?: {
         by: string;
         at: string;
@@ -1277,6 +1281,17 @@ moves a stored record.
 type SealArm = (typeof SEAL_ARMS)[number];
 ```
 
+### SealDoor
+
+type · public
+
+The command or tool that ended a run on request: `realm_run_abandon`, `abandon_run` or
+`realm_run_cleanup` (`SealedBy.door`).
+
+```ts
+type SealDoor = (typeof SEAL_DOORS)[number];
+```
+
 ### SkipDetail
 
 type · public
@@ -1718,6 +1733,23 @@ const SEAL_ARMS: readonly [
     "gate_expiry_abort",
     "abandon_requested",
     "cleanup_sweep"
+];
+```
+
+### SEAL_DOORS
+
+const · public
+
+The commands and tools that end a run on request: `realm run abandon`, the MCP `abandon_run` tool
+and `realm run cleanup` (`SealedBy.door`).
+
+`@remarks` Recorded beside the program that used them. Like the seal arms, the list only grows.
+
+```ts
+const SEAL_DOORS: readonly [
+    "realm_run_abandon",
+    "abandon_run",
+    "realm_run_cleanup"
 ];
 ```
 

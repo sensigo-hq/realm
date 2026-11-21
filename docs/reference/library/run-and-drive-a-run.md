@@ -164,7 +164,10 @@ abandoned, that is idempotent success; otherwise the mismatch is propagated (the
 us — likely a live runner — and abandon should lose). No retry loop beyond the single reload.
 
 ```ts
-function abandonRun(store: RunStore, runId: string, reason?: string): Promise<RunRecord>;
+function abandonRun(store: RunStore, runId: string, reason?: string, actor?: {
+    by: Attributed;
+    door?: 'realm_run_abandon' | 'abandon_run';
+}): Promise<RunRecord>;
 ```
 
 ### advanceRun
@@ -2973,7 +2976,9 @@ Names this job reaches whose entry is on another page.
 - [`ScanOptions`](implement-a-store.md#scanoptions): How a scan pages: its page size, its projection, and the id it starts after.
 - [`ScanPage`](implement-a-store.md#scanpage): One page of a store's scan: its items in id order, its one reading, and the cursor for the next page.
 - [`SEAL_ARMS`](read-a-runs-record.md#seal_arms): Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`).
+- [`SEAL_DOORS`](read-a-runs-record.md#seal_doors): The commands and tools that end a run on request: `realm run abandon`, the MCP `abandon_run` tool and `realm run cleanup` (`SealedBy.door`).
 - [`SealArm`](read-a-runs-record.md#sealarm): Which code path sealed a run, named as a fact about the code, never a verdict on the run (`SealedBy.arm`).
+- [`SealDoor`](read-a-runs-record.md#sealdoor): The command or tool that ended a run on request: `realm_run_abandon`, `abandon_run` or `realm_run_cleanup` (`SealedBy.door`).
 - [`SealedArtifact`](implement-a-store.md#sealedartifact): One sealed artifact for a single run and step.
 - [`SealedBy`](read-a-runs-record.md#sealedby): Who sealed a run: the recorded fact `deriveRunPhase` reads before every marker and the terminal reason's text (`RunRecord.sealed_by`).
 - [`SealedWalLine`](implement-a-store.md#sealedwalline): One line of a WAL as read back, live or sealed.

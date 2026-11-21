@@ -34,12 +34,20 @@ const ZOMBIE: Cell = [MCP, 'check 6 — the zombie refusal'];
 const WAY_OUT: Cell = [MCP, 'check 7 — the way out'];
 const D5: Cell = [MCP, 'check 8 (D5)'];
 const SECOND_ANSWER: Cell = [MCP, 'correction 1 (WK-08)'];
+// #625 PR-2b, the actor unit: the sentences that name who ended the run.
+const ACTOR_CORE = 'packages/core/src/engine/actor-who-ended-625.test.ts';
+const ACTOR_DOORS: Cell = [ACTOR_CORE, 'check 1 — the door × reason cells'];
+const ACTOR_NO_DOOR: Cell = [ACTOR_CORE, 'check 1 — no door'];
+const ACTOR_MASKED: Cell = [
+  'packages/mcp-server/src/actor-who-ended-625.test.ts',
+  'check 4 — abandon_run records the driver and door abandon_run',
+];
 
 const TOOLS = 'docs/reference/mcp/tools.md';
 
 /** A1b-1's CHANGELOG lines, as the prompt writes them. */
 const CHANGED =
-  "- **`execute_step`, `advance_run`, `start_run` and `submit_human_response`, on a run that had already ended, say how it ended, from the record only.** One sentence per ending: which steps failed, which step or guard aborted it, a question's time-limit default or abort, 'realm run cleanup', the reason an abandon was given, or a record whose ending was worked out without a seal. An abandoned run no longer says an operator ended it: the record does not say who. (#625)";
+  "- **`execute_step`, `advance_run`, `start_run` and `submit_human_response`, on a run that had already ended, say how it ended, from the record only.** One sentence per ending: which steps failed, which step or guard aborted it, a question's time-limit default or abort, 'realm run cleanup', the reason an abandon was given, or a record whose ending was worked out without a seal. An abandoned run no longer says an operator ended it; it names the program that ended it, when that program's name is known (see \"A run's ending says who ended it\"). (#625)";
 const UPGRADING =
   '**3. `advance_run` (and `advanceRun` in the library) on a run that had already ended now returns `agent_action` / `intrinsic_action` `stop` (it had none).**';
 
@@ -54,7 +62,7 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
   {
     page: TOOLS,
     words:
-      "How a run ended is one sentence, and never says who ended it (added after version 0.50.0): `It completed.`; `The answer on step '<step>' completed the run.`; `Guard step '<step>' passed and completed the run.`; `The question on step '<step>' reached its time limit, and its declared default completed the run.`; `Step '<step>' failed.` (`Steps '<a>', '<b>' failed.` for several);",
+      "How a run ended is one sentence (added after version 0.50.0): `It completed.`; `The answer on step '<step>' completed the run.`; `Guard step '<step>' passed and completed the run.`; `The question on step '<step>' reached its time limit, and its declared default completed the run.`; `Step '<step>' failed.` (`Steps '<a>', '<b>' failed.` for several);",
     cells: [EVERY_ENDING, TWO_FAILED],
   },
   {
@@ -62,6 +70,12 @@ const WORDS: ReadonlyArray<{ page: string; words: string; cells: readonly Cell[]
     words:
       "`Guard step '<step>' aborted the run: \"<message>\".` (`Guard step '<step>' aborted the run.` when the guard has no message); `Gate '<step>' expired and the run aborted per the workflow's declared on_expiry.`; `It was abandoned, with the reason \"<reason>\".` (`It was abandoned; no reason was given.` when none was given); `'realm run cleanup' marked it abandoned.`;",
     cells: [EVERY_ENDING, GUARD_MESSAGE, NO_ACTOR],
+  },
+  {
+    page: TOOLS,
+    words:
+      "when the record names the program that ended the run (added after version 0.50.0), `It was abandoned with 'realm run abandon', by <name> (<how>), with the reason \"<reason>\".`, `It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as <name> (<how>), with the reason \"<reason>\".` (each ending `; no reason was given.` when none was given), `'realm run cleanup', run by <name> (<how>), marked it abandoned.`, and, from a program that named no command or tool, `It was abandoned by <name> (<how>, via <channel>), with the reason \"<reason>\".` and `'realm run cleanup', run by <name> (<how>, via <channel>), marked it abandoned.`, where `<how>` is `from REALM_OPERATOR`, `from the OS user` or `named by the program that runs Realm` and the name is masked as environment values are (the part of it that matches an environment value of 8 characters or more, such as a long OS user name, shows as `[REDACTED]`, and REALM_OPERATOR's own value is not counted);",
+    cells: [ACTOR_DOORS, ACTOR_NO_DOOR, ACTOR_MASKED],
   },
   {
     page: TOOLS,

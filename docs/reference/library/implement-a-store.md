@@ -1563,6 +1563,8 @@ interface SealRunDelta {
     expected_version: number;
     release_claims: boolean;
     identity_entry?: ExtensionIdentityEntry;
+    by?: Attributed;
+    door?: SealDoor;
 }
 ```
 
@@ -2949,7 +2951,9 @@ Names this job reaches whose entry is on another page.
 - [`RunRecordFieldProblem`](write-a-handler.md#runrecordfieldproblem): One field a value lacks, or holds with the wrong type.
 - [`RunStepWay`](run-and-drive-a-run.md#runstepway): Run one step: an agent step's answer, or an engine step's input given by the operator.
 - [`SEAL_ARMS`](read-a-runs-record.md#seal_arms): Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`).
+- [`SEAL_DOORS`](read-a-runs-record.md#seal_doors): The commands and tools that end a run on request: `realm run abandon`, the MCP `abandon_run` tool and `realm run cleanup` (`SealedBy.door`).
 - [`SealArm`](read-a-runs-record.md#sealarm): Which code path sealed a run, named as a fact about the code, never a verdict on the run (`SealedBy.arm`).
+- [`SealDoor`](read-a-runs-record.md#sealdoor): The command or tool that ended a run on request: `realm_run_abandon`, `abandon_run` or `realm_run_cleanup` (`SealedBy.door`).
 - [`SealedBy`](read-a-runs-record.md#sealedby): Who sealed a run: the recorded fact `deriveRunPhase` reads before every marker and the terminal reason's text (`RunRecord.sealed_by`).
 - [`ServiceDefinition`](define-and-load-a-workflow.md#servicedefinition): A service a workflow declares under `services`: the adapter that calls it, its trust, and its rate limit (`WorkflowDefinition.services`).
 - [`ServiceTrust`](define-and-load-a-workflow.md#servicetrust): The words a workflow's `services: <name>: trust:` takes (`ServiceDefinition.trust`).

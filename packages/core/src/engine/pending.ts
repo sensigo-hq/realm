@@ -6,7 +6,8 @@
 // instruction and way sentence out of it — the doors word the ways.
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definition.js';
-import type { RunRecord, PendingGate, SealArm } from '../types/run-record.js';
+import type { RunRecord, PendingGate, SealArm, SealDoor, SealedBy } from '../types/run-record.js';
+import { SEAL_DOORS } from '../types/run-record.js';
 import type { Snapshot } from './snapshot.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
@@ -33,7 +34,14 @@ import {
 import { consumesInputMap, resolveInputMap } from './input-map.js';
 import { capabilityRefusalWords, requirementForStep } from './capability.js';
 import { parseStamp, isPastDeadline } from './instants.js';
-import { readDrivenBy, type Attributed, type ActorAbsent } from './holder.js';
+import {
+  readAttributed,
+  readDrivenBy,
+  RECORDED_BY_SOURCE_WORDS,
+  UNSHOWABLE_NAME,
+  type Attributed,
+  type ActorAbsent,
+} from './holder.js';
 
 /**
  * The checks that refuse a step before it is claimed, in the order `executeStep` runs them.
@@ -783,8 +791,9 @@ const CLASSIFIED_WORDS = ' (classified when its record was migrated)';
 /**
  * #625 A1b-1: how a run ended, from its record only. `sentence` is the ending's one sentence and how
  * it is known; `wayOut` is the way on from the ended run, as a part of its own (a surface renders a
- * command through its own ctx); `by` is the slot for who ended it, which nothing fills yet (the
- * actor unit's: Realm never claims who was on the other end).
+ * command through its own ctx); `by` is the program that ended it on request, as its seal records it
+ * (#625 PR-2b, the actor unit — a program, never a person: Realm never claims who was on the other
+ * end), when the seal names one that can be read.
  */
 export interface RunEnding {
   sentence: string;
@@ -814,6 +823,49 @@ function sealStepOf(run: Pick<RunRecord, 'sealed_by' | 'aborted_at'>): string | 
  */
 export interface RunEndingOptions {
   quote?: (escaped: string) => string;
+}
+
+/**
+ * #625 PR-2b, the actor unit: who ended a run on request, as its seal records it — `<name> (<how>)`
+ * for a sentence that names the command or tool, `<name> (<how>, via <channel>)` for one that does
+ * not, and the door when it is one of {@link SEAL_DOORS}. `<how>` is {@link RECORDED_BY_SOURCE_WORDS}.
+ * A name that cannot be read is {@link UNSHOWABLE_NAME} where the name and how it is known stand.
+ * `undefined` when the seal names no program. The name is plain text: the masking of each surface
+ * decides what shows of it.
+ */
+function endedByWords(
+  seal: SealedBy | undefined,
+): { who: string; whoVia: string; door: SealDoor | undefined } | undefined {
+  if (seal?.by === undefined) return undefined;
+  const read = readAttributed(seal.by);
+  const door = (SEAL_DOORS as readonly unknown[]).includes(seal.door) ? seal.door : undefined;
+  if (read.by === null) return { who: UNSHOWABLE_NAME, whoVia: UNSHOWABLE_NAME, door };
+  const how = RECORDED_BY_SOURCE_WORDS[read.by_source];
+  return {
+    who: `${read.by} (${how})`,
+    whoVia: `${read.by} (${how}, via ${read.channel})`,
+    door,
+  };
+}
+
+/**
+ * #625 PR-2b, the actor unit: `realm run inspect`'s `Ended by:` line, after `Sealed by:`. It shows the
+ * record as stored, as `Sealed by:` shows an unrecognized arm: a door of {@link SEAL_DOORS} is worded
+ * whatever the arm, and any other door counts as none. `undefined` when the seal names no program.
+ */
+export function endedByLine(seal: SealedBy | undefined): string | undefined {
+  const actor = endedByWords(seal);
+  if (actor === undefined) return undefined;
+  switch (actor.door) {
+    case 'realm_run_abandon':
+      return `Ended by: realm run abandon, by ${actor.who}`;
+    case 'abandon_run':
+      return `Ended by: the assistant's abandon_run tool, on the Realm server running as ${actor.who}`;
+    case 'realm_run_cleanup':
+      return `Ended by: realm run cleanup, run by ${actor.who}`;
+    case undefined:
+      return `Ended by: ${actor.whoVia}`;
+  }
 }
 
 /** The ending sentence of an arm, without how it is known. */
@@ -869,12 +921,34 @@ function endingWords(
       return step !== undefined
         ? `Gate '${step}' expired and the run aborted per the workflow's declared on_expiry.`
         : "A question expired and the run aborted per the workflow's declared on_expiry.";
-    case 'abandon_requested':
-      return isDefaultAbandonReason(run.terminal_reason)
-        ? 'It was abandoned; no reason was given.'
-        : `It was abandoned, with the reason ${quote(escapedBoundedValue(run.terminal_reason))}.`;
-    case 'cleanup_sweep':
-      return "'realm run cleanup' marked it abandoned.";
+    case 'abandon_requested': {
+      const reason = isDefaultAbandonReason(run.terminal_reason)
+        ? undefined
+        : quote(escapedBoundedValue(run.terminal_reason));
+      // #625 PR-2b, the actor unit: who ended it, from the door word (never from `channel`); a
+      // door that is not this arm's is no door.
+      const actor = endedByWords(run.sealed_by);
+      if (actor === undefined) {
+        return reason === undefined
+          ? 'It was abandoned; no reason was given.'
+          : `It was abandoned, with the reason ${reason}.`;
+      }
+      const tail = reason === undefined ? '; no reason was given.' : `, with the reason ${reason}.`;
+      if (actor.door === 'realm_run_abandon') {
+        return `It was abandoned with 'realm run abandon', by ${actor.who}${tail}`;
+      }
+      if (actor.door === 'abandon_run') {
+        return `It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as ${actor.who}${tail}`;
+      }
+      return `It was abandoned by ${actor.whoVia}${tail}`;
+    }
+    case 'cleanup_sweep': {
+      const actor = endedByWords(run.sealed_by);
+      if (actor === undefined) return "'realm run cleanup' marked it abandoned.";
+      return actor.door === 'realm_run_cleanup'
+        ? `'realm run cleanup', run by ${actor.who}, marked it abandoned.`
+        : `'realm run cleanup', run by ${actor.whoVia}, marked it abandoned.`;
+    }
   }
 }
 
@@ -892,8 +966,11 @@ export function runEndingOf(
 ): RunEnding | undefined {
   if (run.terminal_state !== true) return undefined;
   const resume = workflow === undefined ? undefined : offeredResumeWay(run, workflow);
+  // #625 PR-2b, the actor unit: the program its seal names, when it can be read.
+  const by = run.sealed_by?.by !== undefined ? readAttributed(run.sealed_by.by) : undefined;
   return {
     sentence: runEndingSentence(run, options.quote ?? ((escaped) => escaped)),
+    ...(by !== undefined && by.by !== null ? { by } : {}),
     wayOut:
       deriveRunPhase(run) === 'abandoned'
         ? { kind: 'new_run' }
