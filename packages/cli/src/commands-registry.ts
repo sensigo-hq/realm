@@ -35,6 +35,7 @@ import { dbMigrateCommand } from './commands/db-migrate.js';
 import { dbCheckCommand } from './commands/db-check.js';
 import { dbRestoreCommand } from './commands/db-restore.js';
 import { rollbackCommand } from './commands/rollback.js';
+import { callbackKeyCommand } from './commands/callback-key.js';
 import { setClockErrorSink } from '@sensigo/realm';
 import { Command } from 'commander';
 import { VERSION } from './version.js';
@@ -88,6 +89,12 @@ export const dbCommands = [dbBackupCommand, dbMigrateCommand, dbCheckCommand, db
  */
 export const storeTopLevelCommands = [rollbackCommand];
 
+/**
+ * Commands that manage the keys callbacks are signed with (realm callback <cmd>; callback K2a-2). Not
+ * in `topLevelCommands`: realm-cloud's CLI registers that list, and these open the local store file.
+ */
+export const callbackCommands = [callbackKeyCommand];
+
 /** Top-level commands not nested under a subgroup. */
 export const topLevelCommands = [
   mcpCommand,
@@ -97,7 +104,7 @@ export const topLevelCommands = [
   listenCommand,
 ];
 
-// issue #920: the option-value guard, on every command object in the five lists. Attached BEFORE the
+// issue #920: the option-value guard, on every command object in the six lists. Attached BEFORE the
 // writer's hook (a command's hooks run in the order they were added): a refusal is printed before the
 // writer is installed.
 attachOptionValueGuard([
@@ -105,9 +112,10 @@ attachOptionValueGuard([
   runCommands,
   dbCommands,
   storeTopLevelCommands,
+  callbackCommands,
   topLevelCommands,
 ]);
-// #729 PR-3 (L-1): every command object in the five lists — nested ones included — carries the
+// #729 PR-3 (L-1): every command object in the six lists — nested ones included — carries the
 // writer's `preAction` hook, so the one writer is installed in any program that reuses realm's
 // commands (cli-cloud attaches the exported hook to its own commands too).
 attachWriterHook([
@@ -115,6 +123,7 @@ attachWriterHook([
   runCommands,
   dbCommands,
   storeTopLevelCommands,
+  callbackCommands,
   topLevelCommands,
 ]);
 
@@ -139,6 +148,9 @@ export function buildRealmProgram(): Command {
   program.addCommand(group('workflow', 'Manage workflow definitions', workflowCommands));
   program.addCommand(group('run', 'Manage workflow run instances', runCommands));
   program.addCommand(group('db', 'Maintain the store file', dbCommands));
+  program.addCommand(
+    group('callback', 'Manage the keys callbacks are signed with', callbackCommands),
+  );
   for (const cmd of [...storeTopLevelCommands, ...topLevelCommands]) program.addCommand(cmd);
   return program;
 }
