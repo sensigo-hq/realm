@@ -51,6 +51,9 @@ const RULING = {
   reason: 'the guard is what stopped this run',
 };
 
+/** #625 PR-2b, the actor unit (ACT-AUR-01): the program the fixture's seal names. */
+const ENDED_BY = { by: 'tester', by_source: 'ambient' as const, channel: 'abandon' };
+
 const SEALED_BY_DISCLOSURE = {
   arm: {
     surface: 'rendered',
@@ -70,6 +73,15 @@ const SEALED_BY_DISCLOSURE = {
     // The FULL object, field by field: a surface that keeps `by` and drops `reason` has shipped
     // half a provenance record, which is worse than none.
     probe: (s) => expect(s.sealed_by_adjudicated).toEqual(RULING),
+  },
+  // #625 PR-2b, the actor unit: the program that ended the run, and the command or tool it used.
+  by: {
+    surface: 'rendered',
+    probe: (s) => expect(s.sealed_by_actor).toEqual(ENDED_BY),
+  },
+  door: {
+    surface: 'rendered',
+    probe: (s) => expect(s.sealed_by_door).toBe('realm_run_abandon'),
   },
 } satisfies Record<keyof SealedBy, DisclosureRoute>;
 
@@ -127,6 +139,8 @@ describe('#367 — every SealedBy field reaches a get_run_state consumer', () =>
       arm: 'guard_abort',
       step: 'g',
       classified: true,
+      by: ENDED_BY,
+      door: 'realm_run_abandon',
       adjudicated: RULING,
     });
     const summary = await handleGetRunState({ run_id: runId }, { runStore, workflowStore });
@@ -148,7 +162,9 @@ describe('#367 — every SealedBy field reaches a get_run_state consumer', () =>
     expect(Object.keys(SEALED_BY_DISCLOSURE).sort()).toEqual([
       'adjudicated',
       'arm',
+      'by',
       'classified',
+      'door',
       'step',
     ]);
     expect(

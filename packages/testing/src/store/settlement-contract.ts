@@ -200,6 +200,12 @@ export const SETTLEMENT_LAWS = [
   // when its workflow is gone) and applies without one; every other kind needs one, and a call
   // without it is a programming-contract violation the store throws.
   'SEAL_RUN_NEEDS_NO_DEFINITION',
+  // #625 PR-2b, the actor unit: who ended a run is a promise every store keeps.
+  /** A `seal_run` change that carries `by` (the program) and `door` (the command or tool) reads back
+   *  both on its `sealed_by`, byte for byte — on the write's result and on a fresh read. One that
+   *  carries neither reads back neither: never `by: null` or `door: null`, as a column store would
+   *  write them. */
+  'SEAL_RUN_KEEPS_ACTOR',
   // #715 (b) (D5 §5.5): a route-built store's clock is the clock the route sets — a case that moves
   // the route clock moves what the store reads.
   'ROUTE_CLOCK_IS_STORE_CLOCK',
@@ -6410,6 +6416,105 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
   return cases;
 }
 
+/** #625 PR-2b, the actor unit: the program a `seal_run` case writes — every field a stated one has. */
+const TCK_ACTOR = { by: 'tck-program@tck-host', by_source: 'stated', channel: 'tck' } as const;
+
+/** The actor members of a stored seal, as they read back: each present one, and which are present. */
+function actorMembersOf(seal: unknown): { keys: string[]; by: unknown; door: unknown } {
+  const s = (seal ?? {}) as Record<string, unknown>;
+  return {
+    keys: ['by', 'door'].filter((k) => Object.prototype.hasOwnProperty.call(s, k)),
+    by: s['by'],
+    door: s['door'],
+  };
+}
+
+/** Whether `value` is exactly TCK_ACTOR: its three fields, and no other key. */
+function isTckActor(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    Object.keys(v).length === 3 &&
+    v['by'] === TCK_ACTOR.by &&
+    v['by_source'] === TCK_ACTOR.by_source &&
+    v['channel'] === TCK_ACTOR.channel
+  );
+}
+
+/**
+ * #625 PR-2b, the actor unit (the page's Ahead 2): a `seal_run` change's `by` and `door` read back as
+ * written — on the write's result and on a fresh read — and a change without them reads back neither
+ * (no `null` stand-ins).
+ */
+function sealRunKeepsActorCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  return [
+    {
+      law: 'SEAL_RUN_KEEPS_ACTOR',
+      name: `[${adapter.storeName}] a seal_run change with by and door reads back both, byte for byte`,
+      run: async () => {
+        const { record: run } = await adapter.store.create({
+          workflowId: uid('tck-seal-actor'),
+          workflowVersion: 1,
+          params: {},
+        });
+        const sealed = await adapter.store.settleStep(run.id, {
+          kind: 'seal_run',
+          arm: 'abandon_requested',
+          reason: 'tck: sealed by a named program',
+          expected_version: run.version,
+          release_claims: true,
+          by: { ...TCK_ACTOR },
+          door: 'realm_run_abandon',
+        });
+        assertApplied(sealed, 'seal_run with by and door');
+        const stored = (await adapter.store.get(run.id)).record.sealed_by;
+        for (const [where, seal] of [
+          ['the result', sealed.run.sealed_by],
+          ['a fresh read', stored],
+        ] as const) {
+          const got = actorMembersOf(seal);
+          if (!isTckActor(got.by) || got.door !== 'realm_run_abandon') {
+            throw new Error(
+              `seal_run with by and door: ${where} reads back by ${JSON.stringify(got.by)}, door ${JSON.stringify(got.door)} (wrote ${JSON.stringify(TCK_ACTOR)}, 'realm_run_abandon')`,
+            );
+          }
+        }
+      },
+    },
+    {
+      law: 'SEAL_RUN_KEEPS_ACTOR',
+      name: `[${adapter.storeName}] a seal_run change without by or door reads back neither — no null stand-ins`,
+      run: async () => {
+        const { record: run } = await adapter.store.create({
+          workflowId: uid('tck-seal-actor'),
+          workflowVersion: 1,
+          params: {},
+        });
+        const sealed = await adapter.store.settleStep(run.id, {
+          kind: 'seal_run',
+          arm: 'abandon_requested',
+          reason: 'tck: sealed by no named program',
+          expected_version: run.version,
+          release_claims: true,
+        });
+        assertApplied(sealed, 'seal_run without by or door');
+        const stored = (await adapter.store.get(run.id)).record.sealed_by;
+        for (const [where, seal] of [
+          ['the result', sealed.run.sealed_by],
+          ['a fresh read', stored],
+        ] as const) {
+          const got = actorMembersOf(seal);
+          if (got.keys.length > 0) {
+            throw new Error(
+              `seal_run without by or door: ${where} reads back ${got.keys.map((k) => `${k}: ${JSON.stringify(k === 'by' ? got.by : got.door)}`).join(', ')} (wrote neither)`,
+            );
+          }
+        }
+      },
+    },
+  ];
+}
+
 /**
  * #715 (b), Amendment 1 (D-21): a `seal_run` change applies with no definition; a non-seal change
  * without one throws a plain contract-violation `Error` — `applySettlement` takes the seal branch
@@ -6629,6 +6734,7 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
         ),
     },
     ...sealRunNeedsNoDefinitionCases(adapter),
+    ...sealRunKeepsActorCases(adapter),
     ...routeClockCases(adapter),
     ...freshApplicationCases(adapter),
     ...conditionalNoopCases(adapter),

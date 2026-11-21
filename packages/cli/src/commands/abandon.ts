@@ -11,6 +11,7 @@ import {
   writerCtx,
 } from '../output/writer.js';
 import { openCliHome } from '../lib/home.js';
+import { endingProgramIdentity } from '../lib/program-identity.js';
 
 /**
  * #819 correction 1 (02 C2): an empty or blank `--reason` is refused. #819 follow-up 2 (R1, the
@@ -86,12 +87,18 @@ export const abandonCommand = new Command('abandon')
       await noteRunManifest(definition, before);
       withholdUnlessAccepted(false);
       const alreadyAbandoned = before.abandoned_at !== undefined;
+      // #625 PR-2b, the actor unit: this program, recorded on the seal with this command's door. A
+      // REALM_OPERATOR it cannot use records no name (and warns after the write), never a stop.
+      const identity = endingProgramIdentity('abandon');
       // issue #558 PR-C: the reason names THIS surface's verb. Core's neutral default
       // ('Abandoned') would leave a CLI kill unattributed; the MCP tool supplies its own.
       const run = await abandonRun(
         runStore,
         runId,
         opts.reason ?? 'Abandoned via realm run abandon',
+        identity.driver !== undefined
+          ? { by: identity.driver, door: 'realm_run_abandon' }
+          : undefined,
       );
       // issue #558 PR-C (walk 2): the rerun command must be executable from THIS screen. The
       // registered copy records the directory it was registered from (`source_dir`, since v0.14);
@@ -149,6 +156,10 @@ export const abandonCommand = new Command('abandon')
           // `note`. There is no operator `abort` verb (issue #558 PR-C).
           ABANDON_KILL_ADVISORY,
       );
+      // #625 PR-2b, the actor unit: only after a write that ended the run.
+      if (identity.warning !== undefined && !alreadyAbandoned) {
+        console.error(identity.warning('this ending names no program'));
+      }
     } catch (err) {
       // issue #558 PR-C: core's gate refusal is surface-neutral. #729 PR-0 (Table row 39): its way
       // on is the error's typed remedy (the open question's `respond` way), which THIS surface renders
