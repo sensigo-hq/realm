@@ -60,11 +60,11 @@ describe('#625 PR-2b A2b — the guide, the start page and the run-reading page'
   });
 
   it('how-a-run-moves.md: a form’s answer does the same; the token stays inside the server', () => {
-    // EX (example 08: the call that reached the gate ran post_approval); FC check 1 (the token in no
-    // elicitation request, log line or reply).
+    // EX (example 08: the call that reached the gate ran post_approval); FC check 3 (within the form
+    // wait's time); FC check 1 (the token in no elicitation request, log line or reply).
     claim(
       'docs/start/how-a-run-moves.md',
-      "A form's answer does the same when the form was sent by the call that opened the question; the token stays inside the server.",
+      "A form's answer does the same, within the form wait's time, when the form was sent by the call that opened the question; the token stays inside the server.",
     );
   });
 

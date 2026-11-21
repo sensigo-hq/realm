@@ -187,30 +187,54 @@ describe('#625 PR-2b A2b — a form sent by the call that opened the question ca
     });
   });
 
-  it('check 3: a form answered after the form wait’s time is spent — no step is claimed, the reply says why once', async () => {
+  it('check 3: a form answered late in its wait — the step that started runs to its end, the next one is not claimed, the reply says why once', async () => {
+    // The real case (MA 2's review): the person answers 230 s into the call's 240 s (the form wait's
+    // own timer is real time, so the form is still open), and `a` itself takes the call past them.
     let now = 0;
+    const registry = createDefaultRegistry();
+    registry.register('handler', 'slow', {
+      id: 'slow',
+      execute: async () => {
+        now = 245_000;
+        return { data: {} };
+      },
+    } as never);
+    const yaml = gateYaml([
+      '  a:',
+      '    description: A.',
+      '    execution: auto',
+      '    handler: slow',
+      '    depends_on: [q]',
+      '  b:',
+      '    description: B.',
+      '    execution: auto',
+      '    depends_on: [a]',
+      '  finish:',
+      '    description: Finish.',
+      '    execution: agent',
+      '    depends_on: [b]',
+    ]);
     const s = await session(
-      CHAIN,
+      yaml,
       () => {
-        // The person answers 241 s after the call began (the wait's own timer is real time).
-        now = 241_000;
+        now = 230_000;
         return ACCEPT;
       },
-      { monotonicNow: () => now },
+      { monotonicNow: () => now, registry },
     );
     const reply = await s.call('start_run', { workflow_id: 'a2b' });
     const { record } = await s.runStore.get(String(reply['run_id']));
     const said =
-      "This call's time ran out after 'q'; the run was not carried further in this call.";
-    // (a) red when the answer gets a fresh budget (`a` runs), or the mcp_form rule suppresses the
+      "This call's time ran out after 'a'; the run was not carried further in this call.";
+    // (a) red when the answer gets a fresh budget (`b` runs too), or the mcp_form rule suppresses the
     //     sentence; (b) prints the fields.
     expect({
       done: record.completed_steps,
-      claimOnA: record.claims?.['a'],
+      claimOnB: record.claims?.['b'],
       stopped: claimOf(reply)?.['chain_stopped'],
       said: (reply['warnings'] as string[]).filter((w) => w === said).length,
-      owed: occurrences(hintOf(reply), "Owed to the engine: 'a' — call advance_run."),
-    }).toEqual({ done: ['q'], claimOnA: undefined, stopped: 'budget', said: 1, owed: 1 });
+      owed: occurrences(hintOf(reply), "Owed to the engine: 'b' — call advance_run."),
+    }).toEqual({ done: ['q', 'a'], claimOnB: undefined, stopped: 'budget', said: 1, owed: 1 });
   });
 
   it('check 5: the carry-on reaches a new question inside the form’s call — an awaiting entry, no second form, no copied token', async () => {
@@ -356,5 +380,90 @@ describe('#625 PR-2b A2b — a form sent by the call that opened the question ca
       phase: reply['run_phase'],
       carried: claimOf(reply)?.['carried_on'],
     }).toEqual({ said: 1, phase: 'abandoned', carried: true });
+  });
+
+  /** A workflow whose step `a` (after gate `q`) has another program abandon the run while it runs. */
+  const endingRegistry = (target: { store?: RunStore }) => {
+    const registry = createDefaultRegistry();
+    registry.register('handler', 'end_it', {
+      id: 'end_it',
+      execute: async () => {
+        const open = (await runsOf(target.store!)).find((r) => !r.record.terminal_state)!;
+        await abandonRun(target.store!, open.record.id, 'another program');
+        return { data: {} };
+      },
+    } as never);
+    return registry;
+  };
+  const ENDS = [
+    '  a:',
+    '    description: A.',
+    '    execution: auto',
+    '    handler: end_it',
+    '    depends_on: [q]',
+    '  finish:',
+    '    description: Finish.',
+    '    execution: agent',
+    '    depends_on: [a]',
+  ];
+  const SAID = 'It was abandoned, with the reason "another program".';
+
+  it('item 4, execute_step: after its form, a carried-on reply whose continuation meets another program ending the run says how it ended, once', async () => {
+    const target: { store?: RunStore } = {};
+    const yaml = [
+      'id: a2b',
+      'name: a2b',
+      'version: 1',
+      'steps:',
+      '  w:',
+      '    description: Write.',
+      '    execution: agent',
+      '  q:',
+      '    description: Ask.',
+      '    execution: auto',
+      '    trust: human_confirmed',
+      '    depends_on: [w]',
+      '    gate:',
+      '      choices: [approve, reject]',
+      '      message: Ship it?',
+      ...ENDS,
+    ].join('\n');
+    const s = await session(yaml, () => ACCEPT, { registry: endingRegistry(target) });
+    target.store = s.runStore;
+    const started = await s.call('start_run', { workflow_id: 'a2b' });
+    const reply = await s.call('execute_step', {
+      run_id: String(started['run_id']),
+      command: 'w',
+      params: {},
+    });
+    // (a) red when execute_step's tail never says how the run ended on a carried-on reply after its
+    //     form, or says it twice; (b) prints the fields.
+    expect({
+      said: occurrences(hintOf(reply), SAID),
+      phase: reply['run_phase'],
+      carried: claimOf(reply)?.['carried_on'],
+    }).toEqual({ said: 1, phase: 'abandoned', carried: true });
+  });
+
+  it('item 4, advance_run: after its form, a carried-on reply whose continuation meets another program ending the run says how it ended, once', async () => {
+    const target: { store?: RunStore } = {};
+    const s = await session(gateYaml(ENDS), () => ACCEPT, { registry: endingRegistry(target) });
+    target.store = s.runStore;
+    // A run created outside this session and not yet driven: advance_run is the call that opens the
+    // question, and sends its form.
+    const { record: run } = await s.runStore.create({
+      workflowId: 'a2b',
+      workflowVersion: 1,
+      params: {},
+    });
+    const reply = await s.call('advance_run', { run_id: run.id });
+    // (a) red when advance_run's tail never says how the run ended on a carried-on reply after its
+    //     form, or says it twice; (b) prints the fields.
+    expect({
+      said: occurrences(hintOf(reply), SAID),
+      phase: reply['run_phase'],
+      carried: claimOf(reply)?.['carried_on'],
+      forms: s.requests.length,
+    }).toEqual({ said: 1, phase: 'abandoned', carried: true, forms: 1 });
   });
 });
