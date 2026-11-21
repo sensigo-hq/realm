@@ -14,9 +14,11 @@ import {
   deriveRetryCap,
   makeModelRetryPolicy,
   modelAttemptsOf,
+  tryModelRequest,
   type LlmClock,
   type ModelRetryPolicy,
 } from './agent-utils.js';
+import { failedRequestSends } from '@sensigo/realm';
 
 type Wire = (init: RequestInit | undefined) => Response | Promise<Response>;
 let script: Wire[] = [];
@@ -483,4 +485,87 @@ describe('gap 2, unit (i-b) — check 10: on_timeout: false', () => {
       10_000,
     );
   }
+});
+
+describe('gap 2, unit (i-b), correction 1 — a cap that runs out at the top of the loop ends the request on its last try', () => {
+  /** Holds the thread until the monotonic clock passes `until`, so no timer can run first. */
+  const holdUntil = (until: number) => {
+    while (performance.now() < until) {
+      /* busy: the cap's timer cannot fire before this returns */
+    }
+  };
+  const withStatus = (status: number) =>
+    Object.assign(new Error(`fake ${String(status)}`), { status });
+
+  it("after a wait and a check that said yes, and at the start of a re-send: the last try is marked, so the readers show Realm's number", async () => {
+    const CAP = 100;
+    const started = performance.now();
+    // (1) A 503, a 10 ms wait, then a check that says yes only once the cap has run out.
+    const waited = makeModelRetryPolicy({
+      retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 10 },
+      capMs: CAP,
+      capSource: 'declared',
+      mayResend: async () => {
+        holdUntil(started + CAP + 5);
+        return true;
+      },
+    });
+    const one = await tryModelRequest(waited, {}, undefined, async () => {
+      throw withStatus(503);
+    }).catch((e: unknown) => e);
+    // (2) A 400 the gateway rule would answer, which arrives as the cap runs out; then its re-send.
+    const resent = makeModelRetryPolicy({
+      retry: { max_attempts: 2 },
+      capMs: CAP,
+      capSource: 'declared',
+      mayResend: async () => true,
+    });
+    const at = performance.now();
+    await tryModelRequest(resent, {}, undefined, async () => {
+      holdUntil(at + CAP + 5);
+      throw withStatus(400);
+    }).catch(() => undefined);
+    const two = await tryModelRequest(resent, { resend: 'gateway' }, undefined, async () => {
+      throw new Error('the re-send must not be made');
+    }).catch((e: unknown) => e);
+    const classOf = (e: unknown) =>
+      (e as { driveCall?: { error_class?: string } }).driveCall?.error_class;
+    // (a) red when the cap at the top of the loop leaves the last try as it was (a wait, or a
+    //     re-send that never went): the readers then show no number; (b) prints both lists.
+    expect({
+      one: [classOf(one), modelAttemptsOf(waited), failedRequestSends(modelAttemptsOf(waited))],
+      two: [classOf(two), modelAttemptsOf(resent), failedRequestSends(modelAttemptsOf(resent))],
+    }).toEqual({
+      one: [
+        'aborted_by_budget',
+        [
+          {
+            request: 0,
+            kind: 'transient',
+            error_class: 'api_status',
+            status: 503,
+            wait_ms: null,
+            retry_after_ms: null,
+            exhausted_by: 'total_timeout',
+          },
+        ],
+        1,
+      ],
+      two: [
+        'aborted_by_budget',
+        [
+          {
+            request: 0,
+            kind: 'permanent',
+            error_class: 'api_status',
+            status: 400,
+            wait_ms: null,
+            retry_after_ms: null,
+            exhausted_by: 'total_timeout',
+          },
+        ],
+        1,
+      ],
+    });
+  });
 });
