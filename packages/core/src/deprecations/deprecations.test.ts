@@ -54,8 +54,9 @@ describe('CP-W (e) — the table and the said-set', () => {
       frozen: Object.isFrozen(DEPRECATIONS),
     }).toEqual({
       shipped: undefined,
-      // PR #1167 correction 1 (item 11): REALM-D001, the gate-answers value offered.
-      shippedLength: 1,
+      // PR #1167 correction 1 (item 11): REALM-D001, the gate-answers value offered; Q1 (#592)
+      // unit e1: REALM-D002, run_version 0 on a refusal that names no run's state.
+      shippedLength: 2,
       good: undefined,
       duplicate: 'deprecations: REALM-D001 is used twice',
       outOfOrder: 'deprecations: REALM-D001 comes after REALM-D002; ids are listed in order',
@@ -135,14 +136,26 @@ describe('CP-W (f) — the compatibility page lists every id the table holds', (
       page: true,
       rowTooManyOnThePage: false,
       rowTooManyInTheTable: false,
-      // PR #1167 correction 1 (item 11): the page's one row, REALM-D001.
+      // PR #1167 correction 1 (item 11): the page's row REALM-D001; Q1 (#592) unit e1: REALM-D002.
       pinned: {
         rows: [
           ['REALM-D001', '0.50.0', 'not scheduled', 'The gate-answers value offered was given.'],
+          [
+            'REALM-D002',
+            '0.51.0',
+            '0.52.0',
+            "A refusal that named no run's state carried run_version 0.",
+          ],
         ],
         noneLine: false,
         expected: [
           ['REALM-D001', '0.50.0', 'not scheduled', 'The gate-answers value offered was given.'],
+          [
+            'REALM-D002',
+            '0.51.0',
+            '0.52.0',
+            "A refusal that named no run's state carried run_version 0.",
+          ],
         ],
         expectNone: false,
       },

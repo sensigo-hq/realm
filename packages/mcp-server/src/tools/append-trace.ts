@@ -42,6 +42,7 @@ import { toolMeta } from '../tool-annotations.js';
 import { ArgsNumbersRefusal, argsNumbersEnvelope, checkArgsNumbersJoined } from './args-numbers.js';
 import { assertToolStores } from './assert-tool-stores.js';
 import { boundedRefusal } from './refusal-format.js';
+import { noRunState } from './no-run-state.js';
 
 export interface HandleAppendTraceStores {
   /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). #616 PR-2a (ii-b):
@@ -489,7 +490,9 @@ export function registerAppendTrace(
         const runVersion =
           typeof workflowErr.details['run_version'] === 'number'
             ? workflowErr.details['run_version']
-            : 0;
+            : // Q1 (#592) unit e1: only this arm names no run's state (the error carried no version;
+              // a run the engine read can really be at 0): key on the branch, never on the 0.
+              noRunState(0);
         const contextHint =
           workflowErr.code === 'STATE_RUN_NOT_FOUND'
             ? `Run '${args.run_id}' not found.`

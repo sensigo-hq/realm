@@ -43,6 +43,7 @@ import {
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { boundedRefusal } from './refusal-format.js';
+import { noRunState } from './no-run-state.js';
 
 /** The tool's input: exactly `ARGS[present]` (`{ run_id, gate_id }`; the door-schema witness). */
 export const presentQuestionArgsShape = { run_id: z.string(), gate_id: z.string() };
@@ -283,12 +284,14 @@ export function registerPresentQuestion(
             ? `Run '${args.run_id}' not found.`
             : 'An error occurred before the question could be shown.';
         const rendered = renderReply(
-          buildPreExecutionErrorEnvelope(
-            'present_question',
-            args.run_id,
-            0,
-            workflowErr,
-            contextHint,
+          noRunState(
+            buildPreExecutionErrorEnvelope(
+              'present_question',
+              args.run_id,
+              0,
+              workflowErr,
+              contextHint,
+            ),
           ),
           mcpHostOf(opts),
         );

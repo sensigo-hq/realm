@@ -39,6 +39,7 @@ import { ArgsNumbersRefusal, argsNumbersEnvelope, checkArgsNumbers } from './arg
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
 import { boundedLines, boundedRefusal, moreUnmetSteps } from './refusal-format.js';
+import { noRunState } from './no-run-state.js';
 
 /**
  * Z3 (the zod 4 unit): the most items one `start_run_batch` call may carry — the hard ceiling above
@@ -418,7 +419,9 @@ export function registerStartRunBatch(
                 ? `One or more items failed schema validation. No runs were created.`
                 : `An error occurred before any runs were created.`;
         const rendered = renderReply(
-          buildPreExecutionErrorEnvelope('start_run_batch', '', 0, workflowErr, contextHint),
+          noRunState(
+            buildPreExecutionErrorEnvelope('start_run_batch', '', 0, workflowErr, contextHint),
+          ),
           mcpHostOf(opts),
         );
         return toolContentOf(mcpReplyOf(rendered), {

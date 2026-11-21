@@ -48,6 +48,7 @@ import {
   MAX_PLACE_LINES,
   moreUnknownKeys,
 } from './refusal-format.js';
+import { noRunState } from './no-run-state.js';
 
 /**
  * The step-shape allow-list (issue #169): `Object.keys(stepSchema.shape)` is the single source
@@ -184,7 +185,8 @@ export interface CreateWorkflowArgs {
 }
 
 function makeErrorEnvelope(errors: string[]): McpEnvelope {
-  return {
+  // Q1 (#592) unit e1: create_workflow's refusal makes no run and names no run's state.
+  return noRunState({
     command: 'create_workflow',
     run_id: '',
     run_version: 0,
@@ -196,7 +198,7 @@ function makeErrorEnvelope(errors: string[]): McpEnvelope {
     agent_action: 'provide_input',
     context_hint: 'Invalid create_workflow input. Fix the errors and retry.',
     next_actions: [],
-  };
+  });
 }
 
 /**
