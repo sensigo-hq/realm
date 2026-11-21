@@ -930,8 +930,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   /** A claim refused on the record's version: a second refusal there stops the drive (C85's bound). */
   let lastRefusal: { step: string; version: number } | undefined = undefined;
   const SIGNALS: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
-  /** A drive failure's entry (#401), except once a signal stopped the drive: its give-back says why. */
-  const recordFailure = (entry: Parameters<typeof recordDriveFailure>[2]): Promise<void> =>
+  /**
+   * A drive failure's entry (#401), except once a signal stopped the drive: its give-back says why.
+   * Q1 (#592) unit c: what the write did is returned, and ignored here.
+   */
+  const recordFailure = (entry: Parameters<typeof recordDriveFailure>[2]): Promise<unknown> =>
     stopCause === undefined ? recordDriveFailure(deps.store, runId, entry) : Promise.resolve();
   const namesHeldLease = (record: RunRecord, h: NonNullable<typeof held>): boolean =>
     record.in_progress_steps.includes(h.step) && record.claims?.[h.step]?.lease?.id === h.hold.id;

@@ -9,7 +9,7 @@
 // stored with its eight members only, each a number, a closed word or `null`. A program can pass any
 // value there, so the type is not the guarantee; this is.
 import type { DriveFailureRecord, ModelAttempt, ModelFailureKind } from '../types/run-record.js';
-import { ERROR_CLASSES, EXHAUSTED_BY, MODEL_FAILURE_KINDS } from '../types/run-record.js';
+import { CLAIMABLE_ERROR_CLASSES, EXHAUSTED_BY, MODEL_FAILURE_KINDS } from '../types/run-record.js';
 
 /**
  * The values `classifyModelFailure` reads from one failed model request. A value that is absent,
@@ -188,7 +188,8 @@ export function closeModelAttempts(value: unknown): ModelAttempt[] | undefined {
     closed.push({
       request: entry['request'],
       kind: wordOf(MODEL_FAILURE_KINDS, entry['kind']) ?? null,
-      error_class: wordOf(ERROR_CLASSES, entry['error_class']) ?? null,
+      // Q1 (#592) unit c: a program cannot claim `startup_failure` — only Realm's startup writers mint it.
+      error_class: wordOf(CLAIMABLE_ERROR_CLASSES, entry['error_class']) ?? null,
       status: isCount(entry['status']) ? entry['status'] : null,
       wait_ms: isCount(entry['wait_ms']) ? entry['wait_ms'] : null,
       retry_after_ms: isCount(entry['retry_after_ms']) ? entry['retry_after_ms'] : null,

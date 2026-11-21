@@ -1730,6 +1730,14 @@ export interface DriveFailureRecord {
      * per-attempt timeout — this one is realm's bound on the whole create, retries included.
      */
     | 'aborted_by_budget'
+    /**
+     * Q1 (#592) unit c: `realm agent --run-id` was refused by its own startup checks (no key for the
+     * provider, no model, `--base-url` with Anthropic, a provider module that does not load), or
+     * `realm listen`'s child was killed by a signal before it wrote anything to the run. Only those
+     * two writers mint it; a provider's payload or a program's `model_attempts` cannot claim it
+     * ({@link CLAIMABLE_ERROR_CLASSES}). Its `step` is `''`.
+     */
+    | 'startup_failure'
     | 'other';
   /** Sanitized (secrets redacted) and capped at 500 characters. */
   message: string;
@@ -1810,11 +1818,25 @@ export const ERROR_CLASSES = [
   'sdk_missing',
   'validation_rejected',
   'aborted_by_budget',
+  'startup_failure',
   'other',
 ] as const satisfies readonly DriveFailureRecord['error_class'][];
 type MissingErrorClass = Exclude<DriveFailureRecord['error_class'], (typeof ERROR_CLASSES)[number]>;
 const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : MissingErrorClass = true;
 void _everyErrorClassListed;
+
+/** An `error_class` word a provider or a program may claim: every word but `startup_failure`. */
+type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
+
+/**
+ * Q1 (#592) unit c: the {@link ERROR_CLASSES} a provider's thrown payload or a program's
+ * `model_attempts` may claim — every word but `startup_failure`, which only Realm's own two startup
+ * writers mint (`realm agent`'s refusal and `realm listen`'s signal death). The CLI's payload reader
+ * and `closeModelAttempts` both close against this one list.
+ */
+export const CLAIMABLE_ERROR_CLASSES: readonly ClaimableErrorClass[] = ERROR_CLASSES.filter(
+  (c): c is ClaimableErrorClass => c !== 'startup_failure',
+);
 
 /**
  * What a failed model request can need before it succeeds: another try (`transient`), an operator's
