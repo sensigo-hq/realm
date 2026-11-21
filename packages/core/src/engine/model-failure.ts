@@ -39,6 +39,9 @@ export interface ModelFailureFacts {
   phase: 'model_request' | 'after_response' | 'mcp_discovery';
 }
 
+/** The three phases a failure can be tagged with. */
+const PHASES: readonly string[] = ['model_request', 'after_response', 'mcp_discovery'];
+
 /** Realm's codes for an MCP tool the step names that the server does not offer, or offers twice. */
 const MCP_TOOL_CODES: readonly string[] = ['MCP_TOOL_NOT_FOUND', 'MCP_TOOL_NAME_COLLISION'];
 
@@ -109,7 +112,8 @@ export function classifyModelFailure(facts: ModelFailureFacts): ModelFailureKind
   if (facts.phase === 'mcp_discovery') return null;
   // 3. An answer arrived and could not be used: sending it again gets the same kind of answer.
   if (facts.phase === 'after_response') return 'permanent';
-  if (facts.phase !== 'model_request') return null;
+  // A phase outside the three is not placed. Only that: rule 2 alone places mcp_discovery.
+  if (!PHASES.includes(facts.phase)) return null;
   // 4.
   if (facts.error_class === 'validation_rejected') return null;
   const shouldRetry = textOf(facts.should_retry);
