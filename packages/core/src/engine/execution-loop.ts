@@ -79,9 +79,12 @@ import {
   readDrivenBy,
   composeGateClaimSentence,
   readStatedAnswerer,
+  judgeCarryOn,
   type Attributed,
   type ActorAbsent,
+  type NotCarriedOnReason,
 } from './holder.js';
+import { answererOf } from './step-view.js';
 import { buildGuardDelta, renderFailCause, failureMessagesWithOverlay } from './settlement.js';
 import type {
   SettleStepDelta,
@@ -111,12 +114,13 @@ import { computeBackoff } from './backoff.js';
 import { evaluateAllPreconditions, evaluateGuardConditions } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { admitEntry } from '../admission.js';
-import type {
-  AdvanceCaller,
-  AnswerCaller,
-  ChainCaller,
-  EngineStepCaller,
-  StepCaller,
+import {
+  ENTRY_CALLERS,
+  type AdvanceCaller,
+  type AnswerCaller,
+  type ChainCaller,
+  type EngineStepCaller,
+  type StepCaller,
 } from './callers.js';
 import { describeThrown, describeUnrecognised, releaseLineError } from '../release-line.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
@@ -161,6 +165,7 @@ import {
   pendingCleanupSentence,
   heldLeaseWords,
   pendingCleanupLine,
+  judgeProgramFit,
   type GuardOutcome,
   type PendingView,
   type PreClaimRefused,
@@ -371,12 +376,26 @@ export interface SubmitGateOptions {
    */
   clientPromptRequested?: boolean;
   /**
-   * The filter-mask fix (Amendment 1): the door's disclosure set, used only for the reply's ways —
-   * a `run_step` way's prompt is rendered with each value masked before its filters, at the set's
-   * audience tier. The MCP door passes its set (its reply shows the next step's prompt to the
-   * client); the CLI and Slack pass none: none of them shows a step's prompt.
+   * The filter-mask fix (Amendment 1): the door's disclosure set, used for the reply's ways and every
+   * step the carry-on runs — a `run_step` way's prompt is rendered with each value masked before its
+   * filters, at the set's audience tier. The MCP door passes its set (its reply shows the next step's
+   * prompt to the client); the CLI and Slack pass none: none of them shows a step's prompt.
    */
   disclosure?: DisclosureSet;
+  /**
+   * #625 PR-2b A2a: the trace buffer store for the steps the carry-on runs, as `advanceRun` is given
+   * it (`AdvanceRunOptions.traceBufferStore`).
+   */
+  traceBufferStore?: TraceBufferStore;
+  /**
+   * #625 PR-2b A2a: how much of this call's time is left, in milliseconds, measured by the caller on
+   * its own clock. When the answer carries the run on, `remainingMs` is read before each next step is
+   * claimed: at zero or below no further step starts — a step that has started runs to its end — and
+   * the reply's `gate_claim.chain_stopped` is `'budget'`, with the steps still owed in its `advance`
+   * way. Without it nothing bounds the carry-on: it runs to the run's next pause. The MCP answer tool
+   * passes its 240 seconds from the tool call's start.
+   */
+  budget?: { remainingMs: () => number };
   /**
    * #603 A3a: the account the calling door says sent this answer, as its channel reports it, and the
    * forms that name that account (for Slack user `U1`: `U1` and `<@U1>`; default: `user` alone). With
@@ -5237,6 +5256,8 @@ function withGateClaim(
   // sentence about not passing one would be false — none is composed for `mcp_form`. Correction 2
   // (3.3): REQUIRED (an absent route is `undefined`, passed), so the compiler finds every branch.
   route: string | undefined,
+  // #625 PR-2b A2a: D-8's decision for this call, and — carried on — who continued the run.
+  carry: GateClaimCarry,
 ): EngineReply {
   if (gateClaim === undefined || envelope.status !== 'ok') return envelope;
   let openedBy: Attributed | ActorAbsent;
@@ -5257,15 +5278,159 @@ function withGateClaim(
   const sentence =
     route === 'mcp_form'
       ? undefined
-      : composeGateClaimSentence(gateClaim, answerRecorded, tokenPresented);
+      : composeGateClaimSentence(gateClaim, answerRecorded, tokenPresented, carry);
+  // #625 PR-2b A2a: who answered, read off the gate step's last answer on this reply's record — the
+  // answer this call recorded, the earlier one a replay met, or the expiry's (no one answered).
+  const answerEntry = [...run.evidence]
+    .reverse()
+    .find((e) => e.step_id === envelope.command && e.kind === 'gate_response');
   return {
     ...envelope,
     gate_claim: {
       proof: gateClaim.proof,
       ...('cause' in gateClaim ? { cause: gateClaim.cause } : {}),
       opened_by: openedBy,
+      carried_on: carry.carried_on,
+      ...(carry.carried_on
+        ? {
+            continued_by: carry.continued_by,
+            ...(carry.ranOutAfter !== undefined ? { chain_stopped: 'budget' as const } : {}),
+          }
+        : { not_carried_on_because: carry.because }),
+      answered_by: answererOf((answerEntry ?? {}) as Record<string, unknown>),
     },
     ...(sentence !== undefined ? { warnings: [...envelope.warnings, sentence] } : {}),
+  };
+}
+
+/**
+ * #625 PR-2b A2a: D-8's decision for an `ok` answer's call, as `withGateClaim` writes it: not carried
+ * on, and why; or carried on, by whom (this call's driver), and — when the call's time ran out before
+ * the next step — after which step.
+ */
+type GateClaimCarry =
+  | { carried_on: false; because: NotCarriedOnReason }
+  | { carried_on: true; continued_by: Attributed | ActorAbsent; ranOutAfter?: string };
+
+/** The reply's spelling of D-8's reasons is the holder's, both ways. */
+type ReplyReason = NonNullable<NonNullable<EngineReply['gate_claim']>['not_carried_on_because']>;
+const _sameReasons: [
+  Exclude<NotCarriedOnReason, ReplyReason>,
+  Exclude<ReplyReason, NotCarriedOnReason>,
+] extends [never, never]
+  ? true
+  : false = true;
+void _sameReasons;
+
+/**
+ * #625 PR-2b A2a (D-8): the reply of an answer whose reply is `ok`, after D-8's decision. Its facts are
+ * read on `answered`, the snapshot the answer's reply was judged on (after the answer's write and any
+ * cleanup drain). Not carried on: the answer's reply gains `gate_claim` with the reason. Carried on:
+ * the call then runs what the engine owes exactly as an `advanceRun` call on the same server would —
+ * the same registry, trace buffer store, disclosure set and driver, its `command` the gate step, its
+ * caller the answer's own word where `advanceRun` takes it (else `submitHumanResponse`) — bounded by
+ * `options.budget`, and the two replies are merged ({@link mergeCarriedOn}). A reply that is not `ok`,
+ * or whose store reported no verdict, is returned as it is: it never carries on.
+ */
+async function withCarryOn(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: SubmitGateOptions,
+  via: AnswerCaller,
+  answer: EngineReply,
+  verdict: AnswerClaim | undefined,
+  answered: Snapshot,
+  answerRecorded: boolean,
+): Promise<EngineReply> {
+  if (verdict === undefined || answer.status !== 'ok') return answer;
+  const claim = (carry: GateClaimCarry): EngineReply =>
+    withGateClaim(
+      answer,
+      verdict,
+      answered.record,
+      store.persistsClaims === true,
+      answerRecorded,
+      options.claimToken !== undefined,
+      options.route,
+      carry,
+    );
+  const registry = options.registry;
+  const decision = judgeCarryOn({
+    owed: describePending(definition, answered, registry).owed.length > 0,
+    proof: verdict.proof,
+    registry: registry !== undefined,
+    fit: registry !== undefined ? judgeProgramFit(answered.record, registry.identity) : undefined,
+  });
+  if (!decision.carried_on) return claim(decision);
+  const budget = options.budget;
+  const bound: CallBound | undefined =
+    budget !== undefined ? { remainingMs: () => budget.remainingMs() } : undefined;
+  const caller: AdvanceCaller = (ENTRY_CALLERS.advanceRun as readonly string[]).includes(via)
+    ? (via as AdvanceCaller)
+    : 'submitHumanResponse';
+  const chain = await advanceRunBody(
+    store,
+    definition,
+    {
+      runId: options.runId,
+      ...(registry !== undefined ? { registry } : {}),
+      ...(options.traceBufferStore !== undefined
+        ? { traceBufferStore: options.traceBufferStore }
+        : {}),
+      ...(options.driver !== undefined ? { driver: options.driver } : {}),
+      ...(options.disclosure !== undefined ? { disclosure: options.disclosure } : {}),
+      caller,
+      // A chained step that stops the call is named by `stopped_step`; `command` stays the gate step.
+      command: answer.command,
+    },
+    bound,
+  );
+  const ranOut = bound?.ranOut;
+  return mergeCarriedOn(
+    claim({
+      carried_on: true,
+      continued_by: options.driver ?? { by: null, absent_cause: 'driver_not_recorded' },
+      ...(ranOut !== undefined ? { ranOutAfter: ranOut.after ?? answer.command } : {}),
+    }),
+    chain,
+  );
+}
+
+/**
+ * #625 PR-2b A2a (D-8): the ONE reply of an answer whose call carried the run on, from the answer's
+ * reply (its `gate_claim` composed) and the continuation's. Pure. From the answer: `command` (the gate
+ * step), `gate_claim`, the guards its write settled (before the chain's, in `guards`),
+ * `answer_recorded`, `outcome` and `expiry` where it has them, the hint it opens with (once), its
+ * warnings (first), and — on the late, same-choice arm — its `refusal`, whose `remedy` is then this
+ * reply's own `advance` ways (none: `no_remedy`, `already_settled`). Every other member is the
+ * continuation's — `status`, `basis` (so the reply is judged on the chain's last write), the ways,
+ * `stopped_step`, `chained_auto_steps`, `ended_by`, `races` and the rest. A1's `own_act` is not used:
+ * the answer may not have been recorded (the late arm).
+ */
+function mergeCarriedOn(answer: EngineReply, chain: EngineReply): EngineReply {
+  const { refusal: chainRefusal, guards: chainGuards, ...fromChain } = chain;
+  const guards = [...(answer.guards ?? []), ...(chainGuards ?? [])];
+  let refusal = chainRefusal;
+  if (answer.refusal !== undefined) {
+    const advance = chain.ways.filter((w) => w.verb === 'advance');
+    const { no_remedy: _stale, ...own } = answer.refusal;
+    refusal = {
+      ...own,
+      remedy: advance,
+      ...(advance.length === 0 ? { no_remedy: { cause: 'already_settled' as const } } : {}),
+    };
+  }
+  return {
+    ...fromChain,
+    command: answer.command,
+    context_hint: openWithOwnAct(chain.context_hint, answer.context_hint),
+    warnings: [...answer.warnings, ...chain.warnings],
+    ...(guards.length > 0 ? { guards } : {}),
+    ...(answer.gate_claim !== undefined ? { gate_claim: answer.gate_claim } : {}),
+    ...(answer.answer_recorded !== undefined ? { answer_recorded: answer.answer_recorded } : {}),
+    ...(answer.outcome !== undefined ? { outcome: answer.outcome } : {}),
+    ...(answer.expiry !== undefined ? { expiry: answer.expiry } : {}),
+    ...(refusal !== undefined ? { refusal } : {}),
   };
 }
 
@@ -5508,13 +5673,8 @@ async function composeExpiredGateEnvelope(
   now: Date,
   expireResult: Extract<StoreSettlement, { applied: true }>,
   // issue #625: the verdict the late answer already earned (judged when its gate id matched,
-  // before the expiry was found) and the engine inputs the reply's sentence needs.
-  answerClaim: {
-    verdict: AnswerClaim | undefined;
-    tokenPresented: boolean;
-    // Correction 2 (3.3): required — every caller passes the answer's route, or `undefined`.
-    route: string | undefined;
-  },
+  // before the expiry was found). #625 PR-2b A2a: the inputs its sentence needs ride `carryOn`.
+  answerClaim: { verdict: AnswerClaim | undefined },
   // decision C151: the call this late answer is — named on the expiry line when it carried it out.
   via: AnswerCaller,
   // F1: the question's `expires_at` as read BEFORE the expiry's write (the settled record no longer
@@ -5522,6 +5682,8 @@ async function composeExpiredGateEnvelope(
   expiresAt: string | undefined,
   // The filter-mask fix (Amendment 1): the door's set, for the reply's ways only.
   disclosure: DisclosureSet | undefined,
+  // #625 PR-2b A2a: D-8's decision and, carried on, the continuation — on the same-choice (`ok`) reply.
+  carryOn: CarryOn,
 ): Promise<EngineReply> {
   const expiryReply = await composeExpiryReply(
     store,
@@ -5545,18 +5707,7 @@ async function composeExpiredGateEnvelope(
   // When a guard ended the run the sentence is the expiry sentence FOLLOWED BY the guard's — never
   // one replacing the other: the reply rule would put the guard's sentence alone on an `ok` reply
   // and leave it off a refused one.
-  const guarded = withCascadedGuards(expiryReply, expireResult);
-  // The verdict that stands: the one earned when the gate id matched. Same-choice (`ok`) replies
-  // only; a refused late answer carries none.
-  const reply = withGateClaim(
-    guarded,
-    answerClaim.verdict,
-    expireResult.run,
-    store.persistsClaims === true,
-    false,
-    answerClaim.tokenPresented,
-    answerClaim.route,
-  );
+  const reply = withCascadedGuards(expiryReply, expireResult);
   const ending = guardEndingOf(expireResult);
   // decision C211 (the architect's addendum, round 28 note 7): a late answer whose expiry ended the
   // run with a failed step `realm run resume` takes says the way back in, as an on-time answer's
@@ -5580,19 +5731,34 @@ async function composeExpiredGateEnvelope(
     remedy: advance,
     ...(advance.length === 0 ? { no_remedy: { cause: 'already_settled' as const } } : {}),
   };
-  return withResumeOffer(
-    {
-      ...reply,
-      answer_recorded: false,
-      refusal: pastDeadline,
-      ...(ending !== undefined
-        ? { context_hint: `${expiryReply.context_hint} ${ending.sentence}` }
-        : {}),
-    },
-    ended,
-    definition,
+  // The verdict that stands: the one earned when the gate id matched. Same-choice (`ok`) replies
+  // only; a refused late answer carries none and never carries the run on (D-8).
+  return carryOn(
+    withResumeOffer(
+      {
+        ...reply,
+        answer_recorded: false,
+        refusal: pastDeadline,
+        ...(ending !== undefined
+          ? { context_hint: `${expiryReply.context_hint} ${ending.sentence}` }
+          : {}),
+      },
+      ended,
+      definition,
+    ),
+    answerClaim.verdict,
+    snapshotOfBasis(expiryReply) ?? settledSnapshot(expireResult),
+    false,
   );
 }
+
+/** #625 PR-2b A2a: {@link withCarryOn} bound to one answer's call. */
+type CarryOn = (
+  answer: EngineReply,
+  verdict: AnswerClaim | undefined,
+  answered: Snapshot,
+  answerRecorded: boolean,
+) => Promise<EngineReply>;
 
 /** The expiry reply before the guard rule — see {@link composeExpiredGateEnvelope}. */
 async function composeExpiryReply(
@@ -5800,6 +5966,10 @@ async function submitHumanResponseBody(
 ): Promise<EngineReply> {
   // decision C151: the call a late answer that carries out the question's expiry is named by.
   const via: AnswerCaller = options.caller ?? 'submitHumanResponse';
+  // #625 PR-2b A2a: every `ok` answer reply goes through D-8's decision, and — carried on — the
+  // continuation and the one merge.
+  const carryOn: CarryOn = (answer, verdict, answered, answerRecorded) =>
+    withCarryOn(store, definition, options, via, answer, verdict, answered, answerRecorded);
 
   // 1. Load run — #729 PR-0 (A-9): through the one snapshot constructor; its reading — the store's,
   // taken before the load (#715 (b)) — is the instant this call judges the question at. #729 CW-1b
@@ -5938,7 +6108,7 @@ async function submitHumanResponseBody(
               ];
             }
           }
-          return withGateClaim(
+          return carryOn(
             {
               command: stepName,
               run_id: options.runId,
@@ -5976,11 +6146,8 @@ async function submitHumanResponseBody(
                 : {}),
             },
             result.gateClaim,
-            noopRun,
-            store.persistsClaims === true,
+            noopSnap,
             !gateSettledByTimeout(noopRun, stepName),
-            options.claimToken !== undefined,
-            options.route,
           );
         }
         case 'gate_choice_conflict': {
@@ -6255,14 +6422,11 @@ async function submitHumanResponseBody(
         result.lateAnswer.choice,
         result.at,
         result,
-        {
-          verdict: result.lateAnswer.gateClaim,
-          tokenPresented: options.claimToken !== undefined,
-          route: options.route,
-        },
+        { verdict: result.lateAnswer.gateClaim },
         via,
         result.lateAnswer.expiresAt,
         options.disclosure,
+        carryOn,
       );
     }
 
@@ -6320,7 +6484,7 @@ async function submitHumanResponseBody(
     // state it described.)
     // decision C205: an answer whose guards ended the run with a failed step `realm run resume`
     // takes says the way back in.
-    return withGateClaim(
+    return carryOn(
       withResumeOffer(
         withCascadedGuards(
           {
@@ -6347,11 +6511,8 @@ async function submitHumanResponseBody(
         definition,
       ),
       result.gateClaim,
-      finalRun,
-      store.persistsClaims === true,
+      finalSnap,
       true,
-      options.claimToken !== undefined,
-      options.route,
     );
   }
 }
@@ -7020,6 +7181,20 @@ interface AdvanceLoopContext {
   via: EnactedVia;
   /** @see ExecuteStepOptions.disclosure — every step the loop runs. */
   disclosure?: DisclosureSet;
+  /** #625 PR-2b A2a: the answering call's time — read before each next step is claimed. */
+  bound?: CallBound;
+}
+
+/**
+ * #625 PR-2b A2a: an answering call's time, as the carry-on is given it (`SubmitGateOptions.budget`).
+ * The advance loop reads `remainingMs` before it claims each next step; at zero or below it claims
+ * none, sets `ranOut` with the last step it ran (none: `undefined`), and returns the reply composed
+ * from the record — whose `advance` way lists what is still owed. A step that has started runs to its
+ * end. Core reads no clock: the caller measures.
+ */
+interface CallBound {
+  remainingMs: () => number;
+  ranOut?: { after: string | undefined };
 }
 
 /**
@@ -7446,8 +7621,16 @@ async function advanceLoop(
     }
 
     const nextAutoStep = pickNextEngineStep(definition, snap, options.registry);
-    if (nextAutoStep === undefined || executions >= budget) {
-      // Only agent steps, a refused step, or nothing — the reply is composed from this record.
+    // #625 PR-2b A2a: the answering call's time is spent — no next step is claimed.
+    const outOfTime =
+      nextAutoStep !== undefined &&
+      executions < budget &&
+      options.bound !== undefined &&
+      options.bound.remainingMs() <= 0;
+    if (outOfTime) options.bound!.ranOut = { after: lastRan };
+    if (nextAutoStep === undefined || executions >= budget || outOfTime) {
+      // Only agent steps, a refused step, or nothing — or the call's time is spent: the reply is
+      // composed from this record, and its `advance` way names what is still owed.
       return afterRaces({
         ...result,
         run_version: run.version,
@@ -7809,6 +7992,8 @@ async function advanceRunBody(
   store: RunStore,
   definition: WorkflowDefinition,
   options: AdvanceRunOptions,
+  // #625 PR-2b A2a: an answering call's carry-on passes its time (never a public option).
+  bound?: CallBound,
 ): Promise<EngineReply> {
   const caller: AdvanceCaller = options.caller ?? 'advanceRun';
   const command = options.command ?? caller;
@@ -7877,6 +8062,7 @@ async function advanceRunBody(
       ...(options.onNotRecorded !== undefined ? { onNotRecorded: options.onNotRecorded } : {}),
       ...(options.onGuard !== undefined ? { onGuard: options.onGuard } : {}),
       ...(options.disclosure !== undefined ? { disclosure: options.disclosure } : {}),
+      ...(bound !== undefined ? { bound } : {}),
       via: caller,
     },
     {

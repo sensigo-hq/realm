@@ -283,6 +283,10 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('string', 'options', 'channelEvidence', 'ts'),
     typed('string', 'options', 'channelEvidence', 'thread_ts'),
     typed('array', 'options', 'projectAnswerers'),
+    // #625 PR-2b A2a: the carry-on's trace buffer store, and the call's time.
+    typed('object', 'options', 'traceBufferStore'),
+    typed('object', 'options', 'budget'),
+    need('function', 'options', 'budget', 'remainingMs'),
   ],
   abandonRun: [need('string', 'runId'), typed('string', 'reason')],
   drainFinalizers: [...DEFINITION, typed('registry', 'registry'), need('string', 'runId')],
@@ -428,6 +432,8 @@ const SUBMIT_HUMAN_RESPONSE_MEMBERS = [
   'disclosure',
   'channelEvidence',
   'projectAnswerers',
+  'traceBufferStore',
+  'budget',
 ] as const satisfies readonly (keyof SubmitGateOptions)[];
 const GET_WORKFLOW_FOR_RUN_MEMBERS = [
   'retryVerb',

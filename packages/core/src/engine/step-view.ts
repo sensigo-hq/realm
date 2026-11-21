@@ -851,6 +851,22 @@ export function isAnswerEntry(entry: unknown): boolean {
   return e['kind'] === 'gate_response' && e['resolution'] !== 'expired_abort';
 }
 
+/**
+ * Who answered, as one `gate_response` entry records it — the ONE reading, for the answer view and
+ * for an answer reply's `gate_claim.answered_by` (#625 PR-2b A2a). An entry the gate's expiry wrote
+ * carries `resolution` (and the settlement's literal `responded_by: 'timeout'`, never migrated): no
+ * answer was recorded in time — the expiry wrote the default choice. Keyed on `resolution`, never on
+ * the literal — a caller may state `timeout` as its own name. Any other entry: its stated name
+ * (`readStatedAnswerer`). Total.
+ */
+export function answererOf(
+  entry: Record<string, unknown>,
+): { by: string; by_source: 'stated' } | ActorAbsent {
+  return entry['resolution'] !== undefined
+    ? { by: null, absent_cause: 'settled_by_expiry' }
+    : readStatedAnswerer(entry['responded_by']);
+}
+
 /** One `gate_response` entry as an answer. Total. */
 function composeAnswerView(entry: Record<string, unknown>): AnswerView {
   const input = entry['input_summary'];
@@ -869,16 +885,8 @@ function composeAnswerView(entry: Record<string, unknown>): AnswerView {
       : typeof outputChoice === 'string'
         ? outputChoice
         : undefined;
-  // An entry the gate's expiry wrote carries `resolution` (and the settlement's literal
-  // `responded_by: 'timeout'`, never migrated): no answer was recorded in time — the expiry wrote the default
-  // choice. Keyed on `resolution`, never on the literal — a caller may state `timeout` as its own
-  // name. (The abort expiry's entry never reaches here: `isAnswerEntry` leaves it out.)
   const settledByExpiry = entry['resolution'] !== undefined;
-  const answer: AnswerView = {
-    answered_by: settledByExpiry
-      ? { by: null, absent_cause: 'settled_by_expiry' }
-      : readStatedAnswerer(entry['responded_by']),
-  };
+  const answer: AnswerView = { answered_by: answererOf(entry) };
   if (choice !== undefined) answer.choice = choice;
   // #729 PR-6a (B8): when the answer was given — the entry's `completed_at`, as stored.
   const at = entry['completed_at'];

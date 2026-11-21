@@ -312,6 +312,9 @@ describe('THE PROOF OVER REAL STDIO — the token is handed out once, passed bac
       expect(first.gate_claim).toEqual({
         proof: 'matched',
         opened_by: { by: 'proof-row', by_source: 'ambient', channel: 'mcp-stdio' },
+        carried_on: false,
+        not_carried_on_because: 'nothing_runnable',
+        answered_by: { by: null, absent_cause: 'not_stated' },
       });
       expect(first.warnings ?? []).toEqual([]);
 

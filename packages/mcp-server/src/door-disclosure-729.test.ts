@@ -811,6 +811,30 @@ describe('#729 PR-3 correction 2 — the door', () => {
     expect({ kind: by?.kind, name: by?.name }).toEqual({ kind: 'answer', name: 'ops [REDACTED]' });
   });
 
+  it('#625 PR-2b A2a check 7: `gate_claim.answered_by.by` (the name the answer was recorded with) is hidden when it holds a value, as `outcome.by.name` is', async () => {
+    vi.stubEnv(CANARY_NAME, CANARY);
+    const { call } = await connect({ gateAnswers: 'permitted' }, [GATED]);
+    const gated = await call('start_run', { workflow_id: GATED.id, params: {} });
+    const answer = (
+      gated['next_actions'] as Array<{ instruction: { call_with: Record<string, unknown> } }>
+    )[0]!.instruction.call_with;
+    const first = await call('submit_human_response', {
+      ...answer,
+      choice: 'approve',
+      responded_by: `ops ${CANARY}`,
+    });
+    const replay = await call('submit_human_response', { ...answer, choice: 'approve' });
+    const answeredBy = (r: Record<string, unknown>) =>
+      (r['gate_claim'] as { answered_by?: unknown } | undefined)?.answered_by;
+    // Non-vacuity: both replies name who answered (a replay names the answer that settled it).
+    // (a) red when `gate_claim` is a flat fact again or `answered_by.by` is classed `fact` (the
+    //     name shows as typed); (b) prints both (markers).
+    expect([answeredBy(first), answeredBy(replay)]).toEqual([
+      { by: 'ops [REDACTED]', by_source: 'stated' },
+      { by: 'ops [REDACTED]', by_source: 'stated' },
+    ]);
+  });
+
   it("G5: a fresh process's first list hides a value one of its workflows' reads just added", async () => {
     const DECLARED = 'FAKEdeclG5x9';
     // A union provider, as the CLI's is: a workflow's read adds its declared value; the set for no

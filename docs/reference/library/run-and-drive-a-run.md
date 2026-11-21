@@ -82,7 +82,7 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`UnreadableFileFacts`](#unreadablefilefacts) | interface | The facts of one damaged stored file: names, classes and type words, never its content. |
 | [`AbandonWay`](#abandonway) | type | End the run. |
 | [`ActorAbsentCause`](#actorabsentcause) | type | Why the record names no program for an act, worked out when the record is read and never stored (`ActorAbsent.absent_cause`). |
-| [`AdvanceCaller`](#advancecaller) | type | The names a call to `advanceRun` can give for where it came from: the library call, the MCP tools `advance_run` and `start_run`, `realm run advance` or `realm agent` (`AdvanceRunOptions.caller`). |
+| [`AdvanceCaller`](#advancecaller) | type | The names a call to `advanceRun` can give for where it came from (`AdvanceRunOptions.caller`). |
 | [`AdvanceWay`](#advanceway) | type | Have the engine carry out what it owes: a due expiry first, then steps. |
 | [`AnswerCaller`](#answercaller) | type | The names a call to `submitHumanResponse` can give for where it came from (`SubmitGateOptions.caller`). |
 | [`CapabilityBasis`](#capabilitybasis) | type | What a capability refusal was judged from: the caller's own registry, or the run's marker when the caller passed none. |
@@ -1046,6 +1046,14 @@ interface EngineReply {
         proof: GateClaimVerdict['proof'];
         cause?: 'no_claim' | 'claim_has_no_token' | 'store_keeps_no_claims' | 'answered' | 'expired';
         opened_by: Attributed | ActorAbsent;
+        carried_on?: boolean;
+        not_carried_on_because?: 'nothing_runnable' | 'not_settled_by_this_call' | 'proof_absent' | 'proof_mismatch' | 'proof_unverifiable' | 'no_registry' | 'extensions_differ' | 'extensions_not_comparable';
+        chain_stopped?: 'budget';
+        continued_by?: Attributed | ActorAbsent;
+        answered_by?: {
+            by: string;
+            by_source: 'stated';
+        } | ActorAbsent;
     };
 }
 ```
@@ -1673,6 +1681,10 @@ interface SubmitGateOptions {
     principal?: Principal;
     clientPromptRequested?: boolean;
     disclosure?: DisclosureSet;
+    traceBufferStore?: TraceBufferStore;
+    budget?: {
+        remainingMs: () => number;
+    };
     channelEvidence?: {
         user: string;
         forms?: string[];
@@ -1739,8 +1751,10 @@ type ActorAbsentCause = (typeof ACTOR_ABSENT_CAUSES)[number];
 
 type · public
 
-The names a call to `advanceRun` can give for where it came from: the library call, the MCP tools
-`advance_run` and `start_run`, `realm run advance` or `realm agent` (`AdvanceRunOptions.caller`).
+The names a call to `advanceRun` can give for where it came from (`AdvanceRunOptions.caller`).
+They are the library call, the MCP tools `advance_run` and `start_run`, `realm run advance`,
+`realm agent`, and an answer that carries a run on: the MCP tool `submit_human_response` or the
+library's `submitHumanResponse`.
 
 ```ts
 type AdvanceCaller = (typeof ENTRY_CALLERS.advanceRun)[number];
@@ -2396,7 +2410,9 @@ const ENTRY_CALLERS: {
         "advance_run",
         "advance",
         "start_run",
-        "agent"
+        "agent",
+        "submit_human_response",
+        "submitHumanResponse"
     ];
     readonly executeStep: readonly [
         "executeStep",

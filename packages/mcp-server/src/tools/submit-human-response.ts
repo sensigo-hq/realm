@@ -16,8 +16,11 @@ import {
   identityRefusalLine,
   buildPreExecutionErrorEnvelope,
   getWorkflowForRun,
+  saysHowItEnded,
 } from '@sensigo/realm';
-import { mcpHostOf, principalOfStores, type HandleRunStores } from './start-run.js';
+import { formCallOf, mcpHostOf, principalOfStores, type HandleRunStores } from './start-run.js';
+import type { FormCall } from '../form-path.js';
+import { FORM_WAIT_SECONDS_DEFAULT } from '../door.js';
 import { toolMeta } from '../tool-annotations.js';
 import {
   disclosureOfTool,
@@ -107,7 +110,7 @@ export const submitHumanResponseArgsSchema = z
       .string()
       .optional()
       .describe(
-        'The claim_token in the answer instruction of the reply that opened this question (its next_actions entry). Pass it back unchanged; it shows this answer comes from the conversation that opened the question. Never required.',
+        'The claim_token in the answer instruction of the reply that opened this question (its next_actions entry). Pass it back unchanged; it shows this answer comes from the conversation that opened the question, and with it, the steps after the answer run in this call. Never required.',
       ),
   })
   .loose();
@@ -125,6 +128,8 @@ export async function handleSubmitHumanResponse(
     claim_token?: string | undefined;
   },
   stores: HandleRunStores,
+  /** #625 PR-2b A2a: the tool call's start, on the door's clock — the carry-on's time runs from it. */
+  call?: FormCall,
 ): Promise<WithPersonBlock<McpEnvelope>> {
   // issue #620 PR-C + the admission order (framework v1.27 §4): what the host handed in is checked
   // first, then what this caller sent.
@@ -203,6 +208,15 @@ export async function handleSubmitHumanResponse(
     route: 'mcp',
     principal: principalOfStores(stores),
     disclosure: waysDisclosure,
+    // #625 PR-2b A2a: an answer that carries the run on runs its steps as advance_run would — with
+    // this server's trace buffer store — and starts none later than 240 seconds after this call
+    // began: the form wait's default, whose setting is refused under `permitted`, the one setting
+    // that lists this tool. Measured on the door's monotonic clock; a step that has started runs to
+    // its end.
+    ...(stores?.traceBufferStore !== undefined
+      ? { traceBufferStore: stores.traceBufferStore }
+      : {}),
+    ...answerBudgetOf(stores, call),
   });
   const reply = withOutcomeWords(engineReply);
   // decision C211 (walk c14 W3-4's class): an answer that ended the run with cleanup steps left
@@ -224,6 +238,18 @@ export async function handleSubmitHumanResponse(
   if (endedSnap === undefined)
     return mcpReplyOf(withHintTail(renderReply(reply, host), endingTail));
   const ended = endedSnap.record;
+  // #625 PR-2b A2a correction 1 (C205): a reply that carried the run on is the continuation's, so its
+  // ended-run tail is advance_run's — how the run ended when someone else ended it, the cleanup step
+  // left pending, and the way back in, each said once. Core's hint holds none of them: its resume
+  // offer rides only the answer's own reply, composed while the run was still open.
+  if (engineReply.gate_claim?.carried_on === true) {
+    return mcpReplyOf(
+      withHintTail(
+        renderReply(reply, host),
+        endedRunWaysSentence(ended, definition, endedSnap.at, saysHowItEnded(engineReply, ended)),
+      ),
+    );
+  }
   // #729 PR-0: the ended run's ways back in follow the door's own sentence of what comes next, as
   // before PR-0 (withPendingCleanup's rule, kept whole): the cleanup sentence once — never when the
   // hint already names its command (F11) — and, when core's hint ends with the resume offer, the
@@ -237,8 +263,25 @@ export async function handleSubmitHumanResponse(
   const hint = reply.context_hint;
   const moved = offer !== '' && hint.endsWith(offer);
   const own = moved ? { ...reply, context_hint: hint.slice(0, hint.length - offer.length) } : reply;
+  // An answer that did not carry the run on: core's refusal of an answer to an ended run already says
+  // how it ended (A1b-1), so the tail never says it again.
   const tail = `${endingTail}${named ? '' : cleanup}${moved ? offer : ''}`;
   return mcpReplyOf(withHintTail(renderReply(own, host), tail));
+}
+
+/**
+ * #625 PR-2b A2a: the answer's carry-on budget — the answer tool's cap, 240 seconds
+ * (`FORM_WAIT_SECONDS_DEFAULT`), less what this call has spent since its start, on the door's clock.
+ * None when the call's start is unknown (a direct handler call with no door).
+ */
+function answerBudgetOf(
+  stores: HandleRunStores,
+  call: FormCall | undefined,
+): { budget?: { remainingMs: () => number } } {
+  const door = stores?.door;
+  if (call === undefined || door === undefined) return {};
+  const capMs = FORM_WAIT_SECONDS_DEFAULT * 1000;
+  return { budget: { remainingMs: () => capMs - (door.monotonicNow() - call.started) } };
 }
 
 /**
@@ -295,9 +338,10 @@ export function registerSubmitHumanResponse(
       inputSchema: boundedRefusal(submitHumanResponseArgsSchema),
     },
     safeTool(
-      async (rawArgs) => {
+      async (rawArgs, extra) => {
         const args = rawArgs as z.infer<typeof submitHumanResponseArgsSchema>;
-        const result = await handleSubmitHumanResponse(args, opts);
+        // #625 PR-2b A2a: the call's start, taken first — the carry-on's 240 seconds run from it.
+        const result = await handleSubmitHumanResponse(args, opts, formCallOf(opts, extra));
         const unknown = unknownKeyWarnings(args as Record<string, unknown>);
         return toolContentOf(
           {
