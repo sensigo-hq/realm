@@ -128,19 +128,23 @@ describe('callback K2b — the master key’s command, a third name', () => {
     }).toEqual({ names: [], kept: 'kept-value', listenKeepsCommand: true });
   });
 
-  it('a log and an agent never see the command’s value', () => {
+  it('a log and an agent never see the command’s value: the sweep hides it whole', () => {
     const text = `ran ${COMMAND}`;
-    const hidden = (audience: 'log' | 'agent') => {
+    const shown = (audience: 'log' | 'agent') => {
       const { set } = buildDisclosureSet({
         env: { REALM_ENCRYPTION_KEY_COMMAND: COMMAND },
         declared: {},
         declaredState: 'resolved',
         audience,
       });
-      return !disclose(text, set, tierFor(audience)).text.includes('FAKE-TOKEN-0001');
+      return disclose(text, set, tierFor(audience)).text;
     };
-    // (1) red when the name is placed among the settings (its value is then shown whole on a log);
-    //     (2) prints, per audience, whether the token is hidden.
-    expect({ log: hidden('log'), agent: hidden('agent') }).toEqual({ log: true, agent: true });
+    // (1) red when the name is placed among the settings: its value is then shown, and only the
+    //     token pattern's own rule still hides `--token <word>` (`ran op read x --token [REDACTED]`);
+    //     (2) prints what each audience is shown.
+    expect({ log: shown('log'), agent: shown('agent') }).toEqual({
+      log: 'ran [REDACTED]',
+      agent: 'ran [REDACTED]',
+    });
   });
 });
