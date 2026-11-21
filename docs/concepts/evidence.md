@@ -82,6 +82,7 @@ A run can be `completed` and still list a failed step. That happens when a step 
 ```text
 Phase: completed  ✓
 Failed: pay
+  pay: ENGINE_HANDLER_FAILED (ENGINE) — stopped: no_retry_policy; next: stop (attempt 1) — Handler 'pay' threw: payment provider declined 500
 Run Health (1 finding(s)):
   completed_with_failed_steps: completed with 1 failed step(s): pay …
 ```

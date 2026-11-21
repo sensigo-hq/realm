@@ -158,6 +158,7 @@ Step 'assess' completed. Step 'pay' failed. Recovery steps are available in next
 Phase: completed  ✓
 Completed: assess, only_low_risk, open_ticket, flag_large, close_books
 Failed: pay
+  pay: ENGINE_HANDLER_FAILED (ENGINE) — stopped: no_retry_policy; next: stop (attempt 1) — Handler 'pay' threw: payment provider declined 500
 Skipped: send_receipt
   send_receipt: trigger_rule_unsatisfiable: all_success, dep pay failed
 Run Health (1 finding(s)):

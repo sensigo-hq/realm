@@ -35,6 +35,7 @@ import {
   formatInstantWords,
   getWorkflowForRun,
   composeStepViews,
+  composeFailures,
   composeDriveFailureCosts,
   evidenceModelTextView,
   failureModelTextView,
@@ -47,6 +48,11 @@ import {
   buildDisclosureSet,
   escapedBoundedValue,
   FIXED_TERMINAL_REASONS,
+  ERROR_CODES,
+  ERROR_CATEGORIES,
+  AGENT_ACTIONS,
+  STOP_REASONS,
+  type FailureView,
   type DisclosureReceipt,
   controlEscape,
   readAttributed,
@@ -223,6 +229,38 @@ function cliRespondWay(
   });
   const way = narrowed.ways.find((w) => w.verb === 'respond' && w.for.length > 0);
   return way !== undefined && way.verb === 'respond' ? way : undefined;
+}
+
+/**
+ * Q1 (#592) unit b: one failed step's line under `Failed:`, from core's composed view — never from
+ * the evidence directly, so it says what `get_run_state`'s `failures[]` says. A clause whose word
+ * the entry lacks is left out; a word outside its list prints as recorded, then ` (unknown word)`.
+ * The message goes through the value channel, as `Cause:` does.
+ */
+function formatFailureLine(view: FailureView): string {
+  const ctx = writerCtx();
+  if ('absent' in view) {
+    if (view.absent === 'entry_not_found') return `  ${view.step}: no failed entry on the record`;
+    const attempt = view.attempt !== undefined ? ` (attempt ${view.attempt})` : '';
+    return `  ${view.step}: ${ctx.value(view.message)}${attempt} (words not recorded: written by Realm 0.50.0 or earlier)`;
+  }
+  const unknown: readonly string[] = view.unknown ?? [];
+  const word = (key: string, value: string, list: readonly string[]): string =>
+    `${ctx.word(value, list)}${unknown.includes(key) ? ' (unknown word)' : ''}`;
+  let line = `  ${view.step}: ${word('code', view.code, ERROR_CODES)}`;
+  if (view.category !== undefined) {
+    line += ` (${word('category', view.category, ERROR_CATEGORIES)})`;
+  }
+  const clauses: string[] = [];
+  if (view.stop_reason !== undefined) {
+    clauses.push(`stopped: ${word('stop_reason', view.stop_reason, STOP_REASONS)}`);
+  }
+  if (view.agent_action !== undefined) {
+    clauses.push(`next: ${word('agent_action', view.agent_action, AGENT_ACTIONS)}`);
+  }
+  if (clauses.length > 0) line += ` — ${clauses.join('; ')}`;
+  if (view.attempt !== undefined) line += ` (attempt ${view.attempt})`;
+  return `${line} — ${ctx.value(view.message)}`;
 }
 
 function formatSkipDetail(detail: SkipDetail): string {
@@ -1758,6 +1796,8 @@ export async function inspectRun(
     lines.push(`  ${heldWithoutDefinitionLine(run.id, writerCtx())}`);
   }
   lines.push(`Failed: ${run.failed_steps.join(', ') || '(none)'}`);
+  // Q1 (#592) unit b: one line per failed step, from the one composer `get_run_state` reads too.
+  for (const failure of composeFailures(run)) lines.push(formatFailureLine(failure));
   lines.push(`Skipped: ${run.skipped_steps.join(', ') || '(none)'}`);
   for (const stepName of run.skipped_steps) {
     const detail = run.skip_details?.[stepName];

@@ -1324,7 +1324,14 @@ describe('#872 (b1) B11 — run-state-and-health.md: the ceiling, the cursor, st
     );
     claim(
       PAGE,
-      '| `defaulted_steps_more`, `skipped_steps_more`, `completed_steps_more`, `skip_details_more`, `waiting_on_answer_more`, `pending_guards_more`, `step_claims_more`, `stuck_claims_more`, `in_progress_steps_more`, `failed_steps_more`, `engine_runnable_more`, `agent_refused_more`, `capability_blocks_more`, `next_actions_more` | The reply ceiling shortened that list | How many entries it left out; the list keeps its first ones ([the ceiling](tools.md#the-reply)). Added after version 0.48.0. |',
+      '| `defaulted_steps_more`, `skipped_steps_more`, `completed_steps_more`, `skip_details_more`, `waiting_on_answer_more`, `pending_guards_more`, `step_claims_more`, `stuck_claims_more`, `in_progress_steps_more`, `failures_more`, `failed_steps_more`, `engine_runnable_more`, `agent_refused_more`, `capability_blocks_more`, `next_actions_more` | The reply ceiling shortened that list | How many entries it left out; the list keeps its first ones ([the ceiling](tools.md#the-reply)). Added after version 0.48.0; `failures_more` after version 0.50.0. |',
+    );
+    // Q1 (#592) unit b: the `failures` row. Its runtime claims are executed in core
+    // `failure-view-592b.test.ts` (the keys, the cap, the two absences, `unknown`, the retried step's
+    // wrap action and last attempt, resume, `[]`) and cli `failures-592b.test.ts` (the reply's entries).
+    claim(
+      PAGE,
+      '| `failures` | One entry per step in `failed_steps`, from its last failed attempt\'s evidence entry: `step`, `code` (the error code), `category`, `stop_reason` (why Realm stopped retrying), `agent_action` (the action word on that entry — where the step ran out of retries, the wrap\'s `report_to_user`), `attempt`, and `message` (the attempt\'s own error text, at most 500 characters; `terminal_reason` is unchanged beside it). A word Realm does not know is kept as recorded and named in `unknown`. An entry written by Realm 0.50.0 or earlier has no words: the entry reads `absent: "written_before_failure_words"` with the message; a step with no failed entry on the record reads `absent: "entry_not_found"`. A step resumed with `realm run resume` has left `failed_steps` and is not listed until it fails again. `[]` when nothing failed. Added after version 0.50.0. |',
     );
     claim(
       PAGE,
