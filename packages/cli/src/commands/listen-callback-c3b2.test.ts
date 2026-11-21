@@ -12,6 +12,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { executeStep, type RunStore } from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
+import type { ChildExit } from '../agent/startup-failure.js';
 import { parseCallbackEntry, type CallbackLists } from '../lib/callback/allow-list.js';
 import { InMemoryDedupStore } from '../lib/dedup-store.js';
 import {
@@ -105,12 +106,15 @@ const signedBy = (key: string, post: Post): string =>
     .update(`${post.headers['webhook-id']}.${post.headers['webhook-timestamp']}.${post.body}`)
     .digest('base64')}`;
 
-/** A fake agent start: every start succeeds, and its process exits when the cell says. */
+/**
+ * A fake agent start: every start succeeds, and its process exits when the cell says, with exit
+ * code 0 (the end a finished agent gives; listen's startup mark leaves an exit code alone).
+ */
 function agents() {
   const exits = new Map<string, () => void>();
   const spawnAgent = vi.fn(async (runId: string): Promise<SpawnResult> => ({
     pid: 4242,
-    exited: new Promise<void>((r) => exits.set(runId, r)),
+    exited: new Promise<ChildExit>((r) => exits.set(runId, () => r({ code: 0, signal: null }))),
   }));
   const exit = (runId: string): void => {
     const done = exits.get(runId);

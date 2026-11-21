@@ -58,6 +58,7 @@ import { slackPostPath } from '../agent/gate/slack-post-file.js';
 import { slackResponse } from '../agent/test-support/slack-response.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { createCallbackKeySealer } from '@sensigo/realm-store-sqlite';
+import type { ChildExit } from '../agent/startup-failure.js';
 import { parseCallbackEntry, type CallbackLists } from '../lib/callback/allow-list.js';
 import { http } from '../test-support/listen-read-r11.js';
 
@@ -1350,10 +1351,11 @@ describe(
         },
       });
       await abandonRun(r.store, record.id);
+      // The agent exits with code 0, the end a finished agent gives.
       const exits: Array<() => void> = [];
       const spawnAgent = async (): Promise<SpawnResult> => ({
         pid: 1,
-        exited: new Promise<void>((res) => exits.push(res)),
+        exited: new Promise<ChildExit>((res) => exits.push(() => res({ code: 0, signal: null }))),
       });
       vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
       const timers = vi.spyOn(globalThis, 'setInterval');
