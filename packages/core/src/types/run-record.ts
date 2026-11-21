@@ -1161,10 +1161,11 @@ export interface EvidenceSnapshot {
   model_text?: ModelText;
   /**
    * Gap 2, unit (i-a): the failed tries of the attempt's model requests ({@link ModelAttempt}), in
-   * send order, with no text and no usage. Written as a program that embeds the engine passes it in
-   * `StepMeta.modelAttempts`, each entry closed at the write to its eight members; Realm writes none
-   * yet. Absent means Realm recorded no tries for the entry: every entry Realm writes today, and
-   * every entry written by Realm 0.50.0 or earlier. No surface fills it in.
+   * send order, with no text and no usage. Each entry is closed at the write to its eight members.
+   * `realm agent` and `realm listen` write it for an agent step that declares `retry` (gap 2, unit
+   * (i-b)); a program that embeds the engine can still pass its own in `StepMeta.modelAttempts`.
+   * Absent means no tries were recorded for the entry, as on every entry written by Realm 0.50.0 or
+   * earlier. No surface fills it in.
    */
   model_attempts?: ModelAttempt[];
   /**
@@ -1798,8 +1799,8 @@ export interface DriveFailureRecord {
   /** The HTTP status last seen for this attempt, when the error carried one. */
   last_observed_status?: number;
   /**
-   * A `Retry-After` value OBSERVED on the wire — never honored. Recording what the service asked
-   * for is a diagnostic; acting on it would be a scheduling decision this layer does not make.
+   * A `Retry-After` value observed on the wire. On a step that declares `retry`, the drive honours it
+   * within the step's cap (gap 2, unit (i-b)); on a step without, it is a diagnostic only.
    * Populated when the throwing error carries a driveCall payload.
    */
   retry_after_observed_ms?: number;
@@ -1831,7 +1832,8 @@ export interface DriveFailureRecord {
   model_text?: DriveFailureModelText;
   /**
    * Gap 2, unit (i-a): the failed tries of the model requests this failure covers
-   * ({@link ModelAttempt}), in send order, with no text and no usage. Realm writes none yet. Absent
+   * ({@link ModelAttempt}), in send order, with no text and no usage. `realm agent` and
+   * `realm listen` write it for an agent step that declares `retry` (gap 2, unit (i-b)). Absent
    * means Realm recorded no tries for the entry, as on every entry written by Realm 0.50.0 or
    * earlier. A listing of runs keeps it.
    */

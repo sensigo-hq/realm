@@ -500,9 +500,9 @@ export interface RetryConfig {
    * attempt runs to its own timeout and, on timing out, exhausts the budget — it is never
    * reported as clipped. Elapsed budget is measured on the monotonic clock; the persisted claim
    * horizon stays wall-clock (it is anchored at claim time).
-   * Positive integer (E2) — same convention as `timeout_seconds`. Inert on a non-`execution:
-   * 'auto'` step (W5 warns) — the cap only bounds `auto` dispatch, which is the only dispatch
-   * ever wrapped in a timeout.
+   * Positive integer (E2) — same convention as `timeout_seconds`. On an agent step that declares
+   * `retry`, it is the cap on each model request with all its tries, waits and re-sends, under
+   * `realm agent` and `realm listen` (gap 2, unit (i-b)). Inert on a guard step (W5 warns).
    */
   total_timeout_seconds?: number;
 }

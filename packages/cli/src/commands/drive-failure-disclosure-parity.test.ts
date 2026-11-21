@@ -65,9 +65,40 @@ const ENTRY: DriveFailureRecord = {
 const FENCE_WAIVER =
   "the fence against a stale drive-failure entry (the run's evidence count and open question when the entry was appended), consumed by the drive_failing finding; visible verbatim on the MCP door (get_run_state, so an agent can reason about staleness) and as record fields in `realm run export`; inspect shows the finding itself when the fence holds, and nothing of the fence when it does not";
 
-/** Gap 2, unit (i-a): why inspect does not show a drive failure's `model_attempts` yet. */
-const ATTEMPTS_WAIVER =
-  "the failed tries of a failure's model requests (gap 2, unit i-a): Realm writes none until unit (i-b), which shows them in inspect";
+/**
+ * Gap 2, unit (i-b): a second failure, of a step that declares `retry`, carrying its failed tries:
+ * inspect lists them as `Failed tries:` and shows Realm's attempt number in its line. `ENTRY`
+ * carries none, so its line still shows the model client's `attempts_sdk`.
+ */
+const ENTRY_TRIES: DriveFailureRecord = {
+  at: '2026-01-01T00:05:00.000Z',
+  step: 'classify',
+  provider: 'anthropic',
+  error_class: 'api_status',
+  message: 'overloaded upstream',
+  attempts_sdk: 1,
+  elapsed_ms: 900,
+  last_observed_status: 503,
+  model_attempts: [
+    {
+      request: 0,
+      kind: 'transient',
+      error_class: 'api_status',
+      status: 503,
+      wait_ms: 500,
+      retry_after_ms: null,
+    },
+    {
+      request: 0,
+      kind: 'transient',
+      error_class: 'api_status',
+      status: 503,
+      wait_ms: null,
+      retry_after_ms: null,
+      exhausted_by: 'attempts',
+    },
+  ],
+};
 
 const DRIVE_FAILURE_DISCLOSURE = {
   at: { surface: 'rendered', probe: (out) => expect(out).toContain(ENTRY.at) },
@@ -112,7 +143,13 @@ const DRIVE_FAILURE_DISCLOSURE = {
       expect(out).not.toContain('Model text');
     },
   },
-  model_attempts: { surface: 'waived', reason: ATTEMPTS_WAIVER },
+  model_attempts: {
+    surface: 'rendered',
+    probe: (out) => {
+      expect(out).toContain('    Failed tries: 2 (transient 503, transient 503)');
+      expect(out).toContain('overloaded upstream (status 503) (attempt 2)');
+    },
+  },
   usage: {
     surface: 'rendered',
     probe: (out) => {
@@ -138,7 +175,7 @@ const run = {
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:00.000Z',
   terminal_state: false,
-  drive_failures: { first_failed_at: ENTRY.at, total: 1, entries: [ENTRY] },
+  drive_failures: { first_failed_at: ENTRY.at, total: 2, entries: [ENTRY, ENTRY_TRIES] },
 } as unknown as RunRecord;
 
 const store = {
@@ -170,7 +207,7 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
     }
   });
 
-  it('the registry covers every field, and waives only the two fence fields and model_attempts, for their written reasons', () => {
+  it('the registry covers every field, and waives only the two fence fields, for their written reason', () => {
     expect(Object.keys(DRIVE_FAILURE_DISCLOSURE).sort()).toEqual(
       [
         'at',
@@ -202,7 +239,6 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
     ).toEqual([
       ['evidence_count', FENCE_WAIVER],
       ['gate_id', FENCE_WAIVER],
-      ['model_attempts', ATTEMPTS_WAIVER],
     ]);
   });
 });

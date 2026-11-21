@@ -46,8 +46,9 @@ import {
   renderSubmissionProblems,
   extractHttpStatus,
   driveCreate,
+  clientRetries,
+  type ModelResend,
   makeCountingFetch,
-  MAX_RETRIES,
   type LlmClock,
   type WireCounters,
   attachBilledUsage,
@@ -619,6 +620,18 @@ export function workspaceRefusal(
   }
 }
 
+/** Gap 2, unit (i-b): whether `err` is a workspace refusal, as `driveCreate` asks it. */
+function refusesWorkspace(err: unknown): boolean {
+  return workspaceRefusal(err) !== undefined;
+}
+
+/** Gap 2, unit (i-b): a 503 whose text says the strict grammar cannot be compiled now (#236). */
+function grammarUnavailable(err: unknown): boolean {
+  return (
+    extractHttpStatus(err) === 503 && extractErrorMessage(err).includes(GRAMMAR_UNAVAILABLE_TEXT)
+  );
+}
+
 /** Issue #1122 — the line under the failure line, for each workspace refusal (W1, W2, W3). */
 const WORKSPACE_REFUSAL_LINES = {
   missing:
@@ -652,11 +665,13 @@ interface CacheAsk {
 async function sendAsking<T>(
   ask: CacheAsk,
   body: Rec,
-  post: (body: Rec) => Promise<T>,
+  post: (body: Rec, resend?: ModelResend) => Promise<T>,
   withoutQuestion: () => Rec,
+  // Gap 2, unit (i-b): the re-send this first send is, when it is one (the gateway rule's).
+  resend?: ModelResend,
 ): Promise<T> {
   try {
-    return await post(body);
+    return await post(body, resend);
   } catch (err) {
     // Issue #1122: a workspace refusal stops here; no re-send would be accepted.
     if (
@@ -668,7 +683,7 @@ async function sendAsking<T>(
       throw err;
     }
     ask.probed = true;
-    const response = await post(withoutQuestion());
+    const response = await post(withoutQuestion(), 'cache_probe');
     ask.asking = false;
     return response;
   }
@@ -694,15 +709,26 @@ async function createMessageWithLadder(
 ): Promise<any> {
   // ONE signature fits every create site: the body, plus the per-create options driveCreate adds.
   const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.messages.create(b, o);
-  const bounded = (body: Rec): Promise<unknown> =>
+  // Gap 2, unit (i-b): `resend` names a re-send of the request before it (the gateway rule, the
+  // cache probe, the strict ladder), which uses no try of a step that declares `retry`.
+  // A grammar-unavailable 503 on a request sent while strict is on goes to the ladder at once.
+  const bounded = (body: Rec, resend?: ModelResend): Promise<unknown> =>
     clock !== undefined && counters !== undefined
-      ? driveCreate(rawCreate, body, clock, counters)
+      ? driveCreate(rawCreate, body, clock, counters, {
+          resend,
+          workspaceRefusal: refusesWorkspace,
+          toLadder: state.strict ? grammarUnavailable : undefined,
+        })
       : rawCreate(body, {});
 
-  const send = async (withCache: boolean): Promise<unknown> => {
+  const send = async (withCache: boolean, resend?: ModelResend): Promise<unknown> => {
     const strict = state.strict;
-    const response = await sendAsking(ask, buildOpts(strict, withCache), bounded, () =>
-      buildOpts(strict, withCache, false),
+    const response = await sendAsking(
+      ask,
+      buildOpts(strict, withCache),
+      bounded,
+      () => buildOpts(strict, withCache, false),
+      resend,
     );
     if (strict) state.meta = { requested: true, sent: true };
     return response;
@@ -724,7 +750,7 @@ async function createMessageWithLadder(
           : 'service_unavailable';
     state.strict = false; // sticky for the rest of THIS invocation
     try {
-      const response = await bounded(buildOpts(false, withCache));
+      const response = await bounded(buildOpts(false, withCache), 'strict_ladder');
       state.meta = { requested: true, sent: false, downgrade_reason, api_message };
       return response;
     } catch (retryErr) {
@@ -1001,9 +1027,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // ceiling the SDK enforces; `maxRetries` is stated explicitly because the ceiling formula
       // in deriveLlmClock multiplies by it (A4-5) — realm's arithmetic must not be hostage to an
       // SDK default that could change. `fetch` counts the wire attempts and observes the
-      // rate-limit headers so a fired bound can say WHY (never honored — R-4).
+      // rate-limit headers so a fired bound can say WHY; a step that declares `retry` honours
+      // the Retry-After within its cap (gap 2, unit (i-b)), and the client's own retries are off.
       ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
-      maxRetries: MAX_RETRIES,
+      maxRetries: clientRetries(clock),
       fetch: makeCountingFetch(counters),
       // Issue #1122: `anthropic-workspace-id` on every request, when ANTHROPIC_WORKSPACE_ID is set.
       ...workspaceClientOptions(),
@@ -1380,9 +1407,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // ceiling the SDK enforces; `maxRetries` is stated explicitly because the ceiling formula
       // in deriveLlmClock multiplies by it (A4-5) — realm's arithmetic must not be hostage to an
       // SDK default that could change. `fetch` counts the wire attempts and observes the
-      // rate-limit headers so a fired bound can say WHY (never honored — R-4).
+      // rate-limit headers so a fired bound can say WHY; a step that declares `retry` honours
+      // the Retry-After within its cap (gap 2, unit (i-b)), and the client's own retries are off.
       ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
-      maxRetries: MAX_RETRIES,
+      maxRetries: clientRetries(clock),
       fetch: makeCountingFetch(counters),
       // Issue #1122: `anthropic-workspace-id` on every request, when ANTHROPIC_WORKSPACE_ID is set.
       ...workspaceClientOptions(),
@@ -1395,9 +1423,16 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // options driveCreate adds (the abort signal). Bypassed when no clock was threaded — a
     // direct caller of this provider gets the record, never the bound (record R-14).
     const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.messages.create(b, o);
+    // A grammar-unavailable 503 on a turn sent while tool strict is on goes to the ladder at once.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const send = (body: Rec): Promise<any> =>
-      clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
+    const send = (body: Rec, resend?: ModelResend): Promise<any> =>
+      clock !== undefined
+        ? driveCreate(rawCreate, body, clock, counters, {
+            resend,
+            workspaceRefusal: refusesWorkspace,
+            toLadder: toolArgsStrictActive ? grammarUnavailable : undefined,
+          })
+        : rawCreate(body, {});
     // issue #610: the ONE point every request of this loop goes through, and the one place it is
     // recorded. The record is pushed the instant the answer arrives, before any code reads it: a
     // throw while reading must not lose what was billed. A request that fails on the wire has no
@@ -1407,6 +1442,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const bounded = async (
       body: Rec,
       facts: (response: unknown, client: unknown) => Partial<UsageRecord>,
+      // Gap 2, unit (i-b): the re-send this is, when it is one.
+      resend?: ModelResend,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ): Promise<any> => {
       const requestStart = new Date().toISOString();
@@ -1414,7 +1451,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const response = await trackSend(
         callTexts,
         () => anthropicSentText(body),
-        () => send(body),
+        () => send(body, resend),
       );
       // Gap 1, unit A1: the request's text beside its record, in the same statement.
       pushAnswered(
@@ -1661,18 +1698,22 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
             this.choiceFor(options.cacheChoice),
           ),
         });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const send = async (withCache: boolean): Promise<{ response: any; key: string }> => {
+      const send = async (
+        withCache: boolean,
+        resend?: ModelResend,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ): Promise<{ response: any; key: string }> => {
         const sentStrict = toolArgsStrictActive;
         let request = buildMainCallOpts(withCache);
         const response = await sendAsking(
           this.cacheAsk,
           request.body,
-          (body) => bounded(body, facts(withCache, body)),
+          (body, r) => bounded(body, facts(withCache, body), r),
           () => {
             request = buildMainCallOpts(withCache, false);
             return request.body;
           },
+          resend,
         );
         // Only a strict-DECORATED request that came back 200 counts toward the disclosed
         // "turns before drop" — that is exactly what the number claims.
@@ -1711,7 +1752,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         // thinking of the turns made while strict was on stays out of it.
         const retry = buildMainCallOpts(withCache);
         return {
-          response: await bounded(retry.body, facts(withCache, retry.body)),
+          response: await bounded(retry.body, facts(withCache, retry.body), 'strict_ladder'),
           key: retry.key,
         };
       };

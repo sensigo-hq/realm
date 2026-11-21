@@ -64,6 +64,7 @@ import {
   type WorkflowRegistrar,
   type DisclosureSet,
   type NextActionsStatus,
+  failedRequestSends,
 } from '@sensigo/realm';
 import { mcpHostOf } from './start-run.js';
 import type { McpDoor } from '../door.js';
@@ -298,6 +299,12 @@ function boundedRunHealth(findings: readonly RunHealthFinding[]): {
  */
 export type DriveFailureView = Omit<DriveFailuresField['entries'][number], 'model_text'> & {
   usage_more?: number;
+  /**
+   * Gap 2, unit (i-b): Realm's attempt number, for an entry that carries `model_attempts` (a step
+   * that declares `retry`): the sends of the request that failed last, its tries and re-sends.
+   * `attempts_sdk` beside it stays the model client's own count.
+   */
+  attempt?: number;
 };
 
 /** H7: the run's failed drives as get_run_state shows them. */
@@ -317,18 +324,34 @@ function boundedDriveFailures(field: DriveFailuresField): DriveFailuresView {
     entries: field.entries.map((entry) => {
       const { model_text: _text, ...shown } = entry;
       void _text;
-      return shown.usage !== undefined && shown.usage.length > DRIVE_USAGE_SHOWN
-        ? (Object.fromEntries(
-            Object.entries(shown).flatMap(([key, value]) =>
-              key === 'usage'
-                ? [
-                    [key, shown.usage!.slice(0, DRIVE_USAGE_SHOWN)],
-                    [`usage${MORE}`, shown.usage!.length - DRIVE_USAGE_SHOWN],
-                  ]
-                : [[key, value]],
-            ),
-          ) as DriveFailureView)
-        : shown;
+      const view: DriveFailureView =
+        shown.usage !== undefined && shown.usage.length > DRIVE_USAGE_SHOWN
+          ? (Object.fromEntries(
+              Object.entries(shown).flatMap(([key, value]) =>
+                key === 'usage'
+                  ? [
+                      [key, shown.usage!.slice(0, DRIVE_USAGE_SHOWN)],
+                      [`usage${MORE}`, shown.usage!.length - DRIVE_USAGE_SHOWN],
+                    ]
+                  : [[key, value]],
+              ),
+            ) as DriveFailureView)
+          : shown;
+      // Gap 2, unit (i-b): Realm's attempt number beside the client's `attempts_sdk`, for an entry
+      // whose failure is the failed send that ended the last request in its `model_attempts`; at
+      // the end when the entry has no `attempts_sdk`.
+      const attempt = failedRequestSends(entry.model_attempts);
+      if (attempt === undefined) return view;
+      const pairs = Object.entries(view).flatMap(([key, value]): Array<[string, unknown]> =>
+        key === 'attempts_sdk'
+          ? [
+              [key, value],
+              ['attempt', attempt],
+            ]
+          : [[key, value]],
+      );
+      if (view.attempts_sdk === undefined) pairs.push(['attempt', attempt]);
+      return Object.fromEntries(pairs) as DriveFailureView;
     }),
   };
 }
@@ -364,7 +387,9 @@ function boundedResumable(way: { steps: string[]; command: string }): {
 const CORE_DRIVE_FAILURES_TABLE = RUN_RECORD_TABLE.drive_failures.nested;
 export const DRIVE_FAILURES_VIEW_TABLE = {
   ...CORE_DRIVE_FAILURES_TABLE,
-  entries: { nested: { ...CORE_DRIVE_FAILURES_TABLE.entries.nested, usage_more: 'fact' } },
+  entries: {
+    nested: { ...CORE_DRIVE_FAILURES_TABLE.entries.nested, usage_more: 'fact', attempt: 'fact' },
+  },
 } as const;
 
 export const ENGINE_RUNNABLE_TABLE = {

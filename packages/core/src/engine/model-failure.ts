@@ -199,3 +199,19 @@ export function closeModelAttempts(value: unknown): ModelAttempt[] | undefined {
   }
   return closed;
 }
+
+/**
+ * Gap 2, unit (i-b): Realm's attempt number for a failure whose entry carries `model_attempts`: the
+ * sends of the last listed request (its tries and its re-sends), read from the entry's tries, when
+ * that request's last listed try ended it: nothing followed that try (no wait, no re-send). Then the
+ * failure is that request's failed send. When the try was followed by a wait or answered by a
+ * re-send, the request got its answer, and the failure is something else (an answer that could not
+ * be used, a tool or engine error): `undefined`, as for an entry with no tries. A reader shows it
+ * where it shows the model client's own `attempts_sdk`, which stays the client's count.
+ */
+export function failedRequestSends(tries: readonly ModelAttempt[] | undefined): number | undefined {
+  if (tries === undefined || tries.length === 0) return undefined;
+  const last = tries[tries.length - 1]!;
+  if (last.wait_ms !== null || last.then !== undefined) return undefined;
+  return tries.filter((t) => t.request === last.request).length;
+}

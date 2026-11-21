@@ -168,6 +168,7 @@ steps:
     execution: agent
     retry:
       max_attempts: 2
+      jitter: 1
 `;
 
   const HAPPY_FIXTURE = `name: happy
@@ -217,7 +218,8 @@ expected:
     // deleted now — printLoaderWarnings and this loop render identically — so the wording check
     // below can no longer discriminate that specific swap either; see its own comment.
     const unknownKeyLines = lines.filter((l: string) => l.includes("unknown key 'frobnicate'"));
-    const retryInertLines = lines.filter((l: string) => l.includes("'retry' is inert"));
+    // Gap 2, unit (i-b): `retry` is read on an agent step now; its warning is an unknown retry key.
+    const retryInertLines = lines.filter((l: string) => l.includes("unknown key 'jitter'"));
     expect(unknownKeyLines).toHaveLength(1);
     expect(retryInertLines).toHaveLength(1);
 

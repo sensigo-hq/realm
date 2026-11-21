@@ -397,12 +397,15 @@ version: 1
 steps:
   a:
     description: a
-    execution: agent
+    execution: guard
+    abort_unless: ["a.ok == true"]
+    # gap 2 (i-b): an agent step's retry now applies; a guard step's still warns
     retry:
       max_attempts: 3
   b:
     description: b
-    execution: agent
+    execution: guard
+    abort_unless: ["b.ok == true"]
     depends_on: [a]
     retry:
       max_attempts: 2

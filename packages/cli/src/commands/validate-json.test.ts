@@ -452,7 +452,8 @@ export default {
 `,
         'utf8',
       );
-      // The fixture ALSO declares retry: on an agent step — a warning-free fixture would make
+      // The fixture ALSO declares an unknown retry key on an agent step (gap 2, unit (i-b): `retry`
+      // itself is read there now) — a warning-free fixture would make
       // this pin []-vacuous (verified: an agent+retry fixture with a hard error throws with
       // err.warnings: ['RETRY_INERT_NON_AUTO'] — the #424 attach carries it).
       const p = writeWorkflow(
@@ -479,6 +480,7 @@ steps:
       max_attempts: 3
       backoff: fixed
       base_delay_ms: 10
+      jitter: 1
 `,
       );
 
@@ -496,7 +498,8 @@ steps:
       expect(result['workflow_id']).toBe('j6b-wf');
       expect(result['checks_not_run']).toEqual([]);
       const diagnostics = result['diagnostics'] as LoaderWarning[];
-      expect(diagnostics[0]?.code).toBe('RETRY_INERT_NON_AUTO');
+      // Gap 2, unit (i-b): `retry` is read on an agent step now; its warning is the unknown key.
+      expect(diagnostics[0]?.code).toBe('UNKNOWN_RETRY_KEY');
       expect(exitSpy).toHaveBeenCalledWith(1);
       rmSync(proj, { recursive: true, force: true });
     }, 20_000);
