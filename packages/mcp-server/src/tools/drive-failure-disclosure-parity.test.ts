@@ -206,4 +206,24 @@ describe('#401 — every DriveFailureRecord field reaches a get_run_state consum
     );
     expect('drive_failures' in summary).toBe(false);
   });
+
+  it("gap 2, unit (i-b): Realm's attempt number as `attempt`, right after `attempts_sdk`, for an entry that carries model_attempts; none for one that does not", async () => {
+    // ENTRY's tries end with request 1, which was sent once; request 0's two sends do not count.
+    const { model_attempts: _tries, ...bare } = ENTRY;
+    const both = {
+      ...run,
+      drive_failures: { first_failed_at: ENTRY.at, total: 2, entries: [ENTRY, bare] },
+    } as unknown as RunRecord;
+    const summary = await handleGetRunState({ run_id: 'r1' }, { runStore: makeStore(both) });
+    const [withTries, without] = summary.drive_failures?.entries ?? [];
+    const keys = Object.keys(withTries ?? {});
+    // (a) red when the derived field is missing, counts every entry or the client's count, or
+    //     sits elsewhere, or appears on an entry with no tries; (b) prints the fields and keys.
+    expect({
+      attempt: withTries?.attempt,
+      attemptsSdk: withTries?.attempts_sdk,
+      next: keys[keys.indexOf('attempts_sdk') + 1],
+      without: without !== undefined && 'attempt' in without,
+    }).toEqual({ attempt: 1, attemptsSdk: 3, next: 'attempt', without: false });
+  });
 });
