@@ -269,7 +269,7 @@ describe('the REGISTERED tool — the SDK’s argument handling, never a reason 
     const props = (tool.inputSchema as { properties: Record<string, Record<string, unknown>> })
       .properties;
     expect(props['claim_token']!['description']).toBe(
-      'The claim_token in the answer instruction of the reply that opened this question (its next_actions entry). Pass it back unchanged; it shows this answer comes from the conversation that opened the question. Never required.',
+      'The claim_token in the answer instruction of the reply that opened this question (its next_actions entry). Pass it back unchanged; it shows this answer comes from the conversation that opened the question, and with it, the steps after the answer run in this call. Never required.',
     );
     expect(props['responded_by']!['description']).toBe(
       'Who made the choice, as the caller states it — not verified. At most 200 characters, no control characters.',

@@ -110,7 +110,7 @@ export const submitHumanResponseArgsSchema = z
       .string()
       .optional()
       .describe(
-        'The claim_token in the answer instruction of the reply that opened this question (its next_actions entry). Pass it back unchanged; it shows this answer comes from the conversation that opened the question. Never required.',
+        'The claim_token in the answer instruction of the reply that opened this question (its next_actions entry). Pass it back unchanged; it shows this answer comes from the conversation that opened the question, and with it, the steps after the answer run in this call. Never required.',
       ),
   })
   .loose();
@@ -252,9 +252,13 @@ export async function handleSubmitHumanResponse(
   const moved = offer !== '' && hint.endsWith(offer);
   const own = moved ? { ...reply, context_hint: hint.slice(0, hint.length - offer.length) } : reply;
   // #625 A1b-1's rule, as advance_run and execute_step apply it (#625 PR-2b A2a): how the run ended
-  // comes first when someone other than this call ended it — a carry-on can meet that.
+  // comes first when someone other than this call ended it — on a reply that carried the run on,
+  // whose continuation met another program ending it. Never on a refused answer: core's refusal of
+  // an answer to an ended run already says how it ended (A1b-1), so the tail would say it twice.
   const howEnded =
-    earlier === undefined && saysHowItEnded(engineReply, ended)
+    earlier === undefined &&
+    engineReply.gate_claim?.carried_on === true &&
+    saysHowItEnded(engineReply, ended)
       ? runEndingOf(ended, definition)
       : undefined;
   const endedFirst = howEnded === undefined ? '' : ` ${howEnded.sentence}`;

@@ -15,6 +15,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  abandonRun,
   createDefaultRegistry,
   judgeFormWait,
   judgeGateAnswers,
@@ -194,12 +195,15 @@ describe('#625 PR-2b A2a checks 5 and 6 — the answer tool', () => {
       monotonicNow: now,
     });
   };
-  const opened = async (def: WorkflowDefinition) => {
+  const opened = async (
+    def: WorkflowDefinition,
+    registry: ReturnType<typeof createDefaultRegistry> = createDefaultRegistry(),
+  ) => {
     const h = await makeTempHome();
     homes.push(h);
     await h.stores.workflowStore.register(def);
     // A server always has a registry (createRealmMcpServer's default); a direct handler call is given one.
-    const stores = { ...h.stores, driver: DRIVER, registry: createDefaultRegistry() };
+    const stores = { ...h.stores, driver: DRIVER, registry };
     const reply = await handleStartRun({ workflow_id: def.id }, stores);
     const { record } = await h.stores.runStore.get(reply.run_id);
     return {
@@ -282,5 +286,39 @@ describe('#625 PR-2b A2a checks 5 and 6 — the answer tool', () => {
       oldTokenAnywhere: false,
       carried: true,
     });
+  });
+
+  it('MA 2’s cell: a carried-on reply whose continuation meets another program ending the run says how it ended, once', async () => {
+    // `a` runs in the carry-on; while it runs another program abandons the run (a `run_ended` race).
+    // Set once the run exists: the handler ends that run.
+    const target: { runId?: string; store?: Parameters<typeof abandonRun>[0] } = {};
+    const registry = createDefaultRegistry();
+    registry.register('handler', 'end_it', {
+      id: 'end_it',
+      execute: async () => {
+        await abandonRun(target.store!, target.runId!, 'another program');
+        return { data: {} };
+      },
+    } as never);
+    const def = wf('carry-on-ended', {
+      confirm: gate([]),
+      a: { description: 'A.', execution: 'auto', depends_on: ['confirm'], handler: 'end_it' },
+      finish: { description: 'Finish.', execution: 'agent', depends_on: ['a'] },
+    });
+    const o = await opened(def, registry);
+    target.runId = o.runId;
+    target.store = o.h.stores.runStore;
+    const reply = (await handleSubmitHumanResponse(
+      { run_id: o.runId, gate_id: o.gateId, choice: 'approve', claim_token: o.token },
+      o.stores,
+    )) as unknown as Reply;
+    const said = 'It was abandoned, with the reason "another program".';
+    // (a) red when the tail never says how the run ended on a carried-on reply (item 6 dropped), or
+    //     says it twice; (b) prints the count, the phase and the claim.
+    expect({
+      said: occurrences(reply.context_hint ?? '', said),
+      phase: reply.run_phase,
+      carried: reply.gate_claim?.['carried_on'],
+    }).toEqual({ said: 1, phase: 'abandoned', carried: true });
   });
 });

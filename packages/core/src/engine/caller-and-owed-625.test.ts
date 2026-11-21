@@ -191,11 +191,17 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
       claimToken: token!,
     });
     // (a) red when the token the sentence names does not prove the answer; (b) prints the reply.
+    // #625 PR-2b A2a: the token proves it (`matched`); this library call passes no registry, so it
+    // does not carry the run on (D-8 row 4) and says so in its one sentence.
     expect({
       status: answered.status,
       proof: answered.gate_claim?.proof,
       warnings: answered.warnings,
-    }).toEqual({ status: 'ok', proof: 'matched', warnings: [] });
+    }).toEqual({
+      status: 'ok',
+      proof: 'matched',
+      warnings: ['This call has no step registry. The run was not carried on in this call.'],
+    });
   });
 
   it('C135, W2-Y1: a late answer the expiry beat keeps report_to_user and its hint ends with what the run owes — on both store kinds', async () => {

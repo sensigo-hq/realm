@@ -85,7 +85,10 @@ interface ExampleCase {
   fixture: string;
   /** The manifest the copy runs with (adapters pointed at the stand-ins), when it needs one. */
   manifest?: () => string;
-  /** An engine step follows a gate, so the follower must be handed `advance_run`. */
+  /**
+   * The follower is handed `advance_run`. #625 PR-2b A2a: no longer after a gate — the answer, which
+   * passes back the opening reply's token, runs the engine step that follows it (07–09: false).
+   */
   advances?: boolean;
 }
 
@@ -103,13 +106,13 @@ const CASES: ExampleCase[] = [
     dir: '07-issue-triage',
     fixture: 'approve-critical-issue.yaml',
     manifest: ghManifest,
-    advances: true,
+    advances: false,
   },
-  { dir: '08-pr-review', fixture: 'approve-pr.yaml', manifest: ghManifest, advances: true },
+  { dir: '08-pr-review', fixture: 'approve-pr.yaml', manifest: ghManifest, advances: false },
   {
     dir: '09-webhook-pr-review',
     fixture: 'approve-review.yaml',
-    advances: true,
+    advances: false,
     manifest: () =>
       ghManifest() + `  slack:\n    use: slack\n    config: { webhook_url: '${slackUrl}' }\n`,
   },
