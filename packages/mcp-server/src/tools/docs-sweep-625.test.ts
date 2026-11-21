@@ -250,7 +250,9 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     );
     claim(
       'docs/start/how-a-run-moves.md',
-      'The `auto` steps after the gate are owed to the engine, and the reply names the one call that runs them, until a step opens a question, fails or ends the run.',
+      // #625 PR-2b A2a: an answer that passes the token back runs them itself (carry-on-a2a-625 check
+      // 9, end to end); this cell's answer passes none.
+      'Otherwise the `auto` steps after the gate are owed to the engine, and the reply names the one call that runs them.',
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(

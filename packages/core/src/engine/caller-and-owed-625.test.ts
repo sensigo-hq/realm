@@ -1,6 +1,7 @@
 // caller-and-owed-625.test.ts — issue #625 PR-2a, round 17 (the scoped walk on round 16):
-// - decision C133 (W3-R1): `advanceRun`'s `caller` is one of five words; any other value throws at
-//   the admission step, before anything is read or written — the value named, the five listed (its
+// - decision C133 (W3-R1): `advanceRun`'s `caller` is one of seven words (five until #625 PR-2b
+//   A2a); any other value throws at
+//   the admission step, before anything is read or written — the value named, the seven listed (its
 //   code `VALIDATION_CALLER_INVALID` since decision C144);
 // - decision C134 (W1-Y2): the answer act outside the opening reply says the conversation that opened
 //   the question passes back the claim_token it was given then (the opening reply is unchanged) —
@@ -88,7 +89,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
     return { runId: run.id, gateId: gate.gate_id, past, token: proofOf(opened) };
   }
 
-  it('C133, W3-R1: an unknown caller throws before anything is read or written — the value named, the five listed (as a plain-JS program passes it)', async () => {
+  it('C133, W3-R1: an unknown caller throws before anything is read or written — the value named, the seven listed (as a plain-JS program passes it)', async () => {
     const d = gated('settle_default');
     const { runId, past } = await atQuestion(d);
     const before = JSON.stringify((await store.get(runId)).record);
@@ -105,7 +106,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
     ] as const) {
       let lines: string[] = [];
       // (a) red when the caller is not checked (the call runs and writes "this undefined call"),
-      // the check runs after a read, or the message drops the value or the five; (b) prints it.
+      // the check runs after a read, or the message drops the value or the seven; (b) prints it.
       await setClockOf(watched, past);
       await expect(
         advanceRun(watched, d, {
@@ -117,7 +118,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
         code: 'VALIDATION_CALLER_INVALID',
         category: 'VALIDATION',
         agentAction: 'report_to_user',
-        message: `advanceRun's caller is one of advanceRun, advance_run, advance, start_run, agent; it was given ${named}. To label the reply with a word of your own, pass command. Nothing was read or written.`,
+        message: `advanceRun's caller is one of advanceRun, advance_run, advance, start_run, agent, submit_human_response, submitHumanResponse; it was given ${named}. To label the reply with a word of your own, pass command. Nothing was read or written.`,
       });
       // (a) red when the refusal read or wrote the store, or told onExpiry; (b) prints them.
       expect({ calls, lines }).toEqual({ calls: [], lines: [] });
@@ -134,7 +135,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
       const { runId, gateId, past } = await atQuestion(d);
       await setClockOf(store, past);
       const reply = await advanceRun(store, d, { runId, caller });
-      // (a) red when a member of the five is refused or renamed; (b) prints the reply's fields.
+      // (a) red when a member of the seven is refused or renamed; (b) prints the reply's fields.
       expect({
         status: reply.status,
         command: reply.command,

@@ -417,7 +417,13 @@ describe("the proof is judged in the answer's write — one verdict on the recor
     const o = await open(store, def);
     const { reply, entry } = await answer(store, def, o, o.token);
     // (a) red when a matching token is judged otherwise (mutant a's twin); (b) prints the object.
-    expect(reply.gate_claim).toEqual({ proof: 'matched', opened_by: PROGRAM });
+    expect(reply.gate_claim).toEqual({
+      proof: 'matched',
+      opened_by: PROGRAM,
+      carried_on: false,
+      not_carried_on_because: 'nothing_runnable',
+      answered_by: { by: null, absent_cause: 'not_stated' },
+    });
     expect(entry.map((e) => e.claim_proof)).toEqual([{ proof: 'matched' }]);
     expect(reply.warnings).toEqual([]);
   });
@@ -427,7 +433,13 @@ describe("the proof is judged in the answer's write — one verdict on the recor
     const o = await open(store, def);
     const { reply, run, entry } = await answer(store, def, o, undefined);
     expect(reply.status).toBe('ok');
-    expect(reply.gate_claim).toEqual({ proof: 'absent', opened_by: PROGRAM });
+    expect(reply.gate_claim).toEqual({
+      proof: 'absent',
+      opened_by: PROGRAM,
+      carried_on: false,
+      not_carried_on_because: 'nothing_runnable',
+      answered_by: { by: null, absent_cause: 'not_stated' },
+    });
     // (a) red when the sentence is reworded, split over two warnings, or says the answer failed.
     expect(reply.warnings).toEqual([ABSENT_SENTENCE]);
     expect(entry.map((e) => e.claim_proof)).toEqual([{ proof: 'absent' }]);
@@ -464,6 +476,9 @@ describe("the proof is judged in the answer's write — one verdict on the recor
       proof: 'unverifiable',
       cause: 'no_claim',
       opened_by: { by: null, absent_cause: 'no_claim' },
+      carried_on: false,
+      not_carried_on_because: 'nothing_runnable',
+      answered_by: { by: null, absent_cause: 'not_stated' },
     });
     expect(reply.warnings).toEqual([
       'There is no claim to check a claim_token against — the gate step has no claim on this record; the answer was recorded.',
@@ -485,6 +500,9 @@ describe("the proof is judged in the answer's write — one verdict on the recor
       proof: 'unverifiable',
       cause: 'claim_has_no_token',
       opened_by: PROGRAM,
+      carried_on: false,
+      not_carried_on_because: 'nothing_runnable',
+      answered_by: { by: null, absent_cause: 'not_stated' },
     });
     expect(reply.warnings).toEqual([
       "This question's claim carries no token, so the claim_token could not be checked; the answer was recorded.",
@@ -531,6 +549,9 @@ describe("the proof is judged in the answer's write — one verdict on the recor
       proof: 'spent',
       cause: 'answered',
       opened_by: PROGRAM,
+      carried_on: false,
+      not_carried_on_because: 'nothing_runnable',
+      answered_by: { by: null, absent_cause: 'not_stated' },
     });
     expect(withToken.reply.warnings).toEqual([
       'The claim_token could not be checked: this question was already settled by an earlier answer.',
@@ -556,7 +577,13 @@ describe("the proof is judged in the answer's write — one verdict on the recor
     const def = gateWorkflow();
     const o = await open(store, def);
     const { reply } = await answer(store, def, o, o.token);
-    expect(Object.keys(reply.gate_claim!)).toEqual(['proof', 'opened_by']);
+    expect(Object.keys(reply.gate_claim!)).toEqual([
+      'proof',
+      'opened_by',
+      'carried_on',
+      'not_carried_on_because',
+      'answered_by',
+    ]);
   });
 });
 
@@ -659,7 +686,13 @@ describe('the verdict survives the guard cascade (mutant d)', () => {
     // (a) red when settleEligibleGuards rebuilds the result from four fields and drops
     //     `gateClaim`; (b) prints both.
     expect(reply.guards).toEqual([{ step: 'check', outcome: 'pass' }]);
-    expect(reply.gate_claim).toEqual({ proof: 'matched', opened_by: PROGRAM });
+    expect(reply.gate_claim).toEqual({
+      proof: 'matched',
+      opened_by: PROGRAM,
+      carried_on: false,
+      not_carried_on_because: 'nothing_runnable',
+      answered_by: { by: null, absent_cause: 'not_stated' },
+    });
     expect(entryOf((await store.get(o.runId)).record).map((e) => e.claim_proof)).toEqual([
       { proof: 'matched' },
     ]);
@@ -685,7 +718,13 @@ describe("a late answer — the verdict stands when the call's own expiry write 
     expect(reply.answer_recorded).toBe(false);
     // (a) red when the refusal's verdict is dropped on the late path, or the consequence clause
     //     says "recorded"; (b) prints both.
-    expect(reply.gate_claim).toEqual({ proof: 'mismatch', opened_by: PROGRAM });
+    expect(reply.gate_claim).toEqual({
+      proof: 'mismatch',
+      opened_by: PROGRAM,
+      carried_on: false,
+      not_carried_on_because: 'nothing_runnable',
+      answered_by: { by: null, absent_cause: 'settled_by_expiry' },
+    });
     // Issue #625, PR-H review correction C6: the answer was not recorded ⇒ the token fact alone
     // (the expiry's own sentence and `answer_recorded` already say "not recorded").
     expect(reply.warnings).toContain("The claim_token passed is not this question's.");
@@ -727,7 +766,13 @@ describe("a late answer — the verdict stands when the call's own expiry write 
       choice: 'approve',
       claimToken: o.token,
     });
-    expect(reply.gate_claim).toEqual({ proof: 'matched', opened_by: PROGRAM });
+    expect(reply.gate_claim).toEqual({
+      proof: 'matched',
+      opened_by: PROGRAM,
+      carried_on: false,
+      not_carried_on_because: 'nothing_runnable',
+      answered_by: { by: null, absent_cause: 'settled_by_expiry' },
+    });
   });
 
   it('a late answer whose expiry write finds the question ALREADY settled by the clock ⇒ spent/expired', async () => {
@@ -744,7 +789,14 @@ describe("a late answer — the verdict stands when the call's own expiry write 
     });
     // (a) red when row 0 reads the cause from anything but the settled entry's `resolved_by`;
     //     (b) prints the verdict.
-    expect(reply.gate_claim).toEqual({ proof: 'spent', cause: 'expired', opened_by: PROGRAM });
+    expect(reply.gate_claim).toEqual({
+      proof: 'spent',
+      cause: 'expired',
+      opened_by: PROGRAM,
+      carried_on: false,
+      not_carried_on_because: 'nothing_runnable',
+      answered_by: { by: null, absent_cause: 'settled_by_expiry' },
+    });
     expect(reply.warnings).toContain(
       'The claim_token could not be checked: this question was already settled by its expiry.',
     );

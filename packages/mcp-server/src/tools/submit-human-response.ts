@@ -16,8 +16,11 @@ import {
   identityRefusalLine,
   buildPreExecutionErrorEnvelope,
   getWorkflowForRun,
+  saysHowItEnded,
 } from '@sensigo/realm';
-import { mcpHostOf, principalOfStores, type HandleRunStores } from './start-run.js';
+import { formCallOf, mcpHostOf, principalOfStores, type HandleRunStores } from './start-run.js';
+import type { FormCall } from '../form-path.js';
+import { FORM_WAIT_SECONDS_DEFAULT } from '../door.js';
 import { toolMeta } from '../tool-annotations.js';
 import {
   disclosureOfTool,
@@ -125,6 +128,8 @@ export async function handleSubmitHumanResponse(
     claim_token?: string | undefined;
   },
   stores: HandleRunStores,
+  /** #625 PR-2b A2a: the tool call's start, on the door's clock — the carry-on's time runs from it. */
+  call?: FormCall,
 ): Promise<WithPersonBlock<McpEnvelope>> {
   // issue #620 PR-C + the admission order (framework v1.27 §4): what the host handed in is checked
   // first, then what this caller sent.
@@ -203,6 +208,15 @@ export async function handleSubmitHumanResponse(
     route: 'mcp',
     principal: principalOfStores(stores),
     disclosure: waysDisclosure,
+    // #625 PR-2b A2a: an answer that carries the run on runs its steps as advance_run would — with
+    // this server's trace buffer store — and starts none later than 240 seconds after this call
+    // began: the form wait's default, whose setting is refused under `permitted`, the one setting
+    // that lists this tool. Measured on the door's monotonic clock; a step that has started runs to
+    // its end.
+    ...(stores?.traceBufferStore !== undefined
+      ? { traceBufferStore: stores.traceBufferStore }
+      : {}),
+    ...answerBudgetOf(stores, call),
   });
   const reply = withOutcomeWords(engineReply);
   // decision C211 (walk c14 W3-4's class): an answer that ended the run with cleanup steps left
@@ -237,8 +251,30 @@ export async function handleSubmitHumanResponse(
   const hint = reply.context_hint;
   const moved = offer !== '' && hint.endsWith(offer);
   const own = moved ? { ...reply, context_hint: hint.slice(0, hint.length - offer.length) } : reply;
-  const tail = `${endingTail}${named ? '' : cleanup}${moved ? offer : ''}`;
+  // #625 A1b-1's rule, as advance_run and execute_step apply it (#625 PR-2b A2a): how the run ended
+  // comes first when someone other than this call ended it — a carry-on can meet that.
+  const howEnded =
+    earlier === undefined && saysHowItEnded(engineReply, ended)
+      ? runEndingOf(ended, definition)
+      : undefined;
+  const endedFirst = howEnded === undefined ? '' : ` ${howEnded.sentence}`;
+  const tail = `${endingTail}${endedFirst}${named ? '' : cleanup}${moved ? offer : ''}`;
   return mcpReplyOf(withHintTail(renderReply(own, host), tail));
+}
+
+/**
+ * #625 PR-2b A2a: the answer's carry-on budget — the answer tool's cap, 240 seconds
+ * (`FORM_WAIT_SECONDS_DEFAULT`), less what this call has spent since its start, on the door's clock.
+ * None when the call's start is unknown (a direct handler call with no door).
+ */
+function answerBudgetOf(
+  stores: HandleRunStores,
+  call: FormCall | undefined,
+): { budget?: { remainingMs: () => number } } {
+  const door = stores?.door;
+  if (call === undefined || door === undefined) return {};
+  const capMs = FORM_WAIT_SECONDS_DEFAULT * 1000;
+  return { budget: { remainingMs: () => capMs - (door.monotonicNow() - call.started) } };
 }
 
 /**
@@ -295,9 +331,10 @@ export function registerSubmitHumanResponse(
       inputSchema: boundedRefusal(submitHumanResponseArgsSchema),
     },
     safeTool(
-      async (rawArgs) => {
+      async (rawArgs, extra) => {
         const args = rawArgs as z.infer<typeof submitHumanResponseArgsSchema>;
-        const result = await handleSubmitHumanResponse(args, opts);
+        // #625 PR-2b A2a: the call's start, taken first — the carry-on's 240 seconds run from it.
+        const result = await handleSubmitHumanResponse(args, opts, formCallOf(opts, extra));
         const unknown = unknownKeyWarnings(args as Record<string, unknown>);
         return toolContentOf(
           {

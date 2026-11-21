@@ -14,7 +14,16 @@ import { WorkflowError } from '../types/workflow-error.js';
  * @public
  */
 export const ENTRY_CALLERS = {
-  advanceRun: ['advanceRun', 'advance_run', 'advance', 'start_run', 'agent'],
+  advanceRun: [
+    'advanceRun',
+    'advance_run',
+    'advance',
+    'start_run',
+    'agent',
+    // #625 PR-2b A2a: an answer's call that carries the run on runs it naming the answer.
+    'submit_human_response',
+    'submitHumanResponse',
+  ],
   executeStep: ['executeStep', 'agent'],
   executeEngineStep: ['executeEngineStep', 'agent'],
   executeChain: ['executeChain', 'execute_step', 'agent', 'run'],
@@ -27,8 +36,10 @@ export type NamedEntry = keyof typeof ENTRY_CALLERS;
 /** `advanceRun`'s callers (decisions C124, C133). */
 export const ADVANCE_CALLERS = ENTRY_CALLERS.advanceRun;
 /**
- * The names a call to `advanceRun` can give for where it came from: the library call, the MCP tools
- * `advance_run` and `start_run`, `realm run advance` or `realm agent` (`AdvanceRunOptions.caller`).
+ * The names a call to `advanceRun` can give for where it came from (`AdvanceRunOptions.caller`).
+ * They are the library call, the MCP tools `advance_run` and `start_run`, `realm run advance`,
+ * `realm agent`, and an answer that carries a run on: the MCP tool `submit_human_response` or the
+ * library's `submitHumanResponse`.
  * @public
  */
 export type AdvanceCaller = (typeof ENTRY_CALLERS.advanceRun)[number];

@@ -14,6 +14,7 @@ import { WorkflowError } from '../types/workflow-error.js';
 import type { ClaimRecord } from '../types/run-record.js';
 import type { LeaseFact } from '../store/lease-port.js';
 import { isLeaseFact, type Unleased } from '../store/lease-facts.js';
+import type { ProgramFit } from './pending.js';
 
 // ---------------------------------------------------------------------------------------------
 // The vocabulary
@@ -109,6 +110,40 @@ export type GateClaimVerdict =
   | { proof: 'matched' | 'absent' | 'mismatch' }
   | { proof: 'unverifiable'; cause: 'no_claim' | 'claim_has_no_token' | 'store_keeps_no_claims' }
   | { proof: 'spent'; cause: 'answered' | 'expired' };
+
+/**
+ * #625 PR-2b A2a (D-8): why an answer's call did not carry the run on (`gate_claim.
+ * not_carried_on_because`), one per row of D-8's table, in its order: nothing this call could run
+ * after the answer's write; this call's own write did not settle the question; the claim token was
+ * not passed back (`proof_absent`), was another's (`proof_mismatch`) or could not be checked
+ * (`proof_unverifiable`); the call has no step registry; this program's code is not the code the
+ * run last ran with (`extensions_differ`), or cannot be compared with it
+ * (`extensions_not_comparable`). `EngineReply.gate_claim.not_carried_on_because` spells the same
+ * words out (`_sameReasons` in execution-loop.ts holds the two together).
+ */
+export type NotCarriedOnReason =
+  | 'nothing_runnable'
+  | 'not_settled_by_this_call'
+  | 'proof_absent'
+  | 'proof_mismatch'
+  | 'proof_unverifiable'
+  | 'no_registry'
+  | 'extensions_differ'
+  | 'extensions_not_comparable';
+/** Every {@link NotCarriedOnReason}, in D-8's order — each produced by one row of `judgeCarryOn`. */
+export const NOT_CARRIED_ON_REASONS = [
+  'nothing_runnable',
+  'not_settled_by_this_call',
+  'proof_absent',
+  'proof_mismatch',
+  'proof_unverifiable',
+  'no_registry',
+  'extensions_differ',
+  'extensions_not_comparable',
+] as const satisfies readonly NotCarriedOnReason[];
+type UnlistedReason = Exclude<NotCarriedOnReason, (typeof NOT_CARRIED_ON_REASONS)[number]>;
+const _everyReasonListed: [UnlistedReason] extends [never] ? true : UnlistedReason = true;
+void _everyReasonListed;
 
 /**
  * Why an answer's entry shows no proof. `proof_unreadable`: a stored `claim_proof` that is not a
@@ -529,13 +564,84 @@ export function readGateClaimVerdict(value: unknown): GateClaimVerdict | undefin
 }
 
 /**
+ * #625 PR-2b A2a: D-8's decision — whether an answer's call carries the run on, or the first row
+ * that stops it, in the table's order. Pure: the caller reads its facts on the record the answer's
+ * reply was judged on. `owed`: `describePending(…).owed` is not empty; `proof`: the answer's verdict;
+ * `registry`: the call has a step registry; `fit`: `judgeProgramFit(run, registry.identity)`, read
+ * only with a registry.
+ */
+export function judgeCarryOn(input: {
+  owed: boolean;
+  proof: GateProof;
+  registry: boolean;
+  fit: ProgramFit | undefined;
+}): { carried_on: true } | { carried_on: false; because: NotCarriedOnReason } {
+  if (!input.owed) return { carried_on: false, because: 'nothing_runnable' };
+  if (input.proof === 'spent') return { carried_on: false, because: 'not_settled_by_this_call' };
+  if (input.proof !== 'matched') return { carried_on: false, because: `proof_${input.proof}` };
+  if (!input.registry) return { carried_on: false, because: 'no_registry' };
+  if (input.fit === 'differs') return { carried_on: false, because: 'extensions_differ' };
+  if (input.fit === 'not_comparable') {
+    return { carried_on: false, because: 'extensions_not_comparable' };
+  }
+  return { carried_on: true };
+}
+
+/**
+ * #625 PR-2b A2a: what an `ok` answer's call did about the run, for its one sentence: not carried
+ * on, and why; or carried on, and — when the call's time ran out before the next step — the last
+ * step it ran (the gate step when it ran none).
+ */
+export type CarryOnSentenceFacts =
+  { carried_on: false; because: NotCarriedOnReason } | { carried_on: true; ranOutAfter?: string };
+
+/** D-8's consequence: what a verdict's sentence ends with when the call did not carry the run on. */
+const NOT_CARRIED_ON = 'The run was not carried on in this call.';
+/** The consequence when this program's code is not the run's: who runs the owed steps instead. */
+const NOT_CARRIED_ON_CODE =
+  'The run was not carried on in this call; its owed steps run with the code of the program that runs them.';
+
+/**
  * The ONE sentence a verdict adds to a reply's `warnings` (or `undefined` when it adds none). One
  * function, one string per verdict and outcome — never a fact split over two warnings, and no
  * carrier composes a sentence from `gate_claim`. When the answer was not recorded the sentence is
  * the token fact alone: the expiry's own sentence and `answer_recorded` already say so.
- * `tokenPresented` is the engine's input, not a reply key.
+ * `tokenPresented` is the engine's input, not a reply key. #625 PR-2b A2a: with `carry`, the verdict's
+ * sentence and its consequence for the run are that one string; neither names a step to run or a
+ * call to make — the door's sentence of what is owed and the `advance` way say those, once.
  */
 export function composeGateClaimSentence(
+  verdict: GateClaimVerdict,
+  answerRecorded: boolean,
+  tokenPresented: boolean,
+  carry?: CarryOnSentenceFacts,
+): string | undefined {
+  const own = verdictSentence(verdict, answerRecorded, tokenPresented);
+  if (carry === undefined) return own;
+  if (carry.carried_on) {
+    return carry.ranOutAfter !== undefined
+      ? `This call's time ran out after '${carry.ranOutAfter}'; the run was not carried further in this call.`
+      : own;
+  }
+  switch (carry.because) {
+    case 'nothing_runnable':
+      return own;
+    case 'not_settled_by_this_call':
+    case 'proof_absent':
+    case 'proof_mismatch':
+    case 'proof_unverifiable':
+      return own === undefined ? NOT_CARRIED_ON : `${own} ${NOT_CARRIED_ON}`;
+    case 'no_registry':
+      return `This call has no step registry. ${NOT_CARRIED_ON}`;
+    case 'extensions_differ':
+      return `This server's code is not the code the run last ran with. ${NOT_CARRIED_ON_CODE}`;
+    case 'extensions_not_comparable':
+      return `This server's code cannot be compared with the code the run last ran with. ${NOT_CARRIED_ON_CODE}`;
+  }
+}
+
+/** The verdict's own sentence, as {@link composeGateClaimSentence} composed it before #625 PR-2b. */
+function verdictSentence(
   verdict: GateClaimVerdict,
   answerRecorded: boolean,
   tokenPresented: boolean,

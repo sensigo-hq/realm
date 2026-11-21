@@ -172,7 +172,13 @@ describe('submit_human_response — the verdict on every ok reply, the answer de
       { runStore, workflowStore },
     );
     expect(reply.status).toBe('ok');
-    expect(reply.gate_claim).toEqual({ proof: 'matched', opened_by: DRIVER });
+    expect(reply.gate_claim).toEqual({
+      proof: 'matched',
+      opened_by: DRIVER,
+      carried_on: false,
+      not_carried_on_because: 'nothing_runnable',
+      answered_by: { by: null, absent_cause: 'not_stated' },
+    });
     expect(reply.warnings).toEqual([]);
   });
 
