@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"command\": \"a\",\n  \"run_id\": \"no-such-run\",\n  \"run_version\": 0,\n  \"status\": \"error\",\n  \"data\": {},\n  \"evidence\": [],\n  \"warnings\": [],\n  \"errors\": [\n    \"Run not found: no-such-run\"\n  ],\n  \"error_code\": \"STATE_RUN_NOT_FOUND\",\n  \"context_hint\": \"Run 'no-such-run' not found.\",\n  \"error_details\": {\n    \"runId\": \"no-such-run\"\n  },\n  \"agent_action\": \"report_to_user\",\n  \"next_actions\": [],\n  \"disclosure\": {\n    \"declared\": \"unknown\",\n    \"declared_cause\": \"embedder_none\",\n    \"environment\": \"swept\",\n    \"hidden\": {\n      \"declared\": 0,\n      \"environment\": 0,\n      \"pattern\": 0\n    },\n    \"unchecked\": 0,\n    \"unmaskable\": 0,\n    \"too_deep\": 0\n  }\n}"
+    }
+  ]
+}
