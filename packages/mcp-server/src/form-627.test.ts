@@ -333,7 +333,7 @@ async function drive<T>(p: Promise<T>, ms: number): Promise<T> {
 // ─── cell 21: the form, one sub-cell per case ───────────────────────────────────────────────────
 
 describe('#627 W — the form path (cell 21)', () => {
-  it('a form-capable client gets the form when start_run creates the run; accept records mcp_form with what showed it, and no token', async () => {
+  it("a form-capable client gets the form when start_run creates the run; accept records mcp_form with what showed it, and the opening call's token, kept inside the server (never in the form)", async () => {
     let seen: { message?: string; requestedSchema?: unknown } | undefined;
     const s = await session({}, async (req) => {
       seen = req.params;
@@ -343,7 +343,8 @@ describe('#627 W — the form path (cell 21)', () => {
     const runId = String(started['run_id']);
     const [entry] = await answers(s, runId);
     // (a) red when the form is not sent, the route or `shown` is lost, a default sneaks onto the
-    //     field, or the form path passes a token; (b) prints the form's request and the entry's facts.
+    //     field, or the opening call's form passes no token, or the token reaches the form; (b)
+    //     prints the form's request and the entry's facts.
     expect({
       elicited: s.elicited(),
       message: seen?.message,
@@ -363,7 +364,7 @@ describe('#627 W — the form path (cell 21)', () => {
         required: ['choice'],
       },
       answer: { route: 'mcp_form', shown: { renderer: 'realm-mcp-form/1' } },
-      proof: { proof: 'absent' },
+      proof: { proof: 'matched' },
       choice: 'approve',
       tokenInForm: false,
     });
