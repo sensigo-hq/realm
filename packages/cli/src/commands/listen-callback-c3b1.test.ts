@@ -63,6 +63,17 @@ const GUARDED = workflow(W, sharedSecretTrigger(PATH, MAP), {
     },
   },
 });
+const GATED = workflow(W, sharedSecretTrigger(PATH, MAP), {
+  steps: {
+    review: {
+      description: 'Review.',
+      execution: 'auto',
+      trust: 'human_confirmed',
+      depends_on: [],
+      gate: { choices: ['approve', 'reject'], message: 'Refund?' },
+    },
+  },
+});
 const HOOK = 'hooks.example.com';
 const LABEL = 'hooks.example.com:443';
 const URL_ = `https://${HOOK}/cb/x`;
@@ -292,7 +303,7 @@ describe('C3b1 — what the cap does not touch', { timeout: 120_000 }, () => {
 });
 
 describe('C3b1 — the read address says how the callback stands', { timeout: 120_000 }, () => {
-  it('every state: pending never tried, retried, delivered, expired, a failed, aborted or abandoned run, no row, a running run', async () => {
+  it('every state: pending never tried, retried, delivered, expired, a failed, aborted or abandoned run, no row, a gate-waiting and a running run', async () => {
     const store = new InMemoryStore();
     const neverTried = await runWith(store, reg());
     await complete(store, neverTried);
@@ -336,6 +347,13 @@ describe('C3b1 — the read address says how the callback stands', { timeout: 12
     await abandonRun(store, abandoned);
     const noRow = await runWith(store, undefined);
     await complete(store, noRow);
+    const waiting = await runWith(store, reg(), GATED);
+    await executeStep(store, GATED, {
+      runId: waiting,
+      command: 'review',
+      input: {},
+      dispatcher: async () => ({ summary: 'Refund 20 EUR?' }),
+    });
     const running = await runWith(store, reg());
     const view = async (id: string) => (await store.callbacks!.read(id))!;
     const s = await serve([OPTED], { store });
@@ -354,11 +372,13 @@ describe('C3b1 — the read address says how the callback stands', { timeout: 12
       aborted: await field(aborted),
       abandoned: await field(abandoned),
       noRow: await field(noRow),
+      gateWaiting: await field(waiting),
     };
     const readsBefore = get.mock.calls.length;
     const runningFirst = await field(running);
     const runningSecond = await field(running);
-    // (1) red when a running run gets the field (on its store read or its cache hit), a delivered or
+    // (1) red when a running or gate-waiting run gets the field (a running run on its store read or
+    //     its cache hit), a delivered or
     //     failed row keeps `next_try`, a pending row has none, `last_status` shows before a try, a
     //     member is renamed, or the view is spread (its host, workflow_id and created_at show);
     //     (2) prints each read's status, phase and field, and how many store reads the two running
@@ -422,6 +442,7 @@ describe('C3b1 — the read address says how the callback stands', { timeout: 12
         },
       },
       noRow: { status: 200, phase: 'completed', callback: undefined },
+      gateWaiting: { status: 200, phase: 'gate_waiting', callback: undefined },
       runningFirst: { status: 200, phase: 'running', callback: undefined },
       runningSecond: { status: 200, phase: 'running', callback: undefined },
       runningStoreReads: 1,
@@ -534,11 +555,12 @@ describe('C3b1 — a broken callback view never breaks a read', { timeout: 120_0
     const s = await serve([OPTED], { store });
     vi.spyOn(store.callbacks!, 'read').mockRejectedValue(new Error('row unreadable'));
     const broken = await read(s.port, PATH, runId, bearer(s.code(PATH, runId)));
+    const quiet = capturingLogger();
     const ctx: ReadContext = {
       entries: readEntriesOf(s.routes.values()),
       get: (id) => store.get(id),
       disclosureProvider: async () => emptySet(),
-      logger: capturingLogger(),
+      logger: quiet,
       cache: new PhaseCache(),
     };
     const port = await readServer(ctx);
@@ -549,13 +571,17 @@ describe('C3b1 — a broken callback view never breaks a read', { timeout: 120_0
     const n = await serve([OPTED], { store: nullStore });
     const nullBody = json((await read(n.port, PATH, nullRun, bearer(n.code(PATH, nullRun)))).body);
     // (1) red when a read that throws is answered 503 (or loses the result), logs nothing or more,
-    //     or a context without the member, or a store with no callback store, gets a field;
+    //     or a context without the member, or a store with no callback store, gets a field or logs;
     //     (2) prints each reply and the lines.
     expect({
       broken: [broken.status, json(broken.body)['result'], 'callback' in json(broken.body)],
       lines: linesOf(s.logger.lines, 'webhook: callback view'),
-      noMember: 'callback' in noMember,
-      nullStore: [nullBody['run_phase'], 'callback' in nullBody],
+      noMember: ['callback' in noMember, quiet.lines],
+      nullStore: [
+        nullBody['run_phase'],
+        'callback' in nullBody,
+        n.logger.lines.filter((l) => l.level === 'error'),
+      ],
     }).toEqual({
       broken: [200, { approved: true }, false],
       lines: [
@@ -565,8 +591,8 @@ describe('C3b1 — a broken callback view never breaks a read', { timeout: 120_0
           data: { path: `${PATH}/runs/${runId}`, run_id: runId, error: 'Error: row unreadable' },
         },
       ],
-      noMember: false,
-      nullStore: ['completed', false],
+      noMember: [false, []],
+      nullStore: ['completed', false, []],
     });
   });
 });
