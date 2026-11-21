@@ -76,7 +76,8 @@ describe('gap 1, unit B — the words (check 11)', () => {
       LISTEN,
       "| `--no-record-model-text` | Off | Do not keep the text of each model call on the run's record. The step notes that recording was off. Passed to each `realm agent` it starts (added after version 0.50.0). |",
     );
-    claim(LISTEN, 'This page lists its argument and 19 flags (13 in version 0.49.0),');
+    // Callback C2c adds `--callback-allow` and `--callback-allow-private`: the table's 21 rows.
+    claim(LISTEN, 'This page lists its argument and 21 flags (13 in version 0.49.0),');
     claim(
       LISTEN,
       '`--llm-timeout`, `--prompt-cache`, `--cache-diagnostics` and `--no-record-model-text` when `realm listen` was given them',

@@ -75,6 +75,8 @@ realm listen — command
 realm listen <workflows> — argument 1, optional, variadic
 realm listen --body-timeout-ms — option, takes a value, default 5000
 realm listen --cache-diagnostics — option, takes a value
+realm listen --callback-allow — option, takes a value
+realm listen --callback-allow-private — option, takes a value
 realm listen --dedup-store — option, takes a value, default "file"
 realm listen --help — option, short -h, no value
 realm listen --host — option, takes a value, default "127.0.0.1"

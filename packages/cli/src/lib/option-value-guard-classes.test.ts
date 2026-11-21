@@ -123,7 +123,7 @@ function derived(): Map<Pair, Command[]> {
 }
 
 describe('#920 C-2 — every value-taking option is classified exactly once', () => {
-  it('1. the two tables and the command tree agree (28 + 63 = 91)', () => {
+  it('1. the two tables and the command tree agree (30 + 63 = 93)', () => {
     // (a) red when a guarded row is deleted, an option is added to a command, or a row is in two
     // tables; (b) prints the unclassified, extra and duplicated (leaf, flag) pairs only.
     const tree = derived();
@@ -152,9 +152,10 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
       // The filter-mask fix, PR 2: `realm db check --project` is guarded (26, 87). #616 R2:
       // `realm db migrate --to` checks its own value (62, 88). #922 P1b: `realm run reclaim
       // --claimed-at` is guarded (27, 89). Callback K2a-2: `realm callback key --host` is guarded and
-      // its `--keep` checks its own value (28, 63, 91).
-      counts: { guarded: 28, ownCheck: 63 },
-      tree: 91,
+      // its `--keep` checks its own value (28, 63, 91). Callback C2c: `realm listen --callback-allow` and
+      // `--callback-allow-private` are guarded, each word of the array judged (30, 63, 93).
+      counts: { guarded: 30, ownCheck: 63 },
+      tree: 93,
       inTwo: [],
       unclassified: [],
       notInTree: [],
