@@ -355,6 +355,34 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
     expect(built.elapsed_ms).toBeGreaterThanOrEqual(1234);
   });
 
+  it("Q1 (#592) unit c, check 7: a provider's payload cannot claim startup_failure (dropped, as made_up_class); the other seven words are kept", () => {
+    const seven = [
+      'connection_timeout',
+      'connection_error',
+      'api_status',
+      'sdk_missing',
+      'validation_rejected',
+      'aborted_by_budget',
+      'other',
+    ];
+    const classOf = (claimed: string): string =>
+      buildEntry(
+        Object.assign(new Error('refused'), { status: 503, driveCall: { error_class: claimed } }),
+        's',
+        'anthropic',
+        performance.now(),
+        new Date(),
+      ).error_class;
+    // (a) red when the payload reader closes against ERROR_CLASSES (startup_failure then kept) or
+    //     drops one of the seven; (b) prints each claim and the class recorded for it. A dropped
+    //     claim falls to the error's shape: a status, so `api_status`.
+    expect([...seven, 'startup_failure', 'made_up_class'].map((c) => [c, classOf(c)])).toEqual([
+      ...seven.map((c) => [c, c]),
+      ['startup_failure', 'api_status'],
+      ['made_up_class', 'api_status'],
+    ]);
+  });
+
   it('issue #600 PR 1a (D9): usage is an ARRAY-typed field — a real array survives, a non-array is dropped', () => {
     const withArray = Object.assign(new Error('rate limited'), {
       status: 429,
