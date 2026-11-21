@@ -20,7 +20,7 @@ export interface GuardedOption {
 }
 
 /**
- * The options whose value is refused when it is a flag-like word typed as the next word (28). Keyed by
+ * The options whose value is refused when it is a flag-like word typed as the next word (30). Keyed by
  * the leaf command's name (a command parsed on its own has no parent, so a path cannot be read) and
  * the long flag. Each takes any word without a check of its own (the census, `plans/issue-920/census/`).
  * `option-value-guard-classes.test.ts` holds the other class: the options that already refuse such a
@@ -67,6 +67,9 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'check', option: '--project' }, // realm db check
   // Callback K2a-2: the receiver's address, which `parseCallbackEntry` would take as a host.
   { command: 'key', option: '--host' },
+  // R1.3 C2c: two repeatable options (their value is an array: each word is judged).
+  { command: 'listen', option: '--callback-allow' },
+  { command: 'listen', option: '--callback-allow-private' },
 ];
 
 /** A string of two or more characters that starts with `-` (Commander's option-looking token). A lone
@@ -104,10 +107,14 @@ export function optionValueGuard(_thisCommand: Command, actionCommand: Command):
     const option = actionCommand.options.find((o) => o.long === guarded.option);
     if (option === undefined) continue;
     const value: unknown = actionCommand.getOptionValue(option.attributeName());
-    if (typeof value !== 'string' || !looksLikeFlag(value)) continue;
+    // A repeatable option holds an array: each of its words is judged (C2c).
+    const words = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
     const raw = rootRawArgs(actionCommand);
-    const adjacent = raw.some((token, i) => token === guarded.option && raw[i + 1] === value);
-    if (adjacent) actionCommand.error(refusal(option, guarded.option, value));
+    for (const word of words) {
+      if (typeof word !== 'string' || !looksLikeFlag(word)) continue;
+      const adjacent = raw.some((token, i) => token === guarded.option && raw[i + 1] === word);
+      if (adjacent) actionCommand.error(refusal(option, guarded.option, word));
+    }
   }
 }
 
