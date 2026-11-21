@@ -3045,6 +3045,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 usageForStep !== undefined &&
                 usageForStep.length > 0 &&
                 (await callsAlreadyRecorded(stepName, usageForStep));
+              // Gap 2, unit (i-b), correction 1: the step's failed model tries ride along under the
+              // same answer, and only on the step's own wedge: a step's tries are on one record.
+              const wedgeTries =
+                !callsSaved && laterStep === undefined ? triesOf(retryForStep) : undefined;
               await recordFailure({
                 ...validationWedgeEntry(
                   stoppedStep,
@@ -3057,6 +3061,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   ? { usage: usageForStep }
                   : {}),
                 model_text: failureText(callsSaved ? undefined : textsForStep),
+                ...(wedgeTries !== undefined ? { model_attempts: wedgeTries } : {}),
               });
             }
           }

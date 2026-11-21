@@ -200,7 +200,7 @@ When Anthropic answers that it has no model by the name given, `realm agent` pri
 
 The second line was added in 0.46.0. With OpenAI, the failure line is printed alone. The run stays open: continue it with `--run-id` and the right `--model`.
 
-A request that times out is tried again by the provider's client, or by Realm, as its block says, on a step that declares retry. With `--llm-timeout 1` and a model that took 3 seconds, the step stopped after 4.5 seconds, on the third request:
+A request that times out is tried again by the provider's client; on a step that declares `retry`, Realm tries it again instead, as the block says. With `--llm-timeout 1` and a model that took 3 seconds, the step stopped after 4.5 seconds, on the third request:
 
 ```text
 Drive failures:

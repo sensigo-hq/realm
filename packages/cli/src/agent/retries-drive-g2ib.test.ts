@@ -24,6 +24,7 @@ import {
 import type { LlmClock } from './providers/agent-utils.js';
 import type { McpClient, McpTool, StepWithToolsResult } from './mcp/mcp-extensions.js';
 import { inspectRun } from '../commands/inspect.js';
+import { handleGetRunState } from '@sensigo/realm-mcp/dist/tools/get-run-state.js';
 
 type Wire = (init: RequestInit | undefined) => Response | Promise<Response>;
 let script: Wire[] = [];
@@ -427,4 +428,217 @@ describe('gap 2, unit (i-b) — check 11: provider modules', () => {
       ],
     });
   });
+});
+
+// ─── Correction 1 (prompts/gap2-i-b-retries-c1.md) ───────────────────────────────────────────────
+
+/** The drive failure's own line in inspect's output (its step and provider, then its class). */
+const failureLine = (shown: string) =>
+  shown.split('\n').find((l) => /^ {2}\S+ {2}s {2}anthropic {2}/.test(l)) ?? '(no failure line)';
+/** A wire try that answers only when it is aborted, as a request in flight when the cap fires. */
+const hang = (): Wire => (init) =>
+  new Promise<Response>((_, reject) => {
+    init?.signal?.addEventListener('abort', () =>
+      reject(Object.assign(new Error('aborted (fake)'), { name: 'AbortError' })),
+    );
+  });
+
+describe('gap 2, unit (i-b), correction 1 — Behaviour 1: the attempt number belongs to the request whose failure it records', () => {
+  it('check 1: a 529, then two answers that are not JSON: the 529 is kept, and neither reader shows an attempt number', async () => {
+    const def = workflow('g2ib-c1-unusable', {
+      retry: { max_attempts: 3, backoff: 'fixed', base_delay_ms: 1 },
+    });
+    // Request 0 fails once and is answered (not JSON); the provider's re-ask, request 1, is sent
+    // once and answered (not JSON either), so the drive fails on an answer, not on a send.
+    script = [
+      fail(529, 'overloaded_error'),
+      reply([{ type: 'text', text: 'not json (fake)' }]),
+      reply([{ type: 'text', text: 'still not json (fake)' }]),
+    ];
+    const { run, store } = await drive(def, new AnthropicProvider('claude-test-1'));
+    const entry = lastFailure(run);
+    const shown = await inspectRun(run.id, store, workflowStoreOf(def));
+    const state = await handleGetRunState({ run_id: run.id }, { runStore: store });
+    const view = state.drive_failures?.entries[state.drive_failures.entries.length - 1];
+    // (a) red when the attempt number is read as built (request 0's count, "(attempt 2)", on a
+    //     failure request 1's answer caused); (b) prints the wire count, the tries and both readers.
+    expect({
+      wire: bodies.length,
+      open: run.terminal_state,
+      tries: entry?.model_attempts,
+      attemptsSdk: entry?.attempts_sdk,
+      line: /\(attempt \d+\)/.exec(failureLine(shown))?.[0] ?? 'none',
+      failedTries: shown.split('\n').filter((l) => l.includes('Failed tries:')),
+      attempt: view !== undefined && 'attempt' in view,
+    }).toEqual({
+      wire: 3,
+      open: false,
+      tries: [
+        {
+          request: 0,
+          kind: 'transient',
+          error_class: 'api_status',
+          status: 529,
+          wait_ms: 1,
+          retry_after_ms: null,
+        },
+      ],
+      attemptsSdk: undefined,
+      line: 'none',
+      failedTries: ['    Failed tries: 1 (transient 529)'],
+      attempt: false,
+    });
+  });
+
+  it("check 2 (GROUNDING: green before and after): the cap fires during the check before a re-send, and Realm's number stays", async () => {
+    const def = workflow('g2ib-c1-cap-check', {
+      retry: { max_attempts: 2, total_timeout_seconds: 1, backoff: 'fixed', base_delay_ms: 10 },
+    });
+    script = [fail(503), answer()];
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
+    // The check reads the run; that read is held past the 1 s cap, so the cap fires during it.
+    let armed = false;
+    const get = store.get.bind(store);
+    vi.spyOn(store, 'get').mockImplementation(async (id: string) => {
+      if (armed) {
+        armed = false;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      return get(id);
+    });
+    onWire = async (n) => {
+      if (n === 1) armed = true;
+    };
+    const { run } = await drive(def, new AnthropicProvider('claude-test-1'), { store });
+    const entry = lastFailure(run);
+    const shown = await inspectRun(run.id, store, workflowStoreOf(def));
+    // (a) red when a request that ended on the cap loses Realm's number (inspect would show the
+    //     cap's own count, "(attempt 0)"); (b) prints the wire count, the entry and the line.
+    expect({
+      wire: bodies.length,
+      errorClass: entry?.error_class,
+      tries: entry?.model_attempts?.map((t) => [t.status, t.wait_ms, t.exhausted_by]),
+      line: /\(attempt \d+\)/.exec(failureLine(shown))?.[0] ?? 'none',
+    }).toEqual({
+      wire: 1,
+      errorClass: 'aborted_by_budget',
+      tries: [[503, null, 'total_timeout']],
+      line: '(attempt 1)',
+    });
+  }, 10_000);
+});
+
+describe("gap 2, unit (i-b), correction 1 — Behaviour 2: the validation wedge keeps the step's tries", () => {
+  const CHOICE = {
+    type: 'object',
+    required: ['answer'],
+    properties: { answer: { type: 'string', enum: ['yes', 'no'] } },
+  };
+
+  it('check 3 (a): a 503, then an answer outside the schema, no schema retries: the wedge entry keeps the 503, closed', async () => {
+    const def = workflow('g2ib-c1-wedge', { retry: FAST, input_schema: CHOICE });
+    script = [fail(503), answer()];
+    const { run, store } = await drive(def, new AnthropicProvider('claude-test-1'), {
+      schemaRetries: 0,
+    });
+    const entry = lastFailure(run);
+    const shown = await inspectRun(run.id, store, workflowStoreOf(def));
+    // (a) red when the wedge write leaves the tries out; (b) prints the entry and inspect's lines.
+    expect({
+      open: run.terminal_state,
+      errorClass: entry?.error_class,
+      tries: entry?.model_attempts,
+      evidence: run.evidence.filter((e) => e.step_id === 's').length,
+      failedTries: shown.split('\n').filter((l) => l.includes('Failed tries:')),
+    }).toEqual({
+      open: false,
+      errorClass: 'validation_rejected',
+      tries: [
+        {
+          request: 0,
+          kind: 'transient',
+          error_class: 'api_status',
+          status: 503,
+          wait_ms: 1,
+          retry_after_ms: null,
+        },
+      ],
+      evidence: 0,
+      failedTries: ['    Failed tries: 1 (transient 503)'],
+    });
+  });
+
+  it("check 3 (b) (GROUNDING: green before and after): a later step's wedge keeps none of the saved step's tries", async () => {
+    // The one later-step wedge the drive meets: the step after `s` is refused on its input before
+    // its claim, so the drive's exit records the wedge under it (issue #625 PR-2a, C13 and C31).
+    const def = {
+      ...workflow('g2ib-c1-later', { retry: FAST }),
+      steps: {
+        s: { description: 'Answer with JSON.', execution: 'agent', retry: FAST },
+        publish: {
+          description: 'Publish it',
+          execution: 'auto',
+          depends_on: ['s'],
+          input_schema: {
+            type: 'object',
+            required: ['title'],
+            properties: { title: { type: 'string' } },
+          },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    script = [fail(503), answer()];
+    const { run } = await drive(def, new AnthropicProvider('claude-test-1'));
+    // (a) red when the later step's wedge takes `s`'s tries (they would be on two records);
+    //     (b) prints where the tries are.
+    expect({
+      evidence: run.evidence.find((e) => e.step_id === 's')?.model_attempts?.map((t) => t.status),
+      wedges: run.drive_failures?.entries.map((e) => [e.step, e.error_class, e.model_attempts]),
+    }).toEqual({
+      evidence: [503],
+      wedges: [['publish', 'validation_rejected', undefined]],
+    });
+  });
+});
+
+describe("gap 2, unit (i-b), correction 1 — Behaviour 3: a drive failure's elapsed_ms is the whole request's", () => {
+  it("check 4 (a): two 503s with a 300 ms wait between them: elapsed_ms covers the wait, and inspect's line shows it", async () => {
+    const def = workflow('g2ib-c1-elapsed', {
+      retry: { max_attempts: 2, backoff: 'fixed', base_delay_ms: 300 },
+    });
+    script = [fail(503), fail(503)];
+    const { run, store } = await drive(def, new AnthropicProvider('claude-test-1'));
+    const entry = lastFailure(run);
+    const shown = await inspectRun(run.id, store, workflowStoreOf(def));
+    const wait = entry?.model_attempts?.[0]?.wait_ms ?? 0;
+    // (a) red when the entry keeps the last send's span (a few ms); (b) prints the time, the wait
+    //     and the line.
+    expect({
+      wait,
+      coversWait: (entry?.elapsed_ms ?? 0) >= wait,
+      shown: failureLine(shown).includes(` after ${String(entry?.elapsed_ms)}ms: `),
+    }).toEqual({ wait: 300, coversWait: true, shown: true });
+  });
+
+  it('check 4 (b): a 1 s cap that fires during the second send: elapsed_ms is the cap', async () => {
+    const def = workflow('g2ib-c1-elapsed-cap', {
+      retry: { max_attempts: 2, total_timeout_seconds: 1, backoff: 'fixed', base_delay_ms: 300 },
+    });
+    script = [fail(503), hang()];
+    const { run } = await drive(def, new AnthropicProvider('claude-test-1'));
+    const entry = lastFailure(run);
+    // (a) red when the entry keeps the second send's span (about 700 ms); (b) prints the class,
+    //     the time and the ceiling. A timer may fire up to 2 ms before the performance clock's mark.
+    expect({
+      errorClass: entry?.error_class,
+      atLeastTheCap: (entry?.elapsed_ms ?? 0) >= 1000 - 2,
+      ceiling: entry?.derived_ceiling_ms,
+      elapsed: (entry?.elapsed_ms ?? 0) < 1500,
+    }).toEqual({
+      errorClass: 'aborted_by_budget',
+      atLeastTheCap: true,
+      ceiling: 1000,
+      elapsed: true,
+    });
+  }, 10_000);
 });

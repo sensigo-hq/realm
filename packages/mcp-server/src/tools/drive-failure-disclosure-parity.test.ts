@@ -207,23 +207,29 @@ describe('#401 — every DriveFailureRecord field reaches a get_run_state consum
     expect('drive_failures' in summary).toBe(false);
   });
 
-  it("gap 2, unit (i-b): Realm's attempt number as `attempt`, right after `attempts_sdk`, for an entry that carries model_attempts; none for one that does not", async () => {
-    // ENTRY's tries end with request 1, which was sent once; request 0's two sends do not count.
+  it("gap 2, unit (i-b): Realm's attempt number as `attempt`, right after `attempts_sdk`, for an entry whose failure ended its last request; none for one that does not", async () => {
+    // Correction 1: ENTRY's tries end with request 1's failed send, which a gateway re-send
+    // answered, so request 1 got its answer and ENTRY's failure is something else: no `attempt`.
+    // Without that last try, the list ends with request 0's two sends, the second of which ended
+    // it (its tries used up): `attempt` 2. An entry with no tries has none.
     const { model_attempts: _tries, ...bare } = ENTRY;
-    const both = {
+    const ended = { ...ENTRY, model_attempts: ATTEMPTS.slice(0, 2) };
+    const all = {
       ...run,
-      drive_failures: { first_failed_at: ENTRY.at, total: 2, entries: [ENTRY, bare] },
+      drive_failures: { first_failed_at: ENTRY.at, total: 3, entries: [ended, ENTRY, bare] },
     } as unknown as RunRecord;
-    const summary = await handleGetRunState({ run_id: 'r1' }, { runStore: makeStore(both) });
-    const [withTries, without] = summary.drive_failures?.entries ?? [];
-    const keys = Object.keys(withTries ?? {});
-    // (a) red when the derived field is missing, counts every entry or the client's count, or
-    //     sits elsewhere, or appears on an entry with no tries; (b) prints the fields and keys.
+    const summary = await handleGetRunState({ run_id: 'r1' }, { runStore: makeStore(all) });
+    const [withEnded, recovered, without] = summary.drive_failures?.entries ?? [];
+    const keys = Object.keys(withEnded ?? {});
+    // (a) red when the derived field is missing, counts every entry or the client's count, sits
+    //     elsewhere, or appears on an entry whose last request got its answer (correction 1) or
+    //     on one with no tries; (b) prints the fields and keys.
     expect({
-      attempt: withTries?.attempt,
-      attemptsSdk: withTries?.attempts_sdk,
+      attempt: withEnded?.attempt,
+      attemptsSdk: withEnded?.attempts_sdk,
       next: keys[keys.indexOf('attempts_sdk') + 1],
+      recovered: recovered !== undefined && 'attempt' in recovered,
       without: without !== undefined && 'attempt' in without,
-    }).toEqual({ attempt: 1, attemptsSdk: 3, next: 'attempt', without: false });
+    }).toEqual({ attempt: 2, attemptsSdk: 3, next: 'attempt', recovered: false, without: false });
   });
 });

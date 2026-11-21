@@ -34,14 +34,14 @@ A value of 0, or one that is not a whole number, is refused: `'timeout_seconds' 
 
 `retry` is a block on an `auto` step, and on an agent step that `realm agent` or `realm listen` drives. It has six keys.
 
-| Key                                                    | Type                             | Default  | What it does                                                                                                                |
-| ------------------------------------------------------ | -------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
-| [`max_attempts`](#max_attempts)                        | whole number above 0             | 1        | How many times the step is tried, counting the first.                                                                       |
-| [`backoff`](#backoff-base_delay_ms-max_delay_ms)       | `fixed`, `linear`, `exponential` | `fixed`  | How the wait between attempts grows.                                                                                        |
-| [`base_delay_ms`](#backoff-base_delay_ms-max_delay_ms) | number, 0 or more                | 0        | The wait the growth starts from, in milliseconds.                                                                           |
-| [`max_delay_ms`](#backoff-base_delay_ms-max_delay_ms)  | number                           | No limit | The longest any one wait may be.                                                                                            |
-| [`on_timeout`](#on_timeout)                            | true or false                    | false    | Whether a timed-out attempt is tried again. On an agent step, only false loads, and then a timed-out try is not sent again. |
-| [`total_timeout_seconds`](#total_timeout_seconds)      | whole number above 0             | Computed | The longest all attempts together may take.                                                                                 |
+| Key                                                    | Type                             | Default  | What it does                                                                                                                                    |
+| ------------------------------------------------------ | -------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`max_attempts`](#max_attempts)                        | whole number above 0             | 1        | How many times the step is tried, counting the first.                                                                                           |
+| [`backoff`](#backoff-base_delay_ms-max_delay_ms)       | `fixed`, `linear`, `exponential` | `fixed`  | How the wait between attempts grows.                                                                                                            |
+| [`base_delay_ms`](#backoff-base_delay_ms-max_delay_ms) | number, 0 or more                | 0        | The wait the growth starts from, in milliseconds.                                                                                               |
+| [`max_delay_ms`](#backoff-base_delay_ms-max_delay_ms)  | number                           | No limit | The longest any one wait may be.                                                                                                                |
+| [`on_timeout`](#on_timeout)                            | true or false                    | false    | Whether a timed-out attempt is tried again. On an agent step, a timed-out try is sent again unless this is `false`; `true` does not load there. |
+| [`total_timeout_seconds`](#total_timeout_seconds)      | whole number above 0             | Computed | The longest all attempts together may take.                                                                                                     |
 
 ```yaml
 fetch:
@@ -134,7 +134,7 @@ Without `total_timeout_seconds`, the limit is the step's own schedule: `max_atte
 
 ### On an agent step
 
-Under `realm agent` and `realm listen`, `retry` on an agent step tries a failed model request again. Each model request the step makes is tried up to `max_attempts` times: its first request, each tool turn, the request sent after a reply that was not JSON, and the request for its final answer. The model client's own retries are off for such a step, so these are its only tries. A step without `retry` is unchanged: the model client tries each request up to 3 times, as before.
+Under `realm agent` and `realm listen`, `retry` on an agent step tries a failed model request again. Each model request the step makes is tried up to `max_attempts` times: its first request, each tool turn, the request sent after a reply that was not JSON, and the request for its final answer. The model client's own retries are off for such a step, so these are its only tries. The re-sends Realm already makes, once each, when a request fails on its strict mode, its cache fields or its cache question, come on top of these tries. A step without `retry` is unchanged: the model client tries each request up to 3 times, as before.
 
 A request is tried again only after a failure another try can fix: a 408, 409, 429 or 5xx answer, a timeout, or a lost connection. The provider's `x-should-retry` header decides first: `true` tries again at any status, and `false` never does. A wrong key, a missing model, a refused workspace, used-up credit or quota, and a request the provider refuses as written are never tried again. With `on_timeout: false`, a try that timed out is not sent again.
 

@@ -38,7 +38,9 @@ describe('gap 2, unit (i-b) — check 13: the words', () => {
           '`retry` is a block on an `auto` step, and on an agent step that `realm agent` or `realm listen` drives. It has six keys.',
           '| `retry.max_attempts` | How many times the step is tried. | `auto`, `agent` | 1 |',
           '| `retry.total_timeout_seconds` | All attempts together, with the waits between them. | `auto`; `agent`, with `retry` |',
-          'Whether a timed-out attempt is tried again. On an agent step, only false loads, and then a timed-out try is not sent again. |',
+          // Correction 1, Words 5 and 7.
+          'Whether a timed-out attempt is tried again. On an agent step, a timed-out try is sent again unless this is `false`; `true` does not load there. |',
+          'so these are its only tries. The re-sends Realm already makes, once each, when a request fails on its strict mode, its cache fields or its cache question, come on top of these tries.',
           '### On an agent step',
           'A request is tried again only after a failure another try can fix: a 408, 409, 429 or 5xx answer, a timeout, or a lost connection.',
           'When it declares none of `backoff`, `base_delay_ms` and `max_delay_ms`, it waits as the model client did: 500 ms, doubling, at most 8 s.',
@@ -53,6 +55,7 @@ describe('gap 2, unit (i-b) — check 13: the words', () => {
         [
           '`retry` is a block on an `auto` step. It has six keys.',
           '| `retry` on an agent or guard step |',
+          'On an agent step, only false loads, and then a timed-out try is not sent again.',
         ],
       ),
     ).toEqual(CLEAN);
@@ -65,11 +68,16 @@ describe('gap 2, unit (i-b) — check 13: the words', () => {
         FIELDS,
         [
           '| `retry` | yes | yes | – | no |',
-          'Tries the step again after an error marked as retryable; on an agent step under realm agent, a model request that failed for a reason another try can fix.',
+          // Correction 1, Words 9.
+          'Tries the step again after an error marked as retryable; on an agent step under realm agent or realm listen, a model request that failed for a reason another try can fix.',
           'For example, `retry` on a guard step:',
           "⚠ Step 's': 'retry' is inert on execution: 'guard' steps — a guard's evaluation never traverses the dispatch path",
         ],
-        ['| `retry` | yes | – | – | no |', "'retry' is inert on execution: 'agent' steps"],
+        [
+          '| `retry` | yes | – | – | no |',
+          "'retry' is inert on execution: 'agent' steps",
+          'on an agent step under realm agent, a model request',
+        ],
       ),
       loader: check(
         LOADER,
@@ -89,12 +97,23 @@ describe('gap 2, unit (i-b) — check 13: the words', () => {
     const log = flat('CHANGELOG.md');
     const unreleased = log.slice(log.indexOf('## [Unreleased]'), log.indexOf('## [0.'));
     const upgrading = unreleased.slice(0, unreleased.indexOf('### Added'));
+    const added = unreleased.slice(
+      unreleased.indexOf('### Added'),
+      unreleased.indexOf('### Changed'),
+    );
     const changed = unreleased.slice(
       unreleased.indexOf('### Changed'),
       unreleased.indexOf('### Fixed'),
     );
-    // (a) red when either is missing, reworded, or under another heading; (b) prints which.
+    // (a) red when either is missing, reworded, or under another heading, or the (i-a) item still
+    //     says Realm fills none in (correction 1, Words 4); (b) prints which.
     expect({
+      added: [
+        added.includes(
+          ", the member that carries them (`realm agent` and `realm listen` fill them in for an agent step that declares `retry`; see Changed); core's",
+        ),
+        added.includes('Realm fills none of them in yet'),
+      ],
       upgrading: upgrading.includes(
         "**6. `retry` on an agent step now takes effect under `realm agent` and `realm listen`.** A step that declares it is tried up to `max_attempts` times per model request (once when `max_attempts` is absent) on a failure another try can fix (a 408, 409, 429 or 5xx, a timeout or a lost connection), in place of the model client's own up to 3 tries.",
       ),
@@ -110,7 +129,7 @@ describe('gap 2, unit (i-b) — check 13: the words', () => {
         '`ProviderCapabilities`',
         '`handlesRetries`',
       ].filter((n) => !changed.includes(n)),
-    }).toEqual({ upgrading: true, grammar: true, changed: true, names: [] });
+    }).toEqual({ added: [true, false], upgrading: true, grammar: true, changed: true, names: [] });
   });
 
   it('run-record-and-export.md (Words 9)', () => {
@@ -132,12 +151,19 @@ describe('gap 2, unit (i-b) — check 13: the words', () => {
   it('realm-agent.md and agent-step-controls.md (Words 10, 11)', () => {
     // (a) red when a sentence is missing or the old one stays; (b) prints which.
     expect({
-      agent: check(AGENT, [
-        "When a step declares `retry`, the clock its call is given (`opts.llmClock`) carries `retry`: the step's `retry` block, `capMs` (the longest one model request may take with all its tries, waits and re-sends) and `mayResend()`, which says whether another send is allowed.",
-        'A module that does this declares `handlesRetries: true` in its `capabilities()`, and calls `mayResend()` before each re-send',
-        "Without `handlesRetries`, Realm tries the module's whole call again on a step without tools; on a step with tools it tries nothing again, and says so once",
-        "A request that times out is tried again by the provider's client, or by Realm, as its block says, on a step that declares retry.",
-      ]),
+      agent: check(
+        AGENT,
+        [
+          "When a step declares `retry`, the clock its call is given (`opts.llmClock`) carries `retry`: the step's `retry` block, `capMs` (the longest one model request may take with all its tries, waits and re-sends) and `mayResend()`, which says whether another send is allowed.",
+          'A module that does this declares `handlesRetries: true` in its `capabilities()`, and calls `mayResend()` before each re-send',
+          "Without `handlesRetries`, Realm tries the module's whole call again on a step without tools; on a step with tools it tries nothing again, and says so once",
+          // Correction 1, Words 8.
+          "A request that times out is tried again by the provider's client; on a step that declares `retry`, Realm tries it again instead, as the block says.",
+        ],
+        [
+          "A request that times out is tried again by the provider's client, or by Realm, as its block says, on a step that declares retry.",
+        ],
+      ),
       controls: check(CONTROLS, [
         'sent again, up to three times in all; on a step that declares retry, up to its max_attempts (see [Retry and timeouts](retry-and-timeouts.md#on-an-agent-step)).',
         'which Realm works out from it; on a step that declares retry, the cap of its tries.',
@@ -161,5 +187,36 @@ describe('gap 2, unit (i-b) — check 13: the words', () => {
       ),
       oldInert: jsdoc.includes("Inert on a non-`execution: 'auto'` step (W5 warns)"),
     }).toEqual({ neverHonors: [], cap: true, oldInert: false });
+  });
+
+  it('correction 1, Words 1–3 and 6: the public JSDoc of model_attempts and the inspect comment', () => {
+    const jsdoc = (rel: string) => flat(rel).replace(/ \* /g, ' ');
+    const record = jsdoc('packages/core/src/types/run-record.ts');
+    const loop = jsdoc('packages/core/src/engine/execution-loop.ts');
+    const inspect = jsdoc('packages/cli/src/commands/inspect.ts');
+    // (a) red when a sentence is missing or an old one stays; (b) prints which.
+    expect({
+      evidence: record.includes(
+        'Each entry is closed at the write to its eight members. `realm agent` and `realm listen` write it for an agent step that declares `retry` (gap 2, unit (i-b)); a program that embeds the engine can still pass its own in `StepMeta.modelAttempts`. Absent means no tries were recorded for the entry, as on every entry written by Realm 0.50.0 or earlier. No surface fills it in.',
+      ),
+      failure: record.includes(
+        'with no text and no usage. `realm agent` and `realm listen` write it for an agent step that declares `retry` (gap 2, unit (i-b)). Absent means Realm recorded no tries',
+      ),
+      meta: loop.includes(
+        '`realm agent` and `realm listen` pass it for an agent step that declares `retry` (gap 2, unit (i-b)).',
+      ),
+      inspect: inspect.includes('`realm run export` and get_run_state carry the full entries.'),
+      old: [
+        record.includes('Realm writes none'),
+        loop.includes('Realm does not pass it yet.'),
+        inspect.includes('`--json` and get_run_state carry the full entries.'),
+      ],
+    }).toEqual({
+      evidence: true,
+      failure: true,
+      meta: true,
+      inspect: true,
+      old: [false, false, false],
+    });
   });
 });

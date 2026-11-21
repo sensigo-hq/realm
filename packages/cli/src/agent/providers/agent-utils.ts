@@ -1062,9 +1062,28 @@ export async function tryModelRequest<T>(
       last.wait_ms = 0;
     }
   }
+  // Correction 1: the request's time, from its first send (its cap started there) to now.
+  const requestElapsed = (): number =>
+    Math.max(0, Math.round(performance.now() - (log.deadline - policy.capMs)));
+  // Correction 1: a failed send that ends the request is thrown with the whole request's time as
+  // its `elapsed_ms` (its tries, waits and re-sends), as a step without `retry` records the
+  // client's tries and waits; the send's own span is only the last send's. TOTAL: an error Realm
+  // did not make cannot out-throw the failure it carries.
+  const ends = (err: unknown): unknown => {
+    try {
+      const payload = (err as { driveCall?: { elapsed_ms?: unknown } } | null)?.driveCall;
+      if (typeof payload?.elapsed_ms === 'number') payload.elapsed_ms = requestElapsed();
+    } catch {
+      /* the error is thrown as it is */
+    }
+    return err;
+  };
+  // The request's last try, when it is this request's: nothing follows it once the cap has fired
+  // (no wait and no re-send), so it is the try that ended the request.
   const capFired = (last: ModelAttempt | undefined): Error => {
-    if (last !== undefined) {
+    if (last !== undefined && last.request === log.request) {
       last.wait_ms = null;
+      delete last.then;
       last.exhausted_by = 'total_timeout';
     }
     const aborted = new Error(
@@ -1073,7 +1092,7 @@ export async function tryModelRequest<T>(
     attachDriveCall(aborted, {
       error_class: 'aborted_by_budget',
       attempts_sdk: 0,
-      elapsed_ms: Math.max(0, Math.round(performance.now() - (log.deadline - policy.capMs))),
+      elapsed_ms: requestElapsed(),
       ...(clock?.declaredPerAttemptMs !== undefined
         ? { declared_per_attempt_ms: clock.declaredPerAttemptMs }
         : {}),
@@ -1088,10 +1107,10 @@ export async function tryModelRequest<T>(
     const counted = !(first && options.resend !== undefined);
     first = false;
     if (counted && log.triesUsed >= maxAttempts && log.lastError !== undefined) {
-      throw log.lastError;
+      throw ends(log.lastError);
     }
     const left = log.deadline - performance.now();
-    if (left <= 0) throw capFired(undefined);
+    if (left <= 0) throw capFired(log.attempts[log.attempts.length - 1]);
     if (counted) log.triesUsed += 1;
     try {
       return await send(left);
@@ -1101,15 +1120,17 @@ export async function tryModelRequest<T>(
       log.attempts.push(entry);
       if (entry.error_class === 'aborted_by_budget') {
         entry.exhausted_by = 'total_timeout';
-        throw err;
+        throw ends(err);
       }
       // A failure the strict ladder takes goes to it at once: no wait, no further try.
-      if (options.toLadder?.(err) === true) throw err;
+      if (options.toLadder?.(err) === true) throw ends(err);
       const timedOut = entry.error_class === 'connection_timeout';
-      if (entry.kind !== 'transient' || (timedOut && policy.retry.on_timeout === false)) throw err;
+      if (entry.kind !== 'transient' || (timedOut && policy.retry.on_timeout === false)) {
+        throw ends(err);
+      }
       if (log.triesUsed >= maxAttempts) {
         entry.exhausted_by = 'attempts';
-        throw err;
+        throw ends(err);
       }
       const wait = Math.max(
         modelRetryWaitMs(policy.retry, log.triesUsed, log.random),
@@ -1117,7 +1138,7 @@ export async function tryModelRequest<T>(
       );
       if (wait >= log.deadline - performance.now()) {
         entry.exhausted_by = 'total_timeout';
-        throw err;
+        throw ends(err);
       }
       entry.wait_ms = Math.round(wait);
       if ((await beforeDeadline(sleep(wait), log.deadline)) === CAP) throw capFired(entry);
@@ -1125,7 +1146,7 @@ export async function tryModelRequest<T>(
       if (may === CAP) throw capFired(entry);
       if (may !== true) {
         entry.wait_ms = null;
-        throw err;
+        throw ends(err);
       }
     }
   }

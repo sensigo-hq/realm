@@ -336,7 +336,8 @@ function boundedDriveFailures(field: DriveFailuresField): DriveFailuresView {
             ) as DriveFailureView)
           : shown;
       // Gap 2, unit (i-b): Realm's attempt number beside the client's `attempts_sdk`, for an entry
-      // that carries `model_attempts`; at the end when the entry has no `attempts_sdk`.
+      // whose failure is the failed send that ended the last request in its `model_attempts`; at
+      // the end when the entry has no `attempts_sdk`.
       const attempt = failedRequestSends(entry.model_attempts);
       if (attempt === undefined) return view;
       const pairs = Object.entries(view).flatMap(([key, value]): Array<[string, unknown]> =>
