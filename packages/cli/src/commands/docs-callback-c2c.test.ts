@@ -38,10 +38,10 @@ describe('C2c — the words, each held to its page', () => {
     );
   });
   it('3. Each --callback-allow <entry> names one receiver that a request may gi', () => {
-    // Pinned by: listen-switch-c2c 'a real process: --callback-allow-private 10.0.0.5 and a key made first; a request for https://10.0.0.5/x registers; another host is not allowed'; allow-list.test (the entry forms); the C2 door cells.
+    // Pinned by: listen-switch-c2c 'a real process: --callback-allow-private 10.0.0.5 and a key made first; a request for https://10.0.0.5/x registers; another host is not allowed'; allow-list.test (the entry forms); the C2 door cells; listen-switch-c2c 'two bad entries: the first, public list first; a repeated entry once; the two that can never work' (an IP entry refused at start); a host name taken as typed: executed by the reader, CB-C2C-RV-21 (no cell).
     claim(
       LISTEN,
-      'Each `--callback-allow <entry>` names one receiver that a request may give as its callback address, in its `realm-callback-url` header. The entry is a host name or an IP address, with a port if it is not 443: `hooks.example.com`, `hooks.example.com:8443`, or `http://hooks.example.com:8080` for a receiver on plain http. An entry with `http://` allows `http` and `https` to that host and port; one without it allows `https` only. Upper and lower case name the same host. A callback address is allowed when its scheme, host and port match an entry. This flag allows public addresses only: a callback address whose host is an IP address of this machine or of a private or shared network is refused `address`. Without this flag or `--callback-allow-private`, every request that names a callback address is refused `callback_not_enabled`. With either, `realm listen` reads its master key when it starts (see [The callback lines](#the-callback-lines)). This version registers the address with the run and does not yet send a callback. Added after version 0.50.0.',
+      'Each `--callback-allow <entry>` names one receiver that a request may give as its callback address, in its `realm-callback-url` header. The entry is a host name or an IP address, with a port if it is not 443: `hooks.example.com`, `hooks.example.com:8443`, or `http://hooks.example.com:8080` for a receiver on plain http. An entry with `http://` allows `http` and `https` to that host and port; one without it allows `https` only. Upper and lower case name the same host. A callback address is allowed when its scheme, host and port match an entry. This flag is for receivers on public addresses: an entry that is an IP address of this machine or of a private or shared network is refused when `realm listen` starts, as below. A host name is taken as typed: this version does not check which address it leads to. Without this flag or `--callback-allow-private`, every request that names a callback address is refused `callback_not_enabled`. With either, `realm listen` reads its master key when it starts (see [The callback lines](#the-callback-lines)). This version registers the address with the run and does not yet send a callback. Added after version 0.50.0.',
     );
   });
   it('4. --callback-allow refuses a value that starts with -, except a lone -;', () => {
@@ -52,10 +52,10 @@ describe('C2c — the words, each held to its page', () => {
     );
   });
   it('5. An entry that is not one, or that can never be used, stops realm liste', () => {
-    // Pinned by: listen-switch-c2c 'each of the nine refusal words, the exact line, exit 1, nothing before it; a typed password or token never echoed'; listen-switch-c2c 'two bad entries: the first, public list first; a repeated entry once; the two that can never work'.
+    // Pinned by: listen-switch-c2c 'each of the nine refusal words, the exact line, exit 1, nothing before it; a typed password or token never echoed'; listen-switch-c2c 'two bad entries: the first, public list first; a repeated entry once; the two that can never work'; listen-switch-c2c 'an entry that begins with / or ?: no quote, by realm listen and by realm callback key (correction 1)'; start-lines-c2c (the quote rule).
     claim(
       LISTEN,
-      'An entry that is not one, or that can never be used, stops `realm listen` before it reads any workflow, with exit code 1 and one line; the first refused entry is the only one said, the entries of `--callback-allow` before those of `--callback-allow-private`. The line quotes the entry only up to its first `/`, `?` or `#`, and not at all when it holds a user name or a password, so a token or a password typed into it is never printed:',
+      'An entry that is not one, or that can never be used, stops `realm listen` before it reads any workflow, with exit code 1 and one line; the first refused entry is the only one said, the entries of `--callback-allow` before those of `--callback-allow-private`. The line quotes the entry only up to its first `/`, `?` or `#`, and not at all when it holds a user name or a password, or when it begins with `/`, `?` or `#`, so a token or a password typed into it is never printed:',
     );
   });
   it('6. The first line is for hooks.example.com/webhook; the last for an addre', () => {
@@ -97,7 +97,7 @@ describe('C2c — the words, each held to its page', () => {
     // Pinned by: listen-switch-c2c 'the same lines as the base (AU-01), and a master key command is not run; with a flag it runs once'; listen-switch-c2c 'no master key: no master line, and no key or master key in any line of any start above'.
     claim(
       LISTEN,
-      'With `--callback-allow` or `--callback-allow-private`, `realm listen` reads its master key once (see [`realm callback`](realm-callback.md#where-the-master-key-comes-from)) and the stored callback keys once, when it starts. It logs what is on in lines that begin `listen: callbacks:`, after `listen: caching` and before the address line. Without either flag it logs none of them, reads no master key and runs no `REALM_ENCRYPTION_KEY_COMMAND`. No line shows a key, a master key or an address: host names, workflow ids and fingerprints only. Added after version 0.50.0.',
+      'With `--callback-allow` or `--callback-allow-private`, `realm listen` reads its master key once (see [`realm callback`](realm-callback.md#where-the-master-key-comes-from)) and the stored callback keys once, when it starts. It logs what is on in lines that begin `listen: callbacks:`, after `listen: caching` and before the address line. Without either flag it logs none of them, reads no master key and runs no `REALM_ENCRYPTION_KEY_COMMAND`. No line shows a key, a master key or a callback URL. Added after version 0.50.0.',
     );
   });
   it('12. Here REALM_ENCRYPTION_KEY was set, the workflow refunds takes callback', () => {

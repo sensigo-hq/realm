@@ -63,4 +63,28 @@ describe('C2c — the quote rule of an entry refusal', () => {
       whole: ' "10.0.0.5"',
     });
   });
+
+  it('nothing for an entry that begins with / ? or # (correction 1); the rest as before', () => {
+    // (1) red when the empty-text check is dropped (the first three quote `""`, which reads as an
+    //     empty value); (2) prints each quote.
+    expect({
+      folder: quotedEntry('/srv/wf'),
+      query: quotedEntry('?token=CANARY'),
+      fragment: quotedEntry('#frag'),
+      dot: quotedEntry('./wf'),
+      path: quotedEntry('hooks.example.com/x'),
+      schemeOnly: quotedEntry('https:///x'),
+      at: quotedEntry('user:pw@hooks.example.com'),
+      userinfo: quotedEntry('hooks.example.com', 'userinfo'),
+    }).toEqual({
+      folder: '',
+      query: '',
+      fragment: '',
+      dot: ' "."',
+      path: ' "hooks.example.com"',
+      schemeOnly: ' "https://"',
+      at: '',
+      userinfo: '',
+    });
+  });
 });

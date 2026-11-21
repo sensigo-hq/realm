@@ -10,7 +10,7 @@
 //   6. per workflow that takes callbacks and allowed host, its key or what to do;
 //   7. per such workflow, the hosts it keeps keys for that are not allowed;
 //   8. a listing that could not be read (instead of 6 and 7).
-// No line shows a key, a master key or an address: host labels, workflow ids and fingerprints only.
+// No line shows a key, a master key or a callback URL.
 // `listenMasterSummary` reads what lines 2 to 5 need (two files at most); a read that fails leaves
 // its clause out: a start never fails for a line.
 import { readFileSync, statSync } from 'node:fs';

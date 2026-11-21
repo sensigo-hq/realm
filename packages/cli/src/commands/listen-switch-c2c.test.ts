@@ -323,6 +323,37 @@ describe.runIf(POSIX)('C2c — the flags and their refusals', { timeout: 300_000
     });
   });
 
+  it('an entry that begins with / or ?: no quote, by realm listen and by realm callback key (correction 1)', async () => {
+    const b = bench();
+    const folder = await b.listen(['wf', '--callback-allow', '/srv/wf']);
+    const query = await b.listen(['wf', '--callback-allow', '?token=CANARY']);
+    const key = spawnSync(process.execPath, [CLI, 'callback', 'key', 'wf', '--host', '/srv/wf'], {
+      cwd: b.root,
+      env: { PATH: process.env['PATH'] ?? '', HOME: b.home, NO_COLOR: '1' },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    const listenLine =
+      'Error: --callback-allow is not an address Realm can allow: it has a path, query or fragment. Give a host name, with a port if it is not 443: hooks.example.com, or http://hooks.example.com:8080 for plain http.';
+    // (1) red when the empty-text check is dropped (each line then says `""`, which reads as an
+    //     empty value); (2) prints each answer.
+    expect({
+      folder: [folder.code, folder.lines],
+      query: [query.code, query.lines],
+      key: [key.status, key.stdout, key.stderr],
+      leaked: JSON.stringify(query.lines).match(/CANARY/g) ?? [],
+    }).toEqual({
+      folder: [1, [listenLine]],
+      query: [1, [listenLine]],
+      key: [
+        1,
+        '',
+        'Error: --host is not a receiver address: it has a path, query or fragment. Give a host name or address, with a port if it is not 443: n8n.example.com, or http://n8n.lan:5678 for a receiver on plain http.\n',
+      ],
+      leaked: [],
+    });
+  });
+
   it('a real process: --callback-allow-private 10.0.0.5 and a key made first; a request for https://10.0.0.5/x registers; another host is not allowed', async () => {
     const b = bench();
     b.key('wf', '10.0.0.5', { REALM_ENCRYPTION_KEY: A });
