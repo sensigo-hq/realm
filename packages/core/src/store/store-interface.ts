@@ -228,7 +228,8 @@ export interface RunStore {
    * The store's callback store (R1.3, callback A1a). OPTIONAL: absent or `null`, the store keeps none; nothing
    * in core treats that as an error. One row per run registered with `CreateRunOptions.callback`, beside
    * the run record, never in it. `InMemoryStore` keeps one unless it is built with `callbacks: null`.
-   * No Realm command uses it yet.
+   * `realm listen` registers a request's callback with its run and reads `keys`, `realm callback key`
+   * keeps `keys`, and `realm run inspect` and `realm run purge` read a run's row.
    * @beta
    */
   readonly callbacks?: CallbackStore | null;
