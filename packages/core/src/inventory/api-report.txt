@@ -1045,6 +1045,7 @@ DriveFailureRecord · type · public
       retry_after_observed_ms?: number;
       usage?: UsageRecord[];
       model_text?: DriveFailureModelText;
+      model_attempts?: ModelAttempt[];
   }
 
 DriveFailureTextLoss · type · internal
@@ -1274,6 +1275,7 @@ EvidenceSnapshot · type · public
       agent_profile_hash?: string;
       tool_calls?: ToolCallRecord[];
       model_text?: ModelText;
+      model_attempts?: ModelAttempt[];
       resolved_params?: Record<string, unknown>;
       warn?: string;
       debug_output?: unknown;
@@ -2048,6 +2050,13 @@ LoaderWarning · type · public
 MCP_FORM_RENDERER · value · internal
 MINT_WITNESS_PATTERN · value · internal
 MIN_PART_CHARS_LEAST · value · internal
+MODEL_FAILURE_KINDS · value · public
+  const MODEL_FAILURE_KINDS: readonly [
+      "transient",
+      "setup",
+      "permanent"
+  ];
+
 ManifestEntry · type · internal
 ManifestSecretsConfig · type · internal
 MapClass · type · internal
@@ -2076,6 +2085,33 @@ MemberKind · type · public
   type MemberKind = typeof KIND.environment | typeof KIND.declared;
 
 MockAdapter · both · internal
+ModelAttempt · type · public
+  interface ModelAttempt {
+      request: number;
+      kind: ModelFailureKind | null;
+      error_class: DriveFailureRecord['error_class'] | null;
+      status: number | null;
+      wait_ms: number | null;
+      retry_after_ms: number | null;
+      exhausted_by?: 'attempts' | 'total_timeout';
+      then?: 'gateway' | 'cache_probe' | 'strict_ladder';
+  }
+
+ModelFailureFacts · type · public
+  interface ModelFailureFacts {
+      error_class: DriveFailureRecord['error_class'];
+      status?: number | null;
+      provider_error_type?: string | null;
+      provider_error_code?: string | null;
+      should_retry?: string | null;
+      workspace_refusal?: boolean;
+      realm_code?: string | null;
+      phase: 'model_request' | 'after_response' | 'mcp_discovery';
+  }
+
+ModelFailureKind · type · public
+  type ModelFailureKind = (typeof MODEL_FAILURE_KINDS)[number];
+
 ModelText · type · public
   type ModelText = {
       recorded: true;
@@ -3498,6 +3534,7 @@ StepMeta · type · public
       structuredOutput?: StructuredOutputMeta;
       usage?: UsageRecord[];
       modelText?: ModelText;
+      modelAttempts?: ModelAttempt[];
   }
 
 StepScopedFencePredicate · type · public
@@ -4350,6 +4387,9 @@ classifyForCoherence · value · internal
 classifyInProgressClaims · value · internal
 classifyLegacySeal · value · public
   function classifyLegacySeal(run: ClassifiableRun): SealArm | undefined;
+
+classifyModelFailure · value · public
+  function classifyModelFailure(facts: ModelFailureFacts): ModelFailureKind | null;
 
 classifyRegisteredCopy · value · internal
 classifyRunHealth · value · public

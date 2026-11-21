@@ -78,6 +78,8 @@ export type { ArtifactDeleteFailure } from './store/fs-io.js';
 export { hashParams, canonicalJson } from './store/params-hash.js';
 // Gap 1, unit A2a: the rule a store's `update` applies to a drive failure's stored model text.
 export { driveFailureTextLoss, type DriveFailureTextLoss } from './store/drive-failure-texts.js';
+// Gap 2, unit (i-a): what a failed model request needs before it can succeed.
+export { classifyModelFailure, type ModelFailureFacts } from './engine/model-failure.js';
 export { decideIdempotencyPolicy } from './store/idempotency-policy.js';
 export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';

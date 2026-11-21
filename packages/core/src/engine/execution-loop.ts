@@ -13,6 +13,7 @@ import type {
   StepDiagnostics,
   UsageRecord,
   ModelText,
+  ModelAttempt,
   StepCacheDetail,
   SealArm,
   OutputSource,
@@ -212,6 +213,12 @@ export interface StepMeta {
    * any secret value before passing it, as `realm agent` and `realm listen` do.
    */
   modelText?: ModelText;
+  /**
+   * Gap 2, unit (i-a): the failed tries of the attempt's model requests, in send order. Written on
+   * the same entries as `modelText`, as `model_attempts`, each entry closed to its eight members:
+   * numbers, closed words and `null` only. Realm does not pass it yet.
+   */
+  modelAttempts?: ModelAttempt[];
 }
 
 /**
@@ -3848,6 +3855,10 @@ async function executeStepBody(
         ...(options.stepMeta?.modelText !== undefined
           ? { modelText: options.stepMeta.modelText }
           : {}),
+        // Gap 2, unit (i-a): the attempt's failed model tries, closed by captureEvidence.
+        ...(options.stepMeta?.modelAttempts !== undefined
+          ? { modelAttempts: options.stepMeta.modelAttempts }
+          : {}),
         // issue #140: PER-ATTEMPT value (may be smaller than the outer effectiveTimeoutSeconds once
         // the cap starts clipping) — byte-identical to the pre-#140 outer value whenever capMs is
         // undefined or hasn't bitten yet.
@@ -3986,6 +3997,9 @@ async function executeStepBody(
       ...(options.stepMeta?.modelText !== undefined
         ? { modelText: options.stepMeta.modelText }
         : {}),
+      ...(options.stepMeta?.modelAttempts !== undefined
+        ? { modelAttempts: options.stepMeta.modelAttempts }
+        : {}),
       ...(debugOutput !== undefined ? { debugOutput } : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps. Mirrors
       // the real dispatch-loop capture's own trace-spread conjunct exactly.
@@ -4054,6 +4068,9 @@ async function executeStepBody(
         : {}),
       ...(options.stepMeta?.modelText !== undefined
         ? { modelText: options.stepMeta.modelText }
+        : {}),
+      ...(options.stepMeta?.modelAttempts !== undefined
+        ? { modelAttempts: options.stepMeta.modelAttempts }
         : {}),
       ...(debugOutput !== undefined ? { debugOutput } : {}),
       // Gate trace to agent steps only — drop silently for auto/adapter/handler steps. Mirrors

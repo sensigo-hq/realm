@@ -251,7 +251,9 @@
         "readSupplier",
         "armToOutcome",
         "classifyLegacySeal",
-        "RunPhase"
+        "RunPhase",
+        "MODEL_FAILURE_KINDS",
+        "classifyModelFailure"
       ]
     }
   ]

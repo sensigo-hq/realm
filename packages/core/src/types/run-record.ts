@@ -1160,6 +1160,14 @@ export interface EvidenceSnapshot {
    */
   model_text?: ModelText;
   /**
+   * Gap 2, unit (i-a): the failed tries of the attempt's model requests ({@link ModelAttempt}), in
+   * send order, with no text and no usage. Written as a program that embeds the engine passes it in
+   * `StepMeta.modelAttempts`, each entry closed at the write to its eight members; Realm writes none
+   * yet. Absent means Realm recorded no tries for the entry: every entry Realm writes today, and
+   * every entry written by Realm 0.50.0 or earlier. No surface fills it in.
+   */
+  model_attempts?: ModelAttempt[];
+  /**
    * Present only when the step used input_map. Records the concrete params the engine
    * derived from run state and passed to the service adapter. Absent for all other step types.
    */
@@ -1785,6 +1793,13 @@ export interface DriveFailureRecord {
    * it, and a listing of runs leaves it out.
    */
   model_text?: DriveFailureModelText;
+  /**
+   * Gap 2, unit (i-a): the failed tries of the model requests this failure covers
+   * ({@link ModelAttempt}), in send order, with no text and no usage. Realm writes none yet. Absent
+   * means Realm recorded no tries for the entry, as on every entry written by Realm 0.50.0 or
+   * earlier. A listing of runs keeps it.
+   */
+  model_attempts?: ModelAttempt[];
 }
 
 /** Every {@link DriveFailureRecord} `error_class`, in the type's order; checked both ways. */
@@ -1800,6 +1815,50 @@ export const ERROR_CLASSES = [
 type MissingErrorClass = Exclude<DriveFailureRecord['error_class'], (typeof ERROR_CLASSES)[number]>;
 const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : MissingErrorClass = true;
 void _everyErrorClassListed;
+
+/**
+ * What a failed model request can need before it succeeds: another try (`transient`), an operator's
+ * fix first (`setup`), or nothing, because it will fail the same way again (`permanent`). An
+ * operator's fix is a key, a permission, a model name, a workspace, credit or an MCP tool.
+ * `classifyModelFailure` files a failure into one of them from the failure's own values (gap 2,
+ * unit i-a).
+ * @public
+ */
+export const MODEL_FAILURE_KINDS = ['transient', 'setup', 'permanent'] as const;
+
+/**
+ * What a failed model request needs before it can succeed: one of {@link MODEL_FAILURE_KINDS}.
+ * @public
+ */
+export type ModelFailureKind = (typeof MODEL_FAILURE_KINDS)[number];
+
+/**
+ * One failed try of one of a step's model requests, as `model_attempts` keeps it on an evidence entry
+ * and on a drive-failure entry. Numbers, closed words and `null` only: never a text, never usage
+ * (gap 2, unit i-a).
+ * @public
+ */
+export interface ModelAttempt {
+  /** The request's place among the step's model requests, from 0. */
+  request: number;
+  /** What the failure needs ({@link ModelFailureKind}), or `null` when it could not be placed. */
+  kind: ModelFailureKind | null;
+  /** The failure's class, in a drive-failure entry's words, or `null`. */
+  error_class: DriveFailureRecord['error_class'] | null;
+  /** The HTTP status the try got, or `null` when it got none. */
+  status: number | null;
+  /**
+   * The wait after this try before the next send of the same request, in milliseconds: `0` when a
+   * re-send followed at once (`then`), `null` when nothing followed.
+   */
+  wait_ms: number | null;
+  /** The provider's `Retry-After`, as observed, in milliseconds, or `null`. */
+  retry_after_ms: number | null;
+  /** On the entry that ended a request's tries: why they ended, its tries or its time cap used up. */
+  exhausted_by?: 'attempts' | 'total_timeout';
+  /** Where a re-send answered this try: the gateway rule, the cache-question probe or the strict ladder. */
+  then?: 'gateway' | 'cache_probe' | 'strict_ladder';
+}
 
 /**
  * A run's recent drive failures: the last few, plus the total and the time of the first, which do

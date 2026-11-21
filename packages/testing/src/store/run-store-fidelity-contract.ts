@@ -24,7 +24,9 @@ import {
   type CreateResult,
   type DriveFailureModelText,
   type DriveFailureRecord,
+  type ListedRecord,
   type ListedSnapshot,
+  type ModelAttempt,
   type PurgedItem,
   type RunStore,
   type RunRecord,
@@ -82,7 +84,11 @@ import {
  * extends `LISTING_LEAVES_MODEL_TEXT`'s write-back cases to a drive failure's text. Q1 (#592) unit a
  * adds `EVIDENCE_KEEPS_FAILURE_WORDS`: an evidence entry's `error_code`, `error_category`,
  * `agent_action` and `stop_reason` read back unchanged, and an entry written without them reads back
- * without them, never with a word the store made up.
+ * without them, never with a word the store made up. Gap 2, unit (i-a), adds
+ * `RECORD_KEEPS_MODEL_ATTEMPTS`: an evidence entry and a drive-failure entry written with
+ * `model_attempts` (a step's failed model tries) read back with it unchanged, from `get` and from a
+ * listing, and an `update` that keeps it unchanged is accepted; entries written without it read back
+ * without it (its listing case is skipped for a store with no `scanListed`).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -107,6 +113,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'EVIDENCE_KEEPS_MODEL_TEXT',
   'DRIVE_FAILURE_KEEPS_MODEL_TEXT',
   'EVIDENCE_KEEPS_FAILURE_WORDS',
+  'RECORD_KEEPS_MODEL_ATTEMPTS',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -643,6 +650,117 @@ function failureListingCase(
     };
   }
   return { law: 'DRIVE_FAILURE_KEEPS_MODEL_TEXT', name, run };
+}
+
+/**
+ * `RECORD_KEEPS_MODEL_ATTEMPTS`'s tries: every member, a `null` in each nullable one, both optional
+ * members, and two requests (the TCK's own fake values; no store reads into them).
+ */
+const TCK_MODEL_ATTEMPTS: ModelAttempt[] = [
+  {
+    request: 0,
+    kind: 'transient',
+    error_class: 'api_status',
+    status: 503,
+    wait_ms: 500,
+    retry_after_ms: null,
+  },
+  {
+    request: 0,
+    kind: 'transient',
+    error_class: 'api_status',
+    status: 429,
+    wait_ms: null,
+    retry_after_ms: 30000,
+    exhausted_by: 'attempts',
+  },
+  {
+    request: 1,
+    kind: null,
+    error_class: null,
+    status: null,
+    wait_ms: 0,
+    retry_after_ms: null,
+    then: 'strict_ladder',
+  },
+];
+
+/**
+ * `RECORD_KEEPS_MODEL_ATTEMPTS`'s fixture: a run of a workflow of its own whose evidence entry and
+ * drive-failure entry carry `model_attempts` when `withAttempts`, written by `update`.
+ */
+async function runWithAttempts(
+  adapter: RunStoreFidelityContractAdapter,
+  what: string,
+  withAttempts: boolean,
+): Promise<{ tag: string; runId: string }> {
+  const tag = `tck-attempts-${what}-${Math.random().toString(36).slice(2)}`;
+  const { record: run } = await adapter.store.create({
+    workflowId: tag,
+    workflowVersion: 1,
+    params: {},
+  });
+  const attempts = withAttempts ? { model_attempts: structuredClone(TCK_MODEL_ATTEMPTS) } : {};
+  const entry: EvidenceSnapshot = {
+    step_id: adapter.stepName,
+    started_at: '2026-01-01T00:00:00.000Z',
+    completed_at: '2026-01-01T00:00:01.000Z',
+    duration_ms: 1,
+    input_summary: {},
+    output_summary: { answer: 'kept' },
+    status: 'success',
+    evidence_hash: `tck-attempts-${what}`,
+    ...attempts,
+  };
+  const failure: DriveFailureRecord = {
+    ...tckFailure(adapter, 0),
+    ...attempts,
+  };
+  await adapter.store.update({
+    ...run,
+    evidence: [entry],
+    drive_failures: { first_failed_at: failure.at, total: 1, entries: [failure] },
+  });
+  return { tag, runId: run.id };
+}
+
+/** The `model_attempts` of `record`'s evidence entry and of its drive-failure entry, as JSON (`absent` where none). */
+function attemptsOf(record: RunRecord | ListedRecord | undefined): {
+  evidence: string;
+  failure: string;
+} {
+  const read = (entry: object | undefined): string =>
+    entry === undefined
+      ? 'no entry'
+      : Object.prototype.hasOwnProperty.call(entry, 'model_attempts')
+        ? JSON.stringify((entry as { model_attempts?: unknown }).model_attempts)
+        : 'absent';
+  return {
+    evidence: read(record?.evidence[0]),
+    failure: read(record?.drive_failures?.entries[0]),
+  };
+}
+
+/**
+ * A `RECORD_KEEPS_MODEL_ATTEMPTS` listing case: skipped, by name, for a store with no `scanListed`
+ * (Realm lists such a store through `scan`); otherwise `run`.
+ */
+function attemptsListingCase(
+  adapter: RunStoreFidelityContractAdapter,
+  name: string,
+  run: () => Promise<void>,
+): RunStoreFidelityContractCase {
+  if (typeof adapter.store.scanListed !== 'function') {
+    return {
+      law: 'RECORD_KEEPS_MODEL_ATTEMPTS',
+      name: `SKIPPED — store has no scanListed: ${name}`,
+      skipped: true,
+      run: async () => {
+        // Intentional no-op — see the case name for why.
+      },
+    };
+  }
+  return { law: 'RECORD_KEEPS_MODEL_ATTEMPTS', name, run };
 }
 
 /** Runs `write`, and returns the error it threw, or `undefined` when it was accepted. */
@@ -2200,6 +2318,74 @@ export function runStoreFidelityContract(
       }
     },
   });
+
+  // Gap 2, unit (i-a) — RECORD_KEEPS_MODEL_ATTEMPTS. The round trips are always active: every store
+  // round-trips evidence and the drive-failure ring. The listing case needs `scanListed`.
+  const wroteAttempts = JSON.stringify(TCK_MODEL_ATTEMPTS);
+  cases.push(
+    {
+      law: 'RECORD_KEEPS_MODEL_ATTEMPTS',
+      name: 'an evidence entry and a drive-failure entry written with model_attempts read back from get with it unchanged',
+      run: async () => {
+        const { runId } = await runWithAttempts(adapter, 'get', true);
+        const { record } = await adapter.store.get(runId);
+        const read = attemptsOf(record);
+        if (read.evidence !== wroteAttempts || read.failure !== wroteAttempts) {
+          throw new Error(
+            `RECORD_KEEPS_MODEL_ATTEMPTS: get must read model_attempts back as written on both entries; wrote ${wroteAttempts}, read back ${read.evidence} (evidence) and ${read.failure} (drive failure)`,
+          );
+        }
+      },
+    },
+    {
+      law: 'RECORD_KEEPS_MODEL_ATTEMPTS',
+      name: 'an update that keeps both entries model_attempts unchanged is accepted, and both still read back with it',
+      run: async () => {
+        const { runId } = await runWithAttempts(adapter, 'update', true);
+        const { record } = await adapter.store.get(runId);
+        const refusal = await refusalOf(() => adapter.store.update({ ...record }));
+        const { record: reread } = await adapter.store.get(runId);
+        const read = attemptsOf(reread);
+        if (
+          refusal !== undefined ||
+          read.evidence !== wroteAttempts ||
+          read.failure !== wroteAttempts
+        ) {
+          throw new Error(
+            `RECORD_KEEPS_MODEL_ATTEMPTS: an update that keeps model_attempts unchanged must be accepted and keep it; ${refusal === undefined ? 'accepted' : `refused (${String(refusal)})`}, then read back ${read.evidence} (evidence) and ${read.failure} (drive failure), wrote ${wroteAttempts}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'RECORD_KEEPS_MODEL_ATTEMPTS',
+      name: 'an evidence entry and a drive-failure entry written without model_attempts read back without it, never with a list the store made up',
+      run: async () => {
+        const { runId } = await runWithAttempts(adapter, 'absent', false);
+        const { record } = await adapter.store.get(runId);
+        const read = attemptsOf(record);
+        if (read.evidence !== 'absent' || read.failure !== 'absent') {
+          throw new Error(
+            `RECORD_KEEPS_MODEL_ATTEMPTS: entries written without model_attempts must read back without it; read back ${read.evidence} (evidence) and ${read.failure} (drive failure)`,
+          );
+        }
+      },
+    },
+    attemptsListingCase(
+      adapter,
+      'a listing keeps model_attempts on the evidence entry and the drive-failure entry, as get reads it',
+      async () => {
+        const { tag, runId } = await runWithAttempts(adapter, 'listing', true);
+        const listed = await listedRun(adapter, tag, runId);
+        const read = attemptsOf(listed?.record);
+        if (read.evidence !== wroteAttempts || read.failure !== wroteAttempts) {
+          throw new Error(
+            `RECORD_KEEPS_MODEL_ATTEMPTS: scanListed must keep model_attempts on both entries; wrote ${wroteAttempts}, listed ${listed === undefined ? 'no such run' : `${read.evidence} (evidence) and ${read.failure} (drive failure)`}`,
+          );
+        }
+      },
+    ),
+  );
 
   cases.push({
     law: 'STORE_RELEASE_LINE_TRUE',
