@@ -183,6 +183,8 @@ Skipped: summarise
   summarise: trigger_rule_unsatisfiable: all_success, dep fetch failed
 ```
 
+The line under `Failed:` was added after version 0.50.0.
+
 Finalizers do not run when an operator ends a run with `realm run abandon`.
 
 ## Carry on after a failure

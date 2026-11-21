@@ -87,7 +87,7 @@ Run Health (1 finding(s)):
   completed_with_failed_steps: completed with 1 failed step(s): pay …
 ```
 
-Check `Failed:` as well as `Phase:` when you need to know whether everything went well.
+The line under `Failed:` was added after version 0.50.0. Check `Failed:` as well as `Phase:` when you need to know whether everything went well.
 
 ## What the record proves, and what it does not
 

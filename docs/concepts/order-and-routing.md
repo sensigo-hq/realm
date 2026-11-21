@@ -165,7 +165,7 @@ Run Health (1 finding(s)):
   completed_with_failed_steps: completed with 1 failed step(s): pay …
 ```
 
-The run is `completed`, not `failed`, because the workflow had a step to handle the failure and that step ran. The failed step stays listed, and `realm run inspect` flags the run.
+The line under `Failed:` was added after version 0.50.0. The run is `completed`, not `failed`, because the workflow had a step to handle the failure and that step ran. The failed step stays listed, and `realm run inspect` flags the run.
 
 In this run, the steps that became allowed after the failure did not start by themselves. They ran when the driver called them. `realm agent` does that for you.
 

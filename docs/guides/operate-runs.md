@@ -58,7 +58,7 @@ Failed: fetch
 Skipped: summarise
 ```
 
-Further down, `Run Health` lists anything Realm finds wrong with the run, and `Drive failures` lists the times a driver gave up on it. See [Evidence](../concepts/evidence.md) for how to read the rest.
+The line under `Failed:` was added after version 0.50.0. Further down, `Run Health` lists anything Realm finds wrong with the run, and `Drive failures` lists the times a driver gave up on it. See [Evidence](../concepts/evidence.md) for how to read the rest.
 
 ## Decide what to do
 

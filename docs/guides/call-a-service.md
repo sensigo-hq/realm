@@ -189,7 +189,7 @@ Skipped: summarise
   summarise: trigger_rule_unsatisfiable: all_success, dep read_note failed
 ```
 
-To keep a run alive when a service fails, give the workflow a step that handles the failure. See [Handle failure](handle-failure.md).
+The line under `Failed:` was added after version 0.50.0. To keep a run alive when a service fails, give the workflow a step that handles the failure. See [Handle failure](handle-failure.md).
 
 ## A service that needs credentials
 
