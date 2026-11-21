@@ -12,6 +12,7 @@ import type {
   DriveFailureRecord,
   DriveFailuresField,
   EvidenceSnapshot,
+  ModelAttempt,
   PendingGate,
   RunRecord,
   SealedBy,
@@ -276,6 +277,19 @@ const ATTRIBUTED_TABLE = {
   channel: 'fact',
 } as const satisfies Row<Attributed>;
 
+/** Gap 2, unit (i-a): one failed model try. Numbers, closed words and `null` only, closed at the
+ *  write (`closeModelAttempts`), so every member is a fact on every surface. */
+const MODEL_ATTEMPT_TABLE = {
+  request: 'fact',
+  kind: 'fact',
+  error_class: 'fact',
+  status: 'fact',
+  wait_ms: 'fact',
+  retry_after_ms: 'fact',
+  exhausted_by: 'fact',
+  then: 'fact',
+} as const satisfies Row<ModelAttempt>;
+
 /** One evidence snapshot: its inputs and outputs are values, its error a diagnostic copy, the gate
  *  message the question it asked. #729 PR-3 correction 4 (I-9): a digest of value content is a value
  *  (`evidence_hash` of the output, `trace_digest` of the trace) — a short value's digest would
@@ -306,6 +320,8 @@ export const EVIDENCE_TABLE = {
   tool_calls: 'value',
   // Gap 1, unit A1: each model call's text, masked for the agent when kept; a file masks it again.
   model_text: 'value',
+  // Gap 2, unit (i-a): the failed model tries, no text: facts on every surface.
+  model_attempts: { nested: MODEL_ATTEMPT_TABLE },
   resolved_params: 'value',
   warn: 'bounded',
   debug_output: 'value',
@@ -448,6 +464,8 @@ const DRIVE_FAILURE_TABLE = {
   usage: { nested: USAGE_RECORD_TABLE },
   // Gap 1, unit A2a: the model calls' texts a drive failure keeps, masked as values for the file.
   model_text: 'value',
+  // Gap 2, unit (i-a): the failed model tries this failure covers, no text: facts on every surface.
+  model_attempts: { nested: MODEL_ATTEMPT_TABLE },
 } as const satisfies Row<DriveFailureRecord>;
 
 const DRIVE_FAILURES_TABLE = {
@@ -766,6 +784,14 @@ export const DRIVE_FAILURE_FACTS = {
   // #715 (b) (02 §D.2): the open question's id when the entry was appended.
   gate_id: 'id',
 } as const satisfies FactProducers<typeof DRIVE_FAILURE_TABLE, DriveFailureRecord>;
+
+/** Gap 2, unit (i-a): a try's words, each closed at the write by `closeModelAttempts`. */
+export const MODEL_ATTEMPT_FACTS = {
+  kind: 'enum',
+  error_class: 'enum',
+  exhausted_by: 'enum',
+  then: 'enum',
+} as const satisfies FactProducers<typeof MODEL_ATTEMPT_TABLE, ModelAttempt>;
 
 export const DRIVE_FAILURES_FACTS = {
   first_failed_at: 'time',

@@ -65,6 +65,10 @@ const ENTRY: DriveFailureRecord = {
 const FENCE_WAIVER =
   "the fence against a stale drive-failure entry (the run's evidence count and open question when the entry was appended), consumed by the drive_failing finding; visible verbatim on the MCP door (get_run_state, so an agent can reason about staleness) and as record fields in `realm run export`; inspect shows the finding itself when the fence holds, and nothing of the fence when it does not";
 
+/** Gap 2, unit (i-a): why inspect does not show a drive failure's `model_attempts` yet. */
+const ATTEMPTS_WAIVER =
+  "the failed tries of a failure's model requests (gap 2, unit i-a): Realm writes none until unit (i-b), which shows them in inspect";
+
 const DRIVE_FAILURE_DISCLOSURE = {
   at: { surface: 'rendered', probe: (out) => expect(out).toContain(ENTRY.at) },
   step: { surface: 'rendered', probe: (out) => expect(out).toContain('classify') },
@@ -108,6 +112,7 @@ const DRIVE_FAILURE_DISCLOSURE = {
       expect(out).not.toContain('Model text');
     },
   },
+  model_attempts: { surface: 'waived', reason: ATTEMPTS_WAIVER },
   usage: {
     surface: 'rendered',
     probe: (out) => {
@@ -165,7 +170,7 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
     }
   });
 
-  it('the registry covers every field, and waives only the two fence fields, for their written reason', () => {
+  it('the registry covers every field, and waives only the two fence fields and model_attempts, for their written reasons', () => {
     expect(Object.keys(DRIVE_FAILURE_DISCLOSURE).sort()).toEqual(
       [
         'at',
@@ -178,6 +183,7 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
         'gate_id',
         'last_observed_status',
         'message',
+        'model_attempts',
         'model_text',
         'provider',
         'retry_after_observed_ms',
@@ -196,6 +202,7 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
     ).toEqual([
       ['evidence_count', FENCE_WAIVER],
       ['gate_id', FENCE_WAIVER],
+      ['model_attempts', ATTEMPTS_WAIVER],
     ]);
   });
 });

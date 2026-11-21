@@ -7,6 +7,7 @@ import type {
   OutputSource,
   ModelText,
 } from '../types/run-record.js';
+import { closeModelAttempts } from '../engine/model-failure.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import type { Attributed } from '../engine/holder.js';
 import { normalizeTrace } from '../engine/trace-normalizer.js';
@@ -70,6 +71,10 @@ export interface CaptureEvidenceParams {
   /** Gap 1, unit A1: the attempt's model call texts, or why there are none — written as
    *  `model_text`. Not hashed. */
   modelText?: ModelText;
+  /** Gap 2, unit (i-a): the attempt's failed model tries, as a program passed them — written as
+   *  `model_attempts`, each entry closed to its eight members ({@link closeModelAttempts}); a value
+   *  that is not a list is not written. Not hashed. */
+  modelAttempts?: unknown;
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.
@@ -80,6 +85,8 @@ export interface CaptureEvidenceParams {
 export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot {
   // evidence_hash: hash of output only — behavior unchanged.
   const evidenceHash = createHash('sha256').update(JSON.stringify(params.output)).digest('hex');
+  const modelAttempts =
+    params.modelAttempts !== undefined ? closeModelAttempts(params.modelAttempts) : undefined;
 
   // Trace normalization: prefer pre-normalized result when available (avoids double normalization
   // when the execution loop already normalized for schema validation). Fall back to raw trace.
@@ -120,6 +127,7 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
     ...(params.debugOutput !== undefined ? { debug_output: params.debugOutput } : {}),
     ...(params.toolCalls !== undefined ? { tool_calls: params.toolCalls } : {}),
     ...(params.modelText !== undefined ? { model_text: params.modelText } : {}),
+    ...(modelAttempts !== undefined ? { model_attempts: modelAttempts } : {}),
     ...(params.effectiveTimeoutSeconds !== undefined
       ? { effective_timeout_seconds: params.effectiveTimeoutSeconds }
       : {}),

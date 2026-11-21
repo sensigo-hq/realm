@@ -2920,6 +2920,9 @@ Names this job reaches whose entry is on another page.
 - [`LoadErrorCode`](embed-the-mcp-server.md#loaderrorcode): The code a failed load of a program's project code carries: the error's catalogue code, or `uncoded`.
 - [`LoaderWarning`](write-a-handler.md#loaderwarning): A single structured diagnostic.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
+- [`MODEL_FAILURE_KINDS`](read-a-runs-record.md#model_failure_kinds): What a failed model request can need before it succeeds: another try (`transient`), an operator's fix first (`setup`), or nothing, because it will fail the same way again (`permanent`).
+- [`ModelAttempt`](read-a-runs-record.md#modelattempt): One failed try of one of a step's model requests, as `model_attempts` keeps it on an evidence entry and on a drive-failure entry.
+- [`ModelFailureKind`](read-a-runs-record.md#modelfailurekind): What a failed model request needs before it can succeed: one of `MODEL_FAILURE_KINDS`.
 - [`ModelText`](read-a-runs-record.md#modeltext): The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`).
 - [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads.
 - [`NoRemedy`](run-and-drive-a-run.md#noremedy): Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`).
