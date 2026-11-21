@@ -303,6 +303,25 @@ function findReasoningLikeTopLevelProperty(schema: unknown): string | undefined 
  * issue #454: this whole channel is suppressed under `--json` — a caller checking
  * `opts.json` never calls this at all; there is no machinery for it here.
  */
+/**
+ * Gap 2, unit (i-b), for one release: an information line, not a loader warning (so `--strict` is
+ * unaffected), printed in human mode only, once per agent step whose `retry` asks for fewer than 3
+ * tries (an absent `max_attempts` is 1). Realm agent and realm listen now try such a step's model
+ * requests that many times, where the model client tried each up to 3 times before.
+ */
+export function retryNoticeLines(definition: WorkflowDefinition): string[] {
+  const lines: string[] = [];
+  for (const [stepName, step] of Object.entries(definition.steps)) {
+    if (step.execution !== 'agent' || step.retry === undefined) continue;
+    const tries = step.retry.max_attempts ?? 1;
+    if (tries >= 3) continue;
+    lines.push(
+      `ℹ Step '${stepName}': 'retry' now applies here under realm agent and realm listen: each model request is tried ${tries === 1 ? 'once' : `${String(tries)} times`}, where the model client tried up to 3 times before. Write 'max_attempts: 3' to keep today's count.`,
+    );
+  }
+  return lines;
+}
+
 function printStructuredOutputNudge(
   definition: WorkflowDefinition,
   opts: { explain: boolean },
@@ -1389,6 +1408,8 @@ export const validateCommand = new Command('validate')
       // issue #236: the nudge's own INFO channel — never affects the exit code below.
       // issue #422: genuinely end-of-report, BELOW the Extensions block — the summary is a
       // pointer at what you could do next, not part of what was just validated.
+      // Gap 2, unit (i-b): the one-release notice for an agent step's `retry`, before the nudge.
+      for (const line of retryNoticeLines(definition)) console.log(line);
       printStructuredOutputNudge(definition, { explain });
       // issue #600 caching PR 5: the cache lines, last — after the nudge, before a --strict exit.
       printCacheabilityLines(renderCacheabilityLines(cache));

@@ -4403,6 +4403,7 @@ clockBasis · value · internal
 clockErrorSink · value · public
   function clockErrorSink(): ((err: unknown) => void) | undefined;
 
+closeModelAttempts · value · internal
 collectManifestSecretRefs · value · internal
 compareCanonical · value · internal
 compareStrings · value · public
@@ -4556,6 +4557,7 @@ expiryCarriedOutLine · value · internal
 expiryReceiptLine · value · internal
 expiryReceiptOf · value · internal
 extensionIdentityDiffers · value · internal
+failedRequestSends · value · internal
 failureModelTextView · value · internal
 fenceReaderMissingError · value · internal
 fileClock · value · internal
@@ -4698,6 +4700,8 @@ markersIn · value · internal
 matchModel · value · internal
 minCacheableTokensFor · value · internal
 mintQuestionView · value · internal
+modelRetryScheduleMs · value · internal
+modelRetryWaitMs · value · internal
 moreOf · value · internal
 mostPermissive · value · internal
 narrowForDoor · value · internal

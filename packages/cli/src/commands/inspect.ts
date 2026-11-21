@@ -39,6 +39,8 @@ import {
   composeDriveFailureCosts,
   evidenceModelTextView,
   failureModelTextView,
+  failedRequestSends,
+  type ModelAttempt,
   composeRunCost,
   describeClaimHolder,
   answerArrivalOf,
@@ -1207,6 +1209,20 @@ function runCostLine(cost: RunCost | undefined): string | undefined {
  * for every class but `validation_rejected` its own words are "billed before the throw" — and a
  * retry re-sends the prompt and is charged for it again.
  */
+/**
+ * Gap 2, unit (i-b), Words 8: an entry's failed model tries in one line, each its kind (`unplaced`
+ * when none was found) and its status (or its class when it got none); `undefined` when the entry
+ * carries no tries. `--json` and get_run_state carry the full entries.
+ */
+function failedTriesLine(tries: readonly ModelAttempt[] | undefined): string | undefined {
+  if (tries === undefined || tries.length === 0) return undefined;
+  const each = tries.map((t) => {
+    const what = t.status !== null ? String(t.status) : t.error_class;
+    return what === null ? (t.kind ?? 'unplaced') : `${t.kind ?? 'unplaced'} ${what}`;
+  });
+  return `Failed tries: ${String(tries.length)} (${each.join(', ')})`;
+}
+
 function formatDriveFailureUsage(cost: CostView, errorClass?: string): string {
   if (cost.requests === 0) {
     // An empty array says one thing only: the field was present and carried no requests. It does
@@ -1708,8 +1724,10 @@ export async function inspectRun(
         entry.derived_ceiling_ms !== undefined
           ? ` (ceiling ${String(entry.derived_ceiling_ms)}ms)`
           : '';
-      const attempts =
-        entry.attempts_sdk !== undefined ? ` (attempt ${String(entry.attempts_sdk)})` : '';
+      // Gap 2, unit (i-b): Realm's attempt number when the entry carries its tries (a step that
+      // declares `retry`); the model client's own count otherwise.
+      const attemptNumber = failedRequestSends(entry.model_attempts) ?? entry.attempts_sdk;
+      const attempts = attemptNumber !== undefined ? ` (attempt ${String(attemptNumber)})` : '';
       lines.push(
         `  ${entry.at}  ${entry.step}  ${entry.provider}  ` +
           `${entry.error_class} after ${String(entry.elapsed_ms)}ms: ` +
@@ -1728,6 +1746,9 @@ export async function inspectRun(
         // caching 3-M A-2b1: each request that missed the cache, beneath the usage line.
         for (const line of missLines(cost)) lines.push(`      ${line}`);
       }
+      // Gap 2, unit (i-b), Words 8: the failure's failed model tries.
+      const failureTries = failedTriesLine(entry.model_attempts);
+      if (failureTries !== undefined) lines.push(`    ${failureTries}`);
       // Gap 1, unit B: under --verbose, the model calls' text this failure covers (core's reader).
       if (options?.verbose)
         lines.push(...modelTextLines(failureModelTextView(entry), 'failure', '    '));
@@ -2090,6 +2111,9 @@ export async function inspectRun(
           supplierClause(snap, definition),
         );
         if (programLine !== undefined) lines.push(`       ${programLine}`);
+        // Gap 2, unit (i-b), Words 8: the attempt's failed model tries.
+        const attemptTries = failedTriesLine(snap.model_attempts);
+        if (attemptTries !== undefined) lines.push(`       ${attemptTries}`);
         // Gap 1, unit B: under --verbose, each attempt's own model calls' text (core's reader).
         if (options?.verbose) {
           lines.push(
@@ -2267,6 +2291,9 @@ export async function inspectRun(
         if (sentence !== undefined) {
           lines.push(chalk.dim(`     ${sentence}`));
         }
+        // Gap 2, unit (i-b), Words 8: the step's failed model tries.
+        const stepTries = failedTriesLine(snap.model_attempts);
+        if (stepTries !== undefined) lines.push(`     ${stepTries}`);
         // Gap 1, unit B: under --verbose, the step's model calls' text (core's reader).
         if (options?.verbose) {
           lines.push(

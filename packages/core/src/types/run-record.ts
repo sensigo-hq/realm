@@ -1762,8 +1762,8 @@ export interface DriveFailureRecord {
   /** The HTTP status last seen for this attempt, when the error carried one. */
   last_observed_status?: number;
   /**
-   * A `Retry-After` value OBSERVED on the wire — never honored. Recording what the service asked
-   * for is a diagnostic; acting on it would be a scheduling decision this layer does not make.
+   * A `Retry-After` value observed on the wire. On a step that declares `retry`, the drive honours it
+   * within the step's cap (gap 2, unit (i-b)); on a step without, it is a diagnostic only.
    * Populated when the throwing error carries a driveCall payload.
    */
   retry_after_observed_ms?: number;

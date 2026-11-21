@@ -14,6 +14,8 @@ import {
   attachBilledUsage,
   safeErrorText,
   MAX_RETRIES,
+  clientRetries,
+  makeModelRetryPolicy,
   type WireCounters,
 } from './agent-utils.js';
 import { buildEntry } from '../drive-failure.js';
@@ -53,12 +55,30 @@ describe('deriveLlmClock — the per-attempt value becomes a whole-create ceilin
       'src/agent/providers/openai-reasoning-provider.ts',
     ].map((f) => readFileSync(f, 'utf8'));
     // Anchored on the trailing comma: without it the matcher also accepts a site written
-    // `maxRetries: MAX_RETRIES + 1`, which is a DIFFERENT number of attempts than the formula
-    // budgets for and would pass a census that was supposed to catch exactly that.
-    const declared = sources.join('\n').match(/maxRetries: MAX_RETRIES,/g) ?? [];
+    // `clientRetries(clock) + 1`, which is a DIFFERENT number of attempts than the formula
+    // budgets for and would pass a census that was supposed to catch exactly that. Gap 2, unit
+    // (i-b): each site asks `clientRetries`, which gives MAX_RETRIES for a step without `retry`
+    // (the cell below) and 0 for one that declares it, whose tries Realm's loop owns.
+    const declared = sources.join('\n').match(/maxRetries: clientRetries\(clock\),/g) ?? [];
     expect(declared).toHaveLength(6);
     // Non-vacuity: the matcher finds nothing if someone inlines a literal instead.
     expect(sources.join('\n')).not.toMatch(/maxRetries:\s*\d/);
+  });
+
+  it('gap 2, unit (i-b): clientRetries gives MAX_RETRIES without a retry policy, and 0 with one', () => {
+    // (a) red when a clock without `retry` gets another count than the formula budgets for, or a
+    //     step that declares `retry` keeps the client's retries on; (b) prints the three counts.
+    const retry = makeModelRetryPolicy({
+      retry: { max_attempts: 2 },
+      capMs: 1000,
+      capSource: 'derived',
+      mayResend: async () => true,
+    });
+    expect({
+      none: clientRetries(undefined),
+      without: clientRetries({ ceilingMs: 1 }),
+      with: clientRetries({ ceilingMs: 1, retry }),
+    }).toEqual({ none: MAX_RETRIES, without: MAX_RETRIES, with: 0 });
   });
 });
 

@@ -301,8 +301,11 @@ describe(
       } catch {
         parses = false;
       }
-      const retried = project({ workflow: oneStep('retried', '    retry: { max_attempts: 3 }\n') });
-      const INERT = "⚠ Step 'retried': 'retry' is inert on execution: 'agent' steps";
+      // Gap 2, unit (i-b): `retry` is read on an agent step now; the warning is an unknown retry key.
+      const retried = project({
+        workflow: oneStep('retried', '    retry: { max_attempts: 3, jitter: 1 }\n'),
+      });
+      const INERT = "⚠ step 'retried': unknown key 'jitter'";
       const gate = [
         realm(['workflow', 'validate', retried, '--strict']),
         realm(['workflow', 'validate', retried, '--provider', 'anthropic', '--model', '--strict']),

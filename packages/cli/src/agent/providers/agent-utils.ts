@@ -4,10 +4,20 @@ import type {
   CacheControlField,
   CacheControlsRejected,
   CacheReference,
+  DriveFailureRecord,
+  ModelAttempt,
   RequestEndpoint,
+  RetryConfig,
   UsageRecord,
 } from '@sensigo/realm';
-import { describeValidationProblems, renderProblemsLines } from '@sensigo/realm';
+import {
+  ERROR_CLASSES,
+  classifyModelFailure,
+  describeValidationProblems,
+  modelRetryScheduleMs,
+  modelRetryWaitMs,
+  renderProblemsLines,
+} from '@sensigo/realm';
 import { createHash } from 'node:crypto';
 import {
   buildDisclosureSet,
@@ -485,6 +495,97 @@ export interface LlmClock {
    * message then names BOTH levers, because with no provenance either could be the live one.
    */
   perAttemptSource?: 'step' | 'flag' | 'default';
+  /**
+   * Gap 2, unit (i-b): the step's `retry` policy, present only on an agent step that declares
+   * `retry`. With it, Realm's own providers turn their model client's retries off and try each
+   * model request again themselves, as the policy says; a provider module that declares
+   * `handlesRetries` reads it and does the same.
+   */
+  retry?: ModelRetryPolicy;
+}
+
+/**
+ * Gap 2, unit (i-b): how an agent step's failed model requests are tried again, on the clock its
+ * provider is given (`LlmClock.retry`). Realm's own providers follow it; a provider module that
+ * declares `handlesRetries` in its capabilities follows it itself.
+ */
+export interface ModelRetryPolicy {
+  /** The step's `retry` block, as declared. */
+  readonly retry: RetryConfig;
+  /**
+   * The cap on one model request with all its tries, waits and re-sends, in milliseconds, measured
+   * from its first send: the step's `retry.total_timeout_seconds` when declared, else derived.
+   */
+  readonly capMs: number;
+  /** Where `capMs` comes from: the step's `retry.total_timeout_seconds`, or Realm's derivation. */
+  readonly capSource: 'declared' | 'derived';
+  /**
+   * Asked before each re-send after a wait: resolves `false` when nothing more may be sent (the
+   * drive was told to stop, another drive took the step back, or the run ended). A provider that
+   * handles retries calls it before each re-send.
+   */
+  readonly mayResend: () => Promise<boolean>;
+}
+
+/** Gap 2, unit (i-b): a re-send that answers a failed send of the same request (`ModelAttempt.then`). */
+export type ModelResend = NonNullable<ModelAttempt['then']>;
+
+/** What a {@link driveCreate} call is, beyond its body: a re-send of the request before it, and how
+ *  the provider names a workspace refusal (Anthropic). */
+export interface DriveCreateOptions {
+  resend?: ModelResend | undefined;
+  workspaceRefusal?: (err: unknown) => boolean;
+  /** A failure the strict ladder takes at once, with no wait and no further try (Anthropic's
+   *  grammar-unavailable 503 on a strict request). */
+  toLadder?: ((err: unknown) => boolean) | undefined;
+}
+
+/** One step's record of its failed model tries, and the request now being tried. */
+interface AttemptLog {
+  attempts: ModelAttempt[];
+  /** The current request's place among the step's requests, from 0; -1 before the first. */
+  request: number;
+  /** When the current request's cap runs out, on the monotonic clock. */
+  deadline: number;
+  /** Tries of the current request so far (its re-sends not counted). */
+  triesUsed: number;
+  /** The current request's last failure, for a re-send the tries no longer allow. */
+  lastError?: unknown;
+  random: () => number;
+}
+
+const ATTEMPT_LOGS = new WeakMap<ModelRetryPolicy, AttemptLog>();
+
+function logOf(policy: ModelRetryPolicy): AttemptLog {
+  let log = ATTEMPT_LOGS.get(policy);
+  if (log === undefined) {
+    log = { attempts: [], request: -1, deadline: 0, triesUsed: 0, random: Math.random };
+    ATTEMPT_LOGS.set(policy, log);
+  }
+  return log;
+}
+
+/** Gap 2, unit (i-b): a step's retry policy, with an empty record of its failed tries. */
+export function makeModelRetryPolicy(
+  policy: ModelRetryPolicy,
+  random: () => number = Math.random,
+): ModelRetryPolicy {
+  const made: ModelRetryPolicy = { ...policy };
+  ATTEMPT_LOGS.set(made, { attempts: [], request: -1, deadline: 0, triesUsed: 0, random });
+  return made;
+}
+
+/** Gap 2, unit (i-b): the failed tries a step's policy has recorded, in send order (a copy). */
+export function modelAttemptsOf(policy: ModelRetryPolicy): ModelAttempt[] {
+  return (ATTEMPT_LOGS.get(policy)?.attempts ?? []).map((entry) => ({ ...entry }));
+}
+
+/**
+ * Gap 2, unit (i-b): the model client's own retries for a create under `clock`: none when the step
+ * declares `retry` (Realm's loop owns them), else {@link MAX_RETRIES}, as before.
+ */
+export function clientRetries(clock: LlmClock | undefined): number {
+  return clock?.retry !== undefined ? 0 : MAX_RETRIES;
 }
 
 /**
@@ -528,8 +629,35 @@ export function deriveLlmClock(perAttemptMs: number): LlmClock {
 }
 
 /**
+ * Gap 2, unit (i-b): the cap on one model request of an agent step that declares `retry`, with its
+ * tries, waits and re-sends: its `total_timeout_seconds` when declared; otherwise `max_attempts` ×
+ * the per-attempt timeout, plus the waits between the tries (without jitter, an upper bound), plus
+ * the download allowance `deriveLlmClock` adds. Clamped, as every timer here is.
+ */
+export function deriveRetryCap(
+  retry: RetryConfig,
+  perAttemptMs: number,
+): { capMs: number; capSource: ModelRetryPolicy['capSource'] } {
+  if (retry.total_timeout_seconds !== undefined) {
+    return {
+      capMs: Math.min(retry.total_timeout_seconds * 1000, MAX_TIMEOUT_MS),
+      capSource: 'declared',
+    };
+  }
+  const perAttempt = Math.min(perAttemptMs, MAX_TIMEOUT_MS);
+  return {
+    capMs: Math.min(
+      (retry.max_attempts ?? 1) * perAttempt + modelRetryScheduleMs(retry) + DOWNLOAD_ALLOWANCE_MS,
+      MAX_TIMEOUT_MS,
+    ),
+    capSource: 'derived',
+  };
+}
+
+/**
  * Parses all three Retry-After forms into milliseconds: `retry-after-ms`, a numeric
- * `Retry-After` in seconds, and an HTTP-date `Retry-After`. OBSERVED, never honored by realm.
+ * `Retry-After` in seconds, and an HTTP-date `Retry-After`. Observed; a step that declares `retry`
+ * honours it within its cap (gap 2, unit (i-b)).
  *
  * The date form is legal, the SDKs honor it, and a parser that only understood numbers dropped a
  * whole header form on the floor — recording nothing for a rate limit that was clearly signalled.
@@ -557,9 +685,9 @@ function parseRetryAfterMs(headers: Headers): number | undefined {
  * last status, and any Retry-After the server asked for, in all three of its legal forms
  * (`retry-after-ms`, a numeric `Retry-After`, an HTTP-date `Retry-After`).
  *
- * Observation only. Realm never honors a Retry-After: acting on it would be a scheduling decision
- * this layer does not make, and recording it is what lets an operator tell a rate limit apart from
- * a hang. The inner fetch is injectable so the wrapper is unit-testable without a socket.
+ * Observation only, here. Recording a Retry-After is what lets an operator tell a rate limit apart
+ * from a hang; a step that declares `retry` honours it within its cap, in `driveCreate`'s loop
+ * (gap 2, unit (i-b)). The inner fetch is injectable so the wrapper is unit-testable without a socket.
  */
 export function makeCountingFetch(
   counters: WireCounters,
@@ -686,6 +814,56 @@ export async function driveCreate<T>(
   body: Record<string, unknown>,
   clock: LlmClock,
   counters: WireCounters,
+  options: DriveCreateOptions = {},
+): Promise<T> {
+  // Gap 2, unit (i-b): a step without `retry` sends once, under its own fresh ceiling, exactly as
+  // before; one that declares it goes through the loop below.
+  if (clock.retry === undefined) {
+    return createOnce(
+      rawCreate,
+      body,
+      clock,
+      counters,
+      clock.ceilingMs,
+      clock.ceilingMs,
+      levers(clock),
+    );
+  }
+  const policy = clock.retry;
+  const lever =
+    policy.capSource === 'declared'
+      ? 'raise retry.total_timeout_seconds on the step'
+      : levers(clock);
+  return tryModelRequest(policy, options, clock, (left) =>
+    createOnce(rawCreate, body, clock, counters, left, policy.capMs, lever),
+  );
+}
+
+/**
+ * The lever a fired ceiling names: the one that is actually LIVE. Telling an operator to raise a
+ * flag that a step key is already overriding sends them to change something with no effect — so
+ * provenance decides which arm renders. With no provenance at all (a hand-built clock) both arms
+ * render, because either could be the live one.
+ */
+function levers(clock: LlmClock): string {
+  const source = clock.perAttemptSource;
+  const stepArm = source === undefined || source === 'step';
+  const flagArm = source === undefined || source === 'flag' || source === 'default';
+  return [
+    ...(stepArm ? ['raise llm_timeout_seconds on the step'] : []),
+    ...(flagArm ? ['pass a larger --llm-timeout'] : []),
+  ].join(' or ');
+}
+
+/** One send under a ceiling of `timerMs`, recorded as `ceilingMs`; a fired ceiling names `lever`. */
+async function createOnce<T>(
+  rawCreate: (body: Record<string, unknown>, opts: Record<string, unknown>) => Promise<T>,
+  body: Record<string, unknown>,
+  clock: LlmClock,
+  counters: WireCounters,
+  timerMs: number,
+  ceilingMs: number,
+  lever: string,
 ): Promise<T> {
   const before: WireCounters = { ...counters };
   // The observations are cleared, the attempt total is not. `attempts` is a running count, so a
@@ -705,7 +883,7 @@ export async function driveCreate<T>(
     timer = setTimeout(() => {
       fired = true;
       reject(new Error('__realm_ceiling__'));
-    }, clock.ceilingMs);
+    }, timerMs);
   });
   // A race has a LOSER, and an unobserved rejected promise takes the process down on Node >= 15.
   // DEFENSE IN DEPTH, stated precisely: `Promise.race` subscribes to every promise it is given,
@@ -740,7 +918,7 @@ export async function driveCreate<T>(
       ...(clock.declaredPerAttemptMs !== undefined
         ? { declared_per_attempt_ms: clock.declaredPerAttemptMs }
         : {}),
-      derived_ceiling_ms: clock.ceilingMs,
+      derived_ceiling_ms: ceilingMs,
     };
 
     if (fired) {
@@ -749,19 +927,8 @@ export async function driveCreate<T>(
       // in depth as the timer's catch above, and the same honest caveat: the race is already
       // subscribed, so this is insurance rather than the thing currently preventing a crash.
       void sdkCall?.catch(() => undefined);
-      // The lever named is the one that is actually LIVE. Telling an operator to raise a flag
-      // that a step key is already overriding sends them to change something with no effect —
-      // so provenance decides which arm renders. With no provenance at all (a hand-built clock)
-      // both arms render, because either could be the live one.
-      const source = clock.perAttemptSource;
-      const stepArm = source === undefined || source === 'step';
-      const flagArm = source === undefined || source === 'flag' || source === 'default';
-      const levers = [
-        ...(stepArm ? ['raise llm_timeout_seconds on the step'] : []),
-        ...(flagArm ? ['pass a larger --llm-timeout'] : []),
-      ].join(' or ');
       const aborted = new Error(
-        `LLM create exceeded the per-create ceiling (${String(clock.ceilingMs)}ms) — ${levers}`,
+        `LLM create exceeded the per-create ceiling (${String(ceilingMs)}ms) — ${lever}`,
       );
       attachDriveCall(aborted, { error_class: 'aborted_by_budget', ...delta });
       throw aborted;
@@ -771,6 +938,196 @@ export async function driveCreate<T>(
     throw err;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** A text the error carries at `key`, or `null`. */
+function textAt(value: unknown, key: string): string | null {
+  try {
+    const v = (value as Record<string, unknown> | null)?.[key];
+    return typeof v === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Gap 2, unit (i-b): the kind of a failed send, by core's `classifyModelFailure`, from the values
+ * the error carries: its class and status, the provider's error type (both SDKs set `type`;
+ * Anthropic's body also carries it) and code (OpenAI's `code`), the `x-should-retry` header as
+ * given, and a workspace refusal. Every send is phase `model_request`. TOTAL: a value Realm did not
+ * create cannot out-throw the failure being classified.
+ */
+function attemptOf(err: unknown, request: number, options: DriveCreateOptions): ModelAttempt {
+  let payload: DriveCallPayload | undefined;
+  try {
+    payload = (err as { driveCall?: DriveCallPayload } | null)?.driveCall;
+  } catch {
+    payload = undefined;
+  }
+  const named = payload?.error_class ?? shapeClass(err);
+  const cls = (ERROR_CLASSES as readonly string[]).includes(named)
+    ? (named as DriveFailureRecord['error_class'])
+    : 'other';
+  const status = extractHttpStatus(err) ?? null;
+  let header: string | null = null;
+  let refusal = false;
+  try {
+    const headers = (err as { headers?: unknown } | null)?.headers;
+    header = headers instanceof Headers ? headers.get('x-should-retry') : null;
+    refusal = options.workspaceRefusal?.(err) === true;
+  } catch {
+    /* an unreadable error is classified on what could be read */
+  }
+  const body = (() => {
+    try {
+      return (err as { error?: { error?: unknown } } | null)?.error?.error;
+    } catch {
+      return undefined;
+    }
+  })();
+  const kind = classifyModelFailure({
+    error_class: cls,
+    status,
+    provider_error_type: textAt(err, 'type') ?? textAt(body, 'type'),
+    provider_error_code: textAt(err, 'code'),
+    should_retry: header,
+    workspace_refusal: refusal,
+    realm_code: null,
+    phase: 'model_request',
+  });
+  return {
+    request,
+    kind,
+    error_class: cls,
+    status,
+    wait_ms: null,
+    retry_after_ms: payload?.retry_after_observed_ms ?? null,
+  };
+}
+
+/** Resolves as `work` does, or with {@link CAP} at the request's deadline when that comes first. */
+async function beforeDeadline<V>(work: Promise<V>, deadline: number): Promise<V | typeof CAP> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<typeof CAP>((resolve) => {
+    timer = setTimeout(() => resolve(CAP), Math.max(0, deadline - performance.now()));
+  });
+  try {
+    return await Promise.race([work, cap]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+const CAP = Symbol('cap');
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Gap 2, unit (i-b): one model request of an agent step that declares `retry`, tried as the policy
+ * says. A send that is not a re-send begins a new request: its cap starts, and its first send is
+ * its first try. A re-send (the gateway rule, the cache probe, the strict ladder) belongs to the
+ * request before it: it is sent at once, never uses a try, and names itself on the failed send it
+ * follows; a transient failure of it is tried again only while tries are left. Every failed send is
+ * recorded. A failure is tried again only when core calls it `transient` (a timeout not when the
+ * step declares `on_timeout: false`), a try is left, and the wait (the policy's, or the provider's
+ * longer `Retry-After`) ends inside the cap; and after the wait, only when the drive says nothing
+ * stops it. Otherwise the last error is thrown, as a single send's would be. The cap holds over
+ * every send, wait and check: when it runs out during one, the request ends as a fired ceiling.
+ * `send` makes one send, bounded by the time left (a provider module's whole call, which Realm
+ * cannot stop in flight, ignores the bound: Realm then only takes no wait that crosses the cap).
+ */
+export async function tryModelRequest<T>(
+  policy: ModelRetryPolicy,
+  options: DriveCreateOptions,
+  clock: LlmClock | undefined,
+  send: (leftMs: number) => Promise<T>,
+): Promise<T> {
+  const log = logOf(policy);
+  const lever =
+    policy.capSource === 'declared' || clock === undefined
+      ? 'raise retry.total_timeout_seconds on the step'
+      : levers(clock);
+  if (options.resend === undefined) {
+    log.request += 1;
+    log.triesUsed = 0;
+    log.deadline = performance.now() + policy.capMs;
+    delete log.lastError;
+  } else {
+    // The failed send this re-send follows is answered at once, by it.
+    const last = log.attempts[log.attempts.length - 1];
+    if (last !== undefined && last.request === log.request) {
+      last.then = options.resend;
+      last.wait_ms = 0;
+    }
+  }
+  const capFired = (last: ModelAttempt | undefined): Error => {
+    if (last !== undefined) {
+      last.wait_ms = null;
+      last.exhausted_by = 'total_timeout';
+    }
+    const aborted = new Error(
+      `LLM create exceeded the per-create ceiling (${String(policy.capMs)}ms) — ${lever}`,
+    );
+    attachDriveCall(aborted, {
+      error_class: 'aborted_by_budget',
+      attempts_sdk: 0,
+      elapsed_ms: Math.max(0, Math.round(performance.now() - (log.deadline - policy.capMs))),
+      ...(clock?.declaredPerAttemptMs !== undefined
+        ? { declared_per_attempt_ms: clock.declaredPerAttemptMs }
+        : {}),
+      derived_ceiling_ms: policy.capMs,
+    });
+    return aborted;
+  };
+  // An absent `max_attempts` (the loader admits one) means 1, as on an auto step.
+  const maxAttempts = policy.retry.max_attempts ?? 1;
+  let first = true;
+  for (;;) {
+    const counted = !(first && options.resend !== undefined);
+    first = false;
+    if (counted && log.triesUsed >= maxAttempts && log.lastError !== undefined) {
+      throw log.lastError;
+    }
+    const left = log.deadline - performance.now();
+    if (left <= 0) throw capFired(undefined);
+    if (counted) log.triesUsed += 1;
+    try {
+      return await send(left);
+    } catch (err) {
+      log.lastError = err;
+      const entry = attemptOf(err, log.request, options);
+      log.attempts.push(entry);
+      if (entry.error_class === 'aborted_by_budget') {
+        entry.exhausted_by = 'total_timeout';
+        throw err;
+      }
+      // A failure the strict ladder takes goes to it at once: no wait, no further try.
+      if (options.toLadder?.(err) === true) throw err;
+      const timedOut = entry.error_class === 'connection_timeout';
+      if (entry.kind !== 'transient' || (timedOut && policy.retry.on_timeout === false)) throw err;
+      if (log.triesUsed >= maxAttempts) {
+        entry.exhausted_by = 'attempts';
+        throw err;
+      }
+      const wait = Math.max(
+        modelRetryWaitMs(policy.retry, log.triesUsed, log.random),
+        entry.retry_after_ms ?? 0,
+      );
+      if (wait >= log.deadline - performance.now()) {
+        entry.exhausted_by = 'total_timeout';
+        throw err;
+      }
+      entry.wait_ms = Math.round(wait);
+      if ((await beforeDeadline(sleep(wait), log.deadline)) === CAP) throw capFired(entry);
+      const may = await beforeDeadline(policy.mayResend(), log.deadline);
+      if (may === CAP) throw capFired(entry);
+      if (may !== true) {
+        entry.wait_ms = null;
+        throw err;
+      }
+    }
   }
 }
 
@@ -1054,7 +1411,8 @@ export interface CacheFieldMemory {
 export async function sendUnderGatewayRule<R>(
   memory: CacheFieldMemory,
   endpoint: RequestEndpoint,
-  send: (withCache: boolean) => Promise<R>,
+  // Gap 2, unit (i-b): `send` is told when it is the rule's re-send (`'gateway'`).
+  send: (withCache: boolean, resend?: ModelResend) => Promise<R>,
   strictLadder?: (err: unknown, withCache: boolean) => Promise<R>,
 ): Promise<R> {
   const withCache = memory.rejected === undefined;
@@ -1070,7 +1428,7 @@ export async function sendUnderGatewayRule<R>(
     // arrives carries it; a retry that fails takes it back (only a retry that worked is remembered).
     try {
       memory.rejected = { status: 400, dropped: ['cache_fields'], proven: 'cache_fields', fields };
-      return await send(false);
+      return await send(false, 'gateway');
     } catch (retryErr) {
       delete memory.rejected;
       if (strictLadder === undefined || extractHttpStatus(retryErr) !== 400) throw retryErr;

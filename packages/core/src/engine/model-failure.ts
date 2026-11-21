@@ -198,3 +198,15 @@ export function closeModelAttempts(value: unknown): ModelAttempt[] | undefined {
   }
   return closed;
 }
+
+/**
+ * Gap 2, unit (i-b): Realm's attempt number for a failure whose entry carries `model_attempts`: the
+ * sends of the request that failed last (its tries and its re-sends), read from the entry's tries;
+ * `undefined` when it carries none. A reader shows it where it shows the model client's own
+ * `attempts_sdk`, which stays the client's count.
+ */
+export function failedRequestSends(tries: readonly ModelAttempt[] | undefined): number | undefined {
+  if (tries === undefined || tries.length === 0) return undefined;
+  const request = tries[tries.length - 1]!.request;
+  return tries.filter((t) => t.request === request).length;
+}

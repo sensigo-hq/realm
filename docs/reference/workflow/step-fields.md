@@ -26,7 +26,7 @@ For the fields at the top of the file, see [Top-level fields](top-level-fields.m
 | `handler`               | yes    | yes     | no      | yes         |
 | `config`                | yes    | –       | –       | yes         |
 | `timeout_seconds`       | yes    | no      | no      | yes         |
-| `retry`                 | yes    | –       | –       | no          |
+| `retry`                 | yes    | yes     | –       | no          |
 | `idempotent`            | yes    | no      | no      | no          |
 | `prompt`                | yes    | yes     | –       | –           |
 | `instructions`          | yes    | yes     | –       | –           |
@@ -77,17 +77,17 @@ See [Conditions](conditions.md) for how conditions are written, and [Order and r
 
 ## What an auto step does
 
-| Field             | Type                                    | Default              | What it does                                                                                                |
-| ----------------- | --------------------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `uses_service`    | string                                  | None                 | The name of a service from the top-level `services` block to call.                                          |
-| `service_method`  | `fetch`, `create`, `update` or `delete` | `fetch`              | Which method of the adapter is called.                                                                      |
-| `operation`       | string                                  | The step name        | The operation name passed to the adapter.                                                                   |
-| `input_map`       | map                                     | None                 | Builds the step input from run parameters and earlier outputs.                                              |
-| `handler`         | string                                  | None                 | The name of a handler to run.                                                                               |
-| `config`          | map                                     | None                 | Fixed settings passed to the handler, or merged into the adapter settings.                                  |
-| `timeout_seconds` | whole number                            | 3600 on `auto` steps | The longest one attempt may take, in seconds.                                                               |
-| `retry`           | map                                     | None                 | Tries the step again after an error marked as retryable.                                                    |
-| `idempotent`      | true or false                           | false                | States that the step is safe to run again. Needed for `retry.on_timeout` and for `realm run reclaim --all`. |
+| Field             | Type                                    | Default              | What it does                                                                                                                                               |
+| ----------------- | --------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `uses_service`    | string                                  | None                 | The name of a service from the top-level `services` block to call.                                                                                         |
+| `service_method`  | `fetch`, `create`, `update` or `delete` | `fetch`              | Which method of the adapter is called.                                                                                                                     |
+| `operation`       | string                                  | The step name        | The operation name passed to the adapter.                                                                                                                  |
+| `input_map`       | map                                     | None                 | Builds the step input from run parameters and earlier outputs.                                                                                             |
+| `handler`         | string                                  | None                 | The name of a handler to run.                                                                                                                              |
+| `config`          | map                                     | None                 | Fixed settings passed to the handler, or merged into the adapter settings.                                                                                 |
+| `timeout_seconds` | whole number                            | 3600 on `auto` steps | The longest one attempt may take, in seconds.                                                                                                              |
+| `retry`           | map                                     | None                 | Tries the step again after an error marked as retryable; on an agent step under realm agent, a model request that failed for a reason another try can fix. |
+| `idempotent`      | true or false                           | false                | States that the step is safe to run again. Needed for `retry.on_timeout` and for `realm run reclaim --all`.                                                |
 
 See [Input maps, template expressions and filters](input-map-and-templates.md) and [Retry and timeouts](retry-and-timeouts.md).
 
@@ -174,10 +174,10 @@ A `no` in the first table is a refusal that says why. For example, `timeout_seco
 Invalid workflow: Step 's': 'timeout_seconds' is not valid on execution: agent steps — the engine never enforces it there (agent dispatch is never wrapped in a timeout), so the step would LOOK time-bounded while nothing enforced the bound. In realm's own drive the model request is bounded by 'llm_timeout_seconds' (or --llm-timeout) and tool calls by 'tool_timeout'. (line 21)
 ```
 
-A `–` is accepted. Where the loader can tell that the field will do nothing, it says so and still accepts the file. For example, `retry` on an agent step:
+A `–` is accepted. Where the loader can tell that the field will do nothing, it says so and still accepts the file. For example, `retry` on a guard step:
 
 ```text
-⚠ Step 's': 'retry' is inert on execution: 'agent' steps — the built-in dispatch path never throws for agent steps, so this block can never mint a second attempt here (for schema-repair budgets, use the CLI drive's '--schema-retries' flag instead). An embedder-supplied throwing dispatcher may still consume this config — a deliberate public-API capability, not an invalid one.
+⚠ Step 's': 'retry' is inert on execution: 'guard' steps — a guard's evaluation never traverses the dispatch path (its conditions are evaluated inline, with no dispatcher and no retry read), so this block can never mint a second attempt here.
 ```
 
 ## A file that uses every field

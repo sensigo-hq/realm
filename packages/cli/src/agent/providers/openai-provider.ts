@@ -42,8 +42,9 @@ import {
   sendUnderGatewayRule,
   type CacheFieldMemory,
   driveCreate,
+  clientRetries,
+  type ModelResend,
   makeCountingFetch,
-  MAX_RETRIES,
   type LlmClock,
   type WireCounters,
   attachBilledUsage,
@@ -511,14 +512,17 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       ...(this.baseUrl !== undefined ? { baseURL: this.baseUrl } : {}),
       // issue #401: realm's own bound (see the twin comment in anthropic-provider.ts).
       ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
-      maxRetries: MAX_RETRIES,
+      maxRetries: clientRetries(clock),
       fetch: makeCountingFetch(counters),
     });
 
     const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
+    // Gap 2, unit (i-b): `resend` names the gateway rule's re-send, which uses no try.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const bounded = (body: Rec): Promise<any> =>
-      clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
+    const bounded = (body: Rec, resend?: ModelResend): Promise<any> =>
+      clock !== undefined
+        ? driveCreate(rawCreate, body, clock, counters, { resend })
+        : rawCreate(body, {});
 
     const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
     // #896: OpenAI's explicit cache controls, in the set (GPT-5.6+, OpenAI's own address); unit B:
@@ -560,11 +564,11 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         callTexts,
         () => openAiSentText(opts),
         () =>
-          sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
+          sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache, resend) => {
             opts = withCache ? withCacheKey(base, plan) : base;
             // #896 (A1, A2): in the explicit set, the marks and the mode (the retry carries the same).
             if (explicit) opts = withExplicitCache(opts, plan, off);
-            return bounded(opts);
+            return bounded(opts, resend);
           }),
       );
       // Gap 1, unit A1: the request's text beside its record, in the same statement.
@@ -756,7 +760,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       ...(this.baseUrl !== undefined ? { baseURL: this.baseUrl } : {}),
       // issue #401: realm's own bound (see the twin comment in anthropic-provider.ts).
       ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
-      maxRetries: MAX_RETRIES,
+      maxRetries: clientRetries(clock),
       fetch: makeCountingFetch(counters),
     });
 
@@ -799,8 +803,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
 
     const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const create = (o: Rec): Promise<any> =>
-      clock !== undefined ? driveCreate(rawCreate, o, clock, counters) : rawCreate(o, {});
+    const create = (o: Rec, resend?: ModelResend): Promise<any> =>
+      clock !== undefined
+        ? driveCreate(rawCreate, o, clock, counters, { resend })
+        : rawCreate(o, {});
 
     // issue #600 PR 1a (D2/D9): ONE entry per WIRE REQUEST, recorded the instant the response
     // comes back — a billed-but-unparseable response (readContent below can still throw on it)
@@ -810,13 +816,16 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // last send while it has no answer).
     const texts = callTexts.answered;
     try {
-      const timedCreate = async (o: Rec): Promise<Record<string, unknown>> => {
+      const timedCreate = async (
+        o: Rec,
+        resend?: ModelResend,
+      ): Promise<Record<string, unknown>> => {
         const requestStart = new Date().toISOString();
         // Gap 1, unit A2b: while this send has no answer, it is the call's unanswered request.
         const response = await trackSend(
           callTexts,
           () => openAiSentText(o),
-          () => create(o),
+          () => create(o, resend),
         );
         // Gap 1, unit A1: the request's text beside its record, in the same statement.
         pushAnswered(
@@ -867,7 +876,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       const response = await sendUnderGatewayRule(
         this.cacheFields,
         this.endpoint,
-        (withCache) => timedCreate(buildOpts(true, withCache)),
+        (withCache, resend) => timedCreate(buildOpts(true, withCache), resend),
         async (err, withCache) => {
           const status = extractHttpStatus(err);
           // 5xx / transport / timeout: NEVER a downgrade and never sticky — the schema is not what
@@ -882,7 +891,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
             ...extractApiErrorFields(err),
           };
           try {
-            const retry = await timedCreate(buildOpts(false, withCache));
+            const retry = await timedCreate(buildOpts(false, withCache), 'strict_ladder');
             meta = dropped;
             return retry;
           } catch (retryErr) {
@@ -983,14 +992,16 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       ...(this.baseUrl !== undefined ? { baseURL: this.baseUrl } : {}),
       // issue #401: realm's own bound (see the twin comment in anthropic-provider.ts).
       ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
-      maxRetries: MAX_RETRIES,
+      maxRetries: clientRetries(clock),
       fetch: makeCountingFetch(counters),
     });
 
     const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const send = (body: Rec): Promise<any> =>
-      clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
+    const send = (body: Rec, resend?: ModelResend): Promise<any> =>
+      clock !== undefined
+        ? driveCreate(rawCreate, body, clock, counters, { resend })
+        : rawCreate(body, {});
     // caching 3-B (D2, sites 3 and 4): one key for every request of the loop — its main turns
     // (and #311's retry) and its final request.
     const systemText = buildSystemPrompt(options.inputSchema, options.agentProfileInstructions);
@@ -1004,13 +1015,13 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // throw while reading must not lose what was billed. A request that fails on the wire has no
     // record, as on the single-shot path.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const bounded = async (body: Rec): Promise<any> => {
+    const bounded = async (body: Rec, resend?: ModelResend): Promise<any> => {
       const requestStart = new Date().toISOString();
       // Gap 1, unit A2b: while this send has no answer, it is the call's unanswered request.
       const response = await trackSend(
         callTexts,
         () => openAiSentText(body),
-        () => send(body),
+        () => send(body, resend),
       );
       // Gap 1, unit A1: the request's text beside its record, in the same statement.
       pushAnswered(
@@ -1137,9 +1148,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       return sendUnderGatewayRule(
         this.cacheFields,
         this.endpoint,
-        async (withCache) => {
+        async (withCache, resend) => {
           const sentStrict = toolArgsStrictActive;
-          const response = await bounded(buildMainCallOpts(withCache));
+          const response = await bounded(buildMainCallOpts(withCache), resend);
           if (sentStrict) strictTurnsBeforeDrop += 1;
           return response;
         },
@@ -1156,7 +1167,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
               };
               toolArgsStrictActive = false;
               toolArgsStrictStripped = true;
-              return await bounded(buildMainCallOpts(withCache));
+              return await bounded(buildMainCallOpts(withCache), 'strict_ladder');
             }
           : undefined,
       );
@@ -1177,8 +1188,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           'You have reached the maximum number of tool calls. Produce your final JSON answer now using only what you have already gathered. No further tool calls will be executed.',
       });
       // caching 3-B (E3): the final request under the gateway rule too.
-      const final = await sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) =>
-        bounded(buildFinalCallOpts(withCache)),
+      const final = await sendUnderGatewayRule(
+        this.cacheFields,
+        this.endpoint,
+        (withCache, resend) => bounded(buildFinalCallOpts(withCache), resend),
       );
       const text: string = (final.choices[0].message.content as string | null) ?? '';
       const parsed = extractJsonObject(text);
