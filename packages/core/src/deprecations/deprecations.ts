@@ -73,6 +73,17 @@ export const DEPRECATIONS: readonly DeprecationEntry[] = Object.freeze([
     instead: 'Write permitted in its place.',
     when: 'offered keeps working: no removal is scheduled.',
   },
+  // Q1 (#592) unit e1: `run_version: 0` on a refusal that names no run's state. The MCP door raises
+  // it at those refusals' sites; the field leaves them in 0.52.0 (unit e2).
+  {
+    id: 'REALM-D002',
+    since: '0.51.0',
+    removal: '0.52.0',
+    used: "A refusal that named no run's state carried run_version 0.",
+    means: "The 0 is not the run's version; a new run is also at version 0.",
+    instead: 'Read the version from an ok reply or from basis.',
+    when: 'run_version leaves these refusals in 0.52.0.',
+  },
 ]);
 validateDeprecations(DEPRECATIONS);
 
