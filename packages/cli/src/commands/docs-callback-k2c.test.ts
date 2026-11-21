@@ -71,14 +71,14 @@ describe('callback K2c — realm-db.md: backup and check (E2)', () => {
     // Pinned by: CB-K2A2-RV-17 (the copy has no encryption.key, no master bytes, no key text); executed on the build in the K2c report (reports/docs-callback-k2c.md, "The page's examples, run").
     claim(
       DB,
-      'The copy holds the store and nothing else. It does not hold the master key that seals the callback keys in it: not the file `encryption.key` in the Realm home, and not a key given in the environment. Without that key the callback keys in the copy cannot be read, so keep a copy of the master key apart from your backups. See [`realm callback`](realm-callback.md#keeping-the-master-key).',
+      'The copy holds the store and nothing else. It does not hold the master key that seals the callback keys in it: not the file `encryption.key` in the Realm home, and not a key given in the environment. Without that key the callback keys in the copy cannot be read, so keep a copy of the master key apart from your backups. See [`realm callback`](realm-callback.md#keeping-the-master-key). Added after version 0.50.0.',
     );
   });
   it('7. When the store holds callback keys, it also says how many, and, when y', () => {
     // Pinned by: master-key-command-cli-k2b 'every stored slot counts; all under the shell’s master (B3a), some under another (B3b), the line last before the rule'; master-key-command-cli-k2b 'no master key in the shell, or a setting that gives none: B3c, exit 0, no master key error'; master-key-command-cli-k2b 'the command source: run once per check, B3a or B3b; a failing command prints B3c and exits 0'; store-check-keys-k2b 'the limit: a key damaged under the given fingerprint is not told apart from a good one'; the command with no keys stored: executed on the build in the K2c report (reports/docs-callback-k2c.md, "The page's examples, run").
     claim(
       DB,
-      "When the store holds callback keys, it also says how many, and, when your shell has a master key, how many were recorded as sealed under another one: `Callback keys: 3 stored, 1 sealed under another master key than this shell's.` It prints no key. It compares the fingerprint of the master key recorded with each key, so it cannot tell a damaged key from a good one. It finds your master key the way `realm callback key` does, so a command in `REALM_ENCRYPTION_KEY_COMMAND` runs every time you run `db check` on a store file, whether or not the store holds callback keys. The count includes an old key that a rotation keeps. A shell with no usable master key gets `Callback keys: 3 stored; this shell has no usable master key, so none were compared.` and the exit code does not change.",
+      "When the store holds callback keys, it also says how many, and, when your shell has a master key, how many were recorded as sealed under another one: `Callback keys: 3 stored, 1 sealed under another master key than this shell's.` It prints no key. It compares the fingerprint of the master key recorded with each key, so it cannot tell a damaged key from a good one. It finds your master key the way `realm callback key` does, so a command in `REALM_ENCRYPTION_KEY_COMMAND` runs every time you run `db check` on a store file, whether or not the store holds callback keys. The count includes an old key that a rotation keeps. A shell with no usable master key gets `Callback keys: 3 stored; this shell has no usable master key, so none were compared.` and the exit code does not change. Added after version 0.50.0.",
     );
   });
 });
@@ -88,7 +88,7 @@ describe('callback K2c — realm-listen.md: the environment an agent gets (E3)',
     // Pinned by: listen-master-key-k1 'none of the three names reaches the agent; every other variable does'; the .env: CB-K2B-LB-04.
     claim(
       LISTEN,
-      "The new process has the environment of `realm listen`, except `REALM_ENCRYPTION_KEY`, `REALM_ENCRYPTION_KEY_FILE` and `REALM_ENCRYPTION_KEY_COMMAND`, which Realm leaves out; it loads the `.env` file in the workflow's folder when it starts, and that file can set them.",
+      "The new process has the environment of `realm listen`, except `REALM_ENCRYPTION_KEY`, `REALM_ENCRYPTION_KEY_FILE` and `REALM_ENCRYPTION_KEY_COMMAND`, which Realm leaves out; it loads the `.env` file in the workflow's folder when it starts, and that file can set them. Leaving out those three settings was added after version 0.50.0.",
     );
   });
 });
@@ -112,10 +112,10 @@ describe("callback K2c — core-library.md: the callbacks row's keys sentences (
 
 describe('callback K2c — realm-callback.md, the new page (E5)', () => {
   it('11. realm callback manages the key that a receiver, the program at the --h', () => {
-    // Pinned by: callback-key-k2a2 'print and make: the first run makes the master file and a key, the second prints the same key; --whsec'; the request: not built yet (C2, C3).
+    // Pinned by: callback-key-k2a2 'print and make: the first run makes the master file and a key, the second prints the same key; --whsec'; the request: not built yet (C2, C3); correction 1: CB-K2C-RV-17, RV-24 (no callback is sent yet).
     claim(
       PAGE,
-      "`realm callback` manages the key that a receiver, the program at the `--host` address (n8n, for example), checks a callback's signature with. It has one subcommand, [`key`](#key). This page covers the keys; the request they sign is documented when Realm sends it.",
+      "`realm callback` manages the key that a receiver, the program at the `--host` address (n8n, for example), checks a callback's signature with. It has one subcommand, [`key`](#key). This version of Realm does not send a callback, so nothing is signed with these keys yet; this page covers only making and keeping them. The request is documented when Realm sends it. This page was added after version 0.50.0.",
     );
   });
   it('12. A key belongs to one workflow and one receiver, a host and a port. Rea', () => {
@@ -207,10 +207,10 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
     );
   });
   it('25. On success the key is the only thing on standard output: 64 lowercase', () => {
-    // Pinned by: callback-key-k2a2 'over every cell above: no master key in either case on any stream; a callback key only on stdout'; callback-key-k2a2 'end and delete: idempotent, need no master key (even a broken one), make no master file, ignore opt-in'; callback-key-k2a2 'flag checks in order, the first only; the nine entry words; --host missing; two spellings of one host'; callback-key-k2a2 'a workflow that cannot be loaded: Words 12, as realm listen says it; no home is made'; the store that needs realm db migrate: executed on the build in the K2c report (reports/docs-callback-k2c.md, "The page's examples, run").
+    // Pinned by: callback-key-k2a2 'over every cell above: no master key in either case on any stream; a callback key only on stdout'; callback-key-k2a2 'end and delete: idempotent, need no master key (even a broken one), make no master file, ignore opt-in'; callback-key-k2a2 'flag checks in order, the first only; the nine entry words; --host missing; two spellings of one host'; callback-key-k2a2 'a workflow that cannot be loaded: Words 12, as realm listen says it; no home is made'; the store that needs realm db migrate: executed on the build in the K2c report (reports/docs-callback-k2c.md, "The page's examples, run"); correction 1: CB-K2C-RV-04 (the reader ran each refusal).
     claim(
       PAGE,
-      'On success the key is the only thing on standard output: 64 lowercase hexadecimal characters and a line break (with `--whsec`, the `whsec_` form). Everything else goes to standard error, among it the key\'s short fingerprint and the fingerprint of the master key it is sealed under. The exit code is 0 when the command did what you asked, and also when there was nothing to do (no old key to end, no key to delete); it is 1 when the command refused. The line begins `Error:`, except a mistake in the command line itself (no `--host`, a bad `--keep`), which begins `error:`. A refusal about a key or the master key ends "No key was changed."; one about the workflow file or the store file (a store that needs `realm db migrate`) does not.',
+      'On success the key is the only thing on standard output: 64 lowercase hexadecimal characters and a line break (with `--whsec`, the `whsec_` form). Everything else goes to standard error, among it the key\'s short fingerprint and the fingerprint of the master key it is sealed under. The exit code is 0 when the command did what you asked, and also when there was nothing to do (no old key to end, no key to delete); it is 1 when the command refused. The line begins `Error:`, except a missing `--host` or a bad `--keep`, which begin `error:`. A refusal about a key or the master key says "No key was changed." before what to do; one about the workflow file, the store file (a store that needs `realm db migrate`) or a combination of flags does not.',
     );
   });
   it('26. A fingerprint is the first 8 hexadecimal characters of a SHA-256 hash:', () => {
@@ -222,7 +222,10 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
   });
   it("27. The first line is a key's fingerprint, the second a master key file's.", () => {
     // Pinned by: the two commands: executed on the build in the K2c report (reports/docs-callback-k2c.md, "The page's examples, run").
-    claim(PAGE, "The first line is a key's fingerprint, the second a master key file's.");
+    claim(
+      PAGE,
+      "The first line is a key's fingerprint, the second a master key file's. (On macOS, where `sha256sum` is not installed, use `shasum -a 256`.)",
+    );
   });
   it('28. Printing, making, rotating and replacing seal or open a key, so they n', () => {
     // Pinned by: callback-key-k2a2 'end and delete: idempotent, need no master key (even a broken one), make no master file, ignore opt-in'; master-key-command-cli-k2b '--end-previous and --delete never run the command'.
@@ -346,7 +349,7 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
     // Pinned by: master-key-file-k2a1 'absent: placed whole, owner-only, 64 lowercase hex and one newline, read back as found'; master-key-file-k2a1 'a regular file there: exists, its bytes unchanged, nothing left'; master-key-file-order-k2a1 'the temporary file is whole, owner-only and synced before it is linked'; callback-key-k2a2 'print and make: the first run makes the master file and a key, the second prints the same key; --whsec'; callback-key-k2a2 'no master here and other keys stored: Words 4 (5 named, "and 1 more"), no file made; its advice works'.
     claim(
       PAGE,
-      'When no source is set and the store holds no key, `realm callback key` makes `encryption.key` in the Realm home: 64 hexadecimal characters and a line break, readable by your account only (mode 600). It writes the file whole, so no other process reads half of it, and never over anything that is already at that name. It says so when it makes it. When no source is set but the store already holds keys, it refuses instead of making a second master key that could not read them.',
+      'When no source is set and the store holds no key, `realm callback key` makes `encryption.key` in the Realm home (`~/.realm`): 64 hexadecimal characters and a line break, readable by your account only (mode 600). It writes the file whole, so no other process reads half of it, and never over anything that is already at that name. It says so when it makes it. When no source is set but the store already holds keys, it refuses instead of making a second master key that could not read them.',
     );
   });
   it('48. On Linux and macOS, when the file the master key was read from can be', () => {
@@ -363,11 +366,11 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
       '`REALM_ENCRYPTION_KEY_COMMAND` names a command that prints the master key. Realm runs it directly and never through a shell: the value is split into words on spaces, tabs and line breaks, and a double quote keeps a word together (`op read "op://My Vault/realm key"` is three words). There are no escapes, and a single quote is an ordinary character. The first word is the program, looked up on the `PATH` of the environment Realm runs in: a service started with a short `PATH` needs the program\'s full path.',
     );
   });
-  it('50. Realm gives the command its own environment (so VAULT_ADDR or AWS_PROF', () => {
-    // Pinned by: master-key-command-k2b 'the command sees the environment handed to the resolver; a quoted word with a space is one argument'; master-key-command-k2b 'a command’s output and error text are never kept: the key on stderr, or on stdout with exit 2'; master-key-command-k2b 'a command past the limit is a timeout: one that sleeps, one that ignores the polite stop, one that leaves a process holding its output'; master-key-command-k2b 'a key printed and exit 0 is found; CRLF too; 63 characters, nothing, or 10 KB is not'; no standard input: CB-MK-P-01.
+  it('50. Realm gives the command the environment it runs in, whole (so VAULT_AD', () => {
+    // Pinned by: master-key-command-k2b 'the command sees the environment handed to the resolver; a quoted word with a space is one argument'; master-key-command-k2b 'a command’s output and error text are never kept: the key on stderr, or on stdout with exit 2'; master-key-command-k2b 'a command past the limit is a timeout: one that sleeps, one that ignores the polite stop, one that leaves a process holding its output'; master-key-command-k2b 'a key printed and exit 0 is found; CRLF too; 63 characters, nothing, or 10 KB is not'; no standard input: CB-MK-P-01; correction 1: CB-K2C-AU-08, RV-12 (the whole environment).
     claim(
       PAGE,
-      'Realm gives the command its own environment (so `VAULT_ADDR` or `AWS_PROFILE` reach it) and no standard input, throws its error text away, waits at most 30 seconds, and reads at most 4,096 bytes of what it prints: a command that prints more is an error. The key is that text: 64 hexadecimal characters and an optional line break.',
+      'Realm gives the command the environment it runs in, whole (so `VAULT_ADDR` or `AWS_PROFILE` reach it) and no standard input, throws its error text away, waits at most 30 seconds, and reads at most 4,096 bytes of what it prints: a command that prints more is an error. The key is that text: 64 hexadecimal characters and an optional line break.',
     );
   });
   it('51. The command is an error, and Realm goes no further, when it exits with', () => {
@@ -392,10 +395,10 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
     );
   });
   it('54. There is no command that seals the stored keys under a new master key.', () => {
-    // Pinned by: the move to another master key: executed by the reader at review (delete, then make under another master); callback-key-k2a2 'a setting and a different encryption.key: print warns (Words 9), make, rotate and replace refuse (Words 7)'; master-key-file-k2a1 'a regular file there: exists, its bytes unchanged, nothing left'.
+    // Pinned by: the move to another master key: executed by the reader at review (delete, then make under another master); callback-key-k2a2 'a setting and a different encryption.key: print warns (Words 9), make, rotate and replace refuse (Words 7)'; master-key-file-k2a1 'a regular file there: exists, its bytes unchanged, nothing left'; correction 1: CB-K2C-RV-11, AU-05 (the order the reader ran).
     claim(
       PAGE,
-      "There is no command that seals the stored keys under a new master key. To keep the keys you have, put the same 64 characters in the new place (a file, a secret, a command's output) and set the setting that names it: nothing needs making again. To move to a new key, run `--delete` for each key, set the new master key, make each key again, and give each receiver the new key. While the Realm home holds `encryption.key` and a setting gives another key, Realm refuses to make or replace a key, and it never replaces the file itself: move `encryption.key` out of the home first. Keep the old master key with the backups made before the move.",
+      "There is no command that seals the stored keys under a new master key. To keep the keys you have, put the same 64 characters in the new place (a file, a secret, a command's output) and set the setting that names it: nothing needs making again. To move to a new key, run `--delete` for each key (`realm db check` says how many are left), move `encryption.key` out of the home if it is there (while it holds a different key than your setting, Realm refuses to make or replace a key, and it never replaces the file itself), set the new master key, make each key again, and give each receiver the new key. Keep the old master key with the backups made before the move.",
     );
   });
   it('55. realm listen leaves the three settings out of the environment it gives', () => {
@@ -406,17 +409,17 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
     );
   });
   it("56. These are examples with each tool's own commands: Realm's tests do not", () => {
-    // Pinned by: not run: attributed (the page says so).
+    // Pinned by: not run: attributed (the page says so); correction 1: CB-K2C-RV-15 (a run without the shell, and one without the setting).
     claim(
       PAGE,
-      "These are examples with each tool's own commands: Realm's tests do not run them. Check each against your version of the tool. They show where the key can live; Realm reads it through `REALM_ENCRYPTION_KEY_FILE` or `REALM_ENCRYPTION_KEY_COMMAND`. Each makes a new master key. If the Realm home already holds `encryption.key` and you have made keys, put that file's 64 characters in the new place instead, and move the file out of the home once the setting works.",
+      "These are examples with each tool's own commands: Realm's tests do not run them. Check each against your version of the tool. They show where the key can live; Realm reads it through `REALM_ENCRYPTION_KEY_FILE` or `REALM_ENCRYPTION_KEY_COMMAND`. The systemd, Compose and keychain recipes make a new master key; the secret-manager lines read one you stored there (`openssl rand -hex 32` makes it). If the Realm home already holds `encryption.key` and you have made keys, put that file's 64 characters in the new place instead, and move the file out of the home once the setting works. Set the same setting wherever you run `realm callback key` or `realm db check`; without it `realm callback key` makes a master key file of its own in the home, or refuses when the store already holds keys. The single quotes in the lines below belong to the shell; where a service file or a property list sets the variable, give the value without them.",
     );
   });
   it('57. systemd credentials (Linux). As root, seal the key for this machine, t', () => {
-    // Pinned by: not run: attributed.
+    // Pinned by: not run: attributed; correction 1: CB-K2C-RV-18.
     claim(
       PAGE,
-      '**systemd credentials (Linux).** As root, seal the key for this machine, then load it into the service; the service reads it from a file:',
+      '**systemd credentials (Linux).** As root, seal the key for this machine, then load it into the service that will hold it; Realm reads it from the file the setting names:',
     );
   });
   it('58. The last line prints the key once, so that you can keep a copy: the en', () => {
@@ -434,10 +437,10 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
     );
   });
   it('60. Docker Compose and Kubernetes secrets. A secret arrives as a file. In', () => {
-    // Pinned by: not run: attributed.
+    // Pinned by: not run: attributed; correction 1: CB-K2C-RV-19.
     claim(
       PAGE,
-      '**Docker Compose and Kubernetes secrets.** A secret arrives as a file. In Compose:',
+      '**Docker Compose and Kubernetes secrets.** A secret arrives as a file. In Compose, add these lines to your own `realm` service:',
     );
   });
   it('61. Make the file with openssl rand -hex 32 > realm-master-key.txt and chm', () => {

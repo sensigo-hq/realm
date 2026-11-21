@@ -2,7 +2,7 @@
 
 <!-- description: Reference for realm callback key, which makes, prints, rotates, replaces and deletes the key a receiver checks a callback's signature with, and for the master key that seals these keys: its four sources, the file Realm makes, and how to keep it. -->
 
-`realm callback` manages the key that a receiver, the program at the `--host` address (n8n, for example), checks a callback's signature with. It has one subcommand, [`key`](#key). This page covers the keys; the request they sign is documented when Realm sends it.
+`realm callback` manages the key that a receiver, the program at the `--host` address (n8n, for example), checks a callback's signature with. It has one subcommand, [`key`](#key). This version of Realm does not send a callback, so nothing is signed with these keys yet; this page covers only making and keeping them. The request is documented when Realm sends it. This page was added after version 0.50.0.
 
 A key belongs to one workflow and one receiver, a host and a port. Realm keeps it in `realm.db`, sealed (encrypted) under a master key that is kept outside that file: a copy of `realm.db` alone shows no key.
 
@@ -31,7 +31,7 @@ A key is made, printed, rotated or replaced only for a workflow that takes callb
 realm callback key ./my-workflow --host n8n.example.com
 ```
 
-On success the key is the only thing on standard output: 64 lowercase hexadecimal characters and a line break (with `--whsec`, the `whsec_` form). Everything else goes to standard error, among it the key's short fingerprint and the fingerprint of the master key it is sealed under. The exit code is 0 when the command did what you asked, and also when there was nothing to do (no old key to end, no key to delete); it is 1 when the command refused. The line begins `Error:`, except a mistake in the command line itself (no `--host`, a bad `--keep`), which begins `error:`. A refusal about a key or the master key ends "No key was changed."; one about the workflow file or the store file (a store that needs `realm db migrate`) does not.
+On success the key is the only thing on standard output: 64 lowercase hexadecimal characters and a line break (with `--whsec`, the `whsec_` form). Everything else goes to standard error, among it the key's short fingerprint and the fingerprint of the master key it is sealed under. The exit code is 0 when the command did what you asked, and also when there was nothing to do (no old key to end, no key to delete); it is 1 when the command refused. The line begins `Error:`, except a missing `--host` or a bad `--keep`, which begin `error:`. A refusal about a key or the master key says "No key was changed." before what to do; one about the workflow file, the store file (a store that needs `realm db migrate`) or a combination of flags does not.
 
 A fingerprint is the first 8 hexadecimal characters of a SHA-256 hash: it tells keys apart and shows neither. Realm's lines call the master key "encryption key". To check one yourself:
 
@@ -40,7 +40,7 @@ printf '%s' <key> | sha256sum | cut -c1-8
 xxd -r -p <master key file> | sha256sum | cut -c1-8
 ```
 
-The first line is a key's fingerprint, the second a master key file's.
+The first line is a key's fingerprint, the second a master key file's. (On macOS, where `sha256sum` is not installed, use `shasum -a 256`.)
 
 Printing, making, rotating and replacing seal or open a key, so they need the master key. `--end-previous` alone and `--delete` never read it: a master key that is missing or wrong never stops you removing a key.
 
@@ -78,7 +78,7 @@ The master key is 64 hexadecimal characters (32 random bytes; `openssl rand -hex
 
 A value that is empty or only spaces counts as not set. A source that is set but gives no key is an error: Realm does not go on to the next one, and never makes a master key file then.
 
-When no source is set and the store holds no key, `realm callback key` makes `encryption.key` in the Realm home: 64 hexadecimal characters and a line break, readable by your account only (mode 600). It writes the file whole, so no other process reads half of it, and never over anything that is already at that name. It says so when it makes it. When no source is set but the store already holds keys, it refuses instead of making a second master key that could not read them.
+When no source is set and the store holds no key, `realm callback key` makes `encryption.key` in the Realm home (`~/.realm`): 64 hexadecimal characters and a line break, readable by your account only (mode 600). It writes the file whole, so no other process reads half of it, and never over anything that is already at that name. It says so when it makes it. When no source is set but the store already holds keys, it refuses instead of making a second master key that could not read them.
 
 On Linux and macOS, when the file the master key was read from can be read by other users, `realm callback key` prints a warning with the `chmod 600` line that fixes it. Secret files are often readable by others: Kubernetes mounts a Secret with mode 0644 unless you set `defaultMode`. When the output goes to a pipe, a path under your home folder prints as `[REDACTED]/…`; on a terminal it prints whole.
 
@@ -86,7 +86,7 @@ On Linux and macOS, when the file the master key was read from can be read by ot
 
 `REALM_ENCRYPTION_KEY_COMMAND` names a command that prints the master key. Realm runs it directly and never through a shell: the value is split into words on spaces, tabs and line breaks, and a double quote keeps a word together (`op read "op://My Vault/realm key"` is three words). There are no escapes, and a single quote is an ordinary character. The first word is the program, looked up on the `PATH` of the environment Realm runs in: a service started with a short `PATH` needs the program's full path.
 
-Realm gives the command its own environment (so `VAULT_ADDR` or `AWS_PROFILE` reach it) and no standard input, throws its error text away, waits at most 30 seconds, and reads at most 4,096 bytes of what it prints: a command that prints more is an error. The key is that text: 64 hexadecimal characters and an optional line break.
+Realm gives the command the environment it runs in, whole (so `VAULT_ADDR` or `AWS_PROFILE` reach it) and no standard input, throws its error text away, waits at most 30 seconds, and reads at most 4,096 bytes of what it prints: a command that prints more is an error. The key is that text: 64 hexadecimal characters and an optional line break.
 
 The command is an error, and Realm goes no further, when it exits with a status other than 0 or is ended by a signal, takes longer than 30 seconds, cannot be started, prints nothing or anything but the key, or has a value with an unclosed quote or no program. A command that exits 0 but leaves a process running that holds its output counts as having taken too long. The line names the exit status, the signal, the error code or the reason in words; it never shows what the command printed, or its arguments.
 
@@ -96,17 +96,18 @@ Realm runs the command each time `realm callback key` looks for the key (not for
 
 `realm db backup` does not copy the master key: the copy has the keys, sealed, and not what opens them. Keep a copy of the master key somewhere safe, apart from your backups. If it is lost, or a store is restored on another machine without it, the stored keys cannot be read. Runs are not affected, only the keys: make each key again with `--replace` and give each receiver the new key.
 
-There is no command that seals the stored keys under a new master key. To keep the keys you have, put the same 64 characters in the new place (a file, a secret, a command's output) and set the setting that names it: nothing needs making again. To move to a new key, run `--delete` for each key, set the new master key, make each key again, and give each receiver the new key. While the Realm home holds `encryption.key` and a setting gives another key, Realm refuses to make or replace a key, and it never replaces the file itself: move `encryption.key` out of the home first. Keep the old master key with the backups made before the move.
+There is no command that seals the stored keys under a new master key. To keep the keys you have, put the same 64 characters in the new place (a file, a secret, a command's output) and set the setting that names it: nothing needs making again. To move to a new key, run `--delete` for each key (`realm db check` says how many are left), move `encryption.key` out of the home if it is there (while it holds a different key than your setting, Realm refuses to make or replace a key, and it never replaces the file itself), set the new master key, make each key again, and give each receiver the new key. Keep the old master key with the backups made before the move.
 
 `realm listen` leaves the three settings out of the environment it gives each agent. A `.env` file in a workflow's folder is read by the agent itself and still reaches it.
 
 ## Recipes
 
-These are examples with each tool's own commands: Realm's tests do not run them. Check each against your version of the tool. They show where the key can live; Realm reads it through `REALM_ENCRYPTION_KEY_FILE` or `REALM_ENCRYPTION_KEY_COMMAND`. Each makes a new master key. If the Realm home already holds `encryption.key` and you have made keys, put that file's 64 characters in the new place instead, and move the file out of the home once the setting works.
+These are examples with each tool's own commands: Realm's tests do not run them. Check each against your version of the tool. They show where the key can live; Realm reads it through `REALM_ENCRYPTION_KEY_FILE` or `REALM_ENCRYPTION_KEY_COMMAND`. The systemd, Compose and keychain recipes make a new master key; the secret-manager lines read one you stored there (`openssl rand -hex 32` makes it). If the Realm home already holds `encryption.key` and you have made keys, put that file's 64 characters in the new place instead, and move the file out of the home once the setting works. Set the same setting wherever you run `realm callback key` or `realm db check`; without it `realm callback key` makes a master key file of its own in the home, or refuses when the store already holds keys. The single quotes in the lines below belong to the shell; where a service file or a property list sets the variable, give the value without them.
 
-**systemd credentials (Linux).** As root, seal the key for this machine, then load it into the service; the service reads it from a file:
+**systemd credentials (Linux).** As root, seal the key for this machine, then load it into the service that will hold it; Realm reads it from the file the setting names:
 
 ```text
+install -d -m 700 /etc/realm
 key=$(openssl rand -hex 32)
 printf '%s' "$key" | systemd-creds encrypt --name=realm-key - /etc/realm/realm-key.cred
 printf '%s\n' "$key"
@@ -122,7 +123,7 @@ Environment=REALM_ENCRYPTION_KEY_FILE=%d/realm-key
 
 `systemd-creds encrypt` needs the machine's key, which only root can read: as an ordinary user it fails.
 
-**Docker Compose and Kubernetes secrets.** A secret arrives as a file. In Compose:
+**Docker Compose and Kubernetes secrets.** A secret arrives as a file. In Compose, add these lines to your own `realm` service:
 
 ```yaml
 services:
