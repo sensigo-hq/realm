@@ -53,6 +53,7 @@ import {
   describeProgram,
   NO_SNAPSHOT,
   outcomeNotRecordedLine,
+  stepsTakenBack,
   takenLine,
   takenPhrase,
 } from '../lib/holder-render.js';
@@ -174,10 +175,12 @@ export function inFlightItems(
 export function inFlightReasons(
   composed: Pick<ComposedWays, 'unavailable'>,
   ctx: RenderCtx = writerCtx(),
+  takesBack?: ReadonlySet<string>,
 ): string[] {
   // #729 PR-0: the words are the CLI renderer's one line. #729 PR-3: a print helper, so its
-  // commands carry the writer's marks by default.
-  return heldEntriesOf(composed).map((held) => heldLine(held, ctx));
+  // commands carry the writer's marks by default. #729 CW-5c: `takesBack`, the steps a `realm agent`
+  // drive takes back (the caller's `stepsTakenBack`).
+  return heldEntriesOf(composed).map((held) => heldLine(held, ctx, takesBack));
 }
 
 /**
@@ -507,8 +510,10 @@ export async function advanceRunFromShell(
     // composed by core from the record this command read — never by a call of the writer
     // `advanceRun`, which would run any step that became ready since that read.
     // #625 A1b-2: a run that had ended before this read says how it ended.
+    // #729 CW-5c: the steps a `realm agent` drive takes back, from this read.
+    const takesBack = stepsTakenBack(run, workflow, heldEntriesOf(ways));
     const reasons = withResumeWay(
-      stopReasons(ways, runId, deriveRunPhase(run), writerCtx()),
+      stopReasons(ways, runId, deriveRunPhase(run), writerCtx(), takesBack),
       run,
       workflow,
       run.terminal_state === true,
@@ -746,9 +751,10 @@ export async function advanceRunFromShell(
   // #625 A1b-2: said once — how the run ended only when another program ended it during the call
   // (core's `saysHowItEnded`); a run this call ended said it in its own lines above.
   const sayEnding = saysHowItEnded(result, after);
+  const takesBack = stepsTakenBack(after, workflow, heldEntriesOf(afterWays));
   reasons.push(
     ...withResumeWay(
-      stopReasons(afterWays, runId, deriveRunPhase(after), writerCtx()),
+      stopReasons(afterWays, runId, deriveRunPhase(after), writerCtx(), takesBack),
       after,
       workflow,
       sayEnding,

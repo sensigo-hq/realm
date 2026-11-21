@@ -45,8 +45,15 @@ import {
   namedAnswerer,
   recordedAnswer,
   recordedArrival,
+  stepsTakenBack,
 } from '../lib/holder-render.js';
-import { CLI_COMMANDS, cannotGoOnLines, owedItems, writerHost } from './ways-renderer.js';
+import {
+  CLI_COMMANDS,
+  cannotGoOnLines,
+  heldEntriesOf,
+  owedItems,
+  writerHost,
+} from './ways-renderer.js';
 import {
   agentReadyReason,
   attendingLine,
@@ -132,7 +139,10 @@ function nextLines(
     // program — wait for it. (A run the answer ended with a failed step `realm run resume` takes:
     // the way back in ends the reply's own sentence, printed above by `describeAnswerEnding`.)
     ...(commands.length === 0 && cannotGoOn.length === 0
-      ? inFlightReasons(ways).map((reason) => sentenceEnd(reason))
+      ? // #729 CW-5c: with the steps a `realm agent` drive takes back, from this read.
+        inFlightReasons(ways, undefined, stepsTakenBack(run, workflow, heldEntriesOf(ways))).map(
+          (reason) => sentenceEnd(reason),
+        )
       : []),
   ];
 }

@@ -123,20 +123,23 @@ describe(
       const advanced = realm(['run', 'advance', runId]);
       const dry = realm(['run', 'reclaim', runId]);
       // (a) red when the claim is waited on (exit 0, "wait"), or left on `past` alone (the claim has
-      //     no deadline: unknown age); (b) prints both screens.
+      //     no deadline: unknown age); (b) prints both screens. #729 CW-5c: `a` is an agent step a
+      //     `realm agent` drive takes back (below the cap), so both lines also name that command.
+      const takeBack = `Or let realm agent --run-id ${runId} --provider <provider> --model <model> take it back and run it (this step's one automatic take-back until a person reclaims it).`;
       expect({
         code: advanced.code,
         last: advanced.out.at(-1),
-        dry: dry.out.slice(1, 5),
+        dry: dry.out.slice(1, 6),
       }).toEqual({
         code: 1,
-        last: `Nothing is owed to the engine: 'a' was claimed, and no program held the claim's lease when it was checked; no result is recorded for it. ${NOT_DECLARED} To free it, run: ${command(runId, since)}`,
+        last: `Nothing is owed to the engine: 'a' was claimed, and no program held the claim's lease when it was checked; no result is recorded for it. ${NOT_DECLARED} To free it, run: ${command(runId, since)} ${takeBack}`,
         dry: [
           // #729 CW-4b: a leased claim is listed by when it was taken, not its deadline.
           `  • a: claim_stale  (taken at ${since})`,
           `      ${NOT_HELD}`,
           `      ${NOT_DECLARED}`,
           `      To free it, run: ${command(runId, since)}`,
+          `      ${takeBack}`,
         ],
       });
     });

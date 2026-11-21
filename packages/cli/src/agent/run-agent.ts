@@ -146,6 +146,7 @@ import {
   outcomeNotRecordedLine,
   takeBackAtCapLine,
   takenBackLine,
+  takeBackAnswer,
   takenBackNotLandedLine,
   takenBackNotRunLine,
   takenFirstLine,
@@ -1128,15 +1129,24 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         step: string,
         watchMs: number,
       ): Promise<'watch' | 'loop' | 'capped'> => {
-        if (definition.steps[step]?.execution !== 'agent') return 'watch';
         const read = currentSnap;
         const claim = read.record.claims?.[step];
+        // #729 CW-5c: the one answer the doors' `realm agent` sentence reads too. Not an agent step,
+        // an ended run, or no claim with a token: watched.
+        const answer = takeBackAnswer(read.record, definition, step, leaseFactOf(read, claim));
         const token = claim?.token;
-        if (claim === undefined || token === undefined) return 'watch';
+        if (
+          answer.kind === 'not_an_agent_step' ||
+          answer.kind === 'run_ended' ||
+          answer.kind === 'not_claimed' ||
+          claim === undefined ||
+          token === undefined
+        )
+          return 'watch';
         const key = `${step}\u0000${token}`;
         if (capSaid.has(key)) return 'capped';
         const described = describeClaimHolder(claim, keepsClaims, leaseFactOf(read, claim));
-        if (described.lease?.state !== 'not_held') return 'watch';
+        if (answer.kind === 'lease_not_free') return 'watch';
         const atCap = (
           last: ReturnType<typeof automaticTakebacksOf>['last'],
           snap: Snapshot,
@@ -1153,8 +1163,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // once per claim, so the line names no REALM_OPERATOR advice where it would not help.
           if (takeBackSaid.has(key)) return 'watch';
           takeBackSaid.add(key);
-          const taken = automaticTakebacksOf(read.record, step);
-          if (taken.automatic >= AUTOMATIC_TAKEBACKS_PER_STEP) return atCap(taken.last, read);
+          if (answer.kind === 'at_cap') return atCap(answer.last, read);
           waitingSaid.add(key);
           console.log(noDriverTakeBackLine(step, described, watchMs, writerCtx()));
           return 'watch';
