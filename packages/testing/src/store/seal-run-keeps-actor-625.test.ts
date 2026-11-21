@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import type {
   RunRecord,
+  SealedBy,
   SettlementDelta,
   StoreSettlement,
   WorkflowDefinition,
@@ -65,10 +66,11 @@ function dropping(member: 'by' | 'door') {
 class LosesByOnRead extends InMemoryStore {
   override async get(runId: string) {
     const got = await super.get(runId);
-    const seal = got.record.sealed_by as Record<string, unknown> | undefined;
+    const seal = got.record.sealed_by;
     if (seal === undefined || !('by' in seal)) return got;
+    // What is left is still a seal: `arm` and every other member stay, only `by` is gone.
     const { by: _gone, ...rest } = seal;
-    return { ...got, record: { ...got.record, sealed_by: rest } as RunRecord };
+    return { ...got, record: { ...got.record, sealed_by: rest } };
   }
 }
 
@@ -83,11 +85,12 @@ class WritesNulls extends InMemoryStore {
     if (delta.kind !== 'seal_run' || !result.applied || 'by' in delta || 'door' in delta)
       return result;
     const stored = (this as unknown as { runs: Map<string, RunRecord> }).runs.get(runId)!;
-    const nulled = {
-      ...stored.sealed_by!,
-      by: null,
-      door: null,
-    } as unknown as RunRecord['sealed_by'];
+    const seal = stored.sealed_by;
+    if (seal === undefined) return result;
+    // The seal as written, `arm` kept, with the `null` stand-ins a column store writes. Those are
+    // not `SealedBy` members (the type has no `null` for either), which is the break the law refuses,
+    // so this one value is cast.
+    const nulled = { ...seal, by: null, door: null } as unknown as SealedBy;
     stored.sealed_by = nulled;
     return { ...result, run: { ...result.run, sealed_by: nulled } };
   }
