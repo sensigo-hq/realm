@@ -1625,6 +1625,7 @@ FailedAttemptStore · type · public
       read(runId: string): Promise<FailedAttemptReadResult>;
   }
 
+FailureView · type · internal
 FailureWordField · type · internal
 FailureWordsAbsentCause · type · internal
 FailureWordsRead · type · internal
@@ -4371,6 +4372,7 @@ compileDisclosure · value · internal
 compileSchema · value · internal
 composeCostView · value · internal
 composeDriveFailureCosts · value · internal
+composeFailures · value · internal
 composeGateClaimSentence · value · internal
 composeNextActionsStatusWord · value · internal
 composePersonNotice · value · internal

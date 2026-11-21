@@ -715,6 +715,10 @@ export type {
   MoneySourceTotal,
   RunCost,
 } from './engine/step-view.js';
+// Q1 (#592) unit b: a run's failures, read from the record — one composer, shown by get_run_state's
+// `failures[]` and by `realm run inspect` under `Failed:`.
+export { composeFailures } from './engine/failure-view.js';
+export type { FailureView } from './engine/failure-view.js';
 // caching 3-M A-2b1: the words a cost view's misses carry (the functions stay inside core).
 export { CACHE_MISS_CAUSES, CACHE_LIFETIME_SOURCES } from './engine/cache-misses.js';
 export type {

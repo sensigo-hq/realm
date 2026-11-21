@@ -17,6 +17,7 @@ import {
   deriveRunPhase,
   describeClaimHolder,
   composeStepViews,
+  composeFailures,
   composeDriveFailureCosts,
   composeRunCost,
   describePending,
@@ -49,6 +50,7 @@ import {
   type WorkflowDefinition,
   type RunHealthFinding,
   type StepView,
+  type FailureView,
   type DriveFailureCost,
   type Money,
   type PreconditionFacts,
@@ -79,6 +81,7 @@ import {
   type McpAlsoEntry,
   type McpElsewhereEntry,
   type McpNextAction,
+  type Merged,
   type OperatorRoute,
   type PollReason,
   type WithPersonBlock,
@@ -426,6 +429,21 @@ export const RUN_STATE_SUMMARY_TABLE = {
   completed_steps: 'fact',
   in_progress_steps: 'fact',
   failed_steps: 'fact',
+  // Q1 (#592) unit b: one view per failed step, from the record. Realm's words and the step are
+  // facts; the message is a diagnostic copy, bounded as `terminal_reason`'s non-fixed arm is.
+  failures: {
+    nested: {
+      step: 'fact',
+      code: 'fact',
+      category: 'fact',
+      stop_reason: 'fact',
+      agent_action: 'fact',
+      attempt: 'fact',
+      message: 'bounded',
+      unknown: 'fact',
+      absent: 'fact',
+    } satisfies Record<keyof Merged<FailureView>, DisclosureClass>,
+  },
   skipped_steps: 'fact',
   pending_gate: RUN_RECORD_TABLE.pending_gate,
   evidence_count: 'fact',
@@ -479,6 +497,7 @@ export const RUN_STATE_SUMMARY_TABLE = {
   step_claims_more: 'fact',
   stuck_claims_more: 'fact',
   in_progress_steps_more: 'fact',
+  failures_more: 'fact',
   failed_steps_more: 'fact',
   run_health_more: 'fact',
   drive_failure_costs: { nested: DRIVE_FAILURE_COST_TABLE },
@@ -570,6 +589,12 @@ export interface RunStateSummary {
   completed_steps: string[];
   in_progress_steps: string[];
   failed_steps: string[];
+  /**
+   * Q1 (#592) unit b: one entry per step in `failed_steps`, in its order, from the step's last
+   * failed evidence entry (core's `composeFailures`, the one derivation `realm run inspect` prints
+   * too). `[]` when nothing failed.
+   */
+  failures: FailureView[];
   skipped_steps: string[];
   pending_gate: import('@sensigo/realm').PendingGate | undefined;
   evidence_count: number;
@@ -719,6 +744,8 @@ export interface RunStateSummary {
   stuck_claims_more?: number;
   /** #872 (b1) correction 1 (H4): how many `in_progress_steps` the reply ceiling left out. */
   in_progress_steps_more?: number;
+  /** Q1 (#592) unit b: how many `failures` the reply ceiling left out. */
+  failures_more?: number;
   /** #872 (b1) correction 1 (H4): how many `failed_steps` the reply ceiling left out. */
   failed_steps_more?: number;
   /**
@@ -866,6 +893,9 @@ export const RUN_STATE_PLAN = replyPlanOf([
   runList('step_claims'),
   runList('stuck_claims'),
   runList('in_progress_steps'),
+  // Q1 (#592) unit b: before the kept names — the ceiling cuts the first list in this order that
+  // can close the gap alone, so the failures are shortened before `failed_steps` is.
+  runList('failures'),
   runList('failed_steps'),
   runList('engine_runnable'),
   runList('agent_refused'),
@@ -1253,6 +1283,7 @@ export async function handleGetRunState(
     completed_steps: run.completed_steps,
     in_progress_steps: run.in_progress_steps,
     failed_steps: run.failed_steps,
+    failures: composeFailures(run),
     skipped_steps: run.skipped_steps,
     // Suppress a stale/leftover pending_gate on a terminal record (the #282 class) — never
     // surface a gate that no longer means anything live.

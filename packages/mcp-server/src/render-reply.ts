@@ -87,6 +87,7 @@ import type {
   DriveFailureCost,
   EngineRunnable,
   FactProducers,
+  FailureView,
   Money,
   Outcome,
   PreconditionFacts,
@@ -2570,7 +2571,7 @@ export function safeTool<A extends unknown[]>(
 // `MCP_ENVELOPE_ROWS`, and covering every table in `tools/` (imported for their types only).
 
 /** The keys of every member of a union, each with the union of its types. */
-type Merged<U> = {
+export type Merged<U> = {
   [K in U extends unknown ? keyof U : never]: U extends unknown
     ? K extends keyof U
       ? U[K]
@@ -2727,6 +2728,20 @@ export const DOOR_FACTS = {
   } satisfies FactProducers<
     (typeof RUN_STATE_SUMMARY_TABLE)['run_health']['nested'],
     RunHealthFinding
+  >,
+  // Q1 (#592) unit b: a failure's step is the author's name; its words and why it has none are
+  // realm's words (a newer Realm's word is carried as recorded and named in `unknown`).
+  failures: {
+    step: 'author_literal',
+    code: 'enum',
+    category: 'enum',
+    stop_reason: 'enum',
+    agent_action: 'enum',
+    absent: 'enum',
+    unknown: 'enum',
+  } satisfies FactProducers<
+    (typeof RUN_STATE_SUMMARY_TABLE)['failures']['nested'],
+    Merged<FailureView>
   >,
   sealed_by_adjudicated: { by: 'id', at: 'time', previous_arm: 'enum' } satisfies FactProducers<
     (typeof RUN_STATE_SUMMARY_TABLE)['sealed_by_adjudicated']['nested'],

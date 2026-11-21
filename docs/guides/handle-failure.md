@@ -178,9 +178,12 @@ Sealed by: step_failure
 Cause: Step 'fetch' failed: Step 'fetch' failed after 3 attempts
 Completed: page_on_call, release_lock
 Failed: fetch
+  fetch: SERVICE_RATE_LIMITED (SERVICE) — stopped: attempts; next: report_to_user (attempt 3) — upstream returned 503
 Skipped: summarise
   summarise: trigger_rule_unsatisfiable: all_success, dep fetch failed
 ```
+
+The line under `Failed:` was added after version 0.50.0.
 
 Finalizers do not run when an operator ends a run with `realm run abandon`.
 

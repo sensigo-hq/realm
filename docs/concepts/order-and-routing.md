@@ -158,13 +158,14 @@ Step 'assess' completed. Step 'pay' failed. Recovery steps are available in next
 Phase: completed  ✓
 Completed: assess, only_low_risk, open_ticket, flag_large, close_books
 Failed: pay
+  pay: ENGINE_HANDLER_FAILED (ENGINE) — stopped: no_retry_policy; next: stop (attempt 1) — Handler 'pay' threw: payment provider declined 500
 Skipped: send_receipt
   send_receipt: trigger_rule_unsatisfiable: all_success, dep pay failed
 Run Health (1 finding(s)):
   completed_with_failed_steps: completed with 1 failed step(s): pay …
 ```
 
-The run is `completed`, not `failed`, because the workflow had a step to handle the failure and that step ran. The failed step stays listed, and `realm run inspect` flags the run.
+The line under `Failed:` was added after version 0.50.0. The run is `completed`, not `failed`, because the workflow had a step to handle the failure and that step ran. The failed step stays listed, and `realm run inspect` flags the run.
 
 In this run, the steps that became allowed after the failure did not start by themselves. They ran when the driver called them. `realm agent` does that for you.
 

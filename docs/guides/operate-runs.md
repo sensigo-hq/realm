@@ -54,10 +54,11 @@ Sealed by: step_failure
 Cause: Step 'fetch' failed: Step 'fetch' failed after 3 attempts
 Completed: page_on_call, release_lock
 Failed: fetch
+  fetch: SERVICE_RATE_LIMITED (SERVICE) — stopped: attempts; next: report_to_user (attempt 3) — upstream returned 503
 Skipped: summarise
 ```
 
-Further down, `Run Health` lists anything Realm finds wrong with the run, and `Drive failures` lists the times a driver gave up on it. See [Evidence](../concepts/evidence.md) for how to read the rest.
+The line under `Failed:` was added after version 0.50.0. Further down, `Run Health` lists anything Realm finds wrong with the run, and `Drive failures` lists the times a driver gave up on it. See [Evidence](../concepts/evidence.md) for how to read the rest.
 
 ## Decide what to do
 
