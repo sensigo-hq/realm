@@ -22,9 +22,11 @@ Another Realm server or CLI that uses the same store can still record answers. T
 
 ## The form
 
-Under `asked`, in an app that shows forms, the question is sent to the user's app as a form the first time `start_run`, `execute_step` or `advance_run` reaches it. The form has one field, "Your answer", whose options are the question's choices. Only an accepted form holding one of those choices records an answer. A declined, cancelled or failed form records nothing, and the question keeps waiting.
+Under `asked`, in an app that shows forms, the question is sent to the user's app as a form the first time `start_run`, `execute_step` or `advance_run` reaches it. The form has one field, "Your answer", whose options are the question's choices. Only an accepted form holding one of those choices records an answer. A declined, cancelled or failed form records nothing, and the question keeps waiting. A question the run reaches after a form's answer, in the same call, gets its form from the next call that reaches it, or from `present_question`.
 
 Realm waits for the form itself. The wait ends at the question's deadline when the gate declares `on_expiry`, or at the end of the call's own time: 240 seconds by default, counted from the start of the call. `--form-wait-seconds` (`REALM_MCP_FORM_WAIT_SECONDS`, the `formWaitSeconds` option) changes it, from 30 to 3600 seconds; when it is set in more than one place, the smallest value wins. The setting is refused at start wherever no form is sent: under `withheld` or `permitted`, on `realm serve`, and with `statelessHttp`.
+
+When the person answers a form sent by the call that opened the question, the run carries on in that call, up to the next pause, and no step starts after the form wait's time is spent. Any other form, sent by `present_question`, by a later call or from another session, records the answer and leaves the steps to `advance_run`.
 
 The tool `present_question` sends the form again. It is listed only in a session whose client shows forms, and it can send one question's form three more times in one server process.
 
@@ -46,7 +48,7 @@ Each answer's entry in the run record says how it arrived:
 `realm run inspect` prints them on the answer's line, for example:
 
 ```text
-Answer: approve · answered by (not stated) · through the user's app, as a form (as its door declared), recorded by mcp-stdio, running as ops@server-1 (from the OS user) · given at 2026-11-12T10:02:14Z · no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)
+Answer: approve · answered by (not stated) · through the user's app, as a form (as its door declared), recorded by mcp-stdio, running as ops@server-1 (from the OS user) · given at 2026-11-12T10:02:14Z · no claim token passed (a token is passed only from the conversation that opened the question — by Realm's MCP answer tool, or by the form sent by the call that opened it — or by a program that calls the library with it)
 ```
 
 An entry written by an earlier version reads `how it arrived was not recorded`.

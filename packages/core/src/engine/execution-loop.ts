@@ -5269,9 +5269,12 @@ function withGateClaim(
   storeKeepsClaims: boolean,
   answerRecorded: boolean,
   tokenPresented: boolean,
-  // #627 W (correction 1, B1): the answer's route. A form's answer carries no token BY DESIGN, so a
-  // sentence about not passing one would be false — none is composed for `mcp_form`. Correction 2
-  // (3.3): REQUIRED (an absent route is `undefined`, passed), so the compiler finds every branch.
+  // #627 W (correction 1, B1): the answer's route. Correction 2 (3.3): REQUIRED (an absent route is
+  // `undefined`, passed), so the compiler finds every branch. #625 PR-2b A2b: a form's answer carries
+  // the question's token only when the call that opened the question sent the form (from that
+  // request's state, never from the person); every other form carries none — so on `mcp_form` a
+  // sentence about the token, which the agent never held, would be false: one is composed only for a
+  // `matched` proof, and it is then the carry-on's own (the budget's), never a token sentence.
   route: string | undefined,
   // #625 PR-2b A2a: D-8's decision for this call, and — carried on — who continued the run.
   carry: GateClaimCarry,
@@ -5293,7 +5296,7 @@ function withGateClaim(
       'holder' in described ? described.holder : { by: null, absent_cause: described.absent_cause };
   }
   const sentence =
-    route === 'mcp_form'
+    route === 'mcp_form' && gateClaim.proof !== 'matched'
       ? undefined
       : composeGateClaimSentence(gateClaim, answerRecorded, tokenPresented, carry);
   // #625 PR-2b A2a: who answered, read off the gate step's last answer on this reply's record — the

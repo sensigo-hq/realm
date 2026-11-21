@@ -109,7 +109,7 @@ describe('#627 W — the CLI door records its route (cell 5, CLI half)', () => {
       principal: { absent: 'not_a_server_door' },
       driver: { by: 'ops', by_source: 'ambient', channel: 'respond' },
       // #729 PR-6a (B8): the name quoted, and when the answer was given after the route part.
-      line: `Answer: approve · answered by "alice" (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops (from REALM_OPERATOR) · given at ${instantText(Date.parse(String(entry?.completed_at)))} · no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)`,
+      line: `Answer: approve · answered by "alice" (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops (from REALM_OPERATOR) · given at ${instantText(Date.parse(String(entry?.completed_at)))} · no claim token passed (a token is passed only from the conversation that opened the question — by Realm's MCP answer tool, or by the form sent by the call that opened it — or by a program that calls the library with it)`,
     });
   }, 60_000);
 });

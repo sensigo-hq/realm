@@ -418,7 +418,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
         [
           'Answer: approve · answered by "alice" \\(as stated\\) · through a terminal \\(realm run respond\\) \\(as its door declared\\), recorded by respond, running as cli-row \\(from REALM_OPERATOR\\)',
           'given at \\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z',
-          "no claim token passed \\(a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it\\)",
+          "no claim token passed \\(a token is passed only from the conversation that opened the question — by Realm's MCP answer tool, or by the form sent by the call that opened it — or by a program that calls the library with it\\)",
         ].join(' · '),
       ),
     );
@@ -464,7 +464,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
     }
     const inspected = await cli(['run', 'inspect', runId], {});
     expect(inspected.stdout).toContain(
-      "no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
+      "no claim token passed (a token is passed only from the conversation that opened the question — by Realm's MCP answer tool, or by the form sent by the call that opened it — or by a program that calls the library with it)",
     );
   }, 60_000);
 
