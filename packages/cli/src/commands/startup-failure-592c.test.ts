@@ -353,6 +353,8 @@ describe('Q1 (#592) unit c — check 4: the surfaces show the mark, until the ru
     const inspect = await runCli(['run', 'inspect', runId], env());
     const lines = inspect.stdout.split('\n');
     const at = lines.indexOf('Drive failures:');
+    // Correction 1: the Run Health line of a finding about no step carries no `[]`.
+    const healthLine = lines.find((l) => l.startsWith('  drive_failing'));
     const server = createRealmMcpServer({
       runStore: h.home.runStore,
       traceBufferStore: h.home.traceBufferStore,
@@ -377,15 +379,19 @@ describe('Q1 (#592) unit c — check 4: the surfaces show the mark, until the ru
     const before = await state();
     const finding = before.run_health?.find((f) => f.kind === 'drive_failing');
     // (a) red when list prints `=drive_failing` (a step) or no finding, inspect prints a step or
-    //     another line, or get_run_state leaves out the entry or the finding (or gives it a basis);
+    //     another line (or `drive_failing []` in Run Health: correction 1), or get_run_state leaves out the entry or the finding (or gives it a basis);
     //     (b) prints the lines and the reply's parts.
     expect({
+      health: healthLine?.startsWith('  drive_failing: the last drive attempt failed'),
+      healthBrackets: inspect.stdout.includes('drive_failing []'),
       stuckEnd: stuckLine?.slice(stuckLine.lastIndexOf('  ') + 2),
       stuckHasStep: stuckLine?.includes('=drive_failing'),
       inspect: lines.slice(at, at + 2),
       entries: before.drive_failures?.entries.map((e) => [e.step, e.error_class]),
       finding: finding && { step: finding.step, basis: finding.evidence?.basis },
     }).toEqual({
+      health: true,
+      healthBrackets: false,
       stuckEnd: 'drive_failing(startup_failure)',
       stuckHasStep: false,
       inspect: [
@@ -492,7 +498,7 @@ describe('Q1 (#592) unit c — check 8: the pages say it', () => {
     const p = 'guides/realm-agent.md';
     claim(
       p,
-      `After \`--run-id\`, each refusal below that ends \`Nothing was started.\` is recorded on the run, which keeps it under \`Drive failures\`, and ends ${W} instead (added after version 0.50.0). \`realm run list --stuck\` then lists the run with \`drive_failing(startup_failure)\` at the end of its line.`,
+      `After \`--run-id\`, each refusal below that ends \`Nothing was started.\` is recorded on the run, which keeps it under \`Drive failures\`, and ends ${W} instead; when the run has already ended or is not in the store, nothing is recorded and the sentence says so (added after version 0.50.0). \`realm run list --stuck\` then lists the run with \`drive_failing(startup_failure)\` at the end of its line.`,
     );
     claim(
       p,

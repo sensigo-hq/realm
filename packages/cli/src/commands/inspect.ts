@@ -1936,7 +1936,9 @@ export async function inspectRun(
     lines.push('');
     lines.push(`Run Health (${runHealth.length} finding(s)):`);
     for (const f of runHealth) {
-      const stepLabel = f.step !== undefined ? ` [${f.step}]` : '';
+      // Q1 (#592) unit c: a finding about no step (a startup mark's `drive_failing`, step `''`) has no
+      // label, as one with no step at all.
+      const stepLabel = f.step !== undefined && f.step !== '' ? ` [${f.step}]` : '';
       // issue #221 correction: never_claimed_idle's reason text ends "…, idle" with no duration —
       // append the humanized age (matches list --stuck's own `idle: <age>` rendering). Other kinds'
       // reason text is already complete on its own. `eligible_steps` evidence stays data-only (a
