@@ -179,12 +179,21 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
     );
   });
 
-  it("line 102: advanceRun's caller is one of five words — each is the call the expiry line names and the reply's command; another throws", async () => {
+  it("line 102: advanceRun's caller is one of seven words — each is the call the expiry line names and the reply's command; another throws", async () => {
+    // #625 PR-2b A2a: the two answer words, which an answer's carry-on runs under.
     claim(
       PAGE,
-      "`caller` is one of five words: `advanceRun` (the default, a program's own call), `advance_run`, `advance`, `start_run` or `agent`.",
+      "`caller` is one of seven words: `advanceRun` (the default, a program's own call), `advance_run`, `advance`, `start_run`, `agent`, `submit_human_response` or `submitHumanResponse` (the last two, added after version 0.50.0, name an answer's call that carries the run on).",
     );
-    for (const caller of [undefined, 'advance_run', 'advance', 'start_run', 'agent'] as const) {
+    for (const caller of [
+      undefined,
+      'advance_run',
+      'advance',
+      'start_run',
+      'agent',
+      'submit_human_response',
+      'submitHumanResponse',
+    ] as const) {
       const { runId, gateId } = await atQuestion();
       await setClockOf(store, LATER());
       const r = await advanceRun(store, GATED, {
@@ -200,7 +209,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
     }
     const { runId } = await atQuestion();
     const before = JSON.stringify((await store.get(runId)).record);
-    // (a) red when a sixth word is taken; (b) prints the throw.
+    // (a) red when an eighth word is taken; (b) prints the throw.
     await setClockOf(store, LATER());
     await expect(
       advanceRun(store, GATED, { runId, caller: 'nightly' as never }),

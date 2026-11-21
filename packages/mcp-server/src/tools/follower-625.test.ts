@@ -173,7 +173,7 @@ async function phaseOf(runs: RunStore, runId: string): Promise<string> {
 }
 
 describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
-  it('gate→auto: the follower finishes (the act after the answer runs the owed step)', async () => {
+  it('gate→auto: the follower finishes (the answer runs the owed step)', async () => {
     const d = wf('f-gate-auto', {
       write: { description: 'Write.', execution: 'agent', depends_on: [] },
       confirm: gate(['write']),
@@ -183,7 +183,9 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
     await withServer([d], async (client, runs) => {
       const started = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       const { calls, last } = await follow(client, started);
-      expect(calls).toContain('advance_run');
+      // #625 PR-2b A2a: the answer passes back the opening reply's token (the follower copies
+      // call_with), so its call runs `after` itself — no advance_run follows (it did before A2a).
+      expect(calls).toEqual(['execute_step', 'submit_human_response', 'execute_step']);
       expect(last.next_actions).toEqual([]);
       expect(await phaseOf(runs, started.run_id!)).toBe('completed');
     });
@@ -368,7 +370,9 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
         // clock moves past it.
         await clock!.advance(1300);
         const { calls } = await follow(client, opened);
-        expect(calls).toContain('advance_run');
+        // #625 PR-2b A2a: the late answer of the default's choice is `ok` and passes back the token,
+        // so its call runs `after` itself (D-8: the late, same-choice arm carries on).
+        expect(calls).toEqual(['submit_human_response']);
         expect(await phaseOf(runs, started.run_id!)).toBe('completed');
         // #715 (b) commit 4: the question was settled by its expiry (the default), not by the
         // follower's answer — without this the cell passes whether or not the time ran out.
@@ -395,7 +399,8 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       async (client, runs) => {
         const started = await call(client, 'start_run', { workflow_id: d.id, params: {} });
         const { calls } = await follow(client, started);
-        expect(calls).toEqual(['execute_step', 'submit_human_response', 'advance_run']);
+        // #625 PR-2b A2a: the answer's call runs `stamp_it` itself (no advance_run follows).
+        expect(calls).toEqual(['execute_step', 'submit_human_response']);
         expect(calls).not.toContain('stamp');
         const { record: run } = await runs.get(started.run_id!);
         expect(run.run_phase).toBe('completed');

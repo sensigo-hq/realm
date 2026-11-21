@@ -388,10 +388,50 @@ export interface EngineReply {
    * arrived after the question was settled (`spent`); `opened_by` names the PROGRAM through which
    * the question was opened, in the past tense, with how its name is known. It changes nothing
    * about the answer: the answer is decided by the gate id alone. A refused reply carries none.
+   *
+   * #625 PR-2b A2a: `gate_claim` on a reply says that this call's question is settled, whatever
+   * `status` says; the answer was recorded unless `answer_recorded` is false. `carried_on` says
+   * whether this call went on to run the steps after the answer (`true`: the continuation was
+   * started, not that it finished the run — its replies are this reply's `status`, `stopped_step`,
+   * `chained_auto_steps` and the rest); `false` with `not_carried_on_because`, the first of D-8's rows
+   * that stopped it.
    */
   gate_claim?: {
     proof: GateClaimVerdict['proof'];
     cause?: 'no_claim' | 'claim_has_no_token' | 'store_keeps_no_claims' | 'answered' | 'expired';
     opened_by: Attributed | ActorAbsent;
+    /** #625 PR-2b A2a: whether this call carried the run on after the answer. */
+    carried_on?: boolean;
+    /**
+     * #625 PR-2b A2a: with `carried_on: false`, why — the first of D-8's rows that applied: nothing
+     * this call could run after the answer; this call's own write did not settle the question; the
+     * claim token was not passed back, was another's or could not be checked; no step registry; this
+     * program's code is not the code the run last ran with, or cannot be compared with it.
+     */
+    not_carried_on_because?:
+      | 'nothing_runnable'
+      | 'not_settled_by_this_call'
+      | 'proof_absent'
+      | 'proof_mismatch'
+      | 'proof_unverifiable'
+      | 'no_registry'
+      | 'extensions_differ'
+      | 'extensions_not_comparable';
+    /**
+     * #625 PR-2b A2a: with `carried_on: true`, `'budget'` when the call's time ran out before the next
+     * step was claimed; the steps still owed are in the reply's `advance` way.
+     */
+    chain_stopped?: 'budget';
+    /**
+     * #625 PR-2b A2a: with `carried_on: true`, the PROGRAM that ran the steps after the answer — this
+     * call's driver; `{ by: null, absent_cause: 'driver_not_recorded' }` when the host passed none.
+     */
+    continued_by?: Attributed | ActorAbsent;
+    /**
+     * #625 PR-2b A2a: who answered, as the record keeps it — the name the answer was recorded with
+     * (stated by its caller, never verified), `settled_by_expiry` when the question's expiry settled
+     * it, `not_stated` or `name_unreadable` when it names no one.
+     */
+    answered_by?: { by: string; by_source: 'stated' } | ActorAbsent;
   };
 }

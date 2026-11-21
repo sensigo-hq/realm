@@ -1082,7 +1082,9 @@ ENTRY_CALLERS · value · public
           "advance_run",
           "advance",
           "start_run",
-          "agent"
+          "agent",
+          "submit_human_response",
+          "submitHumanResponse"
       ];
       readonly executeStep: readonly [
           "executeStep",
@@ -1186,6 +1188,14 @@ EngineReply · type · public (beta: own_act)
           proof: GateClaimVerdict['proof'];
           cause?: 'no_claim' | 'claim_has_no_token' | 'store_keeps_no_claims' | 'answered' | 'expired';
           opened_by: Attributed | ActorAbsent;
+          carried_on?: boolean;
+          not_carried_on_because?: 'nothing_runnable' | 'not_settled_by_this_call' | 'proof_absent' | 'proof_mismatch' | 'proof_unverifiable' | 'no_registry' | 'extensions_differ' | 'extensions_not_comparable';
+          chain_stopped?: 'budget';
+          continued_by?: Attributed | ActorAbsent;
+          answered_by?: {
+              by: string;
+              by_source: 'stated';
+          } | ActorAbsent;
       };
   }
 
@@ -2113,6 +2123,7 @@ NAME_MAX_LENGTH · value · internal
 NAME_REFUSAL_REASONS · value · internal
 NEW_RUN_SENTENCE · value · internal
 NEXT_ACTIONS_STATUS · value · internal
+NOT_CARRIED_ON_REASONS · value · internal
 NOT_CHECKED_MARKER · value · internal
 NOT_PRICED_CAUSES · value · public
   const NOT_PRICED_CAUSES: readonly [
@@ -3593,6 +3604,10 @@ SubmitGateOptions · type · public
       principal?: Principal;
       clientPromptRequested?: boolean;
       disclosure?: DisclosureSet;
+      traceBufferStore?: TraceBufferStore;
+      budget?: {
+          remainingMs: () => number;
+      };
       channelEvidence?: {
           user: string;
           forms?: string[];

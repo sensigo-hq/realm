@@ -355,7 +355,9 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
   it('connect-an-mcp-client.md: after a gate is answered, the auto steps that follow do not start by themselves', async () => {
     claim(
       'docs/guides/connect-an-mcp-client.md',
-      'The `auto` steps that follow do not start by themselves.',
+      // #625 PR-2b A2a: an answer that passes the token back runs them (carry-on-a2a-625 check 9,
+      // end to end); this cell's answer passes none.
+      "After any other answer — a form's answer among them, in this version — the `auto` steps that follow do not start by themselves.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(

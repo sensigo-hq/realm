@@ -98,6 +98,8 @@ export {
   GATE_PROOFS,
   GATE_PROOF_CAUSES,
   CLAIM_PROOF_ABSENT_CAUSES,
+  // #625 PR-2b A2a: D-8's reasons.
+  NOT_CARRIED_ON_REASONS,
   // #603 A3b: why an answer's view names no account, or no admission.
   ACCOUNT_ABSENT_CAUSES,
   ADMITTED_BY_ABSENT_CAUSES,

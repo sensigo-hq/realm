@@ -79,7 +79,7 @@ A reply is kept at or under 40,000 characters when shortening its lists can make
 A guard step is never called. It is decided inside the write that makes it ready, and the reply to that call says what it did:
 
 - `guards` lists each guard the write decided, in order, with its `outcome`.
-- From `start_run` and `execute_step`, each of those guards is also in `chained_auto_steps`. From `submit_human_response` they are in `guards` only.
+- From `start_run` and `execute_step`, each of those guards is also in `chained_auto_steps`. From `submit_human_response`, the guards the answer's own write decided are in `guards` only; when the answer carries the run on, the guards decided after it are in `chained_auto_steps`, as from `execute_step` (added after version 0.50.0).
 - When a guard ended the run, `ended_by` holds its `arm` (`guard_abort`, `guard_resolution_error` or `guard_pass_complete`) and its `step`, and `context_hint` is one of `Guard step '<step>' aborted the run.`, `Guard step '<step>' failed with a resolution error. Run is terminated.` and `Guard step '<step>' passed and completed the run.` On an answer's reply and `advance_run`'s, the second goes on with the way back in, the guard being a failed step `realm run resume` takes: `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0). From `execute_step`, when the step you called completed, `context_hint` opens with `Step '<step>' completed.` before it (added after version 0.50.0).
 - `ended_by.reason` is the guard's `abort_message` when it aborted, and is left out when the guard has none. For a resolution error it is the error recorded for the guard. For a guard that passed and completed the run there is none.
 
@@ -414,7 +414,9 @@ This reply came from a server started with `--gate-answers permitted`. Under the
 | `gate_id`      | text | Yes      | The open gate's ID, from `gate.gate_id`.                                                                                                                                                                                                                                                                                                                             |
 | `choice`       | text | Yes      | One of the gate's choices.                                                                                                                                                                                                                                                                                                                                           |
 | `responded_by` | text | No       | Who made the choice, as the caller states it. Not verified. At most 200 characters, no control characters. Recorded with the answer. The answer instruction's `call_with` offers it as `"<the person's name, as they gave it; leave out if none>"`; a value wrapped whole in `<` `>`, such as that placeholder copied, records no name (added after version 0.49.0). |
-| `claim_token`  | text | No       | The `claim_token` in the answer instruction of the reply that opened this question (its `next_actions` entry). Never required.                                                                                                                                                                                                                                       |
+| `claim_token`  | text | No       | The `claim_token` in the answer instruction of the reply that opened this question (its `next_actions` entry); with it, the steps after the answer run in this call (see [Carrying the run on](#carrying-the-run-on)). Never required.                                                                                                                               |
+
+An answer that does not carry the run on — here, one that passed no `claim_token` — names what the run owes:
 
 ```json
 {
@@ -441,7 +443,7 @@ A gate ID that is not the open one is refused, and the reply names the question 
 
 An answer refused because its choice was not recorded — another choice was recorded first, or the gate's time was up and it settled another choice (below) — keeps `agent_action: "report_to_user"`: the person must hear that their choice was not recorded. When the run goes on, its `context_hint` follows the message with what the run owes, in the words a recorded answer uses — `… your choice 'discard' was not recorded. Owed to the engine: 'send' — call advance_run.` — and `next_actions` holds it. Added after version 0.46.0. When another person's answer was recorded first, the message names it, and ends `… through a terminal, at 2026-11-12T10:02:14Z.` before what the run owes: its choice, the name as stated and then the account its channel reported, `U0ALICE (as Slack reports it)` (each left out when the record has none; the account was added after version 0.49.0), how it arrived — `through a terminal`, `through Realm's MCP answer tool`, `through the user's app, as a form` or `through a Slack thread` — and when, in UTC to the second. An answer that repeats the recorded choice is `ok`, and its `context_hint` is `Not recorded: the question on step '<step>' already had this answer — …`, in the same words; it has no `answer_recorded`. Both added after version 0.49.0, which said `Gate '<gate>' was already resolved with choice '<c>' — your choice '<other>' was not recorded.` and `… — no action was taken.`
 
-A guard step that the answer makes ready is decided in the same write. The reply names it in `guards`. It has no `chained_auto_steps`. When the guard ended the run, `status` is still `ok`, because the answer was recorded:
+A guard step that the answer makes ready is decided in the same write. The reply names it in `guards`; its `chained_auto_steps` list only what the call ran after the answer, when it carried the run on (added after version 0.50.0). When the guard ended the run, `status` is still `ok`, because the answer was recorded:
 
 ```json
 {
@@ -562,6 +564,37 @@ The examples above leave out `gate_claim` and the `warnings` that go with it. [T
 
 An argument that this tool does not take is named in `warnings`, with the nearest argument it has when there is one: `claimToken` and `token` are answered with `did you mean 'claim_token'?`. Up to version 0.45.0 such an argument was dropped without a word, and an answer that sent `claimToken` read as one with no token. `create_workflow` and `advance_run` name theirs too; the other tools still drop unknown arguments without saying so.
 
+### Carrying the run on
+
+When the answer passes back the `claim_token` (its `proof` is `matched`), the call carries the run on: it runs the guards and `auto` steps the run then owes, as `advance_run` would on this server, until a step opens a question, fails, waits for the agent or ends the run. It does so within 240 seconds of the call's start; a step that has started runs to its end, and can take the call past them. Added after version 0.50.0, whose answers ran no step.
+
+The reply is then about what the call ran: its `status`, `stopped_step`, `chained_auto_steps` and the rest are the continuation's. It keeps the answer's own facts. `command` is the gate's step. `context_hint` opens with the answer's sentence. The guards the answer's own write decided come first in `guards`. `answer_recorded`, `outcome` and `expiry` stay where the answer had them, and the answer's `warnings` come first. A question the call reaches is handed on as any reply that opens a question hands it on: its answer instruction carries that question's own claim token.
+
+`gate_claim` on a reply says that this call's question is settled, whatever `status` says. The answer was recorded unless `answer_recorded` is false. `carried_on: true` means the continuation was started, not that it finished the run.
+
+| Member                   | Holds                                                                                                                                                                                                                                                                                                |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `carried_on`             | Whether the call carried the run on after the answer.                                                                                                                                                                                                                                                |
+| `not_carried_on_because` | With `carried_on: false`, why (below).                                                                                                                                                                                                                                                               |
+| `chain_stopped`          | With `carried_on: true`, `budget` when the call's time ran out before the next step started. The door's `Owed to the engine` sentence names the steps still owed, and `next_actions` holds `advance_run`.                                                                                            |
+| `continued_by`           | With `carried_on: true`, the program that ran the steps after the answer: this server's driver, as `opened_by` names one. `gate_claim.continued_by` is `{ by: null, absent_cause: 'driver_not_recorded' }` when the host passed no driver.                                                           |
+| `answered_by`            | Who answered, as the record keeps it: the name the answer was recorded with, `{ "by": "Ana", "by_source": "stated" }` (stated by the caller, never verified), or `{ "by": null, "absent_cause": … }` with `settled_by_expiry` (the question's expiry settled it), `not_stated` or `name_unreadable`. |
+
+| `not_carried_on_because`    | When                                                                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `nothing_runnable`          | After the answer there is nothing this call could run: the run ended, only agent steps remain, or every owed step is refused. |
+| `not_settled_by_this_call`  | The question was settled before this call (`proof: spent`).                                                                   |
+| `proof_absent`              | No `claim_token` was passed.                                                                                                  |
+| `proof_mismatch`            | The one passed is not this question's.                                                                                        |
+| `proof_unverifiable`        | There was nothing to check it against.                                                                                        |
+| `no_registry`               | The call has no step registry (a program's own call; every MCP server has one).                                               |
+| `extensions_differ`         | This server's code is not the code the run last ran with.                                                                     |
+| `extensions_not_comparable` | This server's code cannot be compared with the code the run last ran with.                                                    |
+
+A server that records no code identity (`realm-mcp`, an embedding program) is not compared: on a run that recorded none either, it carries the run on.
+
+When the call did not carry the run on and the run owes steps, the reply's sentence about the token ends with `The run was not carried on in this call.`, and `next_actions` holds `advance_run`, which runs the owed steps. For `no_registry` the sentence is `This call has no step registry. The run was not carried on in this call.`; for `extensions_differ`, `This server's code is not the code the run last ran with. The run was not carried on in this call; its owed steps run with the code of the program that runs them.`; for `extensions_not_comparable`, `This server's code cannot be compared with the code the run last ran with.` and the same second sentence. When the call's time ran out, it is `This call's time ran out after '<step>'; the run was not carried further in this call.`, naming the last step it ran (the gate's step when it ran none).
+
 ### The claim token
 
 `claim_token`, `gate_claim` and the argument warning were added in 0.46.0.
@@ -570,12 +603,15 @@ The reply that opens a gate carries the token of the claim that the opening call
 
 Pass it back as `claim_token` when you answer. It shows that the answer comes from the conversation that opened the question. It is not a secret: anyone who can read the run store can read it, and Realm cannot tell callers apart. It guards against mistakes and races, not against a caller who means harm. It is never required, and it never decides whether the answer is recorded. The answer is decided by the gate ID alone. An empty `claim_token` is accepted, and counts as a wrong one.
 
-Every `ok` reply to `submit_human_response` has `gate_claim`, including a reply with `answer_recorded: false`. A refused answer has none. `gate_claim` says only what the token showed; whether the answer was recorded is `answer_recorded`.
+Every `ok` reply to `submit_human_response` has `gate_claim`, including a reply with `answer_recorded: false`. A refused answer has none. `gate_claim` says what the token showed, whether the call carried the run on (see [Carrying the run on](#carrying-the-run-on)) and who answered; whether the answer was recorded is `answer_recorded`.
 
 ```json
 "gate_claim": {
   "proof": "matched",
-  "opened_by": { "by": "ops@server-1", "by_source": "derived", "channel": "mcp-stdio" }
+  "opened_by": { "by": "ops@server-1", "by_source": "derived", "channel": "mcp-stdio" },
+  "carried_on": true,
+  "continued_by": { "by": "ops@server-1", "by_source": "derived", "channel": "mcp-stdio" },
+  "answered_by": { "by": "Ana", "by_source": "stated" }
 }
 ```
 
@@ -591,7 +627,7 @@ The same word is stored on the answer's entry in the run's record as `claim_proo
 
 `opened_by` names the program through which the question was opened, not anyone who is working on it now. It holds `by` (the name), `by_source` (how the name is known: `stated`, `ambient` for the `REALM_OPERATOR` variable, or `derived` for the OS user and host name) and `channel` (the door: `mcp-stdio`, `mcp-http`, `agent`, `run`). When there is no name it is `{ "by": null, "absent_cause": … }`, with the word saying why: `holder_not_recorded` (the claim has no name), `pre_lease_claim` (the claim has neither a name nor `since`: it was made before those fields existed), `no_claim`, `store_keeps_no_claims`, `driver_not_recorded` (the step's entry has no name) or `name_unreadable` (a name is stored, and it is not one that can be shown).
 
-Unless the proof is `matched`, or is `spent` with no token passed, the reply also has one sentence in `warnings` about it. For `absent`: `No claim_token was passed; the answer was recorded. Only the conversation that opened the question has one to pass.` On a reply with `answer_recorded: false` the sentence is the token fact alone (for `absent`: `No claim_token was passed.`): the expiry's own sentence and `answer_recorded` already say that the answer was not recorded.
+The reply has at most one sentence in `warnings` about the token. Unless the proof is `matched`, or is `spent` with no token passed, it starts with the proof's sentence; when the call did not carry the run on and the run owes steps, it ends with `The run was not carried on in this call.` (that sentence alone for `spent` with no token; added after version 0.50.0). For `absent`: `No claim_token was passed; the answer was recorded. Only the conversation that opened the question has one to pass.` On a reply with `answer_recorded: false` the sentence is the token fact alone (for `absent`: `No claim_token was passed.`): the expiry's own sentence and `answer_recorded` already say that the answer was not recorded.
 
 ## `get_run_state`
 

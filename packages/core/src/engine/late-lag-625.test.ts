@@ -173,6 +173,9 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
       false,
       { kind: 'timeout' },
       'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
+      // #625 PR-2b A2a: an `ok` answer whose question another call settled (D-8 row 2) on a run
+      // that owes a step, with no token passed: the consequence alone.
+      ['The run was not carried on in this call.'],
     ],
     [
       'settle_default',
@@ -182,6 +185,7 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
       false,
       { kind: 'timeout' },
       "Gate '<g>' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.",
+      [],
     ],
     // Amendment 3: the abort row — the run the expiry ended answers as any ended run does; #729
     // PR-6a (B2 (3)): with what the question met — its expiry (`outcome`), and the answer not
@@ -194,10 +198,11 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
       false,
       { kind: 'timeout' },
       "Run '<r>' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge <r>' previews what it would remove.",
+      [],
     ],
   ] as const)(
     "an answer that reaches a question another process already expired (%s gate, answered '%s'): %s, not recorded, no expiry receipt and no expiry line",
-    async (onExpiry, choice, status, code, recorded, by, hint) => {
+    async (onExpiry, choice, status, code, recorded, by, hint, warnings) => {
       const d = gated(onExpiry);
       const { runId, gateId, at } = await atQuestion(d);
       await setClockOf(store, at(42_000));
@@ -234,7 +239,7 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
         error_code: code,
         answer_recorded: recorded,
         by,
-        warnings: [],
+        warnings,
         expiry: undefined,
         hint,
       });

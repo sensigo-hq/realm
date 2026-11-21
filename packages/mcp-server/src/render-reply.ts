@@ -1733,6 +1733,35 @@ export const OUTCOME_TABLE = {
   via: 'fact',
 } as const satisfies Record<keyof Outcome, DisclosureClass>;
 
+/**
+ * #625 PR-2b A2a: who answered an answer reply's question. The name is the answerer's own text — a
+ * stated name, bounded as `outcome.by.name` is; how it is known and why there is none are realm's
+ * own words.
+ */
+export const GATE_CLAIM_ANSWERED_BY_TABLE = {
+  by: 'bounded',
+  by_source: 'fact',
+  absent_cause: 'fact',
+} as const satisfies Record<
+  keyof Merged<NonNullable<NonNullable<EngineReply['gate_claim']>['answered_by']>>,
+  DisclosureClass
+>;
+
+/**
+ * #625 PR-2b A2a: an answer reply's `gate_claim`, field by field — realm's own words and the programs'
+ * names (facts, as the row was before), and who answered ({@link GATE_CLAIM_ANSWERED_BY_TABLE}).
+ */
+export const GATE_CLAIM_TABLE = {
+  proof: 'fact',
+  cause: 'fact',
+  opened_by: 'fact',
+  carried_on: 'fact',
+  not_carried_on_because: 'fact',
+  chain_stopped: 'fact',
+  continued_by: 'fact',
+  answered_by: { nested: GATE_CLAIM_ANSWERED_BY_TABLE },
+} as const satisfies Record<keyof NonNullable<EngineReply['gate_claim']>, DisclosureClass>;
+
 /** The MCP envelope's rows: what the agent reads, field by field. */
 export const MCP_ENVELOPE_ROWS = {
   command: { class: 'fact' },
@@ -1774,7 +1803,7 @@ export const MCP_ENVELOPE_ROWS = {
     route: { mcp: 'published' },
   },
   answer_recorded: { class: 'fact' },
-  gate_claim: { class: 'fact' },
+  gate_claim: { class: { nested: GATE_CLAIM_TABLE } },
   next_actions: { class: { nested: NEXT_ACTION_TABLE } },
   // #872 (b1): a count (no F5 producer for a number).
   next_actions_more: { class: 'fact' },
@@ -2564,7 +2593,6 @@ export const DOOR_FACTS = {
     defaulted_steps: 'author_literal',
     guards: 'author_literal',
     stopped_step: 'author_literal',
-    gate_claim: 'id',
     agent_action: 'enum',
     elsewhere: 'enum',
     until: 'time',
@@ -2585,7 +2613,6 @@ export const DOOR_FACTS = {
     defaulted_steps: 'author_literal',
     guards: 'author_literal',
     stopped_step: 'author_literal',
-    gate_claim: 'id',
     agent_action: 'enum',
     elsewhere: 'enum',
     until: 'time',
@@ -2632,6 +2659,19 @@ export const DOOR_FACTS = {
   own_act: { command: 'author_literal' } satisfies FactProducers<
     (typeof MCP_ENVELOPE_ROWS)['own_act']['class']['nested'],
     NonNullable<McpEnvelope['own_act']>
+  >,
+  // #625 PR-2b A2a: the answer's verdict and carry-on in realm's own words; the programs' names.
+  gate_claim: {
+    proof: 'enum',
+    cause: 'enum',
+    not_carried_on_because: 'enum',
+    chain_stopped: 'enum',
+    opened_by: 'id',
+    continued_by: 'id',
+  } satisfies FactProducers<typeof GATE_CLAIM_TABLE, NonNullable<McpEnvelope['gate_claim']>>,
+  gate_claim_answered_by: { by_source: 'enum', absent_cause: 'enum' } satisfies FactProducers<
+    typeof GATE_CLAIM_ANSWERED_BY_TABLE,
+    Merged<NonNullable<NonNullable<McpEnvelope['gate_claim']>['answered_by']>>
   >,
   ended_by: { arm: 'enum', step: 'author_literal' } satisfies FactProducers<
     (typeof MCP_ENVELOPE_ROWS)['ended_by']['class']['nested'],

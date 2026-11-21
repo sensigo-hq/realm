@@ -203,7 +203,7 @@ const SENTENCES: ReadonlyArray<readonly [page: string, sentence: string, cells: 
   ],
   [
     'docs/start/how-a-run-moves.md',
-    'In the same example, on a server started with `--gate-answers permitted`, after the reviewer approved:',
+    'In the same example, on a server started with `--gate-answers permitted`, after the reviewer approved, an answer without the token:',
     [PR_EXAMPLE],
   ],
   ['docs/guides/connect-an-mcp-client.md', `${S1} See [Gate answers over MCP]`, [AC1, ROWS]],
