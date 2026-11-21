@@ -922,6 +922,7 @@ The options of `classifyRunHealth`, the bag `classifyRecordHealth` takes.
 ```ts
 interface ClassifyRunHealthOptions {
     idleThresholdMs?: number;
+    owedThresholdMs?: number;
     definition?: WorkflowDefinition;
     definitionError?: {
         code: string;
@@ -1591,7 +1592,7 @@ A single, typed run-health observation: the shared vocabulary every surface rend
 
 ```ts
 interface RunHealthFinding {
-    kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'definition_unresolvable' | 'record_stamped_ahead';
+    kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'owed_undriven' | 'definition_unresolvable' | 'record_stamped_ahead';
     step?: string;
     reason: string;
     since?: string;
