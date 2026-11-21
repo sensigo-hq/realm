@@ -1760,7 +1760,7 @@ export interface DriveFailureRecord {
      */
     | 'aborted_by_budget'
     /**
-     * Q1 (#592) unit c: `realm agent --run-id` was refused by its own startup checks (no key for the
+     * Q1 (#592) unit c: `realm agent --run-id` stopped at its own startup checks (no key for the
      * provider, no model, `--base-url` with Anthropic, a provider module that does not load), or
      * `realm listen`'s child was killed by a signal before it wrote anything to the run. Only those
      * two writers mint it; a provider's payload or a program's `model_attempts` cannot claim it

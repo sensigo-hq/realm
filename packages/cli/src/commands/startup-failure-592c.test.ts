@@ -1,5 +1,5 @@
 // startup-failure-592c.test.ts — Q1 (#592) unit c through the BUILT CLI (prompt
-// q1-c-startup-death-mark.md): `realm agent --run-id <id>` refused by its own startup checks leaves a
+// q1-c-startup-death-mark.md): `realm agent --run-id <id>` stopped at its own startup checks leaves a
 // `startup_failure` mark on the run (checks 1, 2), the surfaces show it (check 4), and the pages say
 // so (check 8). The foreign-copy refusal, the third `--provider-module` member, is driven on a real
 // two-copy layout (multi-copy.test.ts, row 5); the outcomes the CLI cannot reach (an ended run with
@@ -431,7 +431,7 @@ describe('Q1 (#592) unit c — check 8: the pages say it', () => {
     claim(p, '## A startup death leaves a mark');
     claim(
       p,
-      'When `realm agent --run-id <id>` is refused by its own startup checks — no key for the provider, no model, `--base-url` with Anthropic, a provider module that does not load — it records the refusal on the run as a drive failure of kind `startup_failure` before it exits, so `realm run list --stuck` lists the run and `realm run inspect` shows it under `Drive failures` (added after version 0.50.0).',
+      'When `realm agent --run-id <id>` stops at its own startup checks — no key for the provider, no model, `--base-url` with Anthropic, a provider module that does not load — it records the refusal on the run as a drive failure of kind `startup_failure` before it exits, so `realm run list --stuck` lists the run and `realm run inspect` shows it under `Drive failures` (added after version 0.50.0).',
     );
     claim(p, `- ${W}\n`);
     claim(p, '- `Run <run-id> had already ended; nothing was recorded.`\n');
@@ -504,7 +504,7 @@ describe('Q1 (#592) unit c — check 8: the pages say it', () => {
   it('the record, the findings and the run listing: the rows and the sentence', () => {
     claim(
       'reference/run-record-and-export.md',
-      "The kind of failure, such as `connection_timeout`, `connection_error`, `api_status`, `sdk_missing` or `validation_rejected`; `startup_failure` when `realm agent` was refused by its own startup checks or `realm listen`'s child was killed before it wrote anything (added after version 0.50.0).",
+      "The kind of failure, such as `connection_timeout`, `connection_error`, `api_status`, `sdk_missing` or `validation_rejected`; `startup_failure` when `realm agent` stopped at its own startup checks or `realm listen`'s child was killed before it wrote anything (added after version 0.50.0).",
     );
     claim(
       'reference/run-record-and-export.md',
@@ -520,7 +520,7 @@ describe('Q1 (#592) unit c — check 8: the pages say it', () => {
     );
     claim(
       'reference/cli/realm-run-reading.md',
-      "A run whose last drive failed ends its line with `<step>=drive_failing(<kind>)`; a failure that named no step ends it with `drive_failing(<kind>)` alone, as `startup_failure` does when `realm agent` was refused by its own startup checks or `realm listen`'s child was killed before it wrote anything (added after version 0.50.0).",
+      "A run whose last drive failed ends its line with `<step>=drive_failing(<kind>)`; a failure that named no step ends it with `drive_failing(<kind>)` alone, as `startup_failure` does when `realm agent` stopped at its own startup checks or `realm listen`'s child was killed before it wrote anything (added after version 0.50.0).",
     );
   });
 

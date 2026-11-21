@@ -310,7 +310,7 @@ The refusals about a provider module that cannot be loaded, one from another rea
 
 ## A startup death leaves a mark
 
-When `realm agent --run-id <id>` is refused by its own startup checks — no key for the provider, no model, `--base-url` with Anthropic, a provider module that does not load — it records the refusal on the run as a drive failure of kind `startup_failure` before it exits, so `realm run list --stuck` lists the run and `realm run inspect` shows it under `Drive failures` (added after version 0.50.0).
+When `realm agent --run-id <id>` stops at its own startup checks — no key for the provider, no model, `--base-url` with Anthropic, a provider module that does not load — it records the refusal on the run as a drive failure of kind `startup_failure` before it exits, so `realm run list --stuck` lists the run and `realm run inspect` shows it under `Drive failures` (added after version 0.50.0).
 
 The entry names no step. Its provider is the one given with `--provider`, or `unknown`; its message is the refusal's own words, without `Error: ` and its last sentence; its time is how long the command had run. `realm run list --stuck` ends the run's line with `drive_failing(startup_failure)`, with no step before it, and `realm run inspect` prints the entry under `Drive failures` with no step between the time and the provider. The finding clears as every `drive_failing` does: when the run next records a step or a question, or ends.
 
