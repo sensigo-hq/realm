@@ -2697,6 +2697,8 @@ export const DOOR_FACTS = {
     rerun_of: 'id',
     sealed_by_arm: 'enum',
     sealed_by_step: 'author_literal',
+    // #625 PR-2b, the actor unit: the command or tool that ended the run, realm's word.
+    sealed_by_door: 'enum',
     completed_steps: 'author_literal',
     in_progress_steps: 'author_literal',
     failed_steps: 'author_literal',
@@ -2742,6 +2744,16 @@ export const DOOR_FACTS = {
   } satisfies FactProducers<
     (typeof RUN_STATE_SUMMARY_TABLE)['failures']['nested'],
     Merged<FailureView>
+  >,
+  // #625 PR-2b, the actor unit: how the ending program's name is known, its channel and why there is
+  // none are realm's words; the name itself is bounded.
+  sealed_by_actor: {
+    by_source: 'enum',
+    channel: 'enum',
+    absent_cause: 'enum',
+  } satisfies FactProducers<
+    (typeof RUN_STATE_SUMMARY_TABLE)['sealed_by_actor']['nested'],
+    Merged<NonNullable<RunStateSummary['sealed_by_actor']>>
   >,
   sealed_by_adjudicated: { by: 'id', at: 'time', previous_arm: 'enum' } satisfies FactProducers<
     (typeof RUN_STATE_SUMMARY_TABLE)['sealed_by_adjudicated']['nested'],

@@ -1611,6 +1611,23 @@ export const SEAL_ARMS = [
 export type SealArm = (typeof SEAL_ARMS)[number];
 
 /**
+ * The commands and tools that end a run on request: `realm run abandon`, the MCP `abandon_run` tool
+ * and `realm run cleanup` (`SealedBy.door`).
+ *
+ * @remarks
+ * Recorded beside the program that used them. Like the seal arms, the list only grows.
+ * @public
+ */
+export const SEAL_DOORS = ['realm_run_abandon', 'abandon_run', 'realm_run_cleanup'] as const;
+
+/**
+ * The command or tool that ended a run on request: `realm_run_abandon`, `abandon_run` or
+ * `realm_run_cleanup` (`SealedBy.door`).
+ * @public
+ */
+export type SealDoor = (typeof SEAL_DOORS)[number];
+
+/**
  * Who sealed a run: the recorded fact `deriveRunPhase` reads before every marker and the terminal
  * reason's text (`RunRecord.sealed_by`).
  * @public
@@ -1630,6 +1647,17 @@ export interface SealedBy {
    * one forever. Absent on every fresh seal; present on every record the vehicle stamped.
    */
   classified?: true;
+  /**
+   * #625 PR-2b, the actor unit: the PROGRAM that ended the run on request — its name, how that name
+   * is known, and its channel — as the command or tool that ended it passed it (never a person:
+   * Realm names a program). Absent when no name was known, and on every seal the engine wrote itself.
+   */
+  by?: Attributed;
+  /**
+   * #625 PR-2b, the actor unit: the command or tool that ended the run (`realm_run_abandon`,
+   * `abandon_run`, `realm_run_cleanup`), beside `by`. Absent on every other seal.
+   */
+  door?: SealDoor;
   /**
    * Issue #367: the record of a HUMAN RULING on this run's arm — and the only lawful way an arm
    * changes while the run is terminal. Every other rewrite is refused (`STATE_SEAL_REWRITTEN`),

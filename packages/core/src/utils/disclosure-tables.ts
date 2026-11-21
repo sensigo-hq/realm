@@ -493,6 +493,10 @@ const SEALED_BY_TABLE = {
   arm: 'fact',
   step: 'fact',
   classified: 'fact',
+  // #625 PR-2b, the actor unit: the program that ended the run, as every recorded program is; the
+  // command or tool, realm's own word.
+  by: { nested: ATTRIBUTED_TABLE },
+  door: 'fact',
   adjudicated: {
     nested: {
       by: 'fact',
@@ -805,6 +809,9 @@ export const CONTEXT_SNAPSHOT_FACTS = {
 export const SEALED_BY_FACTS = {
   arm: 'enum',
   step: 'author_literal',
+  // #625 PR-2b, the actor unit: the command or tool that ended the run (the nested `by` row's
+  // producers are ATTRIBUTED_FACTS).
+  door: 'enum',
 } as const satisfies FactProducers<typeof SEALED_BY_TABLE, SealedBy>;
 
 export const SEALED_BY_ADJUDICATED_FACTS = {

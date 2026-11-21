@@ -100,6 +100,9 @@ export { shellWord, quotedCommand } from './utils/shell-word.js';
  */
 export {
   BY_SOURCE_CLASSES,
+  // #625 PR-2b, the actor unit: how a program's name is known, in words — the one copy.
+  BY_SOURCE_WORDS,
+  RECORDED_BY_SOURCE_WORDS,
   ACTOR_ABSENT_CAUSES,
   GATE_PROOFS,
   GATE_PROOF_CAUSES,
@@ -438,6 +441,8 @@ export {
   // #625 A1b-1: the one ending composer — how an ended run ended, from its record only; A1b-2: the
   // way out of an abandoned run, read by the CLI's surfaces from here.
   runEndingOf,
+  // #625 PR-2b, the actor unit: `realm run inspect`'s `Ended by:` line, minted beside the sentences.
+  endedByLine,
   NEW_RUN_SENTENCE,
   oneOf,
   waitingOnAnswer,

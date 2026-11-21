@@ -7,6 +7,7 @@ import {
   WorkflowError,
   abandonRun,
   buildPreExecutionErrorEnvelope,
+  type Attributed,
   type DisclosureClass,
   type RunPhase,
   type RunStore,
@@ -36,6 +37,11 @@ export interface HandleAbandonRunStores {
    * answer tool is named where the door hands questions to the person).
    */
   door?: McpDoor;
+  /**
+   * #625 PR-2b, the actor unit: the program this server runs as. Recorded on the seal with the door
+   * `abandon_run`, so every ending sentence names the tool and the server. Absent ⇒ none recorded.
+   */
+  driver?: Attributed;
 }
 
 /** The tool's description where the agent keeps an answer tool (`permitted`). */
@@ -101,7 +107,12 @@ export async function handleAbandonRun(
   const { record: before } = await runStore.get(args.run_id);
   const alreadyAbandoned = before.abandoned_at !== undefined;
   // issue #558 PR-C: the reason names THIS surface's verb; core's default is the neutral fallback.
-  const run = await abandonRun(runStore, args.run_id, args.reason ?? 'Abandoned via abandon_run');
+  const run = await abandonRun(
+    runStore,
+    args.run_id,
+    args.reason ?? 'Abandoned via abandon_run',
+    stores.driver !== undefined ? { by: stores.driver, door: 'abandon_run' } : undefined,
+  );
   /* eslint-disable-next-line no-restricted-syntax --
    * issue #367 (part 2), AUTHORIZED: an envelope ECHO of the stored record, not a writer. The
    * write itself happened inside `abandonRun`, through the `sealRunLevel` chokepoint.

@@ -35,6 +35,27 @@ export const BY_SOURCE_CLASSES = ['stated', 'ambient', 'derived'] as const;
 export type BySourceClass = (typeof BY_SOURCE_CLASSES)[number];
 
 /**
+ * How a program's name is known, as words — never the class token (`from the OS user`, not
+ * `derived`). The ONE copy (#625 PR-2b, the actor unit, moved here from the CLI's holder lines):
+ * every line and sentence that names a program reads it.
+ */
+export const BY_SOURCE_WORDS: Record<BySourceClass, string> = {
+  derived: 'from the OS user',
+  ambient: 'from REALM_OPERATOR',
+  stated: 'as stated',
+};
+
+/**
+ * {@link BY_SOURCE_WORDS} for a program named as the one RECORDING an act — an answer's recording
+ * program, the program that ended a run: a stated name is the one "named by the program that runs
+ * Realm".
+ */
+export const RECORDED_BY_SOURCE_WORDS: Record<BySourceClass, string> = {
+  ...BY_SOURCE_WORDS,
+  stated: 'named by the program that runs Realm',
+};
+
+/**
  * A program's name, how that name is known, and the host's channel. Not a person; not a process.
  * @public
  */

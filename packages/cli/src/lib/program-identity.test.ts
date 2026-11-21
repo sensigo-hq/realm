@@ -15,7 +15,7 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...actual, userInfo: os.userInfo, hostname: os.hostname };
 });
 
-import { resolveProgramIdentity } from './program-identity.js';
+import { endingProgramIdentity, resolveProgramIdentity } from './program-identity.js';
 
 let saved: string | undefined;
 let errSpy: ReturnType<typeof vi.spyOn>;
@@ -130,5 +130,65 @@ describe('resolveProgramIdentity', () => {
       by_source: 'ambient',
       channel: 'mcp-stdio',
     });
+  });
+});
+
+// #625 PR-2b, the actor unit: the identity of a command that ENDS runs (`realm run abandon`, `realm
+// run cleanup`). The same names as above, but a REALM_OPERATOR it cannot use never stops it: no name,
+// and the one warning line its command prints after a write that ended a run.
+describe('endingProgramIdentity', () => {
+  it('REALM_OPERATOR set ⇒ the ambient name, on the channel the command gave; no warning', () => {
+    process.env['REALM_OPERATOR'] = 'tester';
+    const got = endingProgramIdentity('abandon');
+    // (a) red when the variable is ignored, or a warning is offered for a usable name; (b) prints it.
+    expect([got.driver, got.warning, printed()]).toEqual([
+      { by: 'tester', by_source: 'ambient', channel: 'abandon' },
+      undefined,
+      [],
+    ]);
+  });
+
+  it('REALM_OPERATOR unset ⇒ the OS user and host name, derived', () => {
+    expect(endingProgramIdentity('cleanup').driver).toEqual({
+      by: 'carol@box',
+      by_source: 'derived',
+      channel: 'cleanup',
+    });
+  });
+
+  it.each([
+    ['a control character', '\u001b[2J', 'contains a control character'],
+    ['more than 200 characters', 'x'.repeat(201), 'longer than 200 characters'],
+  ])(
+    'REALM_OPERATOR with %s ⇒ no name, no exit, nothing printed yet; the warning names the consequence the command gives',
+    (_l, value, reason) => {
+      process.env['REALM_OPERATOR'] = value;
+      const got = endingProgramIdentity('abandon');
+      // (a) red when the command stops (the old exit 1), prints before its write, or the warning's
+      //     words change; (b) prints the driver, the exit calls, stderr and the warning.
+      expect({
+        driver: got.driver,
+        exited: exitSpy.mock.calls.length,
+        printed: printed(),
+        warning: got.warning?.('this ending names no program'),
+      }).toEqual({
+        driver: undefined,
+        exited: 0,
+        printed: [],
+        warning: `⚠ REALM_OPERATOR: ${reason}; this ending names no program. Unset it or give it a name of at most 200 characters with no control characters.`,
+      });
+    },
+  );
+
+  it('the host name cannot be read ⇒ one notice that says “on the runs it ends”, no name', () => {
+    os.hostname.mockImplementation(() => {
+      throw new Error('no hostname');
+    });
+    const got = endingProgramIdentity('abandon');
+    // (a) red when the notice keeps the drive commands' "on the steps it takes"; (b) prints it.
+    expect([got.driver, printed()]).toEqual([
+      undefined,
+      ["this program's name cannot be recorded on the runs it ends: the host name is not known"],
+    ]);
   });
 });

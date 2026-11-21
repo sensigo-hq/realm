@@ -219,6 +219,7 @@ BY_SOURCE_CLASSES · value · public
       "derived"
   ];
 
+BY_SOURCE_WORDS · value · internal
 Base · type · public
   interface Base<V extends WayVerb> {
       readonly verb: V;
@@ -2637,6 +2638,7 @@ REALM_STORE_VERSIONS · value · internal
 RECLAIM_FLOOR_SECONDS · value · internal
 RECLAIM_MARGIN_SECONDS · value · internal
 RECLAIM_REFUSES_GATE_STEP · value · internal
+RECORDED_BY_SOURCE_WORDS · value · internal
 REDACTED_EMAIL_MARKER · value · internal
 REDACTED_MARKER · value · internal
 RELEASE_LINE_KEY · value · internal
@@ -3046,6 +3048,13 @@ SEAL_ARMS · value · public
       "cleanup_sweep"
   ];
 
+SEAL_DOORS · value · public
+  const SEAL_DOORS: readonly [
+      "realm_run_abandon",
+      "abandon_run",
+      "realm_run_cleanup"
+  ];
+
 SEPARATION_BASES · value · internal
 SEPARATION_CONDITIONS · value · internal
 SEPARATION_MODES · value · internal
@@ -3139,6 +3148,9 @@ SchemaFailure · type · internal
 SealArm · type · public
   type SealArm = (typeof SEAL_ARMS)[number];
 
+SealDoor · type · public
+  type SealDoor = (typeof SEAL_DOORS)[number];
+
 SealResult · type · public
   type SealResult = {
       sealed: true;
@@ -3155,6 +3167,8 @@ SealRunDelta · type · public
       expected_version: number;
       release_claims: boolean;
       identity_entry?: ExtensionIdentityEntry;
+      by?: Attributed;
+      door?: SealDoor;
   }
 
 SealedArtifact · type · public
@@ -3169,6 +3183,8 @@ SealedBy · type · public
       arm: SealArm;
       step?: string;
       classified?: true;
+      by?: Attributed;
+      door?: SealDoor;
       adjudicated?: {
           by: string;
           at: string;
@@ -4277,7 +4293,10 @@ WorkflowRegistrar · type · public
 
 WriteOnceRunField · type · internal
 abandonRun · value · public
-  function abandonRun(store: RunStore, runId: string, reason?: string): Promise<RunRecord>;
+  function abandonRun(store: RunStore, runId: string, reason?: string, actor?: {
+      by: Attributed;
+      door?: 'realm_run_abandon' | 'abandon_run';
+  }): Promise<RunRecord>;
 
 admitWay · value · internal
 adoptsLine · value · internal
@@ -4531,6 +4550,7 @@ dueExpiryWords · value · internal
 dueReminderWork · value · internal
 durationWords · value · internal
 emptyDisclosureSet · value · internal
+endedByLine · value · internal
 endedRunWayOutOf · value · internal
 endedRunWaysSentence · value · internal
 endsWithCommand · value · internal
