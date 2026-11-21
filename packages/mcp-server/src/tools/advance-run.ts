@@ -39,6 +39,7 @@ import {
   runReadError,
 } from '@sensigo/realm';
 import { boundedLines, boundedRefusal, moreUnknownKeys } from './refusal-format.js';
+import { noRunState } from './no-run-state.js';
 
 /** The arguments this tool takes. Anything else is named in the reply's `warnings`, not dropped. */
 const KNOWN_ARGS = ['run_id'] as const;
@@ -217,7 +218,9 @@ export function registerAdvanceRun(
               ? `Run '${args.run_id}' not found.`
               : `An error occurred before the run could be advanced.`;
         const envelope = renderReply(
-          buildPreExecutionErrorEnvelope('advance_run', args.run_id, 0, workflowErr, contextHint),
+          noRunState(
+            buildPreExecutionErrorEnvelope('advance_run', args.run_id, 0, workflowErr, contextHint),
+          ),
           mcpHostOf(opts),
         );
         return toolContentOf(mcpReplyOf(envelope), {

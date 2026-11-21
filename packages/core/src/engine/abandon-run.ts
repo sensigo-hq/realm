@@ -3,6 +3,7 @@
 // Run-mutation primitives live in core; command/tool wiring lives in cli/mcp.
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
+import type { Attributed } from './holder.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { respondWayOfGate } from './ways.js';
 import { admitEntry } from '../admission.js';
@@ -52,8 +53,19 @@ export async function abandonRun(
   store: RunStore,
   runId: string,
   reason?: string,
+  // #625 PR-2b, the actor unit: the program that ends the run, and the command or tool it used —
+  // written on the seal (`sealed_by.by`, `sealed_by.door`). `by` is admitted as every driver is;
+  // a door that is not abandon's own, or another member, is refused before any read.
+  actor?: { by: Attributed; door?: 'realm_run_abandon' | 'abandon_run' },
 ): Promise<RunRecord> {
-  admitEntry('abandonRun', { store, storeKind: 'run store', parts: { runId, reason } });
+  admitEntry('abandonRun', {
+    store,
+    storeKind: 'run store',
+    // An object other than `actor` is the parts rows' to refuse (VALIDATION_OPTION_INVALID).
+    driver:
+      typeof actor === 'object' && actor !== null ? (actor as { by?: unknown }).by : undefined,
+    parts: { runId, reason, actor },
+  });
   const { record: run } = await store.get(runId);
 
   // Already abandoned → idempotent no-op.
@@ -130,6 +142,8 @@ export async function abandonRun(
       reason: abandonedReason,
       expected_version: run.version,
       release_claims: true,
+      ...(actor !== undefined ? { by: actor.by } : {}),
+      ...(actor?.door !== undefined ? { door: actor.door } : {}),
     });
     return sealed.run;
   } catch (err) {

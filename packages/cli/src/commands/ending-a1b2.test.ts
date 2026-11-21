@@ -408,6 +408,32 @@ steps:
     ]);
   });
 
+  it('#625 the actor unit (#1280 correction, item 3): another program abandons the run with realm run abandon — Ended: names the program', async () => {
+    // The workflow page's parenthesis: `It was abandoned with 'realm run abandon', by <name> (<how>),
+    // with the reason "<reason>".` when the record names the program that ended it.
+    mocks.question.mockImplementation(async () => {
+      await abandonRun(h.home.runStore, await runId(), 'wrong run', {
+        by: { by: 'ops@server-1', by_source: 'ambient', channel: 'abandon' },
+        door: 'realm_run_abandon',
+      });
+      return '{}';
+    });
+    const lines = await drive(`id: w-abandon-actor
+name: w
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+`);
+    // (a) red when the line drops the program, or names it from the channel and not the door;
+    //     (b) prints the tail.
+    expect(tail(lines)).toEqual([
+      'Run complete. Phase: abandoned',
+      '  Ended:     It was abandoned with \'realm run abandon\', by ops@server-1 (from REALM_OPERATOR), with the reason "wrong run". To run the work again, start a new run.',
+    ]);
+  });
+
   it('check 3 — another program fails the run while the drive waits: Ended: names the failed step, then Resume:', async () => {
     let n = 0;
     mocks.question.mockImplementation((_q: string, opts?: { signal?: AbortSignal }) => {

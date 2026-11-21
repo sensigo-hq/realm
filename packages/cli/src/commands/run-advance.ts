@@ -12,6 +12,8 @@ import type {
 } from '@sensigo/realm';
 import {
   advanceRun,
+  // #625 PR-2b, the actor unit: how a name is known, in words — core's one copy.
+  BY_SOURCE_WORDS,
   lastExecutionIdentity,
   describePending,
   judgedSnapshotOf,
@@ -49,7 +51,6 @@ import {
 } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import {
-  BY_SOURCE_WORDS,
   describeProgram,
   NO_SNAPSHOT,
   outcomeNotRecordedLine,

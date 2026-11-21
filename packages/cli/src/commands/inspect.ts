@@ -11,6 +11,7 @@ import {
   describePending,
   lastExecutionIdentity,
   pendingCleanupLine,
+  endedByLine,
   pendingGateQuestion,
   composeQuestionView,
   discloseGate,
@@ -1543,6 +1544,10 @@ export async function inspectRun(
     // arm was RECOVERED from a legacy record rather than asserted by the writer that sealed it.
     const classifiedSuffix = run.sealed_by.classified === true ? ' (recovered by classifier)' : '';
     lines.push(`Sealed by: ${arm}${stepSuffix}${classifiedSuffix}`);
+    // #625 PR-2b, the actor unit: the program that ended the run and the command or tool, as plain
+    // text (the framework's §3 exception: core writes the same words without this renderer).
+    const endedBy = endedByLine(run.sealed_by);
+    if (endedBy !== undefined) lines.push(endedBy);
     // issue #367 (part 5): an operator's ruling on this run, on the surface operators actually
     // use. Shipping a ruling channel whose rulings were invisible here was the defect this closes.
     const ruling = run.sealed_by.adjudicated;
@@ -1584,7 +1589,8 @@ export async function inspectRun(
   // decision C205: a run that ended with failed steps `realm run resume` takes (core's one rule,
   // C204 — never a cleanup step) names them and the command that makes them runnable again.
   // F2: the operator's own read surface names the fact for an abandoned run too, with what resuming
-  // it does — no other surface offers it there (#625 A1b-2: never who ended it).
+  // it does — no other surface offers it there (#625 A1b-2). Who ended it is the `Ended by:` line
+  // above (the actor unit).
   const resumable = definition === undefined ? undefined : resumeWay(run, definition);
   if (resumable !== undefined) {
     lines.push(

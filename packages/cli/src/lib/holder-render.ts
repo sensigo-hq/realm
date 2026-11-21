@@ -5,6 +5,8 @@
 // the MCP carriers. The wording rule on every surface: a PROGRAM, past tense ("taken by", "question
 // opened through"), with how its name is known. Never "is running", "is driving", "attended by".
 import {
+  BY_SOURCE_WORDS,
+  RECORDED_BY_SOURCE_WORDS,
   answerArrivalOf,
   automaticTakebacksOf,
   AUTOMATIC_TAKEBACKS_PER_STEP,
@@ -40,7 +42,6 @@ import type {
   AnswerArrival,
   AnswerView,
   Attributed,
-  BySourceClass,
   ClaimHolderAbsentCause,
   ClaimProofAbsentCause,
   GateClaimVerdict,
@@ -74,13 +75,6 @@ export { UNSHOWABLE_NAME };
  * `not_held`. Realm's own callers pass the snapshot the record came from.
  */
 export const NO_SNAPSHOT: Pick<Snapshot, 'lease_facts'> = Object.freeze({});
-
-/** How a name is known, as words — never the class token (`from the OS user`, not `derived`). */
-export const BY_SOURCE_WORDS: Record<BySourceClass, string> = {
-  derived: 'from the OS user',
-  ambient: 'from REALM_OPERATOR',
-  stated: 'as stated',
-};
 
 /**
  * The absence words a CLAIM line can show — typed over exactly the causes `describeClaimHolder`
@@ -792,15 +786,6 @@ export const PEOPLE_DOOR_WORDS: OutcomeDoorWords = {
   slack: 'in a Slack thread',
   other_route: (route) => `through route ${quoteStatedName(route)}`,
   account: accountLabelOf,
-};
-
-/**
- * #627 W (W-i1, W-i8 by_source): how the program that recorded an answer knows its own name, as
- * words — on the answer line a stated name is the one "named by the program that runs Realm".
- */
-const RECORDED_BY_SOURCE_WORDS: Record<BySourceClass, string> = {
-  ...BY_SOURCE_WORDS,
-  stated: 'named by the program that runs Realm',
 };
 
 /**

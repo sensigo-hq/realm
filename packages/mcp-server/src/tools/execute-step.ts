@@ -52,6 +52,7 @@ import {
   runReadError,
 } from '@sensigo/realm';
 import { boundedRefusal } from './refusal-format.js';
+import { noRunState } from './no-run-state.js';
 
 /** Maximum `writer_nonce` length (issue #197 PR-2, design §6). */
 const WRITER_NONCE_MAX_LENGTH = 128;
@@ -478,7 +479,9 @@ export async function handleExecuteStepTool(
             ? `Run '${args.run_id}' not found.`
             : `An error occurred before step '${args.command}' could begin.`;
       const rendered = renderReply(
-        buildPreExecutionErrorEnvelope(args.command, args.run_id, 0, workflowErr, contextHint),
+        noRunState(
+          buildPreExecutionErrorEnvelope(args.command, args.run_id, 0, workflowErr, contextHint),
+        ),
         mcpHostOf(stores),
       );
       return toolContentOf(mcpReplyOf(rendered), {
