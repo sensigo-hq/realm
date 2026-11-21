@@ -795,6 +795,7 @@ ClaimStepForDriveOptions · type · beta
       driver?: Attributed;
   }
 
+ClaimableErrorClass · type · internal
 ClassTable · type · internal
 ClassifiableRun · type · public
   type ClassifiableRun = Pick<RunRecord, 'terminal_state' | 'failed_steps' | 'terminal_reason' | 'aborted_at' | 'abandoned_at'>;

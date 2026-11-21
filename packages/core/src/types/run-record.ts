@@ -1855,18 +1855,34 @@ type MissingErrorClass = Exclude<DriveFailureRecord['error_class'], (typeof ERRO
 const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : MissingErrorClass = true;
 void _everyErrorClassListed;
 
-/** An `error_class` word a provider or a program may claim: every word but `startup_failure`. */
-type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
+/**
+ * Q1 (#592) unit c: an `error_class` word a provider or a program may claim — every word but
+ * `startup_failure`, which only `realm agent`'s and `realm listen`'s own startup writers mint.
+ */
+export type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
 
 /**
- * Q1 (#592) unit c: the {@link ERROR_CLASSES} a provider's thrown payload or a program's
- * `model_attempts` may claim — every word but `startup_failure`, which only Realm's own two startup
- * writers mint (`realm agent`'s refusal and `realm listen`'s signal death). The CLI's payload reader
- * and `closeModelAttempts` both close against this one list.
+ * Q1 (#592) unit c: the classes a provider or a program may claim, in the type's order — every
+ * {@link ERROR_CLASSES} word but `startup_failure`, which only `realm agent`'s and `realm listen`'s
+ * own startup writers mint. The readers that take a claimed class close against this one list: the
+ * CLI's payload reader and model-try reader (a provider's thrown payload, a third-party
+ * `--provider-module`'s included) and `closeModelAttempts` (a program's `model_attempts`).
+ * Checked both ways, as `ERROR_CLASSES` is.
  */
-export const CLAIMABLE_ERROR_CLASSES: readonly ClaimableErrorClass[] = ERROR_CLASSES.filter(
-  (c): c is ClaimableErrorClass => c !== 'startup_failure',
-);
+export const CLAIMABLE_ERROR_CLASSES = [
+  'connection_timeout',
+  'connection_error',
+  'api_status',
+  'sdk_missing',
+  'validation_rejected',
+  'aborted_by_budget',
+  'other',
+] as const satisfies readonly ClaimableErrorClass[];
+type MissingClaimableClass = Exclude<ClaimableErrorClass, (typeof CLAIMABLE_ERROR_CLASSES)[number]>;
+const _everyClaimableClassListed: [MissingClaimableClass] extends [never]
+  ? true
+  : MissingClaimableClass = true;
+void _everyClaimableClassListed;
 
 /**
  * What a failed model request can need before it succeeds: another try (`transient`), an operator's
