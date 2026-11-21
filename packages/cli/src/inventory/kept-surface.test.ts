@@ -396,7 +396,7 @@ const MEANINGS: Record<string, string> = {
   'realm listen 503 respond':
     'a request that named a callback address was refused because 1,000 callbacks are waiting to be sent (callback_backlog)',
   'realm listen read 200 sendRead':
-    "the run's phase and, once it has completed, its result; also the answer to a request that waited for its run to end; and, for a run no longer running that was given a callback address, how that callback stands",
+    "the run's phase and, once it has completed, its result; also the answer to a request that waited for its run to end; and, for a run that has completed, failed, aborted or been abandoned and was given a callback address, how that callback stands",
   'realm listen read 403 sendRead': 'a refused read, whatever the reason',
   'realm listen read 503 sendRead':
     'the store cannot be read, or the values cannot be checked for secrets',
