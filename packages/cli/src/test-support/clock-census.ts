@@ -151,6 +151,17 @@ export const CENSUS: Record<string, Entry> = {
     'outside',
     "validate sizes a step's prompt with no run store; the instant only fills a context snapshot the render discards",
   ],
+  'cli/src/lib/callback/delivery-pass.ts#makeCallbackPass#performance.now()': [
+    1,
+    'duration',
+    MONOTONIC,
+  ],
+  'cli/src/lib/callback/delivery-pass.ts#spent#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/lib/callback/signature.ts#webhookTimestamp#Date.now()': [
+    1,
+    'outside',
+    "callback C3a: a callback try's webhook-timestamp, whole seconds at the send, compared by the receiver with its own clock; reads no RunRecord instant; nothing is stored with it",
+  ],
   'cli/src/lib/dedup-store.ts#FileDedupStore.check#Date.now()': [
     1,
     'outside',
