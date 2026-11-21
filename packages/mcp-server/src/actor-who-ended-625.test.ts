@@ -8,6 +8,9 @@
 // so the reply's own masking decides what shows. Every assertion carries (a) the change that turns
 // it red and (b) what it prints.
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
@@ -16,11 +19,23 @@ import {
   createDefaultRegistry,
   type Attributed,
   type ExtensionRegistry,
+  type RunRecord,
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { createRealmMcpServer } from './server.js';
 import { makeTempHome, type TempHome } from './test-support/temp-home.js';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+const RUN_STATE = 'docs/reference/mcp/run-state-and-health.md';
+/** (a) red when the page no longer holds the sentence word for word; (b) prints the sentence. */
+function claim(page: string, sentence: string): void {
+  const flat = (t: string): string => t.replace(/\s+/g, ' ');
+  expect(
+    flat(readFileSync(join(ROOT, page), 'utf8')),
+    `${page} no longer says: ${sentence}`,
+  ).toContain(flat(sentence));
+}
 
 const DRIVER: Attributed = { by: 'abcdefgh@box', by_source: 'derived', channel: 'mcp-stdio' };
 const USER_PART = 'abcdefgh';
@@ -99,6 +114,11 @@ function stubUser(): void {
 
 describe('#625 the actor unit, check 4 — abandon_run records the server’s program and the tool; the replies mask its name', () => {
   it('check 4 — abandon_run records the driver and door abandon_run; advance_run’s sentence and get_run_state’s sealed_by_actor show no byte of the OS user', async () => {
+    claim(
+      RUN_STATE,
+      '| `sealed_by_actor` | `realm run abandon`, the `abandon_run` tool or `realm run cleanup` recorded the program that ended the run | That program: `by`, its name; `by_source`, how the name is known (`ambient` from REALM_OPERATOR, `derived` from the OS user, `stated` named by the program that runs Realm); and `channel`.',
+    );
+    claim(RUN_STATE, 'The name is masked as an OS user name is. Added after version 0.50.0. |');
     stubUser();
     const def = wf('actor-mcp', { a: { description: 'A.', execution: 'agent', depends_on: [] } });
     const { h, call } = await connected([def]);
@@ -149,6 +169,43 @@ describe('#625 the actor unit, check 4 — abandon_run records the server’s pr
       'sealed_by_door' in state.reply,
       state.reply['sealed_by_arm'],
     ]).toEqual([false, false, 'abandon_requested']);
+  });
+
+  it('check 4 — get_run_state shows the seal as stored: an unknown door as unrecognized, an unreadable name as name_unreadable', async () => {
+    claim(
+      RUN_STATE,
+      "| `sealed_by_door` | The record names the command or tool that ended the run | `realm_run_abandon`, `abandon_run` or `realm_run_cleanup`; a word this version does not know reads `unrecognized door '<value>'`. Added after version 0.50.0. |",
+    );
+    claim(
+      RUN_STATE,
+      'A name that cannot be read is `{ "by": null, "absent_cause": "name_unreadable" }`.',
+    );
+    const def = wf('actor-mcp-stored', {
+      a: { description: 'A.', execution: 'agent', depends_on: [] },
+    });
+    const { h, call } = await connected([def]);
+    const runId = String((await call('start_run', { workflow_id: def.id })).reply.run_id);
+    const { record } = await h.stores.runStore.get(runId);
+    // A record a newer or broken writer left: a door this binary does not know, a name with a
+    // control character.
+    await h.stores.runStore.update({
+      ...record,
+      terminal_state: true,
+      terminal_reason: 'x',
+      abandoned_at: '2026-11-21T00:00:00.000Z',
+      sealed_by: {
+        arm: 'abandon_requested',
+        by: { by: 'abcd\u001b[2J', by_source: 'derived', channel: 'abandon' },
+        door: 'realm_run_sweeper',
+      },
+    } as unknown as RunRecord);
+    const state = await call('get_run_state', { run_id: runId });
+    // (a) red when an unknown door is dropped or shown as a member, or an unreadable name is shown
+    //     or guessed at; (b) prints the two fields.
+    expect([state.reply['sealed_by_door'], state.reply['sealed_by_actor']]).toEqual([
+      "unrecognized door 'realm_run_sweeper'",
+      { by: null, absent_cause: 'name_unreadable' },
+    ]);
   });
 });
 

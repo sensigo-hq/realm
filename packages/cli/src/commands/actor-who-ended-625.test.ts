@@ -111,6 +111,10 @@ describe(
 
     it('check 2 — realm run abandon with REALM_OPERATOR=tester: the record names it and the command; respond and advance say it', async () => {
       claim(
+        'CHANGELOG.md',
+        "- **A run's ending says who ended it.** `realm run abandon`, the assistant's `abandon_run` tool and `realm run cleanup` now record the program that ended the run: its name, how the name is known (from REALM_OPERATOR, from the OS user, or named by the program that runs Realm) and the command or tool. Every ending sentence and `realm run inspect` say it, for example \"It was abandoned with 'realm run abandon', by mihai@host (from the OS user), with the reason \"duplicate order\".\" `get_run_state` gains `sealed_by_actor` and `sealed_by_door`. Realm names a program, never a person. On the assistant's side and in piped output the name is masked as an OS user name is. `realm run abandon` and `realm run cleanup` now read REALM_OPERATOR; a value they cannot use gives a warning, not a stop. `SealedBy`, `SealRunDelta` and `abandonRun` gain optional members, and the store kit gains `SEAL_RUN_KEEPS_ACTOR`. Core exports `SEAL_DOORS` and `SealDoor`, the words for the command or tool. Old runs read as before. (#625)",
+      );
+      claim(
         ENVIRONMENT,
         '`realm run respond`, `realm run drain`, `realm run advance` (added after version 0.46.0), `realm run abandon`, `realm run cleanup` (added after version 0.50.0) |',
       );
