@@ -1589,7 +1589,8 @@ export async function inspectRun(
   // decision C205: a run that ended with failed steps `realm run resume` takes (core's one rule,
   // C204 — never a cleanup step) names them and the command that makes them runnable again.
   // F2: the operator's own read surface names the fact for an abandoned run too, with what resuming
-  // it does — no other surface offers it there (#625 A1b-2: never who ended it).
+  // it does — no other surface offers it there (#625 A1b-2). Who ended it is the `Ended by:` line
+  // above (the actor unit).
   const resumable = definition === undefined ? undefined : resumeWay(run, definition);
   if (resumable !== undefined) {
     lines.push(

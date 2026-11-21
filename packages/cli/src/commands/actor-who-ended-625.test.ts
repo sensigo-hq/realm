@@ -112,7 +112,7 @@ describe(
     it('check 2 — realm run abandon with REALM_OPERATOR=tester: the record names it and the command; respond and advance say it', async () => {
       claim(
         'CHANGELOG.md',
-        "- **A run's ending says who ended it.** `realm run abandon`, the assistant's `abandon_run` tool and `realm run cleanup` now record the program that ended the run: its name, how the name is known (from REALM_OPERATOR, from the OS user, or named by the program that runs Realm) and the command or tool. Every ending sentence and `realm run inspect` say it, for example \"It was abandoned with 'realm run abandon', by mihai@host (from the OS user), with the reason \"duplicate order\".\" `get_run_state` gains `sealed_by_actor` and `sealed_by_door`. Realm names a program, never a person. On the assistant's side and in piped output the name is masked as an OS user name is. `realm run abandon` and `realm run cleanup` now read REALM_OPERATOR; a value they cannot use gives a warning, not a stop. `SealedBy`, `SealRunDelta` and `abandonRun` gain optional members, and the store kit gains `SEAL_RUN_KEEPS_ACTOR`. Core exports `SEAL_DOORS` and `SealDoor`, the words for the command or tool. Old runs read as before. (#625)",
+        "- **A run's ending says who ended it.** `realm run abandon`, the assistant's `abandon_run` tool and `realm run cleanup` now record the program that ended the run: its name, how the name is known (from REALM_OPERATOR, from the OS user, or named by the program that runs Realm) and the command or tool. Every ending sentence and `realm run inspect` say it, for example \"It was abandoned with 'realm run abandon', by mihai@host (from the OS user), with the reason \"duplicate order\".\" `get_run_state` gains `sealed_by_actor` and `sealed_by_door`. Realm names a program, never a person. On the assistant's side and in piped output the name is masked as environment values are: the part of it that matches an environment value of 8 characters or more, such as a long OS user name, shows as `[REDACTED]`; REALM_OPERATOR's own value is not counted. `realm run abandon` and `realm run cleanup` now read REALM_OPERATOR; a value they cannot use gives a warning, not a stop. `SealedBy`, `SealRunDelta` and `abandonRun` gain optional members, and the store kit gains `SEAL_RUN_KEEPS_ACTOR`. Core exports `SEAL_DOORS` and `SealDoor`, the words for the command or tool. Old runs read as before. (#625)",
       );
       claim(
         ENVIRONMENT,
@@ -348,11 +348,16 @@ describe(
       });
     });
 
-    it('check 6 — the name is plain text: piped, the OS user name in it is masked, as every OS user name is there', async () => {
-      claim(
-        ACTING,
-        'The name is plain text: your terminal shows it whole, and in piped output the OS user name in it is masked, as every OS user name is there.',
-      );
+    /** The ending sentence with the program, as the acting, agent and workflow pages give it
+     *  (#1280's correction, item 3: the parenthesis realm-listen.md gained). */
+    const ABANDONED_FORMS =
+      "(`It was abandoned; no reason was given.` when none was given; `It was abandoned with 'realm run abandon', by <name> (<how>), with the reason \"<reason>\".` or `It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as <name> (<how>), with the reason \"<reason>\".` when the record names the program that ended it, added after version 0.50.0)";
+    /** The acting page's masking sentence; the three cells below execute it, one case each. */
+    const MASKING =
+      "The name is plain text: your terminal shows it whole, and in piped output it is masked as environment values are: the part of it that matches an environment value of 8 characters or more, such as a long OS user name, shows as `[REDACTED]`; REALM_OPERATOR's own value is not counted.";
+
+    it('check 6 — the masking sentence, an OS user of 8 characters: piped, the part that matches shows as [REDACTED]', async () => {
+      claim(ACTING, MASKING);
       const id = await fresh();
       await abandonRun(runStore, id, 'x', {
         by: { by: 'abcdefgh@box', by_source: 'derived', channel: 'abandon' },
@@ -366,6 +371,50 @@ describe(
         0,
         'Ended by: realm run abandon, by [REDACTED]@box (from the OS user)',
       ]);
+    });
+
+    it('check 6 — the masking sentence, a short OS user (under the 8-character floor): piped, the name shows whole', async () => {
+      claim(ACTING, MASKING);
+      const id = await fresh();
+      await abandonRun(runStore, id, 'duplicate order', {
+        by: { by: 'ops@box', by_source: 'derived', channel: 'abandon' },
+        door: 'realm_run_abandon',
+      });
+      // advance's preview line takes its reason from the `Stopped:` list (the acting page, "It
+      // opens `Nothing is owed to the engine: <reason>`"), so this cell also executes that list's
+      // form with the program (#1280's correction, item 3).
+      claim(ACTING, ABANDONED_FORMS);
+      const inspect = realm(['run', 'inspect', id], { USER: 'ops' });
+      const advance = realm(['run', 'advance', id], { USER: 'ops' });
+      // (a) red when a name under the environment floor is masked in piped output (a lower floor,
+      //     or the name classed as always hidden); (b) prints the exits and the two lines, never
+      //     the rest of advance's output (its `This program:` line names the machine).
+      expect({
+        codes: [inspect.code, advance.code],
+        line: inspect.out.split('\n').find((l) => l.startsWith('Ended by:')),
+        owed: advance.out.split('\n').find((l) => l.startsWith('Nothing is owed to the engine:')),
+      }).toEqual({
+        codes: [0, 0],
+        line: 'Ended by: realm run abandon, by ops@box (from the OS user)',
+        owed: 'Nothing is owed to the engine: the run has ended (abandoned). It was abandoned with \'realm run abandon\', by ops@box (from the OS user), with the reason "duplicate order". To run the work again, start a new run.',
+      });
+    });
+
+    it('check 6 — the masking sentence, REALM_OPERATOR of 8 or more characters: piped, its own value shows whole', async () => {
+      claim(ACTING, MASKING);
+      const id = await fresh();
+      const env = { REALM_OPERATOR: 'nightly-cleanup' };
+      const abandoned = realm(['run', 'abandon', id, '--reason', 'x'], env);
+      const inspect = realm(['run', 'inspect', id], env);
+      // (a) red when REALM_OPERATOR's value is swept with the environment's (it leaves Realm's
+      //     settings list); (b) prints the exits and the line.
+      expect({
+        codes: [abandoned.code, inspect.code],
+        line: inspect.out.split('\n').find((l) => l.startsWith('Ended by:')),
+      }).toEqual({
+        codes: [0, 0],
+        line: 'Ended by: realm run abandon, by nightly-cleanup (from REALM_OPERATOR)',
+      });
     });
 
     it('check 8 — export and import: a run with a program and a door round-trips at bundle version 5', async () => {

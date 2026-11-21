@@ -104,7 +104,8 @@ export function refusalPrintsStoredValue(run: RunRecord): boolean {
  * carriers: the pre-attach check ({@link resolveRunAttach}) and the agent loop (`runAgent`), so the
  * two can never word it differently (framework rule 3). #729 PR-0 (E1 (d), (e), (j); Table row 55):
  * the run-a-step family's `run_ended`, rendered with how the run ended, from the record (#625
- * A1b-2: the one ending composer's sentence, never who ended it) —
+ * A1b-2: the one ending composer's sentence; since the actor unit it also names the program that
+ * ended the run, and the command or tool, when the record names them) —
  * Realm's own sentence ends with Realm's stop; the recorded reason is stored text, printed after a
  * label as written through the one escaped, bounded value renderer, with no stop added; and the
  * command that delivers cleanup steps left pending ends its own line (C212). The phase is worked out
@@ -118,8 +119,8 @@ export function terminalRunRefusal(runId: string, run: RunRecord, ctx: RenderCtx
   // #729 PR-3 correction 3 (H-8): the phase is realm's own word. `ctx` is the CLI's writer context
   // on the pre-attach carrier, so it prints whole; the library carrier (`runAgent`) passes none and
   // its message carries no span mark (I13).
-  // #625 A1b-2: how it ended, from the record only — never who ended it (Realm never claims who was
-  // on the other end).
+  // #625 A1b-2: how it ended, from the record only; the actor unit: with the program that ended it
+  // when the seal names one (a program, never a person).
   const ending = refusalEnding(run, ctx);
   const lines = [
     `Run ${runId} has already ended (${ctx.word(phase, RUN_PHASE_WORDS)}).${ending === undefined ? '' : ` ${ending.sentence}`}`,

@@ -48,8 +48,21 @@ type PartKind =
   // #625 PR-2b, the actor unit: the doors `abandonRun` itself ends a run through.
   | 'abandon_door';
 
-/** #625 PR-2b, the actor unit: the doors `abandonRun` ends a run through (`actor.door`). */
-const ABANDON_DOORS = ['realm_run_abandon', 'abandon_run'] as const satisfies readonly SealDoor[];
+/**
+ * #625 PR-2b, the actor unit: the doors `abandonRun` ends a run through (`actor.door`). The list
+ * and `abandonRun`'s own door union are one set, checked both ways (#1280's correction): the
+ * `satisfies` keeps every member inside the union (and inside `SealDoor`), and the check below fails
+ * `tsc` when the union gains a door the list does not name. The union stays written out in
+ * `abandonRun`, so its published signature reads as the doors themselves.
+ */
+const ABANDON_DOORS = ['realm_run_abandon', 'abandon_run'] as const satisfies readonly (SealDoor &
+  NonNullable<AbandonActor['door']>)[];
+const _abandonDoorsExhaustive: [
+  Exclude<NonNullable<AbandonActor['door']>, (typeof ABANDON_DOORS)[number]>,
+] extends [never]
+  ? true
+  : never = true;
+void _abandonDoorsExhaustive;
 
 const EXPECTED: Record<PartKind, string> = {
   object: 'an object',

@@ -216,4 +216,26 @@ describe('#625 PR-2a, C85 — a blocked reply on a run another process moved to 
     expect(run.terminal_state).toBe(true);
     expect(run.completed_steps).toEqual([]);
   });
+
+  it('#625 the actor unit (#1280 correction, item 3): the same race, ended by the assistant’s abandon_run tool — the Ended: line names the program', async () => {
+    // The agent page's parenthesis: `It was abandoned with the assistant's 'abandon_run' tool, on the
+    // Realm server running as <name> (<how>), with the reason "<reason>".` when the record names the
+    // program that ended it.
+    const def = wf({ ask: agent(), more: agent({}, ['ask']) });
+    const d = await drive(def, async (store, call) => {
+      if (call !== 1) return;
+      store.armAfterNextGet(async (runId) => {
+        await abandonRun(store, runId, 'ended elsewhere', {
+          by: { by: 'ops@server-1', by_source: 'derived', channel: 'mcp-stdio' },
+          door: 'abandon_run',
+        });
+      });
+    });
+    // (a) red when the Ended: line drops the program, or names it from the channel and not the
+    //     door; (b) prints the result and the screen's last line.
+    expect({ result: d.result, last: d.lines.at(-1) }).toEqual({
+      result: 'failed',
+      last: "error:   Ended:     It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as ops@server-1 (from the OS user), with the reason \"ended elsewhere\". To run the work again, start a new run.",
+    });
+  });
 });

@@ -1,8 +1,10 @@
 // actor-who-ended-625.test.ts — #625 PR-2b, the actor unit: who ended a run, on the MCP side.
 //
 // The assistant's `abandon_run` now records the program the server runs as and the tool, and every
-// reply that says how the run ended names them. On this side the name is masked as an OS user name
-// is: an assistant reads the reply, and a derived name is `<OS user>@<host>`. These cells run the
+// reply that says how the run ended names them. On this side the name is masked as environment
+// values are: an assistant reads the reply, and a derived name is `<OS user>@<host>`, so the part of
+// it that matches an environment value of 8 characters or more shows as `[REDACTED]`;
+// REALM_OPERATOR's own value is not counted. Most cells run the
 // real server in process (`createRealmMcpServer` over `InMemoryTransport`) with a derived driver
 // whose OS user part is `abcdefgh` (8 characters, the environment floor) and `USER` stubbed to it,
 // so the reply's own masking decides what shows. Every assertion carries (a) the change that turns
@@ -28,6 +30,9 @@ import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const RUN_STATE = 'docs/reference/mcp/run-state-and-health.md';
+/** The run-state page's masking sentence; check 4's three masking cells execute it, one case each. */
+const MASKING =
+  "The name is masked as environment values are: the part of it that matches an environment value of 8 characters or more, such as a long OS user name, shows as `[REDACTED]`; REALM_OPERATOR's own value is not counted. Added after version 0.50.0. |";
 /** (a) red when the page no longer holds the sentence word for word; (b) prints the sentence. */
 function claim(page: string, sentence: string): void {
   const flat = (t: string): string => t.replace(/\s+/g, ' ');
@@ -67,14 +72,14 @@ type Reply = Record<string, unknown> & {
 /** The real server in process, with this driver, the given registry and gate-answers setting. */
 async function connected(
   defs: WorkflowDefinition[],
-  opts: { registry?: ExtensionRegistry; gateAnswers?: 'permitted' } = {},
+  opts: { registry?: ExtensionRegistry; gateAnswers?: 'permitted'; driver?: Attributed } = {},
 ) {
   const h = await makeTempHome();
   homes.push(h);
   for (const d of defs) await h.stores.workflowStore.register(d);
   const server = createRealmMcpServer({
     ...h.stores,
-    driver: DRIVER,
+    driver: opts.driver ?? DRIVER,
     ...(opts.registry !== undefined ? { registry: opts.registry } : {}),
     ...(opts.gateAnswers !== undefined ? { gateAnswers: opts.gateAnswers } : {}),
   });
@@ -118,7 +123,7 @@ describe('#625 the actor unit, check 4 — abandon_run records the server’s pr
       RUN_STATE,
       '| `sealed_by_actor` | `realm run abandon`, the `abandon_run` tool or `realm run cleanup` recorded the program that ended the run | That program: `by`, its name; `by_source`, how the name is known (`ambient` from REALM_OPERATOR, `derived` from the OS user, `stated` named by the program that runs Realm); and `channel`.',
     );
-    claim(RUN_STATE, 'The name is masked as an OS user name is. Added after version 0.50.0. |');
+    claim(RUN_STATE, MASKING);
     stubUser();
     const def = wf('actor-mcp', { a: { description: 'A.', execution: 'agent', depends_on: [] } });
     const { h, call } = await connected([def]);
@@ -142,6 +147,7 @@ describe('#625 the actor unit, check 4 — abandon_run records the server’s pr
       ),
       door: state.reply['sealed_by_door'],
       how: [actor?.['by_source'], actor?.['channel']],
+      by: actor?.['by'],
       shownAdvance: advanced.text.includes(USER_PART),
       shownState: state.text.includes(USER_PART),
     }).toEqual({
@@ -150,6 +156,7 @@ describe('#625 the actor unit, check 4 — abandon_run records the server’s pr
       reason: true,
       door: 'abandon_run',
       how: ['derived', 'mcp-stdio'],
+      by: '[REDACTED]@box',
       shownAdvance: false,
       shownState: false,
     });
@@ -206,6 +213,52 @@ describe('#625 the actor unit, check 4 — abandon_run records the server’s pr
       "unrecognized door 'realm_run_sweeper'",
       { by: null, absent_cause: 'name_unreadable' },
     ]);
+  });
+
+  it('check 4 — the masking sentence, a short OS user (under the 8-character floor): advance_run’s sentence and get_run_state’s sealed_by_actor name ops@box whole', async () => {
+    claim(RUN_STATE, MASKING);
+    vi.stubEnv('REALM_NOT_SECRET', '');
+    vi.stubEnv('USER', 'ops');
+    const def = wf('actor-mcp-short', {
+      a: { description: 'A.', execution: 'agent', depends_on: [] },
+    });
+    const short: Attributed = { by: 'ops@box', by_source: 'derived', channel: 'mcp-stdio' };
+    const { call } = await connected([def], { driver: short });
+    const runId = String((await call('start_run', { workflow_id: def.id })).reply.run_id);
+    await call('abandon_run', { run_id: runId, reason: 'duplicate order' });
+    const advanced = await call('advance_run', { run_id: runId });
+    const state = await call('get_run_state', { run_id: runId });
+    // (a) red when a name under the environment floor is masked (a lower floor, or the name
+    //     classed as always hidden); (b) prints the sentence's clause and the field.
+    expect({
+      said: (advanced.reply.context_hint ?? '').includes(
+        "It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as ops@box (from the OS user), with the reason \"duplicate order\".",
+      ),
+      by: (state.reply['sealed_by_actor'] as Record<string, unknown> | undefined)?.['by'],
+    }).toEqual({ said: true, by: 'ops@box' });
+  });
+
+  it('check 4 — the masking sentence, REALM_OPERATOR of 8 or more characters: its own value shows whole on the assistant’s side', async () => {
+    claim(RUN_STATE, MASKING);
+    vi.stubEnv('REALM_NOT_SECRET', '');
+    vi.stubEnv('REALM_OPERATOR', 'nightly-cleanup');
+    const def = wf('actor-mcp-probe', {
+      a: { description: 'A.', execution: 'agent', depends_on: [] },
+    });
+    const op: Attributed = { by: 'nightly-cleanup', by_source: 'ambient', channel: 'mcp-stdio' };
+    const { call } = await connected([def], { driver: op });
+    const runId = String((await call('start_run', { workflow_id: def.id })).reply.run_id);
+    await call('abandon_run', { run_id: runId, reason: 'duplicate order' });
+    const advanced = await call('advance_run', { run_id: runId });
+    const state = await call('get_run_state', { run_id: runId });
+    // (a) red when REALM_OPERATOR's value is swept with the environment's (it leaves Realm's
+    //     settings list); (b) prints the sentence's clause and the field.
+    expect({
+      said: (advanced.reply.context_hint ?? '').includes(
+        "It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as nightly-cleanup (from REALM_OPERATOR), with the reason \"duplicate order\".",
+      ),
+      by: (state.reply['sealed_by_actor'] as Record<string, unknown> | undefined)?.['by'],
+    }).toEqual({ said: true, by: 'nightly-cleanup' });
   });
 });
 

@@ -333,7 +333,6 @@ function boundedDriveFailures(field: DriveFailuresField): DriveFailuresView {
   };
 }
 
-/** #872 (b1) correction 1 (H7): `resumable` with at most ten steps; `steps_more` counts the rest. */
 /**
  * #625 PR-2b, the actor unit: the program a seal names, read as every recorded program is — an
  * unreadable one is `name_unreadable`, never a guess.
@@ -343,6 +342,7 @@ function sealedByActorOf(value: unknown): NonNullable<RunStateSummary['sealed_by
   return read.by === null ? { by: null, absent_cause: 'name_unreadable' } : read;
 }
 
+/** #872 (b1) correction 1 (H7): `resumable` with at most ten steps; `steps_more` counts the rest. */
 function boundedResumable(way: { steps: string[]; command: string }): {
   steps: string[];
   steps_more?: number;
@@ -436,8 +436,10 @@ export const RUN_STATE_SUMMARY_TABLE = {
   sealed_by_classified: 'fact',
   sealed_by_step: 'fact',
   // #625 PR-2b, the actor unit: the program that ended the run — its name is the host's text, bounded
-  // (masked as an OS user name is); how it is known, its channel and why there is none are realm's
-  // words. The command or tool is realm's word.
+  // (masked as environment values are: the part of it that matches an environment value of 8
+  // characters or more, such as a long OS user name, shows as `[REDACTED]`; REALM_OPERATOR's own
+  // value is not counted); how it is known, its channel and why there is none are realm's words. The
+  // command or tool is realm's word.
   sealed_by_actor: {
     nested: {
       by: 'bounded',
@@ -611,7 +613,9 @@ export interface RunStateSummary {
    * its channel. Recorded by `realm run abandon`, `realm run cleanup` and this server's `abandon_run`
    * when a name is known. A name that cannot be read is `{ by: null, absent_cause: 'name_unreadable' }`.
    * Absent — never null — when the seal names no program. Realm names a program, never a person; on
-   * this surface the name is masked as an OS user name is.
+   * this surface the name is masked as environment values are: the part of it that matches an
+   * environment value of 8 characters or more, such as a long OS user name, shows as `[REDACTED]`;
+   * REALM_OPERATOR's own value is not counted.
    */
   sealed_by_actor?: Attributed | { by: null; absent_cause: 'name_unreadable' };
   /**
