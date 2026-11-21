@@ -20,7 +20,7 @@ export interface GuardedOption {
 }
 
 /**
- * The options whose value is refused when it is a flag-like word typed as the next word (25). Keyed by
+ * The options whose value is refused when it is a flag-like word typed as the next word (28). Keyed by
  * the leaf command's name (a command parsed on its own has no parent, so a path cannot be read) and
  * the long flag. Each takes any word without a check of its own (the census, `plans/issue-920/census/`).
  * `option-value-guard-classes.test.ts` holds the other class: the options that already refuse such a
@@ -65,6 +65,8 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'migrate', option: '--backup' }, // realm db migrate
   // The filter-mask fix, PR 2: `realm db check --project --json` would take the flag as the folder.
   { command: 'check', option: '--project' }, // realm db check
+  // Callback K2a-2: the receiver's address, which `parseCallbackEntry` would take as a host.
+  { command: 'key', option: '--host' },
 ];
 
 /** A string of two or more characters that starts with `-` (Commander's option-looking token). A lone

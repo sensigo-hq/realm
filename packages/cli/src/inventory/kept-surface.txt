@@ -36,6 +36,20 @@ realm agent --schema-retries — option, takes a value, default 2
 realm agent --spawned-by-listen — option, no value, hidden
 realm agent --strict-base-url — option, no value
 realm agent --workflow — option, takes a value
+realm callback — command
+realm callback --help — option, short -h, no value
+realm callback help — command, Commander's help
+realm callback help <command> — argument 1, optional
+realm callback key — command
+realm callback key <workflow> — argument 1, optional
+realm callback key --delete — option, no value
+realm callback key --end-previous — option, no value
+realm callback key --help — option, short -h, no value
+realm callback key --host — option, takes a value, mandatory
+realm callback key --keep — option, takes a value
+realm callback key --replace — option, no value
+realm callback key --rotate — option, no value
+realm callback key --whsec — option, no value
 realm db — command
 realm db --help — option, short -h, no value
 realm db backup — command

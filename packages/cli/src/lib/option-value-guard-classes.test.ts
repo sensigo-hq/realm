@@ -3,13 +3,14 @@
 // cannot ship unclassified:
 //   - GUARDED (production, `option-value-guard.ts`): takes any word without a check of its own; the
 //     guard refuses a flag-like word typed after it;
-//   - OWN_CHECK (here): already refuses such a word with its own message (28 by an `argParser`, 34 by
+//   - OWN_CHECK (here): already refuses such a word with its own message (29 by an `argParser`, 34 by
 //     a check in the action).
 // Rule for a new option: it already refuses → OWN_CHECK; otherwise → GUARDED. Prints only the
 // (leaf, flag) pairs that break the law.
 import { describe, expect, it } from 'vitest';
 import type { Command } from 'commander';
 import {
+  callbackCommands,
   workflowCommands,
   runCommands,
   dbCommands,
@@ -20,9 +21,9 @@ import { GUARDED_OPTIONS } from './option-value-guard.js';
 
 type Pair = `${string} ${string}`;
 
-/** The 62 that already refuse a flag-like word with their own message (do NOT guard). */
+/** The 63 that already refuse a flag-like word with their own message (do NOT guard). */
 const OWN_CHECK: readonly Pair[] = [
-  // by an argParser (28)
+  // by an argParser (29)
   'validate --provider',
   'register --provider',
   'watch --provider',
@@ -55,6 +56,8 @@ const OWN_CHECK: readonly Pair[] = [
   // R1.2: `--max-wait` by `option-parsers.ts`, `--max-waiting` by its own parser (digits only)
   'listen --max-wait',
   'listen --max-waiting',
+  // callback K2a-2: `--keep` by its own parser (a whole number of hours from 1 to 168)
+  'key --keep',
   // in the action (34)
   'validate --registered',
   'validate --extensions-module',
@@ -113,13 +116,14 @@ function derived(): Map<Pair, Command[]> {
     dbCommands,
     storeTopLevelCommands,
     topLevelCommands,
+    callbackCommands,
   ])
     for (const c of list) visit(c);
   return out;
 }
 
 describe('#920 C-2 — every value-taking option is classified exactly once', () => {
-  it('1. the two tables and the command tree agree (27 + 62 = 89)', () => {
+  it('1. the two tables and the command tree agree (28 + 63 = 91)', () => {
     // (a) red when a guarded row is deleted, an option is added to a command, or a row is in two
     // tables; (b) prints the unclassified, extra and duplicated (leaf, flag) pairs only.
     const tree = derived();
@@ -147,9 +151,10 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
     ).toEqual({
       // The filter-mask fix, PR 2: `realm db check --project` is guarded (26, 87). #616 R2:
       // `realm db migrate --to` checks its own value (62, 88). #922 P1b: `realm run reclaim
-      // --claimed-at` is guarded (27, 89).
-      counts: { guarded: 27, ownCheck: 62 },
-      tree: 89,
+      // --claimed-at` is guarded (27, 89). Callback K2a-2: `realm callback key --host` is guarded and
+      // its `--keep` checks its own value (28, 63, 91).
+      counts: { guarded: 28, ownCheck: 63 },
+      tree: 91,
       inTwo: [],
       unclassified: [],
       notInTree: [],
