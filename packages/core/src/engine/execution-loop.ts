@@ -18,6 +18,7 @@ import type {
   SealArm,
   OutputSource,
   Principal,
+  ClaimableErrorClass,
 } from '../types/run-record.js';
 import { answerAccountOf, answerViaOf, principalOf } from './answer-facts.js';
 import { isBareAutoStep as isBareAutoStepDef } from './output-source.js';
@@ -471,6 +472,36 @@ export interface ExecuteChainOptions {
    * @beta
    */
   heldClaim?: { hold: LeaseHold };
+  /**
+   * Gap 2, unit (ii-a): the named agent step failed because its model request failed, and it takes
+   * its failure path. Core settles the step failed with one error evidence entry, written as a
+   * validation-exhausted step's is: nothing is dispatched or validated, and `input` must be `{}`.
+   * The caller passes facts only; core mints the code, its category, its action and `retryable`:
+   * `STEP_RETRY_EXHAUSTED` when the step's `retry` used up its tries (`stop_reason: 'attempts'`) or
+   * its time (`'total_timeout'`), otherwise `MODEL_REQUEST_FAILED`. Five pairs of `kind` and
+   * `stop_reason` are admitted: `transient` with `attempts`, `total_timeout`, `non_retryable` (the
+   * step's `retry` does not try it again) or `no_retry_policy` (no `retry`, and the model client's
+   * own tries ran out); `permanent` with `non_retryable`. Any other pair, a value outside its type,
+   * a step that is not an agent step or a non-empty `input` is refused before anything is read or
+   * written. The entry's `diagnostics.failure_kind` is `kind`, which a later step reads as
+   * `$settlement.<step>.failure_kind`.
+   */
+  modelFailure?: {
+    /** Whether a later try might pass (`transient`) or the request will fail the same way (`permanent`). */
+    kind: 'transient' | 'permanent';
+    /** Why the step stopped trying, as the caller judged it (no judging order applies here). */
+    stop_reason: NonNullable<EvidenceSnapshot['stop_reason']>;
+    /** The failure's text, as the caller would show it. Mask any secret first: core stores it as given. */
+    message: string;
+    /** The attempt the failure ended, a whole number above 0: the entry's `attempt`. */
+    attempt: number;
+    /** The failure's class, in a drive-failure entry's words. */
+    error_class: ClaimableErrorClass;
+    /** The HTTP status the request last got, or `null` when it got none. */
+    status: number | null;
+    /** The model client's own count of its tries, when the caller has it. */
+    attempts_sdk?: number;
+  };
   /** @see AdvanceRunOptions.onStep — called for each step this call runs after the named one. */
   onStep?: AdvanceRunOptions['onStep'];
   /** @see AdvanceRunOptions.onTaken — for each step this call finds another process holding. */
@@ -483,6 +514,9 @@ export interface ExecuteChainOptions {
    */
   onGuard?: AdvanceRunOptions['onGuard'];
 }
+
+/** Gap 2, unit (ii-a): `executeChain`'s `modelFailure`, as its named step's body takes it. */
+type ChainModelFailure = NonNullable<ExecuteChainOptions['modelFailure']>;
 
 /** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
 const DROPPED_CLAIMANT_WARNING = 'this run store did not record who took the step';
@@ -2245,7 +2279,53 @@ async function enactExpiredGateIfDue(
 type StepDiagnosticsArm =
   | { kind: 'attempt'; attemptFailed: boolean; accruedRejections: number | undefined }
   | { kind: 'default_settle'; rejections: number }
-  | { kind: 'exhausted'; rejections: number };
+  | { kind: 'exhausted'; rejections: number }
+  // gap 2, unit (ii-a): the model-failure path's entry — `failure_kind`, no rejection count.
+  | { kind: 'model_failure'; failureKind: 'transient' | 'permanent' };
+
+/**
+ * Gap 2, unit (ii-a): the error core mints for an agent step whose model request failed and that
+ * takes its failure path, from the facts its caller passed (`ExecuteChainOptions.modelFailure`): the
+ * code, category, action and `retryable` are core's. `STEP_RETRY_EXHAUSTED` when the step's `retry`
+ * used up its tries or its time, with its auto-step names and the failure's facts beside them;
+ * `MODEL_REQUEST_FAILED` otherwise. The message is the caller's, so the reply's `errors[]` and the
+ * run's `terminal_reason` read `Step '<s>' failed: <message>`.
+ */
+function modelFailureErrorOf(step: string, failure: ChainModelFailure): WorkflowError {
+  const sdk = failure.attempts_sdk !== undefined ? { attempts_sdk: failure.attempts_sdk } : {};
+  if (failure.stop_reason === 'attempts' || failure.stop_reason === 'total_timeout') {
+    return new WorkflowError(failure.message, {
+      code: 'STEP_RETRY_EXHAUSTED',
+      category: 'ENGINE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: {
+        stepName: step,
+        attempts: failure.attempt,
+        lastError: failure.message,
+        exhausted_by: failure.stop_reason,
+        failure_kind: failure.kind,
+        error_class: failure.error_class,
+        status: failure.status,
+        ...sdk,
+      },
+    });
+  }
+  return new WorkflowError(failure.message, {
+    code: 'MODEL_REQUEST_FAILED',
+    category: 'SERVICE',
+    agentAction: 'report_to_user',
+    retryable: false,
+    details: {
+      stepName: step,
+      failure_kind: failure.kind,
+      error_class: failure.error_class,
+      status: failure.status,
+      attempts: failure.attempt,
+      ...sdk,
+    },
+  });
+}
 
 function buildStepDiagnostics(
   arm: StepDiagnosticsArm,
@@ -2277,6 +2357,9 @@ function buildStepDiagnostics(
     if (!arm.attemptFailed && arm.accruedRejections !== undefined && arm.accruedRejections > 0) {
       diag.validation_rejections = arm.accruedRejections;
     }
+  } else if (arm.kind === 'model_failure') {
+    // gap 2, unit (ii-a): why the step's model request failed; no rejection was counted.
+    diag.failure_kind = arm.failureKind;
   } else {
     if (arm.kind === 'default_settle') diag.settled_by_default = true;
     diag.validation_rejections = arm.rejections;
@@ -2287,11 +2370,15 @@ function buildStepDiagnostics(
   // over MCP directly) — realm cannot know whether strict was honored, so it says so rather than
   // staying silent.
   if (facts.stepDef?.structured_output !== undefined) {
-    diag.structured_output = facts.structuredOutputMeta ?? {
-      requested: true,
-      sent: false,
-      downgrade_reason: 'external_agent',
-    };
+    // gap 2, unit (ii-a): on a model failure's entry, only what the driver reported — a program drove
+    // the step, so the external-agent stamp would be false there.
+    if (arm.kind !== 'model_failure' || facts.structuredOutputMeta !== undefined) {
+      diag.structured_output = facts.structuredOutputMeta ?? {
+        requested: true,
+        sent: false,
+        downgrade_reason: 'external_agent',
+      };
+    }
   }
   // issue #600 PR 1a: PRESENT whenever the driver supplied usage — as `state: 'unobservable'` when
   // nothing was observed; ABSENT when nothing was recorded. Recorded-and-silent and not-recorded
@@ -2421,11 +2508,22 @@ async function executeStepAs(
   inputBy: 'engine' | 'caller' = 'caller',
   // #729 CW-2b: `executeChain`'s `heldClaim`, for its named step only — never an option of the step.
   heldClaim?: { hold: LeaseHold },
+  // gap 2, unit (ii-a): `executeChain`'s `modelFailure`, for its named step only, as `heldClaim`.
+  modelFailure?: ChainModelFailure,
 ): Promise<EngineReply> {
   // decisions C109, C110: the line Step 1.5's expiry enactment writes rides EVERY reply this call
   // returns, once — core prints nothing, so a reply that dropped it would hide the enactment.
   const expiry: { line?: string; receipt?: ExpiryReceipt } = {};
-  const reply = await executeStepBody(store, definition, options, expiry, via, inputBy, heldClaim);
+  const reply = await executeStepBody(
+    store,
+    definition,
+    options,
+    expiry,
+    via,
+    inputBy,
+    heldClaim,
+    modelFailure,
+  );
   return withExpiryLineOnce(reply, expiry.line, expiry.receipt);
 }
 
@@ -2441,6 +2539,7 @@ async function executeStepBody(
   via: EnactedVia,
   inputBy: 'engine' | 'caller',
   heldClaim: { hold: LeaseHold } | undefined,
+  modelFailure?: ChainModelFailure,
 ): Promise<EngineReply> {
   // #729, the claim window (CW-2b): the agent step this call holds under the lease `claimStepForDrive`
   // took its claim with (`executeChain`'s `heldClaim`). For any other step, `heldClaim` changes
@@ -2656,6 +2755,13 @@ async function executeStepBody(
 
   let inputTokenEstimate = Math.ceil(JSON.stringify(effectiveInput).length / 4);
 
+  // gap 2, unit (ii-a): the step's model request failed and it takes its failure path (`modelFailure`,
+  // admitted before this call: an agent step, an admitted pair, an empty input). The path is armed by
+  // the member, never by a count, and skips what #220's armed `exhaustion` skips: the schema judges
+  // (2b, 2c) do not run, the trace check (2d) does not return, nothing is dispatched or retried.
+  const modelFailureError =
+    modelFailure !== undefined ? modelFailureErrorOf(options.command, modelFailure) : null;
+
   // issue #220: bounded validation-rejection exhaustion — locals shared by countRejection below
   // and by both its call sites (Step 2b/2c) and the trace enforce-gate further down. `exhaustion`
   // stays null unless/until a counted rejection's JUST-persisted count reaches its threshold;
@@ -2818,8 +2924,13 @@ async function executeStepBody(
     });
   }
 
-  // Step 2b: Validate input schema.
-  if (preClaim?.refused_by === 'input_schema' && preClaim.error !== undefined) {
+  // Step 2b: Validate input schema. Not under `modelFailure` (gap 2, unit (ii-a)): a failed model
+  // request has no answer to judge, and judging `{}` would count a rejection the model never made.
+  if (
+    modelFailureError === null &&
+    preClaim?.refused_by === 'input_schema' &&
+    preClaim.error !== undefined
+  ) {
     {
       const err = preClaim.error;
       const countdown = await countRejection(err);
@@ -2858,6 +2969,7 @@ async function executeStepBody(
   // "post-generation, pre-commit" — the standard output guardrail position.
   if (
     exhaustion === null &&
+    modelFailureError === null &&
     stepDef?.execution === 'agent' &&
     stepDef.output_schema !== undefined
   ) {
@@ -2996,7 +3108,8 @@ async function executeStepBody(
             };
           } catch (err) {
             // On enforce rejection: do NOT delete the WAL — agent retries with WAL preserved.
-            if (exhaustion === null) {
+            // gap 2, unit (ii-a): under `modelFailure` the gate yields too, as below.
+            if (exhaustion === null && modelFailureError === null) {
               return makeErrorEnvelope(
                 store,
                 options,
@@ -3522,7 +3635,8 @@ async function executeStepBody(
   // terminalization if a concurrent valid submission or abandon beat this invocation to the claim
   // (see the claim's own catch above). Without this bypass, a hand-built max_attempts:0 definition
   // would wrap VALIDATION_EXHAUSTED into STEP_RETRY_EXHAUSTED, destroying the discriminator.
-  const bypassDispatch = exhaustion !== null;
+  // gap 2, unit (ii-a): `modelFailure` bypasses them too, for the same reason.
+  const bypassDispatch = exhaustion !== null || modelFailureError !== null;
 
   if (!bypassDispatch) {
     for (let attemptNum = 1; attemptNum <= maxAttempts; attemptNum++) {
@@ -4022,6 +4136,65 @@ async function executeStepBody(
         `(validation_exhaustion.mode: 'default')`,
     );
     traceWarnings.push(...countWarnings);
+  } else if (modelFailureError !== null) {
+    // gap 2, unit (ii-a): the step's model request failed, and it takes its failure path.
+    // `dispatchError` is set here, before the stop-reason block and the retry wrap below, whose
+    // `!bypassDispatch` guards keep the caller's stop reason and core's code. ONE error entry, built
+    // as #220's below is: every `stepMeta` member and the trace spread, so Step 5's buffer delete
+    // never destroys adopted lines unrecorded. `input` is `{}` (admission), so no `_debug` rides it.
+    dispatchError = modelFailureError;
+    const failure = modelFailure!;
+    // #715 (b) (A.9): an EVENT instant on the store's clock.
+    const failedAt = store.clock.now();
+    const failedProfile = stepDef?.agent_profile;
+    const failedProfileData =
+      failedProfile !== undefined ? definition.resolved_profiles?.[failedProfile] : undefined;
+    const failedSnap: EvidenceSnapshot = captureEvidence({
+      stepId: options.command,
+      ...(options.driver !== undefined ? { drivenBy: options.driver } : {}),
+      startedAt: failedAt,
+      completedAt: failedAt,
+      input: effectiveInput,
+      output: {},
+      error: modelFailureError.message,
+      diagnostics: buildStepDiagnostics(
+        { kind: 'model_failure', failureKind: failure.kind },
+        {
+          inputTokenEstimate,
+          preconditionTrace,
+          stepDef,
+          structuredOutputMeta: options.stepMeta?.structuredOutput,
+          usage: options.stepMeta?.usage,
+        },
+      ),
+      ...(failedProfileData !== undefined
+        ? { agentProfile: failedProfile!, agentProfileHash: failedProfileData.content_hash }
+        : {}),
+      ...(options.stepMeta?.toolCalls !== undefined
+        ? { toolCalls: options.stepMeta.toolCalls }
+        : {}),
+      ...(options.stepMeta?.modelText !== undefined
+        ? { modelText: options.stepMeta.modelText }
+        : {}),
+      ...(options.stepMeta?.modelAttempts !== undefined
+        ? { modelAttempts: options.stepMeta.modelAttempts }
+        : {}),
+      ...(options.trace !== undefined || walEntries.length > 0
+        ? preNormalizedTrace !== undefined
+          ? { normalizedTrace: preNormalizedTrace }
+          : { trace: options.trace ?? [] }
+        : {}),
+    });
+    // The failure words the member states: the caller's attempt and stop reason, core's code.
+    allEvidence.push({
+      ...failedSnap,
+      attempt: failure.attempt,
+      ...failureWordsOf(modelFailureError),
+      stop_reason: failure.stop_reason,
+      ...(failure.stop_reason === 'attempts' || failure.stop_reason === 'total_timeout'
+        ? { exhausted_by: failure.stop_reason }
+        : {}),
+    });
   } else if (bypassDispatch) {
     // issue #220: terminalize. `dispatchError` is PRE-SET to the minted VALIDATION_EXHAUSTED error
     // HERE, BEFORE the retry-wrap block below — that block's own `!bypassDispatch` guard is what
@@ -8271,6 +8444,7 @@ async function executeChainBody(
   const {
     caller: _caller,
     heldClaim,
+    modelFailure,
     onStep,
     onTaken,
     onNotRecorded,
@@ -8291,7 +8465,15 @@ async function executeChainBody(
 
   // The named step, through the caller's dispatcher (a bare named step records `driven_step`).
   const named = stampStoppedStep(
-    await executeStepAs(store, definition, effectiveOptions, via, 'caller', heldClaim),
+    await executeStepAs(
+      store,
+      definition,
+      effectiveOptions,
+      via,
+      'caller',
+      heldClaim,
+      modelFailure,
+    ),
     options.command,
   );
   let result: EngineReply = named;

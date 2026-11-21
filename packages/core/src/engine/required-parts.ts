@@ -3,7 +3,13 @@
 // table (the `ENTRY_CALLERS` precedent), checked before anything is read or written. Content is
 // tier 2's (a string is never checked for emptiness here); this row checks presence and type only.
 import { WorkflowError } from '../types/workflow-error.js';
-import { OUTPUT_SOURCES, PRINCIPAL_ABSENCES } from '../types/run-record.js';
+import {
+  CLAIMABLE_ERROR_CLASSES,
+  OUTPUT_SOURCES,
+  PRINCIPAL_ABSENCES,
+  STOP_REASONS,
+} from '../types/run-record.js';
+import { capText } from '../utils/redaction.js';
 import type { SealDoor } from '../types/run-record.js';
 import type { abandonRun } from './abandon-run.js';
 import {
@@ -46,7 +52,13 @@ type PartKind =
   // #922: the literal `true` (`reclaimStep`'s `force`).
   | 'true'
   // #625 PR-2b, the actor unit: the doors `abandonRun` itself ends a run through.
-  | 'abandon_door';
+  | 'abandon_door'
+  // gap 2, unit (ii-a): `executeChain`'s `modelFailure` members.
+  | 'model_failure_kind'
+  | 'stop_reason'
+  | 'positive_whole'
+  | 'claimable_class'
+  | 'status';
 
 /**
  * #625 PR-2b, the actor unit: the doors `abandonRun` ends a run through (`actor.door`). The list
@@ -63,6 +75,20 @@ const _abandonDoorsExhaustive: [
   ? true
   : never = true;
 void _abandonDoorsExhaustive;
+
+/**
+ * Gap 2, unit (ii-a): the kinds of failure that take a step's failure path, and the stop reasons each
+ * admits (`ExecuteChainOptions.modelFailure`): a transient failure Realm's retry gave up on, did not
+ * retry, or never retried (no `retry`); a permanent failure, which is never retried.
+ */
+const MODEL_FAILURE_PAIRS: Readonly<Record<'transient' | 'permanent', readonly string[]>> = {
+  transient: ['attempts', 'total_timeout', 'non_retryable', 'no_retry_policy'],
+  permanent: ['non_retryable'],
+};
+const MODEL_FAILURE_PATH_KINDS = Object.keys(MODEL_FAILURE_PAIRS) as ('transient' | 'permanent')[];
+
+const isWhole = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value);
 
 const EXPECTED: Record<PartKind, string> = {
   object: 'an object',
@@ -81,6 +107,11 @@ const EXPECTED: Record<PartKind, string> = {
   route: 'a non-empty string',
   true: 'true',
   abandon_door: `one of ${ABANDON_DOORS.join(', ')}`,
+  model_failure_kind: `one of ${MODEL_FAILURE_PATH_KINDS.join(', ')}`,
+  stop_reason: `one of ${STOP_REASONS.join(', ')}`,
+  positive_whole: 'a whole number above 0',
+  claimable_class: `one of ${CLAIMABLE_ERROR_CLASSES.join(', ')}`,
+  status: 'a whole number or null',
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -152,6 +183,16 @@ function holds(kind: PartKind, value: unknown): boolean {
       return value === true;
     case 'abandon_door':
       return (ABANDON_DOORS as readonly unknown[]).includes(value);
+    case 'model_failure_kind':
+      return (MODEL_FAILURE_PATH_KINDS as readonly unknown[]).includes(value);
+    case 'stop_reason':
+      return (STOP_REASONS as readonly unknown[]).includes(value);
+    case 'positive_whole':
+      return isWhole(value) && value > 0;
+    case 'claimable_class':
+      return (CLAIMABLE_ERROR_CLASSES as readonly unknown[]).includes(value);
+    case 'status':
+      return value === null || (isWhole(value) && value >= 0);
   }
 }
 
@@ -257,6 +298,16 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('function', 'options', 'onTaken'),
     typed('function', 'options', 'onNotRecorded'),
     typed('function', 'options', 'onGuard'),
+    // gap 2, unit (ii-a): `modelFailure`, when given, an object of these members; the checks across
+    // its members and the step follow the table (`modelFailureDefects`).
+    typed('object', 'options', 'modelFailure'),
+    need('model_failure_kind', 'options', 'modelFailure', 'kind'),
+    need('stop_reason', 'options', 'modelFailure', 'stop_reason'),
+    need('string', 'options', 'modelFailure', 'message'),
+    need('positive_whole', 'options', 'modelFailure', 'attempt'),
+    need('claimable_class', 'options', 'modelFailure', 'error_class'),
+    need('status', 'options', 'modelFailure', 'status'),
+    typed('positive_whole', 'options', 'modelFailure', 'attempts_sdk'),
   ],
   executeEngineStep: [
     ...DEFINITION,
@@ -417,6 +468,7 @@ const EXECUTE_CHAIN_MEMBERS = [
   'onTaken',
   'onNotRecorded',
   'onGuard',
+  'modelFailure',
 ] as const satisfies readonly (keyof ExecuteChainOptions)[];
 const EXECUTE_ENGINE_STEP_MEMBERS = [
   'runId',
@@ -541,6 +593,8 @@ export interface InvalidPart {
   expected: string;
   given_type: string;
   fields?: RunRecordFieldProblem[];
+  /** Gap 2, unit (ii-a): what the sentence says in place of `(got <type>)`, when the type is not why. */
+  because?: string;
 }
 
 /**
@@ -584,6 +638,7 @@ export function invalidParts(entry: Entry, parts: Record<string, unknown>): Inva
       ...(fields !== undefined ? { fields } : {}),
     });
   }
+  if (entry === 'executeChain') invalid.push(...modelFailureDefects(parts));
   const options = OPTION_MEMBERS[entry];
   const container = options !== undefined ? parts[options.container] : undefined;
   if (options !== undefined && isPlainObject(container)) {
@@ -599,7 +654,73 @@ export function invalidParts(entry: Entry, parts: Record<string, unknown>): Inva
   return invalid;
 }
 
+/** `a` or `an`, as the word that follows it needs. */
+const article = (word: string): string => (/^[aeiou]/.test(word) ? `an ${word}` : `a ${word}`);
+
+/**
+ * Gap 2, unit (ii-a): `executeChain`'s `modelFailure` checks that read more than one member, after
+ * the table's: the pair of `kind` and `stop_reason` (judged once both hold their types), the step
+ * the call names (judged as `needsDispatcher` judges it: only when the definition has that step), and
+ * an empty `input` (a failed model request has no answer).
+ */
+function modelFailureDefects(parts: Record<string, unknown>): InvalidPart[] {
+  const options = parts['options'];
+  if (!isPlainObject(options)) return [];
+  const failure = options['modelFailure'];
+  if (!isPlainObject(failure)) return [];
+  const invalid: InvalidPart[] = [];
+  const kind = failure['kind'];
+  const stopReason = failure['stop_reason'];
+  if (
+    holds('model_failure_kind', kind) &&
+    holds('stop_reason', stopReason) &&
+    !MODEL_FAILURE_PAIRS[kind as 'transient' | 'permanent'].includes(stopReason as string)
+  ) {
+    invalid.push({
+      option: 'options.modelFailure.stop_reason',
+      expected:
+        'attempts, total_timeout, non_retryable or no_retry_policy when kind is transient, and ' +
+        'non_retryable when kind is permanent',
+      given_type: givenTypeOf(stopReason),
+    });
+  }
+  const definition = parts['definition'];
+  const steps = isPlainObject(definition) ? definition['steps'] : undefined;
+  const command = options['command'];
+  if (isPlainObject(steps) && typeof command === 'string' && Object.hasOwn(steps, command)) {
+    const step = steps[command];
+    const execution = isPlainObject(step) ? step['execution'] : undefined;
+    if (execution !== 'agent') {
+      invalid.push({
+        option: 'options.modelFailure',
+        expected: 'given only for an agent step',
+        given_type: givenTypeOf(failure),
+        because:
+          typeof execution === 'string' && ['auto', 'guard', 'finalizer'].includes(execution)
+            ? `'${capText(command)}' is ${article(execution)} step`
+            : `'${capText(command)}' is not an agent step`,
+      });
+    }
+  }
+  const input = options['input'];
+  // A missing or null `input` is the table's own refusal.
+  if (
+    input !== undefined &&
+    input !== null &&
+    !(isPlainObject(input) && Object.keys(input).length === 0)
+  ) {
+    invalid.push({
+      option: 'options.input',
+      expected:
+        'an empty object when options.modelFailure is given: a failed model request has no answer',
+      given_type: givenTypeOf(input),
+    });
+  }
+  return invalid;
+}
+
 function clause(p: InvalidPart): string {
+  if (p.because !== undefined) return `${p.option} must be ${p.expected} (${p.because})`;
   if (p.expected.startsWith('not an option of ')) {
     return `${p.option} is ${p.expected} (got ${p.given_type})`;
   }

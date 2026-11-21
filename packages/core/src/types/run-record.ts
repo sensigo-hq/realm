@@ -326,6 +326,13 @@ export interface StepDiagnostics {
    * even one that previously accrued rejections, carries only `validation_rejections` here.
    */
   settled_by_default?: boolean;
+  /**
+   * Gap 2, unit (ii-a): on the entry of an agent step that failed because its model request failed
+   * and it took its failure path, why: `transient` (a later try might pass) or `permanent` (it will
+   * fail the same way). A later step reads it as `$settlement.<step>.failure_kind`. Absent on every
+   * other entry, and on every entry written before this field existed.
+   */
+  failure_kind?: 'transient' | 'permanent';
   /** Issue #236 — disclosure for a `structured_output: 'strict'`-declared step's attempt. See
    *  {@link StructuredOutputMeta}. Absent on a step that never declared `structured_output`. */
   structured_output?: StructuredOutputMeta;
@@ -1302,7 +1309,12 @@ void _everyExhaustedByListed;
  */
 export type StopReason = NonNullable<EvidenceSnapshot['stop_reason']>;
 
-/** Every {@link StopReason}, in judging order; compile-checked both ways, ⊇ {@link ExhaustedBy}. */
+/**
+ * Every {@link StopReason}, in the dispatch loop's judging order; compile-checked both ways,
+ * ⊇ {@link ExhaustedBy}. On an agent step whose model request failed and that took its failure
+ * path (`ExecuteChainOptions.modelFailure`), the caller states the stop reason and no judging order
+ * applies: a permanent model failure reads `non_retryable` even on a step with no `retry` block.
+ */
 export const STOP_REASONS = [
   'no_retry_policy',
   'total_timeout',
@@ -1845,6 +1857,33 @@ export const ERROR_CLASSES = [
 type MissingErrorClass = Exclude<DriveFailureRecord['error_class'], (typeof ERROR_CLASSES)[number]>;
 const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : MissingErrorClass = true;
 void _everyErrorClassListed;
+
+/**
+ * Every drive-failure class a program or a provider may claim, such as the class an `executeChain`
+ * caller passes in `modelFailure.error_class`. Today that is every class (gap 2, unit (ii-a)).
+ * @public
+ */
+export type ClaimableErrorClass = DriveFailureRecord['error_class'];
+
+/**
+ * Every drive-failure class a program or a provider may claim ({@link ClaimableErrorClass}), in the
+ * type's order. A reader that accepts a claimed class closes it against this one list. Checked both
+ * ways, as {@link ERROR_CLASSES} is.
+ */
+export const CLAIMABLE_ERROR_CLASSES = [
+  'connection_timeout',
+  'connection_error',
+  'api_status',
+  'sdk_missing',
+  'validation_rejected',
+  'aborted_by_budget',
+  'other',
+] as const satisfies readonly ClaimableErrorClass[];
+type MissingClaimableClass = Exclude<ClaimableErrorClass, (typeof CLAIMABLE_ERROR_CLASSES)[number]>;
+const _everyClaimableClassListed: [MissingClaimableClass] extends [never]
+  ? true
+  : MissingClaimableClass = true;
+void _everyClaimableClassListed;
 
 /**
  * What a failed model request can need before it succeeds: another try (`transient`), an operator's

@@ -87,6 +87,7 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`AnswerCaller`](#answercaller) | type | The names a call to `submitHumanResponse` can give for where it came from (`SubmitGateOptions.caller`). |
 | [`CapabilityBasis`](#capabilitybasis) | type | What a capability refusal was judged from: the caller's own registry, or the run's marker when the caller passed none. |
 | [`ChainCaller`](#chaincaller) | type | The names a call to `executeChain` can give for where it came from (`ExecuteChainOptions.caller`). |
+| [`ClaimableErrorClass`](#claimableerrorclass) | type | Every drive-failure class a program or a provider may claim, such as the class an `executeChain` caller passes in `modelFailure.error_class`. |
 | [`ClaimState`](#claimstate) | type | How alive a single in-progress claim is: `healthy`, `claim_stale` or `claim_unknown_age`. |
 | [`Cond`](#cond) | type | A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`). |
 | [`DisclosureTier`](#disclosuretier) | type | `declared` hides declared members only (question text, private terminals); `all` adds the environment members and the patterns. |
@@ -1108,6 +1109,15 @@ interface ExecuteChainOptions {
     heldClaim?: {
         hold: LeaseHold;
     };
+    modelFailure?: {
+        kind: 'transient' | 'permanent';
+        stop_reason: NonNullable<EvidenceSnapshot['stop_reason']>;
+        message: string;
+        attempt: number;
+        error_class: ClaimableErrorClass;
+        status: number | null;
+        attempts_sdk?: number;
+    };
     onStep?: AdvanceRunOptions['onStep'];
     onTaken?: AdvanceRunOptions['onTaken'];
     onNotRecorded?: AdvanceRunOptions['onNotRecorded'];
@@ -1812,6 +1822,17 @@ The names a call to `executeChain` can give for where it came from
 
 ```ts
 type ChainCaller = (typeof ENTRY_CALLERS.executeChain)[number];
+```
+
+### ClaimableErrorClass
+
+type · public
+
+Every drive-failure class a program or a provider may claim, such as the class an `executeChain`
+caller passes in `modelFailure.error_class`. Today that is every class (gap 2, unit (ii-a)).
+
+```ts
+type ClaimableErrorClass = DriveFailureRecord['error_class'];
 ```
 
 ### ClaimState
