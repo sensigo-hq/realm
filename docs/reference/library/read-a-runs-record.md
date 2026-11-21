@@ -357,7 +357,7 @@ interface DriveFailureRecord {
     at: string;
     step: string;
     provider: string;
-    error_class: 'connection_timeout' | 'connection_error' | 'api_status' | 'sdk_missing' | 'validation_rejected' | 'aborted_by_budget' | 'other';
+    error_class: 'connection_timeout' | 'connection_error' | 'api_status' | 'sdk_missing' | 'validation_rejected' | 'aborted_by_budget' | 'startup_failure' | 'other';
     message: string;
     evidence_count?: number;
     gate_id?: string;

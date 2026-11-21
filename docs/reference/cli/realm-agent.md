@@ -295,9 +295,34 @@ A command that is refused creates no run. The refusals:
 
 In the row about a provider from another realm-cli version, the project's realm-cli is a copy of 0.46.0 given the version number 0.46.1 for this example.
 
-The refusals about the API keys, `--base-url` and `--model` end `Nothing was started.` with `--workflow`, as shown. After `--run-id`, they end `If run <run-id> exists, it was not changed.` instead. Realm checks these flags before it reads the run, so a mistyped run id is reported as not found once the flags are right. Both closing sentences were added in 0.46.0. The `--prompt-cache` refusal ends the same way (added after version 0.47.0); the one about the workflow reads the run and its workflow first, and changes neither, also for a run that a failed extension load ended. The refusals that begin `Error: --cache-diagnostics on has nothing to act on` end the same way; the one about the workflow reads the run and its workflow first, as `--prompt-cache`'s does (added after version 0.48.0). A `--model` that is empty or holds only spaces gets the same refusal as a missing one.
+The refusals about the API keys, `--base-url` and `--model` end `Nothing was started.` with `--workflow`, as shown; that closing sentence was added in 0.46.0. After `--run-id`, Realm records the refusal on the run first ([A startup death leaves a mark](#a-startup-death-leaves-a-mark)), and the refusal ends with one of four sentences, for what was done to the run (added after version 0.50.0, which ended them `If run <run-id> exists, it was not changed.`):
+
+- `Run <run-id> keeps this failure under Drive failures; realm run list --stuck lists it until the run next records a step or a question, or ends.`
+- `Run <run-id> had already ended; nothing was recorded.`
+- `Run <run-id> is not in the store; nothing was recorded.` A mistyped run id gets this one.
+- `Run <run-id> could not be updated; the failure was not recorded.` The line `⚠ drive-failure record LOST for run <run-id> …`, printed before the refusal, says what was lost.
+
+The refusals about a provider module that cannot be loaded, one from another realm-cli version, and one whose default export is not an `LlmProvider` end the same way after `--run-id`, with that sentence on a line of its own (added after version 0.50.0). The `--prompt-cache` refusal ends `If run <run-id> exists, it was not changed.` after `--run-id` (added after version 0.47.0); the one about the workflow reads the run and its workflow first, and changes neither, also for a run that a failed extension load ended. The refusals that begin `Error: --cache-diagnostics on has nothing to act on` end the same way; the one about the workflow reads the run and its workflow first, as `--prompt-cache`'s does (added after version 0.48.0). A `--model` that is empty or holds only spaces gets the same refusal as a missing one.
 
 `--strict-base-url` without `--base-url` is not refused. It prints `⚠ --strict-base-url has no effect without --base-url …` and carries on.
+
+## A startup death leaves a mark
+
+When `realm agent --run-id <id>` is refused by its own startup checks — no key for the provider, no model, `--base-url` with Anthropic, a provider module that does not load — it records the refusal on the run as a drive failure of kind `startup_failure` before it exits, so `realm run list --stuck` lists the run and `realm run inspect` shows it under `Drive failures` (added after version 0.50.0).
+
+The entry names no step. Its provider is the one given with `--provider`, or `unknown`; its message is the refusal's own words, without `Error: ` and its last sentence; its time is how long the command had run. `realm run list --stuck` ends the run's line with `drive_failing(startup_failure)`, with no step before it, and `realm run inspect` prints the entry under `Drive failures` with no step between the time and the provider. The finding clears as every `drive_failing` does: when the run next records a step or a question, or ends.
+
+A refusal like this on a run that another process is driving is recorded on that run too: it shows `drive_failing(startup_failure)` until that drive next records a step or a question.
+
+Realm cannot record these, by construction:
+
+- A refusal before the store is open: `--workflow` with `--run-id`, `--params` with `--run-id`, a `REALM_OPERATOR` Realm cannot use, and a flag value the command line refuses, such as `--schema-retries x`.
+- A `--workflow` run that is refused: there is no run yet.
+- A store that cannot be opened.
+- A refusal of how the flags are used, which is not a death: `--provider-module` with `--provider`, `--model` or another of its flags, and the refusals of `--prompt-cache` and `--cache-diagnostics on` when they would change nothing.
+- Outside `realm listen`, when the output goes to a file or a pipe: the first process failing to start the second one, which drives, and a `SIGKILL` of the second one before it writes. The run then shows as `never_claimed_idle`.
+
+Under `realm listen` the reverse can happen, rarely: when the first process is killed by a `SIGKILL` and the second one lives on, `realm listen` records the mark ([`realm listen`](realm-listen.md)), and that drive may then start. `drive_failing` clears at the drive's first recorded step.
 
 ## See also
 

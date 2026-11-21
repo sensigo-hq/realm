@@ -383,6 +383,7 @@ CAPABILITY_BASES · value · public
       "marker"
   ];
 
+CLAIMABLE_ERROR_CLASSES · value · internal
 CLAIM_PROOF_ABSENT_CAUSES · value · internal
 CLAIM_STATES · value · internal
 CLOCK_READ_CLASSES · value · public
@@ -1033,7 +1034,7 @@ DriveFailureRecord · type · public
       at: string;
       step: string;
       provider: string;
-      error_class: 'connection_timeout' | 'connection_error' | 'api_status' | 'sdk_missing' | 'validation_rejected' | 'aborted_by_budget' | 'other';
+      error_class: 'connection_timeout' | 'connection_error' | 'api_status' | 'sdk_missing' | 'validation_rejected' | 'aborted_by_budget' | 'startup_failure' | 'other';
       message: string;
       evidence_count?: number;
       gate_id?: string;

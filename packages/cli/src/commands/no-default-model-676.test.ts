@@ -245,34 +245,39 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
     expect(await runFiles()).toEqual([]);
   }, 30_000);
 
-  it('E2 --run-id of an existing run, no --model → "If run <id> exists, it was not changed.", the run file unchanged', async () => {
+  // Q1 (#592) unit c: a refusal for want of a model is a startup death — with --run-id it is recorded on
+  // the run, and the closing sentence says so (the message before it unchanged).
+  it('E2 --run-id of an existing run, no --model → the refusal, then "Run <id> keeps this failure under Drive failures; …"; one startup_failure entry', async () => {
     const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'no-default-model-676',
       workflowVersion: 1,
       params: {},
     });
-    const before = JSON.stringify((await store.get(run.id)).record);
     const r = await runCli(
       ['agent', '--run-id', run.id],
       env({ ANTHROPIC_API_KEY: 'k-676', ANTHROPIC_BASE_URL: CLOSED_PORT }),
     );
     expect(r.code).toBe(1);
     expect(r.stderr.trim()).toBe(
-      `Error: ${ONLY_ANTHROPIC} If run ${run.id} exists, it was not changed.`,
+      `Error: ${ONLY_ANTHROPIC} Run ${run.id} keeps this failure under Drive failures; realm run list --stuck lists it until the run next records a step or a question, or ends.`,
     );
     expect(r.stderr).not.toContain('Nothing was started.');
-    expect(JSON.stringify((await store.get(run.id)).record) === before).toBe(true);
+    const after = (await store.get(run.id)).record;
+    expect(
+      (after.drive_failures?.entries ?? []).map((e) => [e.step, e.error_class, e.message]),
+    ).toEqual([['', 'startup_failure', ONLY_ANTHROPIC]]);
   }, 30_000);
 
-  it('E2b --run-id of a run that does not exist, no --model → the same ending, which does not say the run exists; no run file', async () => {
+  // Q1 (#592) unit c: the closing sentence says there was no run to record it on.
+  it('E2b --run-id of a run that does not exist, no --model → the refusal, then "Run <id> is not in the store; nothing was recorded."; no run file', async () => {
     const r = await runCli(
       ['agent', '--run-id', 'no-such-run-676'],
       env({ ANTHROPIC_API_KEY: 'k-676', ANTHROPIC_BASE_URL: CLOSED_PORT }),
     );
     expect(r.code).toBe(1);
     expect(r.stderr.trim()).toBe(
-      `Error: ${ONLY_ANTHROPIC} If run no-such-run-676 exists, it was not changed.`,
+      `Error: ${ONLY_ANTHROPIC} Run no-such-run-676 is not in the store; nothing was recorded.`,
     );
     expect(await runFiles()).toEqual([]);
   }, 30_000);

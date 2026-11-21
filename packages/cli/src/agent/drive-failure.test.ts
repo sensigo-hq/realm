@@ -127,7 +127,8 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
         'r1',
         entry({ error_class: 'api_status', message: 'rate limit' }),
       ),
-    ).resolves.toBeUndefined();
+      // Q1 (#592) unit c: the fence now says what it did; lost to contention is `not_written`.
+    ).resolves.toBe('not_written');
 
     expect(errors).toHaveLength(2);
     expect(errors[0]).toContain("Step 'classify' LLM call failed");
@@ -146,14 +147,16 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
         throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
       },
     };
-    await expect(recordDriveFailure(store, 'r1', entry())).resolves.toBeUndefined();
+    // Q1 (#592) unit c: a store that failed is `not_written`.
+    await expect(recordDriveFailure(store, 'r1', entry())).resolves.toBe('not_written');
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('drive-failure record LOST');
   });
 
   it('a run that is already terminal is a SILENT skip — the seal is the visibility', async () => {
     const h = makeStore(makeRun({ terminal_state: true }));
-    await recordDriveFailure(h.store, 'r1', entry());
+    // Q1 (#592) unit c: an ended run is `run_ended`.
+    await expect(recordDriveFailure(h.store, 'r1', entry())).resolves.toBe('run_ended');
     expect(h.calls.update).toBe(0);
     expect(errors).toEqual([]);
   });
@@ -170,7 +173,8 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
       },
       update: async (): Promise<Snapshot> => snap(makeRun()),
     };
-    await expect(recordDriveFailure(store, 'r1', entry())).resolves.toBeUndefined();
+    // Q1 (#592) unit c: no such run is `not_found`.
+    await expect(recordDriveFailure(store, 'r1', entry())).resolves.toBe('not_found');
     expect(errors).toEqual([]);
   });
 
