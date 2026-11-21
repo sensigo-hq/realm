@@ -147,10 +147,13 @@ describe('validate --registered (issue #427)', () => {
   it('R2 warnings-only — the header, the warnings, Valid, exit 0', async () => {
     // The fixture's warning MUST be non-escalating. #170 is LIVE: an unknown-key fixture
     // resolves to ERROR under the default policy and refuses, flipping this cell to exit 1 and
-    // testing the opposite of what it claims. `retry` on an agent step is inert-and-warned.
+    // testing the opposite of what it claims. An unknown `retry` key (UNKNOWN_RETRY_KEY) only warns
+    // (gap 2, unit (i-b): `retry` itself is read on an agent step now).
     await h.home.workflowStore.register(
       stored({
-        steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
+        steps: {
+          a: { description: 'a', execution: 'agent', retry: { max_attempts: 3, jitter: 1 } },
+        },
       }) as never,
     );
 
@@ -158,7 +161,7 @@ describe('validate --registered (issue #427)', () => {
 
     const text = out();
     expect(text).toContain("Auditing the registered copy of 'stored-wf'");
-    expect(text).toContain("'retry' is inert on execution: 'agent' steps");
+    expect(text).toContain("unknown key 'jitter'");
     expect(text).toContain('Valid: stored-wf');
     expect(exitSpy).not.toHaveBeenCalled();
   });
@@ -166,7 +169,9 @@ describe('validate --registered (issue #427)', () => {
   it('R3 --strict flips a warnings-only audit to exit 1, in the singular', async () => {
     await h.home.workflowStore.register(
       stored({
-        steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
+        steps: {
+          a: { description: 'a', execution: 'agent', retry: { max_attempts: 3, jitter: 1 } },
+        },
       }) as never,
     );
 
@@ -747,10 +752,10 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     // (2) warnings only, no --strict → the same bare line, warnings above.
     vi.clearAllMocks();
     await planted({
-      steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
+      steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3, jitter: 1 } } },
     });
     await run([]);
-    expect(out()).toContain("'retry' is inert on execution: 'agent' steps");
+    expect(out()).toContain("unknown key 'jitter'");
     expect(validLine()).toBe('Valid: stored-wf v1 (1 step)');
 
     // (3) not-run only → the tail names it, no warning count.
@@ -764,11 +769,11 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     // (4) warnings + not-run, no --strict → the SAME tail as (3) — no warning count, exit 0.
     vi.clearAllMocks();
     await planted({
-      steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
+      steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3, jitter: 1 } } },
     });
     rmSync(tree, { recursive: true, force: true });
     await run([]);
-    expect(out()).toContain("'retry' is inert on execution: 'agent' steps");
+    expect(out()).toContain("unknown key 'jitter'");
     expect(validLine()).toBe('Valid: stored-wf v1 (1 step) — 1 check not run');
     expect(exitSpy).not.toHaveBeenCalled();
 
@@ -776,8 +781,8 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     vi.clearAllMocks();
     await planted({
       steps: {
-        a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } },
-        b: { description: 'b', execution: 'agent', retry: { max_attempts: 3 } },
+        a: { description: 'a', execution: 'agent', retry: { max_attempts: 3, jitter: 1 } },
+        b: { description: 'b', execution: 'agent', retry: { max_attempts: 3, jitter: 1 } },
       },
     });
     rmSync(tree, { recursive: true, force: true });
@@ -804,7 +809,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     vi.clearAllMocks();
     await planted({
       description: 'Reviews a change.',
-      steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
+      steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3, jitter: 1 } } },
     });
     rmSync(tree, { recursive: true, force: true });
     await expect(run(['--strict'])).rejects.toThrow('process.exit');

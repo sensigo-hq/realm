@@ -325,7 +325,9 @@ version: 1
 steps:
   step-one:
     description: First step
-    execution: agent
+    execution: guard
+    abort_unless: ["step-one.ok == true"]
+    # gap 2 (i-b): an agent step's retry now applies; a guard step's still warns
     retry:
       max_attempts: 3
 `;

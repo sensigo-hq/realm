@@ -18,8 +18,9 @@ import {
   extractJsonObject,
   sanitizeError,
   driveCreate,
+  clientRetries,
+  type ModelResend,
   makeCountingFetch,
-  MAX_RETRIES,
   type LlmClock,
   type WireCounters,
   attachBilledUsage,
@@ -211,14 +212,17 @@ export class OpenAIReasoningProvider extends LlmProvider {
       apiKey: process.env['OPENAI_API_KEY'],
       // issue #401: realm's own bound (see the twin comment in anthropic-provider.ts).
       ...(clock?.declaredPerAttemptMs !== undefined ? { timeout: clock.declaredPerAttemptMs } : {}),
-      maxRetries: MAX_RETRIES,
+      maxRetries: clientRetries(clock),
       fetch: makeCountingFetch(counters),
     });
 
     const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
+    // Gap 2, unit (i-b): `resend` names the gateway rule's re-send, which uses no try.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const bounded = (body: Rec): Promise<any> =>
-      clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
+    const bounded = (body: Rec, resend?: ModelResend): Promise<any> =>
+      clock !== undefined
+        ? driveCreate(rawCreate, body, clock, counters, { resend })
+        : rawCreate(body, {});
 
     // Fold system prompt into the user message — safe for all o1-series API revisions.
     const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
@@ -255,9 +259,9 @@ export class OpenAIReasoningProvider extends LlmProvider {
         callTexts,
         () => openAiSentText(body),
         () =>
-          sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
+          sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache, resend) => {
             body = withCache ? withCacheKey(base, plan) : base;
-            return bounded(body);
+            return bounded(body, resend);
           }),
       );
       // Gap 1, unit A1: the request's text beside its record, in the same statement.

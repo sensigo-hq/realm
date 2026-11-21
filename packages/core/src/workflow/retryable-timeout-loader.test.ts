@@ -547,7 +547,9 @@ steps:
   });
 
   describe('W5 — total_timeout_seconds is inert on a non-auto step (CAP-only advisory)', () => {
-    it('warns when an agent step declares retry.total_timeout_seconds', () => {
+    // Gap 2, unit (i-b): an agent step's `retry` is read by realm agent and realm listen, its
+    // total_timeout_seconds the cap on each model request, so W5 now fires on a guard step only.
+    it('warns when a guard step declares retry.total_timeout_seconds', () => {
       const { warnings } = loadWorkflowFromStringWithDiagnostics(`
 id: w5-wf
 name: W5
@@ -555,14 +557,15 @@ version: 1
 steps:
   work:
     description: Work
-    execution: agent
+    execution: guard
+    abort_unless: ["work.ok == true"]
     retry:
       max_attempts: 3
       total_timeout_seconds: 60
 `);
       const w5 = warnings.find((w) => w.code === 'TOTAL_TIMEOUT_NON_AUTO');
       expect(w5).toBeDefined();
-      expect(w5?.message).toContain("execution: 'agent'");
+      expect(w5?.message).toContain("execution: 'guard'");
     });
 
     it('does NOT warn (W5 is cap-only) merely for a bare retry block with no total_timeout_seconds on a non-auto step', () => {
@@ -646,7 +649,9 @@ steps:
 });
 
 describe('yaml-loader — issue #218 RETRY_INERT_NON_AUTO (bare retry sub-keys on a non-auto step)', () => {
-  it('1. agent step, bare retry ⇒ advisory fires, message contains --schema-retries AND the embedder caveat', () => {
+  // Gap 2, unit (i-b): realm agent and realm listen read an agent step's `retry`, so neither
+  // advisory fires there any more (the registry's agent cell is consumed).
+  it('1. agent step, bare retry ⇒ no advisory: realm agent and realm listen read it', () => {
     const { warnings } = loadWorkflowFromStringWithDiagnostics(`
 id: retry-inert-agent-wf
 name: Retry Inert Agent
@@ -660,11 +665,8 @@ steps:
       backoff: fixed
       base_delay_ms: 10
 `);
-    const w = warnings.find((warning) => warning.code === 'RETRY_INERT_NON_AUTO');
-    expect(w).toBeDefined();
-    expect(w?.message).toContain("execution: 'agent'");
-    expect(w?.message).toContain('--schema-retries');
-    expect(w?.message).toContain('embedder-supplied throwing dispatcher');
+    expect(warnings.find((warning) => warning.code === 'RETRY_INERT_NON_AUTO')).toBeUndefined();
+    expect(warnings.find((warning) => warning.code === 'TOTAL_TIMEOUT_NON_AUTO')).toBeUndefined();
   });
 
   it('2. guard step, same block ⇒ fires, message does NOT contain --schema-retries', () => {
@@ -809,7 +811,8 @@ version: 1
 steps:
   work:
     description: Work
-    execution: agent
+    execution: guard
+    abort_unless: ["work.ok == true"]
     retry:
       max_attempts: 3
       backoff: fixed
@@ -828,7 +831,8 @@ version: 1
 steps:
   work:
     description: Work
-    execution: agent
+    execution: guard
+    abort_unless: ["work.ok == true"]
     retry:
       max_attempts: 3
       backoff: fixed
@@ -847,7 +851,8 @@ version: 1
 steps:
   work:
     description: Work
-    execution: agent
+    execution: guard
+    abort_unless: ["work.ok == true"]
     retry:
       max_attempts: 3
       backoff: fixed

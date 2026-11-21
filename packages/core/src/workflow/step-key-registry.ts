@@ -668,7 +668,8 @@ export const CONSUMED_HOME: Partial<Record<(typeof KNOWN_STEP_KEYS)[number], Con
     remedy: 'Move it to an auto or finalizer step it should bound, or remove it.',
   },
   retry: {
-    kinds: ['auto'],
+    // Gap 2, unit (i-b): an agent step's `retry` is read by realm's own drive (the RA witness).
+    kinds: ['auto', 'agent'],
     // #417 wording defect (overclaim, board #26): "only auto attempts are retried that way"
     // implied auto is the retry mechanism's OWN exclusivity boundary — but an embedder-supplied
     // dispatcher on another kind could retry through the identical loop; the true boundary is
@@ -1190,7 +1191,16 @@ export const STEP_KEY_REGISTRY = {
       c: 'consumed',
       where: [W_RETRY_READ],
     },
-    agent: { c: 'inert', via: { kind: 'advisory', code: 'RETRY_INERT_NON_AUTO' } },
+    // Gap 2, unit (i-b): realm agent and realm listen try a failed model request again as it says.
+    agent: {
+      c: 'consumed',
+      where: [
+        {
+          file: RA,
+          pattern: "const retryBlock = stepDef.execution === 'agent' ? stepDef.retry : undefined;",
+        },
+      ],
+    },
     guard: { c: 'inert', via: { kind: 'advisory', code: 'RETRY_INERT_NON_AUTO' } },
     finalizer: { c: 'prohibited', by: [MINT], line: 'key', front: 'not_valid' },
   },
