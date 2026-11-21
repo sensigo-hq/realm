@@ -32,6 +32,7 @@ import { declareMasterKey } from '../lib/callback/declare-master-key.js';
 import { entryRefusalPhrase } from '../lib/callback/entry-words.js';
 import { callbackEntryLabel } from '../lib/callback/host-label.js';
 import { placeMasterKeyFile } from '../lib/callback/master-key-file.js';
+import { commandSourceWords } from '../lib/callback/master-key-words.js';
 import {
   MASTER_KEY_FILE,
   parseMasterKey,
@@ -105,6 +106,10 @@ function invalidLine(
   env: Readonly<Record<string, string | undefined>>,
   homeFile: string,
 ): string {
+  if (res.source === 'command') {
+    const { reason, tail } = commandSourceWords(res);
+    return `Error: REALM_ENCRYPTION_KEY_COMMAND did not give a master key: ${reason}. ${NOTHING} ${tail}`;
+  }
   const named = env['REALM_ENCRYPTION_KEY_FILE'];
   const reason =
     res.source === 'env_file' && named !== undefined && !isAbsolute(named)
@@ -243,7 +248,11 @@ export async function callbackKey(
   const disagree = (): string | undefined => {
     if (res.state !== 'found' || res.differs_from_home_file !== true) return undefined;
     const src =
-      res.source === 'env' ? 'REALM_ENCRYPTION_KEY' : 'the file REALM_ENCRYPTION_KEY_FILE names';
+      res.source === 'env'
+        ? 'REALM_ENCRYPTION_KEY'
+        : res.source === 'command'
+          ? 'REALM_ENCRYPTION_KEY_COMMAND'
+          : 'the file REALM_ENCRYPTION_KEY_FILE names';
     return `${src} gives encryption key ${res.fp}, but ${homeFile} holds encryption key ${homeFileFp(homeFile)}.`;
   };
   const refuseDisagree = (): 1 | undefined => {
@@ -428,8 +437,9 @@ export async function callbackKey(
           const first = listing[0]!;
           return fail(
             `Error: this shell has no master key, and this home holds keys sealed with encryption ` +
-              `key ${fps.join(', ')}: ${shown.join(', ')}${more}. Set REALM_ENCRYPTION_KEY or ` +
-              `REALM_ENCRYPTION_KEY_FILE to the key they were sealed with, or restore ${homeFile}. If ` +
+              `key ${fps.join(', ')}: ${shown.join(', ')}${more}. Set REALM_ENCRYPTION_KEY, ` +
+              'REALM_ENCRYPTION_KEY_FILE or REALM_ENCRYPTION_KEY_COMMAND to the key they were ' +
+              `sealed with, or restore ${homeFile}. If ` +
               'it is lost, make a new master key by running this command with --replace for one of ' +
               `them (the workflow file whose id is ${first.workflow_id}, if it still takes callbacks, ` +
               `with --host ${first.host}), or remove them with --delete; every key made under the old ` +

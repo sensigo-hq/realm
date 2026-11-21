@@ -101,3 +101,46 @@ describe('callback K1 — the environment sweep', () => {
     });
   });
 });
+
+// Callback K2b: the third name, `REALM_ENCRYPTION_KEY_COMMAND` (a command that prints the master key;
+// its words may hold a token), is a credential: stripped from every agent and hidden by the sweep.
+const COMMAND = 'op read x --token FAKE-TOKEN-0001';
+
+describe('callback K2b — the master key’s command, a third name', () => {
+  it('none of the three names reaches the agent; every other variable does', async () => {
+    vi.stubEnv('REALM_ENCRYPTION_KEY', KEY);
+    vi.stubEnv('REALM_ENCRYPTION_KEY_FILE', KEY_FILE);
+    vi.stubEnv('REALM_ENCRYPTION_KEY_COMMAND', COMMAND);
+    vi.stubEnv('K2B_KEPT_VARIABLE', 'kept-value');
+    const spawn = recordingSpawn();
+    await defaultSpawnAgent('run-k2b', process.cwd(), { model: 'm-k2b' }, () => {}, spawn.spawnFn);
+    const env = spawn.options()?.env ?? {};
+    // (1) red when the command's name is not stripped, or another variable is dropped; (2) prints
+    //     which names the agent got (never a value).
+    expect({
+      names: [
+        'REALM_ENCRYPTION_KEY',
+        'REALM_ENCRYPTION_KEY_FILE',
+        'REALM_ENCRYPTION_KEY_COMMAND',
+      ].filter((n) => n in env),
+      kept: env['K2B_KEPT_VARIABLE'],
+      listenKeepsCommand: process.env['REALM_ENCRYPTION_KEY_COMMAND'] === COMMAND,
+    }).toEqual({ names: [], kept: 'kept-value', listenKeepsCommand: true });
+  });
+
+  it('a log and an agent never see the command’s value', () => {
+    const text = `ran ${COMMAND}`;
+    const hidden = (audience: 'log' | 'agent') => {
+      const { set } = buildDisclosureSet({
+        env: { REALM_ENCRYPTION_KEY_COMMAND: COMMAND },
+        declared: {},
+        declaredState: 'resolved',
+        audience,
+      });
+      return !disclose(text, set, tierFor(audience)).text.includes('FAKE-TOKEN-0001');
+    };
+    // (1) red when the name is placed among the settings (its value is then shown whole on a log);
+    //     (2) prints, per audience, whether the token is hidden.
+    expect({ log: hidden('log'), agent: hidden('agent') }).toEqual({ log: true, agent: true });
+  });
+});

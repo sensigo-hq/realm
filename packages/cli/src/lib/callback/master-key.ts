@@ -7,20 +7,33 @@
 // that is invalid does not fall through:
 //   1. `REALM_ENCRYPTION_KEY` (an empty or all-whitespace value counts as unset);
 //   2. the file `REALM_ENCRYPTION_KEY_FILE` names (an absolute path; the same rule for its value);
-//   3. `<home>/encryption.key`, absent exactly when it has no directory entry (`lstat` answers
+//   3. what the command `REALM_ENCRYPTION_KEY_COMMAND` names prints (K2b: run without a shell, for
+//      at most 30 seconds, by `master-key-command.ts`; its output is the key text, read as a file's);
+//   4. `<home>/encryption.key`, absent exactly when it has no directory entry (`lstat` answers
 //      ENOENT): an entry that cannot be read, a dangling link included, is not absent.
 import { lstatSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { masterKeyFingerprint } from '@sensigo/realm-store-sqlite';
+import { COMMAND_TIMEOUT_SECONDS, runKeyCommand } from './master-key-command.js';
 
 /** The master key file in the Realm home. */
 export const MASTER_KEY_FILE = 'encryption.key';
 
 /** The closed words an invalid source is reported with (K2 prints them). */
-export const MASTER_KEY_INVALID_REASONS = ['malformed', 'empty', 'unreadable_file'] as const;
+export const MASTER_KEY_INVALID_REASONS = [
+  'malformed',
+  'empty',
+  'unreadable_file',
+  // K2b: the command source's own.
+  'command_no_program',
+  'command_unclosed_quote',
+  'command_timeout',
+  'command_not_started',
+  'command_failed',
+] as const;
 export type MasterKeyInvalidReason = (typeof MASTER_KEY_INVALID_REASONS)[number];
 
-export type MasterKeySource = 'env' | 'env_file' | 'home_file';
+export type MasterKeySource = 'env' | 'env_file' | 'command' | 'home_file';
 
 /** What the resolver found. A `found` result's `key` is not enumerable: a log of it never carries it. */
 export type MasterKeyResolution =
@@ -29,7 +42,7 @@ export type MasterKeyResolution =
       readonly key: Uint8Array;
       readonly source: MasterKeySource;
       readonly fp: string;
-      /** The home file exists, parses and has another fingerprint (the source is the environment). */
+      /** The home file exists, parses and has another fingerprint (the source is a setting). */
       readonly differs_from_home_file?: true;
       /** POSIX: the file the key came from can be read by others than its owner. */
       readonly mode_wider_than_owner?: true;
@@ -39,6 +52,10 @@ export type MasterKeyResolution =
       readonly state: 'invalid';
       readonly source: MasterKeySource;
       readonly reason: MasterKeyInvalidReason;
+      /** The command source: its exit status, the signal that ended it, or why it did not start. */
+      readonly status?: number;
+      readonly signal?: string;
+      readonly code?: string;
     };
 
 /**
@@ -65,7 +82,7 @@ function readKeyFile(path: string): FileRead {
   }
 }
 
-/** The key a file's text holds, or why it does not hold one. */
+/** The key a file's text (or a command's output) holds, or why it does not hold one. */
 function keyOfFile(read: FileRead): Uint8Array | MasterKeyInvalidReason {
   if ('unreadable' in read) return 'unreadable_file';
   if (read.text === '' || read.text === '\n' || read.text === '\r\n') return 'empty';
@@ -114,12 +131,13 @@ function found(
 }
 
 /**
- * Resolves the master key (see the module comment). Reads the environment and at most two files;
- * writes nothing.
+ * Resolves the master key (see the module comment). Reads the environment and at most two files, and
+ * runs at most one command; writes nothing. `commandTimeoutMs` is a test's shorter limit.
  */
 export function resolveMasterKey(o: {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly homeDir: string;
+  readonly commandTimeoutMs?: number;
 }): MasterKeyResolution {
   const homePath = join(o.homeDir, MASTER_KEY_FILE);
   /** Whether the home file holds a key of another fingerprint (anything else sets nothing). */
@@ -143,6 +161,14 @@ export function resolveMasterKey(o: {
       differs: homeDiffers(masterKeyFingerprint(key)),
       wide: widerThanOwner(named),
     });
+  }
+  const command = o.env['REALM_ENCRYPTION_KEY_COMMAND'];
+  if (isSet(command)) {
+    const ran = runKeyCommand(command, o.env, o.commandTimeoutMs ?? COMMAND_TIMEOUT_SECONDS * 1000);
+    if (!('text' in ran)) return { state: 'invalid', source: 'command', ...ran };
+    const key = keyOfFile(ran);
+    if (!(key instanceof Uint8Array)) return { state: 'invalid', source: 'command', reason: key };
+    return found(key, 'command', { differs: homeDiffers(masterKeyFingerprint(key)) });
   }
   const home = readHomeFile(homePath);
   if (home === undefined) return { state: 'none' };

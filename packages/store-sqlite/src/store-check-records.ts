@@ -123,6 +123,11 @@ export interface RecordPass {
   readonly forms?: ScanOutcome;
   /** The places that hold a changed form, in the scan's order. */
   readonly formHits: readonly FormHit[];
+  /** The callback key count (K2b): every stored slot, an expired previous one included. */
+  readonly keys: ScanOutcome;
+  readonly callbackKeys: number;
+  /** Of those, the ones whose recorded master fingerprint is not the one asked; absent: not asked. */
+  readonly callbackKeysOtherMaster?: number;
 }
 
 /** How many runs one page of the runs scan reads (the driver pages with `all()`; AUD-C8B1-09). */
@@ -272,6 +277,9 @@ interface Collected {
   versionWrong: { workflowId: string; hash: string }[];
   forms?: ScanOutcome;
   formHits: FormHit[];
+  keys: ScanOutcome;
+  callbackKeys: number;
+  callbackKeysOtherMaster?: number;
 }
 
 const NOT_RUN: ScanOutcome = { done: false, errcode: 0 };
@@ -296,6 +304,8 @@ function collected(): Collected {
     versions: NOT_RUN,
     versionWrong: [],
     formHits: [],
+    keys: NOT_RUN,
+    callbackKeys: 0,
   };
 }
 
@@ -582,14 +592,30 @@ function scanVersions(c: DatabaseLike, out: Collected): void {
 }
 
 /**
+ * The callback keys (K2b), counted; and, when a master fingerprint is given, how many were recorded
+ * as sealed under another. The check has no sealer: only the recorded fingerprint is compared.
+ */
+function countKeys(c: DatabaseLike, masterFp: string | null | undefined, out: Collected): void {
+  out.callbackKeys = Number(c.prepare('SELECT count(*) AS n FROM callback_keys').get()?.['n']);
+  if (typeof masterFp === 'string') {
+    const other = c
+      .prepare('SELECT count(*) AS n FROM callback_keys WHERE master_fp <> ?')
+      .get(masterFp);
+    out.callbackKeysOtherMaster = Number(other?.['n']);
+  }
+}
+
+/**
  * The pass (see the module comment), on the check's read-only connection. `running` is the running
  * phase derivation's fingerprint; `declared`, the declared values whose changed forms are looked for
- * (absent: that scan does not run). Rejects only with an error that is not SQLite's corrupt error.
+ * (absent: that scan does not run); `masterFp`, the master fingerprint the keys are compared with (a
+ * string; anything else: not compared). Rejects only with an error that is not SQLite's corrupt error.
  */
 export async function readRecords(
   db: RealmDb,
   running: string,
   declared?: readonly string[],
+  masterFp?: string | null,
 ): Promise<RecordPass> {
   let out = collected();
   let finished = false;
@@ -617,6 +643,7 @@ export async function readRecords(
             out.formHits = scanDeclaredForms(c, declared);
           });
         }
+        out.keys = scan(() => countKeys(c, masterFp, out));
         finished = true;
       },
       { takesReading: false },
@@ -635,6 +662,7 @@ export async function readRecords(
       out.pointers,
       out.versions,
       ...(out.forms === undefined ? [] : [out.forms]),
+      out.keys,
     ];
     const met = all.some((s) => s !== NOT_RUN && !s.done);
     if (!finished || !met) {
@@ -649,6 +677,7 @@ export async function readRecords(
         pointers: stopped,
         versions: stopped,
         ...(declared === undefined ? {} : { forms: stopped }),
+        keys: stopped,
       };
     }
   }

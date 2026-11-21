@@ -1835,10 +1835,11 @@ export function defaultSpawnAgent(
     try {
       const realmBin = process.argv[1] ?? '';
       // Callback K1: an agent never gets the master key the callback keys are sealed under, nor the
-      // path of its file; every other variable is kept.
+      // path of its file, nor (K2b) the command that prints it; every other variable is kept.
       const {
         REALM_ENCRYPTION_KEY: _masterKey,
         REALM_ENCRYPTION_KEY_FILE: _masterKeyFile,
+        REALM_ENCRYPTION_KEY_COMMAND: _masterKeyCommand,
         ...inherited
       } = process.env;
       const child = spawnFn(process.execPath, [realmBin, ...buildAgentArgv(runId, opts)], {
