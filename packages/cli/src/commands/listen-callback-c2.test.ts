@@ -140,6 +140,9 @@ describe('C2 — not enabled, four ways (each with the other three conditions me
     }
     const s = await serveDoor(store, way === 'lists' ? { callbackLists: lists([]) } : {});
     if (way === 'readKey') delete s.routes.get(PATH)!.readKey;
+    // A workflow without result_map never gets a read key at start; one is given here, so that only
+    // the opt-in check can refuse it.
+    if (way === 'plain') s.routes.get('/plain')!.readKey = s.routes.get(PATH)!.readKey!;
     const path = way === 'plain' ? '/plain' : PATH;
     const r = await post(s.port, { id: 'evt-1' }, URL_, {}, path);
     // (1) red when the header is ignored (a 202 and a run), or the named condition is not checked;
