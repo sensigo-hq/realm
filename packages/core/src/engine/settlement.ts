@@ -1676,7 +1676,10 @@ function applySealRun(fresh: RunRecord, delta: SealRunDelta, at: Date): Settleme
   const released: RunRecord = delta.release_claims
     ? { ...withIdentity, in_progress_steps: [], claims: {} }
     : withIdentity;
-  const sealed = sealRunLevel(released, delta.arm, delta.reason, at);
+  const sealed = sealRunLevel(released, delta.arm, delta.reason, at, {
+    ...(delta.by !== undefined ? { by: delta.by } : {}),
+    ...(delta.door !== undefined ? { door: delta.door } : {}),
+  });
   const run: RunRecord = { ...sealed, run_phase: deriveRunPhase(sealed) };
   return {
     applied: true,

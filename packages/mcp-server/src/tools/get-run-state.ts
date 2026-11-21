@@ -5,6 +5,8 @@ import {
   type DriveFailuresField,
   NAMES_SHOWN,
   SEAL_ARMS,
+  SEAL_DOORS,
+  readAttributed,
   WorkflowError,
   capText,
   getWorkflowForRun,
@@ -331,6 +333,15 @@ function boundedDriveFailures(field: DriveFailuresField): DriveFailuresView {
   };
 }
 
+/**
+ * #625 PR-2b, the actor unit: the program a seal names, read as every recorded program is — an
+ * unreadable one is `name_unreadable`, never a guess.
+ */
+function sealedByActorOf(value: unknown): NonNullable<RunStateSummary['sealed_by_actor']> {
+  const read = readAttributed(value);
+  return read.by === null ? { by: null, absent_cause: 'name_unreadable' } : read;
+}
+
 /** #872 (b1) correction 1 (H7): `resumable` with at most ten steps; `steps_more` counts the rest. */
 function boundedResumable(way: { steps: string[]; command: string }): {
   steps: string[];
@@ -424,6 +435,23 @@ export const RUN_STATE_SUMMARY_TABLE = {
   },
   sealed_by_classified: 'fact',
   sealed_by_step: 'fact',
+  // #625 PR-2b, the actor unit: the program that ended the run — its name is the host's text, bounded
+  // (masked as environment values are: the part of it that matches an environment value of 8
+  // characters or more, such as a long OS user name, shows as `[REDACTED]`; REALM_OPERATOR's own
+  // value is not counted); how it is known, its channel and why there is none are realm's words. The
+  // command or tool is realm's word.
+  sealed_by_actor: {
+    nested: {
+      by: 'bounded',
+      by_source: 'fact',
+      channel: 'fact',
+      absent_cause: 'fact',
+    } satisfies Record<
+      keyof Merged<NonNullable<RunStateSummary['sealed_by_actor']>>,
+      DisclosureClass
+    >,
+  },
+  sealed_by_door: 'fact',
   // #872 (b1) correction 1 (H7): core's rows, with `usage_more` a fact.
   drive_failures: { nested: DRIVE_FAILURES_VIEW_TABLE },
   completed_steps: 'fact',
@@ -579,6 +607,24 @@ export interface RunStateSummary {
    * prevent, so the key is absent there. The record still carries it; `export` still ships it.
    */
   sealed_by_step?: string;
+  /**
+   * #625 PR-2b, the actor unit: the program that ended the run, as its seal records it — its name,
+   * how the name is known (`stated`, `ambient` from REALM_OPERATOR, `derived` from the OS user) and
+   * its channel. Recorded by `realm run abandon`, `realm run cleanup` and this server's `abandon_run`
+   * when a name is known. A name that cannot be read is `{ by: null, absent_cause: 'name_unreadable' }`.
+   * Absent — never null — when the seal names no program. Realm names a program, never a person; on
+   * this surface the name is masked as environment values are: the part of it that matches an
+   * environment value of 8 characters or more, such as a long OS user name, shows as `[REDACTED]`;
+   * REALM_OPERATOR's own value is not counted.
+   */
+  sealed_by_actor?: Attributed | { by: null; absent_cause: 'name_unreadable' };
+  /**
+   * #625 PR-2b, the actor unit: the command or tool that ended the run, as its seal records it —
+   * `realm_run_abandon`, `abandon_run` or `realm_run_cleanup`. A word this binary does not recognise
+   * renders as `unrecognized door '<value>'`, as `sealed_by_arm` does. Absent — never null — when the
+   * seal records none.
+   */
+  sealed_by_door?: string;
 
   /**
    * Failed drive attempts for this run (issue #401), as stored, except that each entry's `usage`
@@ -1318,6 +1364,17 @@ export async function handleGetRunState(
             run.sealed_by.arm.startsWith('gate_') ||
             run.sealed_by.arm === 'handler_abort')
             ? { sealed_by_step: run.sealed_by.step }
+            : {}),
+          // #625 PR-2b, the actor unit: who ended it and with what, each absent when not recorded.
+          ...(run.sealed_by.by !== undefined
+            ? { sealed_by_actor: sealedByActorOf(run.sealed_by.by) }
+            : {}),
+          ...(run.sealed_by.door !== undefined
+            ? {
+                sealed_by_door: (SEAL_DOORS as readonly string[]).includes(run.sealed_by.door)
+                  ? run.sealed_by.door
+                  : `unrecognized door '${run.sealed_by.door}'`,
+              }
             : {}),
         }
       : {}),

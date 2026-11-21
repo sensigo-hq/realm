@@ -10,10 +10,12 @@ import { createHash } from 'node:crypto';
 import type {
   RunRecord,
   SealArm,
+  SealDoor,
   SealedBy,
   SkipDetail,
   StepDiagnostics,
 } from '../types/run-record.js';
+import type { Attributed } from './holder.js';
 import { SEAL_ARMS } from '../types/run-record.js';
 import type { ListedRecord, RunPhase } from '../types/run-record.js';
 import { resolvePath } from './render-template.js';
@@ -256,14 +258,25 @@ export function assertSealOutcomeCoherent(
  * passes the write's one reading as `now` — the seal-tier instant (`abandoned_at`). No default: the
  * caller always has the reading.
  */
-export function sealRunLevel(run: RunRecord, arm: SealArm, reason: string, now: Date): RunRecord {
+export function sealRunLevel(
+  run: RunRecord,
+  arm: SealArm,
+  reason: string,
+  now: Date,
+  // #625 PR-2b, the actor unit: who ended the run on request, written as passed; neither ⇒ as before.
+  actor: { by?: Attributed; door?: SealDoor } = {},
+): RunRecord {
   const { sealed_by: _priorSeal, ...base } = run;
   // The carried run_phase may be stale here — every store write tail re-derives it
   // (PHASE_IS_GENERATED), which is exactly why the callers' fossil hand-writes were deletable.
   return {
     ...base,
     terminal_state: true,
-    sealed_by: { arm },
+    sealed_by: {
+      arm,
+      ...(actor.by !== undefined ? { by: actor.by } : {}),
+      ...(actor.door !== undefined ? { door: actor.door } : {}),
+    },
     terminal_reason: reason,
     ...(armMarker(arm) === 'abandoned_at' ? { abandoned_at: now.toISOString() } : {}),
   };

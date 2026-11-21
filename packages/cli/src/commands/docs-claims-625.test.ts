@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { hostname, userInfo } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -609,6 +610,7 @@ describe(
         ['s', 'clean'],
       ]);
       const purge = `'realm run purge ${runId}' previews what it would remove`;
+      const derived = `${userInfo().username.trim()}@${hostname().trim()}`;
       const respond = () => realm('run', 'respond', runId, '--gate', 'any', '--choice', 'approve');
       const first = respond();
       const fromClean = realm('run', 'resume', runId, '--from', 'clean');
@@ -625,7 +627,12 @@ describe(
         fromS: [fromS.code, fromS.err.filter((l) => l !== '')],
         abandoned: abandoned.code,
         cleanOnly: [cleanOnly.run_phase, cleanOnly.failed_steps],
-        second: [second.code, second.err.filter((l) => l !== '')],
+        // #625 PR-2b, the actor unit: `realm run abandon` now records the derived name (no
+        // REALM_OPERATOR here); it is replaced before the comparison, so a failure never prints it.
+        second: [
+          second.code,
+          second.err.filter((l) => l !== '').map((l) => l.split(derived).join('<derived>')),
+        ],
       }).toEqual({
         first: [
           1,
@@ -641,7 +648,7 @@ describe(
         second: [
           1,
           [
-            `Run '${runId}' is terminal (abandoned); cannot submit a gate response — It was abandoned; no reason was given. To run the work again, start a new run; ${purge}.`,
+            `Run '${runId}' is terminal (abandoned); cannot submit a gate response — It was abandoned with 'realm run abandon', by <derived> (from the OS user); no reason was given. To run the work again, start a new run; ${purge}.`,
           ],
         ],
       });
