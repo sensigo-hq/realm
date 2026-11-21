@@ -30,6 +30,9 @@
 //   - a POST that creates a run of such a workflow with `Prefer: wait=N` → held until the run ends,
 //     reaches a gate or N seconds pass (`result-wait.ts`, R1.2), within `--max-wait` and
 //     `--max-waiting`; it keeps its `--max-concurrent` slot, and the first signal answers it
+//   - a POST that names a callback address in `realm-callback-url` → the door (R1.3 C2,
+//     `lib/callback/door.ts`): refused with a closed word before anything is made, or registered with
+//     its run in one step
 import {
   createServer,
   maxHeaderSize,
@@ -40,6 +43,7 @@ import {
 } from 'node:http';
 import { Socket } from 'node:net';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
 // issue #409: the SAME parser `realm agent --llm-timeout` uses — never a second copy, so the two
@@ -77,7 +81,10 @@ import {
   parseStamp,
   persistsField,
   startIdentityEntry,
+  realmHomePath,
+  shellWord,
 } from '@sensigo/realm';
+import { createCallbackKeySealer } from '@sensigo/realm-store-sqlite';
 import { cannotGoOnLines } from './ways-renderer.js';
 import type {
   WorkflowDefinition,
@@ -92,6 +99,7 @@ import type {
   PendingGate,
   RunRecord,
   DisclosureSet,
+  CallbackRegistration,
 } from '@sensigo/realm';
 import {
   verifyGithub,
@@ -124,7 +132,18 @@ import {
 import { RUN_PHASE_WORDS, cliDisclosureProvider, writerCtx } from '../output/writer.js';
 import { DEPRECATIONS_SAID_ENV, addDeclaredValues } from '../output/writer.js';
 import { saidIds } from '@sensigo/realm';
-import { openCliHome } from '../lib/home.js';
+import { openCliHome, type CliHome } from '../lib/home.js';
+import type { CallbackLists } from '../lib/callback/allow-list.js';
+import { declareMasterKey } from '../lib/callback/declare-master-key.js';
+import {
+  CALLBACK_HEADER,
+  judgeCallbackAddress,
+  judgeCallbackKey,
+  noKeyFix,
+  type CallbackKeyVerdict,
+  type CallbackRefusalWord,
+} from '../lib/callback/door.js';
+import { resolveMasterKey } from '../lib/callback/master-key.js';
 import { REMINDER_POLL_MS, reminderSenderOf, type ReminderSource } from './listen-reminders.js';
 // Gap 1, unit A0: the listing that reads no model call's text.
 import { scanListedRuns, type ListedRecord } from '@sensigo/realm';
@@ -175,6 +194,8 @@ export interface ListenDeps {
     | 'outbound'
     // #922: whether the store keeps claims (a held step's reclaim way is offered only then).
     | 'persistsClaims'
+    // R1.3 C2: the callback rows a request registers, and the keys the door reads.
+    | 'callbacks'
   >;
   dedupStoreFor: (workflowId: string) => DedupStore;
   // issue #744: settles once Node has said whether the agent started (`'spawn'`) or not
@@ -188,7 +209,14 @@ export interface ListenDeps {
   disclosureProvider?: (definition: WorkflowDefinition, run: RunRecord) => Promise<DisclosureSet>;
   /** #597 D3b: the home folder (the Slack question post files are under it); absent, no sender. */
   home?: string;
+  /** R1.3 C2: the callback addresses this server may register; absent or empty, it registers none. */
+  callbackLists?: CallbackLists;
+  /** R1.3 C2: this process's master key fingerprint, `null` when it has none; absent: unknown. */
+  callbackMasterFp?: string | null;
 }
+
+/** R1.3 C2: no callback address is allowed until a later unit gives the lists. */
+const NO_CALLBACK_LISTS: CallbackLists = { public: [], private: [] };
 
 /** A mounted workflow: its definition, trigger, source directory, and pre-resolved secret. */
 export interface WorkflowEntry {
@@ -450,6 +478,94 @@ export function makeListenHandler(
     logger: deps.logger,
     cache: new PhaseCache(),
   };
+  // R1.3 C2: the (workflow, host, state, master fingerprint) whose no-key fix this process has said.
+  const fixesSaid = new Set<string>();
+
+  /**
+   * R1.3 C2 (the door), step 9b: a request that names a callback address is refused (the reply) or
+   * may register it (the registration). It reads the stored keys and nothing else.
+   */
+  const callbackDoor = async (
+    entry: WorkflowEntry,
+    path: string,
+    value: string,
+  ): Promise<
+    { registration: CallbackRegistration } | { refused: Record<string, unknown> } | 'store_failed'
+  > => {
+    const workflow = entry.definition.id;
+    const callbacks = deps.runStore.callbacks ?? undefined;
+    const lists = deps.callbackLists ?? NO_CALLBACK_LISTS;
+    if (
+      !optedIn(entry) ||
+      entry.readKey === undefined ||
+      callbacks === undefined ||
+      lists.public.length + lists.private.length === 0
+    ) {
+      deps.logger.warn('webhook: callback not enabled', { path, workflow });
+      return { refused: { error: 'callback_not_enabled' } };
+    }
+    /** A refusal's line: the word and the host label; a no-key fix, when given, the first time. */
+    const refused = (
+      word: CallbackRefusalWord,
+      host: string | undefined,
+      fix?: { key: Exclude<CallbackKeyVerdict, { ok: true }>; cmd: string },
+    ) => {
+      deps.logger.warn(
+        `webhook: callback refused (${word})${fix === undefined ? '' : ` — ${noKeyFix(fix.key, deps.callbackMasterFp, writerCtx().cmd(fix.cmd))}`}`,
+        { path, workflow, ...(host !== undefined ? { host } : {}) },
+      );
+      return { refused: { error: 'callback_refused', reason: word } };
+    };
+    const address = judgeCallbackAddress(lists, value);
+    if (!address.ok) return refused(address.word, address.host);
+    let key;
+    try {
+      key = judgeCallbackKey(await callbacks.keys.read(workflow, address.host));
+    } catch (err) {
+      deps.logger.error('webhook: callback key could not be read', {
+        path,
+        workflow,
+        host: address.host,
+        error: String(err),
+      });
+      return 'store_failed';
+    }
+    if (!key.ok) {
+      // The fix once per state of the pair, so a change of state says its own.
+      const said = [workflow, address.host, key.state, key.state === 'none' ? '' : key.master_fp];
+      if (fixesSaid.has(said.join('\0'))) return refused('no_key', address.host);
+      fixesSaid.add(said.join('\0'));
+      const cmd = `realm callback key ${shellWord(entry.workflowDir)} --host ${shellWord(address.host)}`;
+      return refused('no_key', address.host, { key, cmd });
+    }
+    return { registration: { url: value, host: address.host, webhook_id: randomUUID() } };
+  };
+
+  /**
+   * R1.3 C2: what a repeat that carried a callback address is told about the original run's
+   * callback: `ignored_duplicate` (it has a row), `none`, or nothing when the row cannot be read.
+   */
+  const repeatCallback = async (
+    runId: string | undefined,
+    logged: Record<string, unknown>,
+  ): Promise<{ callback?: 'ignored_duplicate' | 'none' }> => {
+    const callbacks = deps.runStore.callbacks;
+    if (runId === undefined || callbacks === undefined || callbacks === null) {
+      return { callback: 'none' };
+    }
+    try {
+      return {
+        callback: (await callbacks.read(runId)) !== undefined ? 'ignored_duplicate' : 'none',
+      };
+    } catch (err) {
+      deps.logger.warn('webhook: the callback of a repeated event could not be read', {
+        ...logged,
+        run_id: runId,
+        error: String(err),
+      });
+      return {};
+    }
+  };
 
   /**
    * #744 E2: the one way to refuse while the body is unread or only partly read: 417, 400
@@ -646,6 +762,8 @@ export function makeListenHandler(
       const rawBody = bodyResult.body;
 
       const headers = normalizeHeaders(req.headers);
+      // R1.3 C2: the callback address, as one string (a header sent twice arrives joined).
+      const callbackValue = headers[CALLBACK_HEADER];
 
       // 5. Content-Type must be application/json (media type is case-insensitive per RFC 7231).
       const contentType = (headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase();
@@ -729,12 +847,16 @@ export function makeListenHandler(
             } catch {
               named = undefined;
             }
+            const told =
+              callbackValue === undefined
+                ? {}
+                : await repeatCallback(named?.run_id, { path, workflow: entry.definition.id });
             respond(
               res,
               200,
               named === undefined
-                ? { status: 'deduplicated' }
-                : { status: 'deduplicated', ...named, ...readFields(entry, named.run_id) },
+                ? { status: 'deduplicated', ...told }
+                : { status: 'deduplicated', ...named, ...readFields(entry, named.run_id), ...told },
             );
             return;
           }
@@ -767,6 +889,22 @@ export function makeListenHandler(
         }
       }
 
+      // 9b. R1.3 C2 (the door): a request that names a callback address is refused here, before
+      // anything is made, or its registration goes into the run's create.
+      let registration: CallbackRegistration | undefined;
+      if (callbackValue !== undefined) {
+        const door = await callbackDoor(entry, path, callbackValue);
+        if (door === 'store_failed') {
+          respond(res, 500, { error: 'store_error', status: 'failed' });
+          return;
+        }
+        if ('refused' in door) {
+          respond(res, 400, door.refused);
+          return;
+        }
+        registration = door.registration;
+      }
+
       // 10. Create run via Realm's own infra. dedupId doubles as the run store's idempotency backstop.
       // Workflows are registered ONCE at startup (prepareListenWorkflows) — the old per-webhook
       // register silently reverted fresher registrations. Restart listen after re-registering.
@@ -787,6 +925,8 @@ export function makeListenHandler(
           persistsField(deps.runStore, 'extension_identity')
             ? { extensionIdentity: [entry.startIdentity] }
             : {}),
+          // R1.3 C2: the row is written in the same transaction as the run.
+          ...(registration !== undefined ? { callback: registration } : {}),
         }));
       } catch (err) {
         deps.logger.error('webhook: run creation failed', { path, error: String(err) });
@@ -856,8 +996,18 @@ export function makeListenHandler(
           run_phase: runPhase,
           ...(paramsDiffer ? { params_differ: true } : {}),
           ...readFields(entry, run.id),
+          ...(callbackValue === undefined
+            ? {}
+            : await repeatCallback(run.id, { path, workflow: entry.definition.id })),
         });
         return;
+      }
+      if (registration !== undefined) {
+        deps.logger.info('webhook: callback registered', {
+          path,
+          workflow: entry.definition.id,
+          host: registration.host,
+        });
       }
 
       // 11. Spawn detached agent.
@@ -879,6 +1029,21 @@ export function makeListenHandler(
           cwd: entry.workflowDir,
           error: String(spawnResult.error),
         });
+        // R1.3 C2: the callback row goes FIRST, while the run is live and no sender can claim it; a
+        // seal first would leave a moment in which one could send for a request answered 500.
+        if (registration !== undefined) {
+          try {
+            await deps.runStore.callbacks?.deleteAllForRun(run.id);
+          } catch (err) {
+            deps.logger.error(
+              'webhook: failed to remove the callback of a run that did not start',
+              {
+                run_id: run.id,
+                error: String(err),
+              },
+            );
+          }
+        }
         try {
           // issue #367: run-level seal through the ONE bypass-writer chokepoint (`sealRunLevel`) — it
           // stamps sealed_by {arm: 'spawn_failure'}. #715 (b) (D-21): through the `seal_run`
@@ -940,7 +1105,13 @@ export function makeListenHandler(
           respond(
             res,
             202,
-            { run_id: run.id, status: 'accepted', run_phase: runPhase, ...read },
+            {
+              run_id: run.id,
+              status: 'accepted',
+              run_phase: runPhase,
+              ...read,
+              ...(registration !== undefined ? { callback: 'registered' } : {}),
+            },
             { Location: location, 'Retry-After': '5', ...extra },
           );
         // R1.2: `Prefer: wait=N` is honoured only here, on the request that created the run, while
@@ -2043,6 +2214,25 @@ export function sweepIntervalMs(seconds: number): number {
  * for public endpoints. The built-in floors (loopback bind, body cap/timeout, header timeout,
  * --max-concurrent) are the only DoS protections independent of proxy hygiene.
  */
+/**
+ * R1.3 C2: `realm listen`'s one open of its home. The master key is resolved first (once: a command
+ * source runs here, up to 30 seconds, before anything listens); found, it is declared to the writer
+ * and seals the home's callback keys; none or invalid, the home opens without a sealer, so every key
+ * reads unreadable and every callback address is refused `no_key`. `masterFp` is the sealer's
+ * fingerprint, `null` without one.
+ */
+export async function openListenHome(o: {
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly home?: string;
+}): Promise<{ home: CliHome; masterFp: string | null }> {
+  const at = o.home !== undefined ? { home: o.home } : {};
+  const master = resolveMasterKey({ env: o.env, homeDir: realmHomePath(o.home) });
+  if (master.state !== 'found') return { home: await openCliHome(at), masterFp: null };
+  declareMasterKey(master.key);
+  const sealer = createCallbackKeySealer(master.key);
+  return { home: await openCliHome({ ...at, sealer }), masterFp: sealer.masterFp };
+}
+
 export const listenCommand = new Command('listen')
   .description(
     'Start a webhook server that creates runs from inbound webhooks (per each workflow trigger: block)',
@@ -2299,7 +2489,7 @@ export const listenCommand = new Command('listen')
       const dedupKind = opts['dedupStore'] ?? 'file';
       // #616 PR-2a (iii): the one door, opened once, after every refusal above; its dedup marks are
       // rows in the home's store (`--dedup-store memory` keeps its in-memory map).
-      const home = await openCliHome();
+      const { home, masterFp } = await openListenHome({ env: process.env });
       const memoryStores = new Map<string, DedupStore>();
       const deps: ListenDeps = {
         workflowStore: home.workflowStore,
@@ -2318,6 +2508,7 @@ export const listenCommand = new Command('listen')
         spawnAgent: makeAgentSpawner({ ...opts, model }, logger),
         logger,
         home: home.path,
+        callbackMasterFp: masterFp,
       };
 
       // Register routed workflows once + load their extension modules — fail-fast on any error.
