@@ -56,6 +56,7 @@ import {
   outcomeNotRecordedLine,
   cutWayLine,
   viewSetFor,
+  stepsTakenBack,
   NO_SNAPSHOT,
 } from '../lib/holder-render.js';
 import { IN_FLIGHT_WATCH_MS } from '../agent/run-agent.js';
@@ -332,7 +333,12 @@ export function renderDetachMap(
  *
  * @internal Exported for testing only.
  */
-export function renderInFlightHandBack(record: RunRecord, held: readonly HeldEntry[]): string {
+export function renderInFlightHandBack(
+  record: RunRecord,
+  held: readonly HeldEntry[],
+  // #729 CW-5c: the steps a `realm agent` drive takes back (the caller's `stepsTakenBack`).
+  takesBack?: ReadonlySet<string>,
+): string {
   const names = held.map((e) => `'${e.facts.step}'`).join(', ');
   const steps = held.length === 1 ? `step ${names}` : `steps ${names}`;
   return [
@@ -347,6 +353,7 @@ export function renderInFlightHandBack(record: RunRecord, held: readonly HeldEnt
         writerHost(),
       )!,
       writerCtx(),
+      takesBack,
     ),
     `  Inspect:   ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: record.id }, undefined, writerHost())}`,
   ].join('\n');
@@ -1153,6 +1160,8 @@ export const runCommand = new Command('run')
                 lease_facts: read.lease_facts,
               }),
             );
+            // #729 CW-5c: the steps a `realm agent` drive takes back, from this last read.
+            const takesBack = stepsTakenBack(record, definition, held);
             for (const entry of held) {
               const claim = record.claims?.[entry.facts.step];
               console.error(
@@ -1165,10 +1174,11 @@ export const runCommand = new Command('run')
                   ),
                   inFlightWatchMs,
                   writerCtx(),
+                  takesBack,
                 ),
               );
             }
-            console.error(renderInFlightHandBack(record, held));
+            console.error(renderInFlightHandBack(record, held, takesBack));
             // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
             rl.close();
             exitProcess(1);

@@ -22,9 +22,11 @@ import {
   CLI_COMMANDS,
   advanceNeedsWords,
   cannotGoOnLines,
+  heldEntriesOf,
   heldWithoutDefinitionLine,
   writerHost,
 } from './ways-renderer.js';
+import { stepsTakenBack } from '../lib/holder-render.js';
 import {
   parseStamp,
   describePending,
@@ -94,7 +96,7 @@ const waysOnWithoutEngineWork = (
   runId: string,
   run: RunRecord,
   composed: ComposedWays | undefined,
-  pending: PendingView | undefined,
+  pending: OwedView | undefined,
 ): string[] => {
   if (composed === undefined || pending === undefined) {
     const held = run.in_progress_steps.some((s) => s !== run.pending_gate?.step_name);
@@ -104,7 +106,10 @@ const waysOnWithoutEngineWork = (
   // decision C212: each line ends with its command — no full stop.
   if (ready !== undefined)
     return [sentenceEnd(`${ready.charAt(0).toUpperCase()}${ready.slice(1)}`)];
-  return inFlightReasons(composed).map((reason) => sentenceEnd(reason));
+  // #729 CW-5c: with the steps a `realm agent` drive takes back, from this read (the refusal's, or
+  // the one after `--expired`).
+  const takesBack = stepsTakenBack(run, pending.workflow, heldEntriesOf(composed));
+  return inFlightReasons(composed, undefined, takesBack).map((reason) => sentenceEnd(reason));
 };
 
 /**
