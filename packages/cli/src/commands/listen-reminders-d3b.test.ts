@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +29,7 @@ vi.mock('../agent/gate/slack-call.js', async (orig) => ({
 import { settableClock, type SettableClock } from '@sensigo/realm-testing';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  abandonRun,
   writtenSnapshot,
   type OutboundLeaseRequest,
   type OutboundLedger,
@@ -43,16 +45,21 @@ import {
   type ReminderWorkflow,
 } from './listen-reminders.js';
 import {
+  CALLBACK_POLL_MS,
   listenCommand,
   startListen,
   type ListenDeps,
   type Logger,
+  type SpawnResult,
   type WorkflowEntry,
 } from './listen.js';
 import { startGateReminderTimers } from '../agent/gate/slack-gate-notifier.js';
 import { slackPostPath } from '../agent/gate/slack-post-file.js';
 import { slackResponse } from '../agent/test-support/slack-response.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { createCallbackKeySealer } from '@sensigo/realm-store-sqlite';
+import { parseCallbackEntry, type CallbackLists } from '../lib/callback/allow-list.js';
+import { http } from '../test-support/listen-read-r11.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const OPENED = '2033-01-01T00:00:00.000Z';
@@ -156,9 +163,15 @@ interface Rig {
   readonly logger: ReturnType<typeof capture>;
 }
 
-async function rig(): Promise<Rig> {
+async function rig(o: { sealer?: boolean } = {}): Promise<Rig> {
   const clock = settableClock(at(0));
-  const h = await makeTempHome({ clock });
+  // R1.3 C3b2: with a sealer, so a callback key can be made in the home.
+  const h = await makeTempHome({
+    clock,
+    ...(o.sealer === true
+      ? { sealer: createCallbackKeySealer(Buffer.from('7e'.repeat(32), 'hex')) }
+      : {}),
+  });
   onTestFinished(() => h.cleanup());
   for (const id of [WF, WF2]) await h.home.workflowStore.register(def(id));
   return { h, clock, store: h.home.runStore, ledger: h.home.runStore.outbound!, logger: capture() };
@@ -1023,6 +1036,8 @@ async function listening(
     graceSeconds?: number;
     port?: number;
     runStore?: ListenDeps['runStore'];
+    callbackLists?: CallbackLists;
+    spawnAgent?: ListenDeps['spawnAgent'];
   } = {},
 ) {
   const before = { term: process.listeners('SIGTERM'), int: process.listeners('SIGINT') };
@@ -1050,9 +1065,10 @@ async function listening(
       record: async () => {},
       cleanup: async () => {},
     }),
-    spawnAgent: async () => ({ pid: 1 }),
+    spawnAgent: o.spawnAgent ?? (async () => ({ pid: 1 })),
     logger: r.logger,
     home: r.h.path,
+    ...(o.callbackLists !== undefined ? { callbackLists: o.callbackLists } : {}),
   };
   let added: Array<(...a: unknown[]) => void> = [];
   try {
@@ -1252,6 +1268,193 @@ describe('#597 D3b — `realm listen` and the sender', { timeout: 30_000 }, () =
     });
   });
 });
+
+/**
+ * R1.3 C3b2: a callback receiver on 127.0.0.1 that holds each POST until `release`, or answers 200 at
+ * once; its label, address and the private list that allows it.
+ */
+async function callbackReceiver(o: { hold: boolean }) {
+  let held = 0;
+  let posts = 0;
+  const waiting: Array<() => void> = [];
+  const server = createHttpServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      posts += 1;
+      const answer = (): void => {
+        res.writeHead(200);
+        res.end();
+      };
+      if (o.hold) {
+        held += 1;
+        waiting.push(answer);
+      } else answer();
+    });
+  });
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', () => ok()));
+  onTestFinished(
+    () =>
+      new Promise<void>((ok) => {
+        for (const answer of waiting.splice(0)) answer();
+        server.closeAllConnections();
+        server.close(() => ok());
+      }),
+  );
+  const host = `127.0.0.1:${(server.address() as { port: number }).port}`;
+  const parsed = parseCallbackEntry(`http://${host}`);
+  if (!parsed.ok) throw new Error('fixture: the receiver’s entry is refused');
+  return {
+    host,
+    url: `http://${host}/cb`,
+    lists: { public: [], private: [parsed.entry] } satisfies CallbackLists,
+    held: () => held,
+    posts: () => posts,
+    release: () => {
+      for (const answer of waiting.splice(0)) answer();
+    },
+  };
+}
+
+describe(
+  'R1.3 C3b2 — the shutdown waits for the callback pass and the reminder pass',
+  { timeout: 60_000 },
+  () => {
+    /**
+     * A listening server with a question to remind (its Slack post held until released), a finished
+     * run with a callback row due, a callback key, and an agent whose exit the cell decides.
+     */
+    async function bothUnderWay(o: { holdSlack: boolean; holdCallback: boolean }) {
+      const r = await rig({ sealer: true });
+      await question(r);
+      await r.clock.set(at(25 * MIN));
+      let releaseSlack: () => void = () => {};
+      let slackHeld = 0;
+      if (o.holdSlack) {
+        slack.post = () =>
+          new Promise<Response>((res) => {
+            slackHeld += 1;
+            releaseSlack = () => res(new Response('{"ok":true}'));
+          });
+      }
+      onTestFinished(() => releaseSlack());
+      const rcv = await callbackReceiver({ hold: o.holdCallback });
+      await r.store.callbacks!.keys.make(WF, rcv.host, '4d'.repeat(32));
+      const { record } = await r.store.create({
+        workflowId: WF,
+        workflowVersion: 1,
+        params: {},
+        callback: {
+          url: rcv.url,
+          host: rcv.host,
+          webhook_id: '0b3c2b2e-5d6f-4a1b-9c8d-7e6f5a4b3c2d',
+        },
+      });
+      await abandonRun(r.store, record.id);
+      const exits: Array<() => void> = [];
+      const spawnAgent = async (): Promise<SpawnResult> => ({
+        pid: 1,
+        exited: new Promise<void>((res) => exits.push(res)),
+      });
+      vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+      const timers = vi.spyOn(globalThis, 'setInterval');
+      const clears = vi.spyOn(globalThis, 'clearInterval');
+      const { handle, signal } = await listening(r, {
+        graceSeconds: 5,
+        callbackLists: rcv.lists,
+        spawnAgent,
+      });
+      const port = (handle.server.address() as { port: number }).port;
+      const started = await http(
+        port,
+        'POST',
+        '/hook',
+        { 'content-type': 'application/json' },
+        '{}',
+      );
+      if (started.status !== 202)
+        throw new Error(`fixture: the start was answered ${started.status}`);
+      const callbackTimer = (): unknown =>
+        timers.mock.results[timers.mock.calls.findIndex(([, ms]) => ms === CALLBACK_POLL_MS)]
+          ?.value;
+      return {
+        r,
+        rcv,
+        handle,
+        signal,
+        row: () => r.store.callbacks!.read(record.id),
+        exit: () => exits.shift()!(),
+        slackHeld: () => slackHeld,
+        releaseSlack: () => releaseSlack(),
+        callbackTimer,
+        cleared: () => clears.mock.calls.some(([h]) => h === callbackTimer()),
+      };
+    }
+
+    it('the stop resolves only once both passes have ended, in either order; a second signal ends the wait for both at once', async () => {
+      const seen: Record<string, unknown> = {};
+      for (const first of ['reminders', 'callbacks'] as const) {
+        const w = await bothUnderWay({ holdSlack: true, holdCallback: true });
+        w.exit();
+        await until(() => w.slackHeld() >= 1 && w.rcv.held() >= 1, 'both passes to be held');
+        let done = false;
+        const stopped = w.handle.shutdown('test').then(() => void (done = true));
+        await settle();
+        await new Promise((res) => setTimeout(res, 300));
+        const heldBoth = !done;
+        if (first === 'reminders') w.releaseSlack();
+        else w.rcv.release();
+        await new Promise((res) => setTimeout(res, 300));
+        const heldOne = !done;
+        if (first === 'reminders') w.rcv.release();
+        else w.releaseSlack();
+        await until(() => done, `the stop to resolve once both ended (${first} first)`, 3_000);
+        await stopped;
+        seen[first] = { heldBoth, heldOne, row: (await w.row())?.status };
+      }
+      // The second signal: both passes still held, the grace 5 s.
+      const w = await bothUnderWay({ holdSlack: true, holdCallback: true });
+      w.exit();
+      await until(() => w.slackHeld() >= 1 && w.rcv.held() >= 1, 'both passes to be held');
+      const began = Date.now();
+      const stopped = w.handle.shutdown('test');
+      w.signal();
+      await stopped;
+      const took = Date.now() - began;
+      w.rcv.release();
+      w.releaseSlack();
+      await until(async () => (await w.row())?.status === 'delivered', 'the held try to end');
+      // (1) red when the stop waits for one runner only (it resolves while the other is held), or a
+      //     second runner's wait overwrites `endPassWait` (the second signal ends one wait, and the
+      //     other runs its 5 s grace); (2) prints what each order saw and how long the cut took, in ms.
+      expect(
+        { ...seen, 'second signal under 2 s': took < 2_000 },
+        `the cut took ${took} ms`,
+      ).toEqual({
+        reminders: { heldBoth: true, heldOne: true, row: 'delivered' },
+        callbacks: { heldBoth: true, heldOne: true, row: 'delivered' },
+        'second signal under 2 s': true,
+      });
+    });
+
+    it('the stop clears the 30-second timer, and an agent that exits after it sends nothing', async () => {
+      const w = await bothUnderWay({ holdSlack: false, holdCallback: false });
+      const timer = w.callbackTimer() !== undefined;
+      await w.handle.shutdown('test');
+      w.exit();
+      await new Promise((res) => setTimeout(res, 500));
+      const row = await w.row();
+      // (1) red when the stop leaves the callback timer running, or a wake after the first signal runs a
+      //     pass (a new runner, or the pass called directly): the due row would be sent; (2) prints the
+      //     timer, the POSTs and the row.
+      expect({
+        timer,
+        cleared: w.cleared(),
+        posts: w.rcv.posts(),
+        row: { status: row?.status, attempts: row?.attempts },
+      }).toEqual({ timer: true, cleared: true, posts: 0, row: { status: 'pending', attempts: 0 } });
+    });
+  },
+);
 
 describe('#597 D3b — the start-up lines', { timeout: 30_000 }, () => {
   it('the covered list, none covered, no ledger, no home: each one line, and no runner without coverage', async () => {
