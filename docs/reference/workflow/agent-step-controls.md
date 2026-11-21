@@ -211,7 +211,7 @@ If Anthropic refuses the tools with strict mode, Realm sends the request again w
 ## `llm_timeout_seconds`
 
 - **Type:** whole number above 0. **Default:** 600, or the value of `realm agent --llm-timeout`.
-- The longest one request to the model may take. A request that takes longer is abandoned and sent again, up to three times in all. If every one runs out of time, `realm agent` stops and the run stays open.
+- The longest one request to the model may take. A request that takes longer is abandoned and sent again, up to three times in all; on a step that declares retry, up to its max_attempts (see [Retry and timeouts](retry-and-timeouts.md#on-an-agent-step)). If every one runs out of time, `realm agent` stops and the run stays open.
 
 With `llm_timeout_seconds: 1` and a model that did not answer, `realm agent` printed:
 
@@ -226,7 +226,7 @@ Drive failures:
   2026-10-01T22:27:05.314Z  classify  openai  connection_timeout after 5257ms: Request timed out. (declared 1000ms) (ceiling 64500ms) (attempt 3)
 ```
 
-`declared` is the limit for one request. `ceiling` is the longest the three requests together are allowed, which Realm works out from it. The run was still `running`, so it can be driven again. See [Operate runs](../../guides/operate-runs.md#open-with-no-driver).
+`declared` is the limit for one request. `ceiling` is the longest the three requests together are allowed, which Realm works out from it; on a step that declares retry, the cap of its tries. The run was still `running`, so it can be driven again. See [Operate runs](../../guides/operate-runs.md#open-with-no-driver).
 
 ## `tools` and the tool limits
 

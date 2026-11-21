@@ -631,6 +631,7 @@ steps:
     execution: agent
     retry:
       max_attempts: 3
+      jitter: 1
     output_schema:
       type: object
       required: [category]

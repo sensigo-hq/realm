@@ -80,6 +80,10 @@ export { hashParams, canonicalJson } from './store/params-hash.js';
 export { driveFailureTextLoss, type DriveFailureTextLoss } from './store/drive-failure-texts.js';
 // Gap 2, unit (i-a): what a failed model request needs before it can succeed.
 export { classifyModelFailure, type ModelFailureFacts } from './engine/model-failure.js';
+// Gap 2, unit (i-b): the drive's own uses (internal): the closure its drive-failure write shares
+// with the evidence entry's, and an agent step's retry wait and the schedule its derived cap sums.
+export { closeModelAttempts, failedRequestSends } from './engine/model-failure.js';
+export { modelRetryWaitMs, modelRetryScheduleMs } from './engine/backoff.js';
 export { decideIdempotencyPolicy } from './store/idempotency-policy.js';
 export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';

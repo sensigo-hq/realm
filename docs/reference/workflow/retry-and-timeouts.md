@@ -8,14 +8,14 @@ For a walk through the common cases, see [Handle failure](../../guides/handle-fa
 
 ## Which limit applies to what
 
-| Setting                                         | Limits                                              | On                  | Default                             |
-| ----------------------------------------------- | --------------------------------------------------- | ------------------- | ----------------------------------- |
-| `timeout_seconds`                               | One attempt of the step.                            | `auto`, `finalizer` | 3600 on `auto` steps                |
-| `retry.max_attempts`                            | How many times the step is tried.                   | `auto`              | 1                                   |
-| `retry.total_timeout_seconds`                   | All attempts together, with the waits between them. | `auto`              | See [below](#total_timeout_seconds) |
-| [`llm_timeout_seconds`](agent-step-controls.md) | One model request, under `realm agent`.             | `agent`             | None                                |
-| [`tool_timeout`](agent-step-controls.md)        | One tool call, under `realm agent`.                 | `agent`             | 30                                  |
-| [`gate.timeout_seconds`](gates.md)              | How long a gate waits for a person.                 | A gate step         | None                                |
+| Setting                                         | Limits                                              | On                            | Default                             |
+| ----------------------------------------------- | --------------------------------------------------- | ----------------------------- | ----------------------------------- |
+| `timeout_seconds`                               | One attempt of the step.                            | `auto`, `finalizer`           | 3600 on `auto` steps                |
+| `retry.max_attempts`                            | How many times the step is tried.                   | `auto`, `agent`               | 1                                   |
+| `retry.total_timeout_seconds`                   | All attempts together, with the waits between them. | `auto`; `agent`, with `retry` | See [below](#total_timeout_seconds) |
+| [`llm_timeout_seconds`](agent-step-controls.md) | One model request, under `realm agent`.             | `agent`                       | None                                |
+| [`tool_timeout`](agent-step-controls.md)        | One tool call, under `realm agent`.                 | `agent`                       | 30                                  |
+| [`gate.timeout_seconds`](gates.md)              | How long a gate waits for a person.                 | A gate step                   | None                                |
 
 ## `timeout_seconds`
 
@@ -32,16 +32,16 @@ A value of 0, or one that is not a whole number, is refused: `'timeout_seconds' 
 
 ## `retry`
 
-`retry` is a block on an `auto` step. It has six keys.
+`retry` is a block on an `auto` step, and on an agent step that `realm agent` or `realm listen` drives. It has six keys.
 
-| Key                                                    | Type                             | Default  | What it does                                          |
-| ------------------------------------------------------ | -------------------------------- | -------- | ----------------------------------------------------- |
-| [`max_attempts`](#max_attempts)                        | whole number above 0             | 1        | How many times the step is tried, counting the first. |
-| [`backoff`](#backoff-base_delay_ms-max_delay_ms)       | `fixed`, `linear`, `exponential` | `fixed`  | How the wait between attempts grows.                  |
-| [`base_delay_ms`](#backoff-base_delay_ms-max_delay_ms) | number, 0 or more                | 0        | The wait the growth starts from, in milliseconds.     |
-| [`max_delay_ms`](#backoff-base_delay_ms-max_delay_ms)  | number                           | No limit | The longest any one wait may be.                      |
-| [`on_timeout`](#on_timeout)                            | true or false                    | false    | Whether a timed-out attempt is tried again.           |
-| [`total_timeout_seconds`](#total_timeout_seconds)      | whole number above 0             | Computed | The longest all attempts together may take.           |
+| Key                                                    | Type                             | Default  | What it does                                                                                                                                    |
+| ------------------------------------------------------ | -------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`max_attempts`](#max_attempts)                        | whole number above 0             | 1        | How many times the step is tried, counting the first.                                                                                           |
+| [`backoff`](#backoff-base_delay_ms-max_delay_ms)       | `fixed`, `linear`, `exponential` | `fixed`  | How the wait between attempts grows.                                                                                                            |
+| [`base_delay_ms`](#backoff-base_delay_ms-max_delay_ms) | number, 0 or more                | 0        | The wait the growth starts from, in milliseconds.                                                                                               |
+| [`max_delay_ms`](#backoff-base_delay_ms-max_delay_ms)  | number                           | No limit | The longest any one wait may be.                                                                                                                |
+| [`on_timeout`](#on_timeout)                            | true or false                    | false    | Whether a timed-out attempt is tried again. On an agent step, a timed-out try is sent again unless this is `false`; `true` does not load there. |
+| [`total_timeout_seconds`](#total_timeout_seconds)      | whole number above 0             | Computed | The longest all attempts together may take.                                                                                                     |
 
 ```yaml
 fetch:
@@ -132,6 +132,26 @@ Each attempt is also cut to the time that is left. In the same record, the secon
 
 Without `total_timeout_seconds`, the limit is the step's own schedule: `max_attempts` times the timeout of one attempt, plus the waits between attempts. It takes effect only when something makes an attempt wait longer than the schedule says.
 
+### On an agent step
+
+Under `realm agent` and `realm listen`, `retry` on an agent step tries a failed model request again. Each model request the step makes is tried up to `max_attempts` times: its first request, each tool turn, the request sent after a reply that was not JSON, and the request for its final answer. The model client's own retries are off for such a step, so these are its only tries. The re-sends Realm already makes, once each, when a request fails on its strict mode, its cache fields or its cache question, come on top of these tries. A step without `retry` is unchanged: the model client tries each request up to 3 times, as before.
+
+A request is tried again only after a failure another try can fix: a 408, 409, 429 or 5xx answer, a timeout, or a lost connection. The provider's `x-should-retry` header decides first: `true` tries again at any status, and `false` never does. A wrong key, a missing model, a refused workspace, used-up credit or quota, and a request the provider refuses as written are never tried again. With `on_timeout: false`, a try that timed out is not sent again.
+
+Between tries the step waits as its block says. When it declares none of `backoff`, `base_delay_ms` and `max_delay_ms`, it waits as the model client did: 500 ms, doubling, at most 8 s. Each wait is shortened at random by up to a quarter, and is never shorter than a `Retry-After` the provider sends.
+
+Each request has one time limit, for all its tries, waits and re-sends: `total_timeout_seconds` when the block declares it; otherwise `max_attempts` times the timeout of one try (`llm_timeout_seconds`, `--llm-timeout`, or 600 s), plus the waits, plus 60 s. A wait that would pass the limit is not taken: the drive stops at once.
+
+Only the request that failed is sent again, with the conversation as it stood before it, so a tool the model already called never runs again.
+
+After the last try, the drive stops and the run stays open, as after any failed model call. The drive-failure entry keeps each failed try (`model_attempts`), and `realm run inspect` lists them as `Failed tries:`. When the step succeeds after a failed try, its evidence entry keeps them.
+
+`retry` never asks the model again after it gave an answer that was refused; that is `--schema-retries`.
+
+A provider module (`--provider-module`) that says it handles retries is given the block and the time limit, and tries again itself. For a module that does not, Realm tries its whole call again on a step without tools, and tries nothing again on a step with tools; the drive then says so once.
+
+A run an assistant drives over MCP makes no model call through Realm, so `retry` on an agent step does nothing there.
+
 ## Advice the loader prints
 
 These are accepted, with a warning:
@@ -141,7 +161,7 @@ These are accepted, with a warning:
 | `retry` and no `timeout_seconds`                | `declares 'retry' but no 'timeout_seconds' — each attempt is bounded by the default execution timeout (3600s), …`                        |
 | `total_timeout_seconds` below `timeout_seconds` | `'retry.total_timeout_seconds: 10' is at or below its per-attempt timeout (30s) — each attempt is bounded by what remains of the cap, …` |
 | A key in `retry` that is not one of the six     | `unknown key 'jitter' (line 10) — ignored (not a recognized retry field).`                                                               |
-| `retry` on an agent or guard step               | `'retry' is inert on execution: 'agent' steps — …`                                                                                       |
+| `retry` on a guard step                         | `'retry' is inert on execution: 'guard' steps — …`                                                                                       |
 
 `realm workflow validate --strict` treats a warning as a failure:
 

@@ -200,7 +200,7 @@ When Anthropic answers that it has no model by the name given, `realm agent` pri
 
 The second line was added in 0.46.0. With OpenAI, the failure line is printed alone. The run stays open: continue it with `--run-id` and the right `--model`.
 
-A request that times out is tried again by the provider's client. With `--llm-timeout 1` and a model that took 3 seconds, the step stopped after 4.5 seconds, on the third request:
+A request that times out is tried again by the provider's client; on a step that declares `retry`, Realm tries it again instead, as the block says. With `--llm-timeout 1` and a model that took 3 seconds, the step stopped after 4.5 seconds, on the third request:
 
 ```text
 Drive failures:
@@ -244,6 +244,8 @@ No API key is needed. The answer is checked against the step's schema like any o
 A provider can say what it asks its service to cache: its `capabilities()` may return `promptCache`, `'off'`, `'provider'` or `{ lifetime_s }` (the lifetime in whole seconds). `realm agent` then prints `Caching: your provider module asks for 1 hour by its own setting; --prompt-cache does not apply to provider modules.` (`no caching` for `'off'`), and for `'provider'` — the service caches by its own rules — `Caching: this provider caches by its own rules.` (added after version 0.48.0). Another value prints `Caching: your provider module declares a caching setting Realm cannot read; --prompt-cache does not apply to provider modules.` Without it, the line is `Caching: Realm asks this provider for no caching; any caching it does is its own.` Realm does not check what the provider sends. `--prompt-cache` cannot be given with `--provider-module`. Added after version 0.47.0.
 
 A provider can also explain a failure. `LlmProvider` has an optional method, `explainFailure(err)`: when a model call throws, `realm agent` calls it with the error, and prints the sentence it returns on its own line under the failure line. Return one plain sentence for an error your provider recognises, and `undefined` for any other. The method must not throw: Realm ignores a throw, and a sentence that is empty or holds only spaces, and prints the failure line alone. The method was added in 0.46.0.
+
+A provider can also try a failed model request again itself. When a step declares `retry`, the clock its call is given (`opts.llmClock`) carries `retry`: the step's `retry` block, `capMs` (the longest one model request may take with all its tries, waits and re-sends) and `mayResend()`, which says whether another send is allowed. A module that does this declares `handlesRetries: true` in its `capabilities()`, and calls `mayResend()` before each re-send: when it resolves `false` (the drive was told to stop, or the step is no longer this drive's), it sends nothing more. Without `handlesRetries`, Realm tries the module's whole call again on a step without tools; on a step with tools it tries nothing again, and says so once with `• Step '<s>': 'retry' is not applied: provider module '<module>' does not say it handles retries, and a step with tools is never sent again whole.` (added after version 0.50.0).
 
 ## Exit codes
 

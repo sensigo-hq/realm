@@ -2841,7 +2841,7 @@ function parseWorkflowString(
           const retry = step['retry'] as Record<string, unknown>;
           // The one population gate both retry advisories (W5 + RETRY_INERT_NON_AUTO) share:
           // the registry's own retry cell for this step's kind. `inert` = admitted-but-unread
-          // (agent/guard). On `consumed` (auto) neither advisory applies; on `prohibited`
+          // (guard). On `consumed` (auto; agent, gap 2 unit (i-b)) neither advisory applies; on `prohibited`
           // (finalizer) the #517 refusal above is the whole story and an advisory beside it
           // would contradict it; on a malformed kind the invalid-execution error is the verdict.
           const retryCellIsInert =
@@ -2978,18 +2978,14 @@ function parseWorkflowString(
           // routinely; "may still consume" — no dispatcher can reach a finalizer's retry;
           // "not an invalid one" — the co-fired error says it IS invalid). Registry-derived:
           // it fires exactly where the retry cell is inert (agent/guard).
+          // Gap 2, unit (i-b): the agent cell is consumed (realm agent and realm listen read it),
+          // so on that gate this fires on guard steps only, with the guard's text.
           if (retryCellIsInert && retry['total_timeout_seconds'] === undefined) {
-            const isAgent = step['execution'] === 'agent';
-            const message = isAgent
-              ? `Step '${stepName}': 'retry' is inert on execution: 'agent' steps — the built-in ` +
-                `dispatch path never throws for agent steps, so this block can never mint a second ` +
-                `attempt here (for schema-repair budgets, use the CLI drive's '--schema-retries' ` +
-                `flag instead). An embedder-supplied throwing dispatcher may still consume this ` +
-                `config — a deliberate public-API capability, not an invalid one.`
-              : `Step '${stepName}': 'retry' is inert on execution: '${String(step['execution'])}' ` +
-                `steps — a guard's evaluation never traverses the dispatch path (its conditions ` +
-                `are evaluated inline, with no dispatcher and no retry read), so this block can ` +
-                `never mint a second attempt here.`;
+            const message =
+              `Step '${stepName}': 'retry' is inert on execution: '${String(step['execution'])}' ` +
+              `steps — a guard's evaluation never traverses the dispatch path (its conditions ` +
+              `are evaluated inline, with no dispatcher and no retry read), so this block can ` +
+              `never mint a second attempt here.`;
             warnings.push({
               code: 'RETRY_INERT_NON_AUTO',
               severity: resolveSeverity('RETRY_INERT_NON_AUTO'),

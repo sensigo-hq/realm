@@ -103,10 +103,9 @@ steps:
 
     const warned = warnSpy.mock.calls.flat().map(String).join(' ');
     expect(warned).not.toContain("declares 'retry' but no 'timeout_seconds'");
-    // issue #218: the new advisory legitimately fires on this exact fixture (bare retry on a
-    // non-auto step) — pinned here so this test keeps testing what it always tested (A3's
-    // absence) without silently going vacuous now that warnSpy IS called for an unrelated reason.
-    expect(warned).toContain("'retry' is inert on execution: 'agent' steps");
+    // Gap 2, unit (i-b): realm agent and realm listen read an agent step's `retry`, so nothing
+    // warns on this fixture: neither A3's text nor the old inert advisory.
+    expect(warned).toBe('');
   });
 
   it('does NOT warn on an auto step with no retry at all', async () => {

@@ -273,8 +273,8 @@ steps:
     // This file is spawn-based, so the assertion is the CHILD's real exit code from
     // `runValidate` — an in-process `vi.spyOn(process, 'exit')` here would mock the test
     // runner's own exit and could never observe the child, which is an assertion that can only
-    // ever pass. `retry:` on the agent step mints RETRY_INERT_NON_AUTO (warn), which fails
-    // --strict without escalating.
+    // ever pass. The unknown `retry` key on the agent step mints UNKNOWN_RETRY_KEY (warn), which
+    // fails --strict without escalating (gap 2, unit (i-b): `retry` itself is read there now).
     const file = join(workflowDir, 'workflow.yaml');
     writeFileSync(
       file,
@@ -300,6 +300,7 @@ steps:
     depends_on: [fetch_data]
     retry:
       max_attempts: 3
+      jitter: 1
     output_schema:
       type: object
       required: [summary]

@@ -60,6 +60,7 @@ import {
   claimStepForDrive,
   releaseDriveClaim,
   type LeaseHold,
+  closeModelAttempts,
 } from '@sensigo/realm';
 import type {
   RunRecord,
@@ -88,6 +89,11 @@ import {
   mintRequestIds,
   agentDisclosureSet,
   type LlmClock,
+  deriveRetryCap,
+  makeModelRetryPolicy,
+  modelAttemptsOf,
+  tryModelRequest,
+  type ModelRetryPolicy,
 } from './providers/agent-utils.js';
 import {
   appendModelTexts,
@@ -771,6 +777,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   let usageForStep: UsageRecord[] | undefined;
   // Gap 1, unit A1: the texts of the step's calls, gathered where `usageForStep` gathers their usage.
   let textsForStep: StepModelTexts | undefined;
+  // Gap 2, unit (i-b): the current step's retry policy, which records its failed model tries
+  // (`undefined` for a step without `retry`); reset where each step begins.
+  let retryForStep: ModelRetryPolicy | undefined;
+  // Gap 2, unit (i-b), Words 2: the steps whose `retry` this drive has said it cannot apply.
+  const retryNotApplied = new Set<string>();
+  // Gap 2, unit (i-b): the step's failed tries as an entry keeps them, closed as the evidence entry's
+  // are; `undefined` when it recorded none (a step without `retry` records none).
+  const triesOf = (policy: ModelRetryPolicy | undefined) => {
+    const tries = policy === undefined ? [] : modelAttemptsOf(policy);
+    return tries.length > 0 ? closeModelAttempts(tries) : undefined;
+  };
   // Gap 1, unit A2b: a drive-failure entry's `model_text`, from the texts of exactly the requests
   // its usage lists (and any unanswered one): `undefined` when no model request belongs to it.
   const failureText = (texts: StepModelTexts | undefined) =>
@@ -1725,12 +1742,61 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const derivedClock = deriveLlmClock(
           (stepDef.llm_timeout_seconds ?? fallbackLlmTimeoutSeconds) * 1000,
         );
+        // Gap 2, unit (i-b): an agent step that declares `retry` is tried again as it says. Realm's
+        // own providers follow the policy on the clock inside each model request; a provider
+        // module that declares `handlesRetries` gets it too and follows it itself. A module that
+        // does not: a step without tools has its whole call tried again here, and a step with tools
+        // is not tried again (once per drive, a line says so). Before each re-send after a wait the
+        // policy asks the drive: no stop cause, and the step's claim still names this drive's lease
+        // (on a store with no leases: the run unfinished and the step unsettled).
+        const retryBlock = stepDef.execution === 'agent' ? stepDef.retry : undefined;
+        const fromModule = deps.providerId !== undefined;
+        const stepHasTools = (stepDef.tools?.length ?? 0) > 0;
+        retryForStep =
+          retryBlock === undefined
+            ? undefined
+            : makeModelRetryPolicy({
+                retry: retryBlock,
+                // The per-attempt timeout the try's own timer uses (the step's, the flag's, or
+                // the 600 s default), read once above.
+                ...deriveRetryCap(retryBlock, derivedClock.declaredPerAttemptMs),
+                mayResend: async () => {
+                  if (stopCause !== undefined) return false;
+                  const { record } = await deps.store.get(runId);
+                  if (held !== undefined && held.step === stepName) {
+                    return (
+                      record.in_progress_steps.includes(stepName) &&
+                      record.claims?.[stepName]?.lease?.id === held.hold.id
+                    );
+                  }
+                  return (
+                    !record.terminal_state &&
+                    !record.completed_steps.includes(stepName) &&
+                    !record.failed_steps.includes(stepName) &&
+                    !record.skipped_steps.includes(stepName)
+                  );
+                },
+              });
+        const stepRetry = retryForStep;
+        const moduleRetries = fromModule && caps.handlesRetries !== true;
+        if (stepRetry !== undefined && moduleRetries && stepHasTools) {
+          if (!retryNotApplied.has(stepName)) {
+            retryNotApplied.add(stepName);
+            console.log(
+              `• Step '${stepName}': 'retry' is not applied: provider module '${deps.providerId!.slice('module:'.length)}' does not say it handles retries, and a step with tools is never sent again whole.`,
+            );
+          }
+        }
+        // The module's whole call, tried again here (a step without tools, the module silent).
+        const wholeCallRetry =
+          stepRetry !== undefined && moduleRetries && !stepHasTools ? stepRetry : undefined;
         const llmClock: LlmClock = {
           ceilingMs: derivedClock.ceilingMs,
           perAttemptSource,
           ...(perAttemptSource !== 'default' && derivedClock.declaredPerAttemptMs !== undefined
             ? { declaredPerAttemptMs: derivedClock.declaredPerAttemptMs }
             : {}),
+          ...(stepRetry !== undefined && !moduleRetries ? { retry: stepRetry } : {}),
         };
 
         // issue #217: the in-drive schema-feedback repair loop. `stepInput`/`toolCallsForMeta`/
@@ -2303,6 +2369,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
                 }
+                // Gap 2, unit (i-b): the step's failed model tries, closed as on its evidence.
+                const toolsTries = triesOf(retryForStep);
+                if (toolsTries !== undefined) entry.model_attempts = toolsTries;
                 await recordFailure(entry);
                 if (held !== undefined) held.cause = 'step_failed';
                 return 'failed';
@@ -2407,17 +2476,22 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // that never even attempted a call.
                   // Gap 1, unit A2b: from here on a throw is the provider call's.
                   bareProviderCalled = true;
-                  const { output, meta, usage, modelText } = await deps.provider.callStepWithMeta(
-                    promptForAttempt,
-                    inputSchema,
-                    agentProfileInstructions,
-                    {
-                      structuredOutputStrict: structuredOutputPlan.send,
-                      llmClock,
-                      ...cachePrefix,
-                      ...stepCache,
-                    },
-                  );
+                  const callOnce = () =>
+                    deps.provider.callStepWithMeta(
+                      promptForAttempt,
+                      inputSchema,
+                      agentProfileInstructions,
+                      {
+                        structuredOutputStrict: structuredOutputPlan.send,
+                        llmClock,
+                        ...cachePrefix,
+                        ...stepCache,
+                      },
+                    );
+                  const { output, meta, usage, modelText } =
+                    wholeCallRetry !== undefined
+                      ? await tryModelRequest(wholeCallRetry, {}, llmClock, callOnce)
+                      : await callOnce();
                   stepInput = output;
                   // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the
                   // record must say `unobservable`, not stay silent. A provider that reports
@@ -2477,12 +2551,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // be able to stamp a structured_output disclosure on a step that declared none.
                   // Gap 1, unit A2b: from here on a throw is the provider call's.
                   bareProviderCalled = true;
-                  const { output, usage, modelText } = await deps.provider.callStepWithMeta(
-                    promptForAttempt,
-                    inputSchema,
-                    agentProfileInstructions,
-                    { llmClock, ...cachePrefix, ...stepCache },
-                  );
+                  const callOnce = () =>
+                    deps.provider.callStepWithMeta(
+                      promptForAttempt,
+                      inputSchema,
+                      agentProfileInstructions,
+                      { llmClock, ...cachePrefix, ...stepCache },
+                    );
+                  const { output, usage, modelText } =
+                    wholeCallRetry !== undefined
+                      ? await tryModelRequest(wholeCallRetry, {}, llmClock, callOnce)
+                      : await callOnce();
                   stepInput = output;
                   // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the
                   // record must say `unobservable`, not stay silent. A provider that reports
@@ -2535,6 +2614,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
                 }
+                // Gap 2, unit (i-b): the step's failed model tries, closed as on its evidence.
+                const bareTries = triesOf(retryForStep);
+                if (bareTries !== undefined) entry.model_attempts = bareTries;
                 await recordFailure(entry);
                 if (held !== undefined) held.cause = 'step_failed';
                 return 'failed';
@@ -2634,9 +2716,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // computed and dropped right here at the boundary.
             ...(toolCallsForMeta !== undefined ||
             structuredOutputMetaForStep !== undefined ||
-            usageForStep !== undefined
+            usageForStep !== undefined ||
+            triesOf(retryForStep) !== undefined
               ? {
                   stepMeta: {
+                    // Gap 2, unit (i-b): the step's failed model tries, when a try failed.
+                    ...((modelAttempts) => (modelAttempts !== undefined ? { modelAttempts } : {}))(
+                      triesOf(retryForStep),
+                    ),
                     // Gap 1, unit A1: the texts of the calls whose usage is below, or the marker.
                     ...((modelText) => (modelText !== undefined ? { modelText } : {}))(
                       modelTextOf(textsForStep, deps.recordModelText !== false),
@@ -2958,6 +3045,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 usageForStep !== undefined &&
                 usageForStep.length > 0 &&
                 (await callsAlreadyRecorded(stepName, usageForStep));
+              // Gap 2, unit (i-b), correction 1: the step's failed model tries ride along under the
+              // same answer, and only on the step's own wedge: a step's tries are on one record.
+              const wedgeTries =
+                !callsSaved && laterStep === undefined ? triesOf(retryForStep) : undefined;
               await recordFailure({
                 ...validationWedgeEntry(
                   stoppedStep,
@@ -2970,6 +3061,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   ? { usage: usageForStep }
                   : {}),
                 model_text: failureText(callsSaved ? undefined : textsForStep),
+                ...(wedgeTries !== undefined ? { model_attempts: wedgeTries } : {}),
               });
             }
           }
@@ -3154,6 +3246,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       entry.usage = appendRequests(usageForStep, entry.usage);
     }
     entry.model_text = failureText(owned && !callsSaved ? textsForStep : undefined);
+    // Gap 2, unit (i-b): the step's failed model tries ride along exactly when its calls do.
+    const lastTries = owned && !callsSaved ? triesOf(retryForStep) : undefined;
+    if (lastTries !== undefined) entry.model_attempts = lastTries;
     await recordFailure(entry);
     // RE-THROWS, never returns: `runAgent`'s public contract is that these propagate, and
     // commands/agent.ts stays the console floor for anything that happens before a run exists.
