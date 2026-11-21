@@ -87,7 +87,7 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`AnswerCaller`](#answercaller) | type | The names a call to `submitHumanResponse` can give for where it came from (`SubmitGateOptions.caller`). |
 | [`CapabilityBasis`](#capabilitybasis) | type | What a capability refusal was judged from: the caller's own registry, or the run's marker when the caller passed none. |
 | [`ChainCaller`](#chaincaller) | type | The names a call to `executeChain` can give for where it came from (`ExecuteChainOptions.caller`). |
-| [`ClaimableErrorClass`](#claimableerrorclass) | type | Every drive-failure class a program or a provider may claim, such as the class an `executeChain` caller passes in `modelFailure.error_class`. |
+| [`ClaimableErrorClass`](#claimableerrorclass) | type | An `error_class` word a provider or a program may claim: every word but `startup_failure`, which only `realm agent`'s and `realm listen`'s own startup writers mint. |
 | [`ClaimState`](#claimstate) | type | How alive a single in-progress claim is: `healthy`, `claim_stale` or `claim_unknown_age`. |
 | [`Cond`](#cond) | type | A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`). |
 | [`DisclosureTier`](#disclosuretier) | type | `declared` hides declared members only (question text, private terminals); `all` adds the environment members and the patterns. |
@@ -1828,11 +1828,11 @@ type ChainCaller = (typeof ENTRY_CALLERS.executeChain)[number];
 
 type · public
 
-Every drive-failure class a program or a provider may claim, such as the class an `executeChain`
-caller passes in `modelFailure.error_class`. Today that is every class (gap 2, unit (ii-a)).
+An `error_class` word a provider or a program may claim: every word but `startup_failure`, which
+only `realm agent`'s and `realm listen`'s own startup writers mint. Q1 (#592) unit c.
 
 ```ts
-type ClaimableErrorClass = DriveFailureRecord['error_class'];
+type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
 ```
 
 ### ClaimState

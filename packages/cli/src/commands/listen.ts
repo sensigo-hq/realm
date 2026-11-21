@@ -82,7 +82,6 @@ import {
   persistsField,
   startIdentityEntry,
   realmHomePath,
-  shellWord,
 } from '@sensigo/realm';
 import { createCallbackKeySealer } from '@sensigo/realm-store-sqlite';
 import { cannotGoOnLines } from './ways-renderer.js';
@@ -100,6 +99,7 @@ import type {
   RunRecord,
   DisclosureSet,
   CallbackRegistration,
+  CallbackKeyListing,
 } from '@sensigo/realm';
 import {
   verifyGithub,
@@ -125,6 +125,7 @@ import {
   type ReadContext,
 } from '../lib/run-read-address.js';
 import { answerWait, parseWaitPreference } from '../lib/result-wait.js';
+import { markSignalDeath, type ChildExit } from '../agent/startup-failure.js';
 import {
   loadProjectExtensions,
   onceReleaseLineSink,
@@ -137,6 +138,7 @@ import type { CallbackLists } from '../lib/callback/allow-list.js';
 import { declareMasterKey } from '../lib/callback/declare-master-key.js';
 import {
   CALLBACK_HEADER,
+  callbackKeyCommand,
   judgeCallbackAddress,
   judgeCallbackKey,
   noKeyFix,
@@ -144,6 +146,12 @@ import {
   type CallbackRefusalWord,
 } from '../lib/callback/door.js';
 import { resolveMasterKey } from '../lib/callback/master-key.js';
+import { readAllowFlags } from '../lib/callback/allow-flags.js';
+import {
+  callbackStartLines,
+  listenMasterSummary,
+  type ListenMasterSummary,
+} from '../lib/callback/start-lines.js';
 import { REMINDER_POLL_MS, reminderSenderOf, type ReminderSource } from './listen-reminders.js';
 // Gap 1, unit A0: the listing that reads no model call's text.
 import { scanListedRuns, type ListedRecord } from '@sensigo/realm';
@@ -162,10 +170,11 @@ export interface Logger {
 
 /**
  * Result of an agent spawn — a pid on success, or an error to record as spawn_failed. R1.2: with a
- * pid, `exited` (when the spawner gives one) settles once the agent's process has exited.
+ * pid, `exited` (when the spawner gives one) settles once the agent's process has exited. Q1 (#592)
+ * unit c: with how it ended, Node's `'exit'` pair — the code, or the signal that killed it.
  */
 export type SpawnResult =
-  | { pid: number; error?: never; exited?: Promise<void> }
+  | { pid: number; error?: never; exited?: Promise<ChildExit> }
   | { error: Error; pid?: never; exited?: never };
 
 /** Injected I/O dependencies — everything that touches disk, the clock, or child processes. */
@@ -535,8 +544,10 @@ export function makeListenHandler(
       const said = [workflow, address.host, key.state, key.state === 'none' ? '' : key.master_fp];
       if (fixesSaid.has(said.join('\0'))) return refused('no_key', address.host);
       fixesSaid.add(said.join('\0'));
-      const cmd = `realm callback key ${shellWord(entry.workflowDir)} --host ${shellWord(address.host)}`;
-      return refused('no_key', address.host, { key, cmd });
+      return refused('no_key', address.host, {
+        key,
+        cmd: callbackKeyCommand(entry.workflowDir, address.host),
+      });
     }
     return { registration: { url: value, host: address.host, webhook_id: randomUUID() } };
   };
@@ -1016,6 +1027,8 @@ export function makeListenHandler(
       // never a generic 500 that strands the run unmarked. issue #744: awaited inside the same
       // `try`, so a start Node refuses later, or a rejection, takes the same path.
       let spawnResult: SpawnResult;
+      // Q1 (#592) unit c: a startup mark's `elapsed_ms` is measured from here.
+      const spawnedAt = performance.now();
       try {
         spawnResult = await deps.spawnAgent(run.id, entry.workflowDir);
       } catch (err) {
@@ -1073,15 +1086,30 @@ export function makeListenHandler(
       }
 
       // Record agent pid/started_at (non-critical metadata), then the dedup record.
+      // Q1 (#592) unit c: the record of listen's own last write to the run is the baseline its startup
+      // mark compares against — the one this write returns (it bumps the version), or the created run
+      // when it failed.
+      let baseline: RunRecord = { ...run };
       try {
         run.agent_pid = spawnResult.pid;
         // #715 (b) (03 §A.4): the store's clock, as every instant a run record holds.
         run.agent_started_at = deps.runStore.clock.now().toISOString();
-        await deps.runStore.update(run);
+        baseline = (await deps.runStore.update(run)).record;
       } catch (err) {
         deps.logger.error('webhook: failed to record agent pid', {
           run_id: run.id,
           error: String(err),
+        });
+      }
+      // Q1 (#592) unit c: a child killed by a SIGNAL before it wrote anything to the run leaves a
+      // startup mark (one compare-and-set write of the baseline; an exit code is never marked). The
+      // write joins `waits`, so a stop awaits it; a child whose end reaches listen after the stop has
+      // resolved is not marked, because listen has exited.
+      if (spawnResult.exited !== undefined) {
+        void spawnResult.exited.then((exit) => {
+          const write = markSignalDeath(deps.runStore, deps.logger, baseline, exit, spawnedAt);
+          opts.waits?.add(write);
+          void write.finally(() => opts.waits?.delete(write));
         });
       }
       if (dedupId !== undefined && dedupStore !== undefined) {
@@ -2023,7 +2051,9 @@ export function defaultSpawnAgent(
       });
       // R1.2: made here, at the spawn, so an exit before any wait begins is still seen: a listener
       // added after the child has exited never fires.
-      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      const exited = new Promise<ChildExit>((resolve) =>
+        child.once('exit', (code, signal) => resolve({ code, signal })),
+      );
       child.on('error', (err: Error) => {
         if (!settled) {
           settle({ error: err });
@@ -2224,14 +2254,25 @@ export function sweepIntervalMs(seconds: number): number {
 export async function openListenHome(o: {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly home?: string;
-}): Promise<{ home: CliHome; masterFp: string | null }> {
+  /** C2c: whether callbacks are on (an allow-list flag given); absent: on. Off, nothing is resolved. */
+  readonly callbacks?: boolean;
+}): Promise<{ home: CliHome; masterFp: string | null; master?: ListenMasterSummary }> {
   const at = o.home !== undefined ? { home: o.home } : {};
-  const master = resolveMasterKey({ env: o.env, homeDir: realmHomePath(o.home) });
-  if (master.state !== 'found') return { home: await openCliHome(at), masterFp: null };
+  const homeDir = realmHomePath(o.home);
+  const master = o.callbacks === false ? undefined : resolveMasterKey({ env: o.env, homeDir });
+  const summary =
+    master === undefined ? {} : { master: listenMasterSummary(master, o.env, homeDir) };
+  if (master?.state !== 'found') return { home: await openCliHome(at), masterFp: null, ...summary };
   declareMasterKey(master.key);
   const sealer = createCallbackKeySealer(master.key);
-  return { home: await openCliHome({ ...at, sealer }), masterFp: sealer.masterFp };
+  return { home: await openCliHome({ ...at, sealer }), masterFp: sealer.masterFp, ...summary };
 }
+
+/** C2c: one allow-list entry more: the values are kept as typed, in order. */
+const collectEntry = (value: string, previous: readonly string[] = []): string[] => [
+  ...previous,
+  value,
+];
 
 export const listenCommand = new Command('listen')
   .description(
@@ -2357,6 +2398,18 @@ export const listenCommand = new Command('listen')
     parseWholeNumber('--shutdown-grace', 0, 2_147_483),
     30,
   )
+  // R1.3 C2c: the allow-list, repeatable, read in the action with C1's grammar; a flag typed as the
+  // next word is refused by the option-value guard.
+  .option(
+    '--callback-allow <entry>',
+    'A receiver a request may name as its callback address, reached on a public address: a host name, with a port if it is not 443 (http:// before it for plain http). Repeatable. Without this flag or --callback-allow-private, every callback address is refused.',
+    collectEntry,
+  )
+  .option(
+    '--callback-allow-private <entry>',
+    'A receiver a request may name as its callback address that may also be on a private, local or shared address (this machine, your own network). Repeatable.',
+    collectEntry,
+  )
   // #960 U2: checked when the command line is read, like `--shutdown-grace`.
   .option(
     '--shutdown-drain <seconds>',
@@ -2387,6 +2440,8 @@ export const listenCommand = new Command('listen')
         promptCache?: PromptCacheSetting;
         cacheDiagnostics?: CacheDiagnosticsSetting;
         recordModelText?: boolean;
+        callbackAllow?: string[];
+        callbackAllowPrivate?: string[];
       },
     ) => {
       // issue #676: first, before any workflow is loaded, registered or mounted. Every run listen
@@ -2422,6 +2477,18 @@ export const listenCommand = new Command('listen')
         process.exit(1);
         return;
       }
+      // R1.3 C2c: the allow-list flags, read before any workflow is loaded or the home opened; the
+      // first refused entry is the only one said. Without either flag nothing below changes.
+      const allowed =
+        opts.callbackAllow === undefined && opts.callbackAllowPrivate === undefined
+          ? undefined
+          : readAllowFlags(opts.callbackAllow ?? [], opts.callbackAllowPrivate ?? []);
+      if (allowed !== undefined && 'refusal' in allowed) {
+        console.error(allowed.refusal);
+        process.exit(1);
+        return;
+      }
+      const callbackLists = allowed?.lists;
       // caching 3-B (row 5): `--prompt-cache` with `--provider openai` is no longer refused: the
       // setting decides whether each agent sends OpenAI its cache key.
 
@@ -2489,7 +2556,10 @@ export const listenCommand = new Command('listen')
       const dedupKind = opts['dedupStore'] ?? 'file';
       // #616 PR-2a (iii): the one door, opened once, after every refusal above; its dedup marks are
       // rows in the home's store (`--dedup-store memory` keeps its in-memory map).
-      const { home, masterFp } = await openListenHome({ env: process.env });
+      const { home, masterFp, master } = await openListenHome({
+        env: process.env,
+        callbacks: callbackLists !== undefined,
+      });
       const memoryStores = new Map<string, DedupStore>();
       const deps: ListenDeps = {
         workflowStore: home.workflowStore,
@@ -2509,6 +2579,7 @@ export const listenCommand = new Command('listen')
         logger,
         home: home.path,
         callbackMasterFp: masterFp,
+        ...(callbackLists !== undefined ? { callbackLists } : {}),
       };
 
       // Register routed workflows once + load their extension modules — fail-fast on any error.
@@ -2567,6 +2638,39 @@ export const listenCommand = new Command('listen')
         'listen: caching',
         listenCachingFacts(opts.provider, opts.promptCache, openaiEndpoint, model),
       );
+      // R1.3 C2c: what is on, with callbacks only (`start-lines.ts`): each line printed here, a
+      // pair with no usable key with its command built inside the print call.
+      if (callbackLists !== undefined && master !== undefined) {
+        let keys: { listing: readonly CallbackKeyListing[] } | { error: string } | undefined;
+        if (master.state !== 'invalid') {
+          try {
+            keys = { listing: (await home.runStore.callbacks?.keys.list()) ?? [] };
+          } catch (err) {
+            keys = { error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+        const lines = callbackStartLines({
+          lists: callbackLists,
+          master,
+          workflows: [...routes.values()].map((e) => ({
+            id: e.definition.id,
+            folder: e.workflowDir,
+            takes: optedIn(e),
+          })),
+          ...(keys !== undefined ? { keys } : {}),
+        });
+        for (const line of lines) {
+          if (line.kind === 'no_key') {
+            deps.logger.warn(
+              `listen: callbacks: ${line.workflow} → ${line.label}: ${noKeyFix(line.verdict, masterFp, writerCtx().cmd(callbackKeyCommand(line.folder, line.label)))}`,
+            );
+          } else if (line.level === 'warn') {
+            deps.logger.warn(`listen: callbacks: ${line.text}`);
+          } else {
+            deps.logger.info(`listen: callbacks: ${line.text}`);
+          }
+        }
+      }
       const addr = handle.server.address() as { port: number } | null;
       logger.info(
         // eslint-disable-next-line no-restricted-syntax -- prose naming the listener and its address, not a command to copy (#729 PR-3, L-2).

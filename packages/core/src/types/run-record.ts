@@ -1771,6 +1771,14 @@ export interface DriveFailureRecord {
      * per-attempt timeout — this one is realm's bound on the whole create, retries included.
      */
     | 'aborted_by_budget'
+    /**
+     * Q1 (#592) unit c: `realm agent --run-id` stopped at its own startup checks (no key for the
+     * provider, no model, `--base-url` with Anthropic, a provider module that does not load), or
+     * `realm listen`'s child was killed by a signal before it wrote anything to the run. Only those
+     * two writers mint it; a provider's payload or a program's `model_attempts` cannot claim it
+     * ({@link CLAIMABLE_ERROR_CLASSES}). Its `step` is `''`.
+     */
+    | 'startup_failure'
     | 'other';
   /** Sanitized (secrets redacted) and capped at 500 characters. */
   message: string;
@@ -1852,6 +1860,7 @@ export const ERROR_CLASSES = [
   'sdk_missing',
   'validation_rejected',
   'aborted_by_budget',
+  'startup_failure',
   'other',
 ] as const satisfies readonly DriveFailureRecord['error_class'][];
 type MissingErrorClass = Exclude<DriveFailureRecord['error_class'], (typeof ERROR_CLASSES)[number]>;
@@ -1859,16 +1868,20 @@ const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : Missi
 void _everyErrorClassListed;
 
 /**
- * Every drive-failure class a program or a provider may claim, such as the class an `executeChain`
- * caller passes in `modelFailure.error_class`. Today that is every class (gap 2, unit (ii-a)).
+ * An `error_class` word a provider or a program may claim: every word but `startup_failure`, which
+ * only `realm agent`'s and `realm listen`'s own startup writers mint. Q1 (#592) unit c.
  * @public
  */
-export type ClaimableErrorClass = DriveFailureRecord['error_class'];
+export type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
 
 /**
- * Every drive-failure class a program or a provider may claim ({@link ClaimableErrorClass}), in the
- * type's order. A reader that accepts a claimed class closes it against this one list. Checked both
- * ways, as {@link ERROR_CLASSES} is.
+ * Q1 (#592) unit c: the classes a provider or a program may claim, in the type's order — every
+ * {@link ERROR_CLASSES} word but `startup_failure`, which only `realm agent`'s and `realm listen`'s
+ * own startup writers mint. The readers that take a claimed class close against this one list: the
+ * CLI's payload reader and model-try reader (a provider's thrown payload, a third-party
+ * `--provider-module`'s included), `closeModelAttempts` (a program's `model_attempts`), and
+ * `executeChain`'s admission of `modelFailure.error_class`.
+ * Checked both ways, as `ERROR_CLASSES` is.
  */
 export const CLAIMABLE_ERROR_CLASSES = [
   'connection_timeout',

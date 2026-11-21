@@ -6,7 +6,7 @@
 // `userinfo`, `not_allowed`), then the classifier for a host that is an IP literal (`address`), then
 // K1's host label (none is `malformed`), then the key (`no_key`). A refusal carries the host label
 // whenever the address parses far enough to have one; never the address itself.
-import type { CallbackKeyPair } from '@sensigo/realm';
+import { shellWord, type CallbackKeyPair } from '@sensigo/realm';
 import { classifyAddress } from './address.js';
 import {
   isIpLiteralHost,
@@ -92,4 +92,12 @@ export function noKeyFix(
     `its key was sealed with encryption key ${verdict.master_fp}${has}; start realm listen with ` +
     `that encryption key, or make a new key with: ${cmd} --replace`
   );
+}
+
+/**
+ * The command that makes or replaces the key of (the workflow in `folder`, `label`): the ONE template
+ * the door's no-key line and `realm listen`'s start lines print (C2c).
+ */
+export function callbackKeyCommand(folder: string, label: string): string {
+  return `realm callback key ${shellWord(folder)} --host ${shellWord(label)}`;
 }

@@ -35,6 +35,7 @@ import {
 } from '../agent/providers/llm-provider.js';
 import type { AutoStepRule, ProviderName } from '../agent/providers/llm-provider.js';
 import { runAgent } from '../agent/run-agent.js';
+import { recordStartupFailure } from '../agent/startup-failure.js';
 import { chooseStepCaches, type StepCacheChoices } from '../agent/step-cache-choices.js';
 import { readEarlierRuns, type EarlierRuns } from '../agent/earlier-runs.js';
 import {
@@ -245,6 +246,14 @@ function printDriveReceipt(): void {
   }
 }
 
+/**
+ * Q1 (#592) unit c: a printed refusal's own words, without the `Error: ` its first line opens with
+ * (the printer's prefix, not part of what was said) — what a startup mark keeps as its message.
+ */
+function withoutErrorPrefix(text: string): string {
+  return text.startsWith('Error: ') ? text.slice('Error: '.length) : text;
+}
+
 export const agentCommand = new Command('agent')
   .description('Run a workflow autonomously using an LLM provider')
   .option('--workflow <path>', 'Path to workflow directory or workflow.yaml file')
@@ -446,6 +455,18 @@ export const agentCommand = new Command('agent')
         const workflowStore = home.workflowStore;
         const store = home.runStore;
         const traceBufferStore = home.traceBufferStore;
+        // Q1 (#592) unit c: a refusal for want of something the drive needs (a key, a model, a usable
+        // --base-url, a provider module that loads) is a startup death. With --run-id it is recorded on
+        // the run first, and this returns the refusal's closing sentence for what the write did; with
+        // --workflow there is no run, and it returns undefined (the refusal ends as it always has).
+        const markStartup = async (message: string): Promise<string | undefined> =>
+          opts.runId === undefined
+            ? undefined
+            : recordStartupFailure(store, opts.runId, {
+                provider: opts.provider,
+                message,
+                recordModelText: opts.recordModelText !== false,
+              });
         let provider: LlmProvider;
         // Caching 3-M (D-2): under `auto`, the provider's rule for each step's choice, and the
         // requested `--model` the runner's price file is read by.
@@ -478,9 +499,10 @@ export const agentCommand = new Command('agent')
           try {
             mod = (await import(moduleUrl)) as { default?: unknown };
           } catch (err) {
-            console.error(
-              `Error: failed to import provider module '${opts.providerModule}': ${err instanceof Error ? err.message : String(err)}`,
-            );
+            const message = `failed to import provider module '${opts.providerModule}': ${err instanceof Error ? err.message : String(err)}`;
+            const closing = await markStartup(message);
+            console.error(`Error: ${message}`);
+            if (closing !== undefined) console.error(closing);
             exitProcess(1);
           }
           if (!(mod.default instanceof LlmProvider)) {
@@ -488,7 +510,10 @@ export const agentCommand = new Command('agent')
             // the text; this command prints it.
             const unrecognised = describeUnrecognised(mod.default, LlmProvider);
             if (unrecognised.kind === 'foreign_line') {
-              for (const line of describeForeignProvider(unrecognised)) console.error(line);
+              const lines = describeForeignProvider(unrecognised);
+              const closing = await markStartup(withoutErrorPrefix(lines.join('\n')));
+              for (const line of lines) console.error(line);
+              if (closing !== undefined) console.error(closing);
               exitProcess(1);
             }
             // The hedged clause ends the first line in place of its period.
@@ -496,10 +521,12 @@ export const agentCommand = new Command('agent')
               unrecognised.kind === 'unbranded_copy'
                 ? unbrandedClause(unrecognised.className)
                 : '.';
-            console.error(
-              `Error: provider module default export must be an instance extending LlmProvider${ending}\n` +
-                `Import LlmProvider from '@sensigo/realm-cli/agent' and export 'export default new MyProvider()'.`,
-            );
+            const message =
+              `provider module default export must be an instance extending LlmProvider${ending}\n` +
+              `Import LlmProvider from '@sensigo/realm-cli/agent' and export 'export default new MyProvider()'.`;
+            const closing = await markStartup(message);
+            console.error(`Error: ${message}`);
+            if (closing !== undefined) console.error(closing);
             exitProcess(1);
           }
           provider = mod.default;
@@ -515,7 +542,9 @@ export const agentCommand = new Command('agent')
             env: readProviderKeys(),
           });
           if (!flags.ok) {
-            console.error(`Error: ${flags.message} ${tail}`);
+            // Q1 (#592) unit c: with --run-id the closing sentence says what the mark did.
+            const closing = (await markStartup(flags.message)) ?? tail;
+            console.error(`Error: ${flags.message} ${closing}`);
             exitProcess(1);
           }
           // issue #313 (dead-config cell 1): the attestation only means anything for a compat

@@ -99,7 +99,8 @@ describe('caching 3-M B2b — realm-listen.md', () => {
       LISTEN,
       '| `--cache-diagnostics <on\\|off>` | not passed | Passed to each `realm agent` it starts, only when stated (added after version 0.48.0). An agent that cannot ask (another provider, another address) simply does not. |',
     );
-    claim(LISTEN, 'This page lists its argument and 19 flags (13 in version 0.49.0),');
+    // Callback C2c adds `--callback-allow` and `--callback-allow-private`: the table's 21 rows.
+    claim(LISTEN, 'This page lists its argument and 21 flags (13 in version 0.49.0),');
   });
 
   it('the parser refusal', () => {

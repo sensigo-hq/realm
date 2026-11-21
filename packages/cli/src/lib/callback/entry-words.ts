@@ -1,7 +1,8 @@
 // entry-words.ts — callback K2a-2 (R1.3; the owner's K2 page: eaa442b9): the phrase that says why a
 // receiver address an operator typed is not one, for each of C1's closed refusal words. One function,
 // so every command that refuses an entry (`realm callback key --host`, C2c's allow-list flags) says the
-// same thing.
+// same thing. And (C2c) how much of the typed entry such a line quotes back: never a password or a
+// token pasted into a path or query.
 import type { EntryRefusalWord } from './allow-list.js';
 
 const PHRASES: Readonly<Record<EntryRefusalWord, string>> = {
@@ -19,4 +20,19 @@ const PHRASES: Readonly<Record<EntryRefusalWord, string>> = {
 /** Why an entry refused with `word` is not a receiver address, as a clause after a colon. */
 export function entryRefusalPhrase(word: EntryRefusalWord): string {
   return PHRASES[word];
+}
+
+/**
+ * The entry as a refusal quotes it, with its leading space: its text up to the first `/`, `?` or `#`
+ * after any `scheme://` prefix, as JSON; nothing at all for `userinfo`, when that text holds an `@`,
+ * or when it is empty, so a password or a token typed into the entry never reaches the terminal.
+ */
+export function quotedEntry(text: string, word?: EntryRefusalWord): string {
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(text)?.[0] ?? '';
+  const rest = text.slice(scheme.length);
+  const cut =
+    scheme + rest.slice(0, rest.search(/[/?#]/) === -1 ? rest.length : rest.search(/[/?#]/));
+  // C2c correction 1: an entry that begins with `/`, `?` or `#` has nothing to quote; `""` reads as
+  // an empty value.
+  return word === 'userinfo' || cut.includes('@') || cut === '' ? '' : ` ${JSON.stringify(cut)}`;
 }

@@ -204,13 +204,14 @@ const review = (store: RunStore, def: typeof refunds, runId: string, output: unk
 const agent = (work: (runId: string) => Promise<unknown>, exits = true) => {
   let first = true;
   return vi.fn(async (runId: string): Promise<SpawnResult> => {
-    if (!first) return { pid: 4243, exited: Promise.resolve() };
+    // Q1 (#592) unit c: `exited` gives how the process ended; an exit with a code is never marked.
+    if (!first) return { pid: 4243, exited: Promise.resolve({ code: 0, signal: null }) };
     first = false;
     const done = sleep(50)
       .then(() => work(runId))
       .then(
-        () => undefined,
-        () => undefined,
+        () => ({ code: 0, signal: null }),
+        () => ({ code: 0, signal: null }),
       );
     return exits ? { pid: 4242, exited: done } : { pid: 4242 };
   });
@@ -219,7 +220,10 @@ const agent = (work: (runId: string) => Promise<unknown>, exits = true) => {
 const idle = () => agent(async () => undefined, false);
 /** A spawn double whose agent exits at once, the run left running. */
 const exitsAtOnce = () =>
-  vi.fn(async (): Promise<SpawnResult> => ({ pid: 4242, exited: Promise.resolve() }));
+  vi.fn(async (): Promise<SpawnResult> => ({
+    pid: 4242,
+    exited: Promise.resolve({ code: 0, signal: null }),
+  }));
 
 describe('R1.2 — when the preference is not honoured, the reply is as before', () => {
   it('C1: no Prefer gets R1.1’s 202 at once; Prefer on a workflow without result_map gets the same bytes as without it', async () => {
