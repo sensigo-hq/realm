@@ -547,7 +547,7 @@ describe.runIf(POSIX)(
           },
         ],
         entries: [
-          { code: 1, err: refused('n8n.example.com/hook', 'it has a path, query or fragment') },
+          { code: 1, err: refused('n8n.example.com', 'it has a path, query or fragment') },
           { code: 1, err: refused(undefined, 'it has a user name or password') },
           { code: 1, err: refused('*.example.com', 'it has a wildcard') },
           {
