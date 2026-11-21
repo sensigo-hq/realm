@@ -118,4 +118,39 @@ describe('#627 W correction 2 (1.5) — formAnswerRecorded, one conjunct per row
       came_back: 1,
     });
   });
+
+  // #625 PR-2b A2b: a reply that carried the run on is the continuation's — its `status` says how the
+  // steps after the answer went — so it is judged on the answer's own facts alone.
+  const CARRIED = {
+    ...RECORDED,
+    gate_claim: {
+      proof: 'matched',
+      opened_by: { by: null, absent_cause: 'driver_not_recorded' },
+      carried_on: true,
+    },
+  };
+  it('#625 PR-2b A2b: a carried-on reply whose continuation failed (status error) → the form counts as recorded', async () => {
+    // (a) red when formAnswerRecorded reads the merged `status`; (b) prints the counts.
+    expect(
+      await countsFor({
+        ...CARRIED,
+        status: 'error',
+        reply_kind: 'error',
+      } as unknown as EngineReply),
+    ).toEqual({ sent: 1, came_back: 0 });
+  });
+
+  it.each([
+    ['answer_recorded: false', { answer_recorded: false }],
+    ['an outcome', { outcome: { step: 'q', attempted: true, by: { kind: 'timeout' } } }],
+  ] as const)(
+    '#625 PR-2b A2b: a carried-on reply with %s → the form counts as came back',
+    async (_row, over) => {
+      // (a) red when that conjunct is dropped from the carried-on branch; (b) prints the counts.
+      expect(await countsFor({ ...CARRIED, ...over } as unknown as EngineReply)).toEqual({
+        sent: 1,
+        came_back: 1,
+      });
+    },
+  );
 });

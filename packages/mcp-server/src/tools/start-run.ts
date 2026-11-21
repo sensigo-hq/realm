@@ -130,6 +130,8 @@ export function formDepsOf(
     ...(stores.driver !== undefined ? { driver: stores.driver } : {}),
     principal: principalOfStores(stores),
     ...(disclosure !== undefined ? { disclosure } : {}),
+    // #625 PR-2b A2b: for the steps the opening call's form carries the run on to.
+    ...(stores.traceBufferStore !== undefined ? { traceBufferStore: stores.traceBufferStore } : {}),
   };
 }
 
@@ -480,7 +482,11 @@ export async function handleStartRun(
                 afterSnap.record,
                 definition,
                 afterSnap.at,
-                after === ranReply && saysHowItEnded(result, afterSnap.record),
+                // #625 PR-2b A2b: or a form's answer that carried the run on, whose continuation met
+                // another program ending the run (A2a's answer tool's rule).
+                (after === ranReply && saysHowItEnded(result, afterSnap.record)) ||
+                  (after.gate_claim?.carried_on === true &&
+                    saysHowItEnded(after, afterSnap.record)),
               )
             : '';
       return {

@@ -672,7 +672,7 @@ export const PROOF_WORDS = {
   matched: 'the claim token matched the reply that opened this question',
   // #627 W (W-i4).
   absent:
-    "no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
+    "no claim token passed (a token is passed only from the conversation that opened the question — by Realm's MCP answer tool, or by the form sent by the call that opened it — or by a program that calls the library with it)",
   mismatch: "the claim token passed is not this question's",
   unverifiable: {
     no_claim: 'the claim token could not be checked — no claim on this record',
