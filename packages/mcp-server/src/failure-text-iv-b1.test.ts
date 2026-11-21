@@ -488,6 +488,43 @@ describe('gap 2 (iv-b1), checks 2 and 5 — the drive failures and the drive_fai
     });
   });
 
+  it('a startup_failure entry (Q1 unit c: a drive that died at startup, before any step): its message shaped like every class', async () => {
+    const w = await world();
+    const id = await w.fresh(D.pair);
+    const run = await w.record(id);
+    // The entry as unit c's `startupFailureEntry` writes it (cli/src/agent/startup-failure.ts): no
+    // step, the death's message sanitized and capped, no evidence count. Cast through unknown: on
+    // this branch's base the class is not yet in the type.
+    const message = `the project's extensions could not be loaded: ${SECRET_WORDS}`;
+    w.runStore.seed({
+      ...run,
+      drive_failures: {
+        first_failed_at: '2026-11-20T23:58:00.000Z',
+        total: 1,
+        entries: [
+          {
+            at: '2026-11-20T23:58:00.000Z',
+            step: '',
+            provider: 'anthropic',
+            error_class: 'startup_failure',
+            message,
+            elapsed_ms: 40,
+          },
+        ],
+      },
+    } as unknown as RunRecord);
+    const hidden = await (await w.connect('hidden')).state(id);
+    const entry = (hidden.reply['drive_failures'] as { entries: Array<Record<string, unknown>> })
+      .entries[0]!;
+    // (a) red when the entry's message is left as recorded (Realm's startup sentence holds the load
+    //     error's words); (b) prints the class and the message shown.
+    expect({ cls: entry['error_class'], message: entry['message'] }).toEqual({
+      cls: 'startup_failure',
+      message: shape(message.length),
+    });
+    expect(hidden.text.includes(SECRET_WORDS)).toBe(false);
+  });
+
   it('check 5 — the drive_failing reason keeps Realm’s words; the message is one shape, never a shape of a shape', async () => {
     claim(
       RUN_STATE,
