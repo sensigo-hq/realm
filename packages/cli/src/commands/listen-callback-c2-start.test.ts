@@ -306,3 +306,88 @@ describe.runIf(POSIX)(
     });
   },
 );
+
+describe.runIf(POSIX)(
+  'C2 correction 1 — a process with no master key is told to restart',
+  { timeout: 120_000 },
+  () => {
+    it('no key, no master key: the fix says restart; the pasted command makes one; the same process still refuses; after a restart it registers', async () => {
+      const root = scratch();
+      const folder = join(root, 'flows');
+      mkdirSync(folder);
+      writeFileSync(
+        join(folder, 'workflow.yaml'),
+        `id: ${W}\nname: ${W}\nversion: 1\ntrigger:\n  type: webhook\n  path: ${PATH}\n  auth:\n    mode: shared_secret\n    header: X-Token\n    secret_from: READ_SECRET\n  result_map:\n    approved: context.resources.review.approved\nsteps:\n  review:\n    description: Review.\n    execution: auto\n`,
+      );
+      const bin = join(root, 'bin');
+      mkdirSync(bin);
+      writeFileSync(join(bin, 'realm'), `#!/bin/sh\nexec "${process.execPath}" "${CLI}" "$@"\n`);
+      chmodSync(join(bin, 'realm'), 0o755);
+      mkdirSync(join(root, 'home'));
+      const home = join(root, 'home', '.realm');
+      const ask = async (s: Awaited<ReturnType<typeof serve>>, id: string) => {
+        const r = await http(
+          s.port,
+          'POST',
+          PATH,
+          {
+            'content-type': 'application/json',
+            'x-token': ENV['READ_SECRET']!,
+            'realm-callback-url': URL_,
+          },
+          JSON.stringify({ id }),
+        );
+        const body = JSON.parse(r.body) as Record<string, unknown>;
+        return [r.status, body['callback'] ?? body['reason']];
+      };
+      const first = await openListenHome({ env: {}, home });
+      const s1 = await serve([OPTED], {
+        store: first.home.runStore,
+        over: { callbackLists: LISTS, callbackMasterFp: first.masterFp },
+      });
+      s1.routes.get(PATH)!.workflowDir = folder;
+      const before = await ask(s1, 'evt-1');
+      const fix =
+        s1.logger.lines.find((l) => l.msg.startsWith('webhook: callback refused'))?.msg ?? '';
+      const command = fix.slice(fix.indexOf('make a key with: ') + 'make a key with: '.length);
+      const pasted = spawnSync('bash', ['-c', command], {
+        cwd: root,
+        env: {
+          PATH: `${bin}:${process.env['PATH'] ?? ''}`,
+          HOME: join(root, 'home'),
+          NO_COLOR: '1',
+          REALM_NO_NUDGE: '1',
+        },
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+      const sameProcess = await ask(s1, 'evt-2');
+      await first.home.close();
+      const restarted = await openListenHome({ env: {}, home });
+      onTestFinished(() => restarted.home.close());
+      const s2 = await serve([OPTED], {
+        store: restarted.home.runStore,
+        over: { callbackLists: LISTS, callbackMasterFp: restarted.masterFp },
+      });
+      const after = await ask(s2, 'evt-3');
+      // (1) red when the fix for a process with no master key only says to make a key (the same
+      //     process refuses again: pinned), the pasted command fails, or a restart does not read the
+      //     key; (2) prints each answer, the fix and the pasted command's code.
+      expect({
+        before,
+        fix: fix.replace(folder, '<flows>'),
+        pasted: pasted.status,
+        sameProcess,
+        restartedFp: restarted.masterFp === null ? null : 'a fingerprint',
+        after,
+      }).toEqual({
+        before: [400, 'no_key'],
+        fix: `webhook: callback refused (no_key) — this process has no encryption key; restart realm listen after you make a key with: realm callback key <flows> --host ${LABEL}`,
+        pasted: 0,
+        sameProcess: [400, 'no_key'],
+        restartedFp: 'a fingerprint',
+        after: [202, 'registered'],
+      });
+    });
+  },
+);

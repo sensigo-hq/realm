@@ -145,7 +145,7 @@ describe('C2 — realm run inspect: the Callback line', { timeout: 120_000 }, ()
         delivered: [
           'Callback: delivered to hooks.example.com:443 2m ago (2026-11-21T12:00:00Z), attempt 1',
         ],
-        failed: ['Callback: failed after 1 attempts, last answer 410'],
+        failed: ['Callback: failed after 1 attempt, last answer 410'],
         none: [],
       },
       leaked: [],

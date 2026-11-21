@@ -71,13 +71,19 @@ export function judgeCallbackKey(pair: CallbackKeyPair): CallbackKeyVerdict {
  * What to do about a pair with no usable key, ending with the command `cmd` (and nothing after it: a
  * full stop pasted into a shell names another host). `processFp` is this process's master key
  * fingerprint, `null` when it has none, absent when unknown (the clause about it is then left out).
+ * A process with none reads its master key only at start, so a key made now is read after a restart:
+ * its no-key text says so (C2 correction 1).
  */
 export function noKeyFix(
   verdict: Exclude<CallbackKeyVerdict, { ok: true }>,
   processFp: string | null | undefined,
   cmd: string,
 ): string {
-  if (verdict.state === 'none') return `make a key with: ${cmd}`;
+  if (verdict.state === 'none') {
+    return processFp === null
+      ? `this process has no encryption key; restart realm listen after you make a key with: ${cmd}`
+      : `make a key with: ${cmd}`;
+  }
   if (processFp !== undefined && processFp !== null && processFp === verdict.master_fp) {
     return `the stored key cannot be read; make a new key with: ${cmd} --replace`;
   }

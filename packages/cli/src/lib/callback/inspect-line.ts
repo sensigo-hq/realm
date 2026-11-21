@@ -6,7 +6,7 @@
 //   pending, finished, due             `Callback: due since <W>; sent only while realm listen with a
 //                                       matching allow-list runs`
 //   delivered                          `Callback: delivered to <host> <W>, attempt <n>`
-//   failed (an ended window included)  `Callback: failed after <n> attempts, last answer <s>`
+//   failed (an ended window included)  `Callback: failed after <n> attempt(s), last answer <s>`
 // `<W>` is the one instant formatter's (`in 5m (…)`, `5m ago (…)`); a part whose field is absent, or
 // whose instant does not parse, is left out.
 import {
@@ -39,7 +39,10 @@ export function callbackLine(view: CallbackView, runFinished: boolean, at: Date)
     const when = words(view.last_attempt_at, 'past_event');
     return `Callback: delivered to ${view.host}${when === '' ? '' : ` ${when}`}, attempt ${view.attempts}`;
   }
-  if (view.status === 'failed') return `Callback: failed after ${view.attempts} attempts${answer}`;
+  if (view.status === 'failed') {
+    const attempts = view.attempts === 1 ? 'attempt' : 'attempts';
+    return `Callback: failed after ${view.attempts} ${attempts}${answer}`;
+  }
   if (!runFinished) return 'Callback: waiting for the run to finish';
   if (isPastDeadline(view.next_attempt_at, at)) {
     const since = words(view.next_attempt_at, 'past_event');
