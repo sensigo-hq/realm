@@ -26,6 +26,7 @@ import {
   leaseFactOf,
   loadWorkflowFromFile,
   reclaimStep,
+  takeBackStep,
   type ClaimRecord,
   type LeaseHold,
   type RunStore,
@@ -655,6 +656,67 @@ describe(
           waiting: `  • Step 'b' was ${A} at ${since}; ${L[state]}. Waiting up to 1s for the run's record to change.`,
           notRunHere: [],
           frees: state === 'not_held',
+        });
+      });
+
+    // #729 CW-5c check 2: `realm workflow run`'s two places. A killed drive's step `b` the command
+    // reaches: below the cap its in-flight line ends with the `realm agent` sentence and its Go-on
+    // opens with it; at the cap (`b` taken back once since, and that drive killed too) both keep
+    // today's words.
+    for (const cap of [false, true] as const)
+      it(`a killed drive's step the command reaches, ${cap ? 'at the cap: today’s words' : 'below the cap: the in-flight line and the Go-on name realm agent'}`, async () => {
+        const yaml = twoAgentSteps(`cw5c-wf-${cap ? 'cap' : 'below'}`);
+        let taken = false;
+        mocks.question.mockImplementation(async () => {
+          if (!taken) {
+            taken = true;
+            const runId = (await runIds(h.home.runStore))[0]!;
+            const definition = loadWorkflowFromFile(join(wf, 'workflow.yaml'));
+            const killed = async (): Promise<void> => {
+              const answer = await claimStepForDrive(h.home.runStore, runId, 'b', {
+                definition,
+                registry: createDefaultRegistry(),
+                driver: DRIVE,
+              });
+              if (answer.kind !== 'claimed')
+                throw new Error(`fixture: not claimed: ${JSON.stringify(answer)}`);
+              answer.hold.close((await h.home.runStore.get(runId)).record);
+            };
+            await killed();
+            if (cap) {
+              const token = (await h.home.runStore.get(runId)).record.claims?.['b']?.token;
+              const back = await takeBackStep(h.home.runStore, runId, 'b', {
+                expectToken: token!,
+                drivenBy: DRIVE,
+              });
+              if (back.kind !== 'taken_back') throw new Error(`fixture: ${back.kind}`);
+              await killed();
+            }
+          }
+          return '';
+        });
+        const code = await workflowRun(yaml);
+        const all = [...logSpy.mock.calls, ...vi.mocked(console.error).mock.calls]
+          .flatMap((c: unknown[]) => String(c[0]).split('\n'))
+          .filter((l: string) => l !== '');
+        const runId = (await runIds(h.home.runStore))[0]!;
+        const takeBack = `Or let realm agent --run-id ${runId} --provider <provider> --model <model> take it back and run it (this step's one automatic take-back until a person reclaims it).`;
+        const end = all.find(
+          (l: string) => l.startsWith("• Step 'b' was") && l.includes('the record has not changed'),
+        );
+        // (1) red when `realm workflow run` passes no steps to its in-flight line or to its Go-on, or
+        //     names `realm agent` at the cap; (2) prints the lines.
+        expect(
+          {
+            code,
+            inFlight: cap ? end?.endsWith('--force') : end?.endsWith(`--force ${takeBack}`),
+            goOn: all.find((l: string) => l.startsWith('  Go on:')),
+          },
+          all.join('\n'),
+        ).toEqual({
+          code: 1,
+          inFlight: true,
+          goOn: `  Go on:     ${cap ? '' : `let realm agent --run-id ${runId} --provider <provider> --model <model> take 'b' back, or `}once 'b' is freed (realm run reclaim ${runId} prints its command), realm run advance ${runId}`,
         });
       });
 

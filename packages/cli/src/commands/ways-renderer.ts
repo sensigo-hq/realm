@@ -439,6 +439,23 @@ function freeingParts(entry: HeldEntry, way: WayOf<'reclaim'>, ctx: RenderCtx): 
 }
 
 /**
+ * #729 CW-5c: the end of a held step's lines where a `realm agent` drive takes the step back (the
+ * steps in `takesBack`, which the door built with `stepsTakenBack`); the person's way stays before
+ * it. Empty for every other step.
+ */
+function takeBackParts(
+  entry: HeldEntry,
+  way: WayOf<'reclaim'>,
+  ctx: RenderCtx,
+  takesBack: ReadonlySet<string> | undefined,
+): string[] {
+  if (takesBack?.has(entry.facts.step) !== true) return [];
+  return [
+    `Or let ${ctx.cmd(`realm agent --run-id ${way.run_id} --provider <provider> --model <model>`)} take it back and run it (this step's one automatic take-back until a person reclaims it).`,
+  ];
+}
+
+/**
  * #729 CW-5b: what frees a held step, without its opening ({@link freeingParts}) — `realm agent`'s
  * line for a step it may not take back again ends with it. Empty on a store that keeps no claims.
  */
@@ -449,10 +466,16 @@ export function heldFreeingParts(entry: HeldEntry, ctx: RenderCtx = PLAIN): stri
 
 /**
  * #922 P2-2 (R13): the ONE CLI line for a held step, read by every CLI door that names one — its
- * state's opening (core's `HELD_WORDS.cli`), then what frees it ({@link freeingParts}); on a store
- * that keeps no claims, the opening alone. Facts and conditions only (rule 10).
+ * state's opening (core's `HELD_WORDS.cli`), then what frees it ({@link freeingParts}), then, for a
+ * step in `takesBack` (#729 CW-5c), the `realm agent` command that takes it back
+ * ({@link takeBackParts}); on a store that keeps no claims, the opening alone. Facts and conditions
+ * only (rule 10).
  */
-export function heldLine(entry: HeldEntry, ctx: RenderCtx = PLAIN): string {
+export function heldLine(
+  entry: HeldEntry,
+  ctx: RenderCtx = PLAIN,
+  takesBack?: ReadonlySet<string>,
+): string {
   const way = reclaimWayIn(entry);
   const held = heldStateOf(entry);
   const at =
@@ -462,7 +485,13 @@ export function heldLine(entry: HeldEntry, ctx: RenderCtx = PLAIN): string {
         ? entry.facts.claimed_at
         : undefined;
   const opening = HELD_WORDS.cli(heldWordsStateOf(entry, way !== undefined), entry.facts.step, at);
-  return way === undefined ? opening : [opening, ...freeingParts(entry, way, ctx)].join(' ');
+  return way === undefined
+    ? opening
+    : [
+        opening,
+        ...freeingParts(entry, way, ctx),
+        ...takeBackParts(entry, way, ctx, takesBack),
+      ].join(' ');
 }
 
 /**
@@ -471,11 +500,20 @@ export function heldLine(entry: HeldEntry, ctx: RenderCtx = PLAIN): string {
  * deadline, or whose lease no program held, #729 CW-3a); then what frees it ({@link freeingParts}),
  * one line each. Empty on a store that keeps no claims.
  */
-export function heldWayLines(entry: HeldEntry, ctx: RenderCtx = PLAIN): string[] {
+export function heldWayLines(
+  entry: HeldEntry,
+  ctx: RenderCtx = PLAIN,
+  takesBack?: ReadonlySet<string>,
+): string[] {
   const way = reclaimWayIn(entry);
   if (way === undefined) return [];
   const lead = HELD_WORDS.leadLine(heldStateOf(entry));
-  return [...(lead !== undefined ? [lead] : []), ...freeingParts(entry, way, ctx)];
+  return [
+    ...(lead !== undefined ? [lead] : []),
+    ...freeingParts(entry, way, ctx),
+    // #729 CW-5c: the `realm agent` command, for a step a drive takes back.
+    ...takeBackParts(entry, way, ctx, takesBack),
+  ];
 }
 
 /**
@@ -514,6 +552,7 @@ export function stopReasons(
   runId: string,
   phase: RunPhase,
   ctx: RenderCtx = PLAIN,
+  takesBack?: ReadonlySet<string>,
 ): string[] {
   if (composed.unavailable.some((u) => u.code === 'run_ended')) {
     return [`the run has ended (${ctx.word(phase, RUN_PHASE_WORDS)})`];
@@ -546,7 +585,7 @@ export function stopReasons(
   const ready = agentReadyLine(runId, agentSteps, ctx);
   if (ready !== undefined) reasons.push(ready);
   // #922 P2-2: each held step's state and what frees it, from its composed entry.
-  for (const held of heldEntriesOf(composed)) reasons.push(heldLine(held, ctx));
+  for (const held of heldEntriesOf(composed)) reasons.push(heldLine(held, ctx, takesBack));
   return reasons.length > 0 ? reasons : ['nothing is ready to run now'];
 }
 

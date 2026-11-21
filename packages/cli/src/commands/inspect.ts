@@ -111,6 +111,7 @@ import {
   leaseTail,
   renderAnswerLine,
   quotedForTerminal,
+  stepsTakenBack,
   viewSetFor,
 } from '../lib/holder-render.js';
 import {
@@ -1714,6 +1715,8 @@ export async function inspectRun(
         ).map((e) => [e.facts.step, e])
       : [],
   );
+  // #729 CW-5c: the held steps a `realm agent` drive takes back, from this read.
+  const takesBack = stepsTakenBack(run, definition, [...heldSteps.values()]);
   // issue #625 (holder slice): one line per in-progress step — the program that took it, how its
   // name is known, the door it came through, how long ago; or why there is no name. A step whose
   // question is open or answered reads "question opened through": that claim names the program
@@ -1746,7 +1749,7 @@ export async function inspectRun(
     const lease = held === undefined && described.lease !== undefined ? leaseTail(described) : '';
     lines.push(`  ${step}: ${body}${age}${lease}`);
     if (held !== undefined) {
-      for (const line of heldWayLines(held, writerCtx())) lines.push(`    ${line}`);
+      for (const line of heldWayLines(held, writerCtx(), takesBack)) lines.push(`    ${line}`);
     }
   }
   // #922 P2-2 (m-I): with no definition read, the dry run lists each held step's command.

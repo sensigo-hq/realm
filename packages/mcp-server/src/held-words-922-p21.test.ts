@@ -141,19 +141,19 @@ describe('#922 P2-1 — check 1, the bug’s words: a run whose only blocker is 
   it('advance_run says the deadline passed and to tell the user, never "wait"; get_run_state’s elsewhere and person block lead with the past line', async () => {
     claim(
       'mcp/tools.md',
-      "every step it waits on is held by a claim whose deadline has passed (`report_to_user`; `No step is ready: '<step>' was claimed and its deadline passed at <time>; no result is recorded for it. Tell the user: a person can free it.`, then, for a step not declared idempotent, `It is not declared idempotent, so running it again may repeat its effects.`)",
+      "every step it waits on is held by a claim whose deadline has passed, or whose lease no program held when it was checked (`report_to_user`; `No step is ready: '<step>' was claimed and its deadline passed at <time>; no result is recorded for it. Tell the user: a person can free it.`, or, for a lease no program held, `No step is ready: '<step>' was claimed, and no program held the claim's lease when it was checked; no result is recorded for it. Tell the user: a person can free it.`, then, for a step not declared idempotent, `It is not declared idempotent, so running it again may repeat its effects.`)",
     );
     claim(
       'mcp/tools.md',
-      'as `report_to_user` (nothing can be called and the run is open: a step cannot run, or every step it waits on is held by a claim whose deadline has passed)',
+      'as `report_to_user` (nothing can be called and the run is open: a step cannot run, or every step it waits on is held by a claim whose deadline has passed, or whose lease no program held when it was checked)',
     );
     claim(
       'mcp/run-state-and-health.md',
-      'Or every step it waits on is held by a claim whose deadline has passed (`report_to_user`): no result is recorded for them, and a person can free each one (both added after version 0.50.0).',
+      'Or every step it waits on is held by a claim whose deadline has passed, or whose lease no program held when it was checked (`report_to_user`): no result is recorded for them, and a person can free each one (both added after version 0.50.0).',
     );
     claim(
       'mcp/run-state-and-health.md',
-      'else `report_to_user` (a step cannot run, or every step it waits on is held by a claim whose deadline has passed).',
+      'else `report_to_user` (a step cannot run, or every step it waits on is held by a claim whose deadline has passed, or whose lease no program held when it was checked).',
     );
     // Correction 1 (RV-02): the version notes of P2-1's sentences, in each page's own form.
     claim(
