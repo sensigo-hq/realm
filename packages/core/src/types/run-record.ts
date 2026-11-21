@@ -1759,6 +1759,14 @@ export interface DriveFailureRecord {
      * per-attempt timeout — this one is realm's bound on the whole create, retries included.
      */
     | 'aborted_by_budget'
+    /**
+     * Q1 (#592) unit c: `realm agent --run-id` stopped at its own startup checks (no key for the
+     * provider, no model, `--base-url` with Anthropic, a provider module that does not load), or
+     * `realm listen`'s child was killed by a signal before it wrote anything to the run. Only those
+     * two writers mint it; a provider's payload or a program's `model_attempts` cannot claim it
+     * ({@link CLAIMABLE_ERROR_CLASSES}). Its `step` is `''`.
+     */
+    | 'startup_failure'
     | 'other';
   /** Sanitized (secrets redacted) and capped at 500 characters. */
   message: string;
@@ -1840,11 +1848,41 @@ export const ERROR_CLASSES = [
   'sdk_missing',
   'validation_rejected',
   'aborted_by_budget',
+  'startup_failure',
   'other',
 ] as const satisfies readonly DriveFailureRecord['error_class'][];
 type MissingErrorClass = Exclude<DriveFailureRecord['error_class'], (typeof ERROR_CLASSES)[number]>;
 const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : MissingErrorClass = true;
 void _everyErrorClassListed;
+
+/**
+ * Q1 (#592) unit c: an `error_class` word a provider or a program may claim — every word but
+ * `startup_failure`, which only `realm agent`'s and `realm listen`'s own startup writers mint.
+ */
+export type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
+
+/**
+ * Q1 (#592) unit c: the classes a provider or a program may claim, in the type's order — every
+ * {@link ERROR_CLASSES} word but `startup_failure`, which only `realm agent`'s and `realm listen`'s
+ * own startup writers mint. The readers that take a claimed class close against this one list: the
+ * CLI's payload reader and model-try reader (a provider's thrown payload, a third-party
+ * `--provider-module`'s included) and `closeModelAttempts` (a program's `model_attempts`).
+ * Checked both ways, as `ERROR_CLASSES` is.
+ */
+export const CLAIMABLE_ERROR_CLASSES = [
+  'connection_timeout',
+  'connection_error',
+  'api_status',
+  'sdk_missing',
+  'validation_rejected',
+  'aborted_by_budget',
+  'other',
+] as const satisfies readonly ClaimableErrorClass[];
+type MissingClaimableClass = Exclude<ClaimableErrorClass, (typeof CLAIMABLE_ERROR_CLASSES)[number]>;
+const _everyClaimableClassListed: [MissingClaimableClass] extends [never]
+  ? true
+  : MissingClaimableClass = true;
+void _everyClaimableClassListed;
 
 /**
  * What a failed model request can need before it succeeds: another try (`transient`), an operator's

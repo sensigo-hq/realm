@@ -125,6 +125,7 @@ import {
   type ReadContext,
 } from '../lib/run-read-address.js';
 import { answerWait, parseWaitPreference } from '../lib/result-wait.js';
+import { markSignalDeath, type ChildExit } from '../agent/startup-failure.js';
 import {
   loadProjectExtensions,
   onceReleaseLineSink,
@@ -169,10 +170,11 @@ export interface Logger {
 
 /**
  * Result of an agent spawn — a pid on success, or an error to record as spawn_failed. R1.2: with a
- * pid, `exited` (when the spawner gives one) settles once the agent's process has exited.
+ * pid, `exited` (when the spawner gives one) settles once the agent's process has exited. Q1 (#592)
+ * unit c: with how it ended, Node's `'exit'` pair — the code, or the signal that killed it.
  */
 export type SpawnResult =
-  | { pid: number; error?: never; exited?: Promise<void> }
+  | { pid: number; error?: never; exited?: Promise<ChildExit> }
   | { error: Error; pid?: never; exited?: never };
 
 /** Injected I/O dependencies — everything that touches disk, the clock, or child processes. */
@@ -1025,6 +1027,8 @@ export function makeListenHandler(
       // never a generic 500 that strands the run unmarked. issue #744: awaited inside the same
       // `try`, so a start Node refuses later, or a rejection, takes the same path.
       let spawnResult: SpawnResult;
+      // Q1 (#592) unit c: a startup mark's `elapsed_ms` is measured from here.
+      const spawnedAt = performance.now();
       try {
         spawnResult = await deps.spawnAgent(run.id, entry.workflowDir);
       } catch (err) {
@@ -1082,15 +1086,30 @@ export function makeListenHandler(
       }
 
       // Record agent pid/started_at (non-critical metadata), then the dedup record.
+      // Q1 (#592) unit c: the record of listen's own last write to the run is the baseline its startup
+      // mark compares against — the one this write returns (it bumps the version), or the created run
+      // when it failed.
+      let baseline: RunRecord = { ...run };
       try {
         run.agent_pid = spawnResult.pid;
         // #715 (b) (03 §A.4): the store's clock, as every instant a run record holds.
         run.agent_started_at = deps.runStore.clock.now().toISOString();
-        await deps.runStore.update(run);
+        baseline = (await deps.runStore.update(run)).record;
       } catch (err) {
         deps.logger.error('webhook: failed to record agent pid', {
           run_id: run.id,
           error: String(err),
+        });
+      }
+      // Q1 (#592) unit c: a child killed by a SIGNAL before it wrote anything to the run leaves a
+      // startup mark (one compare-and-set write of the baseline; an exit code is never marked). The
+      // write joins `waits`, so a stop awaits it; a child whose end reaches listen after the stop has
+      // resolved is not marked, because listen has exited.
+      if (spawnResult.exited !== undefined) {
+        void spawnResult.exited.then((exit) => {
+          const write = markSignalDeath(deps.runStore, deps.logger, baseline, exit, spawnedAt);
+          opts.waits?.add(write);
+          void write.finally(() => opts.waits?.delete(write));
         });
       }
       if (dedupId !== undefined && dedupStore !== undefined) {
@@ -2032,7 +2051,9 @@ export function defaultSpawnAgent(
       });
       // R1.2: made here, at the spawn, so an exit before any wait begins is still seen: a listener
       // added after the child has exited never fires.
-      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      const exited = new Promise<ChildExit>((resolve) =>
+        child.once('exit', (code, signal) => resolve({ code, signal })),
+      );
       child.on('error', (err: Error) => {
         if (!settled) {
           settle({ error: err });
