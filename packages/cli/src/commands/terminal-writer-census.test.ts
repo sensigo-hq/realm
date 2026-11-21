@@ -182,6 +182,14 @@ const EXPECTED: Record<string, CensusEntry> = {
     reason: '#729 PR-3: no terminal write; the entry authorizes its one prose disable.',
     suppression: 'One message that names the program `realm agent` (L-2); no seal on it.',
   },
+  // Q1 (#592) unit c: the startup mark's two prose sentences share `no-restricted-syntax`.
+  'packages/cli/src/agent/startup-failure.ts': {
+    count: 0,
+    classes: [],
+    reason: 'Q1 (#592) unit c: no terminal write; the entry authorizes its two prose disables.',
+    suppression:
+      "Two prose lines (L-2): the `written` sentence naming `realm run list --stuck`, and listen's message naming the program `realm agent`; no seal on them.",
+  },
   'packages/cli/src/commands/listen.ts': {
     count: 0,
     classes: [],
@@ -438,7 +446,8 @@ describe('#367 — the terminal-writer census', () => {
     // buildFinalizedSeal disable in execution-loop.ts (the function was deleted with the legacy path).
     // #616 PR-1a unit 15a: +1, run-rows.ts's key-holder read.
     // #616 PR-2c c3: +1, run-scan.ts's facts-row read. c4-i: +1, in-memory-store.ts's facts-row read.
-    expect(claimed).toHaveLength(13);
+    // Q1 (#592) unit c: +1, startup-failure.ts's two prose disables.
+    expect(claimed).toHaveLength(14);
   });
 
   it("turbo.json globalDependencies matches the sweep table's join-list", () => {

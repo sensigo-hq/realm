@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowError, type RunRecord, type Snapshot } from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { recordStartupFailure, startupOutcomeSentence } from './startup-failure.js';
+import { snap } from '../test-support/snapshot-double.js';
 
 const WRITTEN = (id: string) =>
   `Run ${id} keeps this failure under Drive failures; realm run list --stuck lists it until the run next records a step or a question, or ends.`;
@@ -101,7 +102,7 @@ describe('Q1 (#592) unit c — check 3: the four outcomes, one closing sentence 
       throw new Error('update must not be called');
     });
     const double = {
-      get: async (): Promise<Snapshot> => ({ record: ended, at: new Date() }),
+      get: async (): Promise<Snapshot> => snap(ended),
       update,
       clock: store.clock,
     };
