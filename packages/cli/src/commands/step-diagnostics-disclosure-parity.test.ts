@@ -109,7 +109,7 @@ const STEP_DIAGNOSTICS_DISCLOSURE = {
     surface: 'waived',
     reason:
       'Read by workflow AUTHORS through `$settlement`; inspect’s failure line names the code, the ' +
-      'stop reason and the message, which together give the kind.',
+      'stop reason and the message.',
   },
   settled_by_default: {
     surface: 'waived',

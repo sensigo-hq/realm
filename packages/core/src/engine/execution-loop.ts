@@ -487,7 +487,11 @@ export interface ExecuteChainOptions {
    * `$settlement.<step>.failure_kind`.
    */
   modelFailure?: {
-    /** Whether a later try might pass (`transient`) or the request will fail the same way (`permanent`). */
+    /**
+     * Whether a later try might pass (`transient`) or the request will fail the same way (`permanent`).
+     * A `setup` failure (`classifyModelFailure`'s word for one an operator must fix first) is refused
+     * here: its step stays open.
+     */
     kind: 'transient' | 'permanent';
     /** Why the step stopped trying, as the caller judged it (no judging order applies here). */
     stop_reason: NonNullable<EvidenceSnapshot['stop_reason']>;
@@ -2288,8 +2292,8 @@ type StepDiagnosticsArm =
  * takes its failure path, from the facts its caller passed (`ExecuteChainOptions.modelFailure`): the
  * code, category, action and `retryable` are core's. `STEP_RETRY_EXHAUSTED` when the step's `retry`
  * used up its tries or its time, with its auto-step names and the failure's facts beside them;
- * `MODEL_REQUEST_FAILED` otherwise. The message is the caller's, so the reply's `errors[]` and the
- * run's `terminal_reason` read `Step '<s>' failed: <message>`.
+ * `MODEL_REQUEST_FAILED` otherwise. The message is the caller's: the reply's `errors[]` holds it as
+ * given, and the run's `terminal_reason` reads `Step '<s>' failed: <message>`, as on #220's path.
  */
 function modelFailureErrorOf(step: string, failure: ChainModelFailure): WorkflowError {
   const sdk = failure.attempts_sdk !== undefined ? { attempts_sdk: failure.attempts_sdk } : {};
