@@ -86,6 +86,15 @@ export interface ProviderCapabilities {
    * providers declare it; a provider module may leave it out.
    */
   endpoint?: RequestEndpoint;
+  /**
+   * Gap 2, unit (i-b): whether this provider tries a failed model request again itself, as the
+   * step's `retry` says. A provider module declares `true` when it reads `LlmClock.retry` (the
+   * policy, the cap, and the check to call before each re-send) and follows it; Realm then passes
+   * that and does not try the call again. Absent: for a step without tools Realm tries the module's
+   * whole call again; for a step with tools it tries nothing, and says so once. Realm's own
+   * providers leave it out: they follow the policy inside each request.
+   */
+  handlesRetries?: boolean;
 }
 
 /**

@@ -216,7 +216,8 @@ export interface StepMeta {
   /**
    * Gap 2, unit (i-a): the failed tries of the attempt's model requests, in send order. Written on
    * the same entries as `modelText`, as `model_attempts`, each entry closed to its eight members:
-   * numbers, closed words and `null` only. Realm does not pass it yet.
+   * numbers, closed words and `null` only. `realm agent` and `realm listen` pass it for an agent
+   * step that declares `retry` (gap 2, unit (i-b)).
    */
   modelAttempts?: ModelAttempt[];
 }

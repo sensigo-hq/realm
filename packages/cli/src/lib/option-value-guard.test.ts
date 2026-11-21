@@ -78,14 +78,15 @@ function realm(args: string[], timeoutMs = 20_000): Run {
   };
 }
 
-/** A project folder holding one workflow whose only agent step has `retry` (it warns). */
+/** A project folder holding one workflow whose only agent step has an unknown `retry` key, `jitter`
+ *  (it warns: UNKNOWN_RETRY_KEY). Gap 2, unit (i-b): `retry` itself is read on an agent step now. */
 function retryProject(): string {
   const dir = join(base, 'proj');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'package.json'), '{}\n');
   writeFileSync(
     join(dir, 'workflow.yaml'),
-    'id: retried\nname: retried\nversion: 1\nsteps:\n  retried:\n    description: a step\n    execution: agent\n    prompt: Do it.\n    retry: { max_attempts: 3 }\n',
+    'id: retried\nname: retried\nversion: 1\nsteps:\n  retried:\n    description: a step\n    execution: agent\n    prompt: Do it.\n    retry: { max_attempts: 3, jitter: 1 }\n',
   );
   return dir;
 }
