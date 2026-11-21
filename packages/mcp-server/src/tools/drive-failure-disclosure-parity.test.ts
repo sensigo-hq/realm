@@ -10,7 +10,13 @@
 // waiver skips its field's probe.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
-import type { DriveFailureRecord, RunRecord, RunStore, UsageRecord } from '@sensigo/realm';
+import type {
+  DriveFailureRecord,
+  ModelAttempt,
+  RunRecord,
+  RunStore,
+  UsageRecord,
+} from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 import {
   snap,
@@ -33,6 +39,36 @@ const USAGE: UsageRecord[] = [
   },
 ];
 
+/** Gap 2, unit (i-a): a failure's failed model tries, every member and both optional ones. */
+const ATTEMPTS: ModelAttempt[] = [
+  {
+    request: 0,
+    kind: 'transient',
+    error_class: 'api_status',
+    status: 429,
+    wait_ms: 30000,
+    retry_after_ms: 30000,
+  },
+  {
+    request: 0,
+    kind: 'transient',
+    error_class: 'api_status',
+    status: 429,
+    wait_ms: null,
+    retry_after_ms: 30000,
+    exhausted_by: 'attempts',
+  },
+  {
+    request: 1,
+    kind: null,
+    error_class: null,
+    status: null,
+    wait_ms: 0,
+    retry_after_ms: null,
+    then: 'gateway',
+  },
+];
+
 const ENTRY: DriveFailureRecord = {
   at: '2026-01-01T00:04:00.000Z',
   step: 'classify',
@@ -49,6 +85,7 @@ const ENTRY: DriveFailureRecord = {
   evidence_count: 2,
   gate_id: 'gate-parity',
   usage: USAGE,
+  model_attempts: ATTEMPTS,
 };
 
 /** Gap 1, unit A2a: why get_run_state does not show a drive failure's `model_text`. */
@@ -86,6 +123,11 @@ const DRIVE_FAILURE_DISCLOSURE = {
   evidence_count: { surface: 'rendered', probe: (e) => expect(e.evidence_count).toBe(2) },
   gate_id: { surface: 'rendered', probe: (e) => expect(e.gate_id).toBe('gate-parity') },
   model_text: { surface: 'waived', reason: MODEL_TEXT_WAIVER },
+  // Gap 2, unit (i-a): passed as stored (`boundedDriveFailures` keeps every key but model_text).
+  model_attempts: {
+    surface: 'rendered',
+    probe: (e) => expect(e.model_attempts).toEqual(ATTEMPTS),
+  },
 } satisfies Record<keyof DriveFailureRecord, DisclosureRoute>;
 
 function makeStore(run: RunRecord): RunStore {
@@ -145,8 +187,8 @@ describe('#401 — every DriveFailureRecord field reaches a get_run_state consum
 
   it('the registry covers every field, and waives only model_text, for its written reason', () => {
     // #715 (b) (02 §D.2): + evidence_count and gate_id, passed as stored like the rest. Gap 1, unit
-    // A2a: + model_text, waived.
-    expect(Object.keys(DRIVE_FAILURE_DISCLOSURE)).toHaveLength(15);
+    // A2a: + model_text, waived. Gap 2, unit (i-a): + model_attempts, passed as stored.
+    expect(Object.keys(DRIVE_FAILURE_DISCLOSURE)).toHaveLength(16);
     expect(
       Object.entries(DRIVE_FAILURE_DISCLOSURE as Record<string, DisclosureRoute>)
         .filter(([, r]) => r.surface === 'waived')

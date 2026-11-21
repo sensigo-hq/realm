@@ -12,6 +12,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | --- | --- | --- |
 | [`armToOutcome`](#armtooutcome) | function | `arm -> outcome class`. |
 | [`classifyLegacySeal`](#classifylegacyseal) | function | Classify a terminal record written before `sealed_by` existed into the arm it would have carried. |
+| [`classifyModelFailure`](#classifymodelfailure) | function | Says what a failed model request needs before it can succeed, from the request's own values only. |
 | [`outputSourceOf`](#outputsourceof) | function | Where an evidence entry's output came from: `{ source }` when the entry carries `output_source`, else `{ absent_cause }`, the first `OUTPUT_SOURCE_ABSENT_CAUSES` member that holds. |
 | [`readSupplier`](#readsupplier) | function | The supplier of an evidence entry's input or output: its recorded role, or why it names none. |
 | [`AnswerFacts`](#answerfacts) | interface | A recorded answer's route as its door declared it, and what showed a form (`EvidenceSnapshot.answer`). |
@@ -25,6 +26,8 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`DriveFailureRecord`](#drivefailurerecord) | interface | One failed attempt to drive a step: when, which step and provider, what kind of failure, and its message (`DriveFailuresField.entries`). |
 | [`DriveFailuresField`](#drivefailuresfield) | interface | A run's recent drive failures: the last few, plus the total and the time of the first, which do not reset when the oldest is dropped (`RunRecord.drive_failures`). |
 | [`EvidenceSnapshot`](#evidencesnapshot) | interface | One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered question recorded, with its times, its input and output, its status and its hash. |
+| [`ModelAttempt`](#modelattempt) | interface | One failed try of one of a step's model requests, as `model_attempts` keeps it on an evidence entry and on a drive-failure entry. |
+| [`ModelFailureFacts`](#modelfailurefacts) | interface | The values `classifyModelFailure` reads from one failed model request. |
 | [`PendingGate`](#pendinggate) | interface | The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and choices shown to the person, when it opened, and its owner and time limit when set. |
 | [`PrefixParts`](#prefixparts) | interface | A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and `format` where it had them (`UsageRecord.prefix_parts`). |
 | [`RunRecord`](#runrecord) | interface | A run as its store keeps it: its workflow and version, its phase, its params, its evidence entries, the question it waits on and how it ended; a store's `get` returns it inside a `Snapshot`. |
@@ -58,6 +61,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`ClassifiableRun`](#classifiablerun) | type | The record shape both legacy classifiers read. |
 | [`DriveFailureModelText`](#drivefailuremodeltext) | type | The text of the model requests one drive failure covers, on its entry (`DriveFailureRecord.model_text`). |
 | [`GateClaimVerdict`](#gateclaimverdict) | type | A verdict with a cause that does not belong to it does not compile. |
+| [`ModelFailureKind`](#modelfailurekind) | type | What a failed model request needs before it can succeed: one of `MODEL_FAILURE_KINDS`. |
 | [`ModelText`](#modeltext) | type | The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`). |
 | [`OutputSource`](#outputsource) | type | One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`). |
 | [`OutputSourceAbsentCause`](#outputsourceabsentcause) | type | Why an evidence entry says nothing about where its output came from (`outputSourceOf`'s `absent_cause`). |
@@ -82,6 +86,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`CACHE_REQUEST_SOURCES`](#cache_request_sources) | const | Where a request's cache setting came from: `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default) (`UsageRecord.cache_requested_source`). |
 | [`CACHE_REQUESTS`](#cache_requests) | const | What Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`). |
 | [`CACHE_STATES`](#cache_states) | const | The words a step's cache state takes (`StepCacheDetail.state`). |
+| [`MODEL_FAILURE_KINDS`](#model_failure_kinds) | const | What a failed model request can need before it succeeds: another try (`transient`), an operator's fix first (`setup`), or nothing, because it will fail the same way again (`permanent`). |
 | [`OUTPUT_SOURCE_ABSENT_CAUSES`](#output_source_absent_causes) | const | Why an evidence entry carries no `output_source` (`outputSourceOf`'s `absent_cause`). |
 | [`OUTPUT_SOURCES`](#output_sources) | const | Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`). |
 | [`PRINCIPAL_ABSENCES`](#principal_absences) | const | Why a door names no principal (`Principal`'s `absent`). |
@@ -126,6 +131,35 @@ the two genuinely prose-less arms — `guard_abort` (reason-less by construction
 
 ```ts
 function classifyLegacySeal(run: ClassifiableRun): SealArm | undefined;
+```
+
+### classifyModelFailure
+
+function · public
+
+Says what a failed model request needs before it can succeed, from the request's own values only.
+It returns `transient` (another try can fix it), `setup` (an operator must fix something first),
+`permanent` (it will fail the same way again), or `null` when it cannot place the failure (gap 2,
+unit i-a). The rules run in this order, and the first that applies wins:
+1. Realm code `MCP_TOOL_NOT_FOUND` or `MCP_TOOL_NAME_COLLISION`: `setup`, in any phase.
+2. Phase `mcp_discovery`: `null` (not a model call).
+3. Phase `after_response`: `permanent`.
+4. Class `validation_rejected`: `null` (it stays on the schema-retry path).
+5. `x-should-retry: true`: `transient`, at any status.
+6. A workspace refusal, 401, 402, 403, 404, class `sdk_missing`, or a used-up quota, credit or spend
+   limit (OpenAI's codes `insufficient_quota`, `credit_balance_exhausted`,
+   `organization_spend_limit_exceeded`, `project_spend_limit_exceeded`,
+   `organization_usage_limit_exceeded`, or the type `insufficient_quota`; Anthropic's type
+   `billing_error`): `setup`.
+7. `x-should-retry: false`: `permanent`, at any status.
+8. 408, 409, 429 or 5xx, or class `connection_error`, `connection_timeout` or `aborted_by_budget`:
+   `transient`.
+9. 400, 413 or 422: `permanent`.
+10. Anything else: `null`.
+A phase outside the three is not placed (`null`).
+
+```ts
+function classifyModelFailure(facts: ModelFailureFacts): ModelFailureKind | null;
 ```
 
 ### outputSourceOf
@@ -335,6 +369,7 @@ interface DriveFailureRecord {
     retry_after_observed_ms?: number;
     usage?: UsageRecord[];
     model_text?: DriveFailureModelText;
+    model_attempts?: ModelAttempt[];
 }
 ```
 
@@ -393,6 +428,7 @@ interface EvidenceSnapshot {
     agent_profile_hash?: string;
     tool_calls?: ToolCallRecord[];
     model_text?: ModelText;
+    model_attempts?: ModelAttempt[];
     resolved_params?: Record<string, unknown>;
     warn?: string;
     debug_output?: unknown;
@@ -406,6 +442,47 @@ interface EvidenceSnapshot {
     error_category?: ErrorCategory;
     agent_action?: AgentAction;
     stop_reason?: 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
+}
+```
+
+### ModelAttempt
+
+interface · public
+
+One failed try of one of a step's model requests, as `model_attempts` keeps it on an evidence entry
+and on a drive-failure entry. Numbers, closed words and `null` only: never a text, never usage
+(gap 2, unit i-a).
+
+```ts
+interface ModelAttempt {
+    request: number;
+    kind: ModelFailureKind | null;
+    error_class: DriveFailureRecord['error_class'] | null;
+    status: number | null;
+    wait_ms: number | null;
+    retry_after_ms: number | null;
+    exhausted_by?: 'attempts' | 'total_timeout';
+    then?: 'gateway' | 'cache_probe' | 'strict_ladder';
+}
+```
+
+### ModelFailureFacts
+
+interface · public
+
+The values `classifyModelFailure` reads from one failed model request. A value that is absent,
+`null` or of another type counts as none (gap 2, unit i-a).
+
+```ts
+interface ModelFailureFacts {
+    error_class: DriveFailureRecord['error_class'];
+    status?: number | null;
+    provider_error_type?: string | null;
+    provider_error_code?: string | null;
+    should_retry?: string | null;
+    workspace_refusal?: boolean;
+    realm_code?: string | null;
+    phase: 'model_request' | 'after_response' | 'mcp_discovery';
 }
 ```
 
@@ -1044,6 +1121,16 @@ type GateClaimVerdict = {
 };
 ```
 
+### ModelFailureKind
+
+type · public
+
+What a failed model request needs before it can succeed: one of `MODEL_FAILURE_KINDS`.
+
+```ts
+type ModelFailureKind = (typeof MODEL_FAILURE_KINDS)[number];
+```
+
 ### ModelText
 
 type · public
@@ -1504,6 +1591,24 @@ const CACHE_STATES: readonly [
     "write_only",
     "partially_observed",
     "unobservable"
+];
+```
+
+### MODEL_FAILURE_KINDS
+
+const · public
+
+What a failed model request can need before it succeeds: another try (`transient`), an operator's
+fix first (`setup`), or nothing, because it will fail the same way again (`permanent`). An
+operator's fix is a key, a permission, a model name, a workspace, credit or an MCP tool.
+`classifyModelFailure` files a failure into one of them from the failure's own values (gap 2,
+unit i-a).
+
+```ts
+const MODEL_FAILURE_KINDS: readonly [
+    "transient",
+    "setup",
+    "permanent"
 ];
 ```
 

@@ -564,8 +564,15 @@ function workspaceClientOptions(): Record<string, unknown> {
   return workspace === undefined ? {} : { defaultHeaders: { 'anthropic-workspace-id': workspace } };
 }
 
-/** An SDK error's status, and its parsed body's `error.type` and `error.message`, when present. */
-function apiErrorParts(err: unknown): { status?: unknown; type?: unknown; message?: unknown } {
+/**
+ * An SDK error's status, and its parsed body's `error.type` and `error.message`, when present.
+ * Exported for gap 2 (i-a)'s kind cells, which read the type off a real SDK error this way.
+ */
+export function apiErrorParts(err: unknown): {
+  status?: unknown;
+  type?: unknown;
+  message?: unknown;
+} {
   if (err === null || typeof err !== 'object') return {};
   const e = err as { status?: unknown; error?: unknown };
   const body = e.error;

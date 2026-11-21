@@ -833,6 +833,9 @@ Names this job reaches whose entry is on another page.
 - [`MarkFinalizerDelta`](implement-a-store.md#markfinalizerdelta): Record a finalizer handler's outcome against the lease that authorized running it.
 - [`MarkFinalizerResult`](implement-a-store.md#markfinalizerresult): The result a `mark_finalizer` delta reports for one finalizer's handler: `completed` or `failed`.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
+- [`MODEL_FAILURE_KINDS`](read-a-runs-record.md#model_failure_kinds): What a failed model request can need before it succeeds: another try (`transient`), an operator's fix first (`setup`), or nothing, because it will fail the same way again (`permanent`).
+- [`ModelAttempt`](read-a-runs-record.md#modelattempt): One failed try of one of a step's model requests, as `model_attempts` keeps it on an evidence entry and on a drive-failure entry.
+- [`ModelFailureKind`](read-a-runs-record.md#modelfailurekind): What a failed model request needs before it can succeed: one of `MODEL_FAILURE_KINDS`.
 - [`ModelText`](read-a-runs-record.md#modeltext): The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`).
 - [`OpenGateDelta`](implement-a-store.md#opengatedelta): Opens a human gate on a claimed step.
 - [`OpeningGate`](implement-a-store.md#openinggate): The gate an `open_gate` delta opens, without its instants: everything a `PendingGate` holds but `opened_at` and `expires_at`.
