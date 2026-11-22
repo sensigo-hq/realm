@@ -14,6 +14,7 @@ import { handleGetRunState } from '@sensigo/realm-mcp/dist/tools/get-run-state.j
 import {
   ExtensionRegistry,
   WorkflowError,
+  executeChain,
   executeStep,
   loadWorkflowFromString,
   type EvidenceSnapshot,
@@ -80,6 +81,8 @@ function lineOf(v: FailureView): string {
     (v.unknown as string[] | undefined)?.includes(k) ? ' (unknown word)' : '';
   const clauses = [
     ...(v.stop_reason !== undefined ? [`stopped: ${v.stop_reason}${u('stop_reason')}`] : []),
+    // Gap 2, unit (ii-b1): the failure's kind, between the stop reason and the action word.
+    ...(v.failure_kind !== undefined ? [`kind: ${v.failure_kind}${u('failure_kind')}`] : []),
     ...(v.agent_action !== undefined ? [`next: ${v.agent_action}${u('agent_action')}`] : []),
   ];
   return (
@@ -345,4 +348,170 @@ describe("Q1 (#592) unit b — check 9: realm-run-reading.md's example line, fro
       true,
     ]);
   }, 30_000);
+});
+
+describe('gap 2 (ii-b1), check 5 — the failure’s kind on both carriers', () => {
+  const MODEL_DEF: WorkflowDefinition = {
+    id: 'wf-g2iib1',
+    name: 'wf g2iib1',
+    version: 1,
+    steps: {
+      classify: {
+        description: 'Classify.',
+        execution: 'agent',
+        depends_on: [],
+        retry: { max_attempts: 3 },
+      },
+    },
+  };
+  /** A run whose `classify` took its failure path, through `executeChain`'s `modelFailure`. */
+  async function modelFailed(
+    failure: NonNullable<Parameters<typeof executeChain>[2]['modelFailure']>,
+  ): Promise<{ store: InMemoryStore; runId: string }> {
+    const store = new InMemoryStore();
+    const { record } = await store.create({
+      workflowId: MODEL_DEF.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeChain(store, MODEL_DEF, {
+      runId: record.id,
+      command: 'classify',
+      input: {},
+      dispatcher: async () => ({}),
+      modelFailure: failure,
+    });
+    return { store, runId: record.id };
+  }
+  async function carriers(store: RunStore, runId: string) {
+    const workflowStore = workflowStoreOf(MODEL_DEF);
+    const reply = await handleGetRunState(
+      { run_id: runId },
+      { runStore: store, workflowStore: workflowStore as never },
+    );
+    return {
+      failures: reply.failures,
+      block: failedBlock(await inspectRun(runId, store, workflowStore)),
+    };
+  }
+  const TRANSIENT = {
+    kind: 'transient',
+    stop_reason: 'attempts',
+    message: 'Anthropic 529: overloaded (fake)',
+    attempt: 3,
+    error_class: 'api_status',
+    status: 529,
+  } as const;
+  const PERMANENT = {
+    kind: 'permanent',
+    stop_reason: 'non_retryable',
+    message: 'Anthropic 400: messages: bad (fake)',
+    attempt: 1,
+    error_class: 'api_status',
+    status: 400,
+  } as const;
+
+  it('a transient failure written through modelFailure: the reply carries failure_kind, inspect prints `kind: transient` between stopped and next', async () => {
+    const { store, runId } = await modelFailed(TRANSIENT);
+    const { failures, block } = await carriers(store, runId);
+    // (a) red when the composer does not read the entry's diagnostics.failure_kind (both carriers
+    //     lose it), or inspect drops the clause; (b) prints the reply's entry and inspect's line.
+    expect({ failures, line: block[1] }).toEqual({
+      failures: [
+        {
+          step: 'classify',
+          code: 'STEP_RETRY_EXHAUSTED',
+          category: 'ENGINE',
+          stop_reason: 'attempts',
+          agent_action: 'report_to_user',
+          failure_kind: 'transient',
+          attempt: 3,
+          message: 'Anthropic 529: overloaded (fake)',
+        },
+      ],
+      line: '  classify: STEP_RETRY_EXHAUSTED (ENGINE) — stopped: attempts; kind: transient; next: report_to_user (attempt 3) — Anthropic 529: overloaded (fake)',
+    });
+    expect(block.slice(1)).toEqual(failures.map(lineOf));
+  });
+
+  // Under `--failure-text hidden` the kind stays: the MCP package's failures-592b.test.ts, check 5.
+  it('a permanent failure written through modelFailure: `kind: permanent` on both carriers', async () => {
+    const { store, runId } = await modelFailed(PERMANENT);
+    const shown = await carriers(store, runId);
+    // (a) red when the composer does not read the kind, or inspect drops the clause; (b) prints the
+    //     reply's entry and inspect's line.
+    expect({ shown: shown.failures, line: shown.block[1] }).toEqual({
+      shown: [
+        {
+          step: 'classify',
+          code: 'MODEL_REQUEST_FAILED',
+          category: 'SERVICE',
+          stop_reason: 'non_retryable',
+          agent_action: 'report_to_user',
+          failure_kind: 'permanent',
+          attempt: 1,
+          message: 'Anthropic 400: messages: bad (fake)',
+        },
+      ],
+      line: '  classify: MODEL_REQUEST_FAILED (SERVICE) — stopped: non_retryable; kind: permanent; next: report_to_user (attempt 1) — Anthropic 400: messages: bad (fake)',
+    });
+    expect(shown.block.slice(1)).toEqual(shown.failures.map(lineOf));
+  });
+
+  it('a kind outside transient and permanent (`setup`, written by hand): kept as recorded and named in unknown; inspect prints `kind: setup (unknown word)`', async () => {
+    const { failures, block } = await bothCarriers(
+      failedRun([
+        entry({
+          step_id: 'pay',
+          error: 'boom',
+          error_code: 'MODEL_REQUEST_FAILED',
+          error_category: 'SERVICE',
+          stop_reason: 'non_retryable',
+          agent_action: 'report_to_user',
+          attempt: 1,
+          diagnostics: {
+            input_token_estimate: 0,
+            precondition_trace: [],
+            // A word outside the type: what a newer Realm, or a program, could have written.
+            failure_kind: 'setup' as never,
+          },
+        }),
+        entry({ step_id: 'fetch', error: 'old' }),
+      ]),
+    );
+    // (a) red when the closure is removed (the word is not named in unknown, or is dropped), or
+    //     inspect prints it without the mark; (b) prints the reply's entry and inspect's line.
+    expect([failures[0], block[1]]).toEqual([
+      {
+        step: 'pay',
+        code: 'MODEL_REQUEST_FAILED',
+        category: 'SERVICE',
+        stop_reason: 'non_retryable',
+        agent_action: 'report_to_user',
+        failure_kind: 'setup',
+        attempt: 1,
+        message: 'boom',
+        unknown: ['failure_kind'],
+      },
+      '  pay: MODEL_REQUEST_FAILED (SERVICE) — stopped: non_retryable; kind: setup (unknown word); next: report_to_user (attempt 1) — boom',
+    ]);
+  });
+
+  it('the words: realm-run-reading.md and the CHANGELOG say what the two cells above print', () => {
+    const flat = (t: string): string => t.replace(/\s+/g, ' ');
+    const reading = flat(
+      readFileSync(join(ROOT, 'docs/reference/cli/realm-run-reading.md'), 'utf8'),
+    );
+    const changelog = flat(readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8'));
+    // (a) red when either sentence is the old text or is removed; (b) prints whether each page holds
+    //     its sentence.
+    expect([
+      reading.includes(
+        "the error code and its category, why Realm stopped retrying, the failure's kind (`transient` or `permanent`) when the step took its failure path after a failed model request, the action word on its entry, the attempt, and the error's message",
+      ),
+      changelog.includes(
+        "- **A failed step's kind shows where operators and assistants read a failure.** `get_run_state`'s `failures[]` gains `failure_kind` (`transient` or `permanent`) on a step that took its failure path after a failed model request, also under `--failure-text hidden`; `realm run inspect`'s line under `Failed:` gains a `kind:` clause between `stopped:` and `next:`. A failure without it shows as before.",
+      ),
+    ]).toEqual([true, true]);
+  });
 });

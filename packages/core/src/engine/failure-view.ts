@@ -10,15 +10,16 @@
 // TOTALITY, as `composeStepViews`: no record a store can hand this function makes it throw. A
 // malformed `evidence` or `failed_steps`, an entry that is not an object, a word that is not a
 // string: each degrades to an absence, never an exception.
-import type { EvidenceSnapshot, RunRecord } from '../types/run-record.js';
+import type { EvidenceSnapshot, RunRecord, StepDiagnostics } from '../types/run-record.js';
 import { capText } from '../utils/redaction.js';
 import { readFailureWords, type FailureWordField } from './ways.js';
 
 /**
  * A failed step, as its last failed evidence entry records it. With the words: the error `code`,
- * its `category`, why Realm stopped retrying (`stop_reason`) and the entry's action word
- * (`agent_action`), each as recorded and absent when the entry lacks it; a word outside its list is
- * kept and named in `unknown`. Without them: `absent` says why — `written_before_failure_words`
+ * its `category`, why Realm stopped retrying (`stop_reason`), the entry's action word
+ * (`agent_action`) and the failure's kind (`failure_kind`: `transient` or `permanent`, on a step
+ * that took its failure path after a failed model request), each as recorded and absent when the
+ * entry lacks it; a word outside its list is kept and named in `unknown`. Without them: `absent` says why — `written_before_failure_words`
  * (an entry an older Realm wrote, with its message) or `entry_not_found` (no failed entry on the
  * record). `message` is the entry's error text, bounded at 500 characters as `terminal_reason` is.
  */
@@ -29,9 +30,10 @@ export type FailureView =
       category?: string;
       stop_reason?: string;
       agent_action?: string;
+      failure_kind?: string;
       attempt?: number;
       message: string;
-      unknown?: Array<'code' | 'category' | 'stop_reason' | 'agent_action'>;
+      unknown?: Array<'code' | 'category' | 'stop_reason' | 'agent_action' | 'failure_kind'>;
     }
   | {
       step: string;
@@ -51,6 +53,24 @@ const VIEW_KEY = {
 
 const stringOr = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined;
+
+/** Gap 2, unit (ii-b1): the kinds a failure-path entry records (`StepDiagnostics.failure_kind`). */
+const FAILURE_KINDS = ['transient', 'permanent'] as const satisfies readonly NonNullable<
+  StepDiagnostics['failure_kind']
+>[];
+type MissingKind = Exclude<
+  NonNullable<StepDiagnostics['failure_kind']>,
+  (typeof FAILURE_KINDS)[number]
+>;
+const _everyKindListed: [MissingKind] extends [never] ? true : MissingKind = true;
+void _everyKindListed;
+
+/** The entry's `diagnostics.failure_kind` when it is a string, else `undefined`. */
+function failureKindOf(entry: Record<string, unknown>): string | undefined {
+  const diagnostics = entry['diagnostics'];
+  if (typeof diagnostics !== 'object' || diagnostics === null) return undefined;
+  return stringOr((diagnostics as Record<string, unknown>)['failure_kind']);
+}
 
 /**
  * One view per name in `failed_steps`, in the list's order (a name appears once: resume is the one
@@ -104,15 +124,25 @@ export function composeFailures(
       };
     }
     const { words } = read;
+    // Gap 2, unit (ii-b1): the kind, read as the other words are — kept as recorded, and named in
+    // `unknown` when it is outside its list.
+    const kind = failureKindOf(entry);
+    const unknown: NonNullable<Extract<FailureView, { code: string }>['unknown']> = [
+      ...words.unknown.map((f) => VIEW_KEY[f]),
+      ...(kind !== undefined && !(FAILURE_KINDS as readonly string[]).includes(kind)
+        ? (['failure_kind'] as const)
+        : []),
+    ];
     return {
       step,
       code: words.error_code,
       ...(words.error_category !== undefined ? { category: words.error_category } : {}),
       ...(words.stop_reason !== undefined ? { stop_reason: words.stop_reason } : {}),
       ...(words.agent_action !== undefined ? { agent_action: words.agent_action } : {}),
+      ...(kind !== undefined ? { failure_kind: kind } : {}),
       ...(attempt !== undefined ? { attempt } : {}),
       message,
-      ...(words.unknown.length > 0 ? { unknown: words.unknown.map((f) => VIEW_KEY[f]) } : {}),
+      ...(unknown.length > 0 ? { unknown } : {}),
     };
   });
 }

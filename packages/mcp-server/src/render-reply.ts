@@ -2751,13 +2751,15 @@ export const DOOR_FACTS = {
     RunHealthFinding
   >,
   // Q1 (#592) unit b: a failure's step is the author's name; its words and why it has none are
-  // realm's words (a newer Realm's word is carried as recorded and named in `unknown`).
+  // realm's words (a newer Realm's word is carried as recorded and named in `unknown`). Gap 2, unit
+  // (ii-b1): so is the failure's kind.
   failures: {
     step: 'author_literal',
     code: 'enum',
     category: 'enum',
     stop_reason: 'enum',
     agent_action: 'enum',
+    failure_kind: 'enum',
     absent: 'enum',
     unknown: 'enum',
   } satisfies FactProducers<

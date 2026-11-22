@@ -55,6 +55,7 @@ import {
   ERROR_CATEGORIES,
   AGENT_ACTIONS,
   STOP_REASONS,
+  MODEL_FAILURE_KINDS,
   type FailureView,
   type DisclosureReceipt,
   controlEscape,
@@ -238,9 +239,11 @@ function cliRespondWay(
 
 /**
  * Q1 (#592) unit b: one failed step's line under `Failed:`, from core's composed view — never from
- * the evidence directly, so it says what `get_run_state`'s `failures[]` says. A clause whose word
- * the entry lacks is left out; a word outside its list prints as recorded, then ` (unknown word)`.
- * The message goes through the value channel, as `Cause:` does.
+ * the evidence directly, so it says what `get_run_state`'s `failures[]` says: the code, its category,
+ * then `stopped:` (why Realm stopped retrying), `kind:` (the failure's kind, gap 2 unit (ii-b1)) and
+ * `next:` (the action word), the attempt and the message. A clause whose word the entry lacks is left
+ * out; a word outside its list prints as recorded, then ` (unknown word)`. The message goes through
+ * the value channel, as `Cause:` does.
  */
 function formatFailureLine(view: FailureView): string {
   const ctx = writerCtx();
@@ -259,6 +262,9 @@ function formatFailureLine(view: FailureView): string {
   const clauses: string[] = [];
   if (view.stop_reason !== undefined) {
     clauses.push(`stopped: ${word('stop_reason', view.stop_reason, STOP_REASONS)}`);
+  }
+  if (view.failure_kind !== undefined) {
+    clauses.push(`kind: ${word('failure_kind', view.failure_kind, MODEL_FAILURE_KINDS)}`);
   }
   if (view.agent_action !== undefined) {
     clauses.push(`next: ${word('agent_action', view.agent_action, AGENT_ACTIONS)}`);
