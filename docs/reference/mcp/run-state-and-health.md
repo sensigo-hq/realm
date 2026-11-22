@@ -275,7 +275,7 @@ Inside these fields, Realm's own words are shaped with the failure's: in `termin
 
 A reply in which something was shaped says so in its `disclosure` receipt: `failure_text: "withheld"`, with the shaped fields' paths in `shaped`. A run with no failures carries neither.
 
-The setting covers `get_run_state` only: the replies of the assistant's own calls, such as `execute_step`'s when a step it runs fails, show a failure's words as recorded. Text a workflow copies into a question, a prompt or an output is shown as that field always is.
+The setting also covers the replies of the assistant's own calls (`execute_step`, `advance_run`, `start_run`, `submit_human_response` and `start_run_batch`): when a step fails, `errors[0]` shows as `‹string, N characters›`, and `error_details` keeps its keys, a retried step's `stepName`, `attempts` and `exhausted_by`, and any number in `status` or `retry_after`, and shows every other value as its shape; a handler's abort shows `Handler step '<step>' aborted the run: ‹string, N characters›` in `context_hint`; `start_run_batch`'s `started[].terminal_reason` shows as `terminal_reason` does here. A refusal of the call itself is Realm's own sentence and stays. A reply whose project code failed to load still shows the error's words. Text a workflow copies into a question, a prompt or an output is shown as that field always is.
 
 ## Health findings
 

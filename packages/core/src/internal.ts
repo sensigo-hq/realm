@@ -1342,7 +1342,10 @@ export {
   failureTextShape,
   terminalReasonHidingFailureText,
   abortMessageHidingFailureText,
+  // Gap 2, unit (iv-b2a): the reader of core's failure-text mark on an engine reply.
+  failureTextMarkOf,
 } from './engine/failure-text.js';
+export type { FailureTextMark } from './engine/failure-text.js';
 
 // CP-W: the deprecation channel's data — the table, its validator, the line, and the ids said in
 // this process. Data only; the CLI and the MCP server print.
