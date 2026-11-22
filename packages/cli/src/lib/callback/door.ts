@@ -19,6 +19,13 @@ import { callbackHostLabel } from './host-label.js';
 /** The request header a caller names its callback address in. */
 export const CALLBACK_HEADER = 'realm-callback-url';
 
+/**
+ * R1.3 C3b1: while this many callbacks are waiting to be sent, a request that names a callback
+ * address is refused `503 callback_backlog` before a run is made (judged after the address and the
+ * key), so a receiver that stays down cannot make the store grow without bound.
+ */
+export const CALLBACK_BACKLOG_CAP = 1000;
+
 /** The closed word a refused callback address is answered with: the matcher's five, and two more. */
 export type CallbackRefusalWord = UrlRefusalWord | 'address' | 'no_key';
 
