@@ -34,6 +34,7 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`ArtifactDeletionReport`](#artifactdeletionreport) | interface | What a store reports about the artifacts it just deleted: the bytes it deleted. |
 | [`BufferedEntry`](#bufferedentry) | interface | An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce that carried it, if any. |
 | [`CallbackClaimRequest`](#callbackclaimrequest) | interface | A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters). |
+| [`CallbackEnded`](#callbackended) | interface | A row `endOverdue` ended, as it ended it: `attempts` is how many tries began (0: never sent). |
 | [`CallbackKeyDeleteResult`](#callbackkeydeleteresult) | interface | What `delete` answers: whether the pair had a current key, readable or not. |
 | [`CallbackKeyListing`](#callbackkeylisting) | interface | One (workflow, host) of a store's listing (`list`), with its live slots. |
 | [`CallbackKeyMakeResult`](#callbackkeymakeresult) | interface | What `make` answers: the current key, and whether this call wrote it. |
@@ -646,6 +647,21 @@ interface CallbackClaimRequest {
 }
 ```
 
+### CallbackEnded
+
+interface · beta: may change in a minor release until it settles
+
+A row `endOverdue` ended, as it ended it: `attempts` is how many tries began (0: never sent).
+
+```ts
+interface CallbackEnded {
+    readonly run_id: string;
+    readonly workflow_id: string;
+    readonly host: string;
+    readonly attempts: number;
+}
+```
+
 ### CallbackKeyDeleteResult
 
 interface · beta: may change in a minor release until it settles
@@ -789,15 +805,18 @@ interface CallbackRow {
 interface · beta: may change in a minor release until it settles
 
 A store's callback store (`RunStore.callbacks`): one row per run, written by `create`.
-`due`, `claim` and a `retry` mark each take ONE raw reading of the store's clock, refused or
-applied; `read`, `countPending`, `freezeBody`, the other marks and the purge pair take none; a
-malformed request throws before any reading. A run without a row is no error.
+`due`, `claim`, `endOverdue` and a `retry` mark each take ONE raw reading of the store's clock,
+refused or applied; `read`, `countPending`, `countWaiting`, `freezeBody`, the other marks and the
+purge pair take none; a malformed request throws before any reading. A run without a row is no
+error.
 
 ```ts
 interface CallbackStore extends PerRunArtifactStore {
     read(runId: string): Promise<CallbackView | undefined>;
     countPending(): Promise<number>;
+    countWaiting(): Promise<number>;
     due(limit: number): Promise<CallbackItem[]>;
+    endOverdue(limit: number): Promise<CallbackEnded[]>;
     claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
     freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
     mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
