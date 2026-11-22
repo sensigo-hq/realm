@@ -205,7 +205,7 @@ A caller that would rather not hold a connection open, or ask again, can give `r
 
 Four things make it work.
 
-**1. The workflow takes callbacks.** Its `trigger` has a `result_map` and `auth.mode: shared_secret`, as in [Getting the result back](#getting-the-result-back). A request that names a callback address to a workflow without them is answered `400` `{"error":"callback_not_enabled"}`.
+**1. The workflow takes callbacks.** Its `trigger` has a `result_map` and `auth.mode: shared_secret`, as in [Getting the result back](#getting-the-result-back). The examples use the `refunds` workflow of that page: save the workflow of [`result_map`](../reference/workflow/webhook-trigger.md#result_map) (add `id: refunds`, a `name` and `version: 1` above its `trigger:`) as `refunds/workflow.yaml`, and set `WH_SECRET=choose-a-long-secret` in the environment of `realm listen`: it is the variable that workflow's `secret_from` names. A request that names a callback address to a workflow without them is answered `400` `{"error":"callback_not_enabled"}`.
 
 **2. The receiver has a key.** `realm callback key ./refunds --host n8n.example.com` prints the key for this workflow and this receiver: 64 hexadecimal characters. The example on this page has its receiver on this machine, at `127.0.0.1:5678`, and its key is a scratch one that protects nothing:
 
@@ -218,9 +218,11 @@ realm callback key ./refunds --host 127.0.0.1:5678
 Made a key for refunds → 127.0.0.1:5678 (key 05089f2a), sealed with encryption key 01769354.
 ```
 
+The example was made with `REALM_ENCRYPTION_KEY` set. In a fresh home without it, `realm callback key` also makes the master key file `encryption.key` and prints a line telling you to keep a copy of it somewhere safe, because `realm db backup` does not copy it.
+
 Give it to the receiver, which checks every callback's signature with it. Realm keeps the key sealed in its database; [`realm callback`](../reference/cli/realm-callback.md) says how to change it, and where the master key that seals it comes from.
 
-**3. `realm listen` is told which receivers it may call.** `--callback-allow n8n.example.com` for a receiver on a public address, `--callback-allow-private http://n8n.lan:5678` for one on this machine or your own network (an entry written with `http://` allows plain `http` as well as `https`; one without it allows `https` only). Without either flag every callback address is refused. See [`realm listen`](../reference/cli/realm-listen.md#--callback-allow). The example's receiver is on plain `http` on this machine, so its `realm listen` was started with `--callback-allow-private http://127.0.0.1:5678`.
+**3. `realm listen` is told which receivers it may call.** `--callback-allow n8n.example.com` for a receiver on a public address, `--callback-allow-private http://n8n.lan:5678` for one on this machine or your own network (an entry written with `http://` allows plain `http` as well as `https`; one without it allows `https` only). Without either flag every callback address is refused. See [`realm listen`](../reference/cli/realm-listen.md#--callback-allow). The example's receiver is on plain `http` on this machine, so its `realm listen` was started as in [2. Start the server](#2-start-the-server), with the flag added: `--callback-allow-private http://127.0.0.1:5678`.
 
 **4. The request names the address,** in the header `realm-callback-url` of the request that starts the run:
 
@@ -249,7 +251,7 @@ Keep-Alive: timeout=5
 
 #### What Realm sends
 
-When the run ends, `realm listen` sends one `POST` to the address: a moment after the agent that was driving the run exits, and otherwise within 30 seconds. The body is JSON:
+When the run ends, `realm listen` sends one `POST` to the address: a moment after the agent that was driving the run exits, and otherwise within 30 seconds: `realm listen` looks for callbacks that are due, a pass, when an agent it started exits and every 30 seconds. The body is JSON:
 
 ```text
 POST /webhook-waiting/301 HTTP/1.1
@@ -310,7 +312,7 @@ Check every token in `webhook-signature`, and reject a request whose timestamp i
 
 A `2xx` answer ends the callback: it is delivered. A `410` ends it too: the receiver has said to stop. Any other answer (a redirect is one: Realm does not follow it), no answer within 10 seconds, or no connection, is tried again, with the same body and the same `webhook-id` and a new timestamp and signature. The wait before a try is 1 second after the first failure and doubles each time up to 1 hour, with 20 % either way; a `Retry-After` of whole seconds raises it, to at most 1 hour. A wait is served at the next pass, so a retry can come up to 30 seconds after its wait has ended. It is given up 1 hour after the first try when the last answer was a `4xx` other than `408`, `425` and `429`, and otherwise 3 days after the run ended.
 
-A callback waits while no `realm listen` runs that has an allow-list flag, the workflow and a key it can read. A `realm listen` that has a flag but no entry for the receiver ends the callback at its next try and does not send it: the entry is checked again at every try. If `realm listen` is stopped while a try is in flight and the grace ends first, the exit code is still 0 and the try is made again after the next start, with the same `webhook-id`: ignore an id you have already handled.
+A callback waits while no `realm listen` runs that has `--callback-allow` or `--callback-allow-private`, the workflow and a key it can read. A `realm listen` that has a flag but no entry for the receiver ends the callback at its next try and does not send it: the entry is checked again at every try. If `realm listen` is stopped while a try is in flight and the grace (`--shutdown-grace`) ends first, the exit code is still 0 and the try is made again after the next start (about a minute later: the cut try holds the callback that long), with the same `webhook-id`: ignore an id you have already handled.
 
 Realm connects only to an address it has checked: a host name on `--callback-allow` whose address is private, local or shared is not called (the try fails and is made again later), and the receiver's certificate is always checked. Realm does not use `HTTP_PROXY` or `HTTPS_PROXY` for callbacks.
 
@@ -327,7 +329,7 @@ Realm connects only to an address it has checked: a host name on `--callback-all
 | `…"reason":"no_key"`                                      | There is no key Realm can read for this workflow and this host: `realm listen` says which command makes one  |
 | `503` `{"error":"callback_backlog"}`                      | 1,000 callbacks are waiting to be sent                                                                       |
 
-A request is refused before a run is made. A repeat of an event inside the duplicate window is answered before this check, `200` `deduplicated`; when that repeat also names an address, the reply carries `"callback":"ignored_duplicate"` if the first request registered one and `"callback":"none"` if not (a repeat that names none has no `callback`). After the window the check comes first, and a refused address gets its refusal.
+A request is refused before a run is made. A repeat of an event inside the [duplicate window](../reference/workflow/webhook-trigger.md#dedup) is answered before this check, `200` `deduplicated`; when that repeat also names an address, the reply carries `"callback":"ignored_duplicate"` if the first request registered one and `"callback":"none"` if not (a repeat that names none has no `callback`). After the window the check comes first, and a refused address gets its refusal.
 
 #### Seeing how a callback stands
 
@@ -341,6 +343,8 @@ Callback: failed after 2 attempts, last answer 410
 Callback: expired at attempt 2, not delivered within its time limit
 Callback: waiting for the run to finish
 ```
+
+`pending` means the next try is still to come; `due` means a try is due now and waits for the next pass of a `realm listen` that can send it: one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver.
 
 A `GET` of the run's `status_path` carries `callback` once the run is no longer running or waiting at a question: `state` (`pending`, `delivered` or `failed`), `attempts` and, when they apply, `last_status` (an HTTP status, or `timeout`, `connection`, `redirect`, `refused_address`, `not_allowed` or `expired`) and `next_try`. After the example's callback was delivered:
 

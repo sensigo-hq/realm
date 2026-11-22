@@ -339,10 +339,10 @@ describe('C3c-1 — cell 1: the words, each held to its page', () => {
     claim(GUIDE, 'Four things make it work.');
   });
   it('3. 1. The workflow takes callbacks. Its trigger has a result_map and auth', () => {
-    // Pinned by: listen-callback-c2.test and door-words-c2.test (callback_not_enabled); CB-C3C1-AU (executed on the build).
+    // Pinned by: listen-callback-c2.test and door-words-c2.test (callback_not_enabled); CB-C3C1-AU (executed on the build). The example workflow: CB-C3C1-RV-13 (the result_map page's workflow, with `id`, `name` and `version: 1` added, validates and runs; `WH_SECRET` is needed); cell 5 (the link).
     claim(
       GUIDE,
-      '**1. The workflow takes callbacks.** Its `trigger` has a `result_map` and `auth.mode: shared_secret`, as in [Getting the result back](#getting-the-result-back). A request that names a callback address to a workflow without them is answered `400` `{"error":"callback_not_enabled"}`.',
+      '**1. The workflow takes callbacks.** Its `trigger` has a `result_map` and `auth.mode: shared_secret`, as in [Getting the result back](#getting-the-result-back). The examples use the `refunds` workflow of that page: save the workflow of [`result_map`](../reference/workflow/webhook-trigger.md#result_map) (add `id: refunds`, a `name` and `version: 1` above its `trigger:`) as `refunds/workflow.yaml`, and set `WH_SECRET=choose-a-long-secret` in the environment of `realm listen`: it is the variable that workflow\'s `secret_from` names. A request that names a callback address to a workflow without them is answered `400` `{"error":"callback_not_enabled"}`.',
     );
   });
   it('4. 2. The receiver has a key. realm callback key ./refunds --host n8n.exa', () => {
@@ -352,245 +352,275 @@ describe('C3c-1 — cell 1: the words, each held to its page', () => {
       '**2. The receiver has a key.** `realm callback key ./refunds --host n8n.example.com` prints the key for this workflow and this receiver: 64 hexadecimal characters. The example on this page has its receiver on this machine, at `127.0.0.1:5678`, and its key is a scratch one that protects nothing:',
     );
   });
-  it("5. Give it to the receiver, which checks every callback's signature with", () => {
+  it('5. The example was made with REALM_ENCRYPTION_KEY set. In a fresh home wi', () => {
+    // Pinned by: CB-C3C1-RV-14 (in a fresh home without it, the built `realm callback key` makes `encryption.key` and prints the keep-a-copy line); the example run (REALM_ENCRYPTION_KEY set, CB-C3C1-IA-01).
+    claim(
+      GUIDE,
+      'The example was made with `REALM_ENCRYPTION_KEY` set. In a fresh home without it, `realm callback key` also makes the master key file `encryption.key` and prints a line telling you to keep a copy of it somewhere safe, because `realm db backup` does not copy it.',
+    );
+  });
+  it("6. Give it to the receiver, which checks every callback's signature with", () => {
     // Pinned by: cell 2 (a receiver checks the signature with that key, as text); cell 5 (the link).
     claim(
       GUIDE,
       "Give it to the receiver, which checks every callback's signature with it. Realm keeps the key sealed in its database; [`realm callback`](../reference/cli/realm-callback.md) says how to change it, and where the master key that seals it comes from.",
     );
   });
-  it('6. 3. realm listen is told which receivers it may call. --callback-allow', () => {
-    // Pinned by: allow-list.test (an entry with http:// allows http and https; one without, https only); listen-switch-c2c (no flag: every address refused callback_not_enabled); the example run (--callback-allow-private http://127.0.0.1:5678); cell 5 (the link).
+  it('7. 3. realm listen is told which receivers it may call. --callback-allow', () => {
+    // Pinned by: allow-list.test (an entry with http:// allows http and https; one without, https only); listen-switch-c2c (no flag: every address refused callback_not_enabled); the example run (--callback-allow-private http://127.0.0.1:5678); cell 5 (the link). cell 5 (the link to 2. Start the server).
     claim(
       GUIDE,
-      "**3. `realm listen` is told which receivers it may call.** `--callback-allow n8n.example.com` for a receiver on a public address, `--callback-allow-private http://n8n.lan:5678` for one on this machine or your own network (an entry written with `http://` allows plain `http` as well as `https`; one without it allows `https` only). Without either flag every callback address is refused. See [`realm listen`](../reference/cli/realm-listen.md#--callback-allow). The example's receiver is on plain `http` on this machine, so its `realm listen` was started with `--callback-allow-private http://127.0.0.1:5678`.",
+      "**3. `realm listen` is told which receivers it may call.** `--callback-allow n8n.example.com` for a receiver on a public address, `--callback-allow-private http://n8n.lan:5678` for one on this machine or your own network (an entry written with `http://` allows plain `http` as well as `https`; one without it allows `https` only). Without either flag every callback address is refused. See [`realm listen`](../reference/cli/realm-listen.md#--callback-allow). The example's receiver is on plain `http` on this machine, so its `realm listen` was started as in [2. Start the server](#2-start-the-server), with the flag added: `--callback-allow-private http://127.0.0.1:5678`.",
     );
   });
-  it('7. 4. The request names the address, in the header realm-callback-url of', () => {
+  it('8. 4. The request names the address, in the header realm-callback-url of', () => {
     // Pinned by: cell 3 (the header, on the built `realm listen`).
     claim(
       GUIDE,
       '**4. The request names the address,** in the header `realm-callback-url` of the request that starts the run:',
     );
   });
-  it('8. The 202 says the address was taken:', () => {
+  it('9. The 202 says the address was taken:', () => {
     // Pinned by: cell 3 (the `202` carries "callback":"registered").
     claim(GUIDE, 'The `202` says the address was taken:');
   });
-  it('9. When the run ends, realm listen sends one POST to the address: a momen', () => {
-    // Pinned by: listen-callback-c3b2.test (the pass woken when an agent it started exits, and every 30 s); CB-C3B2-RV-01/-02; cell 3.
+  it('10. When the run ends, realm listen sends one POST to the address: a momen', () => {
+    // Pinned by: listen-callback-c3b2.test (the pass woken when an agent it started exits, and every 30 s); CB-C3B2-RV-01/-02; cell 3. The pass and its two wake-ups: listen-callback-c3b2.test.
     claim(
       GUIDE,
-      'When the run ends, `realm listen` sends one `POST` to the address: a moment after the agent that was driving the run exits, and otherwise within 30 seconds. The body is JSON:',
+      'When the run ends, `realm listen` sends one `POST` to the address: a moment after the agent that was driving the run exits, and otherwise within 30 seconds: `realm listen` looks for callbacks that are due, a pass, when an agent it started exits and every 30 seconds. The body is JSON:',
     );
   });
-  it("10. timestamp is when the run ended. data holds what a GET of the run's st", () => {
+  it("11. timestamp is when the run ended. data holds what a GET of the run's st", () => {
     // Pinned by: cell 3 (the body's keys: a GET's without `callback`, plus `status_path`; no token); the example run (`timestamp` = the run's `Updated:`, CB-C3C1-IA-02); CB-C3C1-AU (a failed, aborted or abandoned run's body).
     claim(
       GUIDE,
       "`timestamp` is when the run ended. `data` holds what a `GET` of the run's `status_path` answers, without its `callback` member (the run's id and phase and, once it has completed, `result`, `result_masked` or `result_error`: see [Getting the result back](#getting-the-result-back)), and `status_path`. A run that failed, was aborted or was abandoned sends its id, its phase and `status_path` only. The read token is never sent.",
     );
   });
-  it('11. Header What it holds', () => {
+  it('12. Header What it holds', () => {
     // Pinned by: cell 3 (the header names, on the built `realm listen`).
     claim(GUIDE, '| Header | What it holds |');
   });
-  it('12. webhook-id An id for this callback, the same on every try', () => {
+  it('13. webhook-id An id for this callback, the same on every try', () => {
     // Pinned by: cell 3 (the name); CB-C3A-RV-02 and CB-C3B2-RV-08 (the same id on every try).
     claim(GUIDE, '| `webhook-id` | An id for this callback, the same on every try |');
   });
-  it('13. webhook-timestamp When this try was sent, in whole seconds since 1 Jan', () => {
+  it('14. webhook-timestamp When this try was sent, in whole seconds since 1 Jan', () => {
     // Pinned by: cell 3 (the name); CB-C3A-RV-02 (seconds since the epoch, a new one each try).
     claim(
       GUIDE,
       '| `webhook-timestamp` | When this try was sent, in whole seconds since 1 January 1970 (UTC) |',
     );
   });
-  it('14. webhook-signature v1, and the signature below; while the key that was', () => {
+  it('15. webhook-signature v1, and the signature below; while the key that was', () => {
     // Pinned by: cell 2 (two tokens during an overlap, the current first; both keys verify); CB-C3A-RV-04.
     claim(
       GUIDE,
       "| `webhook-signature` | `v1,` and the signature below; while the key that was replaced is still kept (see [`realm callback`](../reference/cli/realm-callback.md)), two of them, separated by a space, the current key's first |",
     );
   });
-  it('15. content-type application/json', () => {
+  it('16. content-type application/json', () => {
     // Pinned by: cell 3 (the name and its value).
     claim(GUIDE, '| `content-type` | `application/json` |');
   });
-  it('16. user-agent realm/ and the version', () => {
+  it('17. user-agent realm/ and the version', () => {
     // Pinned by: cell 3 (the name); delivery-pass-sqlite-c3a.test (`realm/` and VERSION).
     claim(GUIDE, '| `user-agent` | `realm/` and the version |');
   });
-  it("17. realm-run-id The run's id", () => {
+  it("18. realm-run-id The run's id", () => {
     // Pinned by: cell 3 (the name and the run id).
     claim(GUIDE, "| `realm-run-id` | The run's id |");
   });
-  it('18. The first three are those of the Standard Webhooks specification, so a', () => {
+  it('19. The first three are those of the Standard Webhooks specification, so a', () => {
     // Pinned by: CB-C3A-RV-03 and CB-C3B2-RV-01 (standardwebhooks verifies with whsec_ and the base64 of the text; not under the decoded bytes); cell 2 (the 32 decoded bytes do not verify).
     claim(
       GUIDE,
       'The first three are those of the [Standard Webhooks](https://www.standardwebhooks.com/) specification, so a library for it can check them: `realm callback key ./refunds --host n8n.example.com --whsec` prints the key in the `whsec_` form such libraries take. The signature is `v1,` and the base64 of the HMAC-SHA-256 of `<webhook-id>.<webhook-timestamp>.<body>`, keyed with the key as it was printed: its 64 characters as text, not decoded.',
     );
   });
-  it('19. Check the signature of the body exactly as it arrived, before it is pa', () => {
+  it('20. Check the signature of the body exactly as it arrived, before it is pa', () => {
     // Pinned by: cell 2 (the guide's own `js` block, saved as verify.mjs and run against a real callback).
     claim(
       GUIDE,
       'Check the signature of the body exactly as it arrived, before it is parsed. In Node, save this as `verify.mjs`, since it uses `import`:',
     );
   });
-  it('20. Check every token in webhook-signature, and reject a request whose tim', () => {
+  it('21. Check every token in webhook-signature, and reject a request whose tim', () => {
     // Pinned by: cell 2 (every token: the previous key verifies; a timestamp six minutes old is refused).
     claim(
       GUIDE,
       'Check every token in `webhook-signature`, and reject a request whose timestamp is more than five minutes from your clock.',
     );
   });
-  it('21. A 2xx answer ends the callback: it is delivered. A 410 ends it too: th', () => {
+  it('22. A 2xx answer ends the callback: it is delivered. A 410 ends it too: th', () => {
     // Pinned by: CB-C3A-RV-07/-08/-09 and retry-wait-c3a.test (what ends a callback, the schedule, Retry-After up to 1 h); CB-C3B2-RV-08 (served at the next pass); CB-C3C1-AU (a 409 tried again at 26.8 s with the same id and bytes; a hang ends at 10.1 s; a 301 not followed; Retry-After 120 and 99999; given up 1 h after the first try); the example run (503 with Retry-After: 120: next try 2 min later).
     claim(
       GUIDE,
       'A `2xx` answer ends the callback: it is delivered. A `410` ends it too: the receiver has said to stop. Any other answer (a redirect is one: Realm does not follow it), no answer within 10 seconds, or no connection, is tried again, with the same body and the same `webhook-id` and a new timestamp and signature. The wait before a try is 1 second after the first failure and doubles each time up to 1 hour, with 20 % either way; a `Retry-After` of whole seconds raises it, to at most 1 hour. A wait is served at the next pass, so a retry can come up to 30 seconds after its wait has ended. It is given up 1 hour after the first try when the last answer was a `4xx` other than `408`, `425` and `429`, and otherwise 3 days after the run ended.',
     );
   });
-  it('22. A callback waits while no realm listen runs that has an allow-list fla', () => {
-    // Pinned by: CB-C3C1-AU (no flag after a restart: it waits; a flag with another entry: failed, not_allowed, at the next try); CB-C3A-RV-07; CB-C3B2-RV-06 (a try cut by the stop: exit 0, made again after the restart with the same id); the example run (due while `realm listen` was stopped, tried after its restart).
+  it('23. A callback waits while no realm listen runs that has --callback-allow', () => {
+    // Pinned by: CB-C3C1-AU (no flag after a restart: it waits; a flag with another entry: failed, not_allowed, at the next try); CB-C3A-RV-07; CB-C3B2-RV-06 (a try cut by the stop: exit 0, made again after the restart with the same id); the example run (due while `realm listen` was stopped, tried after its restart). The cut try about a minute later: CB-C3C1-RV-08, CB-C3C1-AU-14 (62 to 73 s after the restart).
     claim(
       GUIDE,
-      'A callback waits while no `realm listen` runs that has an allow-list flag, the workflow and a key it can read. A `realm listen` that has a flag but no entry for the receiver ends the callback at its next try and does not send it: the entry is checked again at every try. If `realm listen` is stopped while a try is in flight and the grace ends first, the exit code is still 0 and the try is made again after the next start, with the same `webhook-id`: ignore an id you have already handled.',
+      'A callback waits while no `realm listen` runs that has `--callback-allow` or `--callback-allow-private`, the workflow and a key it can read. A `realm listen` that has a flag but no entry for the receiver ends the callback at its next try and does not send it: the entry is checked again at every try. If `realm listen` is stopped while a try is in flight and the grace (`--shutdown-grace`) ends first, the exit code is still 0 and the try is made again after the next start (about a minute later: the cut try holds the callback that long), with the same `webhook-id`: ignore an id you have already handled.',
     );
   });
-  it('23. Realm connects only to an address it has checked: a host name on --cal', () => {
+  it('24. Realm connects only to an address it has checked: a host name on --cal', () => {
     // Pinned by: CB-C3A-RV-11; CB-C3C1-AU (localhost on --callback-allow: refused_address, tried again; a self-signed certificate: connection, also with NODE_TLS_REJECT_UNAUTHORIZED=0); cell 4 (the proxy variables, through the built `realm listen`, with a control).
     claim(
       GUIDE,
       "Realm connects only to an address it has checked: a host name on `--callback-allow` whose address is private, local or shared is not called (the try fails and is made again later), and the receiver's certificate is always checked. Realm does not use `HTTP_PROXY` or `HTTPS_PROXY` for callbacks.",
     );
   });
-  it('24. The reply Why', () => {
+  it('25. The reply Why', () => {
     // Pinned by: the table of the words below.
     claim(GUIDE, '| The reply | Why |');
   });
-  it('25. 400 {"error":"callback_not_enabled"} The workflow has no result_map wi', () => {
+  it('26. 400 {"error":"callback_not_enabled"} The workflow has no result_map wi', () => {
     // Pinned by: listen-callback-c2.test and door-words-c2.test (callback_not_enabled, both causes); CB-C3C1-AU.
     claim(
       GUIDE,
       '| `400` `{"error":"callback_not_enabled"}` | The workflow has no `result_map` with `shared_secret`, or `realm listen` was started with neither flag |',
     );
   });
-  it('26. 400 {"error":"callback_refused","reason":"malformed"} The header is em', () => {
+  it('27. 400 {"error":"callback_refused","reason":"malformed"} The header is em', () => {
     // Pinned by: door-words-c2.test (the malformed inputs); CB-C3C1-AU (empty, repeated, a space or #, no host, port 0; executed).
     claim(
       GUIDE,
       '| `400` `{"error":"callback_refused","reason":"malformed"}` | The header is empty, repeated, or not an address (it has a space or `#`, no host, or port 0) |',
     );
   });
-  it('27. …"reason":"too_long" The address is longer than 2,048 characters', () => {
+  it('28. …"reason":"too_long" The address is longer than 2,048 characters', () => {
     // Pinned by: door-words-c2.test; CB-C3C1-AU (2,049 characters refused); allow-list.ts CALLBACK_URL_MAX_LENGTH.
     claim(GUIDE, '| `…"reason":"too_long"` | The address is longer than 2,048 characters |');
   });
-  it('28. …"reason":"scheme" The scheme is not http or https, or it is http:// t', () => {
+  it('29. …"reason":"scheme" The scheme is not http or https, or it is http:// t', () => {
     // Pinned by: door-words-c2.test; CB-C3C1-AU (http:// to a host and port listed without it: scheme; to another port: not_allowed).
     claim(
       GUIDE,
       '| `…"reason":"scheme"` | The scheme is not `http` or `https`, or it is `http://` to a host and port that are listed without `http://` |',
     );
   });
-  it('29. …"reason":"userinfo" The address holds a user name or a password', () => {
+  it('30. …"reason":"userinfo" The address holds a user name or a password', () => {
     // Pinned by: door-words-c2.test (userinfo).
     claim(GUIDE, '| `…"reason":"userinfo"` | The address holds a user name or a password |');
   });
-  it('30. …"reason":"not_allowed" No entry of --callback-allow or --callback-all', () => {
+  it('31. …"reason":"not_allowed" No entry of --callback-allow or --callback-all', () => {
     // Pinned by: door-words-c2.test and allow-list.test (not_allowed).
     claim(
       GUIDE,
       '| `…"reason":"not_allowed"` | No entry of `--callback-allow` or `--callback-allow-private` has the address\'s host and port |',
     );
   });
-  it('31. …"reason":"no_key" There is no key Realm can read for this workflow an', () => {
+  it('32. …"reason":"no_key" There is no key Realm can read for this workflow an', () => {
     // Pinned by: door-words-c2.test (no_key); listen-switch-c2c (realm listen's start line names the command).
     claim(
       GUIDE,
       '| `…"reason":"no_key"` | There is no key Realm can read for this workflow and this host: `realm listen` says which command makes one |',
     );
   });
-  it('32. 503 {"error":"callback_backlog"} 1,000 callbacks are waiting to be sen', () => {
+  it('33. 503 {"error":"callback_backlog"} 1,000 callbacks are waiting to be sen', () => {
     // Pinned by: listen-callback-c3b1.test (the cap, both sides); CB-C3B1-RV-02/-03.
     claim(
       GUIDE,
       '| `503` `{"error":"callback_backlog"}` | 1,000 callbacks are waiting to be sent |',
     );
   });
-  it('33. A request is refused before a run is made. A repeat of an event inside', () => {
-    // Pinned by: CB-C2-RV-* (the duplicate words); CB-C3C1-AU (inside the window and after it, executed).
+  it('34. A request is refused before a run is made. A repeat of an event inside', () => {
+    // Pinned by: CB-C2-RV-* (the duplicate words); CB-C3C1-AU (inside the window and after it, executed). cell 5 (the link to dedup).
     claim(
       GUIDE,
-      'A request is refused before a run is made. A repeat of an event inside the duplicate window is answered before this check, `200` `deduplicated`; when that repeat also names an address, the reply carries `"callback":"ignored_duplicate"` if the first request registered one and `"callback":"none"` if not (a repeat that names none has no `callback`). After the window the check comes first, and a refused address gets its refusal.',
+      'A request is refused before a run is made. A repeat of an event inside the [duplicate window](../reference/workflow/webhook-trigger.md#dedup) is answered before this check, `200` `deduplicated`; when that repeat also names an address, the reply carries `"callback":"ignored_duplicate"` if the first request registered one and `"callback":"none"` if not (a repeat that names none has no `callback`). After the window the check comes first, and a refused address gets its refusal.',
     );
   });
-  it('34. realm run inspect <run id> has a Callback: line:', () => {
+  it('35. realm run inspect <run id> has a Callback: line:', () => {
     // Pinned by: cell 3 (the lines of the built `realm run inspect`; every form).
     claim(GUIDE, '`realm run inspect <run id>` has a `Callback:` line:');
   });
-  it("35. A GET of the run's status_path carries callback once the run is no lon", () => {
+  it('36. pending means the next try is still to come; due means a try is due no', () => {
+    // Pinned by: CB-C3C1-RV-11 (the due line is the same whichever of the four is missing); inspect-line-c3b1.test (pending and due); cell 1b (the same words about due on both pages).
+    claim(
+      GUIDE,
+      '`pending` means the next try is still to come; `due` means a try is due now and waits for the next pass of a `realm listen` that can send it: one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver.',
+    );
+  });
+  it("37. A GET of the run's status_path carries callback once the run is no lon", () => {
     // Pinned by: cell 3 (the GET's `callback` members, on the built `realm listen`); CB-C3B1-RV-07/-08/-10; listen-callback-c3b1.test.
     claim(
       GUIDE,
       "A `GET` of the run's `status_path` carries `callback` once the run is no longer running or waiting at a question: `state` (`pending`, `delivered` or `failed`), `attempts` and, when they apply, `last_status` (an HTTP status, or `timeout`, `connection`, `redirect`, `refused_address`, `not_allowed` or `expired`) and `next_try`. After the example's callback was delivered:",
     );
   });
-  it('36. The same read of a run whose receiver had answered 503 with Retry-Afte', () => {
+  it('38. The same read of a run whose receiver had answered 503 with Retry-Afte', () => {
     // Pinned by: cell 3 (a 503 with Retry-After: 120, on the built `realm listen`).
     claim(
       GUIDE,
       'The same read of a run whose receiver had answered `503` with `Retry-After: 120`:',
     );
   });
-  it('37. next_try can be in the past: the callback is due and waits for the nex', () => {
+  it('39. next_try can be in the past: the callback is due and waits for the nex', () => {
     // Pinned by: inspect-line-c3b1.test (the due form); CB-C3B1-RV-14.
     claim(GUIDE, '`next_try` can be in the past: the callback is due and waits for the next pass.');
   });
-  it("38. This part is read from n8n's documentation and source (version 2.47.7)", () => {
+  it("40. This part is read from n8n's documentation and source (version 2.47.7)", () => {
     // Pinned by: LANE-WEB-C1 Q4 and Q6 (n8n's documentation and source read 2026-11-16, version 2.47.7); nothing was run in n8n.
     claim(
       GUIDE,
       "This part is read from n8n's documentation and source (version 2.47.7); we did not run n8n for it. A flow that starts a run and waits for its callback has an **HTTP Request** node that posts to `realm listen` with the header `realm-callback-url` set to `{{ $execution.resumeUrl }}`, followed in the same execution by a **Wait** node with Resume `On Webhook Call` and HTTP Method `POST` (its default is `GET`). n8n's Wait node is read, from its source, to answer `409` (or `404`) until the flow has reached it; Realm tries a `4xx` again for an hour, so a run that ends before the flow gets there can still be delivered. Checking the signature in n8n is not settled by its documentation: the Crypto node takes its secret as text, as Realm's key is, but we could not confirm how to give it the body exactly as received. Until you have a way that works, check it in a **Code** node: the function above with `require('crypto')` in place of its `import` and no `export`. It needs the body exactly as received, and we do not know how the Wait node hands that over. On self-hosted n8n the Code node needs `NODE_FUNCTION_ALLOW_BUILTIN=crypto` set on its task runner (`crypto` and `node:crypto` are separate entries), and n8n Cloud has `crypto`.",
     );
   });
-  it('39. A callback address, if the request names one (the header realm-callbac', () => {
+  it('41. A callback address, if the request names one (the header realm-callbac', () => {
     // Pinned by: listen-callback-c2.test (the check and its replies); CB-C3C1-AU (the row's place in the order); cell 5 (the link).
     claim(
       TRIGGER,
       '| A callback address, if the request names one (the header `realm-callback-url`), is accepted | `400` `{"error":"callback_not_enabled"}`, `400` `{"error":"callback_refused","reason":"<word>"}` or `503` `{"error":"callback_backlog"}`. The words and what each means are in [Receive a callback](../../guides/webhooks.md#what-a-refused-request-says). Added after version 0.50.0. |',
     );
   });
-  it('40. For a workflow with result_map, the 202 also carries run_phase, status', () => {
+  it('42. For a workflow with result_map, the 202 also carries run_phase, status', () => {
     // Pinned by: cell 3 (the `202` carries "callback":"registered").
     claim(
       TRIGGER,
       'For a workflow with `result_map`, the `202` also carries `run_phase`, `status_path` and `token`, with the headers `Location: <status_path>` and `Retry-After: 5` (the example is under [`result_map`](#result_map)). Added after version 0.49.0. A request that named an accepted callback address also gets `"callback":"registered"`. Added after version 0.50.0.',
     );
   });
-  it('41. After those two lines, or where they would be, a run whose request nam', () => {
+  it('43. After those two lines, or where they would be, a run whose request nam', () => {
     // Pinned by: inspect.ts (the line is pushed after the Reminders and Escalation lines: read from the code); cell 3 (the forms).
     claim(
       READING,
       'After those two lines, or where they would be, a run whose request named a callback address has one `Callback:` line, which says how its callback stands (added after version 0.50.0). One line per state:',
     );
   });
-  it('42. A callback that was sent shows its host and when; one that is waiting', () => {
-    // Pinned by: cell 3 (the forms, from the built `realm run inspect` and `callbackLine`).
+  it('44. A callback that was sent shows its host and when. For one that is wait', () => {
+    // Pinned by: cell 3 (the forms, from the built `realm run inspect` and `callbackLine`). CB-C3C1-RV-11; cell 1b (the same words about due on both pages).
     claim(
       READING,
-      'A callback that was sent shows its host and when; one that is waiting says whether its run has finished and when the next try is due.',
+      'A callback that was sent shows its host and when. For one that is waiting, `pending` means the next try is still to come, and `due` means a try is due now and waits for the next pass of a `realm listen` that can send it (one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver); `waiting for the run to finish` means the run has not ended.',
     );
   });
-  it("43. - realm listen sends a run's result to the callback address a request", () => {
-    // Pinned by: cell 3 (the headers and the body's type, on the built `realm listen`); CB-C3A-RV-07/-08 (3 days; 1 hour after the first try for a 4xx but 408, 425, 429); CB-C3C1-AU (expired with the first try set 2 h back).
+  it("45. - realm listen sends a run's result to the callback address a request", () => {
+    // Pinned by: cell 3 (the headers and the body's type, on the built `realm listen`); CB-C3A-RV-07/-08 (3 days; 1 hour after the first try for a 4xx but 408, 425, 429); CB-C3C1-AU (expired with the first try set 2 h back). The inspect line: cell 3.
     claim(
       CHANGELOG,
-      '- **`realm listen` sends a run\'s result to the callback address a request named.** The `POST` carries `webhook-id`, `webhook-timestamp` and `webhook-signature` (Standard Webhooks, `v1`), the body `{"type":"run.finished",…}`; a receiver that answers with anything but `2xx` or `410` is tried again for up to 3 days (1 hour after the first try when its last answer was a `4xx` other than `408`, `425` or `429`). See [Receive a callback](docs/guides/webhooks.md#receive-a-callback).',
+      '- **`realm listen` sends a run\'s result to the callback address a request named.** The `POST` carries `webhook-id`, `webhook-timestamp` and `webhook-signature` (Standard Webhooks, `v1`), the body `{"type":"run.finished",…}`; a receiver that answers with anything but `2xx` or `410` is tried again for up to 3 days (1 hour after the first try when its last answer was a `4xx` other than `408`, `425` or `429`). See [Receive a callback](docs/guides/webhooks.md#receive-a-callback). `realm run inspect` shows how a run\'s callback stands on a `Callback:` line.',
     );
+  });
+});
+
+describe('C3c-1 — cell 1b: the two pages say the same about a callback that is due', () => {
+  it('1b. the guide and realm-run-reading.md give due the same meaning and the same four things a realm listen needs to send it', () => {
+    const due =
+      '`due` means a try is due now and waits for the next pass of a `realm listen` that can send it';
+    const needs =
+      'one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver';
+    // Pinned by: CB-C3C1-RV-11 (the due line is the same whichever of the four is missing).
+    // (1) red when either page words due, or what a realm listen needs to send it, differently;
+    //     (2) prints which page holds which.
+    expect({
+      guide: [flat(section()).includes(due), flat(section()).includes(needs)],
+      reading: [flat(read(READING)).includes(due), flat(read(READING)).includes(needs)],
+    }).toEqual({ guide: [true, true], reading: [true, true] });
   });
 });
 
@@ -925,11 +955,11 @@ describe('C3c-1 — cell 4: no proxy for callbacks', { timeout: 120_000 }, () =>
 // Cell 5: the version marker, and every link into and out of the new section.
 // ---------------------------------------------------------------------------------------------
 
-/** The anchor a heading gets: lower case, its marks dropped, its spaces as hyphens. */
+/** The anchor a heading gets: lower case, its marks dropped (underscores kept, as GitHub keeps them), its spaces as hyphens. */
 function slug(heading: string): string {
   return heading
     .toLowerCase()
-    .replace(/[^a-z0-9 -]/g, '')
+    .replace(/[^a-z0-9 _-]/g, '')
     .trim()
     .replace(/ /g, '-');
 }
@@ -954,7 +984,7 @@ function linksIn(text: string): string[] {
 }
 
 describe('C3c-1 — cell 5: the marker and the links', () => {
-  it('5a. each addition says "Added after version 0.50.0." once: the section, the Replies row, the 202 sentence; the reading page in its own form', () => {
+  it('5a. each addition says "Added after version 0.50.0." once: the section, the Replies row, the 202 sentence; the reading page and the wait row in their own form', () => {
     const trigger = read(TRIGGER).split('\n');
     const row = trigger.find((l) => l.startsWith('| A callback address, if the request names one'));
     const reply = trigger.find((l) =>
@@ -963,6 +993,7 @@ describe('C3c-1 — cell 5: the marker and the links', () => {
     const lead = read(READING)
       .split('\n')
       .find((l) => l.startsWith('After those two lines, or where they would be'));
+    const waitRow = trigger.find((l) => l.startsWith('| The run ends: `completed`'));
     const count = (t: string | undefined) => (t ?? '').split(MARK).length - 1;
     // (1) red when a marker is dropped or said twice; (2) prints the counts.
     expect({
@@ -970,7 +1001,8 @@ describe('C3c-1 — cell 5: the marker and the links', () => {
       row: count(row),
       reply: count(reply?.slice(reply.indexOf('A request that named'))),
       reading: (lead ?? '').includes('(added after version 0.50.0)'),
-    }).toEqual({ section: 1, row: 1, reply: 1, reading: true });
+      waitRow: (waitRow ?? '').includes('which this `200` does not; added after version 0.50.0)'),
+    }).toEqual({ section: 1, row: 1, reply: 1, reading: true, waitRow: true });
   });
 
   it("5b. the two anchors are the guide's headings', and every link out of the section, and into it from the trigger page and the CHANGELOG, resolves", () => {
@@ -1001,7 +1033,7 @@ describe('C3c-1 — cell 5: the marker and the links', () => {
       broken,
     }).toEqual({
       anchors: [],
-      out: 5,
+      out: 8,
       inbound: [
         `${TRIGGER} → ../../guides/webhooks.md#what-a-refused-request-says`,
         `${CHANGELOG} → docs/guides/webhooks.md#receive-a-callback`,

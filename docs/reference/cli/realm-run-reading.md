@@ -260,7 +260,7 @@ Callback: expired at attempt 2, not delivered within its time limit
 Callback: waiting for the run to finish
 ```
 
-A callback that was sent shows its host and when; one that is waiting says whether its run has finished and when the next try is due.
+A callback that was sent shows its host and when. For one that is waiting, `pending` means the next try is still to come, and `due` means a try is due now and waits for the next pass of a `realm listen` that can send it (one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver); `waiting for the run to finish` means the run has not ended.
 
 ### The blocks in the middle
 
