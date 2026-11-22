@@ -1163,13 +1163,21 @@ export function makeListenHandler(
       // Q1 (#592) unit c: a child killed by a SIGNAL before it wrote anything to the run leaves a
       // startup mark (one compare-and-set write of the baseline; an exit code is never marked). The
       // write joins `waits`, so a stop awaits it; a child whose end reaches listen after the stop has
-      // resolved is not marked, because listen has exited.
+      // resolved is not marked, because listen has exited. Q1 c2: the mark's own promise never
+      // rejects; a spawner whose `exited` rejects is logged here, never raised.
       if (spawnResult.exited !== undefined) {
-        void spawnResult.exited.then((exit) => {
-          const write = markSignalDeath(deps.runStore, deps.logger, baseline, exit, spawnedAt);
-          opts.waits?.add(write);
-          void write.finally(() => opts.waits?.delete(write));
-        });
+        void spawnResult.exited
+          .then((exit) => {
+            const write = markSignalDeath(deps.runStore, deps.logger, baseline, exit, spawnedAt);
+            opts.waits?.add(write);
+            void write.finally(() => opts.waits?.delete(write));
+          })
+          .catch((err: unknown) => {
+            deps.logger.warn(
+              "listen: the agent's exit could not be learned; no startup failure recorded",
+              { run_id: run.id, error: String(err) },
+            );
+          });
       }
       if (dedupId !== undefined && dedupStore !== undefined) {
         try {
