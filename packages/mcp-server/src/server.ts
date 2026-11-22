@@ -40,12 +40,15 @@ import { setDeprecationSink } from './deprecations.js';
 import { registerPresentQuestion } from './tools/present-question.js';
 import { ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL } from './tools/abandon-run.js';
 import {
+  FAILURE_TEXT_ENV,
   FORM_WAIT_ENV,
   GATE_ANSWERS_ENV,
   McpDoor,
+  failureTextLibraryRefusal,
   formWaitInertLibraryRefusal,
   formWaitLibraryRefusal,
   gateAnswersLibraryRefusal,
+  judgeFailureText,
   judgeFormWait,
   judgeGateAnswers,
 } from './door.js';
@@ -170,6 +173,17 @@ export interface RealmMcpServerOptions {
   formWaitSeconds?: number;
   /** #627 W: the `--form-wait-seconds` flag's value, as the bins pass it (source `flag`). */
   formWaitSecondsFlag?: string;
+  /**
+   * Gap 2, unit (iv-b1): whether an assistant reads a failure's words in `get_run_state`. `shown`
+   * (the default): as recorded. `hidden`: in place of the words a provider, a handler or an adapter
+   * put in a failure, their length (`‹string, N characters›`); the step, and its code, category or
+   * class where the record has them, stay, and so do Realm's own words around a failure. The record
+   * and `realm run inspect` keep the words. Read with `REALM_MCP_FAILURE_TEXT` and the bins'
+   * `--failure-text` flag; `hidden` wins. A value that is neither throws (no server is built).
+   */
+  failureText?: 'shown' | 'hidden';
+  /** Gap 2, unit (iv-b1): the `--failure-text` flag's value, as the bins pass it (source `flag`). */
+  failureTextFlag?: string;
   /**
    * #627 W: true for a server that answers one stateless HTTP request (`realm serve`): it sends no
    * forms (the SDK 1.x HTTP transport cannot hold one open), so under `asked` no client gets a way to
@@ -301,6 +315,16 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
     option: options?.formWaitSeconds,
   });
   if (!waitJudged.ok) throw new Error(formWaitLibraryRefusal(waitJudged.raw));
+  // Gap 2, unit (iv-b1): the failure-text value, judged as the gate-answers value is — read from the
+  // environment here, so a program that embeds the server gets the variable with no code.
+  const failureJudged = judgeFailureText({
+    flag: options?.failureTextFlag,
+    env: process.env[FAILURE_TEXT_ENV],
+    option: options?.failureText,
+  });
+  if (!failureJudged.ok) {
+    throw new Error(failureTextLibraryRefusal(failureJudged.kind, failureJudged.raw));
+  }
   // Correction 2 (4.2): the same predicate as the bins — a form-wait value where no form is ever
   // sent (`withheld`, `permitted`, or a door that sends none: `statelessHttp`) builds no server.
   const sendsForms = options?.statelessHttp !== true;
@@ -327,6 +351,7 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
     gateAnswers: answersJudged.setting,
     formWait: waitJudged.setting,
     sendsForms,
+    failureText: failureJudged.setting,
     ...(options?.monotonicNow !== undefined ? { monotonicNow: options.monotonicNow } : {}),
   });
 
@@ -396,6 +421,11 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
           'realm/gate_answers': {
             value: door.gateAnswers.value,
             source_kind: door.gateAnswers.source.kind,
+          },
+          // Gap 2, unit (iv-b1): whether this server shows an assistant a failure's words.
+          'realm/failure_text': {
+            value: door.failureText.value,
+            source_kind: door.failureText.source.kind,
           },
         },
         // CP-W: so the SDK delivers a deprecation's log notification, dropped below the client's level.
@@ -526,7 +556,8 @@ export const INVALID_PRINCIPAL_OPTION =
  * #627 W (correction 1, A4): the `realm-mcp` bin reads no flags. A flag given to it would be ignored —
  * `--gate-answers withheld` would start `asked`, a form still sent in apps that show forms, with
  * nothing said — so any argument refuses the start, with one line and exit code 1
- * (correction 2, 4.5/4.6: the line names both variables, and this comment is the constant's own).
+ * (correction 2, 4.5/4.6: the line names both variables, and this comment is the constant's own; gap
+ * 2, unit (iv-b1): and the failure-text variable).
  */
 export const REALM_MCP_TAKES_NO_FLAGS =
-  "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS or REALM_MCP_FORM_WAIT_SECONDS in your MCP client's env block, or run realm mcp with the flag.";
+  "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS, REALM_MCP_FORM_WAIT_SECONDS or REALM_MCP_FAILURE_TEXT in your MCP client's env block, or run realm mcp with the flag.";

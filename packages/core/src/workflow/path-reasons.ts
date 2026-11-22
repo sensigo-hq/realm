@@ -1,5 +1,5 @@
 // path-reasons.ts — the `<why>` of a path that may be absent, shared by `input_map` (fix 1, unit 1)
-// and `when` (piece 2a): row 9's four reasons, worded once.
+// and `when` (piece 2a): row 9's four reasons, and gap 2 (ii-a)'s `failure_kind`, worded once.
 import { capText } from '../utils/redaction.js';
 import type { AbsentCause } from './path-resolver.js';
 
@@ -7,7 +7,9 @@ import type { AbsentCause } from './path-resolver.js';
 export function absentWhy(
   cause: Extract<
     AbsentCause,
-    { rule: 'trigger_rule' | 'optional' | 'default_only' | 'list_position' }
+    {
+      rule: 'trigger_rule' | 'optional' | 'default_only' | 'list_position' | 'model_failure_only';
+    }
   >,
 ): string {
   switch (cause.rule) {
@@ -24,5 +26,10 @@ export function absentWhy(
       );
     case 'list_position':
       return `'${cause.position}' is a position in a list that may be shorter`;
+    case 'model_failure_only':
+      return (
+        `'failure_kind' is set only when step '${capText(cause.step)}''s model request failed and ` +
+        `the step took its failure path`
+      );
   }
 }

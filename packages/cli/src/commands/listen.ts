@@ -41,7 +41,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
-import { Socket } from 'node:net';
+import { Socket, type AddressInfo } from 'node:net';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
@@ -100,6 +100,7 @@ import type {
   DisclosureSet,
   CallbackRegistration,
   CallbackKeyListing,
+  CallbackStore,
 } from '@sensigo/realm';
 import {
   verifyGithub,
@@ -153,7 +154,14 @@ import {
   listenMasterSummary,
   type ListenMasterSummary,
 } from '../lib/callback/start-lines.js';
-import { REMINDER_POLL_MS, reminderSenderOf, type ReminderSource } from './listen-reminders.js';
+import { makeCallbackPass } from '../lib/callback/delivery-pass.js';
+import {
+  REMINDER_POLL_MS,
+  makePollRunner,
+  reminderSenderOf,
+  type PollRunner,
+  type ReminderSource,
+} from './listen-reminders.js';
 // Gap 1, unit A0: the listing that reads no model call's text.
 import { scanListedRuns, type ListedRecord } from '@sensigo/realm';
 
@@ -228,6 +236,12 @@ export interface ListenDeps {
 /** R1.3 C2: no callback address is allowed until a later unit gives the lists. */
 const NO_CALLBACK_LISTS: CallbackLists = { public: [], private: [] };
 
+/**
+ * R1.3 C3b2: how often the callback sender looks for due callbacks, in ms. It is the only way a run
+ * another process finished is noticed; an agent this process started wakes it when it exits.
+ */
+export const CALLBACK_POLL_MS = 30_000;
+
 /** A mounted workflow: its definition, trigger, source directory, and pre-resolved secret. */
 export interface WorkflowEntry {
   path: string;
@@ -270,6 +284,12 @@ export interface HandlerOptions {
    * a wait the stop cuts ends when its connection closes, a turn after the cut, and logs its line.
    */
   waits?: Set<Promise<void>>;
+  /**
+   * R1.3 C3b2: called once for each agent this handler started, after that agent's process has
+   * exited (never for a spawner that gives no `exited`, nor for a start that failed). `startListen`
+   * owns it: it wakes the callback sender, so a finished run's callback goes out at once.
+   */
+  onAgentExit?: () => void;
 }
 
 const DEFAULT_HANDLER_OPTIONS: HandlerOptions = {
@@ -1117,6 +1137,12 @@ export function makeListenHandler(
         respond(res, failed.status, failed.body);
         return;
       }
+      // R1.3 C3b2: the agent's exit wakes the callback sender (`exited` never rejects); the catch
+      // keeps a throwing hook out of the handler.
+      const onExit = opts.onAgentExit;
+      if (onExit !== undefined && spawnResult.exited !== undefined) {
+        void spawnResult.exited.then(onExit).catch(() => {});
+      }
 
       // Record agent pid/started_at (non-critical metadata), then the dedup record.
       // Q1 (#592) unit c: the record of listen's own last write to the run is the baseline its startup
@@ -1668,6 +1694,43 @@ export function makeSweepRunner(
   };
 }
 
+/**
+ * R1.3 C3b2: the callback sender of a server listening on `ownPort`: C3a's pass over `callbacks`, run
+ * one pass at a time by the poll runner. Every line the pass says is printed with the `listen: `
+ * prefix the start lines have.
+ */
+function callbackRunnerOf(
+  routes: Map<string, WorkflowEntry>,
+  deps: ListenDeps,
+  callbacks: CallbackStore,
+  lists: CallbackLists,
+  ownPort: number,
+): PollRunner {
+  const byWorkflow = new Map([...routes.values()].map((entry) => [entry.definition.id, entry]));
+  const prefixed =
+    (level: 'info' | 'warn' | 'error') =>
+    (msg: string, data?: unknown): void =>
+      deps.logger[level](`listen: ${msg}`, data);
+  const pass = makeCallbackPass({
+    callbacks,
+    // As the read address: only the store's own not-found says the run is gone.
+    getRun: async (runId) => {
+      try {
+        return (await deps.runStore.get(runId)).record;
+      } catch (err) {
+        if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') return undefined;
+        throw err;
+      }
+    },
+    entryOf: (workflowId) => byWorkflow.get(workflowId),
+    disclosureProvider: deps.disclosureProvider ?? cliDisclosureProvider,
+    lists,
+    ownPort,
+    logger: { info: prefixed('info'), warn: prefixed('warn'), error: prefixed('error') },
+  });
+  return makePollRunner(pass, 'callbacks', deps.logger);
+}
+
 function emptySweepResult(): SweepResult {
   return { scanned: 0, enacted: 0, skipped_unregistered: 0, skipped_locked: 0, errors: 0 };
 }
@@ -1693,6 +1756,10 @@ export function startListen(
   // R1.2: aborted in the first signal's turn, with the flip above; every wait is answered then.
   const stop = new AbortController();
   const waits = new Set<Promise<void>>();
+  // R1.3 C3b2: the callback sender, built once the server listens (below); the handler is built first,
+  // so its agent-exit hook reads this reference when it is called.
+  let callbackRunner: PollRunner | undefined;
+  let callbackTimer: NodeJS.Timeout | undefined;
   const handler = makeListenHandler(routes, deps, {
     maxConcurrent: options.maxConcurrent,
     maxBodyBytes: options.maxBodyBytes,
@@ -1703,6 +1770,7 @@ export function startListen(
     maxWaiting: options.maxWaiting ?? DEFAULT_HANDLER_OPTIONS.maxWaiting,
     stopSignal: stop.signal,
     waits,
+    onAgentExit: () => void callbackRunner?.wake(),
   });
   // #744: the last request handed to the handler on each socket; the 'clientError' listener reads
   // it.
@@ -1902,7 +1970,8 @@ export function startListen(
   let stopped: Promise<void> | undefined;
   /** While the drain runs: ends it now and cuts everything (a second signal). */
   let endDrain: (() => void) | undefined;
-  /** #597 D3b: ends the wait for a reminder pass under way (a second signal). */
+  /** #597 D3b, R1.3 C3b2: ends the one wait for the reminder and callback passes under way (a second
+   *  signal). */
   let endPassWait = (): void => {};
   let cut = 0;
   const shutdown = (reason: string): Promise<void> => {
@@ -1912,12 +1981,16 @@ export function startListen(
     if (sweepTimer !== undefined) clearInterval(sweepTimer);
     sweeper?.stop();
     if (reminderTimer !== undefined) clearInterval(reminderTimer);
+    if (callbackTimer !== undefined) clearInterval(callbackTimer);
     // #597 D3b: a reminder pass under way starts no new lease or probe; it is waited for at the same
     // time as the grace, and no longer (the drain and the grace from this signal), or until a second
-    // signal.
-    const passUnderWay = reminders?.stop();
+    // signal. R1.3 C3b2: a callback pass under way finishes the row it is on and starts no other;
+    // ONE wait covers both passes (a second wait would overwrite `endPassWait`).
+    const passesUnderWay = [reminders?.stop(), callbackRunner?.stop()].filter(
+      (pass): pass is Promise<void> => pass !== undefined,
+    );
     const passWait =
-      passUnderWay === undefined
+      passesUnderWay.length === 0
         ? Promise.resolve()
         : new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, (drainSeconds + graceSeconds) * 1000);
@@ -1925,7 +1998,7 @@ export function startListen(
               clearTimeout(timer);
               resolve();
             };
-            void passUnderWay.then(endPassWait);
+            void Promise.all(passesUnderWay).then(endPassWait);
           });
     // R1.2: the waits too, in this turn and before any drain: none is held through `--shutdown-drain`.
     stop.abort();
@@ -1986,6 +2059,17 @@ export function startListen(
       if (reminders !== undefined && !stopping) {
         void reminders.wake();
         reminderTimer = setInterval(() => void reminders.wake(), REMINDER_POLL_MS);
+      }
+      // R1.3 C3b2: the callback sender, only with an allow-list flag and a store that keeps callbacks,
+      // and not once the stop has begun. Built here, because its own port is the bound one
+      // (`--port 0` is accepted). No pass now: a callback due from a previous process would print its
+      // line before the start lines; the first pass is the first tick or an agent's exit.
+      const callbacks = deps.runStore.callbacks;
+      if (deps.callbackLists !== undefined && callbacks != null && !stopping) {
+        const ownPort = (server.address() as AddressInfo).port;
+        const runner = callbackRunnerOf(routes, deps, callbacks, deps.callbackLists, ownPort);
+        callbackRunner = runner;
+        callbackTimer = setInterval(() => void runner.wake(), CALLBACK_POLL_MS);
       }
       resolve({ server, shutdown });
     });

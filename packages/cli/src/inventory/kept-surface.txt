@@ -46,7 +46,7 @@ realm callback key --delete — option, no value
 realm callback key --end-previous — option, no value
 realm callback key --help — option, short -h, no value
 realm callback key --host — option, takes a value, mandatory
-realm callback key --keep — option, takes a value
+realm callback key --keep-previous — option, takes a value
 realm callback key --replace — option, no value
 realm callback key --rotate — option, no value
 realm callback key --whsec — option, no value
@@ -98,6 +98,7 @@ realm listen --sweep-expired-gates — option, takes a value
 realm mcp — command
 realm mcp --check — option, no value
 realm mcp --extensions-module — option, takes a value
+realm mcp --failure-text — option, takes a value
 realm mcp --form-wait-seconds — option, takes a value
 realm mcp --gate-answers — option, takes a value
 realm mcp --help — option, short -h, no value
@@ -202,6 +203,7 @@ realm serve — command
 realm serve --check — option, no value
 realm serve --dev — option, no value
 realm serve --extensions-module — option, takes a value
+realm serve --failure-text — option, takes a value
 realm serve --form-wait-seconds — option, takes a value
 realm serve --gate-answers — option, takes a value
 realm serve --help — option, short -h, no value

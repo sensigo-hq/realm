@@ -324,7 +324,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     expect(out()).not.toContain('definition_unresolvable');
     // The stdout verdict says the sweep was partial (review fold C20) — no positional word.
     expect(out()).toContain(
-      'No stuck runs found (threshold 24h; 1 definition not inspected: wf-big).',
+      'No stuck runs found (threshold 24h; owed work 1m; 1 definition not inspected: wf-big).',
     );
     expect(err()).toContain(
       '⚠ workflow definition wf-big (4.0 MiB, 1 run) was not inspected by --stuck (over the ' +

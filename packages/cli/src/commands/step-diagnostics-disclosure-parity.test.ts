@@ -104,6 +104,13 @@ const STEP_DIAGNOSTICS_DISCLOSURE = {
       'threshold) and `buildSettlementNamespace`, i.e. workflow AUTHORS via `$settlement` — not ' +
       'an operator on a screen. Rendering it would be new disclosure, not parity.',
   },
+  // Gap 2, unit (ii-a): the waiver its prompt routes, in `validation_rejections`' shape.
+  failure_kind: {
+    surface: 'waived',
+    reason:
+      'Read by workflow AUTHORS through `$settlement`; inspect’s failure line names the code, the ' +
+      'stop reason and the message.',
+  },
   settled_by_default: {
     surface: 'waived',
     reason:
@@ -367,9 +374,10 @@ describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect rea
     }
   });
 
-  it('the registry covers every field, and the waiver set is exactly the three named above', () => {
+  it('the registry covers every field, and the waiver set is exactly the four named above', () => {
     expect(Object.keys(STEP_DIAGNOSTICS_DISCLOSURE).sort()).toEqual([
       'cache',
+      'failure_kind',
       'guard_conditions',
       'input_token_estimate',
       'precondition_trace',
@@ -381,9 +389,15 @@ describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect rea
       .filter(([, r]) => (r as DisclosureRoute).surface === 'waived')
       .map(([f]) => f)
       .sort();
-    // NOT `[]` — see the header. A fourth waiver is a decision someone must make in this file
-    // (`guard_conditions` is rendered since #729 PR-3 correction 1, F28).
-    expect(waived).toEqual(['settled_by_default', 'structured_output', 'validation_rejections']);
+    // NOT `[]` — see the header. A fifth waiver is a decision someone must make in this file
+    // (`guard_conditions` is rendered since #729 PR-3 correction 1, F28; `failure_kind`'s waiver is
+    // gap 2 unit (ii-a)'s prompt's).
+    expect(waived).toEqual([
+      'failure_kind',
+      'settled_by_default',
+      'structured_output',
+      'validation_rejections',
+    ]);
   });
 });
 

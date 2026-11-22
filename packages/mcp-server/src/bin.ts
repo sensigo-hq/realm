@@ -9,6 +9,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { describeThrown, setClockErrorSink } from '@sensigo/realm';
 import { composeBinIdentity } from './bin-identity.js';
 import {
+  failureTextStartLine,
   gateAnswersConnectLine,
   gateAnswersStartLine,
   offeredGivenToProgram,
@@ -71,5 +72,8 @@ try {
 // The start line — stderr, since stdout carries the protocol — only once the store has opened and the
 // server is built: a refusal never follows a "started" line.
 console.error(gateAnswersStartLine(settings.answers, false, 'realm-mcp'));
+// Gap 2, unit (iv-b1): under `hidden` only, the failure-text line, after the gate-answers line.
+const failureTextLine = failureTextStartLine(settings.failureText);
+if (failureTextLine !== undefined) console.error(failureTextLine);
 const transport = new StdioServerTransport();
 await server.connect(transport);
