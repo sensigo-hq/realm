@@ -10,7 +10,7 @@
 // environment.
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -298,6 +298,13 @@ describe('gap 2 (iv-b1), check 9 — --check, --help and the environment table',
       'CHANGELOG.md',
       "- **An operator can keep a failure's words from an assistant in `get_run_state`.** `realm mcp --failure-text` and `realm serve --failure-text` take `shown` or `hidden` (`--failure-text <shown|hidden>`); `REALM_MCP_FAILURE_TEXT` sets it for them, for the `realm-mcp` command and for a program's `createRealmMcpServer`, and a program can pass it in `RealmMcpServerOptions` (`RealmMcpServerOptions.failureText`); `hidden` wins, and the default is `shown`.",
     );
+    // Correction 1: what is shaped and what stays — executed by the MCP package's field cells (Realm's
+    // words inside failures[].message shaped with the rest), its terminal_reason and drive_failing
+    // cells (Realm's sentence kept), and this file's load-warning cells.
+    claim(
+      'CHANGELOG.md',
+      "in `failures[].message`, `drive_failures.entries[].message`, the `drive_failing` reason, a handler's abort message, `terminal_reason` and the warning that the project's code could not be loaded, with the step and its code, category or class kept, and Realm's sentence around the failure in `terminal_reason`, the `drive_failing` reason and that warning;",
+    );
   });
 
   it('the environment table names the variable and where it is read', () => {
@@ -308,6 +315,120 @@ describe('gap 2 (iv-b1), check 9 — --check, --help and the environment table',
       "| `REALM_MCP_FAILURE_TEXT` | `realm mcp`, `realm serve`, the `realm-mcp` command, a program's `createRealmMcpServer` | Whether an assistant sees a failure's words in `get_run_state`: `shown` (the default) or `hidden`. See [Run state and health](mcp/run-state-and-health.md#failure-text). Added after version 0.50.0. |",
     );
   });
+});
+
+/** Correction 1 — a run whose workflow's code module throws when it is imported: registered from its
+ *  folder with `realm workflow register` (so the folder is its project), the run created in the same
+ *  home; then `get_run_state` over `realm mcp`'s stdio, with the given failure-text value. */
+async function loadFailureState(failureText: 'shown' | 'hidden') {
+  const h = await makeTempHome();
+  homes.push(h);
+  const project = mkdtempSync(join(tmpdir(), 'realm-failure-text-project-'));
+  writeFileSync(
+    join(project, 'workflow.yaml'),
+    [
+      'id: ft-load-failed',
+      'name: ft-load-failed',
+      'version: 1',
+      'extensions: ./registry.mjs',
+      'steps:',
+      '  a:',
+      '    description: A.',
+      '    execution: agent',
+      '',
+    ].join('\n'),
+  );
+  // Registered with a module that loads (register imports it), then the module changed so that it
+  // throws at import, as code that reads a missing setting at load does on the server.
+  writeFileSync(join(project, 'registry.mjs'), 'export default { handlers: {} };\n');
+  const env = { PATH: process.env['PATH'] ?? '', HOME: h.root! };
+  const registered = spawnSync(
+    process.execPath,
+    [CLI, 'workflow', 'register', join(project, 'workflow.yaml')],
+    { env, encoding: 'utf8', timeout: 60_000 },
+  );
+  if (registered.status !== 0) throw new Error(`fixture: register exited ${registered.status}`);
+  writeFileSync(join(project, 'registry.mjs'), `throw new Error(${JSON.stringify(LOAD_WORDS)});\n`);
+  const { record } = await h.home.runStore.create({
+    workflowId: 'ft-load-failed',
+    workflowVersion: 1,
+    params: {},
+  });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [CLI, 'mcp', '--failure-text', failureText],
+    env,
+    stderr: 'pipe',
+  });
+  const client = new Client({ name: 'failure-text-load', version: '0' });
+  await client.connect(transport);
+  const raw = (await client.callTool({
+    name: 'get_run_state',
+    arguments: { run_id: record.id },
+  })) as {
+    content: Array<{ text?: string }>;
+  };
+  await client.close();
+  const text = raw.content[0]?.text ?? '{}';
+  const reply = JSON.parse(text) as Record<string, unknown>;
+  const warning = ((reply['warnings'] as string[] | undefined) ?? []).find((w) =>
+    w.startsWith('this server could not load the project code'),
+  );
+  return { text, reply, warning };
+}
+
+/** A fake string no masking pattern catches (an email would be masked by pattern under shown too). */
+const LOAD_WORDS = 'Config for tenant acme-test card 4111-1111-1111-1111 missing';
+
+describe('gap 2 (iv-b1) correction 1 — the project-code load warning', () => {
+  it('check 1 — under hidden: Realm’s sentence and the code kept, the loader’s message a shape, its path in the receipt', async () => {
+    claim(
+      'docs/reference/mcp/run-state-and-health.md',
+      "| The warning that this server could not load the project's code (in `warnings`) | Realm's sentence, with the code's message as its shape: `this server could not load the project code for workflow '<workflow>' (<code>): ‹string, N characters›; …` | The workflow and the error code |",
+    );
+    const shown = await loadFailureState('shown');
+    const hidden = await loadFailureState('hidden');
+    const head = "this server could not load the project code for workflow 'ft-load-failed' (";
+    const tail = '; no step can be run or advanced from this server until it loads.';
+    // The loader's message, as the shown warning carries it (JSON-quoted, as `escapedBoundedValue`
+    // writes it): between the code's `): ` and the tail; N is its length as thrown.
+    const shownMessage = shown.warning?.slice(shown.warning.indexOf('): ') + 3, -tail.length);
+    const thrown = JSON.parse(shownMessage ?? '""') as string;
+    const receipt = hidden.reply['disclosure'] as Record<string, unknown>;
+    // (a) red when the warning is built as today under hidden (the loader's words reach the
+    //     assistant); (b) prints the warning shown, the receipt's word and paths, and whether the
+    //     fake string is anywhere in the reply.
+    expect({
+      starts: hidden.warning?.startsWith(head),
+      warning: hidden.warning,
+      word: receipt['failure_text'],
+      paths: receipt['shaped'],
+      words: hidden.text.includes('4111-1111-1111-1111'),
+    }).toEqual({
+      starts: true,
+      warning: shown.warning?.replace(
+        `): ${shownMessage}${tail}`,
+        `): ‹string, ${thrown.length} characters›${tail}`,
+      ),
+      word: 'withheld',
+      paths: ['warnings'],
+      words: false,
+    });
+  }, 120_000);
+
+  it('check 2 — under shown: the warning as on the base, the loader’s words in it, no receipt word', async () => {
+    const shown = await loadFailureState('shown');
+    const receipt = shown.reply['disclosure'] as Record<string, unknown>;
+    // (a) red when the shape is applied whatever the setting; (b) prints whether the warning holds
+    //     the module's words, its close, and the receipt's word.
+    expect({
+      words: shown.warning?.includes(LOAD_WORDS),
+      closes: shown.warning?.endsWith(
+        '; no step can be run or advanced from this server until it loads.',
+      ),
+      word: receipt['failure_text'],
+    }).toEqual({ words: true, closes: true, word: undefined });
+  }, 120_000);
 });
 
 describe('gap 2 (iv-b1) — realm run inspect keeps a failure’s words whatever the setting', () => {

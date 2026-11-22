@@ -886,9 +886,18 @@ export interface RunStateSummary {
  * load the project's code — its code first (or that it carries none), then the loader's message
  * through the one escaped, bounded value renderer (E1 (b)).
  */
-function loadFailureWarning(workflowId: string, code: LoadErrorCode, err: unknown): string {
+function loadFailureWarning(
+  workflowId: string,
+  code: LoadErrorCode,
+  err: unknown,
+  hideFailureText = false,
+): string {
   const message = err instanceof Error ? err.message : String(err);
-  return `this server could not load the project code for workflow '${workflowId}' (${code === 'uncoded' ? 'no error code' : code}): ${escapedBoundedValue(message)}; no step can be run or advanced from this server until it loads.`;
+  // Gap 2, unit (iv-b1) correction 1: under the failure-text setting `hidden`, the text the project's
+  // code threw while loading is a failure's words: its shape, N its length as thrown, in Realm's
+  // sentence; the code stays.
+  const shown = hideFailureText ? failureTextShape(message) : escapedBoundedValue(message);
+  return `this server could not load the project code for workflow '${workflowId}' (${code === 'uncoded' ? 'no error code' : code}): ${shown}; no step can be run or advanced from this server until it loads.`;
 }
 
 /** #872 (b1): a refused `cursor` — the agent's own call, fixed by the agent (`VALIDATION_CURSOR`). */
@@ -1022,6 +1031,7 @@ function failureTextPaths(reply: {
   driveFailures?: DriveFailuresView;
   runHealth: readonly RunHealthFinding[];
   abortMessageShaped: boolean;
+  loadWarningShaped: boolean;
 }): string[] {
   return [
     ...(reply.terminalReasonShaped ? ['terminal_reason'] : []),
@@ -1033,6 +1043,8 @@ function failureTextPaths(reply: {
       f.kind === 'drive_failing' ? [`run_health[${i}].reason`] : [],
     ),
     ...(reply.abortMessageShaped ? ['abort_context.abort_message'] : []),
+    // Correction 1: the list's own path — the walk does not descend into a list of strings by row.
+    ...(reply.loadWarningShaped ? ['warnings'] : []),
   ];
 }
 
@@ -1078,6 +1090,9 @@ export async function handleGetRunState(
       ? driveFailuresHidingText(run.drive_failures)
       : undefined;
   const shownDriveFailures = hiddenDriveFailures ?? run.drive_failures;
+  // Correction 1: whether the project-code load warning in `warnings` was shaped (set where it is
+  // pushed).
+  let loadWarningShaped = false;
 
   // #134 capability-block detection — definition-free (reads capability_blocks + the four step sets),
   // computed once and used both to refine the status (below) and as the advisory array (in the return).
@@ -1240,7 +1255,8 @@ export async function handleGetRunState(
         registry = undefined;
         if (stores?.registryProvider !== undefined) {
           loadFailed = err instanceof WorkflowError ? err.code : 'uncoded';
-          warnings.push(loadFailureWarning(run.workflow_id, loadFailed, err));
+          warnings.push(loadFailureWarning(run.workflow_id, loadFailed, err, hideFailureText));
+          if (hideFailureText) loadWarningShaped = true;
         }
       }
       pending = describePending(definition, snap, registry);
@@ -1418,6 +1434,7 @@ export async function handleGetRunState(
         ...(driveFailuresShown !== undefined ? { driveFailures: driveFailuresShown } : {}),
         runHealth: runHealthShown.shown,
         abortMessageShaped: shapedAbortMessage !== undefined,
+        loadWarningShaped,
       })
     : [];
 
