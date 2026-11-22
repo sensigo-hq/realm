@@ -229,6 +229,16 @@ describe('Q1 (#592) unit f1 — check 5: beside the other findings', () => {
     ]);
   });
 
+  it('owed work idle past 24 h: owed_undriven and never_claimed_idle together (neither hides the other)', () => {
+    const run = makeRun({ updated_at: new Date(NOW.getTime() - 25 * 3_600_000).toISOString() });
+    // (a) red when the idle finding is suppressed where this one fires, or the other way round;
+    //     (b) prints the kinds.
+    expect(kinds(classifyRunHealth(writtenSnapshot(run, NOW), { definition: AUTO }))).toEqual([
+      'owed_undriven',
+      'never_claimed_idle',
+    ]);
+  });
+
   it('a failed drive older than a minute: drive_failing and owed_undriven together', () => {
     const run = makeRun({
       updated_at: ago(120_000),
