@@ -437,6 +437,8 @@ export const CALLBACK_VIEW_TABLE = {
  *  replaces a live one with its own marker. */
 const CLAIM_TABLE = {
   deadline: 'fact',
+  // Q1 (#592) unit f2: a word from a closed list, like `deadline`.
+  deadline_absent: 'fact',
   token: 'fact',
   holder: { nested: ATTRIBUTED_TABLE },
   since: 'fact',
@@ -766,6 +768,8 @@ export const SKIP_DETAIL_FACTS = {
 
 export const CLAIM_FACTS = {
   deadline: 'time',
+  // Q1 (#592) unit f2: a word from claimDeadlineOf's closed list.
+  deadline_absent: 'enum',
   token: 'id',
   since: 'time',
 } as const satisfies FactProducers<typeof CLAIM_TABLE, ClaimRecord>;

@@ -686,6 +686,8 @@ function classifyRecordHealth(
       evidence: {
         state: c.state,
         deadline: c.deadline,
+        // Q1 (#592) unit f2: why there is no time limit, only where there is none.
+        ...(c.deadline_absent !== undefined ? { deadline_absent: c.deadline_absent } : {}),
         ...(c.lease !== undefined ? { lease: c.lease } : {}),
       },
     });
