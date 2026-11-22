@@ -116,6 +116,11 @@ interface MarkLogger {
  * as {@link recordDriveFailure} appends it: a `STATE_SNAPSHOT_MISMATCH` means the child (or anyone)
  * wrote to the run, and nothing is written — never a retry, which would re-read and write onto a run
  * that moved. An exit code, any code, is never marked. Every outcome is logged; nothing throws.
+ *
+ * Q1 c2: the exit comes from an injected spawner, so it is judged by its VALUES: a number `code` is
+ * an exit code (nothing, silently); `code` null and a `signal` name is a signal death; anything else
+ * (no object, a key missing, `{code: null, signal: null}`) is logged at `warn` and not marked. The
+ * whole body runs under one `try`, so the promise never rejects.
  */
 export async function markSignalDeath(
   store: Pick<RunStore, 'update' | 'clock'>,
@@ -124,47 +129,65 @@ export async function markSignalDeath(
   exit: ChildExit,
   spawnedAt: number,
 ): Promise<void> {
-  if (exit.code !== null || exit.signal === null) return;
-  const entry = startupFailureEntry({
-    at: store.clock.now(),
-    provider: 'unknown',
-    // eslint-disable-next-line no-restricted-syntax -- prose naming the program that was killed, not a command to copy (#729 PR-3, L-2).
-    message: `realm agent was killed by ${exit.signal} before it wrote anything to the run`,
-    elapsedMs: Math.max(0, Math.round(performance.now() - spawnedAt)),
-    // Listen's child records model text unless told not to; the flag is not in the handler's scope,
-    // and an entry with no model request reads the same either way.
-    recordModelText: true,
-  });
   try {
-    await store.update(appendDriveFailure(baseline, entry));
-    logger.warn('listen: recorded a startup failure', {
-      run_id: baseline.id,
-      signal: exit.signal,
-    });
-  } catch (err) {
-    const code = err instanceof WorkflowError ? err.code : undefined;
-    if (code === 'STATE_SNAPSHOT_MISMATCH') {
-      // The run's version moved since listen's own write: the agent (or another writer) wrote to it,
-      // or it ended. Left to the run's other findings.
+    const got: unknown = exit;
+    const pair = typeof got === 'object' && got !== null ? (got as Partial<ChildExit>) : {};
+    if (typeof pair.code === 'number') return;
+    const signal = pair.signal;
+    if (pair.code !== null || typeof signal !== 'string') {
       logger.warn(
-        'listen: the run moved before the agent was killed; no startup failure recorded',
-        {
-          run_id: baseline.id,
-          signal: exit.signal,
-        },
+        "listen: the agent's exit arrived without a code or signal; no startup failure recorded",
+        { run_id: baseline.id },
       );
-    } else if (code === 'STATE_RUN_NOT_FOUND') {
-      logger.warn('listen: the run is no longer in the store; no startup failure recorded', {
-        run_id: baseline.id,
-        signal: exit.signal,
-      });
-    } else {
-      logger.error('listen: failed to record a startup failure', {
-        run_id: baseline.id,
-        signal: exit.signal,
-        ...(code !== undefined ? { error_code: code } : {}),
-        error: String(err),
-      });
+      return;
     }
+    const entry = startupFailureEntry({
+      at: store.clock.now(),
+      provider: 'unknown',
+      // eslint-disable-next-line no-restricted-syntax -- prose naming the program that was killed, not a command to copy (#729 PR-3, L-2).
+      message: `realm agent was killed by ${signal} before it wrote anything to the run`,
+      elapsedMs: Math.max(0, Math.round(performance.now() - spawnedAt)),
+      // Listen's child records model text unless told not to; the flag is not in the handler's
+      // scope, and an entry with no model request reads the same either way.
+      recordModelText: true,
+    });
+    try {
+      await store.update(appendDriveFailure(baseline, entry));
+      logger.warn('listen: recorded a startup failure', {
+        run_id: baseline.id,
+        signal,
+      });
+    } catch (err) {
+      const code = err instanceof WorkflowError ? err.code : undefined;
+      if (code === 'STATE_SNAPSHOT_MISMATCH') {
+        // The run's version moved since listen's own write: the agent (or another writer) wrote to
+        // it, or it ended. Left to the run's other findings.
+        logger.warn(
+          'listen: the run moved before the agent was killed; no startup failure recorded',
+          {
+            run_id: baseline.id,
+            signal,
+          },
+        );
+      } else if (code === 'STATE_RUN_NOT_FOUND') {
+        logger.warn('listen: the run is no longer in the store; no startup failure recorded', {
+          run_id: baseline.id,
+          signal,
+        });
+      } else {
+        logger.error('listen: failed to record a startup failure', {
+          run_id: baseline.id,
+          signal,
+          ...(code !== undefined ? { error_code: code } : {}),
+          error: String(err),
+        });
+      }
+    }
+  } catch (err) {
+    // Q1 c2: anything the write's own catch does not see (the mark tried and failed).
+    logger.error('listen: failed to record a startup failure', {
+      run_id: baseline.id,
+      error: String(err),
+    });
   }
 }

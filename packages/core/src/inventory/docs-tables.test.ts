@@ -191,7 +191,7 @@ describe('Q1 (#592) d1 — the reference pages the script keeps', () => {
       );
       const count = edited(
         RUN_STATE,
-        'and the 16 health findings, which',
+        'and the 17 health findings, which',
         'and the 14 health findings, which',
       );
       const a = runOn(moved);
@@ -214,7 +214,7 @@ describe('Q1 (#592) d1 — the reference pages the script keeps', () => {
     '(f) a second run changes nothing',
     () => {
       const first = runOn(
-        edited(RUN_STATE, 'and the 16 health findings, which', 'and the 3 health findings, which'),
+        edited(RUN_STATE, 'and the 17 health findings, which', 'and the 3 health findings, which'),
       );
       const second = runOn(first.pages);
       // (a) red when a run's output differs when run again; (b) prints the first differing lines.
