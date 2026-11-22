@@ -768,6 +768,17 @@ export function buildEvidenceByStep(run: ListedRecord): Record<string, Record<st
 }
 
 /**
+ * One step's `$settlement` entry. Gap 2, unit (ii-a): `failure_kind` only on a step whose model
+ * request failed and that took its failure path.
+ */
+type SettlementEntry = {
+  settled_by_default: boolean;
+  validation_rejections: number;
+  failed: boolean;
+  failure_kind?: 'transient' | 'permanent';
+};
+
+/**
  * Builds the `$settlement` evaluation-root namespace (issue #220 §4c, PR-3) — one entry per
  * SETTLED step (`completed_steps ∪ failed_steps` — membership-gated, §4c-pass S3), each carrying
  * that step's fallback-provenance: `{ settled_by_default, validation_rejections }`, derived from
@@ -813,8 +824,11 @@ export function buildEvidenceByStep(run: ListedRecord): Record<string, Record<st
  * structurally unable to diverge from the live engine's for a `$settlement`-referencing
  * precondition (issue #220 §4c-M7).
  *
- * **`failed` (issue #305) — STATUS ONLY, deliberately.** The entry says THAT a step failed, never
- * why. Failure detail (messages, causes) stays on the run record, which is where every surveyed
+ * **`failed` (issue #305) — STATUS ONLY, deliberately.** The entry says THAT a step failed; the one
+ * "why" it carries is `failure_kind` (gap 2, unit (ii-a)), a closed word — `transient` or
+ * `permanent` — on a step whose model request failed and that took its failure path, from that
+ * entry's `diagnostics`; absent on every other step. Failure detail (messages, causes) stays on the
+ * run record, which is where every surveyed
  * orchestrator keeps it: status enumeration is the field's in-band floor (GitHub Actions'
  * `needs.<job>.result`; Step Functions and Airflow make it query-reachable), while detail in a
  * declarative cleanup payload is shipped nowhere. Detail here would also fork the truth away from
@@ -836,19 +850,14 @@ export function buildEvidenceByStep(run: ListedRecord): Record<string, Record<st
  * **`failed` is live, not a fossil.** `applyResume` strips a resumed step out of `failed_steps`,
  * so the marker clears on resume rather than permanently branding a step that has since re-run.
  */
-export function buildSettlementNamespace(
-  run: ListedRecord,
-): Record<string, { settled_by_default: boolean; validation_rejections: number; failed: boolean }> {
+export function buildSettlementNamespace(run: ListedRecord): Record<string, SettlementEntry> {
   const lastDiag: Record<string, StepDiagnostics | undefined> = {};
   for (const snap of run.evidence) {
     if (snap.kind !== 'gate_response') {
       lastDiag[snap.step_id] = snap.diagnostics;
     }
   }
-  const result: Record<
-    string,
-    { settled_by_default: boolean; validation_rejections: number; failed: boolean }
-  > = {};
+  const result: Record<string, SettlementEntry> = {};
   // issue #305: `failed` is derived from LOOP POSITION, not from a membership set built beside
   // the walk. The domain here IS `completed_steps` then `failed_steps`, so splitting the single
   // spread into its two halves makes the flag and the membership the same fact — they cannot
@@ -860,6 +869,7 @@ export function buildSettlementNamespace(
       settled_by_default: diag?.settled_by_default ?? false,
       validation_rejections: diag?.validation_rejections ?? 0,
       failed,
+      ...(diag?.failure_kind !== undefined ? { failure_kind: diag.failure_kind } : {}),
     };
   };
   for (const step of run.completed_steps) write(step, false);
