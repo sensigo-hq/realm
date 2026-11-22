@@ -634,8 +634,8 @@ export interface RunStateSummary {
   sealed_by_step?: string;
   /**
    * #625 PR-2b, the actor unit: the program that ended the run, as its seal records it — its name,
-   * how the name is known (`stated`, `ambient` from REALM_OPERATOR, `derived` from the OS user) and
-   * its channel. Recorded by `realm run abandon`, `realm run cleanup` and this server's `abandon_run`
+   * how the name is known (`stated`, `ambient` from REALM_OPERATOR, `derived` from the OS user, `key`
+   * from a `realm serve` named key the caller presented) and its channel. Recorded by `realm run abandon`, `realm run cleanup` and this server's `abandon_run`
    * when a name is known. A name that cannot be read is `{ by: null, absent_cause: 'name_unreadable' }`.
    * Absent — never null — when the seal names no program. Realm names a program, never a person; on
    * this surface the name is masked as environment values are: the part of it that matches an

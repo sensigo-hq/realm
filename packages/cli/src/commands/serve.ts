@@ -1,16 +1,18 @@
 // realm serve — starts the Realm MCP server over HTTP for hosted agent platforms.
-// Requires REALM_SERVE_TOKEN env var for Bearer token auth, or --dev for local development.
+// A caller sends REALM_SERVE_TOKEN or one of the server's named keys (#625 PR-2b, `realm serve key`)
+// as a Bearer token; --dev turns the check off for local development.
 import { createServer, type Server } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { Command } from 'commander';
-import { GATE_ANSWERS_VALUES } from '@sensigo/realm';
+import { GATE_ANSWERS_VALUES, realmHomePath } from '@sensigo/realm';
 import type {
   ExtensionRegistry,
   WorkflowDefinition,
   Attributed,
+  Clock,
   PriceSource,
 } from '@sensigo/realm';
-import { createRealmMcpServer } from '@sensigo/realm-mcp';
+import { createRealmMcpServer, type RealmMcpServerOptions } from '@sensigo/realm-mcp';
 import { cliOperatorRoute } from './ways-renderer.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { makeProjectProviders } from '../extensions/load-project-extensions.js';
@@ -36,6 +38,15 @@ import {
   OFFERED_DEPRECATION_ID,
 } from '../lib/gate-answers-door.js';
 import { measureSeparation, renderSeparation, systemProbes } from '../lib/separation-check.js';
+import {
+  findServeKey,
+  keyEnded,
+  keyFileOpenWarning,
+  keyPath,
+  readServeKeys,
+  serveKeysPath,
+  type ServeKeysRead,
+} from '../lib/serve-keys.js';
 
 const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MiB
 
@@ -96,6 +107,12 @@ export type StartServerOptions = ServeStores & {
    * by the health address. The caller owns it; absent, the server is never stopping.
    */
   isStopping?: () => boolean;
+  /**
+   * #625 PR-2b, named keys: the key file read on every request the shared token does not settle
+   * (outside dev mode), and the cause of the file warning already printed at start, if any. Absent,
+   * no request is checked against named keys.
+   */
+  keys?: { path: string; warnedCause?: string };
 };
 
 /**
@@ -125,14 +142,13 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
 
   // #616 PR-2a (iii): ONE home per process — the door opened once, at startup, before anything
   // listens (when no stores are injected). The startup server below and every per-request server
-  // are handed these same four objects. JsonWorkflowStore.get() is readFileSync-per-call, so
-  // reusing the registry across requests introduces zero staleness — re-registered workflows are
-  // picked up on the next read.
+  // are handed these same four objects. Every read goes to the store, so reusing them across
+  // requests serves no stale workflow: a re-registered workflow is picked up on the next read.
   const stores: Pick<
     CliHome,
     'workflowStore' | 'runStore' | 'traceBufferStore' | 'failedAttemptStore'
   > = options.runStore !== undefined ? options : await openCliHome();
-  const serverOptions = {
+  const serverOptions: RealmMcpServerOptions = {
     workflowStore: stores.workflowStore,
     runStore: stores.runStore,
     traceBufferStore: stores.traceBufferStore,
@@ -159,6 +175,52 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
   // The startup construction: a throw here rejects this async function's promise.
   createRealmMcpServer(serverOptions);
 
+  // #625 PR-2b, named keys: the shared token is compared only when it is a non-empty string, the
+  // test the start rule uses; then the named keys. Every refusal, and any error in the check, ends
+  // in the same 401: a server on keys alone never stops on a request it refuses.
+  const tokenSet = typeof token === 'string' && token !== '';
+  const channel = driver?.channel ?? 'mcp-http';
+  const keyFile = options.keys?.path;
+  /** The cause of the file warning last printed: once when the state begins, again on a new cause. */
+  let warnedCause = options.keys?.warnedCause;
+  /** The options of a server for one request let in by a named key, or undefined to refuse it. */
+  function admitKey(presented: string, file: string): RealmMcpServerOptions | undefined {
+    // Read for every request, so an added, removed or ended key counts from the next request.
+    const read = readServeKeys(file);
+    if (read.state === 'invalid') {
+      if (read.cause !== warnedCause) {
+        warnedCause = read.cause;
+        console.warn(
+          `Warning: the named keys in ${keyPath(file)} cannot be read (${read.cause}). ` +
+            (tokenSet
+              ? 'Every request with a named key is refused until it is fixed; REALM_SERVE_TOKEN still works.'
+              : 'This server refuses every request until it is fixed.'),
+        );
+      }
+      return undefined;
+    }
+    warnedCause = undefined;
+    if (read.state === 'absent') return undefined;
+    const key = findServeKey(read.keys, presented);
+    if (key === undefined || keyEnded(key, stores.runStore.clock.now())) return undefined;
+    // A server built for this request from its own options: the shared object is never changed.
+    return {
+      ...serverOptions,
+      driver: { by: key.name, by_source: 'key', channel },
+      principal: { kind: 'api_key', id: key.name },
+    };
+  }
+  /** The options to serve a request with, or undefined when it is refused with the 401. */
+  function admit(header: string | undefined): RealmMcpServerOptions | undefined {
+    try {
+      if (!header?.startsWith('Bearer ')) return undefined;
+      if (tokenSet && checkBearerToken(header, token)) return serverOptions;
+      return keyFile === undefined ? undefined : admitKey(header.slice(7), keyFile);
+    } catch {
+      return undefined;
+    }
+  }
+
   const isStopping = options.isStopping ?? (() => false);
   const httpServer = createServer(async (req, res) => {
     // #960 U2: the health address (`GET`/`HEAD` `/health`), before the token: a load balancer asks
@@ -166,8 +228,10 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
     if (answerHealth(req, res, isStopping)) return;
 
     // Auth gate — evaluated before any MCP logic.
+    let requestOptions = serverOptions;
     if (!devMode) {
-      if (!checkBearerToken(req.headers['authorization'], token!)) {
+      const admitted = admit(req.headers['authorization']);
+      if (admitted === undefined) {
         res.writeHead(401, {
           'WWW-Authenticate': 'Bearer',
           'Content-Type': 'application/json',
@@ -175,6 +239,7 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
         res.end(JSON.stringify({ error: 'Unauthorized' }));
         return;
       }
+      requestOptions = admitted;
     }
 
     try {
@@ -208,7 +273,7 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
       // and registryProvider — extension registries (and their rate-limiter buckets) stay
       // stable across requests. An error while a request is handled is logged below (a registry
       // a tool resolves per call is checked inside that tool, which answers with the refusal).
-      const mcpServer = createRealmMcpServer(serverOptions);
+      const mcpServer = createRealmMcpServer(requestOptions);
       // Omitting sessionIdGenerator enables stateless mode (SDK default when absent).
       const transport = new StreamableHTTPServerTransport({});
       // @ts-expect-error — SDK type mismatch under exactOptionalPropertyTypes:
@@ -265,6 +330,16 @@ function isListenFailure(err: unknown): boolean {
 export function serveStartLine(host: string, port: number): string {
   const hostInUrl = host.includes(':') ? `[${host}]` : host;
   return `Realm MCP server listening on http://${hostInUrl}:${port}/`;
+}
+
+/**
+ * #625 PR-2b, named keys: how many keys of a valid key file work at the home's clock (an entry whose
+ * end has not passed).
+ */
+function workingKeyCount(read: ServeKeysRead, clock: Clock): number {
+  if (read.state !== 'valid') return 0;
+  const now = clock.now();
+  return read.keys.filter((key) => !keyEnded(key, now)).length;
 }
 
 /**
@@ -362,18 +437,37 @@ export const serveCommand = new Command('serve')
     const host = options.host as string;
     const devMode = options.dev === true || process.env.REALM_DEV === '1';
     const token = process.env.REALM_SERVE_TOKEN;
+    const tokenSet = token !== undefined && token !== '';
     // issue #600 caching PR P: the registry and the prices share one load per definition call.
     const { registryProvider, priceSourceProvider } = makeProjectProviders(
       options.extensionsModule as string | undefined,
       (options.project as string | undefined) ?? process.cwd(),
     );
 
-    if (!devMode && !token) {
+    // #625 PR-2b, named keys (outside dev mode, which reads no key file): the key file at start. It
+    // starts with the token, or with at least one key that works; otherwise the start is refused, its
+    // first line naming the case.
+    const keyFile = devMode ? undefined : serveKeysPath(realmHomePath());
+    const keysRead: ServeKeysRead | undefined =
+      keyFile === undefined ? undefined : readServeKeys(keyFile);
+    const refuseStart = (first: string): never => {
       console.error(
-        'Error: REALM_SERVE_TOKEN is not set.\n' +
-          'Set it to a secret token, or use --dev / REALM_DEV=1 for local development only.',
+        `${first}\nSet it to a secret token, or use --dev / REALM_DEV=1 for local development only.`,
       );
       process.exit(1);
+    };
+    if (keyFile !== undefined && keysRead !== undefined) {
+      if (keysRead.state !== 'absent' && keysRead.openMode !== undefined)
+        console.warn(keyFileOpenWarning(keyFile, keysRead.openMode));
+      if (!tokenSet && keysRead.state === 'invalid')
+        refuseStart(
+          `Error: REALM_SERVE_TOKEN is not set and the named keys in ${keyPath(keyFile)} cannot be read (${keysRead.cause}).`,
+        );
+      if (
+        !tokenSet &&
+        (keysRead.state === 'absent' || (keysRead.state === 'valid' && keysRead.keys.length === 0))
+      )
+        refuseStart('Error: REALM_SERVE_TOKEN is not set and there is no named key.');
     }
 
     if (devMode) {
@@ -393,8 +487,37 @@ export const serveCommand = new Command('serve')
     let tracker: ConnectionTracker | undefined;
     // #960 U2: set in the first signal's turn (below); the health address reads it per request.
     let stopping = false;
+    // #625 PR-2b, named keys: how many keys work at start, judged by the home's clock.
+    let working = 0;
     try {
+      // Outside dev mode the home is opened here, before the server is built, for its clock.
+      const home = devMode ? undefined : await openCliHome();
+      let warnedCause: string | undefined;
+      if (keyFile !== undefined && keysRead !== undefined && home !== undefined) {
+        working = workingKeyCount(keysRead, home.runStore.clock);
+        if (!tokenSet && working === 0)
+          refuseStart(
+            `Error: REALM_SERVE_TOKEN is not set and every named key in ${keyPath(keyFile)} has ended.`,
+          );
+        if (tokenSet && keysRead.state === 'invalid') {
+          warnedCause = keysRead.cause;
+          console.warn(
+            `Warning: the named keys in ${keyPath(keyFile)} cannot be read (${keysRead.cause}). Every request with a named key is refused until it is fixed; REALM_SERVE_TOKEN still works.`,
+          );
+        }
+      }
       httpServer = await startHttpMcpServer({
+        ...(home !== undefined
+          ? {
+              workflowStore: home.workflowStore,
+              runStore: home.runStore,
+              traceBufferStore: home.traceBufferStore,
+              failedAttemptStore: home.failedAttemptStore,
+            }
+          : {}),
+        ...(keyFile !== undefined
+          ? { keys: { path: keyFile, ...(warnedCause !== undefined ? { warnedCause } : {}) } }
+          : {}),
         port,
         host,
         devMode,
@@ -426,8 +549,15 @@ export const serveCommand = new Command('serve')
     const address = httpServer.address();
     const listeningPort = typeof address === 'object' && address !== null ? address.port : port;
     console.log(serveStartLine(host, listeningPort));
-    if (!devMode) {
-      console.log('Authentication: Bearer token (REALM_SERVE_TOKEN)');
+    if (keyFile !== undefined) {
+      // "Named keys" only when at least one key works.
+      console.log(
+        working === 0
+          ? 'Authentication: Bearer token (REALM_SERVE_TOKEN)'
+          : tokenSet
+            ? `Authentication: Bearer token (REALM_SERVE_TOKEN, and named keys in ${keyPath(keyFile)})`
+            : `Authentication: Bearer token (named keys in ${keyPath(keyFile)})`,
+      );
     }
     // #627 W: the start line (stdout on this door), and W-s5 when dev mode leaves the answer tool open
     // (under `permitted` only: no other value lists it).
