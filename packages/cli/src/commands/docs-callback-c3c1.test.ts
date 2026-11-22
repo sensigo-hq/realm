@@ -352,18 +352,18 @@ describe('C3c-1 — cell 1: the words, each held to its page', () => {
       '**2. The receiver has a key.** `realm callback key ./refunds --host n8n.example.com` prints the key for this workflow and this receiver: 64 hexadecimal characters. The example on this page has its receiver on this machine, at `127.0.0.1:5678`, and its key is a scratch one that protects nothing:',
     );
   });
-  it('5. The example was made with REALM_ENCRYPTION_KEY set. In a fresh home wi', () => {
-    // Pinned by: CB-C3C1-RV-14 (in a fresh home without it, the built `realm callback key` makes `encryption.key` and prints the keep-a-copy line); the example run (REALM_ENCRYPTION_KEY set, CB-C3C1-IA-01).
-    claim(
-      GUIDE,
-      'The example was made with `REALM_ENCRYPTION_KEY` set. In a fresh home without it, `realm callback key` also makes the master key file `encryption.key` and prints a line telling you to keep a copy of it somewhere safe, because `realm db backup` does not copy it.',
-    );
-  });
-  it("6. Give it to the receiver, which checks every callback's signature with", () => {
+  it("5. Give it to the receiver, which checks every callback's signature with", () => {
     // Pinned by: cell 2 (a receiver checks the signature with that key, as text); cell 5 (the link).
     claim(
       GUIDE,
       "Give it to the receiver, which checks every callback's signature with it. Realm keeps the key sealed in its database; [`realm callback`](../reference/cli/realm-callback.md) says how to change it, and where the master key that seals it comes from.",
+    );
+  });
+  it('6. The example was made with REALM_ENCRYPTION_KEY set. In a fresh home wi', () => {
+    // Pinned by: CB-C3C1-RV-14 (in a fresh home without it, the built `realm callback key` makes `encryption.key` and prints the keep-a-copy line); the example run (REALM_ENCRYPTION_KEY set, CB-C3C1-IA-01).
+    claim(
+      GUIDE,
+      'The example was made with `REALM_ENCRYPTION_KEY` set. In a fresh home without it, `realm callback key` also makes the master key file `encryption.key` and prints a line telling you to keep a copy of it somewhere safe, because `realm db backup` does not copy it.',
     );
   });
   it('7. 3. realm listen is told which receivers it may call. --callback-allow', () => {

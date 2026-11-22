@@ -218,9 +218,9 @@ realm callback key ./refunds --host 127.0.0.1:5678
 Made a key for refunds → 127.0.0.1:5678 (key 05089f2a), sealed with encryption key 01769354.
 ```
 
-The example was made with `REALM_ENCRYPTION_KEY` set. In a fresh home without it, `realm callback key` also makes the master key file `encryption.key` and prints a line telling you to keep a copy of it somewhere safe, because `realm db backup` does not copy it.
-
 Give it to the receiver, which checks every callback's signature with it. Realm keeps the key sealed in its database; [`realm callback`](../reference/cli/realm-callback.md) says how to change it, and where the master key that seals it comes from.
+
+The example was made with `REALM_ENCRYPTION_KEY` set. In a fresh home without it, `realm callback key` also makes the master key file `encryption.key` and prints a line telling you to keep a copy of it somewhere safe, because `realm db backup` does not copy it.
 
 **3. `realm listen` is told which receivers it may call.** `--callback-allow n8n.example.com` for a receiver on a public address, `--callback-allow-private http://n8n.lan:5678` for one on this machine or your own network (an entry written with `http://` allows plain `http` as well as `https`; one without it allows `https` only). Without either flag every callback address is refused. See [`realm listen`](../reference/cli/realm-listen.md#--callback-allow). The example's receiver is on plain `http` on this machine, so its `realm listen` was started as in [2. Start the server](#2-start-the-server), with the flag added: `--callback-allow-private http://127.0.0.1:5678`.
 
