@@ -197,7 +197,8 @@ describe("every place a program's code runs names the program (captureEvidence s
   const TABLE: Array<[string, number, number, string]> = [
     [
       'core/src/engine/execution-loop.ts',
-      7,
+      // gap 2, unit (ii-a): the model-failure path's error entry is the eighth (a program drove it).
+      8,
       2,
       // #715 (b), C.1: the legacy block's answer entry and buildFinalizedSeal's three finalizer
       // entries (its callers were all legacy blocks) were deleted with the legacy path.
