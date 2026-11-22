@@ -174,11 +174,14 @@ export interface RealmMcpServerOptions {
   /** #627 W: the `--form-wait-seconds` flag's value, as the bins pass it (source `flag`). */
   formWaitSecondsFlag?: string;
   /**
-   * Gap 2, unit (iv-b1): whether an assistant reads a failure's words in `get_run_state`. `shown`
-   * (the default): as recorded. `hidden`: in place of the words a provider, a handler or an adapter
-   * put in a failure, their length (`‹string, N characters›`); the step, and its code, category or
-   * class where the record has them, stay, and so do Realm's own words around a failure. The record
-   * and `realm run inspect` keep the words. Read with `REALM_MCP_FAILURE_TEXT` and the bins'
+   * Gap 2, unit (iv-b1): whether an assistant reads a failure's words in `get_run_state`, and (unit
+   * (iv-b2a)) in the replies of its own calls. `shown` (the default): as recorded. `hidden`: in place
+   * of the words a provider, a handler or an adapter put in a failure, their length
+   * (`‹string, N characters›`); the step, and its code, category or class where the record has
+   * them, stay, and so does Realm's sentence around a failure in `terminal_reason`, the
+   * `drive_failing` reason, the project-code load warning and a handler's abort hint (inside a field
+   * such as `failures[].message` or `errors[0]`, Realm's words are shaped with the rest). A refusal
+   * of the call stays. The record and `realm run inspect` keep the words. Read with `REALM_MCP_FAILURE_TEXT` and the bins'
    * `--failure-text` flag; `hidden` wins. A value that is neither throws (no server is built).
    */
   failureText?: 'shown' | 'hidden';

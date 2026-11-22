@@ -542,6 +542,15 @@ export function handlerAbortReason(step: string, message: string): string {
 }
 
 /**
+ * The one spelling of the sentence a handler's abort puts in the reply's `context_hint`: `Handler
+ * step '<step>' aborted the run: <message>`. Gap 2, unit (iv-b2a): the abort reply mints it, and its
+ * shaped twin (the message as `‹string, N characters›`) rides the reply's failure-text mark.
+ */
+export function handlerAbortHint(step: string, message: string): string {
+  return `Handler step '${step}' aborted the run: ${message}`;
+}
+
+/**
  * Renders the run-level cause for a run with MORE THAN ONE distinct failed step (issue #373).
  *
  * PRECONDITION — callers gate on `new Set(failedSteps).size > 1`. That gate is about which
