@@ -3,7 +3,7 @@
 // cannot ship unclassified:
 //   - GUARDED (production, `option-value-guard.ts`): takes any word without a check of its own; the
 //     guard refuses a flag-like word typed after it;
-//   - OWN_CHECK (here): already refuses such a word with its own message (29 by an `argParser`, 34 by
+//   - OWN_CHECK (here): already refuses such a word with its own message (29 by an `argParser`, 36 by
 //     a check in the action).
 // Rule for a new option: it already refuses → OWN_CHECK; otherwise → GUARDED. Prints only the
 // (leaf, flag) pairs that break the law.
@@ -21,7 +21,7 @@ import { GUARDED_OPTIONS } from './option-value-guard.js';
 
 type Pair = `${string} ${string}`;
 
-/** The 63 that already refuse a flag-like word with their own message (do NOT guard). */
+/** The 65 that already refuse a flag-like word with their own message (do NOT guard). */
 const OWN_CHECK: readonly Pair[] = [
   // by an argParser (29)
   'validate --provider',
@@ -58,7 +58,7 @@ const OWN_CHECK: readonly Pair[] = [
   'listen --max-waiting',
   // callback K2a-2: `--keep-previous` by its own parser (a whole number of hours from 1 to 168)
   'key --keep-previous',
-  // in the action (34)
+  // in the action (36)
   'validate --registered',
   'validate --extensions-module',
   'validate --floor',
@@ -86,10 +86,13 @@ const OWN_CHECK: readonly Pair[] = [
   'drain --void',
   'mcp --gate-answers',
   'mcp --form-wait-seconds',
+  // Gap 2 (iv-b1): the failure-text judge refuses any word but shown or hidden
+  'mcp --failure-text',
   // #616 R2: `realm db migrate --to` refuses a word that is not a schema version it knows
   'migrate --to',
   'serve --gate-answers',
   'serve --form-wait-seconds',
+  'serve --failure-text',
   'agent --workflow',
   'agent --run-id',
   'agent --provider-module',
@@ -123,7 +126,7 @@ function derived(): Map<Pair, Command[]> {
 }
 
 describe('#920 C-2 — every value-taking option is classified exactly once', () => {
-  it('1. the two tables and the command tree agree (30 + 63 = 93)', () => {
+  it('1. the two tables and the command tree agree (30 + 65 = 95)', () => {
     // (a) red when a guarded row is deleted, an option is added to a command, or a row is in two
     // tables; (b) prints the unclassified, extra and duplicated (leaf, flag) pairs only.
     const tree = derived();
@@ -154,9 +157,10 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
       // --claimed-at` is guarded (27, 89). Callback K2a-2: `realm callback key --host` is guarded and
       // its `--keep-previous` checks its own value (28, 63, 91). Callback C2c: `realm listen
       // --callback-allow` and `--callback-allow-private` are guarded, each word of the array judged
-      // (30, 63, 93).
-      counts: { guarded: 30, ownCheck: 63 },
-      tree: 93,
+      // (30, 63, 93). Gap 2 (iv-b1): `realm mcp` and `realm serve --failure-text` check their own
+      // value (65, 95).
+      counts: { guarded: 30, ownCheck: 65 },
+      tree: 95,
       inTwo: [],
       unclassified: [],
       notInTree: [],

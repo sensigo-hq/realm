@@ -1261,9 +1261,10 @@ describe('#627 W correction 1 (A4) — the realm-mcp bin takes no flags', { time
       code: 1,
       stderr: REALM_MCP_TAKES_NO_FLAGS,
     });
-    // Correction 2 (4.5): the words, pinned as words — both variables, and the flag's own program.
+    // Correction 2 (4.5): the words, pinned as words — every variable (gap 2, unit (iv-b1): the
+    // failure-text one too), and the flag's own program.
     expect(REALM_MCP_TAKES_NO_FLAGS).toBe(
-      "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS or REALM_MCP_FORM_WAIT_SECONDS in your MCP client's env block, or run realm mcp with the flag.",
+      "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS, REALM_MCP_FORM_WAIT_SECONDS or REALM_MCP_FAILURE_TEXT in your MCP client's env block, or run realm mcp with the flag.",
     );
   });
 });

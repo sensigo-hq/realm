@@ -123,10 +123,10 @@ const shown = (text: string, audience: DisclosureAudience, set = setFor(audience
 
 describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
   it('the count of the variables Realm reads by name matches its table, and its REALM_ names are the ones the code reads', () => {
-    claim(ENV_PAGE, "Realm's own code reads 16 variables by name:");
+    claim(ENV_PAGE, "Realm's own code reads 17 variables by name:");
     const lines = read(ENV_PAGE).split('\n');
     const start = lines.findIndex((l) =>
-      l.includes("Realm's own code reads 16 variables by name:"),
+      l.includes("Realm's own code reads 17 variables by name:"),
     );
     let rows = 0;
     const names: string[] = [];
@@ -143,7 +143,8 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       rows,
       realm: names.filter((n) => n.startsWith('REALM_')).sort(),
     }).toEqual({
-      rows: 16,
+      // Gap 2 (iv-b1): REALM_MCP_FAILURE_TEXT's row.
+      rows: 17,
       realm: [...REALM_SETTING_VARIABLES, ...REALM_CREDENTIAL_VARIABLES, 'REALM_NOT_SECRET'].sort(),
     });
   });
@@ -151,11 +152,13 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
   it("realm's own settings, the shell's PWD, OLDPWD and _, and npm's three, are not treated as secrets; REALM_SERVE_TOKEN, REALM_ENCRYPTION_KEY and REALM_ENCRYPTION_KEY_COMMAND are (D-14, D-6)", () => {
     claim(
       ENV_PAGE,
-      "Realm's own settings in this table (`REALM_DEV`, `REALM_NO_NUDGE`, `REALM_REQUIRE_WRITER_NONCE`, `REALM_OPERATOR`, `REALM_MCP_GATE_ANSWERS`, `REALM_MCP_FORM_WAIT_SECONDS`, `REALM_STORE_FS` and `REALM_ENCRYPTION_KEY_FILE`) are not treated as secrets, and neither are `PWD`, `OLDPWD` and `_`, which the shell sets to paths, nor `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`, which npm sets; `REALM_SERVE_TOKEN`, `REALM_ENCRYPTION_KEY` and `REALM_ENCRYPTION_KEY_COMMAND`, which are credentials, are.",
+      "Realm's own settings in this table (`REALM_DEV`, `REALM_NO_NUDGE`, `REALM_REQUIRE_WRITER_NONCE`, `REALM_OPERATOR`, `REALM_MCP_GATE_ANSWERS`, `REALM_MCP_FORM_WAIT_SECONDS`, `REALM_MCP_FAILURE_TEXT`, `REALM_STORE_FS` and `REALM_ENCRYPTION_KEY_FILE`) are not treated as secrets, and neither are `PWD`, `OLDPWD` and `_`, which the shell sets to paths, nor `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`, which npm sets; `REALM_SERVE_TOKEN`, `REALM_ENCRYPTION_KEY` and `REALM_ENCRYPTION_KEY_COMMAND`, which are credentials, are.",
     );
     const env = {
       REALM_OPERATOR: 'fake-operator-0729',
       REALM_MCP_GATE_ANSWERS: 'withheld',
+      // Gap 2 (iv-b1): a value of 8 or more characters, so the sweep would take it were it not a setting.
+      REALM_MCP_FAILURE_TEXT: 'fake-failure-text-0729',
       REALM_SERVE_TOKEN: 'FAKEservetoken0729',
       REALM_ENCRYPTION_KEY: 'fa'.repeat(32),
       REALM_ENCRYPTION_KEY_COMMAND: 'fake-keycmd-0729 --token FAKEtoken0729',
