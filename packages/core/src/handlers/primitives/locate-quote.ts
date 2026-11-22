@@ -147,33 +147,86 @@ const KEPT_SYMBOLS: ReadonlySet<string> = new Set([
 /** N5: NFKC folds `″` `‴` `‶` `‷` into repeated primes, so `5′` would sit inside `5″`; like `\p{No}`,
  *  a unit with one of these bases is not NFKC-normalised. */
 const UNFOLDED_PRIMES: ReadonlySet<string> = new Set(['\u2033', '\u2034', '\u2036', '\u2037']);
-/** N2: a space that may group the thousands of one number. */
+/** N2, #845 (R-B): a space that may group the thousands of one number: U+0020, U+00A0, U+2009 and
+ *  U+202F, and every other `\p{Zs}` (U+2007 FIGURE SPACE, U+2008, U+3000 …). */
 const GROUP_SPACES: ReadonlySet<string> = new Set([' ', '\u00a0', '\u2009', '\u202f']);
-/** A1: the characters that join the digits of one number (after the dash mapping). */
-const NUMBER_JOINERS: ReadonlySet<string> = new Set([',', '.', '/', ':', '-']);
+const SPACE_SEPARATOR = /^\p{Zs}$/u;
+/** A1, #845 (R-B): the characters that join the digits of one number — `,` `.` `/` `:` and every dash
+ *  (`isDash`), and UAX #29's MidNum and MidNumLet between digits: `'` U+0027, `’` U+2019, `‘` U+2018,
+ *  `٬` U+066C, `٫` U+066B. Each is read by its NFKC form, so the full-width and small forms
+ *  (`．` `，` `․` `﹒` `﹐` `＇`) join too. */
+const NUMBER_JOINERS: ReadonlySet<string> = new Set([
+  ',',
+  '.',
+  '/',
+  ':',
+  "'",
+  '\u2019',
+  '\u2018',
+  '\u066c',
+  '\u066b',
+]);
+/** #845 (R-D3): a spacing accent — a character whose NFKC form is a space and one or more marks
+ *  (`´` U+00B4, `¸` U+00B8, `˚` U+02DA, `゛` U+309B …; 50 on Unicode 17), computed at run time.
+ *  Between two digits it is kept as itself and joins them; none lies below U+00A8. */
+const SPACING_ACCENT_FORM = /^ \p{M}+$/u;
+const isSpacingAccent = (c: string | undefined): boolean =>
+  c !== undefined && c.charCodeAt(0) >= 0xa8 && SPACING_ACCENT_FORM.test(c.normalize('NFKC'));
 const LETTER = /^\p{L}$/u;
 const DIGIT = /^\p{Nd}$/u;
 const OTHER_NUMBER = /^\p{No}$/u;
-const SPACE = /^\s$/u;
+/** #845 (R-C1): whitespace is Unicode's White_Space property. JavaScript's `\s` also holds U+FEFF,
+ *  which is invisible (`isInvisible`), never a space; and it leaves out U+0085 NEXT LINE. */
+const SPACE = /^\p{White_Space}$/u;
 const CURRENCY = /^\p{Sc}$/u;
 const MATH = /^\p{Sm}$/u;
 const MARK = /^\p{M}$/u;
 const WORD_CHAR = /[\p{L}\p{Nd}]/u;
-const LOWERCASE = /^\p{Ll}$/u;
-/** The language unit (§2): a code point that is default-ignorable (CGJ U+034F and the variation
- *  selectors are such marks). */
-const DEFAULT_IGNORABLE = /^\p{Default_Ignorable_Code_Point}$/u;
+/** #845 (R-B): a lowercase letter — Unicode's Lowercase property (UAX #29 SB8's Lower): every
+ *  `\p{Ll}`, and `ª`, `º`, small Roman numerals (`ⅳ`) …. */
+const LOWERCASE = /^\p{Lowercase}$/u;
 /** §4: a code point whose script extensions hold Arabic or Hebrew — read by property, never a range
  *  list. */
 const ARABIC_OR_HEBREW = /^[\p{scx=Arabic}\p{scx=Hebrew}]$/u;
+
+/** #845 (R-C1): UAX #29's Prepend format characters — the Arabic, Syriac and Kaithi number signs
+ *  U+0600–U+0605, U+06DD, U+070F, U+0890, U+0891, U+08E2, U+110BD and U+110CD (the `\p{Cf}`
+ *  members of Grapheme_Cluster_Break=Prepend, auxiliary/GraphemeBreakProperty.txt). They are
+ *  visible signs that bind the number after them, so they are number symbols, never invisible. One
+ *  named list: JavaScript has no Grapheme_Cluster_Break property escape. */
+const PREPEND_SIGNS: ReadonlySet<string> = new Set([
+  '\u0600',
+  '\u0601',
+  '\u0602',
+  '\u0603',
+  '\u0604',
+  '\u0605',
+  '\u06dd',
+  '\u070f',
+  '\u0890',
+  '\u0891',
+  '\u08e2',
+  '\u{110bd}',
+  '\u{110cd}',
+]);
+const FORMAT_OR_IGNORABLE = /^[\p{Cf}\p{Default_Ignorable_Code_Point}]$/u;
+/** #845 (R-C1): an invisible character — a format character (`\p{Cf}`) or one Unicode marks as
+ *  default-ignorable (`\p{Default_Ignorable_Code_Point}`: the soft hyphen, U+200B, U+FEFF, CGJ
+ *  U+034F, the variation selectors, the Hangul fillers …), except `PREPEND_SIGNS`. Read by code
+ *  point; none lies below U+00AD, so most characters are answered without the regex. */
+const isInvisible = (c: string | undefined): boolean =>
+  c !== undefined &&
+  c.charCodeAt(0) >= 0xad &&
+  FORMAT_OR_IGNORABLE.test(c) &&
+  !PREPEND_SIGNS.has(c);
 
 const isLetter = (c: string | undefined): boolean => c !== undefined && LETTER.test(c);
 /** A mark (`\p{M}`); none lies below U+0300, so most characters are answered without the regex. */
 const isMark = (c: string | undefined): boolean =>
   c !== undefined && c.charCodeAt(0) >= 0x300 && MARK.test(c);
-/** §2: a visible mark — a `\p{M}` that is not default-ignorable (an accent, a vowel sign, a tone
- *  mark; never CGJ or a variation selector). */
-const isVisibleMark = (c: string | undefined): boolean => isMark(c) && !DEFAULT_IGNORABLE.test(c!);
+/** §2: a visible mark — a `\p{M}` that is not invisible (an accent, a vowel sign, a tone mark; never
+ *  CGJ or a variation selector). */
+const isVisibleMark = (c: string | undefined): boolean => isMark(c) && !isInvisible(c);
 /** §4: an Arabic or Hebrew mark (`\p{M}` with either script extension: 175 code points on Unicode 17),
  *  which a quote may leave out when it sits on an Arabic or Hebrew letter. */
 const isOptionalMark = (c: string | undefined): boolean => isMark(c) && ARABIC_OR_HEBREW.test(c!);
@@ -185,12 +238,19 @@ const isNum = (c: string | undefined): boolean =>
   c !== undefined && (DIGIT.test(c) || OTHER_NUMBER.test(c));
 const isDigit = (c: string | undefined): boolean => c !== undefined && DIGIT.test(c);
 const isAlnum = (c: string | undefined): boolean => isLetter(c) || isNum(c);
-const isGroupSpace = (c: string | undefined): boolean => c !== undefined && GROUP_SPACES.has(c);
-const isJoiner = (c: string | undefined): boolean => c !== undefined && NUMBER_JOINERS.has(c);
+const isGroupSpace = (c: string | undefined): boolean =>
+  c !== undefined && (GROUP_SPACES.has(c) || SPACE_SEPARATOR.test(c));
+const isJoiner = (c: string | undefined): boolean =>
+  c !== undefined &&
+  (NUMBER_JOINERS.has(c) ||
+    isDash(c) ||
+    (c.charCodeAt(0) >= 0x80 && (NUMBER_JOINERS.has(c.normalize('NFKC')) || isSpacingAccent(c))));
+const isLowercase = (c: string | undefined): boolean => c !== undefined && LOWERCASE.test(c);
 /** A1: a symbol that belongs to the number it touches: `%` `‰` `°`, currency, comparison and math
  *  signs (`\p{Sm}`: `<` `>` `≤` `≥` `+` …). */
 const isNumberSymbol = (c: string | undefined): boolean =>
-  c !== undefined && (KEPT_SYMBOLS.has(c) || CURRENCY.test(c) || MATH.test(c));
+  c !== undefined &&
+  (KEPT_SYMBOLS.has(c) || CURRENCY.test(c) || MATH.test(c) || PREPEND_SIGNS.has(c));
 
 /** A8: the substring searches left for one quote. */
 class Budget {
@@ -258,33 +318,68 @@ function canonicalize(text: string): Canonical {
   let onLetter: boolean | undefined;
   let i = 0;
   while (i < text.length) {
-    const first = String.fromCodePoint(text.codePointAt(i)!);
+    const first = cpAt(text, i)!;
+    // #845 (R-C1): an invisible character leaves before NFKC, so it never splits a word or a number
+    if (isInvisible(first)) {
+      i += first.length;
+      continue;
+    }
+    // the marks that follow the base, past invisible characters: `e`+U+034F+U+0301 composes to `é`
+    let unit = first;
     let j = i + first.length;
     let marks = 0;
-    while (
-      j < text.length &&
-      marks < MAX_MARKS &&
-      MARK.test(String.fromCodePoint(text.codePointAt(j)!))
-    ) {
-      j += codePointLength(text, j);
+    for (let k = j; k < text.length && marks < MAX_MARKS;) {
+      const c = cpAt(text, k)!;
+      if (isInvisible(c)) {
+        k += c.length;
+        continue;
+      }
+      if (!MARK.test(c)) break;
+      unit += c;
+      k += c.length;
+      j = k;
       marks++;
     }
-    const unit = text.slice(i, j);
+    // #845 (R-D3): a spacing accent between two digits is kept as itself, a separator (`1´000` is not
+    // `1 000`); next to one digit it reads as NFKC's space, as before (`25˚C`); anywhere else it leaves
+    // before NFKC, like punctuation (`can´t` reads `cant`). Marks on it have no letter under them.
+    if (isSpacingAccent(first)) {
+      const nextToBefore = isNum(accentNeighbour(text, i, -1));
+      const nextToAfter = isNum(accentNeighbour(text, i + first.length, 1));
+      if (nextToBefore !== nextToAfter) {
+        // next to one digit: the NFKC form below, as before
+      } else {
+        if (nextToBefore) {
+          chars.push(first);
+          kept.push(false);
+          from.push(i);
+          to.push(j);
+        }
+        base = first;
+        onLetter = undefined;
+        i = j;
+        continue;
+      }
+    }
     const normal =
       OTHER_NUMBER.test(first) || UNFOLDED_PRIMES.has(first) ? unit : unit.normalize('NFKC');
     for (const c of normal) {
       if (isMark(c)) {
         onLetter ??= isLetter(base);
+        // #845 (R-D): a mark whose base is not a letter leaves before the number rules, so no rule
+        // ever sees a mark between two digits (`5` is not found in `-́5`)
+        if (!(onLetter && isVisibleMark(c))) continue;
         chars.push(c);
-        kept.push(onLetter && isVisibleMark(c));
+        kept.push(true);
         from.push(i);
         to.push(j);
         continue;
       }
       base = c;
       onLetter = undefined;
-      // lower-cased one code point at a time: a mark that lower-casing adds is not kept
+      // lower-cased one code point at a time: a mark that lower-casing adds leaves (`İ` → `i`)
       for (const ch of c.toLowerCase()) {
+        if (isMark(ch)) continue;
         chars.push(isDash(ch) ? '-' : ch);
         kept.push(false);
         from.push(i);
@@ -347,6 +442,17 @@ function canonicalize(text: string): Canonical {
     }
   }
   return { text: out, from: outFrom, to: outTo };
+}
+
+/** #845 (R-D3): the character next to a spacing accent on one side (`dir` -1 before `at`, 1 from
+ *  `at`), past invisible characters, marks and other spacing accents; `undefined` at an end. */
+function accentNeighbour(text: string, at: number, dir: -1 | 1): string | undefined {
+  let k = at;
+  for (;;) {
+    const c = dir < 0 ? cpBefore(text, k) : cpAt(text, k);
+    if (c === undefined || !(isInvisible(c) || isMark(c) || isSpacingAccent(c))) return c;
+    k += dir * c.length;
+  }
 }
 
 /** The canonical text alone — what two texts are compared as (for this module's tests; not part
@@ -439,10 +545,6 @@ function marksHold(source: Bare, at: number, marks: Marks): boolean {
   return true;
 }
 
-function codePointLength(text: string, at: number): number {
-  return text.codePointAt(at)! > 0xffff ? 2 : 1;
-}
-
 // ─── The language unit (§3): neighbours read by code point, past marks ──────────────────────────
 
 /** The code point that ends at `i` (a whole surrogate pair), or `undefined` at the start. */
@@ -477,18 +579,11 @@ function pastMarksAfter(s: string, i: number): number {
   return k;
 }
 
-/** UAX #29 GB9: whether a visible mark stands at `i`, past default-ignorable code points — a span
- *  starting or ending there would split a letter from its mark. */
+/** UAX #29 GB9: whether a visible mark stands at `i`, past invisible characters — a span starting
+ *  or ending there would split a letter from its mark. */
 function visibleMarkAt(s: string, i: number): boolean {
   let k = i;
-  // no default-ignorable code point lies below U+00AD
-  for (
-    let c = cpAt(s, k);
-    c !== undefined && c.charCodeAt(0) >= 0xad && DEFAULT_IGNORABLE.test(c);
-    c = cpAt(s, k)
-  ) {
-    k += c.length;
-  }
+  for (let c = cpAt(s, k); isInvisible(c); c = cpAt(s, k)) k += c!.length;
   return isVisibleMark(cpAt(s, k));
 }
 
@@ -500,12 +595,9 @@ function dashMapped(text: string): string {
   return out;
 }
 
-/** 02 B: an invisible format character (`\p{Cf}`: the soft hyphen U+00AD, the zero-width characters
- *  U+200B–U+200D, U+2060, U+FEFF, and the rest of the category), read by code point. */
-const FORMAT = /^\p{Cf}$/u;
-
-/** 02 B: the source as the literal layer's edges read it — every `\p{Cf}` code point left out, so an
- *  invisible character never makes a word or number edge. `raw` keeps the dashes (the word edges'
+/** 02 B, #845 (R-C1): the source as the literal layer's edges read it — every invisible character
+ *  (`isInvisible`) left out, so it never makes a word or number edge; the literal search itself
+ *  stays character for character on the raw texts. `raw` keeps the dashes (the word edges'
  *  hyphen test); `mapped` is `dashMapped` of it (the number edges); `at[k]` is the view offset of
  *  source offset `k`. */
 interface LiteralView {
@@ -517,9 +609,9 @@ function literalView(text: string): LiteralView {
   let raw = '';
   const at: number[] = [];
   for (let i = 0; i < text.length;) {
-    const unit = String.fromCodePoint(text.codePointAt(i)!);
+    const unit = cpAt(text, i)!;
     for (let u = 0; u < unit.length; u++) at.push(raw.length);
-    if (!FORMAT.test(unit)) raw += unit;
+    if (!isInvisible(unit)) raw += unit;
     i += unit.length;
   }
   at.push(raw.length);
@@ -759,7 +851,17 @@ interface Segment {
 }
 
 const DOUBLE_QUOTES: ReadonlySet<string> = new Set(['"', '“', '”']);
-const LINE_BREAKS: ReadonlySet<string> = new Set(['\n', '\r', ' ', ' ']);
+/** #845 (R-B): a line break — UAX #14's mandatory breaks: LF, CR, VT U+000B, FF U+000C, NEL U+0085,
+ *  U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR. */
+const LINE_BREAKS: ReadonlySet<string> = new Set([
+  '\n',
+  '\r',
+  '\u000b',
+  '\u000c',
+  '\u0085',
+  '\u2028',
+  '\u2029',
+]);
 const ABBREVIATIONS: ReadonlySet<string> = new Set(NOT_SENTENCE_ENDS.map((a) => a.toLowerCase()));
 
 /** L1: the `.` at `at` ends an abbreviation or an initial, never a sentence. */
@@ -887,19 +989,58 @@ function extend(
 // ─── Correction 2, tightened by correction 3: after a skip, the next part starts where the document
 //     starts a sentence, a clause or a line (the owner's yes, 2026-10-18) ─────────────────────────
 
-/** The opening marks a part may sit after (a quotation mark or a bracket). */
-const START_OPENING: ReadonlySet<string> = new Set(['"', '“', '„', '«', "'", '‘', '(', '[']);
-/** The closing marks walked past before an accepted character. */
-const START_CLOSING: ReadonlySet<string> = new Set(['"', '”', '’', "'", ')', ']', '»']);
-/** Read 3's list marks (a run of `#` too), only at a line start that counts. */
-const LIST_MARKS: ReadonlySet<string> = new Set(['-', '*', '•', '◦', '▪', '‣', '·', '–', '—', '|']);
+/** #845 (R-B): an opening mark a part may sit after — an opening bracket or quotation mark
+ *  (`\p{Ps}`, `\p{Pi}`), `"` or `'` — except `{`, a template brace, which must never read found. */
+const OPENING_PUNCTUATION = /^[\p{Ps}\p{Pi}]$/u;
+const isOpeningMark = (c: string | undefined): boolean =>
+  c !== undefined && c !== '{' && (c === '"' || c === "'" || OPENING_PUNCTUATION.test(c));
+/** #845 (R-B): a closing mark, walked past before an accepted character and in the `cut_short`
+ *  reads — a closing bracket or quotation mark (`\p{Pe}`, `\p{Pf}`), `"` or `'`. */
+const CLOSING_PUNCTUATION = /^[\p{Pe}\p{Pf}]$/u;
+const isClosingMark = (c: string | undefined): boolean =>
+  c !== undefined && (c === '"' || c === "'" || CLOSING_PUNCTUATION.test(c));
+/** #845 (R-B): read 3's list marks, only at a line start that counts (a run of `#` too, read apart):
+ *  every dash (`isDash`: `\p{Pd}`, U+2212, U+2796, U+02D7); `*` `+` `>` `|`; the characters whose
+ *  Unicode name holds BULLET (UnicodeData 17.0; U+1F685, an emoji, left out): U+2022, U+2023,
+ *  U+2043, U+204C, U+204D, U+2219, U+25D8, U+25E6, U+29BE, U+29BF, U+2619, U+2765, U+2767; the
+ *  shapes Word and PDFs use for bullets, `○` U+25CB, `●` U+25CF, `■` U+25A0, `▪` U+25AA, `·` U+00B7;
+ *  and U+F0B7, the bullet Word exports from the Symbol font. JavaScript has no character names, so
+ *  the bullets are a named list. */
+const LIST_MARKS: ReadonlySet<string> = new Set([
+  '*',
+  '+',
+  '>',
+  '|',
+  '\u2022',
+  '\u2023',
+  '\u2043',
+  '\u204c',
+  '\u204d',
+  '\u2219',
+  '\u25d8',
+  '\u25e6',
+  '\u29be',
+  '\u29bf',
+  '\u2619',
+  '\u2765',
+  '\u2767',
+  '\u25cb',
+  '\u25cf',
+  '\u25a0',
+  '\u25aa',
+  '\u00b7',
+  '\uf0b7',
+]);
+const isListMark = (c: string | undefined): boolean =>
+  c !== undefined && (isDash(c) || LIST_MARKS.has(c));
 const CAPITAL = /^[\p{Lu}\p{Lt}]$/u;
 
-const isBlank = (c: string | undefined): boolean => c === ' ' || c === '\t';
+/** #845 (R-B): a blank — whitespace (`\p{White_Space}`) other than a line break. */
+const isBlank = (c: string | undefined): boolean =>
+  c !== undefined && SPACE.test(c) && !LINE_BREAKS.has(c);
 const isCapital = (c: string | undefined): boolean => c !== undefined && CAPITAL.test(c);
 /** A capital letter or an opening mark: what a sentence may begin with after a full stop. */
-const isSentenceOpening = (c: string | undefined): boolean =>
-  isCapital(c) || (c !== undefined && START_OPENING.has(c));
+const isSentenceOpening = (c: string | undefined): boolean => isCapital(c) || isOpeningMark(c);
 
 function blanksBack(source: string, at: number): number {
   let i = at;
@@ -972,7 +1113,7 @@ function listMarkBack(source: string, at: number): number {
     while (j > 0 && source[j - 1] === '#') j--;
     return j;
   }
-  return at > 0 && LIST_MARKS.has(source[at - 1]!) ? at - 1 : -1;
+  return at > 0 && isListMark(source[at - 1]) ? at - 1 : -1;
 }
 
 /** How the line break at `lineBreak` counts as a line start: `free` when the line before it is blank,
@@ -983,7 +1124,7 @@ function lineStart(source: string, lineBreak: number): 'free' | 'sentence' | und
   let i = lineBreak;
   while (i > 0 && (isBlank(source[i - 1]) || source[i - 1] === '\r')) i--;
   if (i === 0 || LINE_BREAKS.has(source[i - 1]!)) return 'free';
-  while (i > 0 && START_CLOSING.has(source[i - 1]!)) i--;
+  while (i > 0 && isClosingMark(source[i - 1])) i--;
   const c = source[i - 1];
   if (c === ';' || c === ':' || c === '|') return 'free';
   if ((c === '.' && !endsAbbreviation(source, i - 1)) || c === '!' || c === '?') return 'sentence';
@@ -1005,7 +1146,7 @@ function atCountedLineStart(source: string, at: number): boolean {
  *  and a capital). */
 function acceptedBefore(source: string, at: number, opening: boolean, numbered: boolean): boolean {
   let i = blanksBack(source, at);
-  while (i > 0 && START_CLOSING.has(source[i - 1]!)) i--;
+  while (i > 0 && isClosingMark(source[i - 1])) i--;
   if (i === 0) return true;
   const c = source[i - 1]!;
   if (LINE_BREAKS.has(c)) {
@@ -1038,7 +1179,7 @@ function partStartHolds(source: string, start: number): boolean {
   const numbered = opensWithClauseNumber(source, start);
   // Where the part's own opening mark (and the spaces before it) ends, when it has one.
   const beforeMark =
-    first > 0 && START_OPENING.has(source[first - 1]!) ? blanksBack(source, first - 1) : -1;
+    first > 0 && isOpeningMark(source[first - 1]) ? blanksBack(source, first - 1) : -1;
   // Read 1.
   if (acceptedBefore(source, first, opening, numbered)) return true;
   if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered)) return true;
@@ -1236,10 +1377,11 @@ function trimmed(
 /** L2: whether the source's sentence goes on after `at` (past closing marks and spaces it reaches
  *  no sentence end, line break or end of text). */
 function sentenceGoesOn(source: string, at: number): boolean {
+  // #845 (R-B): closing marks and blanks are the property sets
   let k = at;
-  while (k < source.length && CLOSING.has(source[k]!) && source[k] !== '.') k++;
+  while (k < source.length && isClosingMark(source[k])) k++;
   if (source[k] === '.' || source[k] === '!' || source[k] === '?') return false;
-  while (k < source.length && (source[k] === ' ' || source[k] === '\t')) k++;
+  while (k < source.length && isBlank(source[k])) k++;
   const c = source[k];
   return c !== undefined && !LINE_BREAKS.has(c);
 }
@@ -1248,15 +1390,11 @@ function sentenceGoesOn(source: string, at: number): boolean {
  *  past closing marks, spaces and tabs, the next character is a lowercase letter or a digit
  *  (`approx. 412`). */
 function exactGoesOn(source: string, at: number): boolean {
+  // #845 (R-B): closing marks, blanks and lowercase letters are the property sets
   let k = at;
-  while (
-    k < source.length &&
-    ((CLOSING.has(source[k]!) && source[k] !== '.') || isBlank(source[k]))
-  ) {
-    k++;
-  }
+  while (k < source.length && (isClosingMark(source[k]) || isBlank(source[k]))) k++;
   const c = source[k];
-  return c !== undefined && (LOWERCASE.test(c) || isDigit(c));
+  return c !== undefined && (isLowercase(c) || isDigit(c));
 }
 
 // ─── The ladder ─────────────────────────────────────────────────────────────────────────────────

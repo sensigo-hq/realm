@@ -69,10 +69,12 @@ All notable changes to this project are documented here.
 - In the library, `submitHumanResponse` carries the run on in the same way for a program that passes back the opening reply's `claimToken` with a registry. `SubmitGateOptions` gains `traceBufferStore`, for the steps it runs, and `budget`, whose `remainingMs` is read before each next step starts (without it nothing bounds the carry-on). `EngineReply`'s `gate_claim` gains the members above, and `AdvanceCaller` (with its list in `ENTRY_CALLERS`) gains `submit_human_response` and `submitHumanResponse`, the words such a call runs the steps under. (#625)
 - `realm agent` and `realm listen` now write `model_attempts` for an agent step that declares `retry`: on its evidence entry when it succeeds after a failed try, and on its drive-failure entry when the run is left open. `realm run inspect` prints them as `Failed tries:` and shows Realm's attempt number in a drive failure's line, and `get_run_state` shows it as `attempt`, beside the model client's `attempts_sdk`. For provider modules, `@sensigo/realm-cli/agent` exports `LlmClock`, whose new `retry` member is a `ModelRetryPolicy`, and `ProviderCapabilities` gains `handlesRetries`.
 - **`realm listen` names its callback refusals in a `400`.** A request that names a callback address is answered `400` with `callback_not_enabled`, or with `callback_refused` and a `reason` of `malformed`, `too_long`, `scheme`, `userinfo`, `not_allowed` or `no_key`. Changed: `realm listen 400`.
+- check_quotes now reads some quotes not_found that read found before, on purpose: part of a number with a mark on it (`5` in `-́5`), part of a number whose digits a spacing accent separates (`1` in `1´000`), and two words that only U+FEFF separates (#845).
 
 ### Fixed
 
 - get_run_state's steps page and the run's cost count no longer count a reclaim's audit entry as an attempt.
+- check_quotes reads each character by Unicode's rules: an invisible character or a mark can no longer split a number or a word, U+FEFF is invisible like a zero-width space, a spacing accent between two digits joins them, the sets of lowercase letters, spaces and line breaks follow Unicode's properties, and the list, opening and closing marks follow Unicode's punctuation classes with a short named list (#845).
 
 ## [0.50.0] — 2026-11-17
 
