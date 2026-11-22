@@ -129,10 +129,12 @@ describe('Q1 (#592) unit f1 — check 1: the finding fires', () => {
 });
 
 describe('Q1 (#592) unit f1 — check 2: each conjunct', () => {
-  it('a step in progress: none', () => {
+  it('a step in progress, another auto step ready beside it: none', () => {
+    // `other` is owed whatever `route` does: only the in-progress conjunct keeps the finding away.
+    const d = def({ route, other: { ...route, description: 'Other.', handler: 'other_h' } });
     const run = makeRun({ in_progress_steps: ['route'], claims: { route: { deadline: null } } });
-    // (a) red when the in-progress conjunct is dropped; (b) prints the kinds.
-    expect(kinds(classifyRunHealth(writtenSnapshot(run, NOW), { definition: AUTO }))).not.toContain(
+    // (a) red when the in-progress conjunct is dropped (`other` is then named); (b) prints the kinds.
+    expect(kinds(classifyRunHealth(writtenSnapshot(run, NOW), { definition: d }))).not.toContain(
       'owed_undriven',
     );
   });
