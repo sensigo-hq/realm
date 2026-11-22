@@ -526,8 +526,12 @@ describe('C2 — Prefer: wait', { timeout: 30_000 }, () => {
     // The agent "ends" the run 100 ms after it starts, and then exits.
     const ends = vi.fn(async (runId: string): Promise<SpawnResult> => ({
       pid: 4242,
-      exited: new Promise<void>((resolve) => {
-        setTimeout(() => void abandonRun(store, runId).then(() => resolve()), 100);
+      // Q1 (#592) unit c: `exited` gives how the process ended (a code: never marked).
+      exited: new Promise((resolve) => {
+        setTimeout(
+          () => void abandonRun(store, runId).then(() => resolve({ code: 0, signal: null })),
+          100,
+        );
       }),
     }));
     const s = await serveDoor(store);

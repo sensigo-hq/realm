@@ -6,7 +6,9 @@
 //   pending, finished, due             `Callback: due since <W>; sent only while realm listen with a
 //                                       matching allow-list runs`
 //   delivered                          `Callback: delivered to <host> <W>, attempt <n>`
-//   failed (an ended window included)  `Callback: failed after <n> attempt(s), last answer <s>`
+//   failed, its window ended (C3b1)    `Callback: expired at attempt <n>, not delivered within its
+//                                       time limit`
+//   failed otherwise                   `Callback: failed after <n> attempt(s), last answer <s>`
 // `<W>` is the one instant formatter's (`in 5m (…)`, `5m ago (…)`); a part whose field is absent, or
 // whose instant does not parse, is left out.
 import {
@@ -40,6 +42,9 @@ export function callbackLine(view: CallbackView, runFinished: boolean, at: Date)
     return `Callback: delivered to ${view.host}${when === '' ? '' : ` ${when}`}, attempt ${view.attempts}`;
   }
   if (view.status === 'failed') {
+    if (view.last_status === 'expired') {
+      return `Callback: expired at attempt ${view.attempts}, not delivered within its time limit`;
+    }
     const attempts = view.attempts === 1 ? 'attempt' : 'attempts';
     return `Callback: failed after ${view.attempts} ${attempts}${answer}`;
   }

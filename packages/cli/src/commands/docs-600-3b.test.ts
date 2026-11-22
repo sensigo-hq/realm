@@ -166,9 +166,11 @@ describe('caching 3-B Part D — OpenAI’s cache key (rows 3, 4, 5, 9, 11–15,
     gone(AGENT_REF, '`--prompt-cache` with a provider Realm asks for no caching');
     gone(LISTEN_REF, '`--prompt-cache` with `--provider openai` (added after version 0.47.0)');
     gone(LISTEN_REF, 'It also refuses `--prompt-cache` with `--provider openai`');
+    // Q1 (#592) unit c: the sentence before it now lists the four endings of a startup refusal,
+    // so this one names its own ending.
     claim(
       AGENT_REF,
-      'The `--prompt-cache` refusal ends the same way (added after version 0.47.0);',
+      'The `--prompt-cache` refusal ends `If run <run-id> exists, it was not changed.` after `--run-id` (added after version 0.47.0);',
     );
   });
 

@@ -11,7 +11,7 @@ import type {
   UsageRecord,
 } from '@sensigo/realm';
 import {
-  ERROR_CLASSES,
+  CLAIMABLE_ERROR_CLASSES,
   classifyModelFailure,
   describeValidationProblems,
   modelRetryScheduleMs,
@@ -966,7 +966,9 @@ function attemptOf(err: unknown, request: number, options: DriveCreateOptions): 
     payload = undefined;
   }
   const named = payload?.error_class ?? shapeClass(err);
-  const cls = (ERROR_CLASSES as readonly string[]).includes(named)
+  // Q1 (#592) unit c: a claimed class closes against the classes a provider may claim — a payload
+  // (a third-party provider module's included) cannot claim `startup_failure`: it becomes `other`.
+  const cls = (CLAIMABLE_ERROR_CLASSES as readonly string[]).includes(named)
     ? (named as DriveFailureRecord['error_class'])
     : 'other';
   const status = extractHttpStatus(err) ?? null;

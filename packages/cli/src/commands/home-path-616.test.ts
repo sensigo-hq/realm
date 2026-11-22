@@ -107,6 +107,10 @@ describe('#616 PR-2a (i) — an empty HOME, on the built CLI', () => {
         code: r.code,
         stdoutLines: r.stdout.split('\n').filter((l) => l !== '').length,
         valueLine: r.stdout.startsWith('Gate answers over MCP: asked (from the default)'),
+        // Gap 2 (iv-b1): the failure-text value line is the second.
+        failureTextLine: r.stdout
+          .split('\n')[1]
+          ?.startsWith('Failure text over MCP: shown (from the default)'),
         stderr: r.stderr,
         created: r.created,
       })),
@@ -114,8 +118,9 @@ describe('#616 PR-2a (i) — an empty HOME, on the built CLI', () => {
     ).toEqual(
       ['mcp', 'serve'].map(() => ({
         code: 1,
-        stdoutLines: 1,
+        stdoutLines: 2,
         valueLine: true,
+        failureTextLine: true,
         stderr: `Error: ${REFUSAL}\n`,
         created: [],
       })),

@@ -16,6 +16,8 @@ import { channelStdout, cliDisclosureProvider, writerCtx } from '../output/write
 import { warnDeprecated } from '../output/deprecations.js';
 import {
   checkValueLine,
+  failureTextCheckLine,
+  failureTextStartLine,
   gateAnswersConnectLine,
   gateAnswersStartLine,
   offeredGivenToProgram,
@@ -49,8 +51,12 @@ export const mcpCommand = new Command('mcp')
     'The longest a form waits for the person, in seconds from 30 to 3600 (default 240). The smallest of this flag and REALM_MCP_FORM_WAIT_SECONDS wins.',
   )
   .option(
+    '--failure-text <value>',
+    "Whether the assistant sees a failure's words in get_run_state: shown (the default) or hidden. The most restrictive of this flag and REALM_MCP_FAILURE_TEXT wins.",
+  )
+  .option(
     '--check',
-    'Print the gate-answers value this server would start with and the separation check, then exit without starting',
+    'Print the gate-answers and failure-text values this server would start with and the separation check, then exit without starting',
   )
   .action(
     async (options: {
@@ -58,13 +64,18 @@ export const mcpCommand = new Command('mcp')
       project?: string;
       gateAnswers?: string;
       formWaitSeconds?: string;
+      failureText?: string;
       check?: boolean;
     }) => {
       // #627 W (§5.1): the two settings, read as the server will read them — a bad value refuses the
       // start (W-s4, W-s8) before anything else happens.
       const settings = readBinDoorSettings(
         'mcp',
-        { gateAnswers: options.gateAnswers, formWaitSeconds: options.formWaitSeconds },
+        {
+          gateAnswers: options.gateAnswers,
+          formWaitSeconds: options.formWaitSeconds,
+          failureText: options.failureText,
+        },
         process.env,
       );
       if (!settings.ok) {
@@ -80,6 +91,8 @@ export const mcpCommand = new Command('mcp')
         console.log(
           checkValueLine(settings.answers, (v) => writerCtx().word(v, GATE_ANSWERS_VALUES)),
         );
+        // Gap 2, unit (iv-b1): the failure-text value, beside the gate-answers value.
+        console.log(failureTextCheckLine(settings.failureText));
         const evidence = await measureSeparation({
           probes: systemProbes(),
           value: { value: settings.answers.value, source: settings.answers.source },
@@ -129,6 +142,8 @@ export const mcpCommand = new Command('mcp')
           ...(options.formWaitSeconds !== undefined
             ? { formWaitSecondsFlag: options.formWaitSeconds }
             : {}),
+          // Gap 2, unit (iv-b1): the flag as the bins pass it (source `flag`).
+          ...(options.failureText !== undefined ? { failureTextFlag: options.failureText } : {}),
           principal: { absent: 'door_authenticates_no_principal' },
           // #729 PR-3 (M-3): every reply is masked with this process's set, declared part included.
           disclosureProvider: cliDisclosureProvider,
@@ -148,6 +163,9 @@ export const mcpCommand = new Command('mcp')
       }
       // #627 W: the start line — stderr, since stdout carries the protocol.
       console.error(gateAnswersStartLine(settings.answers, false));
+      // Gap 2, unit (iv-b1): under `hidden` only, the failure-text line, after the gate-answers line.
+      const failureTextLine = failureTextStartLine(settings.failureText);
+      if (failureTextLine !== undefined) console.error(failureTextLine);
       // #729 PR-3 (L-1): the channel is built on the ORIGINAL stdout write; every other stdout write
       // in this process goes to the masked stderr.
       const transport = new StdioServerTransport(process.stdin, channelStdout());

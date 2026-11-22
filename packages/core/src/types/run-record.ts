@@ -326,6 +326,13 @@ export interface StepDiagnostics {
    * even one that previously accrued rejections, carries only `validation_rejections` here.
    */
   settled_by_default?: boolean;
+  /**
+   * Gap 2, unit (ii-a): on the entry of an agent step that failed because its model request failed
+   * and it took its failure path, why: `transient` (a later try might pass) or `permanent` (it will
+   * fail the same way). A later step reads it as `$settlement.<step>.failure_kind`. Absent on every
+   * other entry, and on every entry written before this field existed.
+   */
+  failure_kind?: 'transient' | 'permanent';
   /** Issue #236 — disclosure for a `structured_output: 'strict'`-declared step's attempt. See
    *  {@link StructuredOutputMeta}. Absent on a step that never declared `structured_output`. */
   structured_output?: StructuredOutputMeta;
@@ -1302,7 +1309,12 @@ void _everyExhaustedByListed;
  */
 export type StopReason = NonNullable<EvidenceSnapshot['stop_reason']>;
 
-/** Every {@link StopReason}, in judging order; compile-checked both ways, ⊇ {@link ExhaustedBy}. */
+/**
+ * Every {@link StopReason}, in the dispatch loop's judging order; compile-checked both ways,
+ * ⊇ {@link ExhaustedBy}. On an agent step whose model request failed and that took its failure
+ * path (`ExecuteChainOptions.modelFailure`), the caller states the stop reason and no judging order
+ * applies: a permanent model failure reads `non_retryable` even on a step with no `retry` block.
+ */
 export const STOP_REASONS = [
   'no_retry_policy',
   'total_timeout',
@@ -1759,6 +1771,14 @@ export interface DriveFailureRecord {
      * per-attempt timeout — this one is realm's bound on the whole create, retries included.
      */
     | 'aborted_by_budget'
+    /**
+     * Q1 (#592) unit c: `realm agent --run-id` stopped at its own startup checks (no key for the
+     * provider, no model, `--base-url` with Anthropic, a provider module that does not load), or
+     * `realm listen`'s child was killed by a signal before it wrote anything to the run. Only those
+     * two writers mint it; a provider's payload or a program's `model_attempts` cannot claim it
+     * ({@link CLAIMABLE_ERROR_CLASSES}). Its `step` is `''`.
+     */
+    | 'startup_failure'
     | 'other';
   /** Sanitized (secrets redacted) and capped at 500 characters. */
   message: string;
@@ -1840,11 +1860,43 @@ export const ERROR_CLASSES = [
   'sdk_missing',
   'validation_rejected',
   'aborted_by_budget',
+  'startup_failure',
   'other',
 ] as const satisfies readonly DriveFailureRecord['error_class'][];
 type MissingErrorClass = Exclude<DriveFailureRecord['error_class'], (typeof ERROR_CLASSES)[number]>;
 const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : MissingErrorClass = true;
 void _everyErrorClassListed;
+
+/**
+ * An `error_class` word a provider or a program may claim: every word but `startup_failure`, which
+ * only `realm agent`'s and `realm listen`'s own startup writers mint. Q1 (#592) unit c.
+ * @public
+ */
+export type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
+
+/**
+ * Q1 (#592) unit c: the classes a provider or a program may claim, in the type's order — every
+ * {@link ERROR_CLASSES} word but `startup_failure`, which only `realm agent`'s and `realm listen`'s
+ * own startup writers mint. The readers that take a claimed class close against this one list: the
+ * CLI's payload reader and model-try reader (a provider's thrown payload, a third-party
+ * `--provider-module`'s included), `closeModelAttempts` (a program's `model_attempts`), and
+ * `executeChain`'s admission of `modelFailure.error_class`.
+ * Checked both ways, as `ERROR_CLASSES` is.
+ */
+export const CLAIMABLE_ERROR_CLASSES = [
+  'connection_timeout',
+  'connection_error',
+  'api_status',
+  'sdk_missing',
+  'validation_rejected',
+  'aborted_by_budget',
+  'other',
+] as const satisfies readonly ClaimableErrorClass[];
+type MissingClaimableClass = Exclude<ClaimableErrorClass, (typeof CLAIMABLE_ERROR_CLASSES)[number]>;
+const _everyClaimableClassListed: [MissingClaimableClass] extends [never]
+  ? true
+  : MissingClaimableClass = true;
+void _everyClaimableClassListed;
 
 /**
  * What a failed model request can need before it succeeds: another try (`transient`), an operator's

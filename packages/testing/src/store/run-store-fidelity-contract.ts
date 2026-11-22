@@ -89,9 +89,14 @@ import {
  * `RECORD_KEEPS_MODEL_ATTEMPTS`: an evidence entry and a drive-failure entry written with
  * `model_attempts` (a step's failed model tries) read back with it unchanged, from `get` and from a
  * listing, and an `update` that keeps it unchanged is accepted; entries written without it read back
- * without it (its listing case is skipped for a store with no `scanListed`). #625 PR-2b, named keys,
- * adds `CLAIM_HOLDER_KEEPS_KEY_SOURCE`: a claim taken for a caller that presented one of `realm
- * serve`'s named keys reads back, through core's reader, with `by_source: 'key'`.
+ * without it (its listing case is skipped for a store with no `scanListed`). Gap 2, unit (ii-a), adds
+ * `EVIDENCE_KEEPS_FAILURE_KIND`: an evidence entry written with `diagnostics.failure_kind` (why a
+ * step's failed model request failed it) reads back with it unchanged, from `get` and from a
+ * listing, and an `update` that keeps it unchanged is accepted; an entry written without it reads
+ * back without it (its listing case is skipped for a store with no `scanListed`).
+ * #625 PR-2b, named keys, adds `CLAIM_HOLDER_KEEPS_KEY_SOURCE`: a claim taken for a caller that
+ * presented one of `realm serve`'s named keys reads back, through core's reader, with
+ * `by_source: 'key'`.
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -117,6 +122,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'DRIVE_FAILURE_KEEPS_MODEL_TEXT',
   'EVIDENCE_KEEPS_FAILURE_WORDS',
   'RECORD_KEEPS_MODEL_ATTEMPTS',
+  'EVIDENCE_KEEPS_FAILURE_KIND',
   'CLAIM_HOLDER_KEEPS_KEY_SOURCE',
 ] as const;
 
@@ -767,6 +773,50 @@ function attemptsListingCase(
     };
   }
   return { law: 'RECORD_KEEPS_MODEL_ATTEMPTS', name, run };
+}
+
+/**
+ * `EVIDENCE_KEEPS_FAILURE_KIND`'s fixture: a run of a workflow of its own whose one evidence entry, a
+ * failed step's, carries `diagnostics.failure_kind` when `withKind`, written by `update`.
+ */
+async function runWithFailureKind(
+  adapter: RunStoreFidelityContractAdapter,
+  what: string,
+  withKind: boolean,
+): Promise<{ tag: string; runId: string }> {
+  const tag = `tck-failure-kind-${what}-${Math.random().toString(36).slice(2)}`;
+  const { record: run } = await adapter.store.create({
+    workflowId: tag,
+    workflowVersion: 1,
+    params: {},
+  });
+  const entry: EvidenceSnapshot = {
+    step_id: adapter.stepName,
+    started_at: '2026-01-01T00:00:00.000Z',
+    completed_at: '2026-01-01T00:00:00.000Z',
+    duration_ms: 0,
+    input_summary: {},
+    output_summary: {},
+    status: 'error',
+    error: 'TCK model request failed',
+    evidence_hash: `tck-failure-kind-${what}`,
+    diagnostics: {
+      input_token_estimate: 1,
+      precondition_trace: [],
+      ...(withKind ? { failure_kind: 'permanent' as const } : {}),
+    },
+  };
+  await adapter.store.update({ ...run, evidence: [entry] });
+  return { tag, runId: run.id };
+}
+
+/** `record`'s evidence entry's `diagnostics.failure_kind`, as JSON (`absent` where none). */
+function failureKindOf(record: RunRecord | ListedRecord | undefined): string {
+  const diag = record?.evidence[0]?.diagnostics;
+  if (diag === undefined) return 'no entry or no diagnostics';
+  return Object.prototype.hasOwnProperty.call(diag, 'failure_kind')
+    ? JSON.stringify(diag.failure_kind)
+    : 'absent';
 }
 
 /** Runs `write`, and returns the error it threw, or `undefined` when it was accepted. */
@@ -2421,6 +2471,78 @@ export function runStoreFidelityContract(
         if (read.evidence !== wroteAttempts || read.failure !== wroteAttempts) {
           throw new Error(
             `RECORD_KEEPS_MODEL_ATTEMPTS: scanListed must keep model_attempts on both entries; wrote ${wroteAttempts}, listed ${listed === undefined ? 'no such run' : `${read.evidence} (evidence) and ${read.failure} (drive failure)`}`,
+          );
+        }
+      },
+    ),
+  );
+
+  // Gap 2, unit (ii-a) — EVIDENCE_KEEPS_FAILURE_KIND. The round trips are always active: every store
+  // round-trips evidence. The listing case needs `scanListed`.
+  const wroteKind = JSON.stringify('permanent');
+  const kindListing = (name: string, run: () => Promise<void>): RunStoreFidelityContractCase =>
+    typeof adapter.store.scanListed !== 'function'
+      ? {
+          law: 'EVIDENCE_KEEPS_FAILURE_KIND',
+          name: `SKIPPED — store has no scanListed: ${name}`,
+          skipped: true,
+          run: async () => {
+            // Intentional no-op — see the case name for why.
+          },
+        }
+      : { law: 'EVIDENCE_KEEPS_FAILURE_KIND', name, run };
+  cases.push(
+    {
+      law: 'EVIDENCE_KEEPS_FAILURE_KIND',
+      name: 'an evidence entry written with diagnostics.failure_kind reads back from get with it unchanged',
+      run: async () => {
+        const { runId } = await runWithFailureKind(adapter, 'get', true);
+        const { record } = await adapter.store.get(runId);
+        const read = failureKindOf(record);
+        if (read !== wroteKind) {
+          throw new Error(
+            `EVIDENCE_KEEPS_FAILURE_KIND: get must read diagnostics.failure_kind back as written; wrote ${wroteKind}, read back ${read}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'EVIDENCE_KEEPS_FAILURE_KIND',
+      name: 'an update that keeps the entry diagnostics.failure_kind unchanged is accepted, and it still reads back with it',
+      run: async () => {
+        const { runId } = await runWithFailureKind(adapter, 'update', true);
+        const { record } = await adapter.store.get(runId);
+        const refusal = await refusalOf(() => adapter.store.update({ ...record }));
+        const read = failureKindOf((await adapter.store.get(runId)).record);
+        if (refusal !== undefined || read !== wroteKind) {
+          throw new Error(
+            `EVIDENCE_KEEPS_FAILURE_KIND: an update that keeps diagnostics.failure_kind unchanged must be accepted and keep it; ${refusal === undefined ? 'accepted' : `refused (${String(refusal)})`}, then read back ${read}, wrote ${wroteKind}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'EVIDENCE_KEEPS_FAILURE_KIND',
+      name: 'an evidence entry written without diagnostics.failure_kind reads back without it, never with a kind the store made up',
+      run: async () => {
+        const { runId } = await runWithFailureKind(adapter, 'absent', false);
+        const read = failureKindOf((await adapter.store.get(runId)).record);
+        if (read !== 'absent') {
+          throw new Error(
+            `EVIDENCE_KEEPS_FAILURE_KIND: an entry written without diagnostics.failure_kind must read back without it; read back ${read}`,
+          );
+        }
+      },
+    },
+    kindListing(
+      'a listing keeps diagnostics.failure_kind on the evidence entry, as get reads it',
+      async () => {
+        const { tag, runId } = await runWithFailureKind(adapter, 'listing', true);
+        const listed = await listedRun(adapter, tag, runId);
+        const read = failureKindOf(listed?.record);
+        if (read !== wroteKind) {
+          throw new Error(
+            `EVIDENCE_KEEPS_FAILURE_KIND: scanListed must keep diagnostics.failure_kind; wrote ${wroteKind}, listed ${listed === undefined ? 'no such run' : read}`,
           );
         }
       },

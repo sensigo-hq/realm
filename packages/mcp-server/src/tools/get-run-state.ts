@@ -65,6 +65,10 @@ import {
   type DisclosureSet,
   type NextActionsStatus,
   failedRequestSends,
+  failureTextShape,
+  terminalReasonHidingFailureText,
+  abortMessageHidingFailureText,
+  type RunRecord,
 } from '@sensigo/realm';
 import { mcpHostOf } from './start-run.js';
 import type { McpDoor } from '../door.js';
@@ -88,6 +92,7 @@ import {
   type OperatorRoute,
   type PollReason,
   type WithPersonBlock,
+  FAILURE_TEXT_SHAPED,
   replySubject,
   setForSubject,
   SAFE_TOOL_CONSTANT_RUNLESS,
@@ -881,9 +886,18 @@ export interface RunStateSummary {
  * load the project's code — its code first (or that it carries none), then the loader's message
  * through the one escaped, bounded value renderer (E1 (b)).
  */
-function loadFailureWarning(workflowId: string, code: LoadErrorCode, err: unknown): string {
+function loadFailureWarning(
+  workflowId: string,
+  code: LoadErrorCode,
+  err: unknown,
+  hideFailureText = false,
+): string {
   const message = err instanceof Error ? err.message : String(err);
-  return `this server could not load the project code for workflow '${workflowId}' (${code === 'uncoded' ? 'no error code' : code}): ${escapedBoundedValue(message)}; no step can be run or advanced from this server until it loads.`;
+  // Gap 2, unit (iv-b1) correction 1: under the failure-text setting `hidden`, the text the project's
+  // code threw while loading is a failure's words: its shape, N its length as thrown, in Realm's
+  // sentence; the code stays.
+  const shown = hideFailureText ? failureTextShape(message) : escapedBoundedValue(message);
+  return `this server could not load the project code for workflow '${workflowId}' (${code === 'uncoded' ? 'no error code' : code}): ${shown}; no step can be run or advanced from this server until it loads.`;
 }
 
 /** #872 (b1): a refused `cursor` — the agent's own call, fixed by the agent (`VALIDATION_CURSOR`). */
@@ -989,6 +1003,52 @@ export const RUN_STATE_PLAN = replyPlanOf([
 ]);
 
 /**
+ * Gap 2, unit (iv-b1): the run's drive failures with each entry's message shown as its shape — the
+ * record's text measured, nothing else changed. `get_run_state` shows these under the failure-text
+ * setting `hidden`, and judges `run_health` on them, so the `drive_failing` reason carries the shape
+ * in Realm's own sentence.
+ */
+function driveFailuresHidingText(
+  field: NonNullable<RunRecord['drive_failures']>,
+): NonNullable<RunRecord['drive_failures']> {
+  return {
+    ...field,
+    entries: field.entries.map((entry) =>
+      typeof entry.message === 'string'
+        ? { ...entry, message: failureTextShape(entry.message) }
+        : entry,
+    ),
+  };
+}
+
+/**
+ * Gap 2, unit (iv-b1): the dotted paths of the fields `get_run_state` shaped under the failure-text
+ * setting — the walk's own spelling (`failures[0].message`) — for the receipt.
+ */
+function failureTextPaths(reply: {
+  terminalReasonShaped: boolean;
+  failures: readonly FailureView[];
+  driveFailures?: DriveFailuresView;
+  runHealth: readonly RunHealthFinding[];
+  abortMessageShaped: boolean;
+  loadWarningShaped: boolean;
+}): string[] {
+  return [
+    ...(reply.terminalReasonShaped ? ['terminal_reason'] : []),
+    ...reply.failures.flatMap((f, i) => ('message' in f ? [`failures[${i}].message`] : [])),
+    ...(reply.driveFailures?.entries ?? []).flatMap((e, i) =>
+      typeof e.message === 'string' ? [`drive_failures.entries[${i}].message`] : [],
+    ),
+    ...reply.runHealth.flatMap((f, i) =>
+      f.kind === 'drive_failing' ? [`run_health[${i}].reason`] : [],
+    ),
+    ...(reply.abortMessageShaped ? ['abort_context.abort_message'] : []),
+    // Correction 1: the list's own path — the walk does not descend into a list of strings by row.
+    ...(reply.loadWarningShaped ? ['warnings'] : []),
+  ];
+}
+
+/**
  * Business logic for the get_run_state tool.
  * Returns a structured summary of the run without the full evidence array.
  */
@@ -1020,6 +1080,19 @@ export async function handleGetRunState(
     throw runReadError(err);
   });
   const run = snap.record;
+  // Gap 2, unit (iv-b1): under the door's failure-text setting `hidden`, this composer shows every
+  // failure's words as their shape, each field once, from the record (`failures[].message`,
+  // `drive_failures.entries[].message`, the `drive_failing` reason, a handler's abort message and
+  // `terminal_reason`, judged by the seal arm); the walk shapes nothing more.
+  const hideFailureText = stores.door?.failureText.value === 'hidden';
+  const hiddenDriveFailures =
+    hideFailureText && run.drive_failures !== undefined
+      ? driveFailuresHidingText(run.drive_failures)
+      : undefined;
+  const shownDriveFailures = hiddenDriveFailures ?? run.drive_failures;
+  // Correction 1: whether the project-code load warning in `warnings` was shaped (set where it is
+  // pushed).
+  let loadWarningShaped = false;
 
   // #134 capability-block detection — definition-free (reads capability_blocks + the four step sets),
   // computed once and used both to refine the status (below) and as the advisory array (in the return).
@@ -1182,7 +1255,8 @@ export async function handleGetRunState(
         registry = undefined;
         if (stores?.registryProvider !== undefined) {
           loadFailed = err instanceof WorkflowError ? err.code : 'uncoded';
-          warnings.push(loadFailureWarning(run.workflow_id, loadFailed, err));
+          warnings.push(loadFailureWarning(run.workflow_id, loadFailed, err, hideFailureText));
+          if (hideFailureText) loadWarningShaped = true;
         }
       }
       pending = describePending(definition, snap, registry);
@@ -1301,13 +1375,20 @@ export async function handleGetRunState(
   // finalized BEFORE this line runs — nothing below this point may write back to it.
   const runHealth: RunHealthFinding[] = run.terminal_state
     ? []
-    : classifyRunHealth(snap, {
-        ...(definition !== undefined ? { definition } : {}),
-        ...(definitionError !== undefined ? { definitionError } : {}),
-        // issue #625 PR-2a (decision C46): a server that can run a step is not told the step is
-        // blocked by another runner's old capability marker.
-        ...(registry !== undefined ? { registry } : {}),
-      });
+    : classifyRunHealth(
+        // Gap 2, unit (iv-b1): judged on the drive failures as shown, so the `drive_failing` reason
+        // is Realm's sentence around the message's shape (one call; nothing else differs).
+        hiddenDriveFailures !== undefined
+          ? { ...snap, record: { ...run, drive_failures: hiddenDriveFailures } }
+          : snap,
+        {
+          ...(definition !== undefined ? { definition } : {}),
+          ...(definitionError !== undefined ? { definitionError } : {}),
+          // issue #625 PR-2a (decision C46): a server that can run a step is not told the step is
+          // blocked by another runner's old capability marker.
+          ...(registry !== undefined ? { registry } : {}),
+        },
+      );
   if (runHealth.length > 0) {
     warnings.push(
       `this run has ${runHealth.length} active run-health finding(s) — see 'run_health' for detail.`,
@@ -1339,6 +1420,24 @@ export async function handleGetRunState(
   const ways = waysNow();
   const agentAction = agentActionOf(undefined, 'ok', ways.rendered);
 
+  // Gap 2, unit (iv-b1): the failure fields as shown — under `hidden`, each failure's words as their
+  // shape, N the record's length (never the 500-character cut's); under `shown`, today's fields.
+  const failures = composeFailures(run, hideFailureText ? { message: failureTextShape } : {});
+  const shapedReason = hideFailureText ? terminalReasonHidingFailureText(run) : undefined;
+  const shapedAbortMessage = hideFailureText ? abortMessageHidingFailureText(run) : undefined;
+  const driveFailuresShown =
+    shownDriveFailures !== undefined ? boundedDriveFailures(shownDriveFailures) : undefined;
+  const shapedPaths = hideFailureText
+    ? failureTextPaths({
+        terminalReasonShaped: shapedReason !== undefined,
+        failures,
+        ...(driveFailuresShown !== undefined ? { driveFailures: driveFailuresShown } : {}),
+        runHealth: runHealthShown.shown,
+        abortMessageShaped: shapedAbortMessage !== undefined,
+        loadWarningShaped,
+      })
+    : [];
+
   /* eslint-disable-next-line no-restricted-syntax --
    * issue #367 (part 2), AUTHORIZED: this is an envelope ECHO of a stored value, not a writer.
    * Nothing here reaches a store — the object is the MCP response shape.
@@ -1354,7 +1453,7 @@ export async function handleGetRunState(
     completed_steps: run.completed_steps,
     in_progress_steps: run.in_progress_steps,
     failed_steps: run.failed_steps,
-    failures: composeFailures(run),
+    failures,
     skipped_steps: run.skipped_steps,
     // Suppress a stale/leftover pending_gate on a terminal record (the #282 class) — never
     // surface a gate that no longer means anything live.
@@ -1365,7 +1464,9 @@ export async function handleGetRunState(
     updated_at: run.updated_at,
     params: run.params,
     // #872 (b1): a reason over 500 characters is named by its length (I4), never echoed whole.
-    ...(run.terminal_reason !== undefined ? { terminal_reason: capText(run.terminal_reason) } : {}),
+    ...(run.terminal_reason !== undefined
+      ? { terminal_reason: capText(shapedReason ?? run.terminal_reason) }
+      : {}),
     // issue #558 PR-C: the supersede link — the ONE explicit route onto this surface (there is no
     // `keyof RunRecord` disclosure registry to join, so the cell below is the parity guard).
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
@@ -1406,10 +1507,15 @@ export async function handleGetRunState(
     // issue #401: failed drive attempts, verbatim and additively — absent, never null, so an
     // agent can tell "no failures" from "this surface does not report them".
     // #872 (b1) correction 1 (H7): each entry's billed requests at most three, then the count.
-    ...(run.drive_failures !== undefined
-      ? { drive_failures: boundedDriveFailures(run.drive_failures) }
+    ...(driveFailuresShown !== undefined ? { drive_failures: driveFailuresShown } : {}),
+    ...(run.aborted_at !== undefined
+      ? {
+          abort_context:
+            shapedAbortMessage !== undefined
+              ? { ...run.aborted_at, abort_message: shapedAbortMessage }
+              : run.aborted_at,
+        }
       : {}),
-    ...(run.aborted_at !== undefined ? { abort_context: run.aborted_at } : {}),
     next_actions: ways.next_actions,
     next_actions_status: nextActionsStatus,
     ...(agentAction !== undefined ? { agent_action: agentAction } : {}),
@@ -1482,6 +1588,8 @@ export async function handleGetRunState(
     ...(cleanupPending !== undefined ? { cleanup_pending: cleanupPending } : {}),
     ...(waitingOnAnswer.length > 0 ? { waiting_on_answer: waitingOnAnswer } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
+    // Gap 2, unit (iv-b1): what this composer shaped, for the receipt (never serialized).
+    ...(shapedPaths.length > 0 ? { [FAILURE_TEXT_SHAPED]: shapedPaths } : {}),
   };
 }
 

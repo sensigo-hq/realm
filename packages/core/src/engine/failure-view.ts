@@ -56,8 +56,16 @@ const stringOr = (value: unknown): string | undefined =>
  * One view per name in `failed_steps`, in the list's order (a name appears once: resume is the one
  * remover, and a failed step can be neither claimed nor reclaimed). A word that is not a string is
  * read as absent; so is an `attempt` that is not a number.
+ *
+ * Gap 2, unit (iv-b1): `message` makes each view's message from the entry's error text as recorded
+ * (default `capText`); `get_run_state` under the failure-text setting `hidden` passes the shape, so
+ * its length is the record's, never the 500-character cut's.
  */
-export function composeFailures(run: RunRecord): FailureView[] {
+export function composeFailures(
+  run: RunRecord,
+  options: { message?: (text: string) => string } = {},
+): FailureView[] {
+  const messageOf = options.message ?? capText;
   const failed: unknown = run.failed_steps;
   const names = Array.isArray(failed)
     ? failed.filter((name): name is string => typeof name === 'string')
@@ -76,7 +84,7 @@ export function composeFailures(run: RunRecord): FailureView[] {
   return names.map((step): FailureView => {
     const entry = lastFailed.get(step);
     if (entry === undefined) return { step, absent: 'entry_not_found' };
-    const message = capText(entry['error'] as string);
+    const message = messageOf(entry['error'] as string);
     const attempt = typeof entry['attempt'] === 'number' ? entry['attempt'] : undefined;
     // The recorded words, as strings: a newer Realm's word is outside our lists, which is what the
     // reader exists to name, so the record's words are read as the entry's fields' type here.

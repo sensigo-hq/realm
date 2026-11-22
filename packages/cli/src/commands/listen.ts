@@ -41,7 +41,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
-import { Socket } from 'node:net';
+import { Socket, type AddressInfo } from 'node:net';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
@@ -100,6 +100,7 @@ import type {
   DisclosureSet,
   CallbackRegistration,
   CallbackKeyListing,
+  CallbackStore,
 } from '@sensigo/realm';
 import {
   verifyGithub,
@@ -125,6 +126,7 @@ import {
   type ReadContext,
 } from '../lib/run-read-address.js';
 import { answerWait, parseWaitPreference } from '../lib/result-wait.js';
+import { markSignalDeath, type ChildExit } from '../agent/startup-failure.js';
 import {
   loadProjectExtensions,
   onceReleaseLineSink,
@@ -136,6 +138,7 @@ import { openCliHome, type CliHome } from '../lib/home.js';
 import type { CallbackLists } from '../lib/callback/allow-list.js';
 import { declareMasterKey } from '../lib/callback/declare-master-key.js';
 import {
+  CALLBACK_BACKLOG_CAP,
   CALLBACK_HEADER,
   callbackKeyCommand,
   judgeCallbackAddress,
@@ -151,7 +154,14 @@ import {
   listenMasterSummary,
   type ListenMasterSummary,
 } from '../lib/callback/start-lines.js';
-import { REMINDER_POLL_MS, reminderSenderOf, type ReminderSource } from './listen-reminders.js';
+import { makeCallbackPass } from '../lib/callback/delivery-pass.js';
+import {
+  REMINDER_POLL_MS,
+  makePollRunner,
+  reminderSenderOf,
+  type PollRunner,
+  type ReminderSource,
+} from './listen-reminders.js';
 // Gap 1, unit A0: the listing that reads no model call's text.
 import { scanListedRuns, type ListedRecord } from '@sensigo/realm';
 
@@ -169,10 +179,11 @@ export interface Logger {
 
 /**
  * Result of an agent spawn — a pid on success, or an error to record as spawn_failed. R1.2: with a
- * pid, `exited` (when the spawner gives one) settles once the agent's process has exited.
+ * pid, `exited` (when the spawner gives one) settles once the agent's process has exited. Q1 (#592)
+ * unit c: with how it ended, Node's `'exit'` pair — the code, or the signal that killed it.
  */
 export type SpawnResult =
-  | { pid: number; error?: never; exited?: Promise<void> }
+  | { pid: number; error?: never; exited?: Promise<ChildExit> }
   | { error: Error; pid?: never; exited?: never };
 
 /** Injected I/O dependencies — everything that touches disk, the clock, or child processes. */
@@ -225,6 +236,12 @@ export interface ListenDeps {
 /** R1.3 C2: no callback address is allowed until a later unit gives the lists. */
 const NO_CALLBACK_LISTS: CallbackLists = { public: [], private: [] };
 
+/**
+ * R1.3 C3b2: how often the callback sender looks for due callbacks, in ms. It is the only way a run
+ * another process finished is noticed; an agent this process started wakes it when it exits.
+ */
+export const CALLBACK_POLL_MS = 30_000;
+
 /** A mounted workflow: its definition, trigger, source directory, and pre-resolved secret. */
 export interface WorkflowEntry {
   path: string;
@@ -267,6 +284,12 @@ export interface HandlerOptions {
    * a wait the stop cuts ends when its connection closes, a turn after the cut, and logs its line.
    */
   waits?: Set<Promise<void>>;
+  /**
+   * R1.3 C3b2: called once for each agent this handler started, after that agent's process has
+   * exited (never for a spawner that gives no `exited`, nor for a start that failed). `startListen`
+   * owns it: it wakes the callback sender, so a finished run's callback goes out at once.
+   */
+  onAgentExit?: () => void;
 }
 
 const DEFAULT_HANDLER_OPTIONS: HandlerOptions = {
@@ -484,20 +507,26 @@ export function makeListenHandler(
     disclosureProvider: deps.disclosureProvider ?? cliDisclosureProvider,
     logger: deps.logger,
     cache: new PhaseCache(),
+    // R1.3 C3b1: the read address says how a finished run's callback stands.
+    ...(deps.runStore.callbacks ? { callbacks: deps.runStore.callbacks } : {}),
   };
   // R1.3 C2: the (workflow, host, state, master fingerprint) whose no-key fix this process has said.
   const fixesSaid = new Set<string>();
 
   /**
    * R1.3 C2 (the door), step 9b: a request that names a callback address is refused (the reply) or
-   * may register it (the registration). It reads the stored keys and nothing else.
+   * may register it (the registration). It reads the stored keys and, last (C3b1), how many
+   * callbacks are waiting: at the cap it is refused `'backlog'` (the 503).
    */
   const callbackDoor = async (
     entry: WorkflowEntry,
     path: string,
     value: string,
   ): Promise<
-    { registration: CallbackRegistration } | { refused: Record<string, unknown> } | 'store_failed'
+    | { registration: CallbackRegistration }
+    | { refused: Record<string, unknown> }
+    | 'backlog'
+    | 'store_failed'
   > => {
     const workflow = entry.definition.id;
     const callbacks = deps.runStore.callbacks ?? undefined;
@@ -546,6 +575,28 @@ export function makeListenHandler(
         key,
         cmd: callbackKeyCommand(entry.workflowDir, address.host),
       });
+    }
+    // C3b1: the cap, judged last; every pending row counts, a running run's too.
+    let pending: number;
+    try {
+      pending = await callbacks.countPending();
+    } catch (err) {
+      deps.logger.error('webhook: callback backlog could not be counted', {
+        path,
+        workflow,
+        host: address.host,
+        error: String(err),
+      });
+      return 'store_failed';
+    }
+    if (pending >= CALLBACK_BACKLOG_CAP) {
+      deps.logger.warn('webhook: callback backlog full', {
+        path,
+        workflow,
+        host: address.host,
+        pending,
+      });
+      return 'backlog';
     }
     return { registration: { url: value, host: address.host, webhook_id: randomUUID() } };
   };
@@ -907,6 +958,10 @@ export function makeListenHandler(
           respond(res, 500, { error: 'store_error', status: 'failed' });
           return;
         }
+        if (door === 'backlog') {
+          respond(res, 503, { error: 'callback_backlog' });
+          return;
+        }
         if ('refused' in door) {
           respond(res, 400, door.refused);
           return;
@@ -1025,6 +1080,8 @@ export function makeListenHandler(
       // never a generic 500 that strands the run unmarked. issue #744: awaited inside the same
       // `try`, so a start Node refuses later, or a rejection, takes the same path.
       let spawnResult: SpawnResult;
+      // Q1 (#592) unit c: a startup mark's `elapsed_ms` is measured from here.
+      const spawnedAt = performance.now();
       try {
         spawnResult = await deps.spawnAgent(run.id, entry.workflowDir);
       } catch (err) {
@@ -1080,17 +1137,38 @@ export function makeListenHandler(
         respond(res, failed.status, failed.body);
         return;
       }
+      // R1.3 C3b2: the agent's exit wakes the callback sender (`exited` never rejects); the catch
+      // keeps a throwing hook out of the handler.
+      const onExit = opts.onAgentExit;
+      if (onExit !== undefined && spawnResult.exited !== undefined) {
+        void spawnResult.exited.then(onExit).catch(() => {});
+      }
 
       // Record agent pid/started_at (non-critical metadata), then the dedup record.
+      // Q1 (#592) unit c: the record of listen's own last write to the run is the baseline its startup
+      // mark compares against — the one this write returns (it bumps the version), or the created run
+      // when it failed.
+      let baseline: RunRecord = { ...run };
       try {
         run.agent_pid = spawnResult.pid;
         // #715 (b) (03 §A.4): the store's clock, as every instant a run record holds.
         run.agent_started_at = deps.runStore.clock.now().toISOString();
-        await deps.runStore.update(run);
+        baseline = (await deps.runStore.update(run)).record;
       } catch (err) {
         deps.logger.error('webhook: failed to record agent pid', {
           run_id: run.id,
           error: String(err),
+        });
+      }
+      // Q1 (#592) unit c: a child killed by a SIGNAL before it wrote anything to the run leaves a
+      // startup mark (one compare-and-set write of the baseline; an exit code is never marked). The
+      // write joins `waits`, so a stop awaits it; a child whose end reaches listen after the stop has
+      // resolved is not marked, because listen has exited.
+      if (spawnResult.exited !== undefined) {
+        void spawnResult.exited.then((exit) => {
+          const write = markSignalDeath(deps.runStore, deps.logger, baseline, exit, spawnedAt);
+          opts.waits?.add(write);
+          void write.finally(() => opts.waits?.delete(write));
         });
       }
       if (dedupId !== undefined && dedupStore !== undefined) {
@@ -1608,6 +1686,43 @@ export function makeSweepRunner(
   };
 }
 
+/**
+ * R1.3 C3b2: the callback sender of a server listening on `ownPort`: C3a's pass over `callbacks`, run
+ * one pass at a time by the poll runner. Every line the pass says is printed with the `listen: `
+ * prefix the start lines have.
+ */
+function callbackRunnerOf(
+  routes: Map<string, WorkflowEntry>,
+  deps: ListenDeps,
+  callbacks: CallbackStore,
+  lists: CallbackLists,
+  ownPort: number,
+): PollRunner {
+  const byWorkflow = new Map([...routes.values()].map((entry) => [entry.definition.id, entry]));
+  const prefixed =
+    (level: 'info' | 'warn' | 'error') =>
+    (msg: string, data?: unknown): void =>
+      deps.logger[level](`listen: ${msg}`, data);
+  const pass = makeCallbackPass({
+    callbacks,
+    // As the read address: only the store's own not-found says the run is gone.
+    getRun: async (runId) => {
+      try {
+        return (await deps.runStore.get(runId)).record;
+      } catch (err) {
+        if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') return undefined;
+        throw err;
+      }
+    },
+    entryOf: (workflowId) => byWorkflow.get(workflowId),
+    disclosureProvider: deps.disclosureProvider ?? cliDisclosureProvider,
+    lists,
+    ownPort,
+    logger: { info: prefixed('info'), warn: prefixed('warn'), error: prefixed('error') },
+  });
+  return makePollRunner(pass, 'callbacks', deps.logger);
+}
+
 function emptySweepResult(): SweepResult {
   return { scanned: 0, enacted: 0, skipped_unregistered: 0, skipped_locked: 0, errors: 0 };
 }
@@ -1633,6 +1748,10 @@ export function startListen(
   // R1.2: aborted in the first signal's turn, with the flip above; every wait is answered then.
   const stop = new AbortController();
   const waits = new Set<Promise<void>>();
+  // R1.3 C3b2: the callback sender, built once the server listens (below); the handler is built first,
+  // so its agent-exit hook reads this reference when it is called.
+  let callbackRunner: PollRunner | undefined;
+  let callbackTimer: NodeJS.Timeout | undefined;
   const handler = makeListenHandler(routes, deps, {
     maxConcurrent: options.maxConcurrent,
     maxBodyBytes: options.maxBodyBytes,
@@ -1643,6 +1762,7 @@ export function startListen(
     maxWaiting: options.maxWaiting ?? DEFAULT_HANDLER_OPTIONS.maxWaiting,
     stopSignal: stop.signal,
     waits,
+    onAgentExit: () => void callbackRunner?.wake(),
   });
   // #744: the last request handed to the handler on each socket; the 'clientError' listener reads
   // it.
@@ -1842,7 +1962,8 @@ export function startListen(
   let stopped: Promise<void> | undefined;
   /** While the drain runs: ends it now and cuts everything (a second signal). */
   let endDrain: (() => void) | undefined;
-  /** #597 D3b: ends the wait for a reminder pass under way (a second signal). */
+  /** #597 D3b, R1.3 C3b2: ends the one wait for the reminder and callback passes under way (a second
+   *  signal). */
   let endPassWait = (): void => {};
   let cut = 0;
   const shutdown = (reason: string): Promise<void> => {
@@ -1852,12 +1973,16 @@ export function startListen(
     if (sweepTimer !== undefined) clearInterval(sweepTimer);
     sweeper?.stop();
     if (reminderTimer !== undefined) clearInterval(reminderTimer);
+    if (callbackTimer !== undefined) clearInterval(callbackTimer);
     // #597 D3b: a reminder pass under way starts no new lease or probe; it is waited for at the same
     // time as the grace, and no longer (the drain and the grace from this signal), or until a second
-    // signal.
-    const passUnderWay = reminders?.stop();
+    // signal. R1.3 C3b2: a callback pass under way finishes the row it is on and starts no other;
+    // ONE wait covers both passes (a second wait would overwrite `endPassWait`).
+    const passesUnderWay = [reminders?.stop(), callbackRunner?.stop()].filter(
+      (pass): pass is Promise<void> => pass !== undefined,
+    );
     const passWait =
-      passUnderWay === undefined
+      passesUnderWay.length === 0
         ? Promise.resolve()
         : new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, (drainSeconds + graceSeconds) * 1000);
@@ -1865,7 +1990,7 @@ export function startListen(
               clearTimeout(timer);
               resolve();
             };
-            void passUnderWay.then(endPassWait);
+            void Promise.all(passesUnderWay).then(endPassWait);
           });
     // R1.2: the waits too, in this turn and before any drain: none is held through `--shutdown-drain`.
     stop.abort();
@@ -1926,6 +2051,17 @@ export function startListen(
       if (reminders !== undefined && !stopping) {
         void reminders.wake();
         reminderTimer = setInterval(() => void reminders.wake(), REMINDER_POLL_MS);
+      }
+      // R1.3 C3b2: the callback sender, only with an allow-list flag and a store that keeps callbacks,
+      // and not once the stop has begun. Built here, because its own port is the bound one
+      // (`--port 0` is accepted). No pass now: a callback due from a previous process would print its
+      // line before the start lines; the first pass is the first tick or an agent's exit.
+      const callbacks = deps.runStore.callbacks;
+      if (deps.callbackLists !== undefined && callbacks != null && !stopping) {
+        const ownPort = (server.address() as AddressInfo).port;
+        const runner = callbackRunnerOf(routes, deps, callbacks, deps.callbackLists, ownPort);
+        callbackRunner = runner;
+        callbackTimer = setInterval(() => void runner.wake(), CALLBACK_POLL_MS);
       }
       resolve({ server, shutdown });
     });
@@ -2032,7 +2168,9 @@ export function defaultSpawnAgent(
       });
       // R1.2: made here, at the spawn, so an exit before any wait begins is still seen: a listener
       // added after the child has exited never fires.
-      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      const exited = new Promise<ChildExit>((resolve) =>
+        child.once('exit', (code, signal) => resolve({ code, signal })),
+      );
       child.on('error', (err: Error) => {
         if (!settled) {
           settle({ error: err });

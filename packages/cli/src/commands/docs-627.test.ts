@@ -621,6 +621,7 @@ describe('#627 W — the other pages W changed', () => {
     );
     // Correction 2 (6.9, 4.1, 4.5): executed by door-627 :: "(A4) — `realm-mcp --gate-answers
     // withheld` refuses the start" and its 4.1 cells (the variables judged; the start line on stderr).
+    // Gap 2 (iv-b1): `REALM_MCP_FAILURE_TEXT` by mcp-server failure-text-iv-b1's realm-mcp bin cells.
     // #616 PR-2a (ii-a): "It opens `~/.realm` itself, the same home every `realm` command uses." —
     // executed by holder-625-journeys.test.ts (the program on a scratch HOME; the run read from
     // that HOME's `.realm/runs`) and docs-pages-625-guides.test.ts (a workflow `realm workflow
@@ -628,7 +629,7 @@ describe('#627 W — the other pages W changed', () => {
     // run of the paragraph, so the one claim pins its place too.
     claim(
       'docs/reference/cli/realm-mcp-and-serve.md',
-      'The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It opens `~/.realm` itself, the same home every `realm` command uses. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr, and the same two lines as `realm mcp` for an app that shows no forms (its remedy naming `REALM_MCP_GATE_ANSWERS`) and for `offered`.',
+      'The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It opens `~/.realm` itself, the same home every `realm` command uses. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS`, `REALM_MCP_FORM_WAIT_SECONDS` and `REALM_MCP_FAILURE_TEXT` (the last added after version 0.50.0), and prints its start line on stderr, and the same two lines as `realm mcp` for an app that shows no forms (its remedy naming `REALM_MCP_GATE_ANSWERS`) and for `offered`.',
     );
     // #616 PR-2a (ii-a): the CHANGELOG's line — "its own file" executed by docs-examples-625's cell
     // (the package's `bin` is the entry the CLI's tests resolve) and every spawn through

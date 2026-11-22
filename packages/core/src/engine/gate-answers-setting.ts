@@ -111,8 +111,13 @@ export function judgeGateAnswers(
   };
 }
 
-/** The "also set" clause of a start line or `--check`: every other source that was set, with its value. */
-export function alsoSetClause(setting: GateAnswersSetting): string {
+/**
+ * The "also set" clause of a start line or `--check`: every other source that was set, with its
+ * value. Gap 2, unit (iv-b1): the failure-text setting's lines use it too.
+ */
+export function alsoSetClause(setting: {
+  alsoSet: readonly { source: Source; value: string }[];
+}): string {
   if (setting.alsoSet.length === 0) return '';
   const list = setting.alsoSet.map((a) => `${a.source.ref} = ${a.value}`).join(', ');
   return `; also set: ${list} — the most restrictive value wins`;

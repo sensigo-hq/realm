@@ -150,6 +150,9 @@ export interface DisclosureTally {
   /** H-11': whether the walk withheld the values, and a non-empty question. */
   withheld: boolean;
   questionWithheld: boolean;
+  /** Gap 2, unit (iv-b1): whether the walk met a field its composer shaped under the failure-text
+   *  setting (`WalkOptions.failureTextShaped`). */
+  failureText: boolean;
 }
 
 /** Options of a walk. */
@@ -163,6 +166,14 @@ export interface WalkOptions {
    * failed or changed manifest (never `no_manifest` or `embedder_none`).
    */
   withhold?: WithheldCause;
+  /**
+   * Gap 2, unit (iv-b1): the dotted paths of the fields a composer showed as their shape before the
+   * walk, under the MCP door's failure-text setting `hidden` (`get_run_state`'s failure words). The
+   * walk shapes nothing more: it lists each path it meets in the receipt's `shaped`, and the receipt
+   * then says `failure_text: 'withheld'`. A path the walk does not meet (an entry the reply ceiling
+   * cut) is not listed.
+   */
+  failureTextShaped?: ReadonlySet<string>;
 }
 
 /** The causes the declared values are withheld for (H-7''): a manifest Realm was told about that
@@ -221,6 +232,8 @@ interface WalkContext {
   readonly stack: Set<object>;
   /** H-11': the cause the values are withheld for, when they are. */
   readonly withhold: WithheldCause | undefined;
+  /** Gap 2, unit (iv-b1): the paths a composer shaped under the failure-text setting. */
+  readonly failureTextShaped?: ReadonlySet<string>;
 }
 
 /** How a value subtree is shown. */
@@ -243,6 +256,7 @@ function newTally(audience: DisclosureAudience): DisclosureTally {
     question: false,
     withheld: false,
     questionWithheld: false,
+    failureText: false,
   };
 }
 
@@ -336,6 +350,14 @@ export function discloseLeaf(text: string, set: DisclosureSet, tier: DisclosureT
 
 function noteShaped(ctx: WalkContext, path: string): void {
   if (!ctx.tally.shaped.includes(path)) ctx.tally.shaped.push(path);
+}
+
+/** Gap 2, unit (iv-b1): a field its composer shaped under the failure-text setting, listed once. */
+function noteFailureText(ctx: WalkContext, path: string): void {
+  if (ctx.failureTextShaped?.has(path) !== true) return;
+  noteShaped(ctx, path);
+  ctx.tally.shapedCount += 1;
+  ctx.tally.failureText = true;
 }
 
 /** Walks a value subtree: every string and key through `disclose`, a credential name's value hidden
@@ -524,6 +546,7 @@ function walkTable(
       return Object.fromEntries(
         entries.map(([key, child]) => {
           const childPath = join(path, key);
+          noteFailureText(ctx, childPath);
           return [key, walkRow(child, rowOf(key, childPath), childPath, depth + 1, ctx)];
         }),
       );
@@ -535,6 +558,7 @@ function walkTable(
     for (const [key, child] of entries) {
       if (Object.hasOwn(derived, key)) continue;
       const childPath = join(path, key);
+      noteFailureText(ctx, childPath);
       const before = hiddenTotal(ctx.tally);
       shown.set(key, walkRow(child, rowOf(key, childPath), childPath, depth + 1, ctx));
       if (hiddenTotal(ctx.tally) > before) hid.add(key);
@@ -577,6 +601,9 @@ export function discloseByTable(
     onUnclassified: options.onUnclassified,
     stack: new Set(),
     withhold: options.withhold,
+    ...(options.failureTextShaped !== undefined
+      ? { failureTextShaped: options.failureTextShaped }
+      : {}),
   };
   if (options.withhold !== undefined) tally.withheld = true;
   return { value: walkTable(value, table, '', 0, ctx), tally };
@@ -644,6 +671,9 @@ export interface DisclosureReceipt {
   /** H-11': `withheld` when the values were shown as their shapes because the declared values
    *  could not be read or changed (beside `declared` and `declared_cause`). */
   values?: 'withheld';
+  /** Gap 2, unit (iv-b1): `withheld` when a failure's words were shown as their shape under the MCP
+   *  door's failure-text setting (`hidden`); the paths are in `shaped`. */
+  failure_text?: 'withheld';
   shaped?: string[];
   /** The sources of what was hidden — `private` only. */
   members?: string[];
@@ -666,6 +696,7 @@ export function disclosureReceipt(set: DisclosureSet, tally: DisclosureTally): D
         ? { question: 'declared_only' as const }
         : {}),
     ...(tally.withheld ? { values: 'withheld' as const } : {}),
+    ...(tally.failureText ? { failure_text: 'withheld' as const } : {}),
     // I-9b: the shaped paths on every audience that shaped anything (a broadcast always says them).
     ...(tally.audience === 'broadcast' || tally.shapedCount > 0
       ? { shaped: [...tally.shaped] }

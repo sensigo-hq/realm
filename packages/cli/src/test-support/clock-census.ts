@@ -107,6 +107,17 @@ export const CENSUS: Record<string, Entry> = {
     "the failed-attempt sidecar line's own stamp (a log), compared with nothing on the run",
   ],
   'cli/src/agent/run-agent.ts#validationWedgeEntry#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/agent/startup-failure.ts#markSignalDeath#clock.now()': [
+    1,
+    'event',
+    "Q1 (#592) unit c: listen's startup mark's instant (drive_failures[].at), written with the entry (02 §D.2)",
+  ],
+  'cli/src/agent/startup-failure.ts#markSignalDeath#performance.now()': [1, 'duration', MONOTONIC],
+  'cli/src/agent/startup-failure.ts#recordStartupFailure#clock.now()': [
+    1,
+    'event',
+    "Q1 (#592) unit c: the worker's startup mark's instant (drive_failures[].at), written with the entry (02 §D.2)",
+  ],
   'cli/src/agent/step-cache-choices.ts#chooseStepCaches#Date.now()': [
     1,
     'outside',
@@ -143,6 +154,7 @@ export const CENSUS: Record<string, Entry> = {
     'event',
     "agent_started_at, on the store's clock (03 §A.4)",
   ],
+  'cli/src/commands/listen.ts#handle#performance.now()': [1, 'duration', MONOTONIC],
   'cli/src/commands/run.ts#recordChange#performance.now()': [2, 'duration', MONOTONIC],
   'cli/src/commands/watch.ts#registerFile#new Date()': [1, 'outside', "a watch log line's stamp"],
   'cli/src/commands/watch.ts#renderProfilesGone#new Date()': [
@@ -264,9 +276,9 @@ export const CENSUS: Record<string, Entry> = {
   ],
   'core/src/engine/execution-loop.ts#elapsedCapMs#performance.now()': [1, 'duration', MONOTONIC],
   'core/src/engine/execution-loop.ts#executeStepBody#clock.now()': [
-    7,
+    8,
     'event',
-    "a step's evidence instants (started, completed, settled, the abort, the compensating unclaim, the context's capture), written with them",
+    "a step's evidence instants (started, completed, settled, the abort, the model failure's, the compensating unclaim, the context's capture), written with them",
   ],
   'core/src/engine/execution-loop.ts#executeStepBody#performance.now()': [1, 'duration', MONOTONIC],
   'core/src/store/take-reading.ts#takeRawReading#clock.now()': [

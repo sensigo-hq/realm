@@ -1130,7 +1130,7 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
 
   it('7b. lists NOTHING for a healthy run at age 0', async () => {
     // (a) red when a run that can go on is listed; (b) prints the output.
-    expect(await stuckList([healthy])).toBe('No stuck runs found (threshold 24h).');
+    expect(await stuckList([healthy])).toBe('No stuck runs found (threshold 24h; owed work 1m).');
   });
 
   it('8a. a guard awaiting settlement at age 0 is NOT listed (advance is offered: it is not stuck, and the kind has no label)', async () => {
@@ -1151,7 +1151,9 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
     };
     // (a) red when `guard_awaiting_settlement` selects a run (a silent line at age 0); (b) prints
     //     the output.
-    expect(await stuckList([guarded], d)).toBe('No stuck runs found (threshold 24h).');
+    expect(await stuckList([guarded], d)).toBe(
+      'No stuck runs found (threshold 24h; owed work 1m).',
+    );
   });
 
   const badTrust: WorkflowDefinition['steps'][string] = {
@@ -1171,7 +1173,7 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
     // (a) red when `trust_value_invalid` selects a run on its own (a silent line); (b) prints the
     //     output.
     expect(await stuckList([live({ id: 'run-trust-go' })], d)).toBe(
-      'No stuck runs found (threshold 24h).',
+      'No stuck runs found (threshold 24h; owed work 1m).',
     );
   });
 

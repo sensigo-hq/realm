@@ -85,6 +85,8 @@ RealmMcpServerOptions · type · public
       gateAnswersFlag?: string;
       formWaitSeconds?: number;
       formWaitSecondsFlag?: string;
+      failureText?: 'shown' | 'hidden';
+      failureTextFlag?: string;
       statelessHttp?: boolean;
       onSessionWithoutForms?: () => void;
       deprecationNotifications?: boolean;
@@ -113,6 +115,9 @@ createRealmMcpServer · value · public
   uses McpServer (@modelcontextprotocol/sdk 1)
 
 effectiveGateAnswers · value · internal
+failureTextBinRefusal · value · internal
+failureTextCheckLine · value · internal
+failureTextStartLine · value · internal
 formWaitBinRefusal · value · internal
 formWaitInertRefusal · value · internal
 formWaitNoFormsRefusal · value · internal

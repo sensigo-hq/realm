@@ -367,8 +367,8 @@ describe('fix 1, unit 1 — check 7: row 5, `$settlement`', () => {
     //     its did-you-mean is not computed; (2) prints both lists.
     expect(findings(yaml).messages).toEqual([
       "Step 'refund': input_map 'amount' reads 'context.resources.$settlement.propose.failled', " +
-        "but '$settlement.propose' holds only 'failed', 'settled_by_default' and " +
-        `'validation_rejections'. Did you mean 'failed'? (line ${lineOf(yaml, 'amount: ')})`,
+        "but '$settlement.propose' holds only 'failed', 'settled_by_default', " +
+        `'validation_rejections' and 'failure_kind'. Did you mean 'failed'? (line ${lineOf(yaml, 'amount: ')})`,
     ]);
   });
 

@@ -458,7 +458,7 @@ function applyAbortEdge(
   let aborted: RunRecord = {
     ...withSkipped,
     terminal_state: true,
-    terminal_reason: `Handler '${step}' aborted the run: ${abort.abortMessage}`,
+    terminal_reason: handlerAbortReason(step, abort.abortMessage),
     aborted_at: { step_id: abort.stepId, abort_message: abort.abortMessage },
   };
 
@@ -523,6 +523,23 @@ const FAIL_CAUSE_MESSAGE_CAP = 256;
 /** Cap on the WHOLE sentence: over it, the sentence keeps whole entries while the next would still
  *  fit, then says how many more failed (F24); no entry is cut (I4). Never longer than this. */
 const FAIL_CAUSE_SENTENCE_CAP = 1024;
+
+/**
+ * The one spelling of a run's cause when one step failed: `Step '<step>' failed: <message>`. Gap 2,
+ * unit (iv-b1): the seal mints it, and `get_run_state` rebuilds it with the message shaped
+ * (`terminalReasonHidingFailureText`), so the legacy-seal classifier's prose stays one sentence.
+ */
+export function stepFailedReason(step: string, message: string): string {
+  return `Step '${step}' failed: ${message}`;
+}
+
+/**
+ * The one spelling of a run's cause when a handler aborted it: `Handler '<step>' aborted the run:
+ * <message>`. Gap 2, unit (iv-b1): minted by the abort edge and rebuilt, shaped, by `get_run_state`.
+ */
+export function handlerAbortReason(step: string, message: string): string {
+  return `Handler '${step}' aborted the run: ${message}`;
+}
 
 /**
  * Renders the run-level cause for a run with MORE THAN ONE distinct failed step (issue #373).
@@ -646,7 +663,7 @@ function applyCompleteOrFailEdge(
           withSkipped.failed_steps,
           failureMessagesWithOverlay(withSkipped.evidence, step, failureMessage),
         )
-      : `Step '${step}' failed: ${failureMessage ?? 'unknown error'}`;
+      : stepFailedReason(step, failureMessage ?? 'unknown error');
   const draft: RunRecord = {
     ...withSkipped,
     terminal_state: isComplete,

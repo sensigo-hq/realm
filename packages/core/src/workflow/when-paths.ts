@@ -197,8 +197,8 @@ function neverReason(
     case 'no_settlement_field':
       return {
         text:
-          `'$settlement.${capText(cause.step)}' holds only 'failed', 'settled_by_default' and ` +
-          `'validation_rejections'`,
+          `'$settlement.${capText(cause.step)}' holds only 'failed', 'settled_by_default', ` +
+          `'validation_rejections' and 'failure_kind'`,
         ...dym,
       };
     case 'no_param':
@@ -219,8 +219,9 @@ function neverReason(
 /**
  * Items 5–6: the `<why>` of a may-be-absent warning, or `undefined` for a leaf that gets none: a
  * presence test, a `$settlement` leaf under the reader's trigger rule (a skipped step has no entry by
- * design), and the step causes whose `depends_on` entry is already refused (the step itself, a step
- * outside the reader's dependencies).
+ * design), `$settlement.<s>.failure_kind` (gap 2, unit (ii-a): absent reads null, as a skipped step's
+ * entry does), and the step causes whose `depends_on` entry is already refused (the step itself, a
+ * step outside the reader's dependencies).
  */
 function absentReason(
   cause: AbsentCause,
@@ -235,6 +236,8 @@ function absentReason(
       return undefined;
     case 'trigger_rule':
       return settlement ? undefined : absentWhy(cause);
+    case 'model_failure_only':
+      return undefined;
     case 'undeclared_field':
       return noGate ? choiceWhy(cause.step) : `step '${capText(cause.step)}' does not declare it`;
     case 'undeclared_param':

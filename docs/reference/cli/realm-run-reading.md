@@ -24,12 +24,12 @@ realm run list --stuck [--older-than <duration>] [--workflow <id>]
 
 Prints one line for each run, newest change first.
 
-| Flag                      | What it does                                                                                                                                                                                                                                                   |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--workflow <id>`         | Lists only runs of this workflow.                                                                                                                                                                                                                              |
-| `--status <phase>`        | Lists only runs in this phase: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`, `aborted`.                                                                                                                                                       |
-| `--stuck`                 | Lists only runs that have a health finding. These findings do not select a run: `completed_with_failed_steps`, `structured_output_downgraded`, `guard_awaiting_settlement`, `trust_value_invalid`, `record_stamped_ahead`. Cannot be combined with `--status`. |
-| `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed for the idle finding (`never_claimed_idle`); every other finding lists its run at any age. Default `24h`.                                                                                |
+| Flag                      | What it does                                                                                                                                                                                                                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--workflow <id>`         | Lists only runs of this workflow.                                                                                                                                                                                                                                            |
+| `--status <phase>`        | Lists only runs in this phase: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`, `aborted`.                                                                                                                                                                     |
+| `--stuck`                 | Lists only runs that have a health finding. These findings do not select a run: `completed_with_failed_steps`, `structured_output_downgraded`, `guard_awaiting_settlement`, `trust_value_invalid`, `record_stamped_ahead`. Cannot be combined with `--status`.               |
+| `--older-than <duration>` | With `--stuck`: how long a run must have been unchanged to be listed for the two age-gated findings, `never_claimed_idle` (default `24h`) and `owed_undriven` (default `1m`, added after version 0.50.0); one value sets both. Every other finding lists its run at any age. |
 
 `--workflow` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
@@ -59,7 +59,7 @@ Each line holds, in order:
 
 On a run in `gate_waiting`, the line then says what `realm agent` recorded of the question's Slack reminders and escalation, in the words of `realm run inspect` below: `reminders: …` and, when there is one, `escalation: …` (added after version 0.49.0).
 
-With `--stuck`, a first line gives the limit, each line has `idle:` and how long ago the run last changed, with the instant, and the end of the line names what was found:
+With `--stuck`, a first line gives the limits (the one value `--older-than` gave, as below, or both defaults: `threshold 24h; owed work 1m`, added after version 0.50.0), each line has `idle:` and how long ago the run last changed, with the instant, and the end of the line names what was found:
 
 ```text
 Stuck runs (threshold 0m):
@@ -69,7 +69,7 @@ b773eb50-728d-40e1-945c-096244c88a36  w2-crown v1  running  2026-10-16T10:53:51.
 8814edbd-f187-4e95-a83b-5a0529fb55d0  price v1  running  2026-10-01T20:15:03.551Z  1 step(s)  idle: 2h 40m ago (2026-10-01T20:15:03Z)
 ```
 
-A line with nothing after `idle:` is an open run with no step in progress that has not changed for the limit or longer: the limit applies to that finding (`never_claimed_idle`) alone, and every other finding lists its run at any age, with its label. A run that cannot go on is listed the moment it cannot, with `<step>=cannot_go_on(<check>)` and `realm run inspect <run-id>`, which prints the refusal and the ways out (added after version 0.47.0). [Run state and health findings](../mcp/run-state-and-health.md) lists every finding.
+A line with nothing after `idle:` is an open run with no step in progress that has not changed for the limit or longer: the limit applies to that finding and to `owed_undriven`, whose own default is one minute (added after version 0.50.0); every other finding lists its run at any age, with its label. A run that cannot go on is listed the moment it cannot, with `<step>=cannot_go_on(<check>)` and `realm run inspect <run-id>`, which prints the refusal and the ways out (added after version 0.47.0). A run whose next work is the engine's, and that has not changed for the limit, ends its line with `<step>=owed_undriven (realm run advance <run-id>)` (added after version 0.50.0). A run whose last drive failed ends its line with `<step>=drive_failing(<kind>)`; a failure that named no step ends it with `drive_failing(<kind>)` alone, as `startup_failure` does when `realm agent` stopped at its own startup checks or `realm listen`'s child was killed before it wrote anything (added after version 0.50.0). [Run state and health findings](../mcp/run-state-and-health.md) lists every finding.
 
 When nothing matches, `list` prints one of:
 

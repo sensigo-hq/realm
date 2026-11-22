@@ -51,7 +51,7 @@ export interface CallbackKeyArgs {
   readonly host: string;
   readonly whsec?: boolean;
   readonly rotate?: boolean;
-  readonly keep?: number;
+  readonly keepPrevious?: number;
   readonly endPrevious?: boolean;
   readonly replace?: boolean;
   readonly delete?: boolean;
@@ -77,12 +77,14 @@ const KEEP_DEFAULT_HOURS = 24;
 const KEEP_MAX_HOURS = 168;
 const NOTHING = 'No key was changed.';
 
-/** `--keep <hours>`: a whole number from 1 to 168, checked when the command line is read. */
+/**
+ * `--keep-previous <hours>`: a whole number from 1 to 168, checked when the command line is read.
+ */
 function parseKeepHours(value: string): number {
   const n = /^[0-9]+$/.test(value) ? Number(value) : Number.NaN;
   if (!(n >= 1 && n <= KEEP_MAX_HOURS))
     throw new InvalidArgumentError(
-      `--keep must be a whole number of hours from 1 to ${KEEP_MAX_HOURS}.`,
+      `--keep-previous must be a whole number of hours from 1 to ${KEEP_MAX_HOURS}.`,
     );
   return n;
 }
@@ -123,8 +125,8 @@ export async function callbackKey(
     return fail(
       'Error: --end-previous goes with --rotate, or alone; it cannot be used with --replace or --delete.',
     );
-  if (args.keep !== undefined && args.rotate !== true)
-    return fail('Error: --keep is used with --rotate only.');
+  if (args.keepPrevious !== undefined && args.rotate !== true)
+    return fail('Error: --keep-previous is used with --rotate only.');
   const dropOnly = args.delete === true || (args.endPrevious === true && args.rotate !== true);
   if (args.whsec === true && dropOnly)
     return fail(
@@ -315,7 +317,7 @@ export async function callbackKey(
       if (clash !== undefined) return clash;
       const r = await keys!.rotate(W, H, {
         candidate: deps.randomKey(),
-        keepSeconds: (args.keep ?? KEEP_DEFAULT_HOURS) * 3600,
+        keepSeconds: (args.keepPrevious ?? KEEP_DEFAULT_HOURS) * 3600,
         ...(args.endPrevious === true ? { endPrevious: true } : {}),
       });
       if (!r.applied) {
@@ -440,9 +442,9 @@ export const callbackKeyCommand = new Command('key')
     'the receiver: its host name or address, with a port if it is not 443 (http:// for plain http)',
   )
   .option('--whsec', 'print the key as whsec_ and the base64 of its text')
-  .option('--rotate', 'make a new key; the old one stays valid for --keep hours')
+  .option('--rotate', 'make a new key; the old one stays valid for --keep-previous hours')
   .option(
-    '--keep <hours>',
+    '--keep-previous <hours>',
     'with --rotate: how long the old key stays valid, 1 to 168 (default 24)',
     parseKeepHours,
   )
