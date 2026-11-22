@@ -46,7 +46,7 @@ realm callback key --delete — option, no value
 realm callback key --end-previous — option, no value
 realm callback key --help — option, short -h, no value
 realm callback key --host — option, takes a value, mandatory
-realm callback key --keep — option, takes a value
+realm callback key --keep-previous — option, takes a value
 realm callback key --replace — option, no value
 realm callback key --rotate — option, no value
 realm callback key --whsec — option, no value

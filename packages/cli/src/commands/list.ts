@@ -8,6 +8,7 @@ import {
   deriveRunPhase,
   RUN_PHASES,
   DEFAULT_IDLE_THRESHOLD_MS,
+  DEFAULT_OWED_THRESHOLD_MS,
   type FailedAttemptStore,
   computeGateDueState,
   reminderScheduleOf,
@@ -118,14 +119,19 @@ export function renderFindingLabel(f: RunHealthFinding): string | undefined {
     // out (R9) — the label is built from the finding's own facts only (the #221 S4 rule).
     case 'cannot_go_on':
       return `${f.step}=cannot_go_on(${f.reason})`;
+    // Q1 (#592) unit f1 (G11): the engine owes the step and nothing has driven the run for the owed
+    // threshold. The residual group below appends the `advance` pointer, the command that runs it.
+    case 'owed_undriven':
+      return `${f.step}=owed_undriven`;
     // These kinds carry no --stuck label, and issue #406 settled why for each — this is a
     // decision, not a status quo. `never_claimed_idle` IS the listing reason itself; the
     // threshold header already says it, and a per-step label would restate the line.
     // `guard_awaiting_settlement` and `trust_value_invalid` (issue #508) reach `listRuns` since
     // issue #729 (the probe's parsed definition is passed), but both are EXCLUDED from --stuck
-    // selection (the filter below): a guard awaiting settlement has `advance` offered — the run
-    // is not stuck — and a refused trust value makes the run `cannot_go_on`, whose label carries
-    // the line. `completed_with_failed_steps` and `structured_output_downgraded` are EXCLUDED too
+    // selection (the filter below): a guard awaiting settlement has `advance` offered, and once
+    // nothing has driven it for the owed threshold `owed_undriven` co-fires and labels the line
+    // (Q1 #592 unit f1) — and a refused trust value makes the run `cannot_go_on`, whose label
+    // carries the line. `completed_with_failed_steps` and `structured_output_downgraded` are EXCLUDED too
     // (issues #302/#316). Each of the four can only co-ride a run selected by some other finding,
     // which renders its own label, so a label here would never be the reason a reader is looking
     // at the line.
@@ -226,9 +232,10 @@ export type StuckDefinitionProbe =
  * @param store             Store holding run records.
  * @param statusFilter      Optional filter — only show runs with this run_phase.
  * @param stuck             Show only runs with a typed run-health finding (issue #221).
- * @param idleThresholdMs   Override for the `never_claimed_idle` age gate (issue #221's
- *                          `--older-than`). Defaults to `DEFAULT_IDLE_THRESHOLD_MS` (24h). `0`
- *                          restores today's unconditional breadth.
+ * @param idleThresholdMs   `--older-than` (issue #221): when given, the age gate of BOTH age-gated
+ *                          findings, `never_claimed_idle` and `owed_undriven` (Q1 #592 unit f1);
+ *                          absent, each keeps its default (`DEFAULT_IDLE_THRESHOLD_MS`, 24h;
+ *                          `DEFAULT_OWED_THRESHOLD_MS`, 1m). `0` lists every such run at any age.
  * @param failedAttemptStore Explicit injection (issue #219) for `--stuck` cause attribution —
  *                          deliberately NOT derived from `store` (no structural typing/duck-typed
  *                          `runsDirPath` probing on the `RunStore` interface, which stays plain
@@ -263,6 +270,13 @@ export async function listRuns(
   // #729 CW-1b part 2: each row's snapshot whole, with the lease facts the store attached.
   const snapshotOf = new Map(snapshots.map((s) => [s.record.id, s]));
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
+  // Q1 (#592) unit f1: one flag, two defaults — `--older-than` sets both limits when given.
+  const effectiveOwedThresholdMs = idleThresholdMs ?? DEFAULT_OWED_THRESHOLD_MS;
+  // The listing's first line names the limits it applied: the one value given, or both defaults.
+  const thresholdWords =
+    idleThresholdMs !== undefined
+      ? formatThreshold(idleThresholdMs)
+      : `${formatThreshold(effectiveIdleThresholdMs)}; owed work ${formatThreshold(effectiveOwedThresholdMs)}`;
 
   let filtered = runs;
   const findingsByRun = new Map<string, RunHealthFinding[]>();
@@ -299,6 +313,7 @@ export async function listRuns(
         probed !== undefined && 'definition' in probed ? probed.definition : undefined;
       const findings = classifyRunHealth(snapshotOf.get(r.id)!, {
         idleThresholdMs: effectiveIdleThresholdMs,
+        owedThresholdMs: effectiveOwedThresholdMs,
         ...(definitionError !== undefined ? { definitionError } : {}),
         ...(definition !== undefined ? { definition } : {}),
       });
@@ -369,7 +384,7 @@ export async function listRuns(
   if (filtered.length === 0) {
     const scope = workflowId !== undefined ? ` for workflow '${workflowId}'` : '';
     if (stuck === true) {
-      return `No stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}).`;
+      return `No stuck runs found${scope} (threshold ${thresholdWords}${skipped}).`;
     }
     return `No runs found${scope}.`;
   }
@@ -378,7 +393,7 @@ export async function listRuns(
 
   const lines: string[] = [];
   if (stuck === true) {
-    lines.push(`Stuck runs (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}):`);
+    lines.push(`Stuck runs (threshold ${thresholdWords}${skipped}):`);
   }
   for (const run of filtered) {
     // issue #279 (increment 2, PR-C — D-3 leg vi): derive ONCE per run, used for both the
@@ -481,7 +496,10 @@ export async function listRuns(
               // walker to destroy a run whose copy was one chmod away (and `abandon`'s own text then
               // named a command that does not exist). A gate-waiting run pointed here already (C13).
               `${renderFindingLabel(f) ?? ''} (realm run inspect ${run.id})`
-            : renderFindingLabel(f),
+            : f.kind === 'owed_undriven'
+              ? // Q1 (#592) unit f1: the one command that runs what the engine owes.
+                `${renderFindingLabel(f) ?? ''} (realm run advance ${run.id})`
+              : renderFindingLabel(f),
         )
         .filter((l): l is string => l !== undefined && l !== '');
       if (residualLabels.length > 0) {
@@ -549,10 +567,13 @@ export const listCommand = new Command('list')
   )
   .option(
     '--older-than <duration>',
-    'With --stuck: idle-age threshold for the never-claimed-idle check (e.g. 24h, 7d); default ' +
-      "24h. '0m' restores today's breadth (flags every claimless running run regardless of age; " +
-      "bare '0' is rejected — use '0m'). Distinct from 'realm run reclaim --older-than', which is " +
-      'a deadline-margin add-on for auto-reclaim selection, not an idle-age threshold.',
+    // Q1 (#592) unit f1: both age-gated findings, both defaults (from core's constants).
+    'With --stuck: how long a run must have been unchanged to be listed for the two age-gated ' +
+      `findings — the never-claimed-idle check (default ${formatThreshold(DEFAULT_IDLE_THRESHOLD_MS)}) ` +
+      `and the owed-undriven check (default ${formatThreshold(DEFAULT_OWED_THRESHOLD_MS)}); one value ` +
+      "sets both (e.g. 24h, 7d). '0m' lists every such run regardless of age; bare '0' is rejected — " +
+      "use '0m'. Distinct from 'realm run reclaim --older-than', which is a deadline-margin add-on " +
+      'for auto-reclaim selection, not an idle-age threshold.',
   )
   .action(
     async (opts: { workflow?: string; status?: string; stuck?: boolean; olderThan?: string }) => {
