@@ -316,6 +316,13 @@ function canonicalize(text: string): Canonical {
    *  whether it is a letter. */
   let base: string | undefined;
   let onLetter: boolean | undefined;
+  // #845 1a-i correction 1: the decision for the run of spacing accents being read. Every member of
+  // one unbroken run (its accents, with invisible characters and marks among them) has the same
+  // nearest characters on both sides, so the run is decided once, at its first accent, and the
+  // decision holds up to `runEnd`, where the run stops: reading stays linear in the run's length.
+  let runEnd = -1;
+  let runBefore = false;
+  let runAfter = false;
   let i = 0;
   while (i < text.length) {
     const first = cpAt(text, i)!;
@@ -344,8 +351,13 @@ function canonicalize(text: string): Canonical {
     // `1 000`); next to one digit it reads as NFKC's space, as before (`25˚C`); anywhere else it leaves
     // before NFKC, like punctuation (`can´t` reads `cant`). Marks on it have no letter under them.
     if (isSpacingAccent(first)) {
-      const nextToBefore = isNum(accentNeighbour(text, i, -1));
-      const nextToAfter = isNum(accentNeighbour(text, i + first.length, 1));
+      if (i >= runEnd) {
+        runBefore = isNum(cpBefore(text, accentRunEdge(text, i, -1)));
+        runEnd = accentRunEdge(text, i + first.length, 1);
+        runAfter = isNum(cpAt(text, runEnd));
+      }
+      const nextToBefore = runBefore;
+      const nextToAfter = runAfter;
       if (nextToBefore !== nextToAfter) {
         // next to one digit: the NFKC form below, as before
       } else {
@@ -444,13 +456,15 @@ function canonicalize(text: string): Canonical {
   return { text: out, from: outFrom, to: outTo };
 }
 
-/** #845 (R-D3): the character next to a spacing accent on one side (`dir` -1 before `at`, 1 from
- *  `at`), past invisible characters, marks and other spacing accents; `undefined` at an end. */
-function accentNeighbour(text: string, at: number, dir: -1 | 1): string | undefined {
+/** #845 (R-D3): where a run of spacing accents stops on one side, walking from `at` (`dir` -1
+ *  backwards, 1 forwards) past invisible characters, marks and other spacing accents: the character
+ *  before that offset (backwards) or at it (forwards) is the run's neighbour on that side, and the
+ *  text's start or end gives none. Correction 1: asked once per run, at its first accent. */
+function accentRunEdge(text: string, at: number, dir: -1 | 1): number {
   let k = at;
   for (;;) {
     const c = dir < 0 ? cpBefore(text, k) : cpAt(text, k);
-    if (c === undefined || !(isInvisible(c) || isMark(c) || isSpacingAccent(c))) return c;
+    if (c === undefined || !(isInvisible(c) || isMark(c) || isSpacingAccent(c))) return k;
     k += dir * c.length;
   }
 }

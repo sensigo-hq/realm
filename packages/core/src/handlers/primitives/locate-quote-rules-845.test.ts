@@ -5,7 +5,15 @@
 // accent). Unit 1a-ii adds checks 3, 4, 5 and 8 and the sets' reads outside the BMP. Every input is
 // written as code points.
 import { describe, it, expect } from 'vitest';
-import { canonicalForm, locateQuote, releaseQuoteCache, segmentsOf } from './locate-quote.js';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import {
+  canonicalForm,
+  canonicalMap,
+  locateQuote,
+  releaseQuoteCache,
+  segmentsOf,
+} from './locate-quote.js';
 
 const ch = String.fromCodePoint;
 const hex = (c: number): string => `U+${c.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -463,4 +471,161 @@ describe('#845 check 7: the spacing accent', () => {
       noBreakSpace: state('the rent', 'the\u{a0}rent'),
     }).toEqual({ degree: 'reformatted', acute: 'reformatted', noBreakSpace: 'reformatted' });
   });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 1a-i, correction 1 (`prompts/fix-845-1a-i-correction-1.md`): a run of spacing accents is read
+// in time proportional to its length, and its readings do not move.
+
+/** check 1's shapes: a run of `n` characters. */
+const COST_SHAPES: Record<string, (n: number) => string> = {
+  acute: (n) => '\u{b4}'.repeat(n),
+  acute_zwsp: (n) => '\u{b4}\u{200b}'.repeat(n / 2),
+  acute_mark: (n) => '\u{b4}\u{301}'.repeat(n / 2),
+  double_low_line: (n) => '\u{2017}'.repeat(n),
+  macron: (n) => '\u{af}'.repeat(n),
+};
+/** check 1's places: the document, and the honest quote of the text around and across the run. */
+const COST_PLACES: Record<string, (run: string) => { doc: string; drop: string }> = {
+  sentence: (run) => ({ doc: `Price ${run} end`, drop: 'Price end' }),
+  digits: (run) => ({ doc: `Price 1${run}000 end`, drop: 'Price 1000 end' }),
+};
+
+/**
+ * The character reads one call makes: each call of `String.prototype.normalize`, `codePointAt`,
+ * `charCodeAt` and `slice`, and each step of the string iterator. Plain counting wrappers, no call
+ * log (a recording spy runs the worker out of memory here), installed around the call and restored
+ * in `finally`.
+ */
+function readsOf(work: () => void): number {
+  const proto = String.prototype as unknown as Record<string | symbol, unknown>;
+  const names = ['normalize', 'codePointAt', 'charCodeAt', 'slice'] as const;
+  const saved = names.map((n) => proto[n] as (this: string, a?: unknown, b?: unknown) => unknown);
+  const savedIterator = proto[Symbol.iterator] as (this: string) => Iterator<string>;
+  let reads = 0;
+  try {
+    names.forEach((n, k) => {
+      const original = saved[k]!;
+      proto[n] = function (this: string, a?: unknown, b?: unknown) {
+        reads++;
+        return original.call(this, a, b);
+      };
+    });
+    proto[Symbol.iterator] = function (this: string) {
+      const it = savedIterator.call(this);
+      return {
+        next: () => {
+          reads++;
+          return it.next();
+        },
+        [Symbol.iterator]() {
+          return this;
+        },
+      };
+    };
+    work();
+  } finally {
+    names.forEach((n, k) => {
+      proto[n] = saved[k];
+    });
+    proto[Symbol.iterator] = savedIterator;
+  }
+  return reads;
+}
+
+describe('#845 1a-i correction 1, check 1: a run of spacing accents is read in time proportional to its length', () => {
+  const N = 1000;
+  for (const [shape, runOf] of Object.entries(COST_SHAPES)) {
+    for (const [place, at] of Object.entries(COST_PLACES)) {
+      for (const form of ['drop', 'copy'] as const) {
+        it(`${shape}, ${place}, the quote ${form === 'drop' ? 'around the run' : 'holding the run'}: reads at 2N at most 2.5 times those at N`, () => {
+          const readsAt = (n: number): number => {
+            const { doc, drop } = at(runOf(n));
+            releaseQuoteCache();
+            return readsOf(() => {
+              locateQuote(form === 'drop' ? drop : doc, doc);
+            });
+          };
+          const atN = readsAt(N);
+          const at2N = readsAt(2 * N);
+          const ratio = Math.round((at2N / atN) * 100) / 100;
+          console.log(
+            `check 1 ${shape} ${place} ${form}: ${String(atN)} → ${String(at2N)} reads, ×${String(ratio)}`,
+          );
+          // (1) red when each accent of a run is decided by walking the whole run (about ×4 at
+          //     acafed92); (2) prints the reads at N and 2N and the ratio.
+          expect({ atN, at2N, ratio, linear: at2N <= 2.5 * atN }).toEqual({
+            atN,
+            at2N,
+            ratio,
+            linear: true,
+          });
+        }, 120_000);
+      }
+    }
+  }
+});
+
+describe('#845 1a-i correction 1, check 2 (GROUNDING, not acceptance): the readings do not move', () => {
+  it("every spacing accent in runs of 1, 2, 3, 31 and 64, alone or with U+200B or U+0301 between its members, in six places, and check 1's inputs: each canonicalMap (text, from, to) is acafed92's", () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL('../fixtures/accent-runs-845.json', import.meta.url), 'utf8'),
+    ) as { accents: string[]; groups: Record<string, { in: string; out: string }> };
+    const digest = (v: unknown): string =>
+      createHash('sha256').update(JSON.stringify(v), 'utf8').digest('hex').slice(0, 32);
+    const LENGTHS = [1, 2, 3, 31, 64];
+    const SEPARATORS = ['', '\u{200b}', '\u{301}'];
+    const PLACES: Record<string, (run: string) => string> = {
+      digits: (run) => `Price CHF 1${run}000 net.`,
+      after_digit: (run) => `It is 25${run}C at noon.`,
+      before_digit: (run) => `Call x${run}5 now.`,
+      letters: (run) => `The tenant can${run}t sublet.`,
+      start: (run) => `${run}Start of the text.`,
+      end: (run) => `End of the text${run}`,
+    };
+    const groups: Array<[key: string, inputs: string[]]> = [];
+    for (const a of ACCENTS) {
+      for (const [place, mk] of Object.entries(PLACES)) {
+        const run = (n: number, sep: string): string =>
+          Array.from({ length: n }, () => ch(a)).join(sep);
+        groups.push([
+          `${hex(a)} ${place}`,
+          SEPARATORS.flatMap((sep) => LENGTHS.map((n) => mk(run(n, sep)))),
+        ]);
+      }
+    }
+    for (const [shape, runOf] of Object.entries(COST_SHAPES)) {
+      for (const [place, at] of Object.entries(COST_PLACES)) {
+        const { doc, drop } = at(runOf(1000));
+        groups.push([`cost ${shape} ${place}`, [doc, drop]]);
+      }
+    }
+    const moved = groups
+      .filter(
+        ([key, inputs]) => fixture.groups[key]?.out !== digest(inputs.map((t) => canonicalMap(t))),
+      )
+      .map(
+        ([key, inputs]) =>
+          `${key}: ${inputs
+            .slice(0, 3)
+            .map((t) => JSON.stringify(canonicalMap(t).text))
+            .join(' | ')} …`,
+      );
+    // The fixture's precondition: the same accents, groups and inputs as at acafed92.
+    expect({
+      accents: ACCENTS.map(hex),
+      groups: groups.map(([key]) => key).sort(),
+      inputs: groups
+        .filter(([key, inputs]) => fixture.groups[key]?.in !== digest(inputs))
+        .map(([key]) => key),
+    }).toEqual({
+      accents: fixture.accents,
+      groups: Object.keys(fixture.groups).sort(),
+      inputs: [],
+    });
+    // (1) red when an accent is decided by the characters right beside it instead of past its run,
+    //     or the scan past the run stops after 30 characters; (2) prints each group whose maps moved,
+    //     with the first texts it reads now.
+    expect(moved).toEqual([]);
+  }, 120_000);
 });
