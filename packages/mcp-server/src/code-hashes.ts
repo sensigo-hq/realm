@@ -6,13 +6,17 @@
 //
 // WHY A MAP. Node serves a module from its import cache for the life of the process, and jiti does
 // too, so the code that runs is the code as it was at its first successful import. Hashing the files
-// again after a rebuild would record bytes the process never loaded. So each file's hash is taken
-// once, just before its first import, and kept; a later sweep of the same folder reuses it.
-//
-// WHEN A VALUE IS KEPT. A load reads through a `CodeHashLoad`. A module's own entry hash is kept as
-// soon as its import succeeds (Node now runs those bytes). Everything else the load read (its folder
-// sweeps and the signals) is kept only when the whole load succeeds (`commit`): a failed load is
-// retried after a fix, and the retry reads again, as Node then loads the fixed file.
+// again after a rebuild would record bytes the process never loaded. So the map holds one hash per
+// file per process, shared by every workflow the process loads (#828 correction 1):
+// - a module's own file is hashed just before the loader first imports that module, even when a
+//   sweep of its folder already holds a hash for it, and that hash is final once the import succeeds;
+// - every other file keeps the first hash a sweep of its folder took;
+// - before each first import of a module its folder is swept, reusing every kept hash, and also when
+//   the map holds no sweep of that folder; the identity step never sweeps;
+// - when an import fails, what this load read in the failed module's folder is dropped, but the own
+//   file of each module whose import succeeded: Node reads the failed file again at the retry. Any
+//   other failure keeps everything, as a success does;
+// - the signals are taken once per trust root, just before the first import that reads them.
 //
 // This module loads no code: no dynamic import, no module-require creation. It imports only `node:`
 // modules and `@sensigo/realm` (types). A structural test in the CLI holds it to that.
@@ -182,18 +186,23 @@ export function sweepTree(roots: readonly string[]): TreeSweepResult {
   return joinSweeps(roots.map((root) => sweepFolder(root)));
 }
 
-/** What this process keeps: each file's hash by its real path, each folder's last sweep, the signals. */
+/**
+ * What this process keeps: each file's first hash by its real path, the modules whose import
+ * succeeded (their own file's hash is final), each folder's sweep, and the signals by trust root.
+ */
 interface Kept {
   readonly files: Map<string, FileHash>;
+  readonly modules: Set<string>;
   readonly folders: Map<string, FolderSweep>;
   readonly signals: Map<string, ExtensionIdentitySignals | undefined>;
 }
 
-const kept: Kept = { files: new Map(), folders: new Map(), signals: new Map() };
+const kept: Kept = { files: new Map(), modules: new Set(), folders: new Map(), signals: new Map() };
 
 /** Test-only: forgets every kept hash, as a new process would start with none. */
 export function clearCodeHashes(): void {
   kept.files.clear();
+  kept.modules.clear();
   kept.folders.clear();
   kept.signals.clear();
 }
@@ -205,26 +214,23 @@ export interface CodeHashLoadOptions {
 }
 
 /**
- * One load's reads of the project code, over the process map. Ask `beforeImport` just before each
- * import and `imported` once it has succeeded; read the values for the identity; `commit` when the
- * whole load has succeeded. A load that fails is dropped: only its successful imports' entry hashes
- * stay.
+ * One load's reads of the project code, over the process map (see the module comment). Ask
+ * `beforeImport` just before each import, then `imported` once it has succeeded or `importFailed`
+ * when it threw; then read the values for the identity.
  */
 export interface CodeHashLoad {
-  /** A file's hash: the kept one, else this load's, else read now (this load's until committed). */
-  fileHash(path: string): FileHash | undefined;
-  /** Just before importing `entry` (see `beginCodeHashLoad`). */
+  /** Just before importing `entry`: its own file is hashed at a first import, and its folder swept. */
   beforeImport(entry: string): void;
-  /** `entry`'s import succeeded: its hash is kept now, whatever happens to the rest of the load. */
+  /** `entry`'s import succeeded: its own hash is final for the process. */
   imported(entry: string): void;
+  /** `entry`'s import threw: this load's reads in its folder are dropped, but loaded modules' own files. */
+  importFailed(entry: string): void;
   /** The entry hash for the identity (`undefined`: unreadable, so the identity reads it and fails). */
   entryHash(entry: string): string | undefined;
-  /** The joined tree of `roots`: each folder's sweep in this load, else its kept one, else swept now. */
+  /** The joined tree of `roots`, from the sweeps taken before the imports; it never sweeps. */
   tree(roots: readonly string[]): TreeSweepResult;
-  /** The signals: kept by trust root, else read once in this load. */
+  /** The signals: taken once per trust root per process. */
   signals(): ExtensionIdentitySignals | undefined;
-  /** The whole load succeeded: every value it read is kept. */
-  commit(): void;
 }
 
 /**
@@ -236,80 +242,103 @@ export function beginCodeHashLoad(options: CodeHashLoadOptions): CodeHashLoad {
   return new Load(options);
 }
 
+/** Whether `path` is `root` or inside it. */
+const within = (path: string, root: string): boolean =>
+  path === root || path.startsWith(root + sep);
+
 class Load implements CodeHashLoad {
-  private readonly files = new Map<string, FileHash>();
-  private readonly folders = new Map<string, FolderSweep>();
+  /** The files this load hashed into the map: what a failed import in their folder drops. */
+  private readonly read = new Set<string>();
+  /** The sweeps this load put in the map, with the sweep each replaced: what a failed import undoes. */
+  private readonly swept = new Map<string, FolderSweep | undefined>();
+  /** Own-file hashes taken just before an import that has not succeeded yet. */
+  private readonly own = new Map<string, FileHash | undefined>();
   private signalsTaken = false;
-  private signalsValue: ExtensionIdentitySignals | undefined;
 
   constructor(private readonly options: CodeHashLoadOptions) {}
 
-  /** A file's hash: the kept one, else this load's, else read now (this load's until committed). */
-  fileHash(path: string): FileHash | undefined {
-    const held = kept.files.get(path) ?? this.files.get(path);
-    if (held !== undefined) return held;
-    const read = hashFile(path);
-    if (read !== undefined) this.files.set(path, read);
-    return read;
-  }
-
-  /**
-   * Just before importing `entry`. The first import of a file (none kept for it) sweeps its folder
-   * again in this load, reusing every kept hash; the signals are taken before the load's first import.
-   */
   beforeImport(entry: string): void {
     this.takeSignals();
-    if (kept.files.has(entry)) return;
-    this.sweep(dirname(entry));
+    const root = dirname(entry);
+    if (!kept.modules.has(entry)) {
+      this.own.set(entry, hashFile(entry));
+      this.sweep(root);
+    } else if (!kept.folders.has(root)) this.sweep(root);
   }
 
-  /** `entry`'s import succeeded: its hash is kept now, whatever happens to the rest of the load. */
   imported(entry: string): void {
-    const hash = this.fileHash(entry);
-    if (hash !== undefined) kept.files.set(entry, hash);
+    if (kept.modules.has(entry)) return;
+    const hash = this.own.get(entry);
+    this.own.delete(entry);
+    if (hash === undefined) return;
+    kept.files.set(entry, hash);
+    kept.modules.add(entry);
   }
 
-  /** The entry hash for the identity (`undefined`: unreadable, so the identity reads it and fails). */
+  importFailed(entry: string): void {
+    this.own.delete(entry);
+    const root = dirname(entry);
+    for (const path of this.read) {
+      if (!within(path, root) || kept.modules.has(path)) continue;
+      kept.files.delete(path);
+      this.read.delete(path);
+    }
+    for (const [folder, before] of this.swept) {
+      if (!within(folder, root)) continue;
+      if (before === undefined) kept.folders.delete(folder);
+      else kept.folders.set(folder, before);
+      this.swept.delete(folder);
+    }
+  }
+
   entryHash(entry: string): string | undefined {
     return this.fileHash(entry)?.sha256;
   }
 
-  /** The joined tree of `roots`: each folder's sweep in this load, else its kept one, else swept now. */
   tree(roots: readonly string[]): TreeSweepResult {
     return joinSweeps(
-      roots.map((root) => this.folders.get(root) ?? kept.folders.get(root) ?? this.sweep(root)),
+      roots.map((root) => {
+        const sweep = kept.folders.get(root);
+        if (sweep === undefined) throw new Error(`no sweep of ${root} was taken before its import`);
+        return sweep;
+      }),
     );
   }
 
-  /** The signals: kept by trust root, else read once in this load. */
   signals(): ExtensionIdentitySignals | undefined {
     this.takeSignals();
-    return this.signalsValue;
-  }
-
-  /** The whole load succeeded: every value it read is kept. */
-  commit(): void {
-    for (const [path, hash] of this.files) if (!kept.files.has(path)) kept.files.set(path, hash);
-    for (const [root, sweep] of this.folders) kept.folders.set(root, sweep);
     const trustRoot = this.options.trustRoot;
-    if (this.signalsTaken && trustRoot !== undefined && !kept.signals.has(trustRoot)) {
-      kept.signals.set(trustRoot, this.signalsValue);
-    }
+    return trustRoot === undefined ? undefined : kept.signals.get(trustRoot);
   }
 
-  private sweep(root: string): FolderSweep {
-    const swept = this.folders.get(root) ?? sweepFolder(root, (path) => this.fileHash(path));
-    this.folders.set(root, swept);
-    return swept;
+  /** A file's hash: a loaded module's final one, this load's own-file one, the kept one, else read now. */
+  private fileHash(path: string): FileHash | undefined {
+    if (kept.modules.has(path) || !this.own.has(path)) {
+      const held = kept.files.get(path);
+      if (held !== undefined) return held;
+    }
+    if (this.own.has(path)) return this.own.get(path);
+    const hash = hashFile(path);
+    if (hash !== undefined) {
+      kept.files.set(path, hash);
+      this.read.add(path);
+    }
+    return hash;
+  }
+
+  private sweep(root: string): void {
+    if (!this.swept.has(root)) this.swept.set(root, kept.folders.get(root));
+    kept.folders.set(
+      root,
+      sweepFolder(root, (path) => this.fileHash(path)),
+    );
   }
 
   private takeSignals(): void {
     if (this.signalsTaken) return;
     this.signalsTaken = true;
     const trustRoot = this.options.trustRoot;
-    if (trustRoot === undefined) return;
-    this.signalsValue = kept.signals.has(trustRoot)
-      ? kept.signals.get(trustRoot)
-      : this.options.readSignals(trustRoot);
+    if (trustRoot !== undefined && !kept.signals.has(trustRoot))
+      kept.signals.set(trustRoot, this.options.readSignals(trustRoot));
   }
 }

@@ -469,16 +469,22 @@ export async function loadProjectExtensions(
     processors: [],
   };
 
-  // #828 unit 1: the code's hashes are taken just before each first import, through one load of the
-  // per-process map: a module's entry hash is kept once its import succeeds; the rest only when this
-  // whole load succeeds (`commit` below), so a failed load that is retried after a fix reads again.
+  // #828 unit 1 (correction 1): the code's hashes are taken just before each first import, through
+  // one load of the per-process map: a module's own file and its folder's sweep before its import;
+  // an import that throws drops what this load read in its folder, so the retry reads it again.
   const hashes = beginCodeHashLoad({
     ...(definition.trust_root !== undefined ? { trustRoot: definition.trust_root } : {}),
     readSignals: collectSignals,
   });
   const importTracked: ImportModule = async (resolvedPath, label) => {
     hashes.beforeImport(resolvedPath);
-    const imported = await importModuleNamespace(resolvedPath, label);
+    let imported: Awaited<ReturnType<ImportModule>>;
+    try {
+      imported = await importModuleNamespace(resolvedPath, label);
+    } catch (err) {
+      hashes.importFailed(resolvedPath);
+      throw err;
+    }
     hashes.imported(resolvedPath);
     return imported;
   };
@@ -617,7 +623,6 @@ export async function loadProjectExtensions(
       : {}),
     ...cacheEconomicsPathOf(manifestCtx),
   };
-  hashes.commit();
   cache.set(cacheKey, { result, ...(freshness !== undefined ? { freshness } : {}) });
   emitReleaseLineWarnings(result, opts);
   return result;

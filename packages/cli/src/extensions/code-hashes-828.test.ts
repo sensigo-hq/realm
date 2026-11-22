@@ -1,6 +1,7 @@
 // code-hashes-828.test.ts — #828 unit 1 (PR A): the project code's hashes are taken once per process,
-// just before Realm first loads that code, and kept only if the load succeeds (prompt
-// feat-828-u1-fingerprint-before-load.md, checks 1–5, 7 and 13).
+// just before Realm first loads that code (prompt feat-828-u1-fingerprint-before-load.md, checks 1–5,
+// 7 and 13(a)). Correction 1's cells, and its check 4 that replaces 13(b), are in
+// code-hashes-828-c1.test.ts.
 //
 // Every loader cell uses a temp project WITH a `realm.yaml` (without a manifest a `.env` change does
 // not rebuild), loads once, changes files, then loads again in the same process, and first asserts
@@ -278,39 +279,11 @@ describe('#828 unit 1 — a failed import, then fixed (check 13)', () => {
     const fixed = moduleSource(`h_${counter}`);
     writeFileSync(path, fixed);
     const two = await loadProjectExtensions(def);
-    // (1) red when a value taken for the failed load is kept (the broken bytes' hash); (2) prints the
-    //     first outcome and the entry hash.
+    // (1) red when a value taken for the failed import is kept (the broken bytes' hash); (2) prints
+    //     the first outcome and the entry hash.
     expect({ failed, entry_hash: two.registry.identity?.modules[0]?.entry_hash }).toEqual({
       failed: 'failed',
       entry_hash: sha(fixed),
-    });
-  });
-
-  it('check 13(b): modules a and b in one folder, b broken — the load fails; b fixed, the second load records b’s fixed bytes and a’s first', async () => {
-    const aName = unique('a');
-    const firstA = moduleSource(`ha_${counter}`);
-    const aPath = write('ext', `${aName}.js`, firstA);
-    const bName = unique('b');
-    const bPath = write('ext', `${bName}.js`, 'export default {{ broken');
-    const def = definition([`./ext/${aName}.js`, `./ext/${bName}.js`]);
-    const failed = await loadProjectExtensions(def).then(
-      () => 'loaded',
-      () => 'failed',
-    );
-    // a was imported (Node runs its first bytes); then it is edited, and b is fixed.
-    writeFileSync(aPath, `${firstA}// edited after the failed load\n`);
-    const fixedB = moduleSource(`hb_${counter}`);
-    writeFileSync(bPath, fixedB);
-    const two = await loadProjectExtensions(def);
-    const hashes = Object.fromEntries(
-      (two.registry.identity?.modules ?? []).map((m) => [m.resolved, m.entry_hash]),
-    );
-    // (1) red when a value is kept because an earlier import of the same load succeeded (b's broken
-    //     hash), or a's kept entry hash is not reused (a's edited bytes); (2) prints both hashes.
-    expect({ failed, a: hashes[aPath], b: hashes[bPath] }).toEqual({
-      failed: 'failed',
-      a: sha(firstA),
-      b: sha(fixedB),
     });
   });
 });

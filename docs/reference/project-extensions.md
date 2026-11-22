@@ -243,18 +243,24 @@ Extension Identity (1 entry):
      coverage (dir_tree_v1): covers files under /srv/shop/ext matching dir_tree_v1: include .js,.mjs,.cjs,.ts,.mts,.cts,.json; exclude dirs node_modules,.git; skip symlinks; sort by relpath; sha256(relpath\0filehash); caps 2000 files/50MB; imports outside these roots, node_modules, and runtime dynamic imports are NOT covered.
 ```
 
-| Part         | Holds                                                                                                                 |
-| ------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `captured`   | When this process loaded the code (after a reload, the time of the reload), and the ID of the process.                |
-| `[override]` | Printed after the process ID if `--extensions-module` was used.                                                       |
-| `module`     | For each file: the path as written, the path it resolved to, the format, and a SHA-256 hash of the file.              |
-| `tree`       | One hash over the code files in the folders that hold the named files, with the number of files and their size.       |
-| `signals`    | The `version` in the project's `package.json`, and the commit that `.git/HEAD` points to. Recorded, and not compared. |
-| `coverage`   | Which files the tree hash covers.                                                                                     |
+| Part         | Holds                                                                                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `captured`   | When this process loaded the code, or last rebuilt its list of handlers because `realm.yaml` or a `dotenv` file named from its folder changed, and the ID of the process. |
+| `[override]` | Printed after the process ID if `--extensions-module` was used.                                                                                                           |
+| `module`     | For each file: the path as written, the path it resolved to, the format, and a SHA-256 hash of the file.                                                                  |
+| `tree`       | One hash over the code files in the folders that hold the named files, with the number of files and their size.                                                           |
+| `signals`    | The `version` in the project's `package.json`, and the commit that `.git/HEAD` points to. Recorded, and not compared.                                                     |
+| `coverage`   | Which files the tree hash covers.                                                                                                                                         |
 
 The tree hash covers files ending in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts` or `.json`, at any depth under the folder of each named file. It leaves out `node_modules`, `.git` and links. It stops at 2000 files or 50 MB. A file that the code imports from another folder is not covered.
 
-Realm takes each hash once per process, just before it first loads that code, and keeps it only if the load succeeds. A process that keeps running after a file changes still records the file it loaded. A file that was already in a folder Realm swept keeps that first hash, even when the process loads it later. After a reload, `captured` is the time of the reload, while the hashes are those of the first load.
+A process takes each file's hash at one of two moments: a module's own file just before that module first loads; any other file when a sweep of its folder first finds it, just before a module of that folder first loads. It keeps that hash, so a process that keeps running after a file changes records the file as it loaded it, with three exceptions:
+
+- A file first loaded later, through a module that loads later, keeps its first hash.
+- A file that another module had already loaded records its edit when it is first named as a module itself.
+- When a module's import fails, its folder is read again when it is retried, so the record names the fixed files, and also any file of that folder that had already loaded and was edited in between, though the process keeps running the copy it loaded.
+
+When `realm.yaml`, or a `dotenv` file named from its folder (the default `.env` included), changes, the process rebuilds its list of handlers at the next run but does not load the code again: `captured` is then the time of the rebuild, while every hash already taken stays as it was.
 
 For a project with a `realm.yaml`, the record also holds that file's path and hash, and the names of the secrets it refers to. See [Deployment manifest](deployment-manifest.md#what-a-run-records).
 
