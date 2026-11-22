@@ -1530,14 +1530,14 @@ describe('issue #729 — realm-run-reading.md, `--stuck` names a run that cannot
     await h.cleanup();
   });
 
-  it('the --older-than row and the idle-line sentence: the limit applies to the idle finding alone', () => {
+  it('the --older-than row and the idle-line sentence: the limit applies to the two age-gated findings (Q1 unit f1)', () => {
     claim(
       RD_PAGE,
-      '| `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed for the idle finding (`never_claimed_idle`); every other finding lists its run at any age. Default `24h`. |',
+      '| `--older-than <duration>` | With `--stuck`: how long a run must have been unchanged to be listed for the two age-gated findings, `never_claimed_idle` (default `24h`) and `owed_undriven` (default `1m`, added after version 0.50.0); one value sets both. Every other finding lists its run at any age. |',
     );
     claim(
       RD_PAGE,
-      'A line with nothing after `idle:` is an open run with no step in progress that has not changed for the limit or longer: the limit applies to that finding (`never_claimed_idle`) alone, and every other finding lists its run at any age, with its label. A run that cannot go on is listed the moment it cannot, with `<step>=cannot_go_on(<check>)` and `realm run inspect <run-id>`, which prints the refusal and the ways out (added after version 0.47.0).',
+      'A line with nothing after `idle:` is an open run with no step in progress that has not changed for the limit or longer: the limit applies to that finding and to `owed_undriven`, whose own default is one minute (added after version 0.50.0); every other finding lists its run at any age, with its label. A run that cannot go on is listed the moment it cannot, with `<step>=cannot_go_on(<check>)` and `realm run inspect <run-id>`, which prints the refusal and the ways out (added after version 0.47.0).',
     );
   });
 
