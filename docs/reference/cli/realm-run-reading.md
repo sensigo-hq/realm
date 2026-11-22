@@ -249,6 +249,19 @@ Escalation: sent 28m ago (2030-01-01T00:12:00Z)
 
 `N sent` counts the reminders Slack took, of at most the gate's `reminder_max` (3 when the gate sets `reminder_seconds` and no `reminder_max`; 1 when it sets no `reminder_seconds`), and `last` says when the latest was recorded as sent. `K skipped` counts the earlier reminders that were never posted, for example ones that came due while the computer slept or while no `realm agent` attended the question. On a question that was open at the upgrade from version 0.49.0, `skipped` may count reminders that a 0.49 `realm agent` sent, since they left no record. `U not confirmed` counts the reminders a `realm agent` or `realm listen --send-reminders` started to send and never recorded as sent or failed, for example because it stopped, or because Slack took neither the post nor its retries. `F failed (not retried)` counts the reminders Slack refused because the channel is gone or archived. A count of zero is left out, except `N sent`. A reminder or the escalation that is being sent right now, its lease still running, is not counted yet: it shows as sent once Slack took it, and as not confirmed if its lease ends first. The lines are about the question that is open; when none is, about the latest question that has a reminder or an escalation recorded. The escalation reads `sent <when>`, `not confirmed` or `failed (not retried)`. An open question with no reminder recorded reads `Reminders: none recorded`. A run with neither an open question nor a recorded reminder or escalation prints neither line, and so does a store that keeps no outbound ledger, or one whose ledger cannot be read.
 
+After those two lines, or where they would be, a run whose request named a callback address has one `Callback:` line, which says how its callback stands (added after version 0.50.0). One line per state:
+
+```text
+Callback: delivered to 127.0.0.1:5678 1s ago (2026-11-22T14:17:57Z), attempt 1
+Callback: pending, attempt 1, last answer 503, next try in 1m (2026-11-22T14:20:02Z)
+Callback: due since 2s ago (2026-11-22T14:19:30Z); sent only while realm listen with a matching allow-list runs
+Callback: failed after 2 attempts, last answer 410
+Callback: expired at attempt 2, not delivered within its time limit
+Callback: waiting for the run to finish
+```
+
+A callback that was sent shows its host and when; one that is waiting says whether its run has finished and when the next try is due.
+
 ### The blocks in the middle
 
 Each block is printed only when the run has something for it.

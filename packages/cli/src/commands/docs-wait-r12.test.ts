@@ -50,7 +50,7 @@ describe('R1.2 — webhook-trigger.md, "Waiting for the result"', () => {
     );
     claim(
       TRIGGER,
-      '| The run ends: `completed`, `failed`, `aborted` or `abandoned` | `200` with what a `GET` of its `status_path` would answer: the phase and, for a completed run, the result, `result_masked` or `result_error`, as above |',
+      '| The run ends: `completed`, `failed`, `aborted` or `abandoned` | `200` with what a `GET` of its `status_path` would answer: the phase and, for a completed run, the result, `result_masked` or `result_error`, as above (a `GET` of a run that has a callback also shows its `callback`, which this `200` does not) |',
     );
     claim(
       TRIGGER,
