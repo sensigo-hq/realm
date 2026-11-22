@@ -185,7 +185,7 @@ describe.runIf(POSIX)(
       });
     });
 
-    it('rotate: a new key, the old kept 24 h (168 with --keep 168), refused while it is live, --end-previous ends it', async () => {
+    it('rotate: a new key, the old kept 24 h (168 with --keep-previous 168), refused while it is live, --end-previous ends it', async () => {
       const b = bench();
       const k0 = printed(b.key());
       const m = readFileSync(b.masterFile, 'utf8').trim();
@@ -194,7 +194,7 @@ describe.runIf(POSIX)(
       const pair1 = await b.stored(m);
       const again = b.key(['--rotate']);
       const pairAgain = await b.stored(m);
-      const forced = b.key(['--rotate', '--end-previous', '--keep', '168']);
+      const forced = b.key(['--rotate', '--end-previous', '--keep-previous', '168']);
       const k2 = printed(forced);
       const pair2 = await b.stored(m);
       const hours = (p: typeof pair1) =>
@@ -239,17 +239,19 @@ describe.runIf(POSIX)(
       });
     });
 
-    it('rotate refusals: --keep out of range when the command line is read; --keep without --rotate; no key; an unreadable key', () => {
+    it('rotate refusals: --keep-previous out of range when the command line is read; --keep-previous without --rotate; no key; an unreadable key', () => {
       const b = bench();
-      const keeps = ['0', '169', '1.5', 'abc'].map((v) => b.key(['--rotate', '--keep', v]));
+      const keeps = ['0', '169', '1.5', 'abc'].map((v) =>
+        b.key(['--rotate', '--keep-previous', v]),
+      );
       const homeMade = existsSync(b.realm);
-      const keepAlone = b.key(['--keep', '24']);
+      const keepAlone = b.key(['--keep-previous', '24']);
       const noKey = b.key(['--rotate']);
       const madeA = printed(b.key([], { REALM_ENCRYPTION_KEY: MASTER_A }));
       const otherMaster = b.key(['--rotate'], { REALM_ENCRYPTION_KEY: MASTER_B });
-      // (1) red when a bad --keep reaches the action (or creates the home), --keep is accepted
-      //     alone (a Commander default does that to every call), a rotate with no key makes one, or
-      //     an unreadable key is rotated; (2) prints each answer.
+      // (1) red when a bad --keep-previous reaches the action (or creates the home), --keep-previous
+      //     is accepted alone (a Commander default does that to every call), a rotate with no key
+      //     makes one, or an unreadable key is rotated; (2) prints each answer.
       expect({
         keeps: keeps.map((r) => ({ code: r.code, err: r.err })),
         homeMade,
@@ -264,10 +266,10 @@ describe.runIf(POSIX)(
       }).toEqual({
         keeps: ['0', '169', '1.5', 'abc'].map((v) => ({
           code: 1,
-          err: `error: option '--keep <hours>' argument '${v}' is invalid. --keep must be a whole number of hours from 1 to 168.\n`,
+          err: `error: option '--keep-previous <hours>' argument '${v}' is invalid. --keep-previous must be a whole number of hours from 1 to 168.\n`,
         })),
         homeMade: false,
-        keepAlone: { code: 1, err: lines('Error: --keep is used with --rotate only.') },
+        keepAlone: { code: 1, err: lines('Error: --keep-previous is used with --rotate only.') },
         noKey: {
           code: 1,
           out: '',
@@ -284,6 +286,25 @@ describe.runIf(POSIX)(
           k: 64,
         },
       });
+    });
+
+    it('help: realm callback key --help names --keep-previous on its two lines and never the old --keep', () => {
+      const b = bench();
+      const help = b.run(['callback', 'key', '--help']);
+      // Commander wraps at 80 columns: the lines are compared with their whitespace folded.
+      const text = help.out.replace(/\s+/g, ' ');
+      const wanted = [
+        '--rotate make a new key; the old one stays valid for --keep-previous hours',
+        '--keep-previous <hours> with --rotate: how long the old key stays valid, 1 to 168 (default 24)',
+      ];
+      // (1) red when a help string still names the old --keep (a plain /--keep\b/ would also match
+      //     --keep-previous), or either line lost the new name; (2) prints the exit code, every old
+      //     name found, and the two lines that are missing.
+      expect({
+        code: help.code,
+        old: text.match(/--keep(?!-previous)/g) ?? [],
+        missing: wanted.filter((l) => !text.includes(l)),
+      }).toEqual({ code: 0, old: [], missing: [] });
     });
 
     it('end and delete: idempotent, need no master key (even a broken one), make no master file, ignore opt-in', async () => {
@@ -501,9 +522,9 @@ describe.runIf(POSIX)(
         flags: [
           flag(['--rotate', '--replace']),
           flag(['--end-previous', '--delete']),
-          flag(['--keep', '5']),
+          flag(['--keep-previous', '5']),
           flag(['--whsec', '--delete']),
-          flag(['--replace', '--delete', '--keep', '5', '--whsec']),
+          flag(['--replace', '--delete', '--keep-previous', '5', '--whsec']),
         ],
         entries: [
           entry('n8n.example.com/hook'),
@@ -532,7 +553,7 @@ describe.runIf(POSIX)(
               'Error: --end-previous goes with --rotate, or alone; it cannot be used with --replace or --delete.',
             ),
           },
-          { code: 1, err: lines('Error: --keep is used with --rotate only.') },
+          { code: 1, err: lines('Error: --keep-previous is used with --rotate only.') },
           {
             code: 1,
             err: lines(

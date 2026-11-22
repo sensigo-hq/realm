@@ -129,7 +129,7 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
     // Pinned by: the help cell below.
     claim(
       PAGE,
-      '`realm callback key [workflow] --host <entry> [--whsec] [--rotate [--keep <hours>]] [--end-previous] [--replace] [--delete]`',
+      '`realm callback key [workflow] --host <entry> [--whsec] [--rotate [--keep-previous <hours>]] [--end-previous] [--replace] [--delete]`',
     );
   });
   it('14. Prints the key for one workflow and one receiver, and changes it. With', () => {
@@ -160,22 +160,22 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
       '| `--whsec` | Prints the key as `whsec_` and the base64 of its text, the form some libraries expect. |',
     );
   });
-  it('18. --rotate  Makes a new key and keeps the old one for --keep hours. Refu', () => {
-    // Pinned by: callback-key-k2a2 'rotate: a new key, the old kept 24 h (168 with --keep 168), refused while it is live, --end-previous ends it'; callback-key-k2a2 'rotate refusals: --keep out of range when the command line is read; --keep without --rotate; no key; an unreadable key'.
+  it('18. --rotate  Makes a new key and keeps the old one for --keep-previous ho', () => {
+    // Pinned by: callback-key-k2a2 'rotate: a new key, the old kept 24 h (168 with --keep-previous 168), refused while it is live, --end-previous ends it'; callback-key-k2a2 'rotate refusals: --keep-previous out of range when the command line is read; --keep-previous without --rotate; no key; an unreadable key'.
     claim(
       PAGE,
-      '| `--rotate` | Makes a new key and keeps the old one for `--keep` hours. Refused while an earlier old key is still kept, unless `--end-previous` is also given; refused when there is no key, or the key cannot be read. |',
+      '| `--rotate` | Makes a new key and keeps the old one for `--keep-previous` hours. Refused while an earlier old key is still kept, unless `--end-previous` is also given; refused when there is no key, or the key cannot be read. |',
     );
   });
-  it('19. --keep <hours>  With --rotate only: how long the old key is kept, a wh', () => {
-    // Pinned by: callback-key-k2a2 'rotate refusals: --keep out of range when the command line is read; --keep without --rotate; no key; an unreadable key'; callback-key-k2a2 'rotate: a new key, the old kept 24 h (168 with --keep 168), refused while it is live, --end-previous ends it'.
+  it('19. --keep-previous <hours>  With --rotate only: how long the old key is k', () => {
+    // Pinned by: callback-key-k2a2 'rotate refusals: --keep-previous out of range when the command line is read; --keep-previous without --rotate; no key; an unreadable key'; callback-key-k2a2 'rotate: a new key, the old kept 24 h (168 with --keep-previous 168), refused while it is live, --end-previous ends it'.
     claim(
       PAGE,
-      '| `--keep <hours>` | With `--rotate` only: how long the old key is kept, a whole number from 1 to 168. The default is 24. |',
+      '| `--keep-previous <hours>` | With `--rotate` only: how long the old key is kept, a whole number from 1 to 168. The default is 24. |',
     );
   });
   it('20. --end-previous  Ends the old key now. Alone, it changes nothing else;', () => {
-    // Pinned by: callback-key-k2a2 'end and delete: idempotent, need no master key (even a broken one), make no master file, ignore opt-in'; callback-key-k2a2 'rotate: a new key, the old kept 24 h (168 with --keep 168), refused while it is live, --end-previous ends it'.
+    // Pinned by: callback-key-k2a2 'end and delete: idempotent, need no master key (even a broken one), make no master file, ignore opt-in'; callback-key-k2a2 'rotate: a new key, the old kept 24 h (168 with --keep-previous 168), refused while it is live, --end-previous ends it'.
     claim(
       PAGE,
       '| `--end-previous` | Ends the old key now. Alone, it changes nothing else; with `--rotate`, it lets the rotation replace an old key that is still kept. |',
@@ -196,7 +196,7 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
     // Pinned by: callback-key-k2a2 'flag checks in order, the first only; the nine entry words; --host missing; two spellings of one host'.
     claim(
       PAGE,
-      '`--rotate`, `--replace` and `--delete` exclude each other. `--end-previous` cannot go with `--replace` or `--delete`, `--keep` only with `--rotate`, and `--whsec` not with `--delete` or with `--end-previous` alone.',
+      '`--rotate`, `--replace` and `--delete` exclude each other. `--end-previous` cannot go with `--replace` or `--delete`, `--keep-previous` only with `--rotate`, and `--whsec` not with `--delete` or with `--end-previous` alone.',
     );
   });
   it('24. A key is made, printed, rotated or replaced only for a workflow that t', () => {
@@ -210,7 +210,7 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
     // Pinned by: callback-key-k2a2 'over every cell above: no master key in either case on any stream; a callback key only on stdout'; callback-key-k2a2 'end and delete: idempotent, need no master key (even a broken one), make no master file, ignore opt-in'; callback-key-k2a2 'flag checks in order, the first only; the nine entry words; --host missing; two spellings of one host'; callback-key-k2a2 'a workflow that cannot be loaded: Words 12, as realm listen says it; no home is made'; the store that needs realm db migrate: executed on the build in the K2c report (reports/docs-callback-k2c.md, "The page's examples, run"); correction 1: CB-K2C-RV-04 (the reader ran each refusal).
     claim(
       PAGE,
-      'On success the key is the only thing on standard output: 64 lowercase hexadecimal characters and a line break (with `--whsec`, the `whsec_` form). Everything else goes to standard error, among it the key\'s short fingerprint and the fingerprint of the master key it is sealed under. The exit code is 0 when the command did what you asked, and also when there was nothing to do (no old key to end, no key to delete); it is 1 when the command refused. The line begins `Error:`, except a missing `--host` or a bad `--keep`, which begin `error:`. A refusal about a key or the master key says "No key was changed." before what to do; one about the workflow file, the store file (a store that needs `realm db migrate`) or a combination of flags does not.',
+      'On success the key is the only thing on standard output: 64 lowercase hexadecimal characters and a line break (with `--whsec`, the `whsec_` form). Everything else goes to standard error, among it the key\'s short fingerprint and the fingerprint of the master key it is sealed under. The exit code is 0 when the command did what you asked, and also when there was nothing to do (no old key to end, no key to delete); it is 1 when the command refused. The line begins `Error:`, except a missing `--host` or a bad `--keep-previous`, which begin `error:`. A refusal about a key or the master key says "No key was changed." before what to do; one about the workflow file, the store file (a store that needs `realm db migrate`) or a combination of flags does not.',
     );
   });
   it('26. A fingerprint is the first 8 hexadecimal characters of a SHA-256 hash:', () => {
@@ -242,7 +242,7 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
     );
   });
   it('30. A rotation keeps the old key in the store with an end time, and says w', () => {
-    // Pinned by: callback-key-k2a2 'rotate: a new key, the old kept 24 h (168 with --keep 168), refused while it is live, --end-previous ends it'; callback-key-k2a2 'replace: refused on a readable key or none (no master file made); applied on a key of another master; with no master anywhere, makes the file first'.
+    // Pinned by: callback-key-k2a2 'rotate: a new key, the old kept 24 h (168 with --keep-previous 168), refused while it is live, --end-previous ends it'; callback-key-k2a2 'replace: refused on a readable key or none (no master file made); applied on a key of another master; with no master anywhere, makes the file first'.
     claim(
       PAGE,
       'A rotation keeps the old key in the store with an end time, and says when. `--end-previous` ends it sooner, and `--rotate` is refused while an old key is still kept unless you add `--end-previous`, so a working key is never dropped by accident. `--replace` is only for a key that cannot be read, for the same reason.',
@@ -291,11 +291,11 @@ describe('callback K2c — realm-callback.md, the new page (E5)', () => {
     );
   });
   it('37. --rotate while an old key is still kept  Wait, or add --end-previous.', () => {
-    // Pinned by: callback-key-k2a2 'rotate: a new key, the old kept 24 h (168 with --keep 168), refused while it is live, --end-previous ends it'.
+    // Pinned by: callback-key-k2a2 'rotate: a new key, the old kept 24 h (168 with --keep-previous 168), refused while it is live, --end-previous ends it'.
     claim(PAGE, '| `--rotate` while an old key is still kept | Wait, or add `--end-previous`. |');
   });
   it('38. --rotate or --replace with no key  Make one first, without those flags', () => {
-    // Pinned by: callback-key-k2a2 'rotate refusals: --keep out of range when the command line is read; --keep without --rotate; no key; an unreadable key'; callback-key-k2a2 'replace: refused on a readable key or none (no master file made); applied on a key of another master; with no master anywhere, makes the file first'.
+    // Pinned by: callback-key-k2a2 'rotate refusals: --keep-previous out of range when the command line is read; --keep-previous without --rotate; no key; an unreadable key'; callback-key-k2a2 'replace: refused on a readable key or none (no master file made); applied on a key of another master; with no master anywhere, makes the file first'.
     claim(PAGE, '| `--rotate` or `--replace` with no key | Make one first, without those flags. |');
   });
   it('39. --replace on a key that can be read  Use --rotate.', () => {
