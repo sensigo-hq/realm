@@ -4,25 +4,24 @@
 // and manipulates paths — which is exactly why read-only commands (`realm run inspect
 // --check-drift`) may use it without ever gaining the capability to execute project code.
 // A structural test (read-only-no-extensions.test.ts) enforces this.
-import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type {
   ExtensionIdentityEntry,
   ExtensionIdentityModule,
   ExtensionIdentitySignals,
 } from '@sensigo/realm';
 import { extensionIdentityDiffers } from '@sensigo/realm';
+// #828 unit 1: the dir_tree_v1 sweep lives in the one hashing home, the realm-mcp subpath (loads no
+// code either); this module re-exports its rule string and keeps its pure functions.
+import {
+  DIR_TREE_V1_RULES,
+  sha256Hex,
+  sweepTree,
+  type TreeSweepResult,
+} from '@sensigo/realm-mcp/code-hashes';
 
-/** The one sweep-rule version this module can compute. Comparison ALWAYS recomputes under
- *  the RECORDED rule string — a future rules change must add a new version, never mutate v1. */
-export const DIR_TREE_V1_RULES =
-  'dir_tree_v1: include .js,.mjs,.cjs,.ts,.mts,.cts,.json; exclude dirs node_modules,.git; skip symlinks; sort by relpath; sha256(relpath\\0filehash); caps 2000 files/50MB';
-
-const INCLUDED_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts', '.json']);
-const EXCLUDED_DIR_NAMES = new Set(['node_modules', '.git']);
-const MAX_FILES = 2000;
-const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+export { DIR_TREE_V1_RULES };
 
 /** Compares two identity entries — tree_hash + per-module entry hashes + override flag. */
 export { extensionIdentityDiffers as identityDiffers };
@@ -31,6 +30,19 @@ export interface ComputeIdentityInput {
   declared: string;
   resolved: string;
   format: ExtensionIdentityModule['format'];
+}
+
+/**
+ * #828 unit 1: the values a loader took once per process, just before it first imported the code.
+ * Each one given replaces the read of the disk; each one left out is read now, as before.
+ */
+export interface ComputeIdentityValues {
+  /** A module's entry hash by its resolved path (`undefined`: not known, read the file). */
+  entryHash?: (resolved: string) => string | undefined;
+  /** The joined tree of the module roots. */
+  tree?: (roots: string[]) => TreeSweepResult;
+  /** The signals (`undefined` is a value: none). */
+  signals?: () => ExtensionIdentitySignals | undefined;
 }
 
 export interface ComputeIdentityOptions {
@@ -46,6 +58,8 @@ export interface ComputeIdentityOptions {
   manifest?: { path: string; content_hash: string; secrets_block_hash?: string };
   /** Secret NAMES referenced by the manifest — never values; a read compares them (D-12). */
   secretNames?: string[];
+  /** #828 unit 1: the loader's values, taken before the code first loaded. */
+  values?: ComputeIdentityValues;
 }
 
 /** sha256 hex of raw bytes/text — exported for the loader's manifest content hash. */
@@ -53,94 +67,13 @@ export function sha256HexOf(data: Buffer | string): string {
   return sha256Hex(data);
 }
 
-function sha256Hex(data: Buffer | string): string {
-  return createHash('sha256').update(data).digest('hex');
-}
-
-function fileExtension(path: string): string {
-  const base = path.slice(path.lastIndexOf(sep) + 1);
-  const dot = base.lastIndexOf('.');
-  return dot === -1 ? '' : base.slice(dot);
-}
-
 /**
- * Deterministically enumerates the relative paths of sweep-eligible files under `root`
- * per dir_tree_v1: included extensions only, `node_modules`/`.git` directories excluded at
- * any depth, symlinks (files and directories) skipped, sorted by relative path.
- * Enumeration is cap-free — caps apply at the hashing stage so the truncated fingerprint
- * covers a DETERMINISTIC prefix of the sorted listing.
+ * Advisory signals — each independently fail-soft to undefined; never compared. Exported as the
+ * reader the loader hands the per-process map (#828 unit 1).
  */
-function enumerateTreeFiles(root: string): string[] {
-  const relPaths: string[] = [];
-  const walk = (dir: string): void => {
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return; // unreadable directory — skipped (deterministic for a given tree state)
-    }
-    for (const entry of entries) {
-      const full = join(dir, entry.name);
-      if (entry.isSymbolicLink()) continue; // dir_tree_v1: symlinks skipped
-      if (entry.isDirectory()) {
-        if (EXCLUDED_DIR_NAMES.has(entry.name)) continue;
-        walk(full);
-      } else if (entry.isFile()) {
-        if (INCLUDED_EXTENSIONS.has(fileExtension(entry.name))) {
-          relPaths.push(relative(root, full));
-        }
-      }
-    }
-  };
-  walk(root);
-  return relPaths.sort();
-}
-
-interface TreeSweepResult {
-  file_count: number;
-  total_bytes: number;
-  tree_hash: string;
-  truncated: boolean;
-}
-
-/** Hashes the sorted file listing of `roots` under the dir_tree_v1 caps. */
-function sweepTree(roots: string[]): TreeSweepResult {
-  // Enumerate everything first (cheap), THEN hash under caps — the truncation point is a
-  // deterministic prefix of the sorted listing, so truncated hashes stay comparable.
-  const perRoot = roots.map((root) => enumerateTreeFiles(root).map((rel) => ({ root, rel })));
-  const allFiles = perRoot.flat();
-
-  const lines: string[] = [];
-  let totalBytes = 0;
-  let truncated = false;
-  for (const file of allFiles) {
-    if (lines.length >= MAX_FILES || totalBytes >= MAX_TOTAL_BYTES) {
-      truncated = true;
-      break;
-    }
-    let bytes: Buffer;
-    try {
-      bytes = readFileSync(join(file.root, file.rel));
-    } catch {
-      // File disappeared between enumeration and hashing — record it as unreadable
-      // (deterministic for a given tree state; a vanishing file IS a tree change).
-      lines.push(`${file.rel}\u0000<unreadable>`);
-      continue;
-    }
-    totalBytes += bytes.length;
-    lines.push(`${file.rel}\u0000${sha256Hex(bytes)}`);
-  }
-
-  return {
-    file_count: lines.length,
-    total_bytes: totalBytes,
-    tree_hash: sha256Hex(lines.join('\n')),
-    truncated,
-  };
-}
-
-/** Advisory signals — each independently fail-soft to undefined; never compared. */
-function collectSignals(trustRoot: string | undefined): ExtensionIdentitySignals | undefined {
+export function collectSignals(
+  trustRoot: string | undefined,
+): ExtensionIdentitySignals | undefined {
   if (trustRoot === undefined) return undefined;
   const signals: ExtensionIdentitySignals = {};
 
@@ -181,17 +114,18 @@ export function computeExtensionIdentity(
   modules: ComputeIdentityInput[],
   opts: ComputeIdentityOptions = {},
 ): ExtensionIdentityEntry {
+  const values = opts.values;
   const moduleEntries: ExtensionIdentityModule[] = modules.map((m) => ({
     declared: m.declared,
     resolved: m.resolved,
-    entry_hash: sha256Hex(readFileSync(m.resolved)),
+    entry_hash: values?.entryHash?.(m.resolved) ?? sha256Hex(readFileSync(m.resolved)),
     format: m.format,
   }));
 
   const roots = [...new Set(modules.map((m) => dirname(m.resolved)))].sort();
-  const tree = sweepTree(roots);
+  const tree = values?.tree !== undefined ? values.tree(roots) : sweepTree(roots);
 
-  const signals = collectSignals(opts.trustRoot);
+  const signals = values?.signals !== undefined ? values.signals() : collectSignals(opts.trustRoot);
   return {
     captured_at: opts.capturedAt ?? new Date().toISOString(),
     pid: opts.pid ?? process.pid,

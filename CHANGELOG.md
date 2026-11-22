@@ -75,6 +75,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - get_run_state's steps page and the run's cost count no longer count a reclaim's audit entry as an attempt.
+- The project code's hashes (each module's entry file, its folder's files and the signals) are taken once per process, just before Realm first loads that code, and kept only if the load succeeds. A long-running server no longer records files changed after it loaded them while it still runs the old code (#828).
 
 ## [0.50.0] — 2026-11-17
 

@@ -61,10 +61,13 @@ import type {
   WorkflowDefinition,
 } from '@sensigo/realm';
 import {
+  collectSignals,
   computeExtensionIdentity,
   errorExtensionIdentityEntry,
   sha256HexOf,
 } from './extension-identity.js';
+// #828 unit 1: the per-process map of the code's hashes, taken just before the code first loads.
+import { CodeHashLoad, clearCodeHashes } from '@sensigo/realm-mcp/code-hashes';
 import { resolveManifestSecrets, type SecretMode } from './manifest-secrets.js';
 import { namesSlackAccount } from '../agent/gate/slack-accounts.js';
 import {
@@ -193,9 +196,13 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-/** @internal Test-only: clears the process-lifetime registry cache. */
+/**
+ * @internal Test-only: clears the process-lifetime registry cache, and the code's kept hashes with it
+ * (#828 unit 1): a cleared cache stands for a new process.
+ */
 export function clearProjectExtensionsCache(): void {
   cache.clear();
+  clearCodeHashes();
 }
 
 /** #729 PR-3 correction 3 (H-10): a manifest read that failed (parse, schema or a secret). */
@@ -462,9 +469,23 @@ export async function loadProjectExtensions(
     processors: [],
   };
 
+  // #828 unit 1: the code's hashes are taken just before each first import, through one load of the
+  // per-process map: a module's entry hash is kept once its import succeeds; the rest only when this
+  // whole load succeeds (`commit` below), so a failed load that is retried after a fix reads again.
+  const hashes = new CodeHashLoad({
+    ...(definition.trust_root !== undefined ? { trustRoot: definition.trust_root } : {}),
+    readSignals: collectSignals,
+  });
+  const importTracked: ImportModule = async (resolvedPath, label) => {
+    hashes.beforeImport(resolvedPath);
+    const imported = await importModuleNamespace(resolvedPath, label);
+    hashes.imported(resolvedPath);
+    return imported;
+  };
+
   const moduleFormats = new Map<string, 'esm' | 'cjs' | 'ts-jiti'>();
   for (const ref of moduleRefs ?? []) {
-    const { namespace, format } = await importModuleNamespace(ref.resolved, ref.declared);
+    const { namespace, format } = await importTracked(ref.resolved, ref.declared);
     moduleFormats.set(ref.resolved, format);
     applyModule(
       defaultExportOf(namespace, ref.declared),
@@ -498,6 +519,7 @@ export async function loadProjectExtensions(
     const applied = await applyDeploymentManifest(
       manifestCtx,
       useModuleRefs,
+      importTracked,
       registry,
       builtinNames,
       claimedBy,
@@ -531,6 +553,11 @@ export async function loadProjectExtensions(
       computeExtensionIdentity(identityModules, {
         ...(definition.trust_root !== undefined ? { trustRoot: definition.trust_root } : {}),
         ...(overrideActive ? { overrideActive: true } : {}),
+        values: {
+          entryHash: (resolvedPath) => hashes.entryHash(resolvedPath),
+          tree: (roots) => hashes.tree(roots),
+          signals: () => hashes.signals(),
+        },
         ...(manifestCtx !== undefined
           ? {
               manifest: {
@@ -590,6 +617,7 @@ export async function loadProjectExtensions(
       : {}),
     ...cacheEconomicsPathOf(manifestCtx),
   };
+  hashes.commit();
   cache.set(cacheKey, { result, ...(freshness !== undefined ? { freshness } : {}) });
   emitReleaseLineWarnings(result, opts);
   return result;
@@ -640,6 +668,7 @@ function resolveUseModuleRefs(ctx: ManifestContext): Map<string, string> {
 async function applyDeploymentManifest(
   ctx: ManifestContext,
   useModuleRefs: Map<string, string>,
+  importModule: ImportModule,
   registry: ExtensionRegistry,
   builtinNames: Record<'adapter' | 'handler' | 'processor', Set<string>>,
   claimedBy: Map<string, string>,
@@ -720,6 +749,7 @@ async function applyDeploymentManifest(
       const factory = await resolveEntryFactory(
         ctx,
         useModuleRefs,
+        importModule,
         useFormats,
         section.type,
         name,
@@ -818,6 +848,7 @@ async function applyDeploymentManifest(
 async function resolveEntryFactory(
   ctx: ManifestContext,
   useModuleRefs: Map<string, string>,
+  importModule: ImportModule,
   useFormats: Map<string, 'esm' | 'cjs' | 'ts-jiti'>,
   type: 'adapter' | 'handler' | 'processor',
   name: string,
@@ -854,7 +885,7 @@ async function resolveEntryFactory(
   if (real === undefined) {
     throw new Error(`Deployment manifest '${ctx.path}': ${site} — unresolved module '${use}'.`);
   }
-  const { namespace, format } = await importModuleNamespace(real, `${ctx.path}#${site}`);
+  const { namespace, format } = await importModule(real, `${ctx.path}#${site}`);
   useFormats.set(real, format);
 
   const candidate = pickExport(namespace, exportName, use, ctx.path, site);
@@ -962,6 +993,9 @@ function resolveModuleRefs(
     return { declared: declaredPath, resolved: real };
   });
 }
+
+/** The loader's import of one module: `importModuleNamespace` with the code's hashes taken around it. */
+type ImportModule = typeof importModuleNamespace;
 
 /**
  * Imports one module (jiti-bridged for TypeScript paths) and returns its full namespace

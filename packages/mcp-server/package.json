@@ -39,6 +39,10 @@
       "import": "./dist/home-server.js",
       "types": "./dist/home-server.d.ts"
     },
+    "./code-hashes": {
+      "types": "./dist/code-hashes.d.ts",
+      "import": "./dist/code-hashes.js"
+    },
     "./dist/tools/*.js": {
       "import": "./dist/tools/*.js",
       "types": "./dist/tools/*.d.ts"
