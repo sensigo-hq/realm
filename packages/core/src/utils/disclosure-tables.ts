@@ -267,6 +267,8 @@ export const STEP_DIAGNOSTICS_TABLE = {
   guard_conditions: { nested: GUARD_CONDITION_TABLE },
   validation_rejections: 'fact',
   settled_by_default: 'fact',
+  // gap 2, unit (ii-a): a closed word (`transient`, `permanent`), never the provider's text.
+  failure_kind: 'fact',
   structured_output: { nested: STRUCTURED_OUTPUT_TABLE },
   cache: { nested: STEP_CACHE_TABLE },
 } as const satisfies Row<StepDiagnostics>;
@@ -693,10 +695,9 @@ export const GUARD_CONDITION_FACTS = {
   Element<NonNullable<StepDiagnostics['guard_conditions']>>
 >;
 
-export const STEP_DIAGNOSTICS_FACTS = {} as const satisfies FactProducers<
-  typeof STEP_DIAGNOSTICS_TABLE,
-  StepDiagnostics
->;
+export const STEP_DIAGNOSTICS_FACTS = {
+  failure_kind: 'enum',
+} as const satisfies FactProducers<typeof STEP_DIAGNOSTICS_TABLE, StepDiagnostics>;
 
 export const ATTRIBUTED_FACTS = {
   by: 'id',

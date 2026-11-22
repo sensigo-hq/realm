@@ -188,7 +188,7 @@ describe('piece 2a — check 3: `$settlement` and params', () => {
     expect(judged(yaml)).toEqual([
       "WHEN_PATH_UNRESOLVABLE: Step 'act': when '$settlement.extract.faild == true' reads " +
         "'$settlement.extract.faild', which can never be found: '$settlement.extract' holds only " +
-        `'failed', 'settled_by_default' and 'validation_rejections'. ${NEVER} Did you mean ` +
+        `'failed', 'settled_by_default', 'validation_rejections' and 'failure_kind'. ${NEVER} Did you mean ` +
         `'failed'? ${at(yaml)}`,
     ]);
   });

@@ -1625,8 +1625,20 @@ export const PERSON_BLOCK: unique symbol = Symbol('realm.mcp.person_block');
  */
 export const REPLY_PLAN: unique symbol = Symbol('realm.mcp.reply_plan');
 
+/**
+ * Gap 2, unit (iv-b1): the dotted paths of the fields a composer showed as their shape under the
+ * door's failure-text setting `hidden` ride its reply under this symbol — never serialized, kept by
+ * object spread. {@link toolContentOf} hands them to the walk, which lists each it meets in the
+ * receipt's `shaped` and says `failure_text: 'withheld'`; the walk shapes nothing more.
+ */
+export const FAILURE_TEXT_SHAPED: unique symbol = Symbol('realm.mcp.failure_text_shaped');
+
 /** A handler's reply: the envelope, the person block when there is one, and its plan. */
-export type WithPersonBlock<T> = T & { [PERSON_BLOCK]?: string; [REPLY_PLAN]?: ReplyPlan };
+export type WithPersonBlock<T> = T & {
+  [PERSON_BLOCK]?: string;
+  [REPLY_PLAN]?: ReplyPlan;
+  [FAILURE_TEXT_SHAPED]?: readonly string[];
+};
 
 /** The envelope of a rendered reply, carrying its person block under {@link PERSON_BLOCK}. */
 /**
@@ -2172,11 +2184,18 @@ export function toolContentOf(
     };
   }
   const person = reply[PERSON_BLOCK];
+  // Gap 2, unit (iv-b1): the fields the composer shaped under the failure-text setting, read from the
+  // reply as given; every walk (the ceiling's cut copies too) lists those it meets.
+  const shapedPaths = reply[FAILURE_TEXT_SHAPED];
+  const walkOptions =
+    shapedPaths !== undefined && shapedPaths.length > 0
+      ? { failureTextShaped: new Set(shapedPaths) }
+      : {};
   // Caching 3-B (B2): each `run_step` entry's boundary, computed on the RAW reply before the first
   // walk, so the ceiling's cut copies (`fitted`) inherit it; the internal key goes from every entry.
   const raw = withStablePrefixes(reply, disclosure) as Record<string, unknown>;
   const walk = (r: Readonly<Record<string, unknown>>): Record<string, unknown> =>
-    discloseReply(r, disclosure.set, disclosure.audience, disclosure.table) as Record<
+    discloseReply(r, disclosure.set, disclosure.audience, disclosure.table, walkOptions) as Record<
       string,
       unknown
     >;

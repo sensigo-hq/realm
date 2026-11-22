@@ -480,6 +480,7 @@ const EXCLUDED_LAUNCHER_METADATA = new Set([
 export const REALM_SETTING_VARIABLES: ReadonlySet<string> = new Set([
   'REALM_DEV', // a flag ('1')
   'REALM_ENCRYPTION_KEY_FILE', // a path: the file holding the master key (callback K1), not the key
+  'REALM_MCP_FAILURE_TEXT', // an enum: shown, hidden (gap 2, unit (iv-b1))
   'REALM_MCP_FORM_WAIT_SECONDS', // a number of seconds
   'REALM_MCP_GATE_ANSWERS', // an enum: asked, offered, withheld
   'REALM_NO_NUDGE', // a flag ('1')

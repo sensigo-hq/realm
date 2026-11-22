@@ -326,6 +326,13 @@ export interface StepDiagnostics {
    * even one that previously accrued rejections, carries only `validation_rejections` here.
    */
   settled_by_default?: boolean;
+  /**
+   * Gap 2, unit (ii-a): on the entry of an agent step that failed because its model request failed
+   * and it took its failure path, why: `transient` (a later try might pass) or `permanent` (it will
+   * fail the same way). A later step reads it as `$settlement.<step>.failure_kind`. Absent on every
+   * other entry, and on every entry written before this field existed.
+   */
+  failure_kind?: 'transient' | 'permanent';
   /** Issue #236 — disclosure for a `structured_output: 'strict'`-declared step's attempt. See
    *  {@link StructuredOutputMeta}. Absent on a step that never declared `structured_output`. */
   structured_output?: StructuredOutputMeta;
@@ -1302,7 +1309,12 @@ void _everyExhaustedByListed;
  */
 export type StopReason = NonNullable<EvidenceSnapshot['stop_reason']>;
 
-/** Every {@link StopReason}, in judging order; compile-checked both ways, ⊇ {@link ExhaustedBy}. */
+/**
+ * Every {@link StopReason}, in the dispatch loop's judging order; compile-checked both ways,
+ * ⊇ {@link ExhaustedBy}. On an agent step whose model request failed and that took its failure
+ * path (`ExecuteChainOptions.modelFailure`), the caller states the stop reason and no judging order
+ * applies: a permanent model failure reads `non_retryable` even on a step with no `retry` block.
+ */
 export const STOP_REASONS = [
   'no_retry_policy',
   'total_timeout',
@@ -1856,8 +1868,9 @@ const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : Missi
 void _everyErrorClassListed;
 
 /**
- * Q1 (#592) unit c: an `error_class` word a provider or a program may claim — every word but
- * `startup_failure`, which only `realm agent`'s and `realm listen`'s own startup writers mint.
+ * An `error_class` word a provider or a program may claim: every word but `startup_failure`, which
+ * only `realm agent`'s and `realm listen`'s own startup writers mint. Q1 (#592) unit c.
+ * @public
  */
 export type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
 
@@ -1866,7 +1879,8 @@ export type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'st
  * {@link ERROR_CLASSES} word but `startup_failure`, which only `realm agent`'s and `realm listen`'s
  * own startup writers mint. The readers that take a claimed class close against this one list: the
  * CLI's payload reader and model-try reader (a provider's thrown payload, a third-party
- * `--provider-module`'s included) and `closeModelAttempts` (a program's `model_attempts`).
+ * `--provider-module`'s included), `closeModelAttempts` (a program's `model_attempts`), and
+ * `executeChain`'s admission of `modelFailure.error_class`.
  * Checked both ways, as `ERROR_CLASSES` is.
  */
 export const CLAIMABLE_ERROR_CLASSES = [
