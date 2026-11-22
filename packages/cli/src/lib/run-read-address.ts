@@ -23,6 +23,8 @@ import {
   deriveRunPhase,
   discloseValue,
   withheldCauseOf,
+  type CallbackStore,
+  type CallbackView,
   type DisclosureSet,
   type RunRecord,
   type Snapshot,
@@ -128,6 +130,8 @@ export interface ReadContext {
   disclosureProvider(definition: WorkflowDefinition, run: RunRecord): Promise<DisclosureSet>;
   logger: { error(msg: string, data?: unknown): void };
   readonly cache: PhaseCache;
+  /** R1.3 C3b1: the runs' callback rows, read only to say how a finished run's callback stands. */
+  readonly callbacks?: Pick<CallbackStore, 'read'>;
 }
 
 /** The opted-in entries of a route table, by address prefix. */
@@ -314,7 +318,30 @@ export async function answerRead(
     fail(err);
     return;
   }
+  // C3b1: added here, never inside readReplyBody (a wait's 200 and the callback body share it).
+  if (phase !== 'running' && phase !== 'gate_waiting' && ctx.callbacks !== undefined) {
+    try {
+      const view = await ctx.callbacks.read(run.id);
+      if (view !== undefined) body = { ...body, callback: callbackField(view) };
+    } catch (err) {
+      ctx.logger.error('webhook: callback view could not be read', {
+        path: requestPath(req),
+        run_id: read.runId,
+        error: String(err),
+      });
+    }
+  }
   sendRead(req, res, 200, body);
+}
+
+/** How a run's callback stands, for the read address: four members, never the address or host. */
+function callbackField(view: CallbackView): Record<string, unknown> {
+  return {
+    state: view.status,
+    attempts: view.attempts,
+    ...(view.last_status !== undefined ? { last_status: view.last_status } : {}),
+    ...(view.status === 'pending' ? { next_try: view.next_attempt_at } : {}),
+  };
 }
 
 /**
