@@ -28,7 +28,9 @@
 // AA-AUU1-07); an agent step's output is its answer, plus `choice` once its gate is answered
 // (AA-C1-03, AA-AUU1-03); a handler or adapter step's output declares no shape (AA-C1-02); a bare
 // auto step records its one dependency's output (docs/concepts/step-kinds.md); `$settlement.<s>`
-// holds three fields (AA-AUU1-04); a reader with `all_success` runs only after each of its
+// holds three fields (AA-AUU1-04), and a fourth, `failure_kind`, only on a step whose model request
+// failed and that took its failure path (gap 2, unit (ii-a)); a reader with `all_success` runs only
+// after each of its
 // dependencies completed (AA-MA4-01), and with exactly one dependency `one_success` is the same
 // rule (AA-MA4-07); a step that runs only after `<s>` failed finds `$settlement.<s>`, because a
 // failed step has its entry (AA-AUC1U-03); a default settle records `default_output` as written
@@ -184,7 +186,12 @@ export type AbsentCause =
   /** A field only `default_output` carries (both schemas, `validation_exhaustion.mode: default`). */
   | { readonly rule: 'default_only'; readonly field: string }
   /** A position in a list, which may be shorter. */
-  | { readonly rule: 'list_position'; readonly position: string };
+  | { readonly rule: 'list_position'; readonly position: string }
+  /**
+   * Gap 2, unit (ii-a): `$settlement.<step>.failure_kind`, set only when the step's model request
+   * failed and the step took its failure path.
+   */
+  | { readonly rule: 'model_failure_only'; readonly step: string };
 
 /**
  * Why a path was not checked. Piece 3a-ii-a: `added_from_file` is `workflow.context.schema`, an entry
@@ -205,11 +212,16 @@ export type PathJudgement =
       readonly stepCause?: AbsentCause;
     };
 
-/** The three fields `$settlement.<s>` holds (AA-AUU1-04), in the order the words name them. */
+/**
+ * The fields `$settlement.<s>` holds, in the order the words name them: the three every settled step
+ * has (AA-AUU1-04), then `failure_kind`, which only a model failure's settle sets (gap 2, unit (ii-a);
+ * judged may be absent).
+ */
 const SETTLEMENT_FIELDS: readonly string[] = [
   'failed',
   'settled_by_default',
   'validation_rejections',
+  'failure_kind',
 ];
 
 const SETTLEMENT = '$settlement';
@@ -731,7 +743,7 @@ class Context {
     if (rest.length === 0) return FOUND;
     const s = rest[0]!;
 
-    // `$settlement.<t>.<field>`: `<t>` is judged as a step name, then only three fields exist.
+    // `$settlement.<t>.<field>`: `<t>` is judged as a step name, then only its four fields exist.
     if (s === SETTLEMENT) {
       if (rest.length === 1) return FOUND;
       const t = rest[1]!;
@@ -751,7 +763,11 @@ class Context {
         });
       }
       const stepCause = this.index.stepCause(this.reader, t, true);
-      return stepCause !== undefined ? { verdict: 'may_be_absent', cause: stepCause } : FOUND;
+      if (stepCause !== undefined) return { verdict: 'may_be_absent', cause: stepCause };
+      // Gap 2, unit (ii-a): set only on a model failure's settle, so never judged found.
+      return fields[0] === 'failure_kind'
+        ? { verdict: 'may_be_absent', cause: { rule: 'model_failure_only', step: t } }
+        : FOUND;
     }
 
     if (!this.isStep(s)) return this.noStep(s);

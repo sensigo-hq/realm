@@ -265,9 +265,9 @@ export const CENSUS: Record<string, Entry> = {
   ],
   'core/src/engine/execution-loop.ts#elapsedCapMs#performance.now()': [1, 'duration', MONOTONIC],
   'core/src/engine/execution-loop.ts#executeStepBody#clock.now()': [
-    7,
+    8,
     'event',
-    "a step's evidence instants (started, completed, settled, the abort, the compensating unclaim, the context's capture), written with them",
+    "a step's evidence instants (started, completed, settled, the abort, the model failure's, the compensating unclaim, the context's capture), written with them",
   ],
   'core/src/engine/execution-loop.ts#executeStepBody#performance.now()': [1, 'duration', MONOTONIC],
   'core/src/store/take-reading.ts#takeRawReading#clock.now()': [

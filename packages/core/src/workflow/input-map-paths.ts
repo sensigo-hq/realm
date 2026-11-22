@@ -326,7 +326,7 @@ function neverWords(
     case 'no_settlement_field':
       return withDidYouMean(
         `${opening} reads '${p}', but '$settlement.${cause.step}' holds only 'failed', ` +
-          `'settled_by_default' and 'validation_rejections'.`,
+          `'settled_by_default', 'validation_rejections' and 'failure_kind'.`,
         cause.didYouMean,
       );
     case 'no_param':
@@ -382,6 +382,7 @@ function absentWords(stepName: string, key: string, path: string, cause: AbsentC
     case 'optional':
     case 'default_only':
     case 'list_position':
+    case 'model_failure_only':
       return (
         `${opening} reads '${p}', which may be absent when this step runs (${absentWhy(cause)}); the ` +
         `step then receives no value for '${k}'.`

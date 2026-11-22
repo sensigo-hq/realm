@@ -656,6 +656,7 @@ interface StepDiagnostics {
     }>;
     validation_rejections?: number;
     settled_by_default?: boolean;
+    failure_kind?: 'transient' | 'permanent';
     structured_output?: StructuredOutputMeta;
     cache?: StepCacheDetail;
 }

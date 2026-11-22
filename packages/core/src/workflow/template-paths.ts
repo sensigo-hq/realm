@@ -323,8 +323,8 @@ function neverReason(cause: NeverCause, field: TemplateField): Reason {
     case 'no_settlement_field':
       return {
         text:
-          `'$settlement.${capText(cause.step)}' holds only 'failed', 'settled_by_default' and ` +
-          `'validation_rejections'`,
+          `'$settlement.${capText(cause.step)}' holds only 'failed', 'settled_by_default', ` +
+          `'validation_rejections' and 'failure_kind'`,
         ...dym,
       };
     case 'no_param':
@@ -365,6 +365,7 @@ function absentWords(cause: Exclude<AbsentCause, { rule: 'runs_after' }>): {
       return { why: absentWhy(cause), fix: `${DEFAULT_FIX}, or change the trigger_rule.` };
     case 'list_position':
     case 'default_only':
+    case 'model_failure_only':
       return { why: absentWhy(cause), fix: `${DEFAULT_FIX}.` };
     case 'undeclared_field':
       return {

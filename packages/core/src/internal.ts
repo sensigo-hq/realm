@@ -1328,6 +1328,23 @@ export type {
   FormWaitSetting,
   FormWaitInput,
 } from './engine/gate-answers-setting.js';
+// Gap 2, unit (iv-b1): the MCP door's failure-text setting, judged once (the server and the bins),
+// and a run's failure words as get_run_state shows them under `hidden`.
+export {
+  judgeFailureText,
+  FAILURE_TEXT_ENV,
+  FAILURE_TEXT_VALUES,
+} from './engine/failure-text-setting.js';
+export type {
+  FailureText,
+  FailureTextSetting,
+  FailureTextInput,
+} from './engine/failure-text-setting.js';
+export {
+  failureTextShape,
+  terminalReasonHidingFailureText,
+  abortMessageHidingFailureText,
+} from './engine/failure-text.js';
 
 // CP-W: the deprecation channel's data — the table, its validator, the line, and the ids said in
 // this process. Data only; the CLI and the MCP server print.
