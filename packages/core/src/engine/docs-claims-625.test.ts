@@ -1868,7 +1868,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     );
     // Correction 2 (03): the kept list, its `±` and `☒` members run below.
     expect(stateRow('reformatted')).toContain(
-      'Digits, the separators between two digits, `%`, `‰`, `°`, `‱`, currency signs, every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions never are',
+      'Digits, the separators between two digits, `%`, `‰`, `°`, `‱`, currency signs, the 13 number signs (U+0600–U+0605 and the others the glossary names), every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions never are',
     );
     expect(stateRow('stitched_out_of_order')).toBe('The same, with the pieces in another order.');
     expect(stateRow('not_found')).toBe(
@@ -1963,7 +1963,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     // Correction 2 (03, N8): each example is run below (`numbers`, `signs`, `words`).
     claimOn(
       HANDLERS,
-      'A number written in digits is one unit: a digit never matches inside a longer number or next to a letter, and a quote never starts or ends on a number\'s separator or beside a group of thousands. `clause 9` is not found in `clause 9a`, `9,20` not in `9,200`, `€48` not in `€48,000`, `18` and `18.` not in `18.5`, `1 200` not in `1 200 000`, and `75%` not in `.75%`. A currency or mathematical sign, or a dash, written right before a number belongs to it (the exceptions are listed under "What `check_quotes` does not catch"): `48,000` is not found in `€48,000`, and `5` not in `-5`. A number written in words is matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
+      'A number written in digits is one unit: a digit never matches inside a longer number or next to a letter, and a quote never starts or ends on a number\'s separator or beside a group of thousands. `clause 9` is not found in `clause 9a`, `9,20` not in `9,200`, `€48` not in `€48,000`, `18` and `18.` not in `18.5`, `1 200` not in `1 200 000`, and `75%` not in `.75%`. A currency or mathematical sign, a dash, or one of the 13 number signs (U+0600–U+0605, U+06DD, U+070F, U+0890, U+0891, U+08E2, U+110BD, U+110CD), written right before a number belongs to it (the exceptions are listed under "What `check_quotes` does not catch"): `48,000` is not found in `€48,000`, and `5` not in `-5`. A number written in words is matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
     );
     // #866 correction 1 (C2): what `nearest` reads — run by locate-quote-language-0480.test.ts's
     // "the review’s correction: nearest" cells (`كُتِبَ`, `abcdefgh rent`, `старый замок`,
@@ -2084,7 +2084,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     // marks a quote leaves out — run by locate-quote-language-0480.test.ts's §2 and §4 cells.
     claimOn(
       HANDLERS,
-      "with every dash and hyphen read as `-` (two hyphens outside the Basic Multilingual Plane excepted; a soft hyphen is not a dash: it is invisible, and makes no word edge), every punctuation mark and quotation mark dropped, and every spacing accent not next to a digit, and spaces collapsed, keeping letters with their visible combining marks (a mark is part of its letter, so a quote must carry it; an Arabic or Hebrew vowel mark a quote leaves out is optional, and one it writes must match; a mark on anything but a letter is dropped), digits, `%`, `‰`, `°`, `‱`, currency signs, every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions (never folded into digits), a `-` directly before a digit, a `.` or `,` directly before a digit that follows no letter or digit, and the separators between two digits (a spacing accent between two digits is one, kept as itself). A number written in digits is one unit: a digit never matches inside a longer number of `source`, or next to its letters, and a quote never starts or ends on a number's separator or beside a group of thousands.",
+      "with every dash and hyphen read as `-` (two hyphens outside the Basic Multilingual Plane excepted; a soft hyphen is not a dash: it is invisible, and makes no word edge), every punctuation mark and quotation mark dropped, and every spacing accent not next to a digit, and spaces collapsed, keeping letters with their visible combining marks (a mark is part of its letter, so a quote must carry it; an Arabic or Hebrew vowel mark a quote leaves out is optional, and one it writes must match; a mark on anything but a letter is dropped), digits, `%`, `‰`, `°`, `‱`, currency signs, the 13 number signs (U+0600–U+0605 and the others the glossary names), every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions (never folded into digits), a `-` directly before a digit, a `.` or `,` directly before a digit that follows no letter or digit, and the separators between two digits (a spacing accent between two digits is one, kept as itself). A number written in digits is one unit: a digit never matches inside a longer number of `source`, or next to its letters, and a quote never starts or ends on a number's separator or beside a group of thousands.",
     );
     // (a) red when a mid-word quote or piece is found, a skip lands mid-sentence, a quote with no
     //     break stitches, a sign, a superscript, a dash or a leading decimal is folded, or a number
@@ -4416,6 +4416,103 @@ describe("#855's correction: each sentence's members", () => {
         listMark: 'stitched',
         markOnNumber: 'not_found',
       });
+    });
+  });
+
+  // ─── #845 1a-i correction 1 (`prompts/fix-845-1a-i-correction-1.md`, Words): the sentences the walk
+  //     and the audit found incomplete, each pinned and its claim run over every member. ──────────
+  describe('#845 1a-i correction 1: the number signs and the letter accents, in the words', () => {
+    const ACCENTS = codePoints(/^[^]$/u).filter((c) => /^ \p{M}+$/u.test(ch(c).normalize('NFKC')));
+    const LETTER_ACCENTS = ACCENTS.filter((c) => /^\p{L}$/u.test(ch(c)));
+
+    it('the number paragraph: one of the 13 number signs written right before a number belongs to it', () => {
+      claimOn(
+        HANDLERS,
+        'A currency or mathematical sign, a dash, or one of the 13 number signs (U+0600–U+0605, U+06DD, U+070F, U+0890, U+0891, U+08E2, U+110BD, U+110CD), written right before a number belongs to it',
+      );
+      const rows: Row[] = PREPEND.flatMap((s): Row[] =>
+        ['250', '٢٥٠'].flatMap((digits): Row[] => {
+          const doc = `The fee is ${ch(s)}${digits} in cash.`;
+          return [
+            [`${hex(s)} ${digits} alone`, read(digits, doc), 'not_found'],
+            [
+              `${hex(s)} ${digits}, the words without the sign`,
+              read(`The fee is ${digits}`, doc),
+              'not_found',
+            ],
+            [
+              `${hex(s)} ${digits}, with the sign`,
+              read(`The fee is ${ch(s)}${digits}`, doc),
+              'exact',
+            ],
+          ];
+        }),
+      );
+      // (1) red when the count differs, or a sign does not bind the number after it; (2) prints the
+      //     count and each differing row.
+      expect({ count: PREPEND.length, misses: misses(rows) }).toEqual({ count: 13, misses: [] });
+    });
+
+    it('the kept characters (the `reformatted` row and the canonical form): the 13 number signs are kept, so a word quoted without one is not found', () => {
+      const rows: Row[] = PREPEND.flatMap((s): Row[] => {
+        const doc = `The code is ab${ch(s)}cd here.`;
+        return [
+          [`${hex(s)} kept`, String(canonicalForm(`ab${ch(s)}cd`).includes(ch(s))), 'true'],
+          [`${hex(s)} quoted without it`, read('The code is abcd here.', doc), 'not_found'],
+          [`${hex(s)} quoted with it`, read(`The code is ab${ch(s)}cd here.`, doc), 'exact'],
+        ];
+      });
+      // (1) red when a number sign is set aside by the canonical form; (2) prints each differing row.
+      expect(misses(rows)).toEqual([]);
+    });
+
+    it('the glossary row "a spacing accent": 15 of them are also letters, and inside a word they join it as an invisible character does', () => {
+      const row = GLOSSARY.get('a spacing accent') ?? '';
+      const quotes = ['The Tenant can', 'The Tenant cant sublet.'];
+      const rows: Row[] = LETTER_ACCENTS.flatMap((c): Row[] => {
+        const doc = `The Tenant can${ch(c)}t sublet.`;
+        const zwsp = 'The Tenant can\u{200b}t sublet.';
+        return quotes.map((q): Row => [`${hex(c)} ${q}`, read(q, doc), read(q, zwsp)]);
+      });
+      // (1) red when the count or a named member differs, the row does not say so, or a letter accent
+      //     reads otherwise than U+200B inside the word; (2) prints the members and each differing row.
+      expect({
+        says: row.includes(
+          `elsewhere it is dropped like punctuation. ${String(LETTER_ACCENTS.length)} of them are also letters (U+037A and 14 Arabic isolated forms, such as U+FE70, as Node 24 reads Unicode 17.0); inside a word these join it, as an invisible character does`,
+        ),
+        named: [0x37a, 0xfe70].every((c) => LETTER_ACCENTS.includes(c)),
+        arabic: LETTER_ACCENTS.filter((c) => /^\p{Script=Arabic}$/u.test(ch(c))).length,
+        part: read(quotes[0]!, `The Tenant can${ch(0xfe70)}t sublet.`),
+        whole: read(quotes[1]!, `The Tenant can${ch(0xfe70)}t sublet.`),
+        misses: misses(rows),
+      }).toEqual({
+        says: true,
+        named: true,
+        arabic: 14,
+        part: 'not_found',
+        whole: 'reformatted',
+        misses: [],
+      });
+    });
+
+    it('the Chinese, Japanese and Thai bullet: a spacing accent sets two runs apart, except the 15 that are letters, which join them', () => {
+      claimOn(
+        HANDLERS,
+        'a spacing accent (`´`, `゛`) counts as such a punctuation mark, except next to a digit, and except the 15 that are letters, which join the runs beside them.',
+      );
+      const rows: Row[] = ACCENTS.map((c): Row => [
+        hex(c),
+        // The whole run before the accent: `東京` alone is part of that run, `not_found` either way.
+        read('我们在東京', `我们在東京${ch(c)}大阪工作。`),
+        LETTER_ACCENTS.includes(c) ? 'not_found' : 'exact',
+      ]);
+      // (1) red when a letter accent sets the runs apart, or another accent joins them; (2) prints
+      //     the counts and each differing row.
+      expect({
+        accents: ACCENTS.length,
+        letters: LETTER_ACCENTS.length,
+        misses: misses(rows),
+      }).toEqual({ accents: 50, letters: 15, misses: [] });
     });
   });
 });

@@ -592,7 +592,7 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
     // sweeps below
     claimOn(
       HANDLERS,
-      "- In Chinese, Japanese and Thai text, a quote must be a whole run, between spaces, punctuation, symbols or the text's ends (an invisible character joins the runs beside it, as the `exact` row says): part of a run reads `not_found`. A reformatted quote of a run that only a punctuation mark or a symbol the check sets aside joins to another run (`。` `、` `，` `「` `」` `,` `.` `★` …, with no space beside it) reads `not_found` too; a spacing accent (`´`, `゛`) counts as such a punctuation mark, except next to a digit. Quoted character for character, the run reads `exact`, and a number in it follows the number rule above. Word boundaries for these scripts are designed later.",
+      "- In Chinese, Japanese and Thai text, a quote must be a whole run, between spaces, punctuation, symbols or the text's ends (an invisible character joins the runs beside it, as the `exact` row says): part of a run reads `not_found`. A reformatted quote of a run that only a punctuation mark or a symbol the check sets aside joins to another run (`。` `、` `，` `「` `」` `,` `.` `★` …, with no space beside it) reads `not_found` too; a spacing accent (`´`, `゛`) counts as such a punctuation mark, except next to a digit, and except the 15 that are letters, which join the runs beside them. Quoted character for character, the run reads `exact`, and a number in it follows the number rule above. Word boundaries for these scripts are designed later.",
     );
     // (a) red when a sentence's example reads otherwise; (b) prints the states.
     expect({
