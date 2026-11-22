@@ -67,7 +67,7 @@ import {
   sha256HexOf,
 } from './extension-identity.js';
 // #828 unit 1: the per-process map of the code's hashes, taken just before the code first loads.
-import { CodeHashLoad, clearCodeHashes } from '@sensigo/realm-mcp/code-hashes';
+import { beginCodeHashLoad, clearCodeHashes } from '@sensigo/realm-mcp/code-hashes';
 import { resolveManifestSecrets, type SecretMode } from './manifest-secrets.js';
 import { namesSlackAccount } from '../agent/gate/slack-accounts.js';
 import {
@@ -472,7 +472,7 @@ export async function loadProjectExtensions(
   // #828 unit 1: the code's hashes are taken just before each first import, through one load of the
   // per-process map: a module's entry hash is kept once its import succeeds; the rest only when this
   // whole load succeeds (`commit` below), so a failed load that is retried after a fix reads again.
-  const hashes = new CodeHashLoad({
+  const hashes = beginCodeHashLoad({
     ...(definition.trust_root !== undefined ? { trustRoot: definition.trust_root } : {}),
     readSignals: collectSignals,
   });

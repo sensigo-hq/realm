@@ -210,7 +210,33 @@ export interface CodeHashLoadOptions {
  * whole load has succeeded. A load that fails is dropped: only its successful imports' entry hashes
  * stay.
  */
-export class CodeHashLoad {
+export interface CodeHashLoad {
+  /** A file's hash: the kept one, else this load's, else read now (this load's until committed). */
+  fileHash(path: string): FileHash | undefined;
+  /** Just before importing `entry` (see `beginCodeHashLoad`). */
+  beforeImport(entry: string): void;
+  /** `entry`'s import succeeded: its hash is kept now, whatever happens to the rest of the load. */
+  imported(entry: string): void;
+  /** The entry hash for the identity (`undefined`: unreadable, so the identity reads it and fails). */
+  entryHash(entry: string): string | undefined;
+  /** The joined tree of `roots`: each folder's sweep in this load, else its kept one, else swept now. */
+  tree(roots: readonly string[]): TreeSweepResult;
+  /** The signals: kept by trust root, else read once in this load. */
+  signals(): ExtensionIdentitySignals | undefined;
+  /** The whole load succeeded: every value it read is kept. */
+  commit(): void;
+}
+
+/**
+ * Starts one load's reads over the process map. A factory, not an exported class: every class a
+ * published entry exports carries its package's release mark (`check:brands`), and that mark lives
+ * in a module this one does not import.
+ */
+export function beginCodeHashLoad(options: CodeHashLoadOptions): CodeHashLoad {
+  return new Load(options);
+}
+
+class Load implements CodeHashLoad {
   private readonly files = new Map<string, FileHash>();
   private readonly folders = new Map<string, FolderSweep>();
   private signalsTaken = false;
