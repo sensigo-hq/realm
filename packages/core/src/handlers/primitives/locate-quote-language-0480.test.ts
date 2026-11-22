@@ -236,8 +236,13 @@ describe('the language unit §2: a visible mark stays with its letter', () => {
     }
     // (a) red, `missing`: when marks after a letter are dropped; `carried`: under no break of this
     //     unit (a control); (b) prints the count swept and each mark that reads otherwise.
-    expect({ swept: VISIBLE.length > 2_200, missing: found, carried: notFound }).toEqual({
-      swept: true,
+    // #845 check 9: the guard prints the count it checks when it fails, never `false`
+    expect({
+      swept: VISIBLE.length > 2_200 ? 'more than 2200' : VISIBLE.length,
+      missing: found,
+      carried: notFound,
+    }).toEqual({
+      swept: 'more than 2200',
       missing: [],
       carried: [],
     });
@@ -306,7 +311,11 @@ describe('the language unit §3: a match never splits a character, and its edges
     ).map(hex);
     // (a) red when the needle's first character is not read past its own leading marks (each reads
     //     `exact`); (b) prints the count and each mark that reads otherwise.
-    expect({ count: INVISIBLE.length > 250, open }).toEqual({ count: true, open: [] });
+    // #845 check 9: the guard prints the count it checks when it fails, never `false`
+    expect({ count: INVISIBLE.length > 250 ? 'more than 250' : INVISIBLE.length, open }).toEqual({
+      count: 'more than 250',
+      open: [],
+    });
   });
 
   it('the read after a match steps past every mark, the needle’s last character past its own: a quote ending inside a word is `not_found`; `The fee is 1\u0336` in `1\u0336,000` stays `exact` (#845’s R-A2)', () => {
@@ -497,7 +506,8 @@ describe('the language unit §4: an Arabic or Hebrew vowel mark the quote leaves
     //     reads by code point instead of code unit (`astral`: `not_found`), or tatweel is no base;
     //     (b) prints the count outside the ranges, each mark that reads otherwise, and the states.
     expect({
-      outside: OUTSIDE.length > 90,
+      // #845 check 9: the guard prints the count it checks when it fails, never `false`
+      outside: OUTSIDE.length > 90 ? 'more than 90' : OUTSIDE.length,
       arabic,
       hebrew,
       tatweel: state('ومما رزقنـهم ينفقون', 'وَمِمَّا رَزَقۡنَـٰهُمۡ يُنفِقُونَ'),
@@ -506,7 +516,7 @@ describe('the language unit §4: an Arabic or Hebrew vowel mark the quote leaves
         source.slice(astral.parts[0]?.start, astral.parts[0]?.end) === 'كَتَبَ الطالب',
       ],
     }).toEqual({
-      outside: true,
+      outside: 'more than 90',
       arabic: [],
       hebrew: [],
       tatweel: 'reformatted',
