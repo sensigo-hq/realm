@@ -29,6 +29,8 @@ import { cliDisclosureProvider, writerCtx, writerInstalled } from '../output/wri
 import { warnDeprecated } from '../output/deprecations.js';
 import {
   checkValueLine,
+  failureTextCheckLine,
+  failureTextStartLine,
   gateAnswersStartLine,
   offeredGivenToProgram,
   readBinDoorSettings,
@@ -86,6 +88,8 @@ export type StartServerOptions = ServeStores & {
   driver?: Attributed;
   /** #627 W: the `--gate-answers` flag's value, passed to every per-request server (source `flag`). */
   gateAnswersFlag?: string;
+  /** Gap 2, unit (iv-b1): the `--failure-text` flag's value, passed to every per-request server. */
+  failureTextFlag?: string;
   /**
    * Issue #960: called with the server once it is built, before it listens, so the caller can
    * attach what must see every connection (the stop's tracker, `graceful-stop.ts`).
@@ -121,6 +125,7 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
     priceSourceProvider,
     driver,
     gateAnswersFlag,
+    failureTextFlag,
   } = options;
 
   // #616 PR-2a (iii): ONE home per process — the door opened once, at startup, before anything
@@ -150,6 +155,7 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
     // way to answer here (the start line says so; no connect line is passed).
     statelessHttp: true,
     ...(gateAnswersFlag !== undefined ? { gateAnswersFlag } : {}),
+    ...(failureTextFlag !== undefined ? { failureTextFlag } : {}),
     // #627 W (§5.8): the principal this door authenticates — the shared token names no one; dev mode
     // authenticates nothing. Stamped by the door on every answer it records.
     principal: devMode
@@ -317,8 +323,12 @@ export const serveCommand = new Command('serve')
     'Refused here: this server sends no forms (accepted by realm mcp)',
   )
   .option(
+    '--failure-text <value>',
+    "Whether the assistant sees a failure's words in get_run_state: shown (the default) or hidden. The most restrictive of this flag and REALM_MCP_FAILURE_TEXT wins.",
+  )
+  .option(
     '--check',
-    'Print the gate-answers value this server would start with and the separation check, then exit without starting',
+    'Print the gate-answers and failure-text values this server would start with and the separation check, then exit without starting',
   )
   .action(async (options) => {
     // #627 W (§5.1): the settings, read as the server will read them; a bad value, or a form wait on
@@ -328,6 +338,7 @@ export const serveCommand = new Command('serve')
       {
         gateAnswers: options.gateAnswers as string | undefined,
         formWaitSeconds: options.formWaitSeconds as string | undefined,
+        failureText: options.failureText as string | undefined,
       },
       process.env,
     );
@@ -344,6 +355,8 @@ export const serveCommand = new Command('serve')
       console.log(
         checkValueLine(settings.answers, (v) => writerCtx().word(v, GATE_ANSWERS_VALUES)),
       );
+      // Gap 2, unit (iv-b1): the failure-text value, beside the gate-answers value.
+      console.log(failureTextCheckLine(settings.failureText));
       const evidence = await measureSeparation({
         probes: systemProbes(),
         value: { value: settings.answers.value, source: settings.answers.source },
@@ -405,6 +418,9 @@ export const serveCommand = new Command('serve')
         ...(options.gateAnswers !== undefined
           ? { gateAnswersFlag: options.gateAnswers as string }
           : {}),
+        ...(options.failureText !== undefined
+          ? { failureTextFlag: options.failureText as string }
+          : {}),
         beforeListen: (server) => {
           tracker = trackConnections(server);
         },
@@ -432,6 +448,9 @@ export const serveCommand = new Command('serve')
     // #627 W: the start line (stdout on this door), and W-s5 when dev mode leaves the answer tool open
     // (under `permitted` only: no other value lists it).
     console.log(gateAnswersStartLine(settings.answers, true));
+    // Gap 2, unit (iv-b1): under `hidden` only, the failure-text line, on this door's stdout.
+    const failureTextLine = failureTextStartLine(settings.failureText);
+    if (failureTextLine !== undefined) console.log(failureTextLine);
     if (devMode && settings.answers.value === 'permitted') console.warn(DEV_MODE_ANSWER_WARNING);
 
     // Issue #960: on Ctrl+C or SIGTERM `/health` answers 503 at once (U2); with `--shutdown-drain N`

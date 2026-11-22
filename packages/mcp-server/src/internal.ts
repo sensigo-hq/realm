@@ -9,6 +9,9 @@ export { createRealmMcpServer, createDefaultRegistry } from './server.js';
 export {
   checkValueLine,
   DEV_MODE_ANSWER_WARNING,
+  failureTextBinRefusal,
+  failureTextCheckLine,
+  failureTextStartLine,
   formWaitBinRefusal,
   formWaitInertRefusal,
   formWaitNoFormsRefusal,

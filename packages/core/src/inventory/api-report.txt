@@ -1447,6 +1447,8 @@ ExtensionRegistry · both · public
   }
 
 FAILED_ATTEMPT_SIDECAR_MAX_BYTES · value · internal
+FAILURE_TEXT_ENV · value · internal
+FAILURE_TEXT_VALUES · value · internal
 FENCE_PREDICATE_KINDS · value · internal
 FENCE_REQUIRES_RUN · value · internal
 FENCE_TARGETS_STEP · value · public
@@ -1641,6 +1643,9 @@ FailedAttemptStore · type · public
       read(runId: string): Promise<FailedAttemptReadResult>;
   }
 
+FailureText · type · internal
+FailureTextInput · type · internal
+FailureTextSetting · type · internal
 FailureView · type · internal
 FailureWordField · type · internal
 FailureWordsAbsentCause · type · internal
@@ -4312,6 +4317,7 @@ abandonRun · value · public
       door?: 'realm_run_abandon' | 'abandon_run';
   }): Promise<RunRecord>;
 
+abortMessageHidingFailureText · value · internal
 admitWay · value · internal
 adoptsLine · value · internal
 advanceRun · value · public
@@ -4593,6 +4599,7 @@ expiryReceiptOf · value · internal
 extensionIdentityDiffers · value · internal
 failedRequestSends · value · internal
 failureModelTextView · value · internal
+failureTextShape · value · internal
 fenceReaderMissingError · value · internal
 fileClock · value · internal
 finalizerOutcomeLines · value · internal
@@ -4672,6 +4679,7 @@ isTerminalState · value · internal
 isTestLocationClock · value · internal
 isWorkflowComplete · value · internal
 judgeAnswerer · value · internal
+judgeFailureText · value · internal
 judgeFormWait · value · internal
 judgeGateAnswers · value · internal
 judgeGateProof · value · internal
@@ -4926,6 +4934,7 @@ takeReading · value · public
   }, delta?: SettlementDelta): Date;
 
 terminalAnswerRefusalMessage · value · internal
+terminalReasonHidingFailureText · value · internal
 testClockFilePath · value · internal
 testClockNoticeLine · value · internal
 tierFor · value · internal
