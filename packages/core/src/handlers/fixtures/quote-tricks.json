@@ -1709,6 +1709,15 @@
         "doc": "the rent is 1 200 000 euro"
       },
       "expect": "not_found"
+    },
+    {
+      "group": "follow-up",
+      "id": "us-before-a-capital",
+      "quote": "The Landlord shall insure the Building … Capital rules apply to the Tenant at all times",
+      "source": {
+        "doc": "The Landlord shall insure the Building for its cost in the U.S. Capital rules apply to the Tenant at all times."
+      },
+      "expect": "not_found"
     }
   ],
   "T2": [
@@ -2018,17 +2027,6 @@
       },
       "expect": "exact",
       "why": "a quote that starts at a hyphen breaking a word across a line",
-      "cut_short": false
-    },
-    {
-      "group": "follow-up",
-      "id": "us-before-a-capital",
-      "quote": "The Landlord shall insure the Building … Capital rules apply to the Tenant at all times",
-      "source": {
-        "doc": "The Landlord shall insure the Building for its cost in the U.S. Capital rules apply to the Tenant at all times."
-      },
-      "expect": "stitched",
-      "why": "U.S. before a capital letter is read as a sentence end",
       "cut_short": false
     },
     {

@@ -1942,7 +1942,11 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
 
   it("the stitched row's abbreviations and the not_found row's 1,000 searches are the code's own (L1, A8)", () => {
     const row = stateRow('stitched');
-    const listed = [...row.slice(row.indexOf('one of ')).matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+    // #845 (R-A3): the list is its own sentence; the initialisms' sentence follows it
+    const list = row.slice(row.indexOf('one of '), row.indexOf(' is not a sentence end.'));
+    const listed = [...list.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+    const tail = row.slice(row.indexOf(' is not a sentence end.'));
+    const initialisms = [...tail.matchAll(/`([^`]+)`/g)].map((m) => m[1]!).filter((a) => a !== '.');
     // (a) red when the row's list and the code's differ, a listed abbreviation or an initial ends a
     //     piece, or the budget is not the row's figure; (b) prints the two lists, the abbreviations
     //     that split a quote, the initial's piece count and the budget.
@@ -1950,8 +1954,19 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
       listed,
       splits: listed.filter((a) => segmentsOf(`see ${a} the roof`).length !== 1),
       initial: segmentsOf('signed by J. Smith today').length,
+      initialisms,
+      initialismSplits: initialisms.filter(
+        (a) => segmentsOf(`made in the ${a} The roof`).length !== 1,
+      ),
       budget: QUOTE_SEARCH_BUDGET,
-    }).toEqual({ listed: [...NOT_SENTENCE_ENDS], splits: [], initial: 1, budget: 1_000 });
+    }).toEqual({
+      listed: [...NOT_SENTENCE_ENDS],
+      splits: [],
+      initial: 1,
+      initialisms: ['U.S.', 'U.K.', 'J.R.R.'],
+      initialismSplits: [],
+      budget: 1_000,
+    });
     expect(stateRow('not_found')).toContain('more than 1,000 substring searches');
   });
 
@@ -2229,7 +2244,7 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
       'A clause joined to a later sentence (`stitched`) or an earlier one (`stitched_out_of_order`): the piece before a skip may end mid-sentence.',
       'A number written in words, matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
       'A true quote that stops before its sentence ends is found. It is marked `cut_short` only at a `.`, `!` or `?` the quote itself carries.',
-      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and an initial), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
+      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, an initial, and an initialism), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`): a skip may land there.",
       'A grouped amount written with a letter prefix (`500 euro` in `EUR2 500 euro`), and a middle-dot decimal (`·5`).',
       // The follow-up (§2): which enclosed letters read as letters, run by its own cell. The language
       // unit re-pin (§5.2): a mark on a letter stays with it, so the bullet keeps marks on digits and
@@ -2328,7 +2343,7 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
       'A skip onto a clause number in the middle of a line after a sentence end.',
       'A zero-width space or U+FEFF used as the only separator between two words.',
       'A skip onto a new line, a list item included, after a line that ends mid-sentence, or onto a line under a heading with no stop.',
-      'A sentence after a footnote marker; a tab-separated row with no stop; a skip past the labels `a)`, `A)` and `A.`, which are not read as clause numbers; `Ltd.`, `Inc.` or `etc.` ending a sentence; `Schedule A.` (read as an initial); a bullet in the middle of a line after a sentence end.',
+      'A sentence after a footnote marker; a tab-separated row with no stop; a skip past the labels `a)`, `A)` and `A.`, which are not read as clause numbers; `Ltd.`, `Inc.` or `etc.` ending a sentence; `Schedule A.` (read as an initial, as any single capital before `.` is); a bullet in the middle of a line after a sentence end.',
     ])
       claimOn(sentence);
     const cases: Array<[string, string, string]> = [
@@ -2602,19 +2617,21 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     ]).toEqual(['exact', 'exact']);
   });
 
-  it("§2 can still read found: an abbreviation not on the check's list, before a capital letter or an opening mark, is read as a sentence end (every member: #855's correction §4)", () => {
+  it("§2 can still read found: an abbreviation not on the check's list, before a capital letter or an opening mark, is read as a sentence end (every member: #855's correction §4); an initialism is not (#845 R-A3)", () => {
     // #855's correction (§4): `:396`'s `U.S.` sentence merged into the abbreviation bullet.
     claimOn(
       HANDLERS,
-      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and an initial), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
+      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, an initial, and an initialism), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`): a skip may land there.",
     );
     const capital = 'Capital rules apply to the Tenant at all times';
-    // (a) red when the gap closes, or an initial starts ending a sentence; (b) prints the states.
+    // (a) red when the gap closes for `a.m.`, or an initial or an initialism starts ending a sentence
+    //     (#845 R-A3 re-pin: `U.S.` and `U.S.A.` no longer do); (b) prints the states.
     expect([
+      state(...skipTo(' before 9 a.m. ', capital)),
       state(...skipTo(' in the U.S. ', capital)),
       state(...skipTo(' in the U.S.A. ', capital)),
       state(...skipTo(' by J. ', 'Smith shall pay the insurance rent at once')),
-    ]).toEqual(['stitched', 'stitched', 'not_found']);
+    ]).toEqual(['stitched', 'not_found', 'not_found', 'not_found']);
   });
 
   it('§2 #845 closed (R-B): a group of thousands spaced with any `\\p{Zs}` space; still found: a `:` at a line end before a digit', () => {
@@ -2690,7 +2707,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   it("§2 `cut_short`: an `exact` quote is marked when its last character is its stop and the document goes on with a lowercase letter or a digit, not when the quote carries a space after it (every member: #855's correction §1)", () => {
     claimOn(
       HANDLERS,
-      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past closing marks, whitespace other than a line break, and invisible characters, goes on with a lowercase letter or a digit (`approx. 412`); a line break there, or whitespace the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote, but the dots of `...` and a `.` right after `…`, that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
+      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past closing marks, whitespace other than a line break, and invisible characters, goes on with a lowercase letter or a digit (`approx. 412`); a line break there, or whitespace the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote, but the dots of `...` and a `.` right after `…`, that whitespace or the quote's end follows past any invisible characters, unless it ends an abbreviation on the check's list, an initial or an initialism, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
     );
     // #866 correction 1 (C4): the handlers paragraph carries the CHANGELOG's `….` words too.
     // the owner's word, 2026-10-24 ("i agree"): a `.` right after `…` is no sentence end inside a
@@ -3431,7 +3448,7 @@ describe("#855's correction: each sentence's members", () => {
     }).toEqual({ changelog: [...RELEASED].sort((a, b) => a - b).map(hex), misses: [] });
   });
 
-  it("M2 each `.`, `!` or `?` inside the quote, but the dots of `...`, that whitespace or the quote's end follows marks it, unless it ends an abbreviation on the check's list or an initial", () => {
+  it("M2 each `.`, `!` or `?` inside the quote, but the dots of `...`, that whitespace or the quote's end follows past any invisible characters marks it, unless it ends an abbreviation on the check's list, an initial or an initialism (#845 R-C2, R-A3)", () => {
     whole(WS, /^\p{White_Space}$/u);
     const doc = 'THE TENANT SHALL PAY THE RENT AND THE RATES ON THE USUAL QUARTER DAYS.';
     const lease = (a: string) =>
@@ -3445,6 +3462,12 @@ describe("#855's correction: each sentence's members", () => {
           read(`The Tenant shall pay the Rent${stop}${ch(w)}and the rates`, doc),
           'reformatted+cut_short',
         ]),
+        // #845 (R-C2): the read past the stop steps over invisible characters
+        [
+          `${stop} then U+200B then a space`,
+          read(`The Tenant shall pay the Rent${stop}\u{200b} and the rates`, doc),
+          'reformatted+cut_short',
+        ],
         [
           `${stop} at the quote's end`,
           read(`The Tenant shall pay the Rent${stop}`, doc),
@@ -3470,8 +3493,10 @@ describe("#855's correction: each sentence's members", () => {
       ),
       // an initial: a single capital letter's (a lowercase `j.` is none, and ends a sentence)
       ['J.', abbreviation('J.', 'J.'), 'reformatted'],
-      // off the list: each ends a sentence
-      ...['approx.', 'U.S.'].map((a): Row => [a, abbreviation(a, a), 'reformatted+cut_short']),
+      // off the list: it ends a sentence
+      ['approx.', abbreviation('approx.', 'approx.'), 'reformatted+cut_short'],
+      // #845 (R-A3) re-pin: an initialism ends none
+      ...['U.S.', 'U.K.', 'J.R.R.'].map((a): Row => [a, abbreviation(a, a), 'reformatted']),
     ];
     // (1) red when a member is left out of the iteration, a `.` followed by a quotation mark starts to
     //     end a sentence, or an entry or an initial ends one; (2) prints the members missing and each
@@ -3581,7 +3606,7 @@ describe("#855's correction: each sentence's members", () => {
     ['with a lowercase form', true],
     ['with no lowercase form', false],
   ] as const)(
-    'M5 an initial, one capital letter: every BMP `\\p{Lu}`/`\\p{Lt}` %s',
+    'M5 an initial, one capital letter: every BMP `\\p{Lu}`/`\\p{Lt}` %s (#845 R-A3: every one is an initial)',
     (_, lowers) => {
       const A = 'The Landlord shall insure the building at its own cost';
       const B = 'The Tenant shall keep the Premises in good and substantial repair';
@@ -3590,25 +3615,26 @@ describe("#855's correction: each sentence's members", () => {
       const rows = CAPITALS.filter((c) => LOWERS.test(ch(c)) === lowers).map((c): Row => [
         hex(c),
         after(`${ch(c)}.`),
-        // an initial ends no sentence, so the skip after it is refused
-        lowers ? 'not_found' : 'stitched',
+        // an initial ends no sentence, so the skip after it is refused; #845 (R-A3) re-pin: a capital
+        // with no lowercase form is one too (main read only a letter that changes when lowercased)
+        'not_found',
       ]);
-      // (1) red when an initial with a lowercase form ends a sentence, or a capital with none stops
-      //     ending one; (2) prints each differing code point and state.
+      void lowers;
+      // (1) red when a capital, with or without a lowercase form, ends a sentence; (2) prints each differing code point and state.
       expect(misses(rows)).toEqual([]);
     },
   );
 
-  it('M5 the group: every BMP capital; a decomposed `É` and U+1D400 end a sentence (their code half is on #845)', () => {
+  it('M5 the group: every BMP capital; a decomposed `É` and U+1D400 are initials too (#845 R-A3)', () => {
     whole(CAPITALS, /^[\p{Lu}\p{Lt}]$/u, 0, BMP);
     const A = 'The Landlord shall insure the building at its own cost';
     const B = 'The Tenant shall keep the Premises in good and substantial repair';
     const after = (abbr: string) => read(`${A} … ${B}`, `${A} under ${abbr} ${B} at all times.`);
-    // (1) red when a member is left out of an iteration, or one of these two moves (then #845's code
-    //     half has landed, and the sentence may say more); (2) prints the two states.
+    // (1) red when a member is left out of an iteration, or a capital with a visible mark, or one
+    //     outside the BMP, ends a sentence; (2) prints the two states.
     expect({ decomposed: after('E\u0301.'), outside: after(`${ch(0x1d400)}.`) }).toEqual({
-      decomposed: 'stitched',
-      outside: 'stitched',
+      decomposed: 'not_found',
+      outside: 'not_found',
     });
   });
 
@@ -3804,12 +3830,12 @@ describe("#855's correction: each sentence's members", () => {
     },
   );
 
-  it('§4 the abbreviations: the printed list is `NOT_SENTENCE_ENDS`; each entry and an initial ends no sentence; each example does', () => {
+  it('§4 the abbreviations: the printed list is `NOT_SENTENCE_ENDS`; each entry, an initial and an initialism ends no sentence; each example does', () => {
     const text = raw(HANDLERS);
     const sentence = text.slice(
       text.indexOf("- An abbreviation that is not on the check's list ("),
     );
-    const printed = sentence.slice(0, sentence.indexOf(', and an initial'));
+    const printed = sentence.slice(0, sentence.indexOf(', an initial, and an initialism'));
     const listed = [...printed.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
     const Cap = 'Capital rules apply to the Tenant at all times';
     const skip = (ab: string, second = Cap) =>
@@ -3824,14 +3850,14 @@ describe("#855's correction: each sentence's members", () => {
         [a.toLowerCase(), skip(a.toLowerCase()), 'not_found'],
       ]),
       ...['J.', 'A.', 'É.'].map((a): Row => [a, skip(a), 'not_found']),
-      // The sentence's six examples (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`,
-      // `U.S. (the`), each read as a sentence end.
+      // The sentence's two examples (`a.m. Monday`, `excl. VAT`), each read as a sentence end.
       ['a.m. Monday', skip('a.m.', 'Monday rules apply to the Tenant at all times'), 'stitched'],
       ['excl. VAT', skip('excl.', 'VAT rules apply to the Tenant at all times'), 'stitched'],
-      ['U.S. The', skip('U.S.', 'The rules apply to the Tenant at all times'), 'stitched'],
-      ['U.K. The', skip('U.K.', 'The rules apply to the Tenant at all times'), 'stitched'],
-      ['U.S.A. The', skip('U.S.A.', 'The rules apply to the Tenant at all times'), 'stitched'],
-      ['U.S. (the', skip('U.S.', '(the rules apply to the Tenant at all times'), 'stitched'],
+      // #845 (R-A3) re-pin: an initialism ends no sentence, so the skip after it is refused
+      ['U.S. The', skip('U.S.', 'The rules apply to the Tenant at all times'), 'not_found'],
+      ['U.K. The', skip('U.K.', 'The rules apply to the Tenant at all times'), 'not_found'],
+      ['U.S.A. The', skip('U.S.A.', 'The rules apply to the Tenant at all times'), 'not_found'],
+      ['U.S. (the', skip('U.S.', '(the rules apply to the Tenant at all times'), 'not_found'],
     ];
     // (1) red when an entry leaves `NOT_SENTENCE_ENDS` (`Ltd.`: the two lists differ) or the printed
     // list loses one, or an entry or an initial ends a sentence, or an example stops ending one;
@@ -3978,7 +4004,7 @@ describe("#855's correction: each sentence's members", () => {
       expect({
         words: [...GLOSSARY.keys()],
         initialRule: (GLOSSARY.get('an initial') ?? '').includes(
-          'that changes when lowercased, with neither a letter nor `.` right before it, followed by `.`',
+          'one capital letter, with any accents on it (`Q́`), with neither a letter nor `.` right before it, followed by `.`',
         ),
       }).toEqual({ words: WORDS, initialRule: true });
     });
@@ -4108,22 +4134,22 @@ describe("#855's correction: each sentence's members", () => {
         const initial = (x: string) =>
           segmentsOf(`Alpha ${x}. Gamma`).every((p) => !p.endsSentence);
         const got = codePoints(/^\p{L}$/u, from, to).filter((c) => initial(ch(c)));
-        // the row's rule: a letter of its property that changes when lowercased
-        const want = glossaryProps('an initial').filter((c) => ch(c).toLowerCase() !== ch(c));
+        // #845 (R-A3) re-pin: the row's rule, one capital letter, as the capital row reads it
+        const want = glossaryProps('a capital letter');
         // (1) red when the page's initial row and the letters read as an initial differ here; (2)
         //     prints the code points each has and the other lacks.
         expect(differ(got, want, from, to)).toEqual(NONE);
       },
     );
 
-    it('an initial in context: a letter with a letter or `.` right before it is none (`U.S.`, `xA.`); `2A.` is one', () => {
+    it('an initial in context: a letter with a letter or `.` right before it is none (`xA.`); `U.S.` is an initialism, which ends no sentence either (#845 R-A3); `2A.` is one', () => {
       const ends = (q: string) => segmentsOf(q)[0]!.endsSentence;
       // (1) red when the row's context clause no longer holds; (2) prints the three booleans.
       expect({
         'U.S.': ends('Alpha U.S. Gamma'),
         'xA.': ends('Alpha xA. Gamma'),
         '2A.': ends('Alpha 2A. Gamma'),
-      }).toEqual({ 'U.S.': true, 'xA.': true, '2A.': false });
+      }).toEqual({ 'U.S.': false, 'xA.': true, '2A.': false });
     });
 
     it('B1 and M5: whitespace other than a line break marks, a line break does not (#845); a `\\p{Ll}` or `\\p{Nd}` character outside the BMP marks it too (#845 R-A2); the dots of `...` and a `.` right after `…` do not mark', () => {
@@ -4384,14 +4410,14 @@ describe("#855's correction: each sentence's members", () => {
       }).toEqual({ parts: [{ start: 4, end: 8 }], slice: 'rent' });
     });
 
-    it("the CHANGELOG's two #845 lines (1a-i): each example run", () => {
+    it("the CHANGELOG's two #845 lines (1a-i, 1a-ii): each example run", () => {
       claimOn(
         CL,
-        "check_quotes reads each character by Unicode's rules: an invisible character or a mark can no longer split a number or a word, U+FEFF is invisible like a zero-width space, a spacing accent between two digits joins them, the sets of lowercase letters, spaces and line breaks follow Unicode's properties, and the list, opening and closing marks follow Unicode's punctuation classes with a short named list (#845).",
+        "check_quotes reads each character by Unicode's rules: an invisible character or a mark can no longer split a number or a word, U+FEFF is invisible like a zero-width space, a spacing accent between two digits joins them, the sets of capitals, lowercase letters, spaces and line breaks follow Unicode's properties in every plane, the list, opening and closing marks follow Unicode's punctuation classes with a short named list, and initialisms such as U.S. do not end a sentence (#845).",
       );
       claimOn(
         CL,
-        'check_quotes now reads some quotes not_found that read found before, on purpose: part of a number with a mark on it (`5` in `-́5`), part of a number whose digits a spacing accent separates (`1` in `1´000`), and two words that only U+FEFF separates (#845).',
+        'check_quotes now reads some quotes not_found that read found before, on purpose: part of a number with a mark on it (`5` in `-́5`), part of a number whose digits a spacing accent separates (`1` in `1´000`), part of a number after a dash outside the Basic Multilingual Plane (`5` after U+10D6E), two words that only U+FEFF separates, and a skip onto the sentence after an initialism (`…the U.S. The…`) (#845).',
       );
       // (1) red when an example reads otherwise; (2) prints each state.
       expect({
@@ -4409,6 +4435,16 @@ describe("#855's correction: each sentence's members", () => {
           `${F} for its cost:\n○ the Tenant shall pay the insurance rent at the end of each year.`,
         ),
         markOnNumber: state('5 degrees', 'It is -́5 degrees.'),
+        // #845 1a-ii: the two new clauses
+        astralDash: state('5 degrees', `It is ${String.fromCodePoint(0x10d6e)}5 degrees.`),
+        astralLowercase: read(
+          'The area is approx.',
+          `The area is approx. ${String.fromCodePoint(0x1d41a)} square metres.`,
+        ),
+        initialism: state(
+          'We deliver across … The Landlord shall repair the roof.',
+          'We deliver across the U.S. The Landlord shall repair the roof.',
+        ),
       }).toEqual({
         splitNumber: 'not_found',
         splitWord: 'not_found',
@@ -4418,6 +4454,9 @@ describe("#855's correction: each sentence's members", () => {
         lineBreak: 'reformatted',
         listMark: 'stitched',
         markOnNumber: 'not_found',
+        astralDash: 'not_found',
+        astralLowercase: 'exact+cut_short',
+        initialism: 'not_found',
       });
     });
   });

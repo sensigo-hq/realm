@@ -949,11 +949,18 @@ const LINE_BREAKS: ReadonlySet<string> = new Set([
 const isLineBreak = (c: string | undefined): boolean => c !== undefined && LINE_BREAKS.has(c);
 const ABBREVIATIONS: ReadonlySet<string> = new Set(NOT_SENTENCE_ENDS.map((a) => a.toLowerCase()));
 
-/** L1: the `.` at `at` ends an abbreviation or an initial, never a sentence. #845 (R-C2, R-A2): the
- *  word before it — letters and `.` — is read back by code point, past invisible characters. */
+/** L1, #845 (R-A3, R-B): the `.` at `at` ends an abbreviation, an initial or an initialism, never a
+ *  sentence. The word before it — letters with their marks, and `.` — is read back by code point,
+ *  past invisible characters. An initial is, after NFC, one capital (`\p{Lu}` or `\p{Lt}`, any
+ *  plane) followed only by visible marks (`Q́.`, `ℝ.`); an initialism is two or more of them, each
+ *  followed by `.` (`U.S.`, `J.R.R.`). Lowercase initialisms (`a.m.`) are not. */
 function endsAbbreviation(text: string, at: number): boolean {
   let s = at;
-  for (let p = stepBack(text, s); isLetter(p.c) || p.c === '.'; p = stepBack(text, s)) {
+  for (
+    let p = stepBack(text, s);
+    isLetter(p.c) || isMark(p.c) || p.c === '.';
+    p = stepBack(text, s)
+  ) {
     s = p.at;
   }
   let token = '';
@@ -964,7 +971,13 @@ function endsAbbreviation(text: string, at: number): boolean {
   }
   if (token === '') return false;
   if (ABBREVIATIONS.has(`${token}.`.toLowerCase())) return true;
-  return token.length === 1 && token !== token.toLowerCase();
+  return token.split('.').every(isInitial);
+}
+
+/** #845 (R-A3): one capital letter with only visible marks on it, after NFC. */
+function isInitial(piece: string): boolean {
+  const [head, ...rest] = [...piece.normalize('NFC')];
+  return isCapital(head) && rest.every(isVisibleMark);
 }
 
 /**
