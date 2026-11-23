@@ -840,6 +840,15 @@ export interface StepDefinition {
    * covers the SDK's retries and their backoff.
    */
   llm_timeout_seconds?: number;
+  /**
+   * Gap 2, unit (ii-b2): what happens to this agent step when its model request fails. `'fail'`, the
+   * one value: `realm agent` fails the step, so the workflow's failure route can run (a
+   * `trigger_rule: one_failed` step, a finalizer), when the request failed for good
+   * (`STEP_RETRY_EXHAUSTED` or `MODEL_REQUEST_FAILED`, with `$settlement.<step>.failure_kind`).
+   * Absent: the drive stops and gives the step back, and the run stays open. Only valid on
+   * `execution: agent` steps; `'default'` is refused (a later version).
+   */
+  on_model_failure?: 'fail';
   timeout_seconds?: number;
   retry?: RetryConfig;
   /**
@@ -987,6 +996,7 @@ export const KNOWN_STEP_KEYS = [
   'tool_timeout',
   'structured_output',
   'llm_timeout_seconds',
+  'on_model_failure',
 ] as const;
 
 /**

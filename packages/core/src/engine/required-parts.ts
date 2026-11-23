@@ -700,6 +700,44 @@ function modelFailureDefects(parts: Record<string, unknown>): InvalidPart[] {
             ? `'${capText(command)}' is ${article(execution)} step`
             : `'${capText(command)}' is not an agent step`,
       });
+    } else {
+      // Gap 2, unit (ii-b2), rule 10: the member only for a step that opted in, and a stop reason
+      // the step's `retry` does not contradict (judged only on a pair the check above admits).
+      const name = capText(command);
+      const declared = isPlainObject(step) ? step : {};
+      if (declared['on_model_failure'] !== 'fail') {
+        invalid.push({
+          option: 'options.modelFailure',
+          expected: 'given only for a step that declares on_model_failure: fail',
+          given_type: givenTypeOf(failure),
+          because: `'${name}' does not`,
+        });
+      }
+      const pairAdmitted =
+        holds('model_failure_kind', kind) &&
+        holds('stop_reason', stopReason) &&
+        MODEL_FAILURE_PAIRS[kind as 'transient' | 'permanent'].includes(stopReason as string);
+      const declaresRetry = declared['retry'] !== undefined && declared['retry'] !== null;
+      if (
+        pairAdmitted &&
+        !declaresRetry &&
+        (stopReason === 'attempts' || stopReason === 'total_timeout')
+      ) {
+        invalid.push({
+          option: 'options.modelFailure.stop_reason',
+          expected: 'non_retryable or no_retry_policy for a step that declares no retry',
+          given_type: givenTypeOf(stopReason),
+          because: `'${name}' declares none; '${stopReason}' says its retry used up its tries or its time`,
+        });
+      }
+      if (pairAdmitted && declaresRetry && stopReason === 'no_retry_policy') {
+        invalid.push({
+          option: 'options.modelFailure.stop_reason',
+          expected: 'attempts, total_timeout or non_retryable for a step that declares retry',
+          given_type: givenTypeOf(stopReason),
+          because: `'${name}' declares one; 'no_retry_policy' says it has none`,
+        });
+      }
     }
   }
   const input = options['input'];
