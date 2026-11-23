@@ -55,7 +55,7 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
     // drive) and check 1 (without the key: the drive stops, gives the step back, the run open).
     claim(
       CONTROLS,
-      "`on_model_failure: fail` fails the step when its model request fails, so the workflow's failure route can run: a step with `trigger_rule: one_failed`, or a finalizer. A step with `trigger_rule: one_failed` runs in the same drive: `realm agent` goes on after the failed step. Without it, the drive stops, gives the step back and leaves the run open, as before.",
+      "`on_model_failure: fail` fails the step when its model request fails, so the workflow's failure route can run: a step with `trigger_rule: one_failed`, or a finalizer. Without the key, the drive stops, gives the step back and leaves the run open, as before. With it, a step with `trigger_rule: one_failed` runs in the same drive: `realm agent` goes on after the failed step.",
     );
     // Executed by check 2's rows (each code, and failure_kind read by the route), check 6 (a module
     // that handles its own retries: MODEL_REQUEST_FAILED) and check 4 (texts, tries, usage; no drive
@@ -112,7 +112,7 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
     // cell — the drive goes on — is executed by goes-on-drive-g2iib3.test.ts, check 3.
     claim(
       AGENT,
-      "| An agent step with `on_model_failure: fail` whose model request failed | `✗ Step 'classify' LLM call failed: Connection error.` (`✗ Step 'classify' (tools) failed: …` on a step with tools), followed by `• Step 'classify' failed (MODEL_REQUEST_FAILED): its model request failed, and the step has on_model_failure: fail.` (`STEP_RETRY_EXHAUSTED` when the step's `retry` used up its tries) | The drive goes on. Ended, in `failed`, when nothing runs after the failure; otherwise as its last step leaves it (`completed`, with the failed step listed). |",
+      "| An agent step with `on_model_failure: fail` whose model request failed | `✗ Step 'classify' LLM call failed: Connection error.` (`✗ Step 'classify' (tools) failed: …` on a step with tools), followed by `• Step 'classify' failed (MODEL_REQUEST_FAILED): its model request failed, and the step has on_model_failure: fail.` (`STEP_RETRY_EXHAUSTED` when the step's `retry` used up its tries) | The drive goes on. Ended, in `failed`, when no other step finishes after it; otherwise as the last step to finish leaves it (`completed`, with the failed step listed). |",
     );
     // Correction 1's ride-along: the lease row's run afterwards (nothing was claimed).
     claim(

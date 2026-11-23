@@ -23,7 +23,7 @@ const CONTROLS = 'docs/reference/workflow/agent-step-controls.md';
 const WORDS3 =
   '✗ The run completed, but a step failed during this drive (<step>[, <step>…]); realm agent exits with code 1.';
 const GOES_ON =
-  'The drive goes on. Ended, in `failed`, when nothing runs after the failure; otherwise as its last step leaves it (`completed`, with the failed step listed).';
+  'The drive goes on. Ended, in `failed`, when no other step finishes after it; otherwise as the last step to finish leaves it (`completed`, with the failed step listed).';
 
 describe('gap 2 (ii-b3), check 9 — the words', () => {
   it('realm-agent.md: When it stops', () => {
@@ -61,9 +61,11 @@ describe('gap 2 (ii-b3), check 9 — the words', () => {
       AGENT,
       `| \`${WORDS3}\` | The run completes after a step failed during the drive | The steps that failed, in order; the exit code is 1. Added after version 0.50.0. |`,
     );
+    // Wording correction 1: its last sentence is executed by check 7's give-back cell (a `✗` line,
+    // then the give-back line, and the drive stops).
     claim(
       AGENT,
-      "| `✗ Step '<step>' … failed: …` or `• Step '<step>' failed (<CODE>): …` | A step failed, and the run is still open | The failure's reason, as in [When it stops](#when-it-stops). The drive goes on with whatever became ready: a step that runs on the failure, and other branches. Added after version 0.50.0, which stopped there. |",
+      "| `✗ Step '<step>' … failed: …` or `• Step '<step>' failed (<CODE>): …` | A step was recorded as failed (`realm run inspect` lists it under `Failed:`), and the run is still open | The failure's reason, as in [When it stops](#when-it-stops). The drive goes on with whatever became ready: a step that runs on the failure, and other branches. Added after version 0.50.0, which stopped there. A `✗` line followed by `• Step '<step>': this drive let its claim go …` is a step left open, not failed: the drive stops (the next row). |",
     );
     // Executed by check 5 (a failure that ended the run) and check 7 (a step left open).
     claim(
@@ -74,7 +76,7 @@ describe('gap 2 (ii-b3), check 9 — the words', () => {
     claim(AGENT, 'The lines that say why the drive stopped or that a step failed (`✗ Step …`,');
     claim(
       AGENT,
-      `The line \`${WORDS3}\`, the last line when the run completed after a step failed during the drive, goes to stderr too (added after version 0.50.0).`,
+      `The line \`${WORDS3}\`, printed at the end when the run completed after a step failed during the drive, goes to stderr too (added after version 0.50.0).`,
     );
     // Executed by checks 8 and 7b (exit 0: no step failed during this drive) and checks 1–6 (exit 1).
     claim(AGENT, '| 0 | The run completed, and no step failed during the drive. |');
@@ -97,7 +99,7 @@ describe('gap 2 (ii-b3), check 9 — the words', () => {
     // Executed by check 3 (the route runs in the same drive; exit 1 at the end).
     claim(
       CONTROLS,
-      'A step with `trigger_rule: one_failed` runs in the same drive: `realm agent` goes on after the failed step.',
+      'Without the key, the drive stops, gives the step back and leaves the run open, as before. With it, a step with `trigger_rule: one_failed` runs in the same drive: `realm agent` goes on after the failed step.',
     );
     claim(
       CONTROLS,
@@ -109,7 +111,7 @@ describe('gap 2 (ii-b3), check 9 — the words', () => {
     // Executed by checks 1–4 and 6 (goes on, exit 1), and 7 (a step left open stops the drive).
     claim(
       'CHANGELOG.md',
-      '- **`realm agent` and `realm listen` go on after a failed step.** The drive runs whatever became ready — a `one_failed` or `all_done` step, other branches — in the same drive, where before a second `realm agent --run-id` had to run it, and a run `realm listen` drove never got one. Its exit code is still 1 whenever a step failed during the drive, even when the run then completed; a line at the end says so. A step left open (a setup failure, a give-back, answers refused before the limit) still stops the drive as before.',
+      "- **`realm agent` and `realm listen` go on after a failed step.** The drive runs whatever became ready — a `one_failed` or `all_done` step, other branches — in the same drive, where before a second `realm agent --run-id` had to run it, and a run `realm listen` drove never got one. Its exit code is still 1 whenever a step failed during the drive, even when the run then completed; when the run completed, a line at the end says so. A step left open (a setup failure, a give-back, answers refused before `validation_exhaustion`'s limit is reached) still stops the drive as before.",
     );
   });
 });

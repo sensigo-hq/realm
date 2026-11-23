@@ -824,7 +824,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         "✗ Step 'file' (run by the engine after 'classify' finished) failed: Handler 'file_ticket' threw: the filing system is down";
       claim(
         AGENT_PAGE,
-        `| An \`auto\` step the engine ran after it failed | \`${LINE}\` | The drive goes on. Ended, in \`failed\`, when nothing runs after the failure; otherwise as its last step leaves it (\`completed\`, with the failed step listed). |`,
+        `| An \`auto\` step the engine ran after it failed | \`${LINE}\` | The drive goes on. Ended, in \`failed\`, when no other step finishes after it; otherwise as the last step to finish leaves it (\`completed\`, with the failed step listed). |`,
       );
       claim(
         AGENT_PAGE,

@@ -231,7 +231,7 @@ Drive failures:
 
 ## `on_model_failure`
 
-`on_model_failure: fail` fails the step when its model request fails, so the workflow's failure route can run: a step with `trigger_rule: one_failed`, or a finalizer. A step with `trigger_rule: one_failed` runs in the same drive: `realm agent` goes on after the failed step. Without it, the drive stops, gives the step back and leaves the run open, as before.
+`on_model_failure: fail` fails the step when its model request fails, so the workflow's failure route can run: a step with `trigger_rule: one_failed`, or a finalizer. Without the key, the drive stops, gives the step back and leaves the run open, as before. With it, a step with `trigger_rule: one_failed` runs in the same drive: `realm agent` goes on after the failed step.
 
 With `fail`, the step fails when its request fails for good. When Realm's own `retry` used up its tries or its time, the code is `STEP_RETRY_EXHAUSTED`. When a later try would fail the same way (an answer Realm cannot use, such as one cut off at `max_tokens` or not JSON after its one re-ask, included), `retry` does not try it again, or the step has no `retry`, the code is `MODEL_REQUEST_FAILED`. A provider module that handles its own retries reports `MODEL_REQUEST_FAILED` too. A later step reads `$settlement.<step>.failure_kind`: `transient` when a later try might pass, `permanent` when it would fail the same way. The step's error entry keeps the failure's message, the texts of its requests, its tries and, for the requests that were billed, their cost; no drive failure is recorded for it.
 
