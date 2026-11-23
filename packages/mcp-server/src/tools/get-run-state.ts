@@ -565,6 +565,8 @@ export const RUN_STATE_SUMMARY_TABLE = {
       category: 'fact',
       stop_reason: 'fact',
       agent_action: 'fact',
+      // Gap 2, unit (ii-b1): the failure's kind, a closed word: a fact, also under `hidden`.
+      failure_kind: 'fact',
       attempt: 'fact',
       message: 'bounded',
       unknown: 'fact',

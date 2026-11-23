@@ -3,7 +3,10 @@
 //
 // `classifyModelFailure` files a failure into one of `MODEL_FAILURE_KINDS` from the values it is given,
 // and from nothing else: pure, no clock, no I/O, no provider imports (framework §0 rule 9). Its rules
-// run in one order, and the first that applies wins. Realm calls it nowhere yet: unit (i-b) does.
+// run in one order, and the first that applies wins. Realm's drive calls it on each failed send of a
+// model request (`driveCreate`, and the retry loop around a provider module's whole call); its
+// failure rule, `decideModelFailure` (gap 2, unit ii-b1), also calls it for an answer Realm could not
+// use and for a provider module's failure.
 //
 // `closeModelAttempts` is the write's own closure: an entry passed in `StepMeta.modelAttempts` is
 // stored with its eight members only, each a number, a closed word or `null`. A program can pass any

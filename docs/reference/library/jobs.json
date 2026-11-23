@@ -55,6 +55,7 @@
       ],
       "entryPoints": [
         "ErrorCode",
+        "TRIGGER_RULES",
         "WorkflowError",
         "loadWorkflowFromFile",
         "loadWorkflowFromFileWithDiagnostics",
@@ -92,6 +93,7 @@
         "Party",
         "PreconditionFacts",
         "PresentWay",
+        "RUN_STATUSES",
         "ReclaimWay",
         "RefusedCheck",
         "RegisterWay",
@@ -232,7 +234,13 @@
         "createRealmMcpServerOnHome",
         "DEFINITION_ABSENCES",
         "DefinitionAbsence",
-        "LoadErrorCode"
+        "LoadErrorCode",
+        "LOAD_ERROR_CODES",
+        "ENACTOR_KINDS",
+        "DECLARED_STATES",
+        "DECLARED_CAUSES",
+        "ENVIRONMENT_STATES",
+        "PRICE_SOURCE_CLASSES"
       ]
     },
     {
@@ -256,7 +264,14 @@
         "classifyLegacySeal",
         "RunPhase",
         "MODEL_FAILURE_KINDS",
-        "classifyModelFailure"
+        "classifyModelFailure",
+        "GATE_ON_EXPIRY_WORDS",
+        "REQUIREMENT_KINDS",
+        "BLOCKING_DEP_STATES",
+        "ADMITTED_BY_WORDS",
+        "MODEL_ATTEMPT_THEN_WORDS",
+        "CACHE_CONTROLS_PROVEN_WORDS",
+        "CACHE_AUTO_PRICES_FROM_WORDS"
       ]
     }
   ]

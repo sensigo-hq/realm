@@ -34,8 +34,16 @@ type DisclosureRoute =
       // `mismatch`: a request that asked for 1 hour, part of whose write was kept for 5 minutes,
       // carrying every request fact — the only shape on which the lifetime split has text of its
       // own. Caching 3-B adds `split`: an OpenAI drive to a custom endpoint whose requests carry the
-      // split's facts — the cache key, then the endpoint's refusal of it.
-      probe: (out: string, partial: string, mismatch: string, split: string) => void;
+      // split's facts — the cache key, then the endpoint's refusal of it. Gap 2, unit (ii-b1), adds
+      // `failed`: a step that took its failure path after a failed model request, the only shape on
+      // which inspect prints a failure line, where the kind shows.
+      probe: (
+        out: string,
+        partial: string,
+        mismatch: string,
+        split: string,
+        failed: string,
+      ) => void;
     }
   | { surface: 'waived'; reason: string };
 
@@ -104,12 +112,14 @@ const STEP_DIAGNOSTICS_DISCLOSURE = {
       'threshold) and `buildSettlementNamespace`, i.e. workflow AUTHORS via `$settlement` — not ' +
       'an operator on a screen. Rendering it would be new disclosure, not parity.',
   },
-  // Gap 2, unit (ii-a): the waiver its prompt routes, in `validation_rejections`' shape.
+  // Gap 2, unit (ii-b1): inspect's line under `Failed:` names the kind between `stopped:` and
+  // `next:` (unit (ii-a) waived it; workflow authors still read it through `$settlement`).
   failure_kind: {
-    surface: 'waived',
-    reason:
-      'Read by workflow AUTHORS through `$settlement`; inspect’s failure line names the code, the ' +
-      'stop reason and the message.',
+    surface: 'rendered',
+    probe: (_out, _partial, _mismatch, _split, failed) =>
+      expect(failed).toContain(
+        '  classify: MODEL_REQUEST_FAILED (SERVICE) — stopped: non_retryable; kind: permanent; next: report_to_user (attempt 1) — Anthropic 400: messages: bad (fake)',
+      ),
   },
   settled_by_default: {
     surface: 'waived',
@@ -325,6 +335,35 @@ const splitStore = {
   ...neverPurges,
 } as never;
 
+// Gap 2, unit (ii-b1) — the FAILED shape: `classify` took its failure path after a failed model
+// request, so its entry carries the failure's words and `diagnostics.failure_kind`, as
+// `executeChain`'s `modelFailure` writes them.
+const failedRun = {
+  ...(run as unknown as RunRecord),
+  id: 'run_diag5',
+  completed_steps: [],
+  failed_steps: ['classify'],
+  run_phase: 'failed',
+  evidence: [
+    {
+      ...(run as unknown as RunRecord).evidence[0]!,
+      status: 'error',
+      error: 'Anthropic 400: messages: bad (fake)',
+      error_code: 'MODEL_REQUEST_FAILED',
+      error_category: 'SERVICE',
+      stop_reason: 'non_retryable',
+      agent_action: 'report_to_user',
+      attempt: 1,
+      diagnostics: { ...DIAG, failure_kind: 'permanent' },
+    },
+  ],
+} as unknown as RunRecord;
+const failedStore = {
+  get: async () => snap(failedRun),
+  scan: scanning(() => [failedRun]),
+  ...neverPurges,
+} as never;
+
 const workflowStore = {
   get: async () => {
     throw new Error('not registered');
@@ -362,10 +401,11 @@ describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect rea
       priceSource: ECHO_PRICES,
     });
     const split = await inspectRun('run_diag4', splitStore, workflowStore, { verbose: true });
+    const failed = await inspectRun('run_diag5', failedStore, workflowStore, { verbose: true });
     for (const [field, route] of Object.entries(STEP_DIAGNOSTICS_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
-      if (route.surface === 'rendered') route.probe(out, partial, mismatch, split);
+      if (route.surface === 'rendered') route.probe(out, partial, mismatch, split, failed);
       else
         expect(
           route.reason.trim().length,
@@ -374,7 +414,7 @@ describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect rea
     }
   });
 
-  it('the registry covers every field, and the waiver set is exactly the four named above', () => {
+  it('the registry covers every field, and the waiver set is exactly the three named above', () => {
     expect(Object.keys(STEP_DIAGNOSTICS_DISCLOSURE).sort()).toEqual([
       'cache',
       'failure_kind',
@@ -389,15 +429,10 @@ describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect rea
       .filter(([, r]) => (r as DisclosureRoute).surface === 'waived')
       .map(([f]) => f)
       .sort();
-    // NOT `[]` — see the header. A fifth waiver is a decision someone must make in this file
-    // (`guard_conditions` is rendered since #729 PR-3 correction 1, F28; `failure_kind`'s waiver is
-    // gap 2 unit (ii-a)'s prompt's).
-    expect(waived).toEqual([
-      'failure_kind',
-      'settled_by_default',
-      'structured_output',
-      'validation_rejections',
-    ]);
+    // NOT `[]` — see the header. A fourth waiver is a decision someone must make in this file
+    // (`guard_conditions` is rendered since #729 PR-3 correction 1, F28; `failure_kind` since gap 2
+    // unit (ii-b1), whose unit (ii-a) waived it).
+    expect(waived).toEqual(['settled_by_default', 'structured_output', 'validation_rejections']);
   });
 });
 
@@ -639,10 +674,11 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
       priceSource: ECHO_PRICES,
     });
     const split = await inspectRun('run_diag4', splitStore, workflowStore, { verbose: true });
+    const failed = await inspectRun('run_diag5', failedStore, workflowStore, { verbose: true });
     for (const [field, route] of Object.entries(USAGE_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
-      if (route.surface === 'rendered') route.probe(out, partial, mismatch, split);
+      if (route.surface === 'rendered') route.probe(out, partial, mismatch, split, failed);
       else
         expect(
           route.reason.trim().length,
