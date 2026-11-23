@@ -162,7 +162,9 @@
         }
       ],
       "entryPoints": [
+        "CLAIM_DEADLINE_ABSENT_CAUSES",
         "CLOCK_READ_CLASSES",
+        "ClaimDeadlineAbsent",
         "Clock",
         "DedupStore",
         "FailedAttemptStore",
@@ -182,6 +184,7 @@
         "WorkflowRegistrar",
         "applySettlement",
         "assertSealIntegrity",
+        "claimDeadlineOf",
         "clockErrorSink",
         "computeClaimDeadline",
         "createSystemClock",

@@ -158,10 +158,58 @@ export function computeClaimDeadline(
   stepName: string,
   now: Date,
 ): string | null {
+  return claimDeadlineOf(definition, stepName, now).deadline;
+}
+
+/**
+ * Why a claim has no time limit, written on the claim when it is taken (`ClaimRecord.deadline_absent`).
+ * One word per branch of {@link claimDeadlineOf} that gives no deadline (Q1, #592, unit f2), judged
+ * in this order: `step_unknown` (the step is not in the workflow; Realm's own
+ * writers claim eligible steps only, so they never write it), `step_not_auto` (the step is not an
+ * `auto` step: from Realm's writers always an agent step, whose time Realm cannot bound; guards and
+ * finalizers are never claimed), `finalizer_bearing` (an `auto` step of a workflow with finalizer
+ * steps: the claim may be held through the run's ending). A reader says `not_recorded` for a claim
+ * that carries none; that word is never written.
+ * @public
+ */
+export type ClaimDeadlineAbsent = 'step_unknown' | 'step_not_auto' | 'finalizer_bearing';
+
+/**
+ * Every word a claim's `deadline_absent` can hold, in the order {@link claimDeadlineOf} judges them.
+ * Compile-checked both ways against {@link ClaimDeadlineAbsent}.
+ * @public
+ */
+export const CLAIM_DEADLINE_ABSENT_CAUSES = [
+  'step_unknown',
+  'step_not_auto',
+  'finalizer_bearing',
+] as const satisfies readonly ClaimDeadlineAbsent[];
+type MissingDeadlineCause = Exclude<
+  ClaimDeadlineAbsent,
+  (typeof CLAIM_DEADLINE_ABSENT_CAUSES)[number]
+>;
+const _everyDeadlineCauseListed: [MissingDeadlineCause] extends [never]
+  ? true
+  : MissingDeadlineCause = true;
+void _everyDeadlineCauseListed;
+
+/**
+ * A claim's deadline and, when there is none, why: what a store writes on a claim it takes.
+ * `deadline` always, and `absent` exactly when `deadline` is `null`: the cause, which the store
+ * writes as `deadline_absent` (Q1, #592, unit f2). {@link computeClaimDeadline} returns this
+ * function's `deadline`. Never throws.
+ * @public
+ */
+export function claimDeadlineOf(
+  definition: WorkflowDefinition,
+  stepName: string,
+  now: Date,
+): { deadline: string | null; absent?: ClaimDeadlineAbsent } {
   const step = definition.steps[stepName];
-  if (step === undefined) return null;
+  if (step === undefined) return { deadline: null, absent: 'step_unknown' };
+  if (step.execution !== 'auto') return { deadline: null, absent: 'step_not_auto' };
   const hasFinalizers = Object.values(definition.steps).some((s) => s.execution === 'finalizer');
-  if (step.execution !== 'auto' || hasFinalizers) return null;
+  if (hasFinalizers) return { deadline: null, absent: 'finalizer_bearing' };
   const perAttemptSec = step.timeout_seconds ?? DEFAULT_EXECUTION_TIMEOUT_SECONDS;
   // B2: consume the resolved cap (explicit total_timeout_seconds, when declared, else the shared
   // worst-case formula) — NOT worstCaseScheduleSeconds directly — so an explicit cap ABOVE the
@@ -172,7 +220,7 @@ export function computeClaimDeadline(
       ? resolveCapMs(step.retry, perAttemptSec * 1000) / 1000
       : perAttemptSec;
   const horizonSeconds = Math.max(RECLAIM_FLOOR_SECONDS, worstCaseSec + RECLAIM_MARGIN_SECONDS);
-  return new Date(now.getTime() + horizonSeconds * 1000).toISOString();
+  return { deadline: new Date(now.getTime() + horizonSeconds * 1000).toISOString() };
 }
 
 /**
@@ -244,6 +292,12 @@ export interface InProgressClaimInfo {
   step: string;
   state: ClaimState;
   deadline: string | null;
+  /**
+   * Q1 (#592) unit f2: why there is no time limit, only when `deadline` is `null`: the word the claim
+   * carries, as stored (a word outside {@link CLAIM_DEADLINE_ABSENT_CAUSES}, which another store
+   * wrote, is kept as it is), or `not_recorded` when the claim carries none or there is no claim.
+   */
+  deadline_absent?: ClaimDeadlineAbsent | 'not_recorded' | (string & {});
   /** #729 CW-1b: the claim's lease fact (`leaseFactOf`), only for a claim that names a lease. */
   lease?: LeaseFact;
 }
@@ -260,10 +314,16 @@ export function classifyInProgressClaims(snapshot: ListedSnapshot): InProgressCl
   return run.in_progress_steps.map((step) => {
     const claim = run.claims?.[step];
     const lease = leaseFactOf(snapshot, claim);
-    const info = {
+    const deadline = claim?.deadline ?? null;
+    // Q1 (#592) unit f2: the cause is read only where there is no deadline; never guessed.
+    const stored: unknown = claim?.deadline_absent;
+    const info: InProgressClaimInfo = {
       step,
       state: classifyClaim(claim, now, lease),
-      deadline: claim?.deadline ?? null,
+      deadline,
+      ...(deadline === null
+        ? { deadline_absent: typeof stored === 'string' ? stored : 'not_recorded' }
+        : {}),
     };
     return isLeaseFact(lease) ? { ...info, lease } : info;
   });

@@ -26,7 +26,7 @@ import {
   deriveRunPhase,
   isStepSettledOrInFlight,
 } from '../engine/eligibility.js';
-import { computeClaimDeadline } from '../engine/claim-liveness.js';
+import { claimDeadlineOf } from '../engine/claim-liveness.js';
 import { applySettlement } from '../engine/settlement.js';
 import { TERMINAL_PHASES } from '../engine/lifecycle.js';
 import { runNotFoundError } from './fence-predicate.js';
@@ -709,7 +709,8 @@ export class JsonFileStore implements PerRunArtifactStore {
       // write that adds the step to in_progress_steps. There must be no second write — a torn
       // `S ∈ in_progress` with no claims[S] would silently re-create the permanent wedge.
       // OVERWRITE (not add-if-absent) so a missed settle-site delete self-heals on re-claim.
-      const deadline = computeClaimDeadline(definition, stepName, at);
+      // Q1 (#592) f2: the deadline and, when there is none, why (written as `deadline_absent`).
+      const { deadline, absent } = claimDeadlineOf(definition, stepName, at);
       // issue #279 (increment 1, PR-A): mint an acquirer-minted fencing token alongside the
       // deadline, in the SAME write — dormant until PR-B's settleStep migration reads it.
       const token = uuidv4();
@@ -723,6 +724,7 @@ export class JsonFileStore implements PerRunArtifactStore {
           // the program that took the step, when the caller passed one.
           [stepName]: {
             deadline,
+            ...(absent !== undefined ? { deadline_absent: absent } : {}),
             token,
             since: claimedAt,
             ...(claimant !== undefined ? { holder: claimant } : {}),

@@ -385,6 +385,13 @@ CAPABILITY_BASES · value · public
   ];
 
 CLAIMABLE_ERROR_CLASSES · value · internal
+CLAIM_DEADLINE_ABSENT_CAUSES · value · public
+  const CLAIM_DEADLINE_ABSENT_CAUSES: readonly [
+      "step_unknown",
+      "step_not_auto",
+      "finalizer_bearing"
+  ];
+
 CLAIM_PROOF_ABSENT_CAUSES · value · internal
 CLAIM_STATES · value · internal
 CLOCK_READ_CLASSES · value · public
@@ -772,11 +779,15 @@ ChannelEvidence · type · public
   }
 
 ChosenClass · type · internal
+ClaimDeadlineAbsent · type · public
+  type ClaimDeadlineAbsent = 'step_unknown' | 'step_not_auto' | 'finalizer_bearing';
+
 ClaimHolderAbsentCause · type · internal
 ClaimProofAbsentCause · type · internal
 ClaimRecord · type · public
   interface ClaimRecord {
       deadline: string | null;
+      deadline_absent?: ClaimDeadlineAbsent;
       token?: string;
       holder?: Attributed;
       since?: string;
@@ -4422,6 +4433,12 @@ chooseAutoLifetime · value · internal
 chooseAutoOneLifetime · value · internal
 chooseCacheLifetime · value · internal
 claimCallback · value · internal
+claimDeadlineOf · value · public
+  function claimDeadlineOf(definition: WorkflowDefinition, stepName: string, now: Date): {
+      deadline: string | null;
+      absent?: ClaimDeadlineAbsent;
+  };
+
 claimStepForDrive · value · beta
   function claimStepForDrive(store: RunStore, runId: string, stepName: string, options: ClaimStepForDriveOptions): Promise<DriveClaim>;
 
