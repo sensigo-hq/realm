@@ -19,6 +19,7 @@ import {
   type ServeKeysLockResult,
 } from '@sensigo/realm-store-sqlite';
 import { Command } from 'commander';
+import { reportExpectedRefusal } from '../lib/expected-refusal.js';
 import { openCliHome, type CliHome } from '../lib/home.js';
 import {
   escapedKeyName,
@@ -31,6 +32,7 @@ import {
   newServeKey,
   readServeKeys,
   serveKeysPath,
+  ServeKeysWriteRefused,
   writeServeKeys,
   type ServeKeyEntry,
   type ServeKeysRead,
@@ -98,6 +100,41 @@ function warnIfOpen(path: string, read: ServeKeysRead): void {
   }
 }
 
+/** Correction 1: the mode warning after a refusal that did not read the file, from a fresh read. */
+function warnFileIfOpen(path: string): void {
+  warnIfOpen(path, readServeKeys(path));
+}
+
+/** The same, for a refusal before the home is known: no warning when the home cannot be named. */
+function warnHomeFileIfOpen(deps: ServeKeyDeps): void {
+  let path: string;
+  try {
+    path = serveKeysPath(deps.home());
+  } catch {
+    return;
+  }
+  warnFileIfOpen(path);
+}
+
+/** The guard's refusal: a new file the reader would refuse was not written (correction 1). */
+function writeRefusedLine(path: string, err: ServeKeysWriteRefused): string {
+  return `Error: ${keyPath(path)} was not changed: the new key file would not be valid (${err.keyFileCause}). ${NOTHING}`;
+}
+
+/**
+ * The home's store, or the house refusal printed (as the CLI's entry prints it) and the mode warning
+ * after it (correction 1): `undefined` then. An unexpected error stays loud.
+ */
+async function openHomeOrRefuse(deps: ServeKeyDeps): Promise<CliHome | undefined> {
+  try {
+    return await deps.openHome();
+  } catch (err) {
+    if (!reportExpectedRefusal(err)) throw err;
+    warnHomeFileIfOpen(deps);
+    return undefined;
+  }
+}
+
 /** Runs `realm serve key add` (see the module comment): the exit code, every line already printed. */
 export async function serveKeyAdd(
   name: string,
@@ -108,26 +145,37 @@ export async function serveKeyAdd(
     console.error(
       `Error: '${escapedKeyName(name)}' is not a key name: use 1 to 64 characters from a-z, 0-9, '.', '_' and '-', starting with a letter or a digit. ${NOTHING}`,
     );
+    warnHomeFileIfOpen(deps);
     return 1;
   }
   const expires = parseExpires(expiresFlag);
-  const badExpires = `Error: --expires takes a number of days from 1 to ${MAX_DAYS}, a date after today (YYYY-MM-DD) or 'never'. ${NOTHING}`;
+  const badExpires = `Error: --expires takes a number of days from 1 to ${MAX_DAYS}, a date after today and at most ${MAX_DAYS} days ahead (YYYY-MM-DD) or 'never'. ${NOTHING}`;
   if (expires === undefined) {
     console.error(badExpires);
+    warnHomeFileIfOpen(deps);
     return 1;
   }
-  const home = await deps.openHome();
+  const home = await openHomeOrRefuse(deps);
+  if (home === undefined) return 1;
   try {
-    // The home's clock: the key's making, and a last day judged against today, UTC.
+    // The home's clock, read once: the key's making, and a last day judged on the UTC calendar: after
+    // today, and at most MAX_DAYS days ahead (as many days as `--expires 3650`), so no date can make
+    // an end the file's own rule refuses.
     const now = home.runStore.clock.now();
-    if ('through' in expires && expires.through <= now.toISOString().slice(0, 10)) {
+    const path = serveKeysPath(home.path);
+    const today = now.toISOString().slice(0, 10);
+    const horizon = new Date(Date.parse(`${today}T00:00:00.000Z`) + MAX_DAYS * DAY_MS)
+      .toISOString()
+      .slice(0, 10);
+    if ('through' in expires && (expires.through <= today || expires.through > horizon)) {
       console.error(badExpires);
+      warnFileIfOpen(path);
       return 1;
     }
-    const path = serveKeysPath(home.path);
     const lock = await deps.takeLock(home.path);
     if (!('taken' in lock)) {
       console.error(lockRefusal(home.path, path, lock));
+      warnFileIfOpen(path);
       return 1;
     }
     let read: ServeKeysRead;
@@ -159,7 +207,14 @@ export async function serveKeyAdd(
               ? new Date(Date.parse(`${expires.through}T00:00:00.000Z`) + DAY_MS).toISOString()
               : null,
       };
-      writeServeKeys(home.path, [...keys, entry]);
+      try {
+        writeServeKeys(home.path, [...keys, entry]);
+      } catch (err) {
+        if (!(err instanceof ServeKeysWriteRefused)) throw err;
+        console.error(writeRefusedLine(path, err));
+        warnFileIfOpen(path);
+        return 1;
+      }
       console.log(text);
       console.error(
         `Added key '${name}' to ${keyPath(path)}. It is shown only now: keep it where its caller can read it. ${
@@ -179,7 +234,8 @@ export async function serveKeyAdd(
 
 /** Runs `realm serve key list`: one line per key, in name order. */
 export async function serveKeyList(deps: ServeKeyDeps = SERVE_KEY_DEPS): Promise<0 | 1> {
-  const home = await deps.openHome();
+  const home = await openHomeOrRefuse(deps);
+  if (home === undefined) return 1;
   try {
     const now = home.runStore.clock.now();
     const path = serveKeysPath(home.path);
@@ -225,6 +281,7 @@ export async function serveKeyRemove(
   const lock = await deps.takeLock(homeDir);
   if (!('taken' in lock)) {
     console.error(lockRefusal(homeDir, path, lock));
+    warnFileIfOpen(path);
     return 1;
   }
   try {
@@ -240,10 +297,17 @@ export async function serveKeyRemove(
       warnIfOpen(path, read);
       return 1;
     }
-    writeServeKeys(
-      homeDir,
-      keys.filter((k) => k.name !== name),
-    );
+    try {
+      writeServeKeys(
+        homeDir,
+        keys.filter((k) => k.name !== name),
+      );
+    } catch (err) {
+      if (!(err instanceof ServeKeysWriteRefused)) throw err;
+      console.error(writeRefusedLine(path, err));
+      warnFileIfOpen(path);
+      return 1;
+    }
     console.error(`Removed key '${name}'. A request with it is refused from now on.`);
     return 0;
   } finally {
@@ -256,7 +320,7 @@ export function addServeKeyCommands(serve: Command): void {
   const key = serve
     .command('key')
     .description(
-      "Manage the named keys callers of 'realm serve' send in place of REALM_SERVE_TOKEN",
+      "Manage the named keys callers of 'realm serve' send beside REALM_SERVE_TOKEN or in its place",
     );
   key
     .command('add <name>')

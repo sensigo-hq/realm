@@ -25,11 +25,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { takeServeKeysLock } from '@sensigo/realm-store-sqlite';
+import { takeServeKeysLock, type ServeKeysLockResult } from '@sensigo/realm-store-sqlite';
+import { settableClock } from '@sensigo/realm-testing';
 import { buildRealmProgram, topLevelCommands } from '../commands-registry.js';
 import { openCliHome } from '../lib/home.js';
 import { serveKeysPath } from '../lib/serve-keys.js';
-import { serveKeyAdd, serveKeyRemove, type ServeKeyDeps } from './serve-key.js';
+import { serveKeyAdd, serveKeyList, serveKeyRemove, type ServeKeyDeps } from './serve-key.js';
 import { makeServeCommand } from './serve.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -422,5 +423,241 @@ describe('list and remove, their words', () => {
         "Error: no key named 'ana'. No key was changed. See the keys with 'realm serve key list'.\n",
       madeHome: false,
     });
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Correction 1 (prompts/fix-625-nk1b-correction-1.md rev 2): a far date never breaks the key file,
+// and every key command that ends with the file open to other users says so.
+// ---------------------------------------------------------------------------------------------
+
+const DAY_MS = 86_400_000;
+/** The UTC date `n` days after the UTC date `ymd`. */
+const addDays = (ymd: string, n: number): string =>
+  new Date(Date.parse(`${ymd}T00:00:00.000Z`) + n * DAY_MS).toISOString().slice(0, 10);
+const BAD_EXPIRES =
+  "Error: --expires takes a number of days from 1 to 3650, a date after today and at most 3650 days ahead (YYYY-MM-DD) or 'never'. No key was changed.";
+const WARNING = (): string =>
+  `Warning: ${FILE()} is open to other users (mode 0644). Fix that with: chmod 600 ${FILE()}`;
+
+/** The command bodies' collaborators on this cell's home, on a home clock fixed at `at`. */
+function depsAt(
+  at: string,
+  takeLock: ServeKeyDeps['takeLock'] = (h) => takeServeKeysLock(h),
+): ServeKeyDeps {
+  return {
+    home: () => home,
+    openHome: () => openCliHome({ home, clock: settableClock(at) }),
+    takeLock,
+  };
+}
+
+/** Runs a command body with stdout and stderr captured, in order: its code and lines. */
+async function captured(
+  run: () => Promise<0 | 1>,
+): Promise<{ code: 0 | 1; err: string[]; out: string[] }> {
+  const err: string[] = [];
+  const out: string[] = [];
+  const e = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+    err.push(a.map(String).join(' '));
+  });
+  const o = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+    out.push(a.map(String).join(' '));
+  });
+  // The house refusal printer writes to process.stderr itself.
+  const w = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+    for (const line of String(chunk).split('\n')) if (line !== '') err.push(line);
+    return true;
+  });
+  const exitCode = process.exitCode;
+  try {
+    const code = await run();
+    return { code, err, out };
+  } finally {
+    e.mockRestore();
+    o.mockRestore();
+    w.mockRestore();
+    process.exitCode = exitCode;
+  }
+}
+
+/** The temporary key files left in the home. */
+const temps = (): string[] =>
+  existsSync(home) ? readdirSync(home).filter((f) => /^\.serve-keys\.json-.*\.tmp$/.test(f)) : [];
+
+describe('correction 1, check 1 — a far date is refused; 3650 days ahead is the last date', () => {
+  for (const [label, at, tz] of [
+    ['UTC', '2026-11-23T12:00:00.000Z', undefined],
+    [
+      'TZ=Pacific/Kiritimati, 23:30Z (the next day there)',
+      '2026-11-23T23:30:00.000Z',
+      'Pacific/Kiritimati',
+    ],
+  ] as const) {
+    it(`${label}: 9999-12-31 and 3651 days ahead refused, the file unchanged; 3650 days ahead accepted, and list reads it`, async () => {
+      const savedTz = process.env['TZ'];
+      if (tz !== undefined) process.env['TZ'] = tz;
+      try {
+        const deps = depsAt(at);
+        const today = at.slice(0, 10);
+        expect((await captured(() => serveKeyAdd('seed', undefined, deps))).code).toBe(0);
+        const before = fileState();
+        const far = await captured(() => serveKeyAdd('far', '9999-12-31', deps));
+        const past = await captured(() => serveKeyAdd('past', addDays(today, 3651), deps));
+        const after = fileState();
+        const last = await captured(() => serveKeyAdd('last', addDays(today, 3650), deps));
+        const list = await captured(() => serveKeyList(deps));
+        // (1) red when a date past the horizon is taken (320a7210's parse stored year 10000), the
+        //     horizon is shorter than 3650 days, or it is counted on the local calendar (Kiritimati is
+        //     a day ahead of UTC at 23:30Z); (2) prints each command's code and lines.
+        expect({
+          far: [far.code, far.err],
+          past: [past.code, past.err],
+          unchanged: after === before,
+          last: last.code,
+          list: [list.code, list.out.filter((l) => l.startsWith('last '))],
+        }).toEqual({
+          far: [1, [BAD_EXPIRES]],
+          past: [1, [BAD_EXPIRES]],
+          unchanged: true,
+          last: 0,
+          list: [
+            0,
+            [
+              expect.stringMatching(
+                new RegExp(`^last  made .*  works until ${addDays(today, 3651)}`),
+              ),
+            ],
+          ],
+        });
+      } finally {
+        if (savedTz === undefined) delete process.env['TZ'];
+        else process.env['TZ'] = savedTz;
+      }
+    }, 60_000);
+  }
+});
+
+describe('correction 1, check 2 — the commands never write a file the reader refuses', () => {
+  it('on a home clock at 9999-12-31T12:00Z, add one --expires 1 is refused with the guard words; the file unchanged, no temporary file left', async () => {
+    const deps = depsAt('9999-12-31T12:00:00.000Z');
+    expect((await captured(() => serveKeyAdd('seed', undefined, deps))).code).toBe(0);
+    const before = fileState();
+    const one = await captured(() => serveKeyAdd('one', '1', deps));
+    // (1) red when the write skips the reader's check (the end +010000-01-01 is stored and every key
+    //     is then refused); (2) prints the code, the lines, the file's fingerprint and the temp files.
+    expect({
+      code: one.code,
+      err: one.err,
+      out: one.out,
+      unchanged: fileState() === before,
+      temps: temps(),
+    }).toEqual({
+      code: 1,
+      err: [
+        `Error: ${FILE()} was not changed: the new key file would not be valid (entry 2 is not a valid key entry). No key was changed.`,
+      ],
+      out: [],
+      unchanged: true,
+      temps: [],
+    });
+  }, 60_000);
+});
+
+describe('correction 1, check 3 — every key command ending with the file open to other users says so, last', () => {
+  const busy: ServeKeyDeps['takeLock'] = async () => ({ busy: true }) as ServeKeysLockResult;
+  /** A home with one key, `seed`, its file then opened to others (0644). */
+  async function openFile(at = '2026-11-23T12:00:00.000Z'): Promise<void> {
+    expect((await captured(() => serveKeyAdd('seed', undefined, depsAt(at)))).code).toBe(0);
+    chmodSync(FILE(), 0o644);
+  }
+  /** Breaks the home's store: realm.db is not a SQLite file. */
+  function breakStore(): void {
+    for (const side of ['realm.db-wal', 'realm.db-shm']) rmSync(join(home, side), { force: true });
+    writeFileSync(join(home, 'realm.db'), 'not a database\n');
+  }
+  const cases: Array<[string, () => Promise<void>, () => Promise<0 | 1>, RegExp]> = [
+    [
+      'add BAD',
+      () => openFile(),
+      () => serveKeyAdd('BAD', undefined, depsAt('2026-11-23T12:00:00.000Z')),
+      /^Error: 'BAD' is not a key name/,
+    ],
+    [
+      'add fine --expires 0',
+      () => openFile(),
+      () => serveKeyAdd('fine', '0', depsAt('2026-11-23T12:00:00.000Z')),
+      /^Error: --expires takes/,
+    ],
+    [
+      'add fine --expires <a date past the horizon>',
+      () => openFile(),
+      () => serveKeyAdd('fine', addDays('2026-11-23', 3651), depsAt('2026-11-23T12:00:00.000Z')),
+      /^Error: --expires takes/,
+    ],
+    [
+      "add's lock refusal",
+      () => openFile(),
+      () => serveKeyAdd('fine', undefined, depsAt('2026-11-23T12:00:00.000Z', busy)),
+      /^Error: another 'realm serve key' command is changing/,
+    ],
+    [
+      "remove's lock refusal",
+      () => openFile(),
+      () => serveKeyRemove('seed', depsAt('2026-11-23T12:00:00.000Z', busy)),
+      /^Error: another 'realm serve key' command is changing/,
+    ],
+    [
+      'add, the store cannot be opened',
+      async () => {
+        await openFile();
+        breakStore();
+      },
+      () => serveKeyAdd('fine', undefined, depsAt('2026-11-23T12:00:00.000Z')),
+      /^Error: The store file .* is not a Realm store this Realm can use/,
+    ],
+    [
+      'list, the store cannot be opened',
+      async () => {
+        await openFile();
+        breakStore();
+      },
+      () => serveKeyList(depsAt('2026-11-23T12:00:00.000Z')),
+      /^Error: The store file .* is not a Realm store this Realm can use/,
+    ],
+    [
+      "the guard's refusal",
+      () => openFile('9999-12-31T12:00:00.000Z'),
+      () => serveKeyAdd('one', '1', depsAt('9999-12-31T12:00:00.000Z')),
+      /^Error: .* was not changed: the new key file would not be valid/,
+    ],
+  ];
+  for (const [label, setup, run, refusal] of cases) {
+    it(`${label}: the refusal, then the warning as the last line, exit 1, the file still 0644`, async () => {
+      await setup();
+      const r = await captured(run);
+      // (1) red when the warning is printed only on paths that read the file (320a7210: none of
+      //     these), or not last; (2) prints the code, every stderr line and the mode.
+      expect(
+        {
+          code: r.code,
+          refusal: refusal.test(r.err[0] ?? ''),
+          last: r.err[r.err.length - 1],
+          warnings: r.err.filter((l) => l.startsWith('Warning:')).length,
+          mode: (statSync(FILE()).mode & 0o777).toString(8),
+        },
+        r.err.join('\n'),
+      ).toEqual({ code: 1, refusal: true, last: WARNING(), warnings: 1, mode: '644' });
+    }, 60_000);
+  }
+});
+
+describe('correction 1, check 4 — the help line', () => {
+  it('realm serve key --help says the keys are sent beside REALM_SERVE_TOKEN or in its place', () => {
+    const r = realm('serve', 'key', '--help');
+    // (1) red with the old words ("in place of REALM_SERVE_TOKEN"); (2) prints the help.
+    expect(r.stdout.replace(/\s+/g, ' ')).toContain(
+      "Manage the named keys callers of 'realm serve' send beside REALM_SERVE_TOKEN or in its place",
+    );
   }, 60_000);
 });

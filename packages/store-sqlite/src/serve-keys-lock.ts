@@ -6,7 +6,9 @@
 // small file in the home, `serve-keys.lock`. The operating system keeps that lock for exactly as long
 // as the holding program runs and lets go of it the moment the program ends, however it ends, so a
 // killed command never leaves a lock behind. It is not a lease and opens no lease file. The file holds
-// nothing: no row is ever written, so no journal file is made beside it.
+// nothing: no row is ever written. SQLite still makes its journal, `serve-keys.lock-journal`, beside it
+// while the lock is held; a killed holder leaves that file until the next `add` or `remove` that takes
+// the lock (NK-WALK1B-17). It holds no key and no key's text.
 //
 // Load-bearing, as measured for the leases (plans/facts-claim-window.md):
 //   - a held lock's connection stays referenced in a module-level set until it is released: a

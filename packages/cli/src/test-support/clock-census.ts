@@ -223,7 +223,7 @@ export const CENSUS: Record<string, Entry> = {
   'cli/src/commands/serve-key.ts#serveKeyAdd#clock.now()': [
     1,
     'event',
-    "a named key's making: its created_at, the instant its end is counted from, and the UTC day a last day (YYYY-MM-DD) must come after",
+    "a named key's making: its created_at, the instant its end is counted from, and the UTC day a last day (YYYY-MM-DD) must come after and be at most 3650 days from",
   ],
   'cli/src/commands/serve-key.ts#serveKeyList#clock.now()': [
     1,

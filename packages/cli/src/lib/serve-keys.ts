@@ -153,9 +153,21 @@ export function readServeKeys(path: string): ServeKeysRead {
 }
 
 /**
+ * #625 PR-2b 1b, correction 1: a write refused because the new file would break the reader's rules
+ * (`keyFileCause` is the reader's cause word). The old file is unchanged and the temporary file gone.
+ */
+export class ServeKeysWriteRefused extends Error {
+  constructor(readonly keyFileCause: string) {
+    super(`the new key file would not be valid (${keyFileCause})`);
+    this.name = 'ServeKeysWriteRefused';
+  }
+}
+
+/**
  * Writes `keys` as the whole key file of `home`, at 0600: a temporary file in the home (exclusive,
- * owner-only, synced), renamed over the old file. Throws the system's error; the temporary file is
- * removed in every outcome.
+ * owner-only, synced), checked with the reader's own rules, then renamed over the old file. A new file
+ * the reader would refuse is never renamed: {@link ServeKeysWriteRefused}. Throws the system's error
+ * otherwise; the temporary file is removed in every outcome but the rename.
  */
 export function writeServeKeys(home: string, keys: readonly ServeKeyEntry[]): void {
   const target = serveKeysPath(home);
@@ -173,6 +185,9 @@ export function writeServeKeys(home: string, keys: readonly ServeKeyEntry[]): vo
     } finally {
       closeSync(fd);
     }
+    // The file as written, judged as `readServeKeys` judges it (an end past year 9999, for one).
+    const judged = judge(readFileSync(temp, 'utf8'));
+    if ('cause' in judged) throw new ServeKeysWriteRefused(judged.cause);
     renameSync(temp, target);
     renamed = true;
   } finally {
