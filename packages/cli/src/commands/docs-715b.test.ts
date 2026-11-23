@@ -628,6 +628,18 @@ describe('#715 (b) 04 §E — the CHANGELOG', () => {
     // out of it here (a rename still shows: one name gone, one new).
     // #625 A1b-1 deleted them (their callers moved to `endedRunWaysSentence`).
     const REMOVED_SINCE = new Set(['withEndedRunWays', 'withPendingCleanup']);
+    // And the names added since, each named as taking a parameter `now` in the [Unreleased] line that
+    // adds it. Q1 (#592) f2: `claimDeadlineOf`, beside `computeClaimDeadline`.
+    const ADDED_SINCE = new Map([
+      ['claimDeadlineOf', changelogEntry('**A claim with no time limit now says why.**')],
+    ]);
+    // (a) red when a name added since is not said, in its own line, to take a parameter `now`;
+    //     (b) prints the names that are not.
+    expect(
+      [...ADDED_SINCE].filter(
+        ([name, entry]) => !new RegExp(`\`${name}\`[^;]*as a parameter \`now\``).test(entry),
+      ),
+    ).toEqual([]);
     expect({
       byParameter: [...new Set(byParameter)].sort(),
       byField: [...new Set(byField)].sort(),
@@ -635,6 +647,7 @@ describe('#715 (b) 04 §E — the CHANGELOG', () => {
       byParameter: [...parameterNames.matchAll(/`(\w+)`/g)]
         .map((m) => m[1])
         .filter((name) => !REMOVED_SINCE.has(name!))
+        .concat([...ADDED_SINCE.keys()])
         .sort(),
       byField: [...fieldNames.matchAll(/`(\w+)` \(/g)].map((m) => m[1]).sort(),
     });
