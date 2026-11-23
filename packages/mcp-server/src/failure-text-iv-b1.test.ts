@@ -781,35 +781,15 @@ describe('gap 2 (iv-b1), check 6 — the receipt says failure text was withheld,
     });
   });
 
-  it('a run with no failures carries neither; an execute_step reply on a failing step carries neither', async () => {
-    claim(
-      RUN_STATE,
-      "The setting covers `get_run_state` only: the replies of the assistant's own calls, such as `execute_step`'s when a step it runs fails, show a failure's words as recorded.",
-    );
+  // Gap 2, unit (iv-b2a): the execute_step half of this cell (its reply kept the words, as (iv-b1)
+  // covered get_run_state only) moved to failure-text-replies-iv-b2a, where that reply is shaped.
+  it('a run with no failures carries neither', async () => {
     const w = await world();
     const hidden = await w.connect('hidden');
     const quiet = await w.fresh(D.pair);
     const stateReceipt = receipt((await hidden.state(quiet)).reply);
-    // execute_step on `a` chains into `s`, whose handler fails: the reply of the assistant's own call.
-    const failing = await w.fresh(D.chain);
-    const stepped = await hidden.call('execute_step', {
-      run_id: failing,
-      command: 'a',
-      params: {},
-    });
-    const stepReceipt = receipt(stepped.reply);
-    // (a) red when the word or `shaped` is set with nothing shaped, or on another tool's reply in this
-    //     unit; (b) prints both receipts' two keys, and whether the call's reply holds the failure's
-    //     words (it does: this unit covers get_run_state only).
-    expect({
-      state: [stateReceipt['failure_text'], stateReceipt['shaped']],
-      step: [stepReceipt['failure_text'], stepReceipt['shaped']],
-      stepWords: stepped.text.includes(SECRET_WORDS),
-    }).toEqual({
-      state: [undefined, undefined],
-      step: [undefined, undefined],
-      stepWords: true,
-    });
+    // (a) red when the word or `shaped` is set with nothing shaped; (b) prints the receipt's two keys.
+    expect([stateReceipt['failure_text'], stateReceipt['shaped']]).toEqual([undefined, undefined]);
   });
 });
 

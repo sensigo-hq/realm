@@ -17,6 +17,8 @@ import {
   type DisclosureSet,
   persistsField,
   startIdentityEntry,
+  capText,
+  terminalReasonHidingFailureText,
 } from '@sensigo/realm';
 import { composeToolWays, handBackHint, mcpHostOf, type HandleRunStores } from './start-run.js';
 import {
@@ -33,6 +35,7 @@ import {
   replySubject,
   setForSubject,
   SAFE_TOOL_CONSTANT_RUNLESS,
+  FAILURE_TEXT_SHAPED,
 } from '../render-reply.js';
 import { toolMeta } from '../tool-annotations.js';
 import { ArgsNumbersRefusal, argsNumbersEnvelope, checkArgsNumbers } from './args-numbers.js';
@@ -145,8 +148,13 @@ export async function handleStartRunBatch(
     on_live_match?: 'use_existing' | 'fail' | undefined;
   },
   stores: HandleRunStores,
-): Promise<StartRunBatchResult> {
+): Promise<StartRunBatchResult & { [FAILURE_TEXT_SHAPED]?: readonly string[] }> {
   assertToolStores(stores, 'handleStartRunBatch', ['runStore', 'workflowStore']);
+  // Gap 2, unit (iv-b2a): under the door's failure-text setting `hidden`, a matched run that ended
+  // shows its `terminal_reason` as get_run_state does (core's arm-judged rebuild); the composer
+  // sets the receipt's paths itself, since this reply does not pass renderReply.
+  const hideFailureText = stores.door?.failureText.value === 'hidden';
+  const shapedPaths: string[] = [];
   const workflowStore = stores.workflowStore;
   const runStore = stores.runStore;
 
@@ -306,13 +314,20 @@ export async function handleStartRunBatch(
       composeToolWays(runStore, definition, handedBack, registry, waysDisclosure),
       mcpHostOf(stores),
     );
+    const shapedReason = hideFailureText ? terminalReasonHidingFailureText(run) : undefined;
+    if (shapedReason !== undefined) shapedPaths.push(`started[${started.length}].terminal_reason`);
     started.push({
       run_id: run.id,
       ...(item.idempotency_key !== undefined ? { idempotency_key: item.idempotency_key } : {}),
       params: item.params,
       deduped,
       run_phase: derivedPhase,
-      ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
+      ...(run.terminal_reason !== undefined
+        ? {
+            terminal_reason:
+              shapedReason !== undefined ? capText(shapedReason) : run.terminal_reason,
+          }
+        : {}),
       warnings,
       next_actions: rendered.next_actions,
       context_hint: `${handBackHint({ run, current: handedBack, definition, deduped })}${run.terminal_state ? '' : rendered.next_sentence}`,
@@ -326,7 +341,11 @@ export async function handleStartRunBatch(
       total: args.items.length,
     });
   }
-  return { started, failed };
+  return {
+    started,
+    failed,
+    ...(shapedPaths.length > 0 ? { [FAILURE_TEXT_SHAPED]: shapedPaths } : {}),
+  };
 }
 
 export function registerStartRunBatch(
