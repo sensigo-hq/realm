@@ -1657,6 +1657,7 @@ FailedAttemptStore · type · public
 
 FailureText · type · internal
 FailureTextInput · type · internal
+FailureTextMark · type · internal
 FailureTextSetting · type · internal
 FailureView · type · internal
 FailureWordField · type · internal
@@ -4613,6 +4614,7 @@ expiryReceiptOf · value · internal
 extensionIdentityDiffers · value · internal
 failedRequestSends · value · internal
 failureModelTextView · value · internal
+failureTextMarkOf · value · internal
 failureTextShape · value · internal
 fenceReaderMissingError · value · internal
 fileClock · value · internal
