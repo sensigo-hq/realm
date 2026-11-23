@@ -1185,14 +1185,14 @@ const CONSUMER_TABLE = [
   ["A model attempt's `kind`", 'Do not retry; a person decides.'],
   ["A model attempt's `then`", 'A re-send followed; its kind is unknown.'],
   [
-    '`cost_unrecorded`, a not-priced cause (`money.not_priced[].cause`)',
+    '`cost_unrecorded`, a not-priced cause (`not_priced[].cause`)',
     'The cost is unknown: do not add it to a total.',
   ],
   [
     "A cache miss's `derived.cause` or `provider.reason`, a request's `cache_diagnostics.result` and its `type`",
     'Why the cache missed is unknown.',
   ],
-  ["A cache miss's `derived.rule`", 'How the miss was judged is unknown: treat it as unexplained.'],
+  ["A cache miss's `derived.rule`", 'How the miss was judged is unknown.'],
   ['`cache_controls_rejected.proven` and its `fields`', 'Treat the cache controls as not proven.'],
   [
     "The `auto` choice's `prices.from`, `prices.cause`, `prices.excluded[]` and `prices.missing[]`, a price's `source_class`",

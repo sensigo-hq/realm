@@ -501,33 +501,33 @@ The file describes both replies: the run's state, and a refusal (for example, th
 
 A program that reads the reply must accept a word it does not know in any list, and a key it does not know in any object. For a word it does not know, it acts as for the most cautious word of that list:
 
-| The list                                                                                                                     | What a word it does not know means                           |
-| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `next_actions_status`                                                                                                        | Act as for `report_to_user`.                                 |
-| `agent_action`                                                                                                               | Act as for `report_to_user`.                                 |
-| `failures[].stop_reason`, and `exhausted_by` in a drive failure's `model_attempts`                                           | Act as for `non_retryable`: do not retry.                    |
-| `error_code` (`basis.enactor`'s, and a refusal's), `failures[].code`, `failures[].category`                                  | The error is not retryable: report it.                       |
-| `run_phase`                                                                                                                  | Read `terminal_state` for whether the run ended.             |
-| `run_health[].kind`                                                                                                          | A finding to show the person.                                |
-| `stuck_claims[].state`                                                                                                       | The step is stuck.                                           |
-| A status word                                                                                                                | Not a success.                                               |
-| A skip's `kind` or `rule`                                                                                                    | The step did not run.                                        |
-| A drive failure's `error_class`, and a model attempt's                                                                       | The drive failed.                                            |
-| A model attempt's `kind`                                                                                                     | Do not retry; a person decides.                              |
-| A model attempt's `then`                                                                                                     | A re-send followed; its kind is unknown.                     |
-| `cost_unrecorded`, a not-priced cause (`money.not_priced[].cause`)                                                           | The cost is unknown: do not add it to a total.               |
-| A cache miss's `derived.cause` or `provider.reason`, a request's `cache_diagnostics.result` and its `type`                   | Why the cache missed is unknown.                             |
-| A cache miss's `derived.rule`                                                                                                | How the miss was judged is unknown: treat it as unexplained. |
-| `cache_controls_rejected.proven` and its `fields`                                                                            | Treat the cache controls as not proven.                      |
-| The `auto` choice's `prices.from`, `prices.cause`, `prices.excluded[]` and `prices.missing[]`, a price's `source_class`      | Where the price came from is unknown.                        |
-| `predecessor.from`, `reference.from`                                                                                         | Which earlier request it was compared with is unknown.       |
-| A lifetime's source (`lifetime_from`), the `auto` choice's `basis`                                                           | How long the cache entry lives is unknown.                   |
-| What a request asked of the cache (`cache_requested`, `cache_requested_source`, `cache_marked`, `marked`) and its `endpoint` | Treat the request's cache setting as unknown.                |
-| A seal arm (`sealed_by_arm`)                                                                                                 | How the run ended is not verified.                           |
-| `poll_reason`                                                                                                                | Poll as for `fixed`.                                         |
-| `on_expiry`                                                                                                                  | The question may end without an answer: ask the person.      |
-| The receipt's words (`declared`, `declared_cause`, `environment`, `question`)                                                | Treat the value as withheld or unverified.                   |
-| An absence cause, an admission word or a class word (`absent_cause`, `admitted_by`, `by_source`, …)                          | The fact is unknown.                                         |
+| The list                                                                                                                     | What a word it does not know means                      |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `next_actions_status`                                                                                                        | Act as for `report_to_user`.                            |
+| `agent_action`                                                                                                               | Act as for `report_to_user`.                            |
+| `failures[].stop_reason`, and `exhausted_by` in a drive failure's `model_attempts`                                           | Act as for `non_retryable`: do not retry.               |
+| `error_code` (`basis.enactor`'s, and a refusal's), `failures[].code`, `failures[].category`                                  | The error is not retryable: report it.                  |
+| `run_phase`                                                                                                                  | Read `terminal_state` for whether the run ended.        |
+| `run_health[].kind`                                                                                                          | A finding to show the person.                           |
+| `stuck_claims[].state`                                                                                                       | The step is stuck.                                      |
+| A status word                                                                                                                | Not a success.                                          |
+| A skip's `kind` or `rule`                                                                                                    | The step did not run.                                   |
+| A drive failure's `error_class`, and a model attempt's                                                                       | The drive failed.                                       |
+| A model attempt's `kind`                                                                                                     | Do not retry; a person decides.                         |
+| A model attempt's `then`                                                                                                     | A re-send followed; its kind is unknown.                |
+| `cost_unrecorded`, a not-priced cause (`not_priced[].cause`)                                                                 | The cost is unknown: do not add it to a total.          |
+| A cache miss's `derived.cause` or `provider.reason`, a request's `cache_diagnostics.result` and its `type`                   | Why the cache missed is unknown.                        |
+| A cache miss's `derived.rule`                                                                                                | How the miss was judged is unknown.                     |
+| `cache_controls_rejected.proven` and its `fields`                                                                            | Treat the cache controls as not proven.                 |
+| The `auto` choice's `prices.from`, `prices.cause`, `prices.excluded[]` and `prices.missing[]`, a price's `source_class`      | Where the price came from is unknown.                   |
+| `predecessor.from`, `reference.from`                                                                                         | Which earlier request it was compared with is unknown.  |
+| A lifetime's source (`lifetime_from`), the `auto` choice's `basis`                                                           | How long the cache entry lives is unknown.              |
+| What a request asked of the cache (`cache_requested`, `cache_requested_source`, `cache_marked`, `marked`) and its `endpoint` | Treat the request's cache setting as unknown.           |
+| A seal arm (`sealed_by_arm`)                                                                                                 | How the run ended is not verified.                      |
+| `poll_reason`                                                                                                                | Poll as for `fixed`.                                    |
+| `on_expiry`                                                                                                                  | The question may end without an answer: ask the person. |
+| The receipt's words (`declared`, `declared_cause`, `environment`, `question`)                                                | Treat the value as withheld or unverified.              |
+| An absence cause, an admission word or a class word (`absent_cause`, `admitted_by`, `by_source`, …)                          | The fact is unknown.                                    |
 
 Where the reply types a field as a plain string, the file says so; the rule still applies to the word it carries.
 
