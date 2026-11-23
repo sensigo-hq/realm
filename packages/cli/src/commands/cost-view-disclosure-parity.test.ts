@@ -956,9 +956,10 @@ const STEP_LINE_UNRECORDED_CAUSE = {
     surface: 'rendered',
     probe: (out) =>
       expect(out).toContain(
-        'cost: not recorded — realm has no usage figures for this attempt (for example: an ' +
-          'outside agent over MCP made it, a person typed its answer at a realm workflow run ' +
-          'prompt, or realm 0.45.0 or earlier recorded it)',
+        'cost: not recorded — realm has no usage figures for this attempt (for example: its ' +
+          'model request failed before an answer came, an outside agent over MCP made it, a ' +
+          'person typed its answer at a realm workflow run prompt, or realm 0.45.0 or earlier ' +
+          'recorded it)',
       ),
   },
 } satisfies Record<CostUnrecordedCause, DisclosureRoute>;
