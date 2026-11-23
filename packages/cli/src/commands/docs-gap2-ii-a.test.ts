@@ -44,7 +44,7 @@ describe('gap 2, unit (ii-a) — check 10: the words', () => {
     // (a) red when the row is missing, worded otherwise, or under another category; (b) prints it.
     expect(
       service.includes(
-        "| `MODEL_REQUEST_FAILED` | An agent step's model request failed and the step took its failure path: the request would fail the same way again, the step's `retry` does not try it again (for example a timeout with `on_timeout: false`), or the step has no `retry` and the model client's own tries ran out. The step fails. `details.failure_kind` says whether a later try might pass. | `report_to_user` | No |",
+        "| `MODEL_REQUEST_FAILED` | An agent step's model request failed and the step took its failure path: the request would fail the same way again, the step's `retry` does not try it again (for example a timeout with `on_timeout: false`), or the step has no `retry`. The step fails. `details.failure_kind` says whether a later try might pass. | `report_to_user` | No |",
       ),
     ).toBe(true);
   });

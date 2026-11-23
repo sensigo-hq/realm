@@ -581,11 +581,14 @@ describe('gap 2 (ii-b1), check 2 — the hazards on a step without retry', () =>
   });
 });
 
+// Gap 2, unit (ii-b2): the member is given only for a step that declares `on_model_failure: fail`;
+// its `retry` is the request's, so core's stop-reason check meets the step the rule judged.
 const stepOf = (retry: RetryConfig | undefined): StepDefinition =>
   ({
     description: 'Classify.',
     execution: 'agent',
     depends_on: [],
+    on_model_failure: 'fail',
     ...(retry !== undefined ? { retry } : {}),
   }) as StepDefinition;
 const wfOf = (retry: RetryConfig | undefined): WorkflowDefinition =>

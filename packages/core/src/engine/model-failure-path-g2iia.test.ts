@@ -26,8 +26,24 @@ type ModelFailure = NonNullable<ExecuteChainOptions['modelFailure']>;
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
 const DRIVE: Attributed = { by: 'drive', by_source: 'derived', channel: 'agent' };
 
+// Gap 2, unit (ii-b2): the member is given only for a step that declares `on_model_failure: fail`, and
+// its stop reason must not contradict the step's `retry`: the step declares one (the default pair is
+// `attempts`); a `no_retry_policy` cell's step declares none (`retry: undefined`).
 const agent = (over: Partial<StepDefinition> = {}): StepDefinition =>
-  ({ description: 'Classify.', execution: 'agent', depends_on: [], ...over }) as StepDefinition;
+  ({
+    description: 'Classify.',
+    execution: 'agent',
+    depends_on: [],
+    on_model_failure: 'fail',
+    retry: { max_attempts: 3 },
+    ...over,
+  }) as StepDefinition;
+
+/** `step` with no `retry` block, for a `no_retry_policy` cell. */
+const withoutRetry = (step: StepDefinition): StepDefinition => {
+  const { retry: _retry, ...rest } = step;
+  return rest as StepDefinition;
+};
 
 const wf = (steps: Record<string, StepDefinition>): WorkflowDefinition =>
   ({ id: 'wf-g2iia', name: 'g2iia', version: 1, steps }) as WorkflowDefinition;
@@ -137,7 +153,7 @@ describe('gap 2, unit (ii-a) — each admitted pair settles the step failed (che
       const registry = new ExtensionRegistry();
       registry.register('handler', 'h_catch', okHandler('h_catch', ran));
       const d = wf({
-        classify: agent(),
+        classify: row.failure.stop_reason === 'no_retry_policy' ? withoutRetry(agent()) : agent(),
         on_catch: {
           description: 'Clean up.',
           execution: 'finalizer',
