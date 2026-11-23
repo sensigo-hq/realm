@@ -1,0 +1,877 @@
+{
+  "about": "#845 1a-ii correction 1, check 2 (GROUNDING): each case's full locateQuote result as read at dfda322b, before the fix. `in` is the digest (the first 32 hex digits of SHA-256 over the JSON of [quote, doc]) of the case's inputs, so the test checks it builds the same inputs. The W3 cases are the walk's (845-WALK1AII), taken from its probe file. Recorded by plans/issue-845/unit1a/ia4/correction-1-1aii/record-invisible-runs.mjs (run, not committed).",
+  "cases": {
+    "run U+200B end_after_stop 1000": {
+      "in": "09c12c5d3b7b25b1dcba023fb6036efe",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [24]
+      }
+    },
+    "run U+200B end_after_stop 2000": {
+      "in": "7248948b54e7d5aca228888b21d76bdf",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [24]
+      }
+    },
+    "run U+200B mid_sentence 1000": {
+      "in": "3d9e8e8ffc2000ab9b7b70ce19bc7c97",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "run U+200B mid_sentence 2000": {
+      "in": "77dfdcd78294b99f96d3ab4a0cf21254",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "run U+200B stitched 1000": {
+      "in": "c212d50d6e14984651686597f8471df5",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 69,
+            "end": 111
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "run U+200B stitched 2000": {
+      "in": "ab814dc2cc9e969f788f3bddc959db9e",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 69,
+            "end": 111
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "run U+00AD end_after_stop 1000": {
+      "in": "b034f530a1af45e780e28fd4f97c5d6c",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [24]
+      }
+    },
+    "run U+00AD end_after_stop 2000": {
+      "in": "3d721958498172976e6c4afdd086a175",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [24]
+      }
+    },
+    "run U+00AD mid_sentence 1000": {
+      "in": "e9f95c26e1dc7f5e0c399f6c787d2470",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "run U+00AD mid_sentence 2000": {
+      "in": "c079a9b3ae0df4ea20795c8749300a52",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "run U+00AD stitched 1000": {
+      "in": "e27599c42cd4cb2560f927b071d06c59",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 69,
+            "end": 111
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "run U+00AD stitched 2000": {
+      "in": "cc9c90f60fcd22b9759dda162ed27a95",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 69,
+            "end": 111
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "run U+FEFF end_after_stop 1000": {
+      "in": "4bbc1c976ff13cd071bfd645e3f19c8f",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [24]
+      }
+    },
+    "run U+FEFF end_after_stop 2000": {
+      "in": "c5876dc3c78bcf3ac4a8b75047075631",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [24]
+      }
+    },
+    "run U+FEFF mid_sentence 1000": {
+      "in": "6f75dc1168bbfa17617c227f0b8ef654",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "run U+FEFF mid_sentence 2000": {
+      "in": "8c08f013827e69d11891878b8b2597b9",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "run U+FEFF stitched 1000": {
+      "in": "f60ceea0cc7eb70c2109156943f22289",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 69,
+            "end": 111
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "run U+FEFF stitched 2000": {
+      "in": "ef423ef191dd2930cf798c687650273c",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 69,
+            "end": 111
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "run U+FE0F end_after_stop 1000": {
+      "in": "a5ab7f6ff24fd5d37bc67a18b5efd057",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [24]
+      }
+    },
+    "run U+FE0F end_after_stop 2000": {
+      "in": "92c82c569bdd55b194ee41715fbed2f5",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [24]
+      }
+    },
+    "run U+FE0F mid_sentence 1000": {
+      "in": "10fa4c30e047dfb2a63bb63f923f0011",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "run U+FE0F mid_sentence 2000": {
+      "in": "9c17ed6b9924233ef1ed507ca3275a53",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "run U+FE0F stitched 1000": {
+      "in": "24372797835433923733502039050221",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 69,
+            "end": 111
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "run U+FE0F stitched 2000": {
+      "in": "e14527fe36c6f00be763e3c4e78a7fc6",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 69,
+            "end": 111
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.1a": {
+      "in": "e01399c1c1cf6533c8a8ba21df6aee36",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 31
+          },
+          {
+            "start": 47,
+            "end": 89
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.1b": {
+      "in": "af8ab656b8035adfabb3b36a3f48d326",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 31
+          },
+          {
+            "start": 47,
+            "end": 89
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.1c": {
+      "in": "3d8e9247ca59dce244741b648683ff19",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 31
+          },
+          {
+            "start": 47,
+            "end": 89
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.1d": {
+      "in": "29bd496d623bfcd86394d4795a169ec4",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 31
+          },
+          {
+            "start": 46,
+            "end": 88
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.1e": {
+      "in": "99bcf27787b2b31f1db7ad3802987efc",
+      "out": {
+        "state": "not_found",
+        "parts": [],
+        "occurrences": 0,
+        "nearest": {
+          "start": 47,
+          "end": 89
+        }
+      }
+    },
+    "W3.2a": {
+      "in": "ccda7543b52387fb6a44734e1b7e3fb0",
+      "out": {
+        "state": "exact",
+        "parts": [
+          {
+            "start": 0,
+            "end": 25
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [25]
+      }
+    },
+    "W3.2b": {
+      "in": "f52c7bf308aa6caec0d14da68ac3da08",
+      "out": {
+        "state": "exact",
+        "parts": [
+          {
+            "start": 0,
+            "end": 25
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [25]
+      }
+    },
+    "W3.2c": {
+      "in": "005471d15a0adcb5caf30c4cd8f880e5",
+      "out": {
+        "state": "exact",
+        "parts": [
+          {
+            "start": 0,
+            "end": 25
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "W3.2d": {
+      "in": "647887ddd417d8dcb8212f320980f32a",
+      "out": {
+        "state": "exact",
+        "parts": [
+          {
+            "start": 0,
+            "end": 25
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [25]
+      }
+    },
+    "W3.2e": {
+      "in": "c54ba5679023ad6c744df1add05d1a11",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 24
+          }
+        ],
+        "occurrences": 1,
+        "cut_short": true,
+        "cut_short_at": [24]
+      }
+    },
+    "W3.3a": {
+      "in": "7ea499981ed06ab9fbab0d46e18b0ede",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 90,
+            "end": 125
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.3b": {
+      "in": "f0ce66f7629f331072b78adada137123",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 86
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "W3.3c": {
+      "in": "7ae196f40d49452fd64b686f0ab97866",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 86
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "W3.3d": {
+      "in": "3252cbe5d90f66163daf89cf2f8a1620",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 90,
+            "end": 125
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.3e": {
+      "in": "2cbf1292058f0b2ca9221f7ca46ab5c2",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 89,
+            "end": 124
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.3f": {
+      "in": "b9e439eb0b3d2add593c113ff92dfcb3",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 90,
+            "end": 125
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.4a": {
+      "in": "43b2fe8ebfdfdbb8ed96871fd8750156",
+      "out": {
+        "state": "not_found",
+        "parts": [],
+        "occurrences": 0
+      }
+    },
+    "W3.4b": {
+      "in": "886986c2fbe97d191952547a1f36aefb",
+      "out": {
+        "state": "not_found",
+        "parts": [],
+        "occurrences": 0,
+        "nearest": {
+          "start": 0,
+          "end": 19
+        }
+      }
+    },
+    "W3.4c": {
+      "in": "96bc2d7ac7f14f6a65cee71460ba82fa",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 39
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "W3.4d": {
+      "in": "1133d52e64a6224f27cd2012902e0db4",
+      "out": {
+        "state": "not_found",
+        "parts": [],
+        "occurrences": 0,
+        "nearest": {
+          "start": 0,
+          "end": 19
+        }
+      }
+    },
+    "W3.4e": {
+      "in": "e91050e996a9d54e46bc3a4114ce724b",
+      "out": {
+        "state": "not_found",
+        "parts": [],
+        "occurrences": 0
+      }
+    },
+    "W3.5a": {
+      "in": "5a9edbc72781df57cfd63ceb231bd769",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 37
+          },
+          {
+            "start": 42,
+            "end": 86
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.5b": {
+      "in": "a93d26f762d89b18dd3a4875d2726d27",
+      "out": {
+        "state": "reformatted",
+        "parts": [
+          {
+            "start": 0,
+            "end": 86
+          }
+        ],
+        "occurrences": 1
+      }
+    },
+    "W3.5c": {
+      "in": "dc01dbad8103d953f7ee47587db1ea97",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 37
+          },
+          {
+            "start": 41,
+            "end": 85
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.5d": {
+      "in": "69fc0f0add6b319023a79d0fc3025929",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 37
+          },
+          {
+            "start": 42,
+            "end": 86
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "W3.5e": {
+      "in": "e22c2e83750306a45b84f130f8fe5d68",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 37
+          },
+          {
+            "start": 42,
+            "end": 86
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "FIX W3.3b": {
+      "in": "125a4e42543e1ac83335cdbea4d73af3",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 61,
+            "end": 98
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "FIX W3.3c": {
+      "in": "5153c57f96f94ae21286b23a54a04930",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 61,
+            "end": 98
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "FIX W3.3g": {
+      "in": "cad64387377409734368147179a78333",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 61,
+            "end": 98
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "FIX W3.3h": {
+      "in": "755e3f99088a794455215590c352b7e9",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 60,
+            "end": 97
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "FIX W3.3i": {
+      "in": "6b5e6066359c17aadfc25ca7043f114b",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 44
+          },
+          {
+            "start": 61,
+            "end": 98
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "FIX W3.5b": {
+      "in": "d8758413c1beb643af15698a8ebe0f0a",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 37
+          },
+          {
+            "start": 62,
+            "end": 110
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "FIX W3.5f": {
+      "in": "4179d4766fc9384259d759519f870e07",
+      "out": {
+        "state": "stitched",
+        "parts": [
+          {
+            "start": 0,
+            "end": 37
+          },
+          {
+            "start": 62,
+            "end": 109
+          }
+        ],
+        "occurrences": 0
+      }
+    },
+    "FIX W3.5g": {
+      "in": "dd3c1c8789eccaa2e59d2fe5ab9fe22e",
+      "out": {
+        "state": "not_found",
+        "parts": [],
+        "occurrences": 0,
+        "nearest": {
+          "start": 66,
+          "end": 110
+        }
+      }
+    }
+  }
+}
