@@ -1743,3 +1743,39 @@ describe('#845 1b-i check 7: M8r — a list mark counts only with at least one b
     expect({ marks: all.length, misses: misses(rows) }).toEqual({ marks: 55, misses: [] });
   });
 });
+
+describe('#845 1b-i check 8: item 14 — a `.` ends a sentence only when the word before it holds a letter or a digit', () => {
+  it('items3 rows 106–113 and extra2 rows 125–128: a stop after `²` `ͺ` `§` `*` `½` `‿` or a sign set apart is no sentence end; after `2024`, `(see above)`, `5%`, `m²` it is', () => {
+    const F = SHALL_F;
+    const keep = 'Keep the Premises in good and substantial repair';
+    const tenant = 'The Tenant shall pay the insurance rent';
+    const onKeep = (label: string) =>
+      lq(
+        `${F} … ${keep}`,
+        `${F} for its full reinstatement cost.\n${label}. ${keep} at the end of each year.`,
+      ).state;
+    const onTenant = (before: string) =>
+      lq(`${F} … ${tenant}`, `${F} ${before}${tenant} at the end of each year.`).state;
+    const rows: Row[] = [
+      ['items3 106: `.`⏎`². Keep`', onKeep('\u{b2}'), 'not_found'],
+      [
+        'items3 107: `.`⏎U+037A`. Keep` (a spacing accent is no letter)',
+        onKeep('\u{37a}'),
+        'not_found',
+      ],
+      ['items3 108: `.`⏎`§. Keep`', onKeep('\u{a7}'), 'not_found'],
+      ['items3 109: `.`⏎`*. Keep`', onKeep('*'), 'not_found'],
+      ['items3 110: `.`⏎`½. Keep`', onKeep('\u{bd}'), 'not_found'],
+      ['items3 111: `.`⏎`‿. Keep`', onKeep('\u{203f}'), 'not_found'],
+      ['items3 112: `2024. The`', onTenant('for its cost, signed on 1 May 2024. '), 'stitched'],
+      ['items3 113: `(see above). The`', onTenant('for its cost (see above). '), 'stitched'],
+      ['extra2 125: `20 °. The` (a stated tightening)', onTenant('at 20 \u{b0}. '), 'not_found'],
+      ['extra2 126: `5%. The`', onTenant('at 5%. '), 'stitched'],
+      ['extra2 127: `m². The`', onTenant('of 40 m\u{b2}. '), 'stitched'],
+      ['extra2 128: `5%.`⏎`The`', onTenant('at 5%.\n'), 'stitched'],
+    ];
+    // (1) red when the condition is removed, or a spacing accent is counted as a letter (row 107);
+    //     (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
