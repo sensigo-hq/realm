@@ -159,13 +159,13 @@ Every answer but `claimed` lets go of the lease. `releaseDriveClaim` gives such 
 
 `executeStep`, `executeChain`, `submitHumanResponse` and `advanceRun` take an optional `driver`, your program's name: `{ by, by_source, channel }`.
 
-| Field       | Takes                                                                                                                                             |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `by`        | The name: text of 1 to 200 characters, not only spaces, with no control character.                                                                |
-| `by_source` | How the name is known: `stated` (your program says it), `ambient` (from the environment, as `REALM_OPERATOR` is) or `derived` (from the OS user). |
-| `channel`   | Your own word for the way the call came in: 1 to 64 characters of `a`–`z`, `0`–`9`, `_` and `-`, such as `cron`.                                  |
+| Field       | Takes                                                                                                                                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `by`        | The name: text of 1 to 200 characters, not only spaces, with no control character.                                                                                                                                                          |
+| `by_source` | How the name is known: `stated` (your program says it), `ambient` (from the environment, as `REALM_OPERATOR` is), `derived` (from the OS user) or `key` (the name of a `realm serve` key the caller presented; added after version 0.50.0). |
+| `channel`   | Your own word for the way the call came in: 1 to 64 characters of `a`–`z`, `0`–`9`, `_` and `-`, such as `cron`.                                                                                                                            |
 
-With any other value the call rejects with a `WorkflowError` with the code `VALIDATION_ACTOR_INVALID` before anything is read or written, naming the field: for example `Invalid driver.by_source: not one of stated, ambient, derived.` or `Invalid driver.channel: not 1–64 characters of [a-z0-9_-].` `realm run inspect` shows a step's driver as `Taken by: <by> (as stated, via <channel>)`, `(from REALM_OPERATOR, via <channel>)` or `(from the OS user, via <channel>)`.
+With any other value the call rejects with a `WorkflowError` with the code `VALIDATION_ACTOR_INVALID` before anything is read or written, naming the field: for example `Invalid driver.by_source: not one of stated, ambient, derived, key.` or `Invalid driver.channel: not 1–64 characters of [a-z0-9_-].` `realm run inspect` shows a step's driver as `Taken by: <by> (as stated, via <channel>)`, `(from REALM_OPERATOR, via <channel>)`, `(from the OS user, via <channel>)` or `(from the server's key, via <channel>)`.
 
 ## Serve MCP from your own program
 
@@ -402,9 +402,9 @@ The 3 fenced functions of a trace buffer take a condition on the run, and must c
 
 | Store                                                            | Cases | Failed |
 | ---------------------------------------------------------------- | ----- | ------ |
-| `InMemoryStore`                                                  | 59    | 0      |
-| A copy that lists `capability_blocks` and drops it on `update`   | 59    | 1      |
-| A copy that lists no fields and does not keep the identity entry | 51    | 0      |
+| `InMemoryStore`                                                  | 60    | 0      |
+| A copy that lists `capability_blocks` and drops it on `update`   | 60    | 1      |
+| A copy that lists no fields and does not keep the identity entry | 52    | 0      |
 
 The failure:
 

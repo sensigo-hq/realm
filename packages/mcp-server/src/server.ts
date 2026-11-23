@@ -17,6 +17,8 @@ import {
   type RunStore,
   type TraceBufferStore,
   type RunRecord,
+  isFailureWordsThrow,
+  noteFailureWords,
 } from '@sensigo/realm';
 import type { PriceSource, WorkflowDefinition } from '@sensigo/realm';
 import { discloseByTable, type DisclosureClass, type DisclosureSet } from '@sensigo/realm';
@@ -66,7 +68,9 @@ export interface RealmMcpServerOptions {
    * Per-definition registry resolution (project extensions). Awaited BEFORE `runStore.create`
    * in start_run / start_run_batch (a throwing provider means no run is created) and before
    * execution in execute_step. When both `registry` and `registryProvider` are supplied, the
-   * provider wins. Additive — absent provider preserves existing behavior.
+   * provider wins. Additive — absent provider preserves existing behavior. Under the failure-text
+   * setting `hidden`, a plain `Error` this provider throws shows to the assistant as its shape; a
+   * `WorkflowError` it throws stays as written.
    */
   registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
   /**
@@ -176,7 +180,8 @@ export interface RealmMcpServerOptions {
   /**
    * Gap 2, unit (iv-b1): whether an assistant reads a failure's words in `get_run_state`, and (unit
    * (iv-b2a)) in the replies of its own calls. `shown` (the default): as recorded. `hidden`: in place
-   * of the words a provider, a handler or an adapter put in a failure, their length
+   * of the words a provider, a handler or an adapter put in a failure, or that a workflow's code threw
+   * while it was loaded, their length
    * (`‹string, N characters›`); the step, and its code, category or class where the record has
    * them, stay, and so does Realm's sentence around a failure in `terminal_reason`, the
    * `drive_failing` reason, the project-code load warning and a handler's abort hint (inside a field
@@ -279,6 +284,27 @@ export type DisclosedElicit = (
  * automatically — you only need this if you are adding custom extensions.
  */
 export { createDefaultRegistry };
+
+/**
+ * Gap 2, unit (iv-b2b): `provider` with the one rule (`isFailureWordsThrow`) applied to what it
+ * throws. A throw that is a failure's words is marked on the same object, so each tool's reply and
+ * `get_run_state`'s load warning can show its shape under `hidden`; what is thrown is unchanged (a
+ * thrown value that is not an object becomes an `Error` with the same message, to carry the mark).
+ */
+function judgingFailureWords(
+  provider: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>,
+): (definition: WorkflowDefinition) => Promise<ExtensionRegistry> {
+  return async (definition) => {
+    try {
+      return await provider(definition);
+    } catch (err) {
+      if (!isFailureWordsThrow(err, provider)) throw err;
+      throw noteFailureWords(
+        typeof err === 'object' && err !== null ? err : new Error(String(err), { cause: err }),
+      );
+    }
+  };
+}
 
 /**
  * Creates and configures the Realm MCP server with its workflow tools. Which answer tool the server
@@ -467,6 +493,10 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
   });
   const effectiveOptions = {
     ...options,
+    // Gap 2, unit (iv-b2b): the one provider the seven tools that load the project's code reach.
+    ...(options.registryProvider !== undefined
+      ? { registryProvider: judgingFailureWords(options.registryProvider) }
+      : {}),
     registry: effectiveRegistry,
     workflowStore: effectiveWorkflowStore,
     runStore: effectiveRunStore,

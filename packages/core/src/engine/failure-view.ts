@@ -41,6 +41,48 @@ export type FailureView =
     }
   | { step: string; absent: 'entry_not_found' };
 
+/** The words of a failure's `unknown`: the type the list below is checked against. */
+type FailureUnknownField = NonNullable<Extract<FailureView, { code: string }>['unknown']>[number];
+/**
+ * Every field a failure's `unknown` can name: the stored words it could not read, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ */
+export const FAILURE_UNKNOWN_WORDS = [
+  'code',
+  'category',
+  'stop_reason',
+  'agent_action',
+] as const satisfies readonly FailureUnknownField[];
+type MissingFailureUnknownWords = Exclude<
+  FailureUnknownField,
+  (typeof FAILURE_UNKNOWN_WORDS)[number]
+>;
+const _everyFailureUnknownWordsListed: [MissingFailureUnknownWords] extends [never]
+  ? true
+  : MissingFailureUnknownWords = true;
+void _everyFailureUnknownWordsListed;
+
+/** The words of a failure's `absent`: the type the list below is checked against. */
+type FailureAbsentCause = Extract<FailureView, { absent: string }>['absent'];
+/**
+ * Every reason a failure's words can be absent, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ */
+export const FAILURE_ABSENT_CAUSES = [
+  'written_before_failure_words',
+  'entry_not_found',
+] as const satisfies readonly FailureAbsentCause[];
+type MissingFailureAbsentCauses = Exclude<
+  FailureAbsentCause,
+  (typeof FAILURE_ABSENT_CAUSES)[number]
+>;
+const _everyFailureAbsentCausesListed: [MissingFailureAbsentCauses] extends [never]
+  ? true
+  : MissingFailureAbsentCauses = true;
+void _everyFailureAbsentCausesListed;
+
 /** The view's key for each of the reader's word fields. */
 const VIEW_KEY = {
   error_code: 'code',

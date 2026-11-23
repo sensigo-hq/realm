@@ -219,6 +219,17 @@ export const CENSUS: Record<string, Entry> = {
     'outside',
     "the dedup window's bucket and TTL (#177): a delivery's age, no run record",
   ],
+  // #625 PR-2b, named keys: the home's clock, read once per request or start, judges a key's end.
+  'cli/src/commands/serve.ts#admitKey#clock.now()': [
+    1,
+    'read',
+    "the instant a request's named key's expires_at is judged at: an ended key is refused",
+  ],
+  'cli/src/commands/serve.ts#workingKeyCount#clock.now()': [
+    1,
+    'read',
+    "serve's start: the instant each key's expires_at is judged at, for the start rule and the start line",
+  ],
   'cli/src/lib/graceful-stop.ts#armGrace#performance.now()': [1, 'duration', MONOTONIC],
   'cli/src/lib/graceful-stop.ts#armYoung#performance.now()': [1, 'duration', MONOTONIC],
   'cli/src/lib/graceful-stop.ts#onConnection#performance.now()': [1, 'duration', MONOTONIC],

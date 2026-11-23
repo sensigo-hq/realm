@@ -660,6 +660,25 @@ export type TriggerRule =
   'all_success' | 'all_failed' | 'all_done' | 'one_failed' | 'one_success' | 'none_failed';
 
 /**
+ * Every trigger rule a step can declare, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const TRIGGER_RULES = [
+  'all_success',
+  'all_failed',
+  'all_done',
+  'one_failed',
+  'one_success',
+  'none_failed',
+] as const satisfies readonly TriggerRule[];
+type MissingTriggerRules = Exclude<TriggerRule, (typeof TRIGGER_RULES)[number]>;
+const _everyTriggerRulesListed: [MissingTriggerRules] extends [never] ? true : MissingTriggerRules =
+  true;
+void _everyTriggerRulesListed;
+
+/**
  * A node in an input_map tree. One of:
  * - string: a dot-path reference resolved against run state
  * - { $literal: value }: a static constant value (any JSON value: scalar, array, or object) —
