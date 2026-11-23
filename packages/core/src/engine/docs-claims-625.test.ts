@@ -1869,7 +1869,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     // Correction 2 (03): the skip rule's sentences, run below (`skipMidSentence`, `skipToLine`).
     expect(stateRow('stitched')).toContain(
       // Correction 3 (03, D2): rule rev 3, run by locate-quote.test.ts's "correction 3, 01" cells.
-      'After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece begins with a capital letter or an opening mark, or with a clause number or a list mark whose item begins with one; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, below). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, below), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, below) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence.',
+      'After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece begins with a capital letter or an opening mark, or with a clause number or a list mark whose item begins with one; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark with a blank after it is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, below). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, below), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, below) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence.',
     );
     // Correction 2 (03): the exact row's edges, run below (`exactMidWord`); correction 3 (03, D2):
     // the invisible character, run below (`exactInvisible`); the follow-up (§1): a format character
@@ -2103,7 +2103,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     );
     claimOn(
       HANDLERS,
-      "3. `stitched`: the quote's pieces, split where it breaks (`…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), are each found whole, at word edges, and in order; pieces next to each other in `source` count as one part, and every part is at least `options.minPartChars` long (default `20`, at least `4`). After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece begins with a capital letter or an opening mark, or with a clause number or a list mark whose item begins with one; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, as the glossary above defines it). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, as the glossary above defines it), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, as the glossary above defines it) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A quote with no break is never stitched.",
+      "3. `stitched`: the quote's pieces, split where it breaks (`…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), are each found whole, at word edges, and in order; pieces next to each other in `source` count as one part, and every part is at least `options.minPartChars` long (default `20`, at least `4`). After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece begins with a capital letter or an opening mark, or with a clause number or a list mark whose item begins with one; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark with a blank after it is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, as the glossary above defines it). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, as the glossary above defines it), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, as the glossary above defines it) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A quote with no break is never stitched.",
     );
     claimOn(HANDLERS, '4. `stitched_out_of_order`: the same, with the parts in another order.');
     // #866 correction 1 (C2): only the longest piece is read, and Arabic and Hebrew are read bare —
@@ -3979,6 +3979,8 @@ describe("#855's correction: each sentence's members", () => {
       'a plain space',
       'a tab',
       'whitespace',
+      // #845 1b-i (M8r): a new row, the blank a list mark needs after it
+      'a blank',
       'a line break',
       // #845 (R-C1, R-D3): two new rows
       'an invisible character',
@@ -4932,5 +4934,65 @@ describe('#845 1b-i — the words of rule 4 (Outside-b, a `:` between two digits
         `${F} as set out in Clause 4:\n${item} at the end of each year.`,
       ).state,
     }).toEqual({ sameLine: 'not_found', acrossLine: 'not_found', clause4: 'not_found' });
+  });
+});
+
+describe('#845 1b-i — the words of rule 5 (M8r, a list mark with a blank after it), each executed', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const HANDLERS = 'docs/reference/handlers.md';
+  const raw = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+  const flatten = (t: string) => t.replace(/\\\|/g, '|').replace(/\s+/g, ' ');
+  /** (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+  const claimOn = (p: string, sentence: string): void => {
+    expect(flatten(raw(p)), `${p} no longer says: ${sentence}`).toContain(flatten(sentence));
+  };
+  const F = 'The Landlord shall insure the Building';
+  const item = 'the Tenant shall pay the insurance rent';
+  const after = (mark: string) =>
+    locateQuote(
+      `${F} … ${item}`,
+      `${F} for its full reinstatement cost:\n${mark}${item} at the end of each year.`,
+    ).state;
+
+  it('the `stitched` row, item 3 and the glossary: a list mark with a blank after it is skipped; a blank is whitespace other than a line break, a no-break space one, an invisible character not', () => {
+    claimOn(HANDLERS, 'or a list mark with a blank after it is skipped');
+    claimOn(
+      HANDLERS,
+      '| a blank | whitespace other than a line break; a no-break space is one, an invisible character is not |',
+    );
+    // Every blank the row names: `\p{White_Space}` but the seven line breaks (all at or below U+3000).
+    const breaks = [0x0a, 0x0b, 0x0c, 0x0d, 0x85, 0x2028, 0x2029];
+    const blanks = Array.from({ length: 0x3001 }, (_, c) => c).filter(
+      (c) => /^\p{White_Space}$/u.test(String.fromCodePoint(c)) && !breaks.includes(c),
+    );
+    const notOpening = blanks.filter((c) => after(`-${String.fromCodePoint(c)}`) !== 'stitched');
+    // (a) red when a blank after a mark stops opening an item, or nothing, U+200B or U+FEFF after it
+    //     opens one; (b) prints the blanks that fail and the states.
+    expect({
+      blanks: blanks.length,
+      notOpening,
+      feff: after('-\u{feff}'),
+      space: after('- '),
+      noBreakSpace: after('-\u{a0}'),
+      nothing: after('-'),
+      zeroWidthSpace: after('-\u{200b}'),
+    }).toEqual({
+      blanks: 18,
+      notOpening: [],
+      feff: 'not_found',
+      space: 'stitched',
+      noBreakSpace: 'stitched',
+      nothing: 'not_found',
+      zeroWidthSpace: 'not_found',
+    });
+  });
+
+  it('the new honest refusal: an item whose list mark has no blank after it (`-the Tenant`, `-“the Tenant`)', () => {
+    claimOn(
+      HANDLERS,
+      '- An item whose list mark has no blank after it (`-the Tenant`, `-“the Tenant`).',
+    );
+    // (a) red when one of them reads found (the bullet would then be false); (b) prints the states.
+    expect([after('-'), after('-\u{201c}')]).toEqual(['not_found', 'not_found']);
   });
 });

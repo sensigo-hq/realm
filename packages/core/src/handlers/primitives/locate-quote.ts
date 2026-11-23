@@ -1233,6 +1233,18 @@ function opensWithClauseNumber(source: string, start: number): boolean {
   return isSentenceOpening(stepOn(source, j).c);
 }
 
+/** #845 (M8r): whether a blank sits between the list mark (or run of `#`) that starts at `mark` and
+ *  `to`, where the part or its opening mark begins — a no-break space is one; an invisible character
+ *  alone is not (`-the`, `-`+U+200B+`the` are no list items). */
+function blankAfterMark(source: string, mark: number, to: number): boolean {
+  let p = stepOn(source, mark);
+  if (p.c === '#') while (stepOn(source, p.at).c === '#') p = stepOn(source, p.at);
+  for (let q = stepOn(source, p.at); q.c !== undefined && q.at <= to; q = stepOn(source, q.at)) {
+    if (isBlank(q.c)) return true;
+  }
+  return false;
+}
+
 /** Read 3: the start of one list mark (or a run of `#`) that ends at `at`, or -1. */
 function listMarkBack(source: string, at: number): number {
   // #845 (R-C2, R-A2): read back by code point, past invisible characters
@@ -1359,9 +1371,9 @@ function acceptedBefore(
  * 2. A clause-number label (never bare digits) right before the part, or before its opening mark and
  *    spaces, sitting at a line start that counts — and the part, or its opening mark, begins with a
  *    capital letter or an opening mark (never `4.5 per cent`).
- * 3. A list mark, then spaces, then an optional opening mark and spaces, right before the part,
- *    sitting at a line start that counts — after a blank line under a line that ends nothing (#845,
- *    B3), only before a capital letter or an opening mark.
+ * 3. A list mark, then spaces — at least one blank (#845, M8r) — then an optional opening mark and
+ *    spaces, right before the part, sitting at a line start that counts — after a blank line under a
+ *    line that ends nothing (#845, B3), only before a capital letter or an opening mark.
  * `strict` false leaves rule 1 (B3) out: the test of a held-back candidate (Q-C).
  */
 function partStartHolds(source: string, start: number, strict: boolean): boolean {
@@ -1384,7 +1396,7 @@ function partStartHolds(source: string, start: number, strict: boolean): boolean
       if (label >= 0 && countedLineStart(source, label, strict) !== undefined) return true;
     }
     const mark = listMarkBack(source, end);
-    if (mark >= 0) {
+    if (mark >= 0 && blankAfterMark(source, mark, end === first ? start : openingMark.at)) {
       const kind = countedLineStart(source, mark, strict);
       if (kind !== undefined && (kind !== 'blank' || isSentenceOpening(after))) return true;
     }

@@ -803,7 +803,9 @@ describe('#845 check 3: every walk over raw text steps over invisible characters
     });
   }, 60_000);
 
-  it('E4, the class that turns until 1b: a list mark directly before a word after `:` and a line break, with no blank or only invisible characters between, reads `stitched`; `2.`+U+200B+`Send` does not', () => {
+  it('E4, closed by 1b-i (M8r): a list mark directly before a word after `:` and a line break, with no blank or only invisible characters between, reads `not_found`; so does `2.`+U+200B+`Send`', () => {
+    // #845 1b-i (M8r) re-pin: a list mark counts only with a blank after it; 1a's E4 read these
+    // `stitched` until 1b-i (check 7 sweeps the class at every counted line start).
     const lc = 'the Tenant shall pay the insurance rent';
     const marks = [
       ...codePoints(/^\p{Pd}$/u),
@@ -836,11 +838,11 @@ describe('#845 check 3: every walk over raw text steps over invisible characters
     ];
     const rows: Row[] = [
       ...marks.flatMap((m): Row[] => [
-        [`${hex(m)}the`, skipOver(` for its full reinstatement cost:\n${ch(m)}`, lc), 'stitched'],
+        [`${hex(m)}the`, skipOver(` for its full reinstatement cost:\n${ch(m)}`, lc), 'not_found'],
         [
           `${hex(m)}+U+200B+the (extra2 row 123's class)`,
           skipOver(` for its full reinstatement cost:\n${ch(m)}\u{200b}`, lc),
-          'stitched',
+          'not_found',
         ],
       ]),
       [
@@ -852,8 +854,8 @@ describe('#845 check 3: every walk over raw text steps over invisible characters
         'not_found',
       ],
     ];
-    // (1) red when E4's class changes before 1b closes it (a mark glued to its word is refused, or
-    //     `2.`+U+200B+`Send` opens a part); (2) prints the count and each differing row.
+    // (1) red when a mark glued to its word, or with only U+200B after it, opens an item again, or
+    //     `2.`+U+200B+`Send` opens a part; (2) prints the count and each differing row.
     expect({ marks: marks.length, misses: misses(rows) }).toEqual({
       marks: marks.length,
       misses: [],
@@ -1656,5 +1658,88 @@ describe('#845 1b-i check 6: Outside-b — a `:` at a line’s end ends a clause
     // (1) red when the condition is removed, or only the digit after (or only the digit before) is
     //     read; (2) prints each differing row.
     expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i check 1 (with M8r): an occurrence M8r refuses too is no candidate of either kind', () => {
+  it('`-` directly before the part after a blank line under a line with no stop reads `not_found` with no `cause`', () => {
+    const c = lq(`${SHALL_F} … ${SHALL_REST}`, shallDoc('\n\n-'));
+    // (1) red when M8r is left out of the held-back test (the occurrence would be held back, and the
+    //     quote refused with the cause); (2) prints the record's state and cause.
+    expect({ state: c.state, cause: c.cause ?? null }).toEqual({ state: 'not_found', cause: null });
+  });
+});
+
+describe('#845 1b-i check 7: M8r — a list mark counts only with at least one blank after it', () => {
+  it('every list mark, `#` and `##` included, at four counted line starts: directly before the word or with U+200B between `not_found`; with a space or U+00A0 between `stitched`; `-“the` refused and `- “the` kept', () => {
+    const lc = 'the Tenant shall pay the insurance rent';
+    const marks = [
+      ...codePoints(/^\p{Pd}$/u),
+      0x2212,
+      0x2796,
+      0x02d7,
+      0x2a,
+      0x2b,
+      0x3e,
+      0x7c,
+      0x2022,
+      0x2023,
+      0x2043,
+      0x204c,
+      0x204d,
+      0x2219,
+      0x25d8,
+      0x25e6,
+      0x29be,
+      0x29bf,
+      0x2619,
+      0x2765,
+      0x2767,
+      0x25cb,
+      0x25cf,
+      0x25a0,
+      0x25aa,
+      0xb7,
+      0xf0b7,
+    ].map((m) => ch(m));
+    const all = [...marks, '#', '##'];
+    const starts: Record<string, string> = {
+      'after `:`': ' for its full reinstatement cost:\n',
+      'after `;`': ' for its full reinstatement cost;\n',
+      'after a sentence': ' for its full reinstatement cost.\n',
+      'after a blank line under a sentence': ' for its full reinstatement cost.\n\n',
+    };
+    const between: Record<string, string> = {
+      'no blank': '',
+      'U+200B': '\u{200b}',
+      'a space': ' ',
+      'U+00A0': '\u{a0}',
+    };
+    const rows: Row[] = [];
+    for (const [where, line] of Object.entries(starts)) {
+      for (const m of all) {
+        for (const [gap, g] of Object.entries(between)) {
+          const name = `${[...m].map((c) => hex(c.codePointAt(0)!)).join('')} ${gap} ${where}`;
+          const want = gap === 'a space' || gap === 'U+00A0' ? 'stitched' : 'not_found';
+          rows.push([name, skipOver(`${line}${m}${g}`, lc), want]);
+        }
+      }
+    }
+    rows.push(
+      [
+        '-“the after `:`',
+        skipOver(' for its full reinstatement cost:\n-\u{201c}', `${lc}\u{201d}`),
+        'not_found',
+      ],
+      [
+        '- “the after `:`',
+        skipOver(' for its full reinstatement cost:\n- \u{201c}', `${lc}\u{201d}`),
+        'stitched',
+      ],
+    );
+    // (1) red when M8r is removed (a mark glued to its word, or with only U+200B after it, opens an
+    //     item again), or a blank after the mark stops counting; (2) prints the count and each
+    //     differing row.
+    expect({ marks: all.length, misses: misses(rows) }).toEqual({ marks: 55, misses: [] });
   });
 });
