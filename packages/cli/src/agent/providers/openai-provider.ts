@@ -604,8 +604,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // issue #600 PR 1a (D9): two billed, completed requests (the first generation and this
     // retry) preceded this throw — attaching them here is the only way that money is ever
     // recorded; without it a drive that throws is indistinguishable from one that spent nothing.
-    const err = new Error(
+    // Gap 2, unit (ii-b1): an answer Realm could not use carries Realm's code, as Anthropic's does.
+    const err = new WorkflowError(
       sanitizeError(`OpenAI returned non-JSON content after retry: ${passedSnippet(retry)}`),
+      { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
     );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (err as any).driveCall = { usage: requests };
@@ -859,14 +861,24 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         if (typeof refusal === 'string' && refusal.length > 0) {
           // A refusal is a well-formed API response, not a transport failure: surface it the same
           // way a non-JSON answer surfaces, so the existing validation/reask layer handles it.
-          throw new Error(sanitizeError(`OpenAI refused the request: ${passedSnippet(refusal)}`));
+          // Gap 2, unit (ii-b1): with Realm's code, as an answer Realm could not use.
+          throw new WorkflowError(
+            sanitizeError(`OpenAI refused the request: ${passedSnippet(refusal)}`),
+            {
+              code: 'ENGINE_STEP_FAILED',
+              category: 'ENGINE',
+              agentAction: 'stop',
+              retryable: false,
+            },
+          );
         }
         const parsed = extractJsonObject(message?.content ?? '');
         if (parsed !== null) return parsed;
-        throw new Error(
+        throw new WorkflowError(
           sanitizeError(
             `OpenAI returned non-JSON content under strict decoding: ${passedSnippet(message?.content ?? '')}`,
           ),
+          { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
         );
       };
 
