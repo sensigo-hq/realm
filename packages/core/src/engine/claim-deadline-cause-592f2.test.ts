@@ -21,6 +21,7 @@ import { writtenSnapshot } from './snapshot.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { jsonAsRunStore } from '../test-support/json-as-run-store.js';
 import type { ClaimRecord, PendingGate, RunRecord } from '../types/run-record.js';
+import type { ClaimDeadlineAbsent } from './claim-liveness.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 
 const NOW = new Date('2026-07-20T12:00:00.000Z');
@@ -228,7 +229,7 @@ describe('Q1 (#592) unit f2 — check 3: the readers', () => {
       noClaim: info(undefined),
       foreign: info({
         deadline: null,
-        deadline_absent: 'whatever' as ClaimRecord['deadline_absent'],
+        deadline_absent: 'whatever' as ClaimDeadlineAbsent,
       }),
       both: info({ deadline: ago(1_000), deadline_absent: 'step_not_auto' }),
     }).toEqual({
@@ -274,7 +275,7 @@ describe('Q1 (#592) unit f2 — check 3: the readers', () => {
       preF2: evidenceOf({ deadline: null }),
       foreign: evidenceOf({
         deadline: null,
-        deadline_absent: 'whatever' as ClaimRecord['deadline_absent'],
+        deadline_absent: 'whatever' as ClaimDeadlineAbsent,
       }),
       both: evidenceOf({ deadline: ago(1_000), deadline_absent: 'step_not_auto' }),
     }).toEqual({

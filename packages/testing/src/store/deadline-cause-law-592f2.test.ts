@@ -127,10 +127,10 @@ describe('Q1 (#592) unit f2 — CLAIM_KEEPS_DEADLINE_CAUSE', () => {
   });
 
   it('is skipped, by name, for a store that keeps no claims', () => {
-    class KeepsNone extends InMemoryStore {
-      override readonly persistsClaims = false;
-    }
-    const cases = lawOf(new KeepsNone());
+    // A store that says it keeps no claims (the field is the store's own declaration).
+    const keepsNone = new InMemoryStore();
+    Object.defineProperty(keepsNone, 'persistsClaims', { value: false });
+    const cases = lawOf(keepsNone);
     // (a) red when the law runs on a store that keeps no claims, or skips silently; (b) prints the
     //     cases.
     expect(cases.map((c) => ({ name: c.name, skipped: c.skipped }))).toEqual([
