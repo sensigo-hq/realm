@@ -1,9 +1,10 @@
 // delivery-pass.ts — callback C3a (R1.3; the callback design rev 4 §1.8, §2): the ONE pass that sends
 // what is due. First (C3d) it ends every due row whose run finished 3 days or more ago, served here or
-// not (`endOverdue`), with a line for each. Then, for each due row it can serve, it claims the row, ends
-// it when its time limit has passed, builds the body once and freezes it, signs it with the pair's keys
-// read fresh, posts it to the address the door stored (exactly as stored), and records the answer.
-// Every collaborator is passed in; the pass is the shape `makePollRunner` takes.
+// not (`endOverdue`, again while a round ends a full 1,000: C3d-B), with a line for each. Then, for
+// each due row it can serve, it claims the row, ends it when its time limit has passed, builds the
+// body once and freezes it, signs it with the pair's keys read fresh, posts it to the address the
+// door stored (exactly as stored), and records the answer. Every collaborator is passed in; the
+// pass is the shape `makePollRunner` takes.
 //
 // Nothing it logs, throws or marks carries a key, an address (beyond its host label), a body or a
 // result: host labels, workflow ids, run ids, attempt numbers, statuses and the closed words only.
@@ -65,6 +66,11 @@ export interface CallbackPassDeps {
   readonly random?: () => number;
   /** The `webhook-timestamp` clock ({@link webhookTimestamp} by default). */
   readonly timestamp?: () => number;
+  /**
+   * C3d-B: told when a try begins (its claim applied) and when it ends, whichever way it ends (a
+   * throw included); `realm listen`'s stop reads the count of tries in flight from it.
+   */
+  readonly tries?: { readonly begin: () => void; readonly end: () => void };
 }
 
 /** The keys a pair signs with, or the master key's fingerprint (`undefined`: no key) it cannot read. */
@@ -152,8 +158,11 @@ export function makeCallbackPass(
   const { callbacks, logger } = deps;
   const random = deps.random ?? Math.random;
   const timestamp = deps.timestamp ?? webhookTimestamp;
-  /** Lines said once per key in this process: an unmounted workflow, a pair without a key. */
+  /** Lines said once per key in this process: an unmounted workflow. */
   const said = new Set<string>();
+  /** C3d-B: per (workflow, host), the key states its no-key line was said for; dropped when a try
+   *  finds that pair's key readable, so a later loss is said again. */
+  const noKeyFor = new Map<string, Set<string>>();
   /** Per run, the lines said once for it; dropped when its row ends. */
   const saidFor = new Map<string, Set<string>>();
   const once = (key: string, line: string): void => {
@@ -161,12 +170,17 @@ export function makeCallbackPass(
     said.add(key);
     logger.warn(line);
   };
-  const oncePerRun = (runId: string, key: string, line: string): void => {
+  const oncePerRun = (
+    runId: string,
+    key: string,
+    line: string,
+    level: 'warn' | 'error' = 'warn',
+  ): void => {
     let keys = saidFor.get(runId);
     if (keys === undefined) saidFor.set(runId, (keys = new Set()));
     if (keys.has(key)) return;
     keys.add(key);
-    logger.warn(line);
+    logger[level](line);
   };
 
   /** Ends the row with `result`; the line is said only when the mark applied. */
@@ -237,22 +251,43 @@ export function makeCallbackPass(
     if (dead.has(row.host)) return;
     // Fresh for every try, never cached: a rotation, an expiry or another process's write counts.
     const keys = signingKeys(await callbacks.keys.read(workflow, row.host));
+    const pair = `${workflow}\0${row.host}`;
     if ('missing' in keys) {
       const why =
         keys.missing === undefined ? 'none' : `sealed with encryption key ${keys.missing}`;
-      once(
-        `no key\0${workflow}\0${row.host}\0${keys.missing ?? 'none'}`,
-        `${prefix} no signing key this process can read (${why}), so its callbacks wait`,
-      );
+      let states = noKeyFor.get(pair);
+      if (states === undefined) noKeyFor.set(pair, (states = new Set()));
+      if (states.has(why)) return;
+      states.add(why);
+      logger.warn(`${prefix} no signing key this process can read (${why}), so its callbacks wait`);
       return;
     }
+    noKeyFor.delete(pair);
     const token = randomBytes(16).toString('hex');
     const claim = await callbacks.claim(row.run_id, {
       expectedNextAttemptAt: row.next_attempt_at,
       token,
     });
     if (!claim.applied) return;
-    const { item, at } = claim;
+    // C3d-B: in flight from the claim to whichever way the try ends, a throw included.
+    deps.tries?.begin();
+    try {
+      await sendClaimed(claim.item, claim.at, token, entry, keys, prefix, dead);
+    } finally {
+      deps.tries?.end();
+    }
+  };
+
+  /** The claimed row's one try: ended, dropped without a mark, or marked. */
+  const sendClaimed = async (
+    item: CallbackClaimedItem,
+    at: string,
+    token: string,
+    entry: ReadEntry,
+    keys: { readonly current: string; readonly previous?: string },
+    prefix: string,
+    dead: Set<string>,
+  ): Promise<void> => {
     const attempt = item.attempts;
     if (expiredAt(item, at)) {
       await end(
@@ -317,29 +352,49 @@ export function makeCallbackPass(
     }
   };
 
-  /** C3d: ends what is overdue, before the listing; one line per row, at most 10, then a count. */
-  const sweep = async (): Promise<void> => {
-    const ended = await callbacks.endOverdue(CALLBACK_OVERDUE_SWEEP);
-    for (const row of ended) saidFor.delete(row.run_id);
-    for (const row of ended.slice(0, CALLBACK_OVERDUE_LINES)) {
-      const prefix = `callbacks: ${row.workflow_id} → ${row.host}:`;
-      logger.warn(
-        row.attempts >= 1
-          ? `${prefix} stopped at attempt ${row.attempts}: not delivered within its time limit`
-          : `${prefix} never sent: its time limit passed before a try could be made`,
-      );
+  /**
+   * C3d: ends what is overdue, before the listing; one line per row, at most 10 in the pass, then a
+   * count. C3d-B: asks again while a round ends a full 1,000 and the pass is live and within its
+   * budget; the count line covers every round, and is said even when a later round throws. Answers
+   * `undefined` when nothing overdue is left, else the pass's own answer for stopping early.
+   */
+  const sweep = async (live: () => boolean, spent: () => boolean): Promise<boolean | undefined> => {
+    let named = 0;
+    let more = 0;
+    try {
+      for (;;) {
+        const ended = await callbacks.endOverdue(CALLBACK_OVERDUE_SWEEP);
+        for (const row of ended) {
+          saidFor.delete(row.run_id);
+          if (named === CALLBACK_OVERDUE_LINES) {
+            more += 1;
+            continue;
+          }
+          named += 1;
+          const prefix = `callbacks: ${row.workflow_id} → ${row.host}:`;
+          logger.warn(
+            row.attempts >= 1
+              ? `${prefix} stopped at attempt ${row.attempts}: not delivered within its time limit`
+              : `${prefix} never sent: its time limit passed before a try could be made`,
+          );
+        }
+        if (ended.length < CALLBACK_OVERDUE_SWEEP) return undefined;
+        if (!live()) return false;
+        if (spent()) return true;
+      }
+    } finally {
+      if (more > 0)
+        logger.warn(
+          `callbacks: and ${more} more ${more === 1 ? 'callback' : 'callbacks'} ended the same way`,
+        );
     }
-    const more = ended.length - CALLBACK_OVERDUE_LINES;
-    if (more > 0)
-      logger.warn(
-        `callbacks: and ${more} more ${more === 1 ? 'callback' : 'callbacks'} ended the same way`,
-      );
   };
 
   return async (live) => {
     const started = performance.now();
     const spent = (): boolean => performance.now() - started >= CALLBACK_PASS_BUDGET_MS;
-    await sweep();
+    const early = await sweep(live, spent);
+    if (early !== undefined) return early;
     /** The rows handled or skipped in this pass: a row due again within it waits for the next. */
     const seen = new Set<string>();
     const dead = new Set<string>();
@@ -353,8 +408,13 @@ export function makeCallbackPass(
         try {
           await tryRow(row, dead);
         } catch (err) {
-          logger.error(
-            `callbacks: ${row.workflow_id} → ${row.host}: unexpected error (${classOf(err)}) for run ${row.run_id}`,
+          // C3d-B: once for each run and error class in this process, as the other lines of a run.
+          const cls = classOf(err);
+          oncePerRun(
+            row.run_id,
+            `error\0${cls}`,
+            `callbacks: ${row.workflow_id} → ${row.host}: unexpected error (${cls}) for run ${row.run_id}`,
+            'error',
           );
         }
       }
