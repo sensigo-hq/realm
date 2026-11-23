@@ -1259,14 +1259,29 @@ function holdsAnotherBar(source: string, bar: number): boolean {
   return false;
 }
 
+/** #845 (Outside-b): whether the `:` at `colon`, ending a line, sits between two digits — the one
+ *  before it, and the first character of the next line that is not blank, past blank lines. */
+function colonBetweenDigits(source: string, colon: number): boolean {
+  if (!isNum(stepBack(source, colon).c)) return false;
+  let p = stepOn(source, colon + 1);
+  while (isBlank(p.c) || isLineBreak(p.c)) p = stepOn(source, p.at);
+  return isNum(p.c);
+}
+
 /** How a line ends, read back from `p`, its last character past spaces and invisible characters:
- *  `clause` with `;`, `:` or `|` (a table row's end: the line holds another `|`, #845 M6w),
- *  `sentence` with `.` `!` `?` under L1's test, `undefined` with anything else. Closing marks before
- *  the end are walked past. */
+ *  `clause` with `;`, `:` (not between two digits, #845 Outside-b) or `|` (a table row's end: the
+ *  line holds another `|`, #845 M6w), `sentence` with `.` `!` `?` under L1's test, `undefined` with
+ *  anything else. Closing marks before the end are walked past. */
 function lineEnding(source: string, p: Step): 'clause' | 'sentence' | undefined {
   while (isClosingMark(p.c)) p = stepBack(source, p.at);
   const c = p.c;
-  if (c === ';' || c === ':' || (c === '|' && holdsAnotherBar(source, p.at))) return 'clause';
+  if (
+    c === ';' ||
+    (c === ':' && !colonBetweenDigits(source, p.at)) ||
+    (c === '|' && holdsAnotherBar(source, p.at))
+  ) {
+    return 'clause';
+  }
   if ((c === '.' && !endsAbbreviation(source, p.at)) || c === '!' || c === '?') return 'sentence';
   return undefined;
 }

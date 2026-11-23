@@ -1727,6 +1727,15 @@
         "doc": "The Landlord shall insure the Building for its full reinstatement cost. The Tenant shall\n\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building."
       },
       "expect": "not_found"
+    },
+    {
+      "group": "follow-up",
+      "id": "colon-before-a-digit",
+      "quote": "The Landlord shall insure the Building … 30 minutes before the Tenant arrives at the Building",
+      "source": {
+        "doc": "The Landlord shall insure the Building for its cost at 9:\n30 minutes before the Tenant arrives at the Building."
+      },
+      "expect": "not_found"
     }
   ],
   "T2": [
@@ -2025,17 +2034,6 @@
       },
       "expect": "exact",
       "why": "a quote that starts at a hyphen breaking a word across a line",
-      "cut_short": false
-    },
-    {
-      "group": "follow-up",
-      "id": "colon-before-a-digit",
-      "quote": "The Landlord shall insure the Building … 30 minutes before the Tenant arrives at the Building",
-      "source": {
-        "doc": "The Landlord shall insure the Building for its cost at 9:\n30 minutes before the Tenant arrives at the Building."
-      },
-      "expect": "stitched",
-      "why": "a : at a line's end before a digit counts as a clause end",
       "cut_short": false
     }
   ],

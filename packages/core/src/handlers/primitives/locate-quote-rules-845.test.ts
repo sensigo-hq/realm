@@ -1599,3 +1599,62 @@ describe('#845 1b-i check 5: M6w — a `|` ends a table row only when its line h
     expect(misses(rows)).toEqual([]);
   });
 });
+
+describe('#845 1b-i check 6: Outside-b — a `:` at a line’s end ends a clause only when it is not between two digits', () => {
+  it('items3 rows 38 and 39; `9:`, a blank line, `30` is refused with the cause; a `:` with a digit on one side only still ends a clause', () => {
+    const F = SHALL_F;
+    const A = 'The Tenant covenants with the Landlord as set out below';
+    const thirty = '30 minutes before the Tenant arrives at the Building';
+    const read = (quote: string, doc: string) => {
+      const c = lq(quote, doc);
+      return `${c.state}${c.cause === undefined ? '' : `+${c.cause}`}`;
+    };
+    const rows: Row[] = [
+      [
+        'items3 38: `at 9:`, a line break, `30`',
+        read(`${F} … ${thirty}`, `${F} for its cost at 9:\n${thirty}.`),
+        'not_found',
+      ],
+      [
+        'items3 39: `:`, a line break, a list (no digits)',
+        read(
+          `${F} … The Tenant shall pay the insurance rent`,
+          `${F} for its full reinstatement cost:\nThe Tenant shall pay the insurance rent at the end of each year.`,
+        ),
+        'stitched',
+      ],
+      [
+        '`9:`, a blank line, `30` (B3 applies)',
+        read(`${F} … ${thirty}`, `${F} for its cost at 9:\n\n${thirty}.`),
+        'not_found+blank_line_join',
+      ],
+      [
+        '`as follows:`, a line break, `1. The Tenant…` quoted with its label',
+        read(
+          `${A} … 1. The Tenant shall pay the rent quarterly`,
+          `${A} as follows:\n1. The Tenant shall pay the rent quarterly.`,
+        ),
+        'stitched',
+      ],
+      [
+        '`as follows:`, a blank line, `1. The Tenant…` quoted with its label',
+        read(
+          `${A} … 1. The Tenant shall pay the rent quarterly`,
+          `${A} as follows:\n\n1. The Tenant shall pay the rent quarterly.`,
+        ),
+        'stitched',
+      ],
+      [
+        '`under Clause 9:`, a line break, `the Tenant…`',
+        read(
+          `${A} … the Tenant shall pay the rent quarterly`,
+          `${A} under Clause 9:\nthe Tenant shall pay the rent quarterly.`,
+        ),
+        'stitched',
+      ],
+    ];
+    // (1) red when the condition is removed, or only the digit after (or only the digit before) is
+    //     read; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
