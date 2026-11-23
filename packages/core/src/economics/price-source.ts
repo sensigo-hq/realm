@@ -102,6 +102,25 @@ export interface PricedBy {
 }
 
 /**
+ * Every class of source a priced request can name (`PricedBy.source_class`), in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const PRICE_SOURCE_CLASSES = [
+  'economics',
+  'price_list',
+] as const satisfies readonly PricedBy['source_class'][];
+type MissingPriceSourceClasses = Exclude<
+  PricedBy['source_class'],
+  (typeof PRICE_SOURCE_CLASSES)[number]
+>;
+const _everyPriceSourceClassesListed: [MissingPriceSourceClasses] extends [never]
+  ? true
+  : MissingPriceSourceClasses = true;
+void _everyPriceSourceClassesListed;
+
+/**
  * A price source's answer: the price, with what the same request would cost with no caching and
  * what priced it, or why it has no price.
  * @public

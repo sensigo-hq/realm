@@ -22,14 +22,16 @@ import type { ProgramFit } from './pending.js';
 
 /**
  * How a program's name is known. `stated` — a host passed an explicit name; `ambient` — the
- * operator set `REALM_OPERATOR`; `derived` — the OS user and host name. `verified` (#603) and
+ * operator set `REALM_OPERATOR`; `derived` — the OS user and host name; `key` — the name of the
+ * server's key the caller presented (`realm serve`'s named keys, #625 PR-2b). `verified` (#603) and
  * `capability` (#597) are added by the units that produce them.
  * @public
  */
-export const BY_SOURCE_CLASSES = ['stated', 'ambient', 'derived'] as const;
+export const BY_SOURCE_CLASSES = ['stated', 'ambient', 'derived', 'key'] as const;
 /**
- * How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or
- * `derived` from the OS user and host name (`Attributed.by_source`).
+ * How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, `derived`
+ * from the OS user and host name, or `key` from a server key the caller presented. It is
+ * `Attributed.by_source`.
  * @public
  */
 export type BySourceClass = (typeof BY_SOURCE_CLASSES)[number];
@@ -43,6 +45,7 @@ export const BY_SOURCE_WORDS: Record<BySourceClass, string> = {
   derived: 'from the OS user',
   ambient: 'from REALM_OPERATOR',
   stated: 'as stated',
+  key: "from the server's key",
 };
 
 /**

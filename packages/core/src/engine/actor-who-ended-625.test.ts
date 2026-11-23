@@ -222,11 +222,17 @@ describe('#625 the actor unit, check 1 — one cell per producing branch of the 
   it('check 1 — how a name is known, in words, is one copy: the holder lines’ words, with the stated override', () => {
     // (a) red when the words drift from the holder lines' or the override is lost; (b) prints both.
     expect({ base: BY_SOURCE_WORDS, recorded: RECORDED_BY_SOURCE_WORDS }).toEqual({
-      base: { derived: 'from the OS user', ambient: 'from REALM_OPERATOR', stated: 'as stated' },
+      base: {
+        derived: 'from the OS user',
+        ambient: 'from REALM_OPERATOR',
+        stated: 'as stated',
+        key: "from the server's key",
+      },
       recorded: {
         derived: 'from the OS user',
         ambient: 'from REALM_OPERATOR',
         stated: 'named by the program that runs Realm',
+        key: "from the server's key",
       },
     });
   });

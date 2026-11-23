@@ -42,7 +42,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`WorkflowContextSnapshot`](#workflowcontextsnapshot) | interface | Snapshot of a single workflow context entry taken at run start. |
 | [`AdmittedBy`](#admittedby) | type | How an answer's sender was let through, or why it was not compared (`EvidenceSnapshot.admitted_by`). |
 | [`AnswerOnRecord`](#answeronrecord) | type | What an answer's entry holds about its route: the facts, or the absence a library caller leaves (`EvidenceSnapshot.answer`). |
-| [`BySourceClass`](#bysourceclass) | type | How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or `derived` from the OS user and host name (`Attributed.by_source`). |
+| [`BySourceClass`](#bysourceclass) | type | How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, `derived` from the OS user and host name, or `key` from a server key the caller presented. |
 | [`CacheAutoBasis`](#cacheautobasis) | type | One of the words in `CACHE_AUTO_BASES`: what `--prompt-cache auto` based a request's chosen cache lifetime on (`CacheAuto.basis`). |
 | [`CacheAutoPriceCause`](#cacheautopricecause) | type | One of the words in `CACHE_AUTO_PRICE_CAUSES`: why `--prompt-cache auto` chose without prices (`CacheAutoPrices`'s `cause` when `from` is `none`). |
 | [`CacheAutoPrices`](#cacheautoprices) | type | Where the `auto` choice took its prices: the runner's price file (`economics`), or none, with the cause (`CacheAuto.prices`). |
@@ -74,12 +74,16 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`SkipDetail`](#skipdetail) | type | Why a step was skipped, keyed by step name (`RunRecord.skip_details`). |
 | [`SupplierAbsentCause`](#supplierabsentcause) | type | One of the words in `SUPPLIER_ABSENT_CAUSES`: why an evidence entry names no supplier (`readSupplier`'s `absent`). |
 | [`SupplierRole`](#supplierrole) | type | One of the words in `SUPPLIER_ROLES`: who supplied a step's input or output, as an evidence entry records it (`EvidenceSnapshot.supplied_by`). |
+| [`ADMITTED_BY_WORDS`](#admitted_by_words) | const | Every word an answer's `admitted_by` can hold, in the type's order. |
+| [`BLOCKING_DEP_STATES`](#blocking_dep_states) | const | Every state a dependency that makes a trigger rule unsatisfiable can be in, in the type's order. |
 | [`BY_SOURCE_CLASSES`](#by_source_classes) | const | How a program's name is known. |
 | [`CACHE_AUTO_BASES`](#cache_auto_bases) | const | On what `--prompt-cache auto` chose a request's cache lifetime (`UsageRecord.cache_auto.basis`). |
 | [`CACHE_AUTO_PRICE_CAUSES`](#cache_auto_price_causes) | const | Why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, with `from: 'none'`). |
+| [`CACHE_AUTO_PRICES_FROM_WORDS`](#cache_auto_prices_from_words) | const | Every place the `auto` cache choice can take its prices from (`CacheAutoPrices.from`), in the type's order. |
 | [`CACHE_AUTO_RATES`](#cache_auto_rates) | const | The price-file rates the `auto` choice reads, in the order a `missing` list names them (the price file's own order). |
 | [`CACHE_BASES`](#cache_bases) | const | How a cache number is known: reported by the provider, or not observable (`StepCacheDetail.basis`). |
 | [`CACHE_CONTROL_FIELDS`](#cache_control_fields) | const | The cache fields Realm itself adds to a request: Anthropic's `cache_control` markers and OpenAI's `prompt_cache_key`; the closed set a recorded refusal names. |
+| [`CACHE_CONTROLS_PROVEN_WORDS`](#cache_controls_proven_words) | const | Every word a rejected request's `proven` can hold, in the type's order. |
 | [`CACHE_DIAGNOSTICS_WORDS`](#cache_diagnostics_words) | const | What Anthropic said in words for a request that named an earlier answer: `no_divergence`, `pending` or `not_returned`. |
 | [`CACHE_MARKED_PARTS`](#cache_marked_parts) | const | What carried a cache marker, or OpenAI's key, on one request (`UsageRecord.cache_marked`). |
 | [`CACHE_MISS_TYPES`](#cache_miss_types) | const | Anthropic's reasons a request's cache read fell short, and `unknown` for a reason Realm does not know, recorded as such and never verbatim (`CacheMissReason.type`). |
@@ -87,11 +91,14 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`CACHE_REQUEST_SOURCES`](#cache_request_sources) | const | Where a request's cache setting came from: `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default) (`UsageRecord.cache_requested_source`). |
 | [`CACHE_REQUESTS`](#cache_requests) | const | What Realm asked a provider to cache on a request, as stored (`UsageRecord.cache_requested`). |
 | [`CACHE_STATES`](#cache_states) | const | The words a step's cache state takes (`StepCacheDetail.state`). |
+| [`GATE_ON_EXPIRY_WORDS`](#gate_on_expiry_words) | const | Every word a pending gate's `on_expiry` can hold, in the type's order. |
+| [`MODEL_ATTEMPT_THEN_WORDS`](#model_attempt_then_words) | const | Every word a failed model attempt's `then` can hold: the re-send that followed it, in the type's order. |
 | [`MODEL_FAILURE_KINDS`](#model_failure_kinds) | const | What a failed model request can need before it succeeds: another try (`transient`), an operator's fix first (`setup`), or nothing, because it will fail the same way again (`permanent`). |
 | [`OUTPUT_SOURCE_ABSENT_CAUSES`](#output_source_absent_causes) | const | Why an evidence entry carries no `output_source` (`outputSourceOf`'s `absent_cause`). |
 | [`OUTPUT_SOURCES`](#output_sources) | const | Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`). |
 | [`PRINCIPAL_ABSENCES`](#principal_absences) | const | Why a door names no principal (`Principal`'s `absent`). |
 | [`REQUEST_ENDPOINTS`](#request_endpoints) | const | Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`). |
+| [`REQUIREMENT_KINDS`](#requirement_kinds) | const | Every kind a capability block's `requirement` can name, in the type's order. |
 | [`SEAL_ARMS`](#seal_arms) | const | Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`). |
 | [`SEAL_DOORS`](#seal_doors) | const | The commands and tools that end a run on request: `realm run abandon`, the MCP `abandon_run` tool and `realm run cleanup` (`SealedBy.door`). |
 | [`SUPPLIER_ABSENT_CAUSES`](#supplier_absent_causes) | const | Why an evidence entry names no supplier. |
@@ -331,6 +338,7 @@ Written atomically when a step is claimed.
 ```ts
 interface ClaimRecord {
     deadline: string | null;
+    deadline_absent?: ClaimDeadlineAbsent;
     token?: string;
     holder?: Attributed;
     since?: string;
@@ -864,8 +872,9 @@ type AnswerOnRecord = AnswerFacts | {
 
 type · public
 
-How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or
-`derived` from the OS user and host name (`Attributed.by_source`).
+How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, `derived`
+from the OS user and host name, or `key` from a server key the caller presented. It is
+`Attributed.by_source`.
 
 ```ts
 type BySourceClass = (typeof BY_SOURCE_CLASSES)[number];
@@ -1355,19 +1364,55 @@ type SupplierRole = (typeof SUPPLIER_ROLES)[number];
 
 ## Constants
 
+### ADMITTED_BY_WORDS
+
+const · public
+
+Every word an answer's `admitted_by` can hold, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const ADMITTED_BY_WORDS: readonly [
+    "owner",
+    "answerers",
+    "project_answerers",
+    "no_named_answerer",
+    "owner_not_checked_on_route"
+];
+```
+
+### BLOCKING_DEP_STATES
+
+const · public
+
+Every state a dependency that makes a trigger rule unsatisfiable can be in, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const BLOCKING_DEP_STATES: readonly [
+    "completed",
+    "failed",
+    "skipped"
+];
+```
+
 ### BY_SOURCE_CLASSES
 
 const · public
 
 How a program's name is known. `stated` — a host passed an explicit name; `ambient` — the
-operator set `REALM_OPERATOR`; `derived` — the OS user and host name. `verified` (#603) and
+operator set `REALM_OPERATOR`; `derived` — the OS user and host name; `key` — the name of the
+server's key the caller presented (`realm serve`'s named keys, #625 PR-2b). `verified` (#603) and
 `capability` (#597) are added by the units that produce them.
 
 ```ts
 const BY_SOURCE_CLASSES: readonly [
     "stated",
     "ambient",
-    "derived"
+    "derived",
+    "key"
 ];
 ```
 
@@ -1426,6 +1471,21 @@ const CACHE_AUTO_PRICE_CAUSES: readonly [
 ];
 ```
 
+### CACHE_AUTO_PRICES_FROM_WORDS
+
+const · public
+
+Every place the `auto` cache choice can take its prices from (`CacheAutoPrices.from`), in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const CACHE_AUTO_PRICES_FROM_WORDS: readonly [
+    "economics",
+    "none"
+];
+```
+
 ### CACHE_AUTO_RATES
 
 const · public
@@ -1478,6 +1538,21 @@ Normalised at the write: any other name drops the fact.
 const CACHE_CONTROL_FIELDS: readonly [
     "cache_control",
     "prompt_cache_key"
+];
+```
+
+### CACHE_CONTROLS_PROVEN_WORDS
+
+const · public
+
+Every word a rejected request's `proven` can hold, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const CACHE_CONTROLS_PROVEN_WORDS: readonly [
+    "cache_fields",
+    "none"
 ];
 ```
 
@@ -1610,6 +1685,37 @@ const CACHE_STATES: readonly [
 ];
 ```
 
+### GATE_ON_EXPIRY_WORDS
+
+const · public
+
+Every word a pending gate's `on_expiry` can hold, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const GATE_ON_EXPIRY_WORDS: readonly [
+    "settle_default",
+    "abort"
+];
+```
+
+### MODEL_ATTEMPT_THEN_WORDS
+
+const · public
+
+Every word a failed model attempt's `then` can hold: the re-send that followed it, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const MODEL_ATTEMPT_THEN_WORDS: readonly [
+    "gateway",
+    "cache_probe",
+    "strict_ladder"
+];
+```
+
 ### MODEL_FAILURE_KINDS
 
 const · public
@@ -1706,6 +1812,21 @@ const REQUEST_ENDPOINTS: readonly [
 ];
 ```
 
+### REQUIREMENT_KINDS
+
+const · public
+
+Every kind a capability block's `requirement` can name, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const REQUIREMENT_KINDS: readonly [
+    "handler",
+    "adapter"
+];
+```
+
 ### SEAL_ARMS
 
 const · public
@@ -1793,6 +1914,7 @@ Names this job reaches whose entry is on another page.
 - [`AuthNone`](define-and-load-a-workflow.md#authnone): Documented, discouraged escape hatch — accept without verification (trusted network / localhost only).
 - [`AuthSharedSecret`](define-and-load-a-workflow.md#authsharedsecret): Header-token auth — the request carries a user-configured header equal to a shared secret.
 - [`AuthStripe`](define-and-load-a-workflow.md#authstripe): Stripe timestamped HMAC body signature (header 'Stripe-Signature').
+- [`ClaimDeadlineAbsent`](implement-a-store.md#claimdeadlineabsent): Why a claim has no time limit, written on the claim when it is taken (`ClaimRecord.deadline_absent`).
 - [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
 - [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the `run_phase` from the run record's fields.

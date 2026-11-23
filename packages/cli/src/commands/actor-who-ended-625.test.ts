@@ -287,7 +287,7 @@ describe(
     it('check 6 — realm run inspect: each door’s Ended by line after Sealed by, none with no program recorded', async () => {
       claim(
         READING,
-        "| `Ended by` | When the run's record names the program that ended it: `realm run abandon`, the assistant's `abandon_run` tool or `realm run cleanup` knew its name | That program and the command or tool, such as `Ended by: realm run abandon, by ops@server-1 (from the OS user)`, `Ended by: the assistant's abandon_run tool, on the Realm server running as ops@server-1 (from the OS user)` or `Ended by: realm run cleanup, run by ops@server-1 (from REALM_OPERATOR)`; for a program that named no command or tool, `Ended by: ops@server-1 (from the OS user, via mcp-stdio)`.",
+        "| `Ended by` | When the run's record names the program that ended it: `realm run abandon`, the assistant's `abandon_run` tool or `realm run cleanup` knew its name | That program and the command or tool, such as `Ended by: realm run abandon, by ops@server-1 (from the OS user)`, `Ended by: the assistant's abandon_run tool, on the Realm server running as ops@server-1 (from the OS user)`, for a caller with one of `realm serve`'s named keys `Ended by: the assistant's abandon_run tool, by ana-laptop (from the server's key)`, or `Ended by: realm run cleanup, run by ops@server-1 (from REALM_OPERATOR)`; for a program that named no command or tool, `Ended by: ops@server-1 (from the OS user, via mcp-stdio)`.",
       );
       const by: Attributed = { by: 'ops@server-1', by_source: 'derived', channel: 'mcp-stdio' };
       const [cmd, tool, library, bare, swept] = [
@@ -351,7 +351,7 @@ describe(
     /** The ending sentence with the program, as the acting, agent and workflow pages give it
      *  (#1280's correction, item 3: the parenthesis realm-listen.md gained). */
     const ABANDONED_FORMS =
-      "(`It was abandoned; no reason was given.` when none was given; `It was abandoned with 'realm run abandon', by <name> (<how>), with the reason \"<reason>\".` or `It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as <name> (<how>), with the reason \"<reason>\".` when the record names the program that ended it, added after version 0.50.0)";
+      "(`It was abandoned; no reason was given.` when none was given; `It was abandoned with 'realm run abandon', by <name> (<how>), with the reason \"<reason>\".`, `It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as <name> (<how>), with the reason \"<reason>\".` or, for a caller with one of `realm serve`'s named keys, `It was abandoned with the assistant's 'abandon_run' tool, by <name> (from the server's key), with the reason \"<reason>\".` when the record names the program that ended it, added after version 0.50.0)";
     /** The acting page's masking sentence; the three cells below execute it, one case each. */
     const MASKING =
       "The name is plain text: your terminal shows it whole, and in piped output it is masked as environment values are: the part of it that matches an environment value of 8 characters or more, such as a long OS user name, shows as `[REDACTED]`; REALM_OPERATOR's own value is not counted.";
@@ -460,7 +460,7 @@ describe(
     it('realm agent --run-id on a run abandoned with a command or the tool: its refusal says who ended it', async () => {
       claim(
         LISTEN,
-        '`It was abandoned, with the reason "<reason>".` (`It was abandoned with \'realm run abandon\', by <name> (<how>), with the reason "<reason>".` or `It was abandoned with the assistant\'s \'abandon_run\' tool, on the Realm server running as <name> (<how>), with the reason "<reason>".` when the record names the program that ended it, added after version 0.50.0)',
+        "`It was abandoned, with the reason \"<reason>\".` (`It was abandoned with 'realm run abandon', by <name> (<how>), with the reason \"<reason>\".`, `It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as <name> (<how>), with the reason \"<reason>\".` or, for a caller with one of `realm serve`'s named keys, `It was abandoned with the assistant's 'abandon_run' tool, by <name> (from the server's key), with the reason \"<reason>\".` when the record names the program that ended it, added after version 0.50.0)",
       );
       const [cmd, tool] = [await fresh(), await fresh()];
       await abandonRun(runStore, cmd, 'wrong run', {

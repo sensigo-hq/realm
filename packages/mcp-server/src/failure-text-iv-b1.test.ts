@@ -1025,7 +1025,7 @@ describe('gap 2 (iv-b1), checks 1 and 9 — the realm-mcp bin', { timeout: 30_00
     //     (b) prints each run's stderr lines after the first.
     expect({ hidden: hidden.lines.slice(1), shown: shown.lines.slice(1) }).toEqual({
       hidden: [
-        "Failure text over MCP: hidden (from REALM_MCP_FAILURE_TEXT). In get_run_state an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.",
+        "Failure text over MCP: hidden (from REALM_MCP_FAILURE_TEXT). In get_run_state and in the replies to its own calls, an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.",
       ],
       shown: [],
     });

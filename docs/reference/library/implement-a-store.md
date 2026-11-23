@@ -12,6 +12,7 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | --- | --- | --- |
 | [`applySettlement`](#applysettlement) | function | Applies one `SettlementDelta` against `fresh`: pure, synchronous, with no I/O and no registry. |
 | [`assertSealIntegrity`](#assertsealintegrity) | function | Checks a store write against the four seal-integrity clauses and `SEAL_COHERENT`, throwing on a violation. |
+| [`claimDeadlineOf`](#claimdeadlineof) | function | A claim's deadline and, when there is none, why: what a store writes on a claim it takes. |
 | [`clockErrorSink`](#clockerrorsink) | function | The process's waiter-error sink, or `undefined` when no host set one. |
 | [`computeClaimDeadline`](#computeclaimdeadline) | function | Computes the claim deadline for `stepName` at claim time. |
 | [`createSystemClock`](#createsystemclock) | function | Builds a system clock with its own waiter-error sink: `now()` is `new Date()`; `at()` arms an `unref`'d timer of at most `MAX_HOP_MS` and re-checks `now()` each time it fires. |
@@ -108,6 +109,7 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`CallbackStatus`](#callbackstatus) | type | The state of a callback row: `pending` while it may be tried, then `delivered` or `failed`. |
 | [`CallbackView`](#callbackview) | type | A callback row as the port's `read` returns it: no address, body, token or webhook id. |
 | [`CappedRead`](#cappedread) | type | What `WorkflowRegistrar.getCapped` resolves to. |
+| [`ClaimDeadlineAbsent`](#claimdeadlineabsent) | type | Why a claim has no time limit, written on the claim when it is taken (`ClaimRecord.deadline_absent`). |
 | [`CreateResult`](#createresult) | type | What a run store's `create` returns: the record with the reading the create used, and whether it was written. |
 | [`FencePredicate`](#fencepredicate) | type | The four facts a fenced trace-buffer operation can be conditioned on. |
 | [`FencePredicateKind`](#fencepredicatekind) | type | The names of the conditions a fenced trace-buffer write checks before it writes (`FencePredicate.kind`). |
@@ -148,6 +150,7 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`CALLBACK_KEY_SLOTS`](#callback_key_slots) | const | The two places a pair keeps a key, one list for every use of the word. |
 | [`CALLBACK_LAST_STATUS_WORDS`](#callback_last_status_words) | const | The words a try's last answer can be when it got no HTTP status. |
 | [`CALLBACK_STATUSES`](#callback_statuses) | const | The states a callback row can be in, one list for every use of the word. |
+| [`CLAIM_DEADLINE_ABSENT_CAUSES`](#claim_deadline_absent_causes) | const | Every word a claim's `deadline_absent` can hold, in the order `claimDeadlineOf` judges them. |
 | [`CLOCK_READ_CLASSES`](#clock_read_classes) | const | The five classes of a clock read: what a run store's clock governs (`write`, `read`, `event`) and what it does not (`outside`, `duration`). |
 | [`FENCE_TARGETS_STEP`](#fence_targets_step) | const | Whether a member conditions one step — evaluated against the fenced method's own `stepId`. |
 | [`LEASE_PROBE_REASONS`](#lease_probe_reasons) | const | Why a probe could not say whether a lease is held: a closed list. |
@@ -197,6 +200,22 @@ single-version fleet (the mixed-fleet caveat is a named residual, not a solved c
 
 ```ts
 function assertSealIntegrity(stored: RunRecord, next: RunRecord): void;
+```
+
+### claimDeadlineOf
+
+function · public
+
+A claim's deadline and, when there is none, why: what a store writes on a claim it takes.
+`deadline` always, and `absent` exactly when `deadline` is `null`: the cause, which the store
+writes as `deadline_absent` (Q1, #592, unit f2). `computeClaimDeadline` returns this
+function's `deadline`. Never throws.
+
+```ts
+function claimDeadlineOf(definition: WorkflowDefinition, stepName: string, now: Date): {
+    deadline: string | null;
+    absent?: ClaimDeadlineAbsent;
+};
 ```
 
 ### clockErrorSink
@@ -2044,6 +2063,23 @@ type CappedRead = {
 };
 ```
 
+### ClaimDeadlineAbsent
+
+type · public
+
+Why a claim has no time limit, written on the claim when it is taken (`ClaimRecord.deadline_absent`).
+One word per branch of `claimDeadlineOf` that gives no deadline (Q1, #592, unit f2), judged
+in this order: `step_unknown` (the step is not in the workflow; Realm's own
+writers claim eligible steps only, so they never write it), `step_not_auto` (the step is not an
+`auto` step: from Realm's writers always an agent step, whose time Realm cannot bound; guards and
+finalizers are never claimed), `finalizer_bearing` (an `auto` step of a workflow with finalizer
+steps: the claim may be held through the run's ending). A reader says `not_recorded` for a claim
+that carries none; that word is never written.
+
+```ts
+type ClaimDeadlineAbsent = 'step_unknown' | 'step_not_auto' | 'finalizer_bearing';
+```
+
 ### CreateResult
 
 type · public
@@ -2746,6 +2782,21 @@ const CALLBACK_STATUSES: readonly [
 ];
 ```
 
+### CLAIM_DEADLINE_ABSENT_CAUSES
+
+const · public
+
+Every word a claim's `deadline_absent` can hold, in the order `claimDeadlineOf` judges them.
+Compile-checked both ways against `ClaimDeadlineAbsent`.
+
+```ts
+const CLAIM_DEADLINE_ABSENT_CAUSES: readonly [
+    "step_unknown",
+    "step_not_auto",
+    "finalizer_bearing"
+];
+```
+
 ### CLOCK_READ_CLASSES
 
 const · public
@@ -2848,7 +2899,7 @@ Names this job reaches whose entry is on another page.
 - [`AuthStripe`](define-and-load-a-workflow.md#authstripe): Stripe timestamped HMAC body signature (header 'Stripe-Signature').
 - [`Base`](write-a-handler.md#base): What every way carries: its verb and the conditions it is offered with; each way type adds its own fields to it.
 - [`BY_SOURCE_CLASSES`](read-a-runs-record.md#by_source_classes): How a program's name is known.
-- [`BySourceClass`](read-a-runs-record.md#bysourceclass): How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or `derived` from the OS user and host name (`Attributed.by_source`).
+- [`BySourceClass`](read-a-runs-record.md#bysourceclass): How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, `derived` from the OS user and host name, or `key` from a server key the caller presented.
 - [`CACHE_AUTO_BASES`](read-a-runs-record.md#cache_auto_bases): On what `--prompt-cache auto` chose a request's cache lifetime (`UsageRecord.cache_auto.basis`).
 - [`CACHE_AUTO_PRICE_CAUSES`](read-a-runs-record.md#cache_auto_price_causes): Why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, with `from: 'none'`).
 - [`CACHE_AUTO_RATES`](read-a-runs-record.md#cache_auto_rates): The price-file rates the `auto` choice reads, in the order a `missing` list names them (the price file's own order).

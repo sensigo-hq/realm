@@ -7,7 +7,6 @@
 import { z } from 'zod';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
-  WorkflowError,
   admitWay,
   assertRegistryLine,
   buildPreExecutionErrorEnvelope,
@@ -44,6 +43,7 @@ import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { boundedRefusal } from './refusal-format.js';
 import { noRunState } from './no-run-state.js';
+import { workflowErrorOfThrown } from './thrown-error.js';
 
 /** The tool's input: exactly `ARGS[present]` (`{ run_id, gate_id }`; the door-schema witness). */
 export const presentQuestionArgsShape = { run_id: z.string(), gate_id: z.string() };
@@ -270,15 +270,7 @@ export function registerPresentQuestion(
         );
       },
       async (err, args) => {
-        const workflowErr =
-          err instanceof WorkflowError
-            ? err
-            : new WorkflowError(err instanceof Error ? err.message : String(err), {
-                code: 'ENGINE_INTERNAL',
-                category: 'ENGINE',
-                agentAction: 'stop',
-                retryable: false,
-              });
+        const workflowErr = workflowErrorOfThrown(err);
         const contextHint =
           workflowErr.code === 'STATE_RUN_NOT_FOUND'
             ? `Run '${args.run_id}' not found.`

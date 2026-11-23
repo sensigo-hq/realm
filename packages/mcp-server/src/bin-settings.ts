@@ -247,7 +247,7 @@ export function gateAnswersConnectLine(
  */
 export function failureTextStartLine(setting: FailureTextSetting): string | undefined {
   if (setting.value !== 'hidden') return undefined;
-  return `Failure text over MCP: hidden (${fromClause(setting)}). In get_run_state an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.`;
+  return `Failure text over MCP: hidden (${fromClause(setting)}). In get_run_state and in the replies to its own calls, an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.`;
 }
 
 /** Gap 2, unit (iv-b1): `--check`'s failure-text line, printed after the gate-answers value line. */
