@@ -75,10 +75,10 @@ realm serve [--port <number>] [--host <address>] [--shutdown-grace <seconds>] [-
 
 `realm serve` sends no forms, so `--form-wait-seconds`, or `REALM_MCP_FORM_WAIT_SECONDS`, stops it from starting, as it stops `realm mcp` under `withheld` or `permitted`: the setting is refused at start wherever no form is sent. Added after version 0.47.0.
 
-| Environment variable | What it does                                                          |
-| -------------------- | --------------------------------------------------------------------- |
-| `REALM_SERVE_TOKEN`  | The token a caller must send. Required unless the token check is off. |
-| `REALM_DEV`          | Set to `1`, has the same effect as `--dev`.                           |
+| Environment variable | What it does                                                                                                   |
+| -------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `REALM_SERVE_TOKEN`  | The token a caller may send. Required unless a named key that has not ended exists, or the token check is off. |
+| `REALM_DEV`          | Set to `1`, has the same effect as `--dev`.                                                                    |
 
 ```bash
 REALM_SERVE_TOKEN=choose-a-long-secret realm serve --port 3001
@@ -101,20 +101,34 @@ After these lines, `realm serve` prints the gate-answers value it runs with, and
 
 ### Requests
 
-A caller sends MCP messages as HTTP `POST` requests with the header `Authorization: Bearer <token>`. Apart from `GET` and `HEAD` to `/health` (added after version 0.49.0; see [The health address](#the-health-address)), the path is not checked: every path reaches the server. Each request is handled on its own, and nothing is kept in the process between requests.
+A caller sends MCP messages as HTTP `POST` requests with the header `Authorization: Bearer <token>`, where `<token>` is `REALM_SERVE_TOKEN` or one of the server's [named keys](#named-keys). Apart from `GET` and `HEAD` to `/health` (added after version 0.49.0; see [The health address](#the-health-address)), the path is not checked: every path reaches the server. Each request is handled on its own. Nothing is kept in the process between requests, except whether `realm serve` has already warned that the key file cannot be read (see [Named keys](#named-keys)); the key file itself is read again for each request that `REALM_SERVE_TOKEN` does not settle.
 
 `realm serve` serves plain HTTP. To reach it from another machine, put it behind a web server that provides HTTPS.
 
-| Request                                                                               | Reply                                                                                                                                                                      |
-| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No token, or a wrong one                                                              | `401` `{"error":"Unauthorized"}`, with the header `WWW-Authenticate: Bearer`                                                                                               |
-| A body that is not JSON                                                               | `400` `{"error":"Invalid JSON in request body"}`                                                                                                                           |
-| A body larger than 1 MiB                                                              | `413` `{"error":"Request body too large"}`                                                                                                                                 |
-| An `Accept` header that does not list both `application/json` and `text/event-stream` | `406` `{"jsonrpc":"2.0","error":{"code":-32000,"message":"Not Acceptable: Client must accept both application/json and text/event-stream"},"id":null}`                     |
-| A batch of more than 100 MCP messages                                                 | `400` `{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Batch must not exceed 100 messages"},"id":null}` (added after version 0.46.0, which answers it) |
-| An MCP message                                                                        | `200`, with the MCP reply                                                                                                                                                  |
+| Request                                                                                                                                | Reply                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No token or key, or one it refuses (a wrong token; a key that is unknown, removed or ended; any key while the key file cannot be read) | `401` `{"error":"Unauthorized"}`, with the header `WWW-Authenticate: Bearer`                                                                                               |
+| A body that is not JSON                                                                                                                | `400` `{"error":"Invalid JSON in request body"}`                                                                                                                           |
+| A body larger than 1 MiB                                                                                                               | `413` `{"error":"Request body too large"}`                                                                                                                                 |
+| An `Accept` header that does not list both `application/json` and `text/event-stream`                                                  | `406` `{"jsonrpc":"2.0","error":{"code":-32000,"message":"Not Acceptable: Client must accept both application/json and text/event-stream"},"id":null}`                     |
+| A batch of more than 100 MCP messages                                                                                                  | `400` `{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Batch must not exceed 100 messages"},"id":null}` (added after version 0.46.0, which answers it) |
+| An MCP message                                                                                                                         | `200`, with the MCP reply                                                                                                                                                  |
 
 The token is checked before anything else except the health address (added after version 0.49.0), so a caller without it learns nothing about the request.
+
+### Named keys
+
+Each program or person that calls `realm serve` can have its own key, with a name, beside `REALM_SERVE_TOKEN` or in its place. Added after version 0.50.0.
+
+A caller sends its key as `Authorization: Bearer <key>`. The keys live in `serve-keys.json` in Realm's home (`~/.realm`), which should be readable by your account only (mode 600). The file holds each key's name, the SHA-256 of its text, when it was made and when it ends, never the key's text.
+
+`realm serve` starts when `REALM_SERVE_TOKEN` is set, or when the file holds a key that has not ended. When a key in the file works at start, its `Authentication:` line names the file: `Bearer token (REALM_SERVE_TOKEN, and named keys in <path>)` with the token, `Bearer token (named keys in <path>)` without it. Otherwise the line stays `Bearer token (REALM_SERVE_TOKEN)`. It reads the file for every request the token does not settle, so a key that is added, removed or ended counts from the next request. Dev mode reads no key file.
+
+What a request with a key does is recorded under the key's name, with how the name is known, `from the server's key`: on the steps it runs and the claims it takes (`{ "by": "<name>", "by_source": "key", "channel": "mcp-http" }`), on an `abandon_run` (`Ended by: the assistant's abandon_run tool, by <name> (from the server's key)`), and on an answer, whose principal is `{ "kind": "api_key", "id": "<name>" }`: `realm run inspect` shows it `recorded by mcp-http, for <name> (from the server's key)` and `authenticated by API key <name>`. A request with `REALM_SERVE_TOKEN` is recorded as before.
+
+A file that cannot be read, or is not a valid key file, refuses every request with a key; `REALM_SERVE_TOKEN` still works. `realm serve` says so once when that begins, and again if the cause changes: `Warning: the named keys in <path> cannot be read (<cause>).`, then, with `REALM_SERVE_TOKEN` set, that every request with a key is refused until it is fixed, and without it, that the server refuses every request until it is fixed. Fix it by hand, or delete it to remove every key. A file open to other users gets `Warning: <path> is open to other users (mode <NNNN>). Fix that with: chmod 600 <path>` from `realm serve` at start.
+
+`realm db backup` does not copy the key file: after a restore onto another machine, add the keys again.
 
 ### The health address
 
@@ -153,17 +167,19 @@ Every paragraph above in this section was added or changed after version 0.49.0.
 
 It does not start in these cases:
 
-| Case                                                                                                      | Message                                                                                                                                                                       |
-| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No token, and the token check is on                                                                       | `Error: REALM_SERVE_TOKEN is not set.` then `Set it to a secret token, or use --dev / REALM_DEV=1 for local development only.`                                                |
-| The port is in use (changed after version 0.48.0)                                                         | `Error: cannot listen on 127.0.0.1:3001: the port is already in use. Stop the program using it, or choose another --port.`                                                    |
-| `--port` is not a whole number from 0 to 65535 (added after version 0.48.0)                               | `error: option '--port <number>' argument 'abc' is invalid. --port must be a whole number from 0 to 65535.`                                                                   |
-| `--host` is empty, holds a space or starts with `-` (added after version 0.48.0)                          | `error: option '--host <address>' argument 'a b' is invalid. --host must be an IP address or a host name.`                                                                    |
-| `--shutdown-grace` is not a whole number from 0 to 2147483 (added after version 0.49.0)                   | `error: option '--shutdown-grace <seconds>' argument '-1' is invalid. --shutdown-grace must be a whole number from 0 to 2147483.`                                             |
-| `--shutdown-drain` is not a whole number from 0 to 2147483 (added after version 0.49.0)                   | `error: option '--shutdown-drain <seconds>' argument '-1' is invalid. --shutdown-drain must be a whole number from 0 to 2147483.`                                             |
-| The port needs rights `realm serve` does not have, or the system reserves it (added after version 0.48.0) | `Error: cannot listen on 127.0.0.1:80: permission denied. A port below 1024 usually needs extra rights, and on Windows the system can reserve a port. Choose another --port.` |
-| `--host` is not an address of this machine (added after version 0.48.0)                                   | `Error: cannot listen on 192.0.2.1:3001: 192.0.2.1 is not an address of this machine. Check --host.`                                                                          |
-| `--host` is a name that cannot be resolved (added after version 0.48.0)                                   | `Error: cannot listen on no-such-host.invalid:3001: the name no-such-host.invalid cannot be resolved. Check --host.`                                                          |
+| Case                                                                                                      | Message                                                                                                                                                                                 |
+| --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No token, no named key, and the token check is on                                                         | `Error: REALM_SERVE_TOKEN is not set and there is no named key.` then `Set it to a secret token, or use --dev / REALM_DEV=1 for local development only.` (changed after version 0.50.0) |
+| No token, and every named key has ended (added after version 0.50.0)                                      | `Error: REALM_SERVE_TOKEN is not set and every named key in <path> has ended.` then the same second line                                                                                |
+| No token, and the key file cannot be read (added after version 0.50.0)                                    | `Error: REALM_SERVE_TOKEN is not set and the named keys in <path> cannot be read (<cause>).` then the same second line                                                                  |
+| The port is in use (changed after version 0.48.0)                                                         | `Error: cannot listen on 127.0.0.1:3001: the port is already in use. Stop the program using it, or choose another --port.`                                                              |
+| `--port` is not a whole number from 0 to 65535 (added after version 0.48.0)                               | `error: option '--port <number>' argument 'abc' is invalid. --port must be a whole number from 0 to 65535.`                                                                             |
+| `--host` is empty, holds a space or starts with `-` (added after version 0.48.0)                          | `error: option '--host <address>' argument 'a b' is invalid. --host must be an IP address or a host name.`                                                                              |
+| `--shutdown-grace` is not a whole number from 0 to 2147483 (added after version 0.49.0)                   | `error: option '--shutdown-grace <seconds>' argument '-1' is invalid. --shutdown-grace must be a whole number from 0 to 2147483.`                                                       |
+| `--shutdown-drain` is not a whole number from 0 to 2147483 (added after version 0.49.0)                   | `error: option '--shutdown-drain <seconds>' argument '-1' is invalid. --shutdown-drain must be a whole number from 0 to 2147483.`                                                       |
+| The port needs rights `realm serve` does not have, or the system reserves it (added after version 0.48.0) | `Error: cannot listen on 127.0.0.1:80: permission denied. A port below 1024 usually needs extra rights, and on Windows the system can reserve a port. Choose another --port.`           |
+| `--host` is not an address of this machine (added after version 0.48.0)                                   | `Error: cannot listen on 192.0.2.1:3001: 192.0.2.1 is not an address of this machine. Check --host.`                                                                                    |
+| `--host` is a name that cannot be resolved (added after version 0.48.0)                                   | `Error: cannot listen on no-such-host.invalid:3001: the name no-such-host.invalid cannot be resolved. Check --host.`                                                                    |
 
 ### A store or registry from another realm version
 

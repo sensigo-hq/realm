@@ -1127,7 +1127,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     [
       'by_source',
       { by: 'n', by_source: 'program', channel: 'cron' },
-      'Invalid driver.by_source: not one of stated, ambient, derived.',
+      'Invalid driver.by_source: not one of stated, ambient, derived, key.',
     ],
     [
       'channel',
@@ -1166,7 +1166,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       'Your own word for the way the call came in: 1 to 64 characters of `a`–`z`, `0`–`9`, `_` and `-`, such as `cron`.',
     );
     claim(
-      'How the name is known: `stated` (your program says it), `ambient` (from the environment, as `REALM_OPERATOR` is) or `derived` (from the OS user).',
+      'How the name is known: `stated` (your program says it), `ambient` (from the environment, as `REALM_OPERATOR` is), `derived` (from the OS user) or `key` (the name of a `realm serve` key the caller presented; added after version 0.50.0).',
     );
     const plain: WorkflowDefinition = {
       id: 'dc-drv',
@@ -1174,7 +1174,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       version: 1,
       steps: { only: { description: 'O.', execution: 'auto', depends_on: [] } },
     };
-    for (const by_source of ['stated', 'ambient', 'derived'] as const) {
+    for (const by_source of ['stated', 'ambient', 'derived', 'key'] as const) {
       const { record: run } = await store.create({
         workflowId: plain.id,
         workflowVersion: 1,

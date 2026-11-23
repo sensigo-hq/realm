@@ -121,7 +121,7 @@ describe('#625 the actor unit, check 4 — abandon_run records the server’s pr
   it('check 4 — abandon_run records the driver and door abandon_run; advance_run’s sentence and get_run_state’s sealed_by_actor show no byte of the OS user', async () => {
     claim(
       RUN_STATE,
-      '| `sealed_by_actor` | `realm run abandon`, the `abandon_run` tool or `realm run cleanup` recorded the program that ended the run | That program: `by`, its name; `by_source`, how the name is known (`ambient` from REALM_OPERATOR, `derived` from the OS user, `stated` named by the program that runs Realm); and `channel`.',
+      '| `sealed_by_actor` | `realm run abandon`, the `abandon_run` tool or `realm run cleanup` recorded the program that ended the run | That program: `by`, its name; `by_source`, how the name is known (`ambient` from REALM_OPERATOR, `derived` from the OS user, `stated` named by the program that runs Realm, `key` from the `realm serve` key the caller presented); and `channel`.',
     );
     claim(RUN_STATE, MASKING);
     stubUser();

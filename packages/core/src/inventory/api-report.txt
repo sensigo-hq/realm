@@ -216,7 +216,8 @@ BY_SOURCE_CLASSES · value · public
   const BY_SOURCE_CLASSES: readonly [
       "stated",
       "ambient",
-      "derived"
+      "derived",
+      "key"
   ];
 
 BY_SOURCE_WORDS · value · internal

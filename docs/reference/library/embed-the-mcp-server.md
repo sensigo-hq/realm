@@ -712,7 +712,7 @@ Names this job reaches whose entry is on another page.
 - [`BufferedEntry`](implement-a-store.md#bufferedentry): An `AgentTraceEntry` with the engine's ordering timestamp in milliseconds, and the writer nonce that carried it, if any.
 - [`buildDisclosureSet`](run-and-drive-a-run.md#builddisclosureset): The one builder of a disclosure set: every surface builds its set here.
 - [`BY_SOURCE_CLASSES`](read-a-runs-record.md#by_source_classes): How a program's name is known.
-- [`BySourceClass`](read-a-runs-record.md#bysourceclass): How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or `derived` from the OS user and host name (`Attributed.by_source`).
+- [`BySourceClass`](read-a-runs-record.md#bysourceclass): How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, `derived` from the OS user and host name, or `key` from a server key the caller presented.
 - [`CACHE_AUTO_BASES`](read-a-runs-record.md#cache_auto_bases): On what `--prompt-cache auto` chose a request's cache lifetime (`UsageRecord.cache_auto.basis`).
 - [`CACHE_AUTO_PRICE_CAUSES`](read-a-runs-record.md#cache_auto_price_causes): Why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, with `from: 'none'`).
 - [`CACHE_AUTO_RATES`](read-a-runs-record.md#cache_auto_rates): The price-file rates the `auto` choice reads, in the order a `missing` list names them (the price file's own order).
