@@ -24,24 +24,24 @@ function claim(page: string, text: string): void {
 
 describe('C2c — the words, each held to its page', () => {
   it('1. --callback-allow <entry>  None  A receiver a request may name as its c', () => {
-    // Pinned by: listen-switch-c2c 'a real process: --callback-allow-private 10.0.0.5 and a key made first; a request for https://10.0.0.5/x registers; another host is not allowed'; the C2 door cells (callback_not_enabled without lists); C3 sends nothing yet: not built.
+    // Pinned by: listen-switch-c2c 'a real process: --callback-allow-private 10.0.0.5 and a key made first; a request for https://10.0.0.5/x registers; another host is not allowed'; the C2 door cells (callback_not_enabled without lists); C3c-2: the sending, listen-callback-c3b2 'the wake: …' and delivery-pass-c3a 'a failed and an abandoned run send their phase only, with the read address; never the read code'.
     claim(
       LISTEN,
-      '| `--callback-allow <entry>` | None | A receiver a request may name as its callback address, in its `realm-callback-url` header, reached on a public address: a host name or an IP address, with a port if it is not 443 (`http://` before it for a receiver on plain http). Give it once per receiver. Without this flag or `--callback-allow-private`, every request that names a callback address is refused `callback_not_enabled`. This version registers the address with the run and does not yet send a callback. See [`--callback-allow`](#--callback-allow). Added after version 0.50.0. |',
+      '| `--callback-allow <entry>` | None | A receiver a request may name as its callback address, in its `realm-callback-url` header, reached on a public address: a host name or an IP address, with a port if it is not 443 (`http://` before it for a receiver on plain http). Give it once per receiver. Without this flag or `--callback-allow-private`, every request that names a callback address is refused `callback_not_enabled`. When a run that was given such an address ends, `realm listen` sends its result there (a run that did not complete sends its phase only): see [Receive a callback](../../guides/webhooks.md#receive-a-callback). See [`--callback-allow`](#--callback-allow). Added after version 0.50.0. |',
     );
   });
   it('2. --callback-allow-private <entry>  None  As --callback-allow, for a rec', () => {
-    // Pinned by: listen-switch-c2c 'a real process: --callback-allow-private 10.0.0.5 and a key made first; a request for https://10.0.0.5/x registers; another host is not allowed'; the C2 door cells (callback_not_enabled without lists); C3 sends nothing yet: not built.
+    // Pinned by: listen-switch-c2c 'a real process: --callback-allow-private 10.0.0.5 and a key made first; a request for https://10.0.0.5/x registers; another host is not allowed'; the C2 door cells (callback_not_enabled without lists); C3c-2: the sending, listen-callback-c3b2 'the wake: …' and delivery-pass-c3a 'a failed and an abandoned run send their phase only, with the read address; never the read code'.
     claim(
       LISTEN,
-      '| `--callback-allow-private <entry>` | None | As `--callback-allow`, for a receiver that may also be on an address of this machine or of a private or shared network. Give it once per receiver. This version registers the address with the run and does not yet send a callback. See [`--callback-allow-private`](#--callback-allow-private). Added after version 0.50.0. |',
+      '| `--callback-allow-private <entry>` | None | As `--callback-allow`, for a receiver that may also be on an address of this machine or of a private or shared network. Give it once per receiver. When a run that was given such an address ends, `realm listen` sends its result there (a run that did not complete sends its phase only): see [Receive a callback](../../guides/webhooks.md#receive-a-callback). See [`--callback-allow-private`](#--callback-allow-private). Added after version 0.50.0. |',
     );
   });
   it('3. Each --callback-allow <entry> names one receiver that a request may gi', () => {
-    // Pinned by: listen-switch-c2c 'a real process: --callback-allow-private 10.0.0.5 and a key made first; a request for https://10.0.0.5/x registers; another host is not allowed'; allow-list.test (the entry forms); the C2 door cells; listen-switch-c2c 'two bad entries: the first, public list first; a repeated entry once; the two that can never work' (an IP entry refused at start); a host name taken as typed: executed by the reader, CB-C2C-RV-21 (no cell).
+    // Pinned by: listen-switch-c2c 'a real process: --callback-allow-private 10.0.0.5 and a key made first; a request for https://10.0.0.5/x registers; another host is not allowed'; allow-list.test (the entry forms); the C2 door cells; listen-switch-c2c 'two bad entries: the first, public list first; a repeated entry once; the two that can never work' (an IP entry refused at start); a host name taken as typed: executed by the reader, CB-C2C-RV-21 (no cell). C3c-2: the try's address check, delivery-pass-c3a 'every row of the table: 302 is redirect and a refused address refused_address, each one retry and one line; 699 is connection; a mark that does not apply says nothing'; the entry re-checked at every try, delivery-pass-c3a 'a row whose host is no longer on the lists ends not_allowed, with no POST'; the sending, listen-callback-c3b2 'the wake: …'.
     claim(
       LISTEN,
-      'Each `--callback-allow <entry>` names one receiver that a request may give as its callback address, in its `realm-callback-url` header. The entry is a host name or an IP address, with a port if it is not 443: `hooks.example.com`, `hooks.example.com:8443`, or `http://hooks.example.com:8080` for a receiver on plain http. An entry with `http://` allows `http` and `https` to that host and port; one without it allows `https` only. Upper and lower case name the same host. A callback address is allowed when its scheme, host and port match an entry. This flag is for receivers on public addresses: an entry that is an IP address of this machine or of a private or shared network is refused when `realm listen` starts, as below. A host name is taken as typed: this version does not check which address it leads to. Without this flag or `--callback-allow-private`, every request that names a callback address is refused `callback_not_enabled`. With either, `realm listen` reads its master key when it starts (see [The callback lines](#the-callback-lines)). This version registers the address with the run and does not yet send a callback. Added after version 0.50.0.',
+      'Each `--callback-allow <entry>` names one receiver that a request may give as its callback address, in its `realm-callback-url` header. The entry is a host name or an IP address, with a port if it is not 443: `hooks.example.com`, `hooks.example.com:8443`, or `http://hooks.example.com:8080` for a receiver on plain http. An entry with `http://` allows `http` and `https` to that host and port; one without it allows `https` only. Upper and lower case name the same host. A callback address is allowed when its scheme, host and port match an entry. This flag is for receivers on public addresses: an entry that is an IP address of this machine or of a private or shared network is refused when `realm listen` starts, as below. A host name is checked when a callback is sent: if it leads to a private, local or shared address, the try fails (`refused_address`) and is made again later. Without this flag or `--callback-allow-private`, every request that names a callback address is refused `callback_not_enabled`. With either, `realm listen` reads its master key when it starts (see [The callback lines](#the-callback-lines)). When a run that was given an allowed address ends, `realm listen` sends its result there (see [Receive a callback](../../guides/webhooks.md#receive-a-callback)). The entry is checked again at every try: one that is no longer listed ends the callback, which is then not sent. Added after version 0.50.0.',
     );
   });
   it('4. --callback-allow refuses a value that starts with -, except a lone -;', () => {
@@ -66,10 +66,10 @@ describe('C2c — the words, each held to its page', () => {
     );
   });
   it('7. The same as --callback-allow, for a receiver that may also be on an ad', () => {
-    // Pinned by: address.test (the classes, by value); listen-switch-c2c 'two bad entries: the first, public list first; a repeated entry once; the two that can never work'; allow-list.test (the same host in both lists counts as public).
+    // Pinned by: address.test (the classes, by value); listen-switch-c2c 'two bad entries: the first, public list first; a repeated entry once; the two that can never work'; allow-list.test (the same host in both lists counts as public). C3c-2: a host name leading to this machine is sent to, CB-C3C2-AU (localhost delivered with --callback-allow-private); the entry re-checked, delivery-pass-c3a 'a row whose host is no longer on the lists ends not_allowed, with no POST'.
     claim(
       LISTEN,
-      'The same as `--callback-allow`, for a receiver that may also be on an address of this machine (`127.0.0.1`) or of a private or shared network (`10.0.0.5`, `192.168.1.20`, `100.64.0.1`). Some addresses are refused whichever flag lists them: the unspecified address, the cloud metadata address, and link-local, multicast, reserved and documentation addresses. A host and port given with both flags counts as given with `--callback-allow`. This version registers the address with the run and does not yet send a callback. Added after version 0.50.0.',
+      'The same as `--callback-allow`, for a receiver that may also be on an address of this machine (`127.0.0.1`) or of a private or shared network (`10.0.0.5`, `192.168.1.20`, `100.64.0.1`). Some addresses are refused whichever flag lists them: the unspecified address, the cloud metadata address, and link-local, multicast, reserved and documentation addresses. A host and port given with both flags counts as given with `--callback-allow`. The same sending as for `--callback-allow`, and the same check at every try that the entry is still listed. A host name that leads to an address of this machine or of a private or shared network is sent to (the addresses named above are refused whichever flag lists them). Added after version 0.50.0.',
     );
   });
   it('8. --callback-allow-private refuses a value that starts with -, except a', () => {
@@ -87,10 +87,10 @@ describe('C2c — the words, each held to its page', () => {
     );
   });
   it('10. 7. Starts listening, logs what the agents it starts ask each provider', () => {
-    // Pinned by: listen-switch-c2c 'stale keys (one; six), a workflow without result_map that holds keys (not named), no workflow that takes callbacks, the order of the lines'.
+    // Pinned by: listen-switch-c2c 'stale keys (one; six), a workflow without result_map that holds keys (not named), no workflow that takes callbacks, the order of the lines'. C3c-2: the sender, listen-callback-c3b2 'off means off: no allow-list flag, or a store without callbacks, gives no timer, no pass and no key read; the lines are the base’s'.
     claim(
       LISTEN,
-      '7. Starts listening, logs what the agents it starts ask each provider to cache (`listen: caching`, added after version 0.47.0), with an allow-list flag logs the callback lines (below, added after version 0.50.0), and logs the address.',
+      '7. Starts listening, logs what the agents it starts ask each provider to cache (`listen: caching`, added after version 0.47.0), with an allow-list flag logs the callback lines (below, added after version 0.50.0), with an allow-list flag starts the callback sender (below), and logs the address.',
     );
   });
   it('11. With --callback-allow or --callback-allow-private, realm listen reads', () => {
@@ -122,10 +122,10 @@ describe('C2c — the words, each held to its page', () => {
     );
   });
   it('15. A source that is set but gives no key gets one warning, with its reaso', () => {
-    // Pinned by: the the start lines, each from a real start cells of listen-switch-c2c.
+    // Pinned by: the the start lines, each from a real start cells of listen-switch-c2c. C3c-2: the line a due callback says, delivery-pass-sqlite-c3a 'keys this process cannot read — sealed under another master key, or a home opened with no master key — and a pair with none: nothing claimed, nothing sent, one line per pair and master key'.
     claim(
       LISTEN,
-      'A source that is set but gives no key gets one warning, with its reason. `realm listen` starts anyway, says nothing about the keys, and refuses every allowed callback address `no_key` until the source is fixed.',
+      'A source that is set but gives no key gets one warning, with its reason. `realm listen` starts anyway, says nothing more about the keys at start (a callback that is due later says it once: see Sending callbacks), and refuses every allowed callback address `no_key` until the source is fixed.',
     );
   });
   it("16. For each workflow that takes callbacks and each allowed host: the key'", () => {

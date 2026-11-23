@@ -102,20 +102,20 @@ describe("callback K2c — core-library.md: the callbacks row's keys sentences (
     );
   });
   it("10. realm callback key uses keys; realm run purge reads a run's callbacks", () => {
-    // Pinned by: CB-K2C-AU-16 (purge.ts reads a run's callbacks row; callback-key.ts is the only user of keys).
+    // Pinned by: CB-K2C-AU-16 (purge.ts reads a run's callbacks row; callback-key.ts is the only user of keys). C3c-2: each caller, docs-callback-c3c2 '12. the callers the callbacks row names are the code's' (CB-C3C2-AU-14).
     claim(
       CORE,
-      "`realm callback key` uses `keys`; `realm listen` reads `keys` and registers a request's callback with its run; `realm run inspect` and `realm run purge` read a run's `callbacks` row, and purge removes it with the run. No other command uses the callback store yet.",
+      "`realm callback key` uses `keys`. `realm listen` uses `countPending`, `read` (a repeated event's lookup), the keys' `read` and `list`, `deleteAllForRun` (a run that did not start), and, to send, `due`, `claim`, `freezeBody` and `mark`; `realm run inspect` and the read address use `read`; `realm run purge` uses `read` (its hold), `statAllForRun` and `deleteAllForRun`.",
     );
   });
 });
 
 describe('callback K2c — realm-callback.md, the new page (E5)', () => {
   it('11. realm callback manages the key that a receiver, the program at the --h', () => {
-    // Pinned by: callback-key-k2a2 'print and make: the first run makes the master file and a key, the second prints the same key; --whsec'; the request: not built yet (C2, C3); correction 1: CB-K2C-RV-17, RV-24 (no callback is sent yet).
+    // Pinned by: callback-key-k2a2 'print and make: the first run makes the master file and a key, the second prints the same key; --whsec'; the request: not built yet (C2, C3); correction 1: CB-K2C-RV-17, RV-24. C3c-2: the signing, delivery-pass-sqlite-c3a 'end to end: one POST, the wire’s headers, the envelope, a signature that checks with the key `realm callback key` printed; the row delivered, its address and body gone'.
     claim(
       PAGE,
-      "`realm callback` manages the key that a receiver, the program at the `--host` address (n8n, for example), checks a callback's signature with. It has one subcommand, [`key`](#key). This version of Realm does not send a callback, so nothing is signed with these keys yet; this page covers only making and keeping them. The request is documented when Realm sends it. This page was added after version 0.50.0.",
+      "`realm callback` manages the key that a receiver, the program at the `--host` address (n8n, for example), checks a callback's signature with. It has one subcommand, [`key`](#key). `realm listen` signs every callback it sends with the key of that workflow and receiver (see [Receive a callback](../../guides/webhooks.md#receive-a-callback)); this page covers making and keeping the keys. This page was added after version 0.50.0.",
     );
   });
   it('12. A key belongs to one workflow and one receiver, a host and a port. Rea', () => {

@@ -2,7 +2,7 @@
 
 <!-- description: Reference for realm callback key, which makes, prints, rotates, replaces and deletes the key a receiver checks a callback's signature with, and for the master key that seals these keys: its four sources, the file Realm makes, and how to keep it. -->
 
-`realm callback` manages the key that a receiver, the program at the `--host` address (n8n, for example), checks a callback's signature with. It has one subcommand, [`key`](#key). This version of Realm does not send a callback, so nothing is signed with these keys yet; this page covers only making and keeping them. The request is documented when Realm sends it. This page was added after version 0.50.0.
+`realm callback` manages the key that a receiver, the program at the `--host` address (n8n, for example), checks a callback's signature with. It has one subcommand, [`key`](#key). `realm listen` signs every callback it sends with the key of that workflow and receiver (see [Receive a callback](../../guides/webhooks.md#receive-a-callback)); this page covers making and keeping the keys. This page was added after version 0.50.0.
 
 A key belongs to one workflow and one receiver, a host and a port. Realm keeps it in `realm.db`, sealed (encrypted) under a master key that is kept outside that file: a copy of `realm.db` alone shows no key.
 
@@ -45,6 +45,8 @@ The first line is a key's fingerprint, the second a master key file's. (On macOS
 Printing, making, rotating and replacing seal or open a key, so they need the master key. `--end-previous` alone and `--delete` never read it: a master key that is missing or wrong never stops you removing a key.
 
 Running it again prints the same key. Two runs at the same moment, for the same workflow and receiver, end with the same key.
+
+While the old key is kept after `--rotate`, `realm listen` signs each callback with both keys, the new key's signature first, so a receiver that has not yet been given the new key still checks it. Each try reads the keys afresh: a key made, rotated or ended here takes effect at the next try, with no restart.
 
 ```bash
 realm callback key ./my-workflow --host n8n.example.com --rotate --keep-previous 48
@@ -94,7 +96,7 @@ Realm runs the command each time `realm callback key` looks for the key (not for
 
 ## Keeping the master key
 
-`realm db backup` does not copy the master key: the copy has the keys, sealed, and not what opens them. Keep a copy of the master key somewhere safe, apart from your backups. If it is lost, or a store is restored on another machine without it, the stored keys cannot be read. Runs are not affected, only the keys: make each key again with `--replace` and give each receiver the new key.
+`realm db backup` does not copy the master key: the copy has the keys, sealed, and not what opens them. Keep a copy of the master key somewhere safe, apart from your backups. If it is lost, or a store is restored on another machine without it, the stored keys cannot be read. Runs are not affected, only the keys: make each key again with `--replace` and give each receiver the new key. A `realm listen` that cannot read the key for a workflow and receiver sends none of the callbacks that key signs: it says so at start and once more when one is due, and they wait.
 
 There is no command that seals the stored keys under a new master key. To keep the keys you have, put the same 64 characters in the new place (a file, a secret, a command's output) and set the setting that names it: nothing needs making again. To move to a new key, run `--delete` for each key (`realm db check` says how many are left), move `encryption.key` out of the home if it is there (while it holds a different key than your setting, Realm refuses to make or replace a key, and it never replaces the file itself), set the new master key, make each key again, and give each receiver the new key. Keep the old master key with the backups made before the move.
 
