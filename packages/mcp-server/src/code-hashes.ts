@@ -7,15 +7,17 @@
 // WHY A MAP. Node serves a module from its import cache for the life of the process, and jiti does
 // too, so the code that runs is the code as it was at its first successful import. Hashing the files
 // again after a rebuild would record bytes the process never loaded. So the map holds one hash per
-// file per process, shared by every workflow the process loads (#828 correction 1):
+// file per process, shared by every workflow the process loads (#828 corrections 1 and 2):
 // - a module's own file is hashed just before the loader first imports that module, even when a
 //   sweep of its folder already holds a hash for it, and that hash is final once the import succeeds;
 // - every other file keeps the first hash a sweep of its folder took;
 // - before each first import of a module its folder is swept, reusing every kept hash, and also when
 //   the map holds no sweep of that folder; the identity step never sweeps;
-// - when an import fails, what this load read in the failed module's folder is dropped, but the own
-//   file of each module whose import succeeded: Node reads the failed file again at the retry. Any
-//   other failure keeps everything, as a success does;
+// - when an import fails, the hashes this load read in the failed module's folder are dropped, but
+//   the own file of each module whose import succeeded: Node reads the failed file again at the
+//   retry. No folder's sweep changes: the map keeps the latest sweep any load took, as when every
+//   load succeeds, and the retry's first import sweeps the folder again. Any other failure keeps
+//   everything, as a success does;
 // - the signals are taken once per trust root, just before the first import that reads them.
 //
 // This module loads no code: no dynamic import, no module-require creation. It imports only `node:`
@@ -223,7 +225,10 @@ export interface CodeHashLoad {
   beforeImport(entry: string): void;
   /** `entry`'s import succeeded: its own hash is final for the process. */
   imported(entry: string): void;
-  /** `entry`'s import threw: this load's reads in its folder are dropped, but loaded modules' own files. */
+  /**
+   * `entry`'s import threw: this load's hashes in its folder are dropped, but loaded modules' own
+   * files. No folder's sweep changes.
+   */
   importFailed(entry: string): void;
   /** The entry hash for the identity (`undefined`: unreadable, so the identity reads it and fails). */
   entryHash(entry: string): string | undefined;
@@ -249,8 +254,6 @@ const within = (path: string, root: string): boolean =>
 class Load implements CodeHashLoad {
   /** The files this load hashed into the map: what a failed import in their folder drops. */
   private readonly read = new Set<string>();
-  /** The sweeps this load put in the map, with the sweep each replaced: what a failed import undoes. */
-  private readonly swept = new Map<string, FolderSweep | undefined>();
   /** Own-file hashes taken just before an import that has not succeeded yet. */
   private readonly own = new Map<string, FileHash | undefined>();
   private signalsTaken = false;
@@ -282,12 +285,6 @@ class Load implements CodeHashLoad {
       if (!within(path, root) || kept.modules.has(path)) continue;
       kept.files.delete(path);
       this.read.delete(path);
-    }
-    for (const [folder, before] of this.swept) {
-      if (!within(folder, root)) continue;
-      if (before === undefined) kept.folders.delete(folder);
-      else kept.folders.set(folder, before);
-      this.swept.delete(folder);
     }
   }
 
@@ -327,7 +324,6 @@ class Load implements CodeHashLoad {
   }
 
   private sweep(root: string): void {
-    if (!this.swept.has(root)) this.swept.set(root, kept.folders.get(root));
     kept.folders.set(
       root,
       sweepFolder(root, (path) => this.fileHash(path)),
