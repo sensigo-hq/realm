@@ -835,16 +835,20 @@ export interface RunEndingOptions {
  */
 function endedByWords(
   seal: SealedBy | undefined,
-): { who: string; whoVia: string; door: SealDoor | undefined } | undefined {
+): { who: string; whoVia: string; door: SealDoor | undefined; byKey: boolean } | undefined {
   if (seal?.by === undefined) return undefined;
   const read = readAttributed(seal.by);
   const door = (SEAL_DOORS as readonly unknown[]).includes(seal.door) ? seal.door : undefined;
-  if (read.by === null) return { who: UNSHOWABLE_NAME, whoVia: UNSHOWABLE_NAME, door };
+  if (read.by === null)
+    return { who: UNSHOWABLE_NAME, whoVia: UNSHOWABLE_NAME, door, byKey: false };
   const how = RECORDED_BY_SOURCE_WORDS[read.by_source];
   return {
     who: `${read.by} (${how})`,
     whoVia: `${read.by} (${how}, via ${read.channel})`,
     door,
+    // #625 PR-2b, named keys: the name of the server's key a caller presented. The server does not
+    // "run as" a key, so the abandon_run sentences name the key as who ended it.
+    byKey: read.by_source === 'key',
   };
 }
 
@@ -860,7 +864,9 @@ export function endedByLine(seal: SealedBy | undefined): string | undefined {
     case 'realm_run_abandon':
       return `Ended by: realm run abandon, by ${actor.who}`;
     case 'abandon_run':
-      return `Ended by: the assistant's abandon_run tool, on the Realm server running as ${actor.who}`;
+      return actor.byKey
+        ? `Ended by: the assistant's abandon_run tool, by ${actor.who}`
+        : `Ended by: the assistant's abandon_run tool, on the Realm server running as ${actor.who}`;
     case 'realm_run_cleanup':
       return `Ended by: realm run cleanup, run by ${actor.who}`;
     case undefined:
@@ -938,7 +944,9 @@ function endingWords(
         return `It was abandoned with 'realm run abandon', by ${actor.who}${tail}`;
       }
       if (actor.door === 'abandon_run') {
-        return `It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as ${actor.who}${tail}`;
+        return actor.byKey
+          ? `It was abandoned with the assistant's 'abandon_run' tool, by ${actor.who}${tail}`
+          : `It was abandoned with the assistant's 'abandon_run' tool, on the Realm server running as ${actor.who}${tail}`;
       }
       return `It was abandoned by ${actor.whoVia}${tail}`;
     }

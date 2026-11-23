@@ -326,6 +326,21 @@ export const POLL_CAP_MS = 300_000;
 /** #715 (b) (03 §C): which deadline set `poll_after_ms`. */
 export type PollReason = 'gate_expiry' | 'claim_deadline' | 'fixed';
 
+/**
+ * Every reason an `await` reply's `poll_reason` can give, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ */
+export const POLL_REASONS = [
+  'gate_expiry',
+  'claim_deadline',
+  'fixed',
+] as const satisfies readonly PollReason[];
+type MissingPollReasons = Exclude<PollReason, (typeof POLL_REASONS)[number]>;
+const _everyPollReasonsListed: [MissingPollReasons] extends [never] ? true : MissingPollReasons =
+  true;
+void _everyPollReasonsListed;
+
 /** #715 (b) (03 §C, D6-71): an `await` reply's pace — the interval, why, and the instant it names. */
 export interface Pace {
   poll_after_ms: number;
@@ -2822,13 +2837,15 @@ export const DOOR_FACTS = {
     RunHealthFinding
   >,
   // Q1 (#592) unit b: a failure's step is the author's name; its words and why it has none are
-  // realm's words (a newer Realm's word is carried as recorded and named in `unknown`).
+  // realm's words (a newer Realm's word is carried as recorded and named in `unknown`). Gap 2, unit
+  // (ii-b1): so is the failure's kind.
   failures: {
     step: 'author_literal',
     code: 'enum',
     category: 'enum',
     stop_reason: 'enum',
     agent_action: 'enum',
+    failure_kind: 'enum',
     absent: 'enum',
     unknown: 'enum',
   } satisfies FactProducers<

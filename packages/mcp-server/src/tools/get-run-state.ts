@@ -68,6 +68,8 @@ import {
   failureTextShape,
   terminalReasonHidingFailureText,
   abortMessageHidingFailureText,
+  carriesFailureWords,
+  isFailureWordsThrow,
   type RunRecord,
 } from '@sensigo/realm';
 import { mcpHostOf } from './start-run.js';
@@ -168,10 +170,16 @@ function notPriced(
   };
 }
 
-/** Issue #600 caching PR P: the price source for this run's view. Never throws. */
+/**
+ * Issue #600 caching PR P: the price source for this run's view. Never throws. Gap 2, unit (iv-b2b):
+ * under the failure-text setting `hidden`, a not-priced `detail` that is a failure's words — from a
+ * source the provider marked (its load failed on the project's code), or a throw the one rule calls
+ * one — is handed on as its shape, and each shape is kept in `shaped` for the receipt.
+ */
 async function priceSourceFor(
   stores: HandleRunStateStores | undefined,
   definition: WorkflowDefinition | undefined,
+  shaped: Set<string>,
 ): Promise<PriceSource> {
   const provider = stores?.priceSourceProvider;
   if (provider === undefined) return notPriced('no_price_source');
@@ -181,12 +189,73 @@ async function priceSourceFor(
       "the run's workflow copy could not be read, so its deployment root is unknown",
     );
   }
+  const hidden = stores?.door?.failureText.value === 'hidden';
   try {
-    return await provider(definition);
+    const source = await provider(definition);
+    return hidden && carriesFailureWords(source) ? detailShaped(source, shaped) : source;
   } catch (err) {
     if (isReleaseLineRefusal(err)) throw err;
-    return notPriced('economics_unreachable', err instanceof Error ? err.message : String(err));
+    const detail = err instanceof Error ? err.message : String(err);
+    if (!hidden || !isFailureWordsThrow(err, provider)) {
+      return notPriced('economics_unreachable', detail);
+    }
+    return detailShaped(notPriced('economics_unreachable', detail), shaped);
   }
+}
+
+/** Gap 2, unit (iv-b2b): `source` with each not-priced `detail` as its shape, kept in `shaped`. */
+function detailShaped(source: PriceSource, shaped: Set<string>): PriceSource {
+  return {
+    price: (input) => {
+      const result = source.price(input);
+      if (!('not_priced' in result) || result.detail === undefined) return result;
+      const shape = failureTextShape(result.detail);
+      shaped.add(shape);
+      return { ...result, detail: shape };
+    },
+  };
+}
+
+/**
+ * Gap 2, unit (iv-b2b): the paths, in the walk's own spelling, of `node`'s fields that hold a
+ * not-priced `detail` shown as its shape (one of `shaped`): down `table`'s nested rows to the
+ * `detail` itself, or to the row that is not a table and holds one (`steps`; a drive failure's
+ * `cost`), as the walk lists only the rows it meets.
+ */
+function shapedDetailPaths(
+  node: unknown,
+  table: Readonly<Record<string, DisclosureClass>>,
+  path: string,
+  shaped: ReadonlySet<string>,
+): string[] {
+  if (Array.isArray(node)) {
+    return node.flatMap((child, i) => shapedDetailPaths(child, table, `${path}[${i}]`, shaped));
+  }
+  if (typeof node !== 'object' || node === null) return [];
+  return Object.entries(node).flatMap(([key, child]) => {
+    const at = path === '' ? key : `${path}.${key}`;
+    const row = Object.hasOwn(table, key) ? table[key] : undefined;
+    if (typeof row === 'object' && 'nested' in row) {
+      const nested = typeof row.nested === 'function' ? row.nested(child) : row.nested;
+      return shapedDetailPaths(child, nested, at, shaped);
+    }
+    const holds =
+      table === NOT_PRICED_TABLE && key === 'detail'
+        ? typeof child === 'string' && shaped.has(child)
+        : holdsShapedDetail(child, shaped);
+    return holds ? [at] : [];
+  });
+}
+
+/** Whether `node` holds, at any depth, a not-priced entry whose `detail` is one of `shaped`. */
+function holdsShapedDetail(node: unknown, shaped: ReadonlySet<string>): boolean {
+  if (Array.isArray(node)) return node.some((child) => holdsShapedDetail(child, shaped));
+  if (typeof node !== 'object' || node === null) return false;
+  return Object.entries(node).some(([key, child]) =>
+    key === 'not_priced' && Array.isArray(child)
+      ? child.some((entry) => shaped.has((entry as { detail?: string }).detail ?? ''))
+      : holdsShapedDetail(child, shaped),
+  );
 }
 
 // Q1 (#592) d1: the `next_actions_status` words are core's (`NEXT_ACTIONS_STATUS`); the type's name
@@ -496,6 +565,8 @@ export const RUN_STATE_SUMMARY_TABLE = {
       category: 'fact',
       stop_reason: 'fact',
       agent_action: 'fact',
+      // Gap 2, unit (ii-b1): the failure's kind, a closed word: a fact, also under `hidden`.
+      failure_kind: 'fact',
       attempt: 'fact',
       message: 'bounded',
       unknown: 'fact',
@@ -639,8 +710,8 @@ export interface RunStateSummary {
   sealed_by_step?: string;
   /**
    * #625 PR-2b, the actor unit: the program that ended the run, as its seal records it — its name,
-   * how the name is known (`stated`, `ambient` from REALM_OPERATOR, `derived` from the OS user) and
-   * its channel. Recorded by `realm run abandon`, `realm run cleanup` and this server's `abandon_run`
+   * how the name is known (`stated`, `ambient` from REALM_OPERATOR, `derived` from the OS user, `key`
+   * from a `realm serve` named key the caller presented) and its channel. Recorded by `realm run abandon`, `realm run cleanup` and this server's `abandon_run`
    * when a name is known. A name that cannot be read is `{ by: null, absent_cause: 'name_unreadable' }`.
    * Absent — never null — when the seal names no program. Realm names a program, never a person; on
    * this surface the name is masked as environment values are: the part of it that matches an
@@ -893,9 +964,9 @@ function loadFailureWarning(
   hideFailureText = false,
 ): string {
   const message = err instanceof Error ? err.message : String(err);
-  // Gap 2, unit (iv-b1) correction 1: under the failure-text setting `hidden`, the text the project's
-  // code threw while loading is a failure's words: its shape, N its length as thrown, in Realm's
-  // sentence; the code stays.
+  // Gap 2, unit (iv-b1) correction 1, narrowed by (iv-b2b): a throw the door's rule marked as a
+  // failure's words (the project's code threw while loading) shows as its shape, N its length as
+  // thrown, in Realm's sentence; the code stays, and so does a sentence Realm wrote about the project.
   const shown = hideFailureText ? failureTextShape(message) : escapedBoundedValue(message);
   return `this server could not load the project code for workflow '${workflowId}' (${code === 'uncoded' ? 'no error code' : code}): ${shown}; no step can be run or advanced from this server until it loads.`;
 }
@@ -1255,8 +1326,9 @@ export async function handleGetRunState(
         registry = undefined;
         if (stores?.registryProvider !== undefined) {
           loadFailed = err instanceof WorkflowError ? err.code : 'uncoded';
-          warnings.push(loadFailureWarning(run.workflow_id, loadFailed, err, hideFailureText));
-          if (hideFailureText) loadWarningShaped = true;
+          const words = hideFailureText && carriesFailureWords(err);
+          warnings.push(loadFailureWarning(run.workflow_id, loadFailed, err, words));
+          if (words) loadWarningShaped = true;
         }
       }
       pending = describePending(definition, snap, registry);
@@ -1365,7 +1437,10 @@ export async function handleGetRunState(
   }
 
   // issue #600 caching PR P: the run's prices, resolved only when the view is asked for.
-  const priceSource = asked ? await priceSourceFor(stores, viewDefinition) : undefined;
+  const shapedDetails = new Set<string>();
+  const priceSource = asked
+    ? await priceSourceFor(stores, viewDefinition, shapedDetails)
+    : undefined;
 
   // issue #221: the SAME shared classifyRunHealth predicate the three READ surfaces (get_run_state,
   // list --stuck, inspect) derive from — computed definition-aware when the workflow resolved
@@ -1442,7 +1517,7 @@ export async function handleGetRunState(
    * issue #367 (part 2), AUTHORIZED: this is an envelope ECHO of a stored value, not a writer.
    * Nothing here reaches a store — the object is the MCP response shape.
    */
-  return {
+  return withShapedDetailPaths(shapedDetails, {
     run_id: run.id,
     workflow_id: run.workflow_id,
     // issue #279 (increment 2, PR-C — D-3 leg vi): render the DERIVED phase, never the persisted
@@ -1590,7 +1665,18 @@ export async function handleGetRunState(
     ...(warnings.length > 0 ? { warnings } : {}),
     // Gap 2, unit (iv-b1): what this composer shaped, for the receipt (never serialized).
     ...(shapedPaths.length > 0 ? { [FAILURE_TEXT_SHAPED]: shapedPaths } : {}),
-  };
+  });
+}
+
+/** Gap 2, unit (iv-b2b): `reply` with the paths of its shaped not-priced details, for the receipt. */
+function withShapedDetailPaths(
+  shaped: ReadonlySet<string>,
+  reply: WithPersonBlock<RunStateSummary>,
+): WithPersonBlock<RunStateSummary> {
+  const paths =
+    shaped.size > 0 ? shapedDetailPaths(reply, RUN_STATE_SUMMARY_TABLE, '', shaped) : [];
+  if (paths.length === 0) return reply;
+  return { ...reply, [FAILURE_TEXT_SHAPED]: [...(reply[FAILURE_TEXT_SHAPED] ?? []), ...paths] };
 }
 
 /** Registers the get_run_state MCP tool on the server. */

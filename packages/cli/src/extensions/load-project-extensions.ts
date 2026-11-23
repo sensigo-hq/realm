@@ -48,6 +48,9 @@ import {
   manifestSecretsBlockHash,
   disclose,
   unmaskableWarning,
+  noteFailureWords,
+  carriesFailureWords,
+  noteRealmProvider,
 } from '@sensigo/realm';
 import type {
   LoaderWarning,
@@ -749,8 +752,9 @@ async function applyDeploymentManifest(
         // with the original's name; never the raw error.
         const cause = new Error(maskDeclared(errMsg(err)));
         cause.name = err instanceof Error ? err.name : 'Error';
-        // eslint-disable-next-line preserve-caught-error -- the caught error, redacted: a raw cause prints the secret
-        throw new Error(redacted, { cause });
+        // Gap 2, unit (iv-b2b): the factory's own words, marked as a failure's words (same object).
+        // The cause is the caught error redacted: a raw cause prints the secret.
+        throw noteFailureWords(new Error(redacted, { cause }));
       }
 
       probeShape(instance, section.type, PROBE_MEMBERS[section.type], name, {
@@ -980,9 +984,12 @@ async function importModuleNamespace(
     try {
       namespace = (await import(pathToFileURL(resolvedPath).href)) as Record<string, unknown>;
     } catch (err) {
-      throw new Error(`Failed to import module '${label}' (${resolvedPath}): ${errMsg(err)}`, {
-        cause: err,
-      });
+      // Gap 2, unit (iv-b2b): what the module threw at import, marked as a failure's words.
+      throw noteFailureWords(
+        new Error(`Failed to import module '${label}' (${resolvedPath}): ${errMsg(err)}`, {
+          cause: err,
+        }),
+      );
     }
   }
   let format: 'esm' | 'cjs' | 'ts-jiti' = isTypescript
@@ -1073,9 +1080,12 @@ async function importViaJiti(
       return { default: required };
     }
   } catch (err) {
-    throw new Error(`Failed to import TypeScript module '${label}' via jiti: ${errMsg(err)}`, {
-      cause: err,
-    });
+    // Gap 2, unit (iv-b2b): what the module threw under jiti, marked as a failure's words.
+    throw noteFailureWords(
+      new Error(`Failed to import TypeScript module '${label}' via jiti: ${errMsg(err)}`, {
+        cause: err,
+      }),
+    );
   }
   throw new Error(
     `Unrecognized 'jiti' package shape at '${jitiPath}' — upgrade jiti in your project, or ` +
@@ -1088,7 +1098,10 @@ function safeGet(obj: object, key: string, context: string): unknown {
   try {
     return (obj as Record<string, unknown>)[key];
   } catch (err) {
-    throw new Error(`${context}: reading '${key}' threw: ${errMsg(err)}`, { cause: err });
+    // Gap 2, unit (iv-b2b): what the module's getter threw, marked as a failure's words.
+    throw noteFailureWords(
+      new Error(`${context}: reading '${key}' threw: ${errMsg(err)}`, { cause: err }),
+    );
   }
 }
 
@@ -1270,21 +1283,26 @@ export function makeProjectProviders(
     pending.set(definition, { from, promise });
     return promise;
   };
+  // Gap 2, unit (iv-b2b): both are Realm's own providers, so a throw the loader did not mark is
+  // Realm's own sentence; a load that failed on the project's code marks the price source it gives.
   return {
-    registryProvider: async (definition) => (await shared(definition, 'registry')).registry,
-    priceSourceProvider: async (definition) => {
+    registryProvider: noteRealmProvider(
+      async (definition: WorkflowDefinition) => (await shared(definition, 'registry')).registry,
+    ),
+    priceSourceProvider: noteRealmProvider(async (definition: WorkflowDefinition) => {
       let loaded: LoadedProjectExtensions;
       try {
         loaded = await shared(definition, 'prices');
       } catch (err) {
         const result = { not_priced: 'economics_unreachable' as const, detail: errMsg(err) };
-        return { price: () => result };
+        const source: PriceSource = { price: () => result };
+        return carriesFailureWords(err) ? noteFailureWords(source) : source;
       }
       const { loadPriceSource } = await import('@sensigo/realm-mcp');
       return loadPriceSource(
         loaded.cacheEconomicsPath !== undefined ? { economicsPath: loaded.cacheEconomicsPath } : {},
       );
-    },
+    }),
   };
 }
 

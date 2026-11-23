@@ -19,6 +19,7 @@ import { storeReleaseLineLaw } from './store-release-line-law.js';
 import {
   WorkflowError,
   SCAN_MAX_PAGE_SIZE,
+  readAttributed,
   type Attributed,
   type ClaimRecord,
   type EvidenceSnapshot,
@@ -99,6 +100,9 @@ import {
  * on an `auto` step of a workflow with finalizer steps), written in the claim's own write, and a
  * claim with a string deadline carries no cause; each reads back from `get`. The law makes its own
  * three workflows, and is skipped for a store that keeps no claims.
+ * #625 PR-2b, named keys, adds `CLAIM_HOLDER_KEEPS_KEY_SOURCE`: a claim taken for a caller that
+ * presented one of `realm serve`'s named keys reads back, through core's reader, with
+ * `by_source: 'key'`.
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -126,6 +130,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'RECORD_KEEPS_MODEL_ATTEMPTS',
   'EVIDENCE_KEEPS_FAILURE_KIND',
   'CLAIM_KEEPS_DEADLINE_CAUSE',
+  'CLAIM_HOLDER_KEEPS_KEY_SOURCE',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -302,6 +307,8 @@ const TCK_DIAGNOSTICS_STATES: readonly CacheDiagnostics[] = [
 
 /** The program the holder laws name — a synthetic label, never a real host or user. */
 const TCK_CLAIMANT: Attributed = { by: 'tck-program', by_source: 'stated', channel: 'tck' };
+/** #625 PR-2b, named keys: a claim taken for a caller of `realm serve` that presented a named key. */
+const KEY_CLAIMANT: Attributed = { by: 'ana-laptop', by_source: 'key', channel: 'mcp-http' };
 
 /**
  * `CLAIM_NAMES_HOLDER`'s one assertion: the step's claim carries a `since` inside the bracket
@@ -1351,6 +1358,40 @@ export function runStoreFidelityContract(
     cases.push({
       law: 'CLAIM_NAMES_HOLDER',
       name: "SKIPPED — store does not declare 'persistsClaims': claim holder round-trip",
+      skipped: true,
+      run: async () => {
+        // Intentional no-op — see the case name for why.
+      },
+    });
+  }
+
+  // #625 PR-2b, named keys — CLAIM_HOLDER_KEEPS_KEY_SOURCE (framework §5 E1: a widened value set gets
+  // a law). A claim taken for a caller that presented one of `realm serve`'s named keys reads back,
+  // through core's reader, with how the name is known — `key` — never as a name that cannot be shown.
+  if (adapter.store.persistsClaims === true) {
+    cases.push({
+      law: 'CLAIM_HOLDER_KEEPS_KEY_SOURCE',
+      name: "a claim taken for a server key's caller reads back, through core's reader, with by_source 'key'",
+      run: async () => {
+        const { record: run } = await adapter.store.create({
+          workflowId: `tck-key-${Math.random().toString(36).slice(2)}`,
+          workflowVersion: 1,
+          params: {},
+        });
+        await adapter.store.claimStep(run.id, adapter.stepName, adapter.definition, KEY_CLAIMANT);
+        const claim = (await adapter.store.get(run.id)).record.claims?.[adapter.stepName];
+        const read = readAttributed(claim?.holder);
+        if (!isDeepStrictEqual(read, KEY_CLAIMANT)) {
+          throw new Error(
+            `CLAIM_HOLDER_KEEPS_KEY_SOURCE: the claim's holder reads back as ${JSON.stringify(read)}, not ${JSON.stringify(KEY_CLAIMANT)}`,
+          );
+        }
+      },
+    });
+  } else {
+    cases.push({
+      law: 'CLAIM_HOLDER_KEEPS_KEY_SOURCE',
+      name: "SKIPPED — store does not declare 'persistsClaims': a key holder's round-trip",
       skipped: true,
       run: async () => {
         // Intentional no-op — see the case name for why.

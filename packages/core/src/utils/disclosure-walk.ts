@@ -679,6 +679,24 @@ export interface DisclosureReceipt {
   members?: string[];
 }
 
+/**
+ * Every word a disclosure receipt's `question` can hold, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ */
+export const DISCLOSURE_QUESTIONS = [
+  'declared_only',
+  'withheld',
+] as const satisfies readonly NonNullable<DisclosureReceipt['question']>[];
+type MissingDisclosureQuestions = Exclude<
+  NonNullable<DisclosureReceipt['question']>,
+  (typeof DISCLOSURE_QUESTIONS)[number]
+>;
+const _everyDisclosureQuestionsListed: [MissingDisclosureQuestions] extends [never]
+  ? true
+  : MissingDisclosureQuestions = true;
+void _everyDisclosureQuestionsListed;
+
 /** Builds the receipt for a walk's tally over `set`. */
 export function disclosureReceipt(set: DisclosureSet, tally: DisclosureTally): DisclosureReceipt {
   return {

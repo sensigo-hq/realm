@@ -456,14 +456,14 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
     expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
   });
 
-  it('lines 132–134, the driver rows: by 1–200 characters, not only spaces, no control character; by_source stated, ambient or derived; channel 1–64 of [a-z0-9_-] — taken and written as driven_by, or refused naming the field', async () => {
+  it('lines 132–134, the driver rows: by 1–200 characters, not only spaces, no control character; by_source stated, ambient, derived or key; channel 1–64 of [a-z0-9_-] — taken and written as driven_by, or refused naming the field', async () => {
     claim(
       PAGE,
       '| `by` | The name: text of 1 to 200 characters, not only spaces, with no control character. |',
     );
     claim(
       PAGE,
-      '| `by_source` | How the name is known: `stated` (your program says it), `ambient` (from the environment, as `REALM_OPERATOR` is) or `derived` (from the OS user). |',
+      '| `by_source` | How the name is known: `stated` (your program says it), `ambient` (from the environment, as `REALM_OPERATOR` is), `derived` (from the OS user) or `key` (the name of a `realm serve` key the caller presented; added after version 0.50.0). |',
     );
     claim(
       PAGE,
@@ -473,6 +473,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       { by: 'n', by_source: 'stated', channel: 'cron' },
       { by: 'n'.repeat(200), by_source: 'ambient', channel: 'a'.repeat(64) },
       { by: 'Ana B', by_source: 'derived', channel: 'z_0-9' },
+      { by: 'ana-laptop', by_source: 'key', channel: 'mcp-http' },
     ] as const;
     for (const driver of taken) {
       const { record: run } = await store.create({
@@ -500,7 +501,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       ],
       [
         { by: 'n', by_source: 'typed', channel: 'cron' },
-        'Invalid driver.by_source: not one of stated, ambient, derived.',
+        'Invalid driver.by_source: not one of stated, ambient, derived, key.',
       ],
       [
         { by: 'n', by_source: 'stated', channel: '' },

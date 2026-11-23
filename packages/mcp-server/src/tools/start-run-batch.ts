@@ -43,6 +43,7 @@ import { assertToolStores, markServedByTool, registryRole } from './assert-tool-
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
 import { boundedLines, boundedRefusal, moreUnmetSteps } from './refusal-format.js';
 import { noRunState } from './no-run-state.js';
+import { workflowErrorOfThrown } from './thrown-error.js';
 
 /**
  * Z3 (the zod 4 unit): the most items one `start_run_batch` call may carry — the hard ceiling above
@@ -420,15 +421,7 @@ export function registerStartRunBatch(
             audience: 'agent',
             table: MCP_ENVELOPE_TABLE,
           });
-        const workflowErr =
-          err instanceof WorkflowError
-            ? err
-            : new WorkflowError(err instanceof Error ? err.message : String(err), {
-                code: 'ENGINE_INTERNAL',
-                category: 'ENGINE',
-                agentAction: 'stop',
-                retryable: false,
-              });
+        const workflowErr = workflowErrorOfThrown(err);
         const contextHint =
           workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
             ? `Workflow '${args.workflow_id}' not found.`
