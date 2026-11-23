@@ -61,6 +61,7 @@
       "failures[].category": "0.50.0",
       "failures[].stop_reason": "0.50.0",
       "failures[].agent_action": "0.50.0",
+      "failures[].failure_kind": "0.50.0",
       "failures[].attempt": "0.50.0",
       "failures[].message": "0.50.0",
       "failures[].unknown": "0.50.0",
@@ -350,7 +351,8 @@
         "code": "0.50.0",
         "category": "0.50.0",
         "stop_reason": "0.50.0",
-        "agent_action": "0.50.0"
+        "agent_action": "0.50.0",
+        "failure_kind": "0.50.0"
       },
       "failures[].absent": {
         "written_before_failure_words": "0.50.0",

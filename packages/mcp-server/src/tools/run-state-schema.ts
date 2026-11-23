@@ -257,6 +257,7 @@ const OK_SHAPE = {
       category: z.string().optional(),
       stop_reason: z.string().optional(),
       agent_action: z.string().optional(),
+      failure_kind: z.string().optional(),
       attempt: z.number().optional(),
       message: z.string().optional(),
       unknown: z.array(openWord(FAILURE_UNKNOWN_WORDS)).optional(),
