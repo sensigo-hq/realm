@@ -258,7 +258,7 @@ describe('Q1 (#592) unit f2 — check 6: the words, each held to its page', () =
     // (a) red when a word of it changes on the page; (b) prints the text.
     claim(
       HEALTH,
-      '`evidence.deadline_absent` then says why there is no time limit — `step_not_auto`, `finalizer_bearing`, `not_recorded` for a claim written before this field was added or by a store that does not write it, or the word another store wrote (added after version 0.50.0).',
+      '`evidence.deadline_absent` then says why there is no time limit — `step_not_auto`, `finalizer_bearing`, `not_recorded` (a claim written before this field was added or by a store that does not write it, or a step in progress with no claim record), or the word another store wrote (added after version 0.50.0).',
     );
   });
   it('6. the law row', () => {
