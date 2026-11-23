@@ -84,6 +84,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - get_run_state's steps page and the run's cost count no longer count a reclaim's audit entry as an attempt.
+- The project code's hashes (each module's entry file, its folder's files and the signals) are now taken in the process that loads the code, before it loads it: a module's own file just before it first loads, the other files when a sweep of their folder first finds them, the signals once. A long-running server now records the files as it loaded them, not as they are later, with three exceptions listed under "What a run records" in the project-extensions reference; after a module's import fails, its folder is read again when it is retried (#828).
 - check_quotes reads each character by Unicode's rules: an invisible character or a mark can no longer split a number or a word, U+FEFF is invisible like a zero-width space, a spacing accent between two digits joins them, the sets of capitals, lowercase letters, spaces and line breaks follow Unicode's properties in every plane, the list, opening and closing marks follow Unicode's punctuation classes with a short named list, and initialisms such as U.S. do not end a sentence (#845).
 
 ## [0.50.0] — 2026-11-17
