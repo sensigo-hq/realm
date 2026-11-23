@@ -79,6 +79,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`BY_SOURCE_CLASSES`](#by_source_classes) | const | How a program's name is known. |
 | [`CACHE_AUTO_BASES`](#cache_auto_bases) | const | On what `--prompt-cache auto` chose a request's cache lifetime (`UsageRecord.cache_auto.basis`). |
 | [`CACHE_AUTO_PRICE_CAUSES`](#cache_auto_price_causes) | const | Why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, with `from: 'none'`). |
+| [`CACHE_AUTO_PRICE_EXCLUSIONS`](#cache_auto_price_exclusions) | const | Every lifetime the `auto` choice can exclude from the price file (`CacheAutoPrices.excluded`), in the type's order. |
 | [`CACHE_AUTO_PRICES_FROM_WORDS`](#cache_auto_prices_from_words) | const | Every place the `auto` cache choice can take its prices from (`CacheAutoPrices.from`), in the type's order. |
 | [`CACHE_AUTO_RATES`](#cache_auto_rates) | const | The price-file rates the `auto` choice reads, in the order a `missing` list names them (the price file's own order). |
 | [`CACHE_BASES`](#cache_bases) | const | How a cache number is known: reported by the provider, or not observable (`StepCacheDetail.basis`). |
@@ -1470,6 +1471,22 @@ const CACHE_AUTO_PRICE_CAUSES: readonly [
     "model_unknown",
     "input_zero",
     "rate_missing"
+];
+```
+
+### CACHE_AUTO_PRICE_EXCLUSIONS
+
+const · public
+
+Every lifetime the `auto` choice can exclude from the price file (`CacheAutoPrices.excluded`), in
+the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d2b).
+
+```ts
+const CACHE_AUTO_PRICE_EXCLUSIONS: readonly [
+    "short",
+    "long"
 ];
 ```
 
