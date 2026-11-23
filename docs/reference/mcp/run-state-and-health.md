@@ -501,23 +501,25 @@ The file describes both replies: the run's state, and a refusal (for example, th
 
 A program that reads the reply must accept a word it does not know in any list, and a key it does not know in any object. For a word it does not know, it acts as for the most cautious word of that list:
 
-| The list                                                                                            | What a word it does not know means                      |
-| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `next_actions_status`                                                                               | Act as for `report_to_user`.                            |
-| `agent_action`                                                                                      | Act as for `report_to_user`.                            |
-| `stop_reason`, `exhausted_by`                                                                       | Act as for `non_retryable`: do not retry.               |
-| `error_code`, `error_category`                                                                      | The error is not retryable: report it.                  |
-| `run_phase`                                                                                         | Read `terminal_state` for whether the run ended.        |
-| `run_health[].kind`                                                                                 | A finding to show the person.                           |
-| `stuck_claims[].state`                                                                              | The step is stuck.                                      |
-| A status word                                                                                       | Not a success.                                          |
-| A skip's `kind` or `rule`                                                                           | The step did not run.                                   |
-| A drive failure's `error_class`                                                                     | The drive failed.                                       |
-| A seal arm (`sealed_by_arm`)                                                                        | How the run ended is not verified.                      |
-| `poll_reason`                                                                                       | Poll as for `fixed`.                                    |
-| `on_expiry`                                                                                         | The question may end without an answer: ask the person. |
-| The receipt's words (`declared`, `declared_cause`, `environment`, `question`)                       | Treat the value as withheld or unverified.              |
-| An absence cause, an admission word or a class word (`absent_cause`, `admitted_by`, `by_source`, …) | The fact is unknown.                                    |
+| The list                                                                                                                         | What a word it does not know means                      |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `next_actions_status`                                                                                                            | Act as for `report_to_user`.                            |
+| `agent_action`                                                                                                                   | Act as for `report_to_user`.                            |
+| `failures[].stop_reason` (and `exhausted_by` inside a drive failure's `model_attempts`, described loosely until a later release) | Act as for `non_retryable`: do not retry.               |
+| `error_code` (`basis.enactor`'s, and a refusal's), `failures[].code`, `failures[].category`                                      | The error is not retryable: report it.                  |
+| `run_phase`                                                                                                                      | Read `terminal_state` for whether the run ended.        |
+| `run_health[].kind`                                                                                                              | A finding to show the person.                           |
+| `stuck_claims[].state`                                                                                                           | The step is stuck.                                      |
+| A status word                                                                                                                    | Not a success.                                          |
+| A skip's `kind` or `rule`                                                                                                        | The step did not run.                                   |
+| A drive failure's `error_class`                                                                                                  | The drive failed.                                       |
+| A seal arm (`sealed_by_arm`)                                                                                                     | How the run ended is not verified.                      |
+| `poll_reason`                                                                                                                    | Poll as for `fixed`.                                    |
+| `on_expiry`                                                                                                                      | The question may end without an answer: ask the person. |
+| The receipt's words (`declared`, `declared_cause`, `environment`, `question`)                                                    | Treat the value as withheld or unverified.              |
+| An absence cause, an admission word or a class word (`absent_cause`, `admitted_by`, `by_source`, …)                              | The fact is unknown.                                    |
+
+Where the reply types a field as a plain string, the file says so; the rule still applies to the word it carries.
 
 `docs/reference/mcp/run-state.added-after.json` says the release each field and each word arrived after: `"0.50.0"` marks what was there when the file was first published. A path in it is dotted keys, with `[]` for a list's entries and `.*` for a map's values (`steps.*.attempts[].status`), and `described_loosely` names the fields the schema does not yet describe in full. It is a file of its own because a validator in strict mode, Ajv's default, refuses a keyword it does not know, so a release marker inside the schema would stop such a client from using it.
 

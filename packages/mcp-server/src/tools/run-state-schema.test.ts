@@ -728,15 +728,16 @@ const NO_UNKNOWN_WORD = [
 
 /** The SDK's own validator, as its client builds it (`validation/ajv-provider.js`). */
 const sdkValidator = () => new AjvJsonSchemaValidator();
-/** A strict Ajv (Ajv's defaults: unknown keywords refused at compile), the one the SDK ships:
- *  the draft-07 class for the wire's rendering, the 2020-12 class for the file. */
+/** An Ajv a client builds itself, the one the SDK ships: the draft-07 class for the wire's
+ *  rendering, the 2020-12 class for the file. At Ajv's defaults an unknown keyword is refused at
+ *  compile; at `{ strict: true }` a `type` array (`["number", "string"]`) is refused too. */
 const sdkRequire = createRequire(
   createRequire(import.meta.url).resolve('@modelcontextprotocol/sdk/validation/ajv'),
 );
-type AjvClass = new () => { compile(schema: object): unknown };
-const strictAjv = (draft2020: boolean): { compile(schema: object): unknown } => {
+type AjvClass = new (options?: object) => { compile(schema: object): unknown };
+const ajvOf = (draft2020: boolean, options: object = {}): { compile(schema: object): unknown } => {
   const mod = sdkRequire(draft2020 ? 'ajv/dist/2020' : 'ajv') as { default: AjvClass };
-  return new mod.default();
+  return new mod.default(options);
 };
 /** Validates `value` against `schema` with the SDK's validator; the errors when it fails. */
 function errorsOf(schema: Json, value: unknown): string | undefined {
@@ -781,14 +782,21 @@ const PAGE_SECTION = [
   "`get_run_state`'s reply is described by `docs/reference/mcp/run-state.schema.json` in the repository, a JSON Schema (draft 2020-12) built from the same word lists the engine uses, so the file and the code cannot drift: a test regenerates it and fails when they differ. Every list in it is open and every object accepts a key it does not know. The cost view (`steps.*.attempts[].cost`, `steps.*.total`, `run_cost`, `drive_failure_costs[].cost`, and a drive failure's `usage` and `model_attempts`) is described loosely until a later release. Added after version 0.50.0.",
   "The file describes both replies: the run's state, and a refusal (for example, the run is not found). Every field in it is kept under the rule of [Compatibility](../compatibility.md), so a new word or field is never a breaking change. When Realm withholds values (the receipt's `values` is `withheld`), a number or true/false inside `steps` can arrive as its shape, a string such as `‹number›`; the schema allows it.",
   'A program that reads the reply must accept a word it does not know in any list, and a key it does not know in any object. For a word it does not know, it acts as for the most cautious word of that list:',
+  'Where the reply types a field as a plain string, the file says so; the rule still applies to the word it carries.',
   "`docs/reference/mcp/run-state.added-after.json` says the release each field and each word arrived after: `\"0.50.0\"` marks what was there when the file was first published. A path in it is dotted keys, with `[]` for a list's entries and `.*` for a map's values (`steps.*.attempts[].status`), and `described_loosely` names the fields the schema does not yet describe in full. It is a file of its own because a validator in strict mode, Ajv's default, refuses a keyword it does not know, so a release marker inside the schema would stop such a client from using it.",
 ];
 const CONSUMER_TABLE = [
   ['The list', 'What a word it does not know means'],
   ['`next_actions_status`', 'Act as for `report_to_user`.'],
   ['`agent_action`', 'Act as for `report_to_user`.'],
-  ['`stop_reason`, `exhausted_by`', 'Act as for `non_retryable`: do not retry.'],
-  ['`error_code`, `error_category`', 'The error is not retryable: report it.'],
+  [
+    "`failures[].stop_reason` (and `exhausted_by` inside a drive failure's `model_attempts`, described loosely until a later release)",
+    'Act as for `non_retryable`: do not retry.',
+  ],
+  [
+    "`error_code` (`basis.enactor`'s, and a refusal's), `failures[].code`, `failures[].category`",
+    'The error is not retryable: report it.',
+  ],
   ['`run_phase`', 'Read `terminal_state` for whether the run ended.'],
   ['`run_health[].kind`', 'A finding to show the person.'],
   ['`stuck_claims[].state`', 'The step is stuck.'],
@@ -976,7 +984,7 @@ describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
     );
   });
 
-  it('(e)(i) #2614: the file and the wire rendering compile with the SDK validator and with a strict Ajv', () => {
+  it('(e)(i) #2614: the file and the wire rendering compile with the SDK validator, with Ajv at its defaults and with Ajv at strict', () => {
     const compiles = (compile: () => unknown): string => {
       try {
         compile();
@@ -985,16 +993,21 @@ describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
         return err instanceof Error ? err.message : String(err);
       }
     };
-    // (a) red when the tree carries a keyword a strict validator refuses (`.meta()`), or cannot be
-    //     rendered (`z.date()`); (b) prints each validator's error.
+    // (a) red when the tree carries a keyword a strict validator refuses (`.meta()`), a `type` array
+    //     strict mode refuses (`.or(z.string())` on a number), or cannot be rendered (`z.date()`);
+    //     (b) prints each validator's error.
     expect({
       sdkFile: compiles(() => sdkValidator().getValidator(file())),
       sdkWire: compiles(() => sdkValidator().getValidator(wire())),
-      strictFile: compiles(() => strictAjv(true).compile(file())),
-      strictWire: compiles(() => strictAjv(false).compile(wire())),
+      defaultFile: compiles(() => ajvOf(true).compile(file())),
+      defaultWire: compiles(() => ajvOf(false).compile(wire())),
+      strictFile: compiles(() => ajvOf(true, { strict: true }).compile(file())),
+      strictWire: compiles(() => ajvOf(false, { strict: true }).compile(wire())),
     }).toEqual({
       sdkFile: 'compiles',
       sdkWire: 'compiles',
+      defaultFile: 'compiles',
+      defaultWire: 'compiles',
       strictFile: 'compiles',
       strictWire: 'compiles',
     });

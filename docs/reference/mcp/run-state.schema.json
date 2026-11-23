@@ -1421,9 +1421,14 @@
                   "type": "object",
                   "properties": {
                     "attempt": {
-                      "type": [
-                        "number",
-                        "string"
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                        }
                       ]
                     },
                     "status": {
@@ -1451,9 +1456,14 @@
                       ]
                     },
                     "cost_unreadable": {
-                      "type": [
-                        "boolean",
-                        "string"
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "string",
+                          "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                        }
                       ]
                     },
                     "driven_by": {

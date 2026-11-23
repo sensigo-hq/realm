@@ -56,10 +56,14 @@ function openWord<const T extends readonly [string, ...string[]]>(words: T) {
 /**
  * A number or true/false under a field the reply's disclosure table marks `bounded` (`steps`): when
  * the door withholds values (the receipt's `values` is `withheld`) it arrives as its shape, a string
- * such as `‹number›` or `‹boolean›`, so the schema admits a string beside it.
+ * such as `‹number›` or `‹boolean›`, so the schema admits a string beside it. The string carries a
+ * description so zod renders `anyOf` (a bare `.or(z.string())` folds into `type: [number, string]`,
+ * which Ajv in strict mode refuses to load).
  */
 function withholdable<T extends z.ZodNumber | z.ZodBoolean>(leaf: T) {
-  return leaf.or(z.string());
+  return leaf.or(
+    z.string().describe('Its shape, such as ‹number› or ‹boolean›, when Realm withholds values.'),
+  );
 }
 
 /** The cost view's placeholders (d2b describes them): an object, and a list. */
