@@ -1618,7 +1618,20 @@ describe('locateQuote — correction 3, 01: the start rule, rev 3 (labels, accep
     ['line break: after a line ending `?`, onto a capital', '?\n', CAPITAL, 'stitched'],
     ['line break: after a line ending `;`, onto a lowercase word', ';\n', LOWER, 'stitched'],
     ['line break: after a line ending `:`, onto a lowercase word', ':\n', LOWER, 'stitched'],
-    ['line break: after a line ending `|`, onto a lowercase word', ' |\n', LOWER, 'stitched'],
+    // #845 1b-i (M6w) re-pin: a `|` ends a table row only when its line holds another `|`; a prose
+    // line ending a lone `|` ends nothing (main: `stitched`).
+    [
+      'line break: after a prose line ending a lone `|`, onto a lowercase word',
+      ' |\n',
+      LOWER,
+      'not_found',
+    ],
+    [
+      'line break, twin: after a table row ending `|`, onto a lowercase word',
+      ' | x |\n',
+      LOWER,
+      'stitched',
+    ],
     ['line break, twin: after a line ending a word', ' and\n', CAPITAL, 'not_found'],
     ['line break, twin: after a line ending `,`', ',\n', CAPITAL, 'not_found'],
     [

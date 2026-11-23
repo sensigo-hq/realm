@@ -1248,13 +1248,25 @@ function listMarkBack(source: string, at: number): number {
 /** How a line counts as a line start, by its kind (`lineStart`). */
 type LineStart = 'free' | 'sentence' | 'blank';
 
+/** #845 (M6w): whether the line whose `|` sits at `bar` holds another `|` before it — a table
+ *  row's end, never a prose line that happens to end with one. */
+function holdsAnotherBar(source: string, bar: number): boolean {
+  for (let k = bar - 1; k >= 0; k--) {
+    const c = source[k]!;
+    if (c === '|') return true;
+    if (LINE_BREAKS.has(c)) return false;
+  }
+  return false;
+}
+
 /** How a line ends, read back from `p`, its last character past spaces and invisible characters:
- *  `clause` with `;`, `:` or `|` (a table row's end), `sentence` with `.` `!` `?` under L1's test,
- *  `undefined` with anything else. Closing marks before the end are walked past. */
+ *  `clause` with `;`, `:` or `|` (a table row's end: the line holds another `|`, #845 M6w),
+ *  `sentence` with `.` `!` `?` under L1's test, `undefined` with anything else. Closing marks before
+ *  the end are walked past. */
 function lineEnding(source: string, p: Step): 'clause' | 'sentence' | undefined {
   while (isClosingMark(p.c)) p = stepBack(source, p.at);
   const c = p.c;
-  if (c === ';' || c === ':' || c === '|') return 'clause';
+  if (c === ';' || c === ':' || (c === '|' && holdsAnotherBar(source, p.at))) return 'clause';
   if ((c === '.' && !endsAbbreviation(source, p.at)) || c === '!' || c === '?') return 'sentence';
   return undefined;
 }

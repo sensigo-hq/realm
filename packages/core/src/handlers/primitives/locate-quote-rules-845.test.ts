@@ -1571,3 +1571,31 @@ describe('#845 1b-i check 4: B3, a blank line inside a sentence', () => {
     expect(misses(rows)).toEqual([]);
   });
 });
+
+describe('#845 1b-i check 5: M6w — a `|` ends a table row only when its line holds another `|`', () => {
+  it('items3 rows 62 and 63: a prose line ending a lone `|` is no line start; a table row is', () => {
+    const F = SHALL_F;
+    const second = 'the Tenant shall pay the insurance rent';
+    const rows: Row[] = [
+      [
+        'items3 62: a prose line ending a lone `|`',
+        lq(
+          `${F} … ${second}`,
+          `${F} for its full reinstatement cost or |\n${second} at the end of each year.`,
+        ).state,
+        'not_found',
+      ],
+      [
+        'items3 63: a table row `| … | x |`',
+        lq(
+          `${F} … ${second}`,
+          `| ${F} for its full reinstatement cost | x |\n${second} at the end of each year.`,
+        ).state,
+        'stitched',
+      ],
+    ];
+    // (1) red when the condition is removed (a lone `|` ends a line again) or a table row stops
+    //     ending one; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
