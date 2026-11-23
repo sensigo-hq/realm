@@ -13,8 +13,10 @@
 // else, and `described_loosely` = the placeholders; (e) three checks from bugs the MCP SDK shipped:
 // (i) #2614 the file and the wire rendering compile with the SDK's validator and a strict Ajv,
 // (ii) #2464 real replies, as the wire carries them, validate, also with an unknown word in every
-// list and an unknown key in every object, (iii) #2748 real refusals validate against the refusal
-// arm and the file, and the ok arm rejects them.
+// list and an unknown key in every object, and when the door withholds values (a number or
+// true/false inside `steps` arrives as its shape), (iii) #2748 real refusals validate against the
+// refusal arm and the file, and the ok arm rejects them; (f) the page's section, its consumer
+// table, the compatibility sentence and the CHANGELOG line, word for word.
 //
 // TO REGENERATE (a change made on purpose — a new field or word): give it its release in
 // `RUN_STATE_ADDED_AFTER`, then `npm run build` and `npm run docs:schema` (from the repository root),
@@ -773,6 +775,43 @@ function withUnknowns(reply: Json, nodes: Map<string, Json[]>) {
   return { reply: visit(reply, '') as Json, ...counts };
 }
 
+// ─── The words a reader reads (item 4) ──────────────────────────────────────────────────────────
+
+const PAGE_SECTION = [
+  "`get_run_state`'s reply is described by `docs/reference/mcp/run-state.schema.json` in the repository, a JSON Schema (draft 2020-12) built from the same word lists the engine uses, so the file and the code cannot drift: a test regenerates it and fails when they differ. Every list in it is open and every object accepts a key it does not know. The cost view (`steps.*.attempts[].cost`, `steps.*.total`, `run_cost`, `drive_failure_costs[].cost`, and a drive failure's `usage` and `model_attempts`) is described loosely until a later release. Added after version 0.50.0.",
+  "The file describes both replies: the run's state, and a refusal (for example, the run is not found). Every field in it is kept under the rule of [Compatibility](../compatibility.md), so a new word or field is never a breaking change. When Realm withholds values (the receipt's `values` is `withheld`), a number or true/false inside `steps` can arrive as its shape, a string such as `‹number›`; the schema allows it.",
+  'A program that reads the reply must accept a word it does not know in any list, and a key it does not know in any object. For a word it does not know, it acts as for the most cautious word of that list:',
+  "`docs/reference/mcp/run-state.added-after.json` says the release each field and each word arrived after: `\"0.50.0\"` marks what was there when the file was first published. A path in it is dotted keys, with `[]` for a list's entries and `.*` for a map's values (`steps.*.attempts[].status`), and `described_loosely` names the fields the schema does not yet describe in full. It is a file of its own because a validator in strict mode, Ajv's default, refuses a keyword it does not know, so a release marker inside the schema would stop such a client from using it.",
+];
+const CONSUMER_TABLE = [
+  ['The list', 'What a word it does not know means'],
+  ['`next_actions_status`', 'Act as for `report_to_user`.'],
+  ['`agent_action`', 'Act as for `report_to_user`.'],
+  ['`stop_reason`, `exhausted_by`', 'Act as for `non_retryable`: do not retry.'],
+  ['`error_code`, `error_category`', 'The error is not retryable: report it.'],
+  ['`run_phase`', 'Read `terminal_state` for whether the run ended.'],
+  ['`run_health[].kind`', 'A finding to show the person.'],
+  ['`stuck_claims[].state`', 'The step is stuck.'],
+  ['A status word', 'Not a success.'],
+  ["A skip's `kind` or `rule`", 'The step did not run.'],
+  ["A drive failure's `error_class`", 'The drive failed.'],
+  ['A seal arm (`sealed_by_arm`)', 'How the run ended is not verified.'],
+  ['`poll_reason`', 'Poll as for `fixed`.'],
+  ['`on_expiry`', 'The question may end without an answer: ask the person.'],
+  [
+    "The receipt's words (`declared`, `declared_cause`, `environment`, `question`)",
+    'Treat the value as withheld or unverified.',
+  ],
+  [
+    'An absence cause, an admission word or a class word (`absent_cause`, `admitted_by`, `by_source`, …)',
+    'The fact is unknown.',
+  ],
+];
+const COMPATIBILITY_SENTENCE =
+  "The shape of `get_run_state`'s reply — every field and every word — is published as a JSON Schema in the repository, `docs/reference/mcp/run-state.schema.json`, built from the same lists the engine uses; every list in it is open and every object accepts a key it does not know, so a new word or field is never a breaking change. Added after version 0.50.0.";
+const CHANGELOG_LINE =
+  "- **`get_run_state`'s reply has a published schema.** `docs/reference/mcp/run-state.schema.json` describes every field and word of the reply, built from the same lists the engine uses, so the file and the code cannot drift (a test regenerates it). Every list in it is open and every object accepts a key it does not know: a new word or field is never a breaking change. `run-state.added-after.json` says the release each field and word arrived after, and the page says what a program does with a word it does not know. The cost view is described loosely until a later release.";
+
 describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
   it('(a) the committed files are the script output, from the committed sidecar and from none; a second run changes nothing', () => {
     const kept = runOn(committed(SIDECAR), true);
@@ -1030,5 +1069,39 @@ describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
     );
     // The arms are the module's: the refusal one renders as the file's second arm.
     expect(RUN_STATE_REFUSAL).toBeDefined();
+  });
+  it('(f) the words: the section, the consumer table, the compatibility sentence and the CHANGELOG line, word for word', () => {
+    const page = readFileSync(join(ROOT, 'docs/reference/mcp/run-state-and-health.md'), 'utf8');
+    const from = page.indexOf('\n## The schema\n');
+    const section = page.slice(from, page.indexOf('\n## See also\n', from));
+    const count = (text: string, words: string) => text.split(words).length - 1;
+    const rows = section
+      .split('\n')
+      .filter((l) => l.startsWith('| ') && !l.startsWith('| ---'))
+      .map((l) =>
+        l
+          .split('|')
+          .slice(1, -1)
+          .map((c) => c.trim()),
+      );
+    // (a) red when a word of the section, a cell of the table, the compatibility sentence or the
+    //     changelog line changes, or the section moves after "See also"; (b) prints the counts and
+    //     the table's cells.
+    expect({
+      before: from > 0 && from < page.indexOf('\n## See also\n'),
+      section: PAGE_SECTION.map((p) => count(section, `\n${p}\n`)),
+      rows,
+      compatibility: count(
+        readFileSync(join(ROOT, 'docs/reference/compatibility.md'), 'utf8'),
+        `\n${COMPATIBILITY_SENTENCE}\n`,
+      ),
+      changelog: count(readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8'), `\n${CHANGELOG_LINE}\n`),
+    }).toEqual({
+      before: true,
+      section: PAGE_SECTION.map(() => 1),
+      rows: CONSUMER_TABLE,
+      compatibility: 1,
+      changelog: 1,
+    });
   });
 });
