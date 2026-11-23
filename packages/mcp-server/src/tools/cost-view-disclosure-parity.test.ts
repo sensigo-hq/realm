@@ -1049,6 +1049,13 @@ describe('#625 PR-H — context 3b, get_run_state.step_claims and the answer', (
           'not a holder-slice field: a stale or unknown-age claim reaches a runner as stuck_claims ' +
           '(its state), never as the deadline itself',
       },
+      // Q1 (#592) f2: why a claim has no time limit.
+      deadline_absent: {
+        surface: 'waived',
+        reason:
+          "not a holder-slice field: it reaches a runner on the run-health finding's evidence, " +
+          'never on the cost view',
+      },
       token: {
         surface: 'waived',
         reason:
@@ -1143,7 +1150,8 @@ describe('#625 PR-H — context 3b, get_run_state.step_claims and the answer', (
         .filter(([, r]) => r.surface === 'waived')
         .map(([f]) => f)
         .sort(),
-    ).toEqual(['deadline', 'lease', 'token']);
+      // Q1 (#592) f2: and why a claim has no time limit, which the cost view does not show either.
+    ).toEqual(['deadline', 'deadline_absent', 'lease', 'token']);
     for (const registry of [ATTRIBUTED, ANSWER_VIEW] as Array<Record<string, DisclosureRoute>>) {
       expect(Object.values(registry).filter((r) => r.surface === 'waived')).toEqual([]);
     }

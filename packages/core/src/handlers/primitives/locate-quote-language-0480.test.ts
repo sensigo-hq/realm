@@ -23,6 +23,12 @@ import { canonicalForm, canonicalMap, locateQuote } from './locate-quote.js';
 
 const ch = String.fromCodePoint;
 const hex = (c: number): string => `U+${c.toString(16).toUpperCase().padStart(4, '0')}`;
+/** #845 (R-C1): the 13 Prepend format characters, which the invisible set leaves out (visible number
+ *  signs; the module's `PREPEND_SIGNS`, copied: it is not exported). */
+const PREPEND = [
+  0x0600, 0x0601, 0x0602, 0x0603, 0x0604, 0x0605, 0x06dd, 0x070f, 0x0890, 0x0891, 0x08e2, 0x110bd,
+  0x110cd,
+];
 const state = (quote: string, source: string): string => locateQuote(quote, source).state;
 /** Every code point in `from`–`to` (surrogates skipped) that `re` matches. */
 const codePoints = (re: RegExp, from = 0, to = 0x10ffff): number[] => {
@@ -230,8 +236,13 @@ describe('the language unit §2: a visible mark stays with its letter', () => {
     }
     // (a) red, `missing`: when marks after a letter are dropped; `carried`: under no break of this
     //     unit (a control); (b) prints the count swept and each mark that reads otherwise.
-    expect({ swept: VISIBLE.length > 2_200, missing: found, carried: notFound }).toEqual({
-      swept: true,
+    // #845 check 9: the guard prints the count it checks when it fails, never `false`
+    expect({
+      swept: VISIBLE.length > 2_200 ? 'more than 2200' : VISIBLE.length,
+      missing: found,
+      carried: notFound,
+    }).toEqual({
+      swept: 'more than 2200',
       missing: [],
       carried: [],
     });
@@ -300,7 +311,11 @@ describe('the language unit §3: a match never splits a character, and its edges
     ).map(hex);
     // (a) red when the needle's first character is not read past its own leading marks (each reads
     //     `exact`); (b) prints the count and each mark that reads otherwise.
-    expect({ count: INVISIBLE.length > 250, open }).toEqual({ count: true, open: [] });
+    // #845 check 9: the guard prints the count it checks when it fails, never `false`
+    expect({ count: INVISIBLE.length > 250 ? 'more than 250' : INVISIBLE.length, open }).toEqual({
+      count: 'more than 250',
+      open: [],
+    });
   });
 
   it('the read after a match steps past every mark, the needle’s last character past its own: a quote ending inside a word is `not_found`; `The fee is 1\u0336` in `1\u0336,000` stays `exact` (#845’s R-A2)', () => {
@@ -491,7 +506,8 @@ describe('the language unit §4: an Arabic or Hebrew vowel mark the quote leaves
     //     reads by code point instead of code unit (`astral`: `not_found`), or tatweel is no base;
     //     (b) prints the count outside the ranges, each mark that reads otherwise, and the states.
     expect({
-      outside: OUTSIDE.length > 90,
+      // #845 check 9: the guard prints the count it checks when it fails, never `false`
+      outside: OUTSIDE.length > 90 ? 'more than 90' : OUTSIDE.length,
       arabic,
       hebrew,
       tatweel: state('ومما رزقنـهم ينفقون', 'وَمِمَّا رَزَقۡنَـٰهُمۡ يُنفِقُونَ'),
@@ -500,7 +516,7 @@ describe('the language unit §4: an Arabic or Hebrew vowel mark the quote leaves
         source.slice(astral.parts[0]?.start, astral.parts[0]?.end) === 'كَتَبَ الطالب',
       ],
     }).toEqual({
-      outside: true,
+      outside: 'more than 90',
       arabic: [],
       hebrew: [],
       tatweel: 'reformatted',
@@ -531,13 +547,15 @@ describe('the language unit §4: an Arabic or Hebrew vowel mark the quote leaves
       ['Syriac + an Arabic fatha', state('ܡܠܟܐ', 'ܗܢܐ ܡ\u064eܠܟܐ ܗܘ'), 'not_found'],
       ['Thaana + U+07A6', state('ދވ', 'މި ދ\u07a6ވ އެވެ'), 'not_found'],
       ['Thaana + a fatha', state('ދވ', 'މި ދ\u064eވ އެވެ'), 'not_found'],
-      ['٣٥ / ٣\u064e٥', state('العدد ٣٥', 'العدد ٣\u064e٥'), 'not_found'],
+      // #845 (R-D) re-pin: a mark on a digit leaves before the number rules, so `٣َ٥` reads `٣٥` and
+      // the whole number reads `reformatted`; the base test no longer decides this row
+      ['٣٥ / ٣\u064e٥', state('العدد ٣٥', 'العدد ٣\u064e٥'), 'reformatted'],
       ['NEW-7 Hindi', state('काम', 'यह कम है'), 'not_found'],
       ['NEW-7 Thai', state('ไม่', 'ไม้'), 'not_found'],
     ];
     // (a) red when the per-letter check is removed (the wrong vowels read found), the base limit is
-    //     removed (the Latin, Devanagari, Thai, Syriac and Thaana rows read found), `\p{L}` leaves the
-    //     base test (`٣٥` reads `reformatted`), or marks are looked up by a piece's bare text (the
+    //     removed (the Latin, Devanagari, Thai, Syriac and Thaana rows read found), a mark on a digit
+    //     is kept again (`٣٥` reads `not_found`), or marks are looked up by a piece's bare text (the
     //     repeated piece reads `stitched`); (b) prints each differing row's label and state.
     expect(misses(rows)).toEqual([]);
   });
@@ -574,7 +592,7 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
     // sweeps below
     claimOn(
       HANDLERS,
-      "- In Chinese, Japanese and Thai text, a quote must be a whole run, between spaces, punctuation, symbols or the text's ends (an invisible format character joins the runs beside it, U+FEFF excepted, as the `exact` row says): part of a run reads `not_found`. A reformatted quote of a run that only a punctuation mark or a symbol the check sets aside joins to another run (`。` `、` `，` `「` `」` `,` `.` `★` …, with no space beside it) reads `not_found` too; a character Unicode turns into a space and a mark (`´`, `゛`) counts as a space. Quoted character for character, the run reads `exact`, and a number in it follows the number rule above. Word boundaries for these scripts are designed later.",
+      "- In Chinese, Japanese and Thai text, a quote must be a whole run, between spaces, punctuation, symbols or the text's ends (an invisible character joins the runs beside it, as the `exact` row says): part of a run reads `not_found`. A reformatted quote of a run that only a punctuation mark or a symbol the check sets aside joins to another run (`。` `、` `，` `「` `」` `,` `.` `★` …, with no space beside it) reads `not_found` too; a spacing accent (`´`, `゛`) counts as such a punctuation mark, except next to a digit, and except the 15 that are letters, which join the runs beside them. Quoted character for character, the run reads `exact`, and a number in it follows the number rule above. Word boundaries for these scripts are designed later.",
     );
     // (a) red when a sentence's example reads otherwise; (b) prints the states.
     expect({
@@ -610,7 +628,8 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
       number: state('价格100', '价格100,200元'),
       betweenSpaces: state(Q, `他说 ${R} 好`),
       afterIdeographicSpace: state(Q, `他说\u3000${R}`),
-      // U+FEFF reads as a space, the run copied character for character or reformatted
+      // #845 (R-C1) re-pin: U+FEFF is invisible, so it joins the runs like U+200B, the run copied
+      // character for character or reformatted
       afterFeff: [state(R, `他说\ufeff${R}`), state(Q, `他说\ufeff${R}`)],
       afterPercent: state(Q, `他说%${R}`),
       stopThenEnd: state(Q, `他说 ${R}。`),
@@ -630,17 +649,18 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
       number: 'not_found',
       betweenSpaces: 'reformatted',
       afterIdeographicSpace: 'reformatted',
-      afterFeff: ['reformatted', 'reformatted'],
+      afterFeff: ['not_found', 'not_found'],
       afterPercent: 'reformatted',
       stopThenEnd: 'reformatted',
       stopThenSpace: 'reformatted',
       exactBetweenStops: 'exact',
     });
-    // C3's sweeps, computed as the running Node reads Unicode (2,691, 35, 25 and 42 on Node 24.21):
+    // C3's sweeps, computed as the running Node reads Unicode (2,691, 35, 25 and 32 on Node 24.21):
     // (A) every BMP punctuation mark or symbol the check sets aside, but those Unicode turns into a
-    // space and a mark, joins the runs; (A′) those it turns into a space and a mark do not; (B) no
-    // whitespace joins them; (C) every BMP format character but U+FEFF joins them, the run copied
-    // character for character.
+    // space and a mark, joins the runs; (A′) #845 (R-D3) re-pin: those it turns into a space and a
+    // mark (the spacing accents) join them too, dropped like punctuation; (B) no whitespace
+    // (`\p{White_Space}`, #845) joins them; (C) #845 (R-C1) re-pin: every BMP format character but
+    // the 13 Prepend signs joins them, U+FEFF included, the run copied character for character.
     const setAside = codePoints(/^[\p{P}\p{S}]$/u, 0, 0xffff).filter(
       (c) => canonicalForm(ch(c)) === '',
     );
@@ -661,19 +681,19 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
         'not_found',
         2_600,
       ),
-      'A′': sweep(setAside.filter(spaced), Q, 'reformatted', 30),
-      B: sweep(codePoints(/^\s$/u, 0, 0xffff), Q, 'reformatted', 25),
+      'A′': sweep(setAside.filter(spaced), Q, 'not_found', 30),
+      B: sweep(codePoints(/^\p{White_Space}$/u, 0, 0xffff), Q, 'reformatted', 25),
       C: sweep(
-        codePoints(/^\p{Cf}$/u, 0, 0xffff).filter((c) => c !== 0xfeff),
+        codePoints(/^\p{Cf}$/u, 0, 0xffff).filter((c) => !PREPEND.includes(c)),
         R,
         'not_found',
-        40,
+        30,
       ),
     }).toEqual({
       A: { swept: 'at least 2600', otherwise: [] },
       'A′': { swept: 'at least 30', otherwise: [] },
       B: { swept: 'at least 25', otherwise: [] },
-      C: { swept: 'at least 40', otherwise: [] },
+      C: { swept: 'at least 30', otherwise: [] },
     });
   });
 

@@ -87,7 +87,13 @@ import {
   type NotCarriedOnReason,
 } from './holder.js';
 import { answererOf } from './step-view.js';
-import { buildGuardDelta, renderFailCause, failureMessagesWithOverlay } from './settlement.js';
+import {
+  buildGuardDelta,
+  renderFailCause,
+  failureMessagesWithOverlay,
+  handlerAbortHint,
+} from './settlement.js';
+import { failureTextShape, noteFailureText } from './failure-text.js';
 import type {
   SettleStepDelta,
   SettlementResult,
@@ -3623,6 +3629,8 @@ async function executeStepBody(
 
   let output: Record<string, unknown> = {};
   let dispatchError: WorkflowError | null = null;
+  // Gap 2, unit (iv-b2a): the retry wrap core minted, when it wrapped (its details are core's own).
+  let retryWrapError: WorkflowError | null = null;
   // issue #220 PR-2: true iff THIS invocation settles the step via its declared default_output
   // substitution (exhaustion armed above AND the step opted into mode: 'default') — computed once,
   // function-scoped (not inside the `if (bypassDispatch)` block below, which closes long before
@@ -3881,7 +3889,8 @@ async function executeStepBody(
               `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
             ];
           }
-          return {
+          const abortHint = handlerAbortHint(options.command, abortMessage);
+          const abortReply: EngineReply = {
             command: options.command,
             run_id: options.runId,
             run_version: finalSnap.record.version,
@@ -3890,11 +3899,22 @@ async function executeStepBody(
             evidence: [abortEvidence],
             warnings: mergeWarnings(traceWarnings, ...reArmWarnings, ...drainWarnings),
             errors: [],
-            context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
+            context_hint: abortHint,
             run_phase: finalSnap.record.run_phase,
             reply_kind: 'ok',
             ...ways(finalSnap),
           };
+          // Gap 2, unit (iv-b2a): the abort's message is the handler's words; the mark, on the
+          // reply's `basis` (it has no `error`), carries the span core wrote and its shaped twin.
+          if (abortReply.basis !== undefined) {
+            noteFailureText(abortReply.basis, {
+              abort: {
+                text: abortHint,
+                shaped: handlerAbortHint(options.command, failureTextShape(abortMessage)),
+              },
+            });
+          }
+          return abortReply;
         }
 
         attemptOutput = callResult.output;
@@ -4333,6 +4353,7 @@ async function executeStepBody(
           },
         },
       );
+      retryWrapError = dispatchError;
       if (lastSnap !== undefined) lastSnap.agent_action = dispatchError.agentAction;
     }
   }
@@ -4672,6 +4693,25 @@ async function executeStepBody(
       },
       result,
     );
+    // Gap 2, unit (iv-b2a): which of this reply's text is a failure's words, for the door. The
+    // dispatch arm (the retry wrap included) and the model-failure arm are; #220's armed exhaustion
+    // (VALIDATION_EXHAUSTED) is a refusal of the assistant's answer and is never marked.
+    if (exhaustion === null && failedReply.error !== undefined) {
+      noteFailureText(failedReply.error, {
+        message: dispatchError.message,
+        ...(failedReply.error_details !== undefined
+          ? {
+              details: {
+                object: failedReply.error_details,
+                words:
+                  dispatchError === retryWrapError || dispatchError === modelFailureError
+                    ? 'last_error'
+                    : 'failing_code',
+              },
+            }
+          : {}),
+      });
+    }
     judgedOn(failedReply, finalSnap);
     return failedReply;
   }

@@ -1,0 +1,1300 @@
+{
+  "about": "#845 1a-i correction 1, check 2 (GROUNDING): each group's canonicalMap (text, from, to) as read at acafed92, before the fix, as digests (the first 32 hex digits of SHA-256 over the JSON). `in` is the digest of the group's inputs, so the test checks it builds the same inputs. Recorded by plans/issue-845/unit1a/ia4/correction-1/record-accent-runs.mjs (run, not committed).",
+  "recorded_from": "acafed92517155f2026318f554497a44b687d095",
+  "node": "v24.21.0",
+  "unicode": "17.0",
+  "accents": [
+    "U+00A8",
+    "U+00AF",
+    "U+00B4",
+    "U+00B8",
+    "U+02D8",
+    "U+02D9",
+    "U+02DA",
+    "U+02DB",
+    "U+02DC",
+    "U+02DD",
+    "U+037A",
+    "U+0384",
+    "U+0385",
+    "U+1FBD",
+    "U+1FBF",
+    "U+1FC0",
+    "U+1FC1",
+    "U+1FCD",
+    "U+1FCE",
+    "U+1FCF",
+    "U+1FDD",
+    "U+1FDE",
+    "U+1FDF",
+    "U+1FED",
+    "U+1FEE",
+    "U+1FFD",
+    "U+1FFE",
+    "U+2017",
+    "U+203E",
+    "U+309B",
+    "U+309C",
+    "U+FC5E",
+    "U+FC5F",
+    "U+FC60",
+    "U+FC61",
+    "U+FC62",
+    "U+FC63",
+    "U+FE49",
+    "U+FE4A",
+    "U+FE4B",
+    "U+FE4C",
+    "U+FE70",
+    "U+FE72",
+    "U+FE74",
+    "U+FE76",
+    "U+FE78",
+    "U+FE7A",
+    "U+FE7C",
+    "U+FE7E",
+    "U+FFE3"
+  ],
+  "groups": {
+    "U+00A8 digits": {
+      "in": "c5188992935e5a219d9b23d4f51290b8",
+      "out": "a28dbb972bf6331dc0a9e5b6a1899269"
+    },
+    "U+00A8 after_digit": {
+      "in": "58bd8bb5b0474cb8a16768e1383a66a5",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+00A8 before_digit": {
+      "in": "0a8c190ad42b94110877761536b6175c",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+00A8 letters": {
+      "in": "ea36c0e99addc87e08b58151c01b04e0",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+00A8 start": {
+      "in": "c51a2d493f76b7efb1290f9f81e78403",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+00A8 end": {
+      "in": "e76f991c6b5730688955f9f14d975c2a",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+00AF digits": {
+      "in": "46b4f75bc286415d963e8522bd62f14a",
+      "out": "04b4e509a44d07a551223460fbcc767e"
+    },
+    "U+00AF after_digit": {
+      "in": "4639e7a34ddbd3a9c884e3e9d6672e48",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+00AF before_digit": {
+      "in": "d052eb875ea37754721d7d43c684c10d",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+00AF letters": {
+      "in": "dd9814f27a63cd725e3e1147073d62e5",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+00AF start": {
+      "in": "48c0dd2d9b1131bce1e01dd67afa41b1",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+00AF end": {
+      "in": "def54ce13be3ed223e390c3cb913dc71",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+00B4 digits": {
+      "in": "f82d5e06704fd310f423271e6ee251b2",
+      "out": "a852baa7743601d92ac06b85783c4cee"
+    },
+    "U+00B4 after_digit": {
+      "in": "2ef21b40ee0929b56edfa91621173c29",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+00B4 before_digit": {
+      "in": "3db09b4f7f609cab439438feb933135f",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+00B4 letters": {
+      "in": "09c46e1ee5d75a81a19d9bff9e67eba6",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+00B4 start": {
+      "in": "b04a8342883e933937ea83689b8444ea",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+00B4 end": {
+      "in": "b70d4d73f046604ba47e60425c55f413",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+00B8 digits": {
+      "in": "bb76c5b9106b2bd97f3cd6df031bd65e",
+      "out": "26aea76756328f926b5c18df2f4a33df"
+    },
+    "U+00B8 after_digit": {
+      "in": "e138bcbf65a5240ba2eecf70e2ea1a0e",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+00B8 before_digit": {
+      "in": "69b303b82514b9ec54680836f47fdfb4",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+00B8 letters": {
+      "in": "1ccf6fe57d65ee6697516d50af4ff72b",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+00B8 start": {
+      "in": "fb249681a5097fa0a14ea856ba31cb15",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+00B8 end": {
+      "in": "bd4effa3988cee713bd6db97306def23",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+02D8 digits": {
+      "in": "a8c3fa064b11046f12cd4c56253ea944",
+      "out": "190cb2790d7144531551cab21b02382c"
+    },
+    "U+02D8 after_digit": {
+      "in": "0be9e55bfb58e0a01c12a1bd92d6af9d",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+02D8 before_digit": {
+      "in": "053f6046d22159b059497fba715bf435",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+02D8 letters": {
+      "in": "352d06630730eb498039f311b87c7248",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+02D8 start": {
+      "in": "a9edc8d90535b88efb0d4d848a3cafcc",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+02D8 end": {
+      "in": "0bdd3045b91640708ff7e7e3b2e6a3b3",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+02D9 digits": {
+      "in": "e3bbb1251f1216bdc06e00b3141eca82",
+      "out": "764909e459ca9ddac000a99d657355d2"
+    },
+    "U+02D9 after_digit": {
+      "in": "da7284ea2670ba51fc08969d7e5fd78f",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+02D9 before_digit": {
+      "in": "84bd633621b1067a1a4d9147ab77c840",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+02D9 letters": {
+      "in": "8067dc419927700be6ebe1e241358ac7",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+02D9 start": {
+      "in": "d1c8bba41cf68194563a4007f345e692",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+02D9 end": {
+      "in": "c9198220fcf9cd0e0260c7236ec8de2f",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+02DA digits": {
+      "in": "d5c433c15a25ce37f9f4feaa776e507b",
+      "out": "81effb4c9367deabc4b18ed02678849b"
+    },
+    "U+02DA after_digit": {
+      "in": "6ea0d648ee745e48bb6f8762ad7821f2",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+02DA before_digit": {
+      "in": "eb8b32d57dea772f154ff294686b0753",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+02DA letters": {
+      "in": "62df215d5e867229e0ed8aa6bad877dd",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+02DA start": {
+      "in": "6bd6d766329ec5f06aec77b7e37f5bca",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+02DA end": {
+      "in": "97a245c2a3c2aea917b222a5b29abf6f",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+02DB digits": {
+      "in": "ad822c66bb8b78cffedfbc1c0d3e80f8",
+      "out": "74345d217960c7989c3f107fae92a403"
+    },
+    "U+02DB after_digit": {
+      "in": "308da27aef658d2f5ceea33fcef73f5c",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+02DB before_digit": {
+      "in": "6211aa35841882e80c63f168d984eb01",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+02DB letters": {
+      "in": "60c10f5e48141396c07bd4874b02b848",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+02DB start": {
+      "in": "09d35adf0195a44bead8d07706580bdf",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+02DB end": {
+      "in": "1f781faa7daedd8f717c6992347690a0",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+02DC digits": {
+      "in": "225c0719a7a69addb7b3408191de87c3",
+      "out": "e0ee822f37064c3884881e846cb79ba1"
+    },
+    "U+02DC after_digit": {
+      "in": "8ffa40bcb649875b90d31bc5bd0430a6",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+02DC before_digit": {
+      "in": "c0d7fc627d08a365a7230e83a0dc66d0",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+02DC letters": {
+      "in": "67bfba10bceb2381680e6f86bcf90068",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+02DC start": {
+      "in": "8cfdcd4e949e3ecc67f796c76dc3d34b",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+02DC end": {
+      "in": "703f7d41cc7c9d9f79afd9fc1dc78759",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+02DD digits": {
+      "in": "d8ba01845f85467ec5a6b9cb50e813e4",
+      "out": "bd4b05c82e8be5335ec1095e815bafff"
+    },
+    "U+02DD after_digit": {
+      "in": "4147153b3f15e2d8f9a3dcaa39c86d0c",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+02DD before_digit": {
+      "in": "675aae4d0a0ef2addb8103c3d231961f",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+02DD letters": {
+      "in": "5f7e2668e0ae64597b23157cd05d37f7",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+02DD start": {
+      "in": "a3380a8dbb217b422e59b43490db9896",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+02DD end": {
+      "in": "4f367fed6c6a9183789a12b288308a4b",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+037A digits": {
+      "in": "14c343dc8017a671ace2bc8c5e3c33b7",
+      "out": "bcc377339894d272308f88702d27aca7"
+    },
+    "U+037A after_digit": {
+      "in": "592f4445a3f0489537d35f9c4eb7db08",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+037A before_digit": {
+      "in": "68f910a15eaa6fde4f5700c09d7e4be4",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+037A letters": {
+      "in": "e50f0408ecf3afd0925d61c0bc63dcc5",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+037A start": {
+      "in": "e5aa130aced1698dca28d0c00de9e934",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+037A end": {
+      "in": "877de83326a5b36fdb13bdfb6f87391b",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+0384 digits": {
+      "in": "fb0c65b153701d9470d2626aa5e0446a",
+      "out": "28a0cc2c36a6f3233020100b5b14c0a4"
+    },
+    "U+0384 after_digit": {
+      "in": "b3567efb1c0fae625b238b7f33dd4153",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+0384 before_digit": {
+      "in": "be60d4944abd6946219eba9211fd0cff",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+0384 letters": {
+      "in": "edc7f9a04b2aab819db3e998a9d19539",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+0384 start": {
+      "in": "cdcab0a65167557a2242834d9b01eb0b",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+0384 end": {
+      "in": "f57da5b06e89a3863f98b0e9b3f73f3c",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+0385 digits": {
+      "in": "5b7a0f55865bc5fdef1a7a3da19c85ae",
+      "out": "7ff2bb587df97d5fbad7144d3c41db06"
+    },
+    "U+0385 after_digit": {
+      "in": "2b88e08e2a72b551e9facdafc4ad337c",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+0385 before_digit": {
+      "in": "442ad3731a6345433ef1e5e104b950d4",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+0385 letters": {
+      "in": "d9a21e2bf1c8f5c341775eecb8dcee88",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+0385 start": {
+      "in": "dcdf68a49a9bca07c9d987fda0b929c6",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+0385 end": {
+      "in": "936c898efcba1fe5695972cd90136583",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FBD digits": {
+      "in": "9c1481c277833c67c1c428abeb9f3075",
+      "out": "ab5a88cd71ed3b4c0f177f1d44bd77b7"
+    },
+    "U+1FBD after_digit": {
+      "in": "ee93aac7152b6d4e36f3482e38162a52",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FBD before_digit": {
+      "in": "d9df3443bfa9059739f056baee2e5f50",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FBD letters": {
+      "in": "5ef2ae3256cdcf1262003c16acc74809",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FBD start": {
+      "in": "e82b659918419e94be9942498f7e7e37",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FBD end": {
+      "in": "a4921768f0cdaa3b2d0b518ca7b10dd4",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FBF digits": {
+      "in": "ce36618e836efb2dee424917a8922b5f",
+      "out": "f34e5580dcd76450e391c037c0117934"
+    },
+    "U+1FBF after_digit": {
+      "in": "4bd2558f5628912c61ff43fa0eed2f45",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FBF before_digit": {
+      "in": "979af5cf093ec25d32e98565fe481454",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FBF letters": {
+      "in": "f2a1f765d8c97f1be87f7404ff4250c0",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FBF start": {
+      "in": "8194fd0c8b79f80c6b250be666d45a64",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FBF end": {
+      "in": "a33e46a560f989698ac45f7d307d6c14",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FC0 digits": {
+      "in": "bc63f5076b949b84f4cae3f22ec3b5e8",
+      "out": "c43f888fe74474e6180dab5b165fee30"
+    },
+    "U+1FC0 after_digit": {
+      "in": "c752b4293fed7debd664edcbf8fac3f1",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FC0 before_digit": {
+      "in": "4432a6fa911c5e5d965a8bbd53ed12de",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FC0 letters": {
+      "in": "aea64fc16ffbb2efb6a7e1c663977e6a",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FC0 start": {
+      "in": "ad7a277f2f80045ccdcf31eb59efcff6",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FC0 end": {
+      "in": "28725b2f37535180316f4c1ee46f20fc",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FC1 digits": {
+      "in": "9dff9c28e7d7828d21c8ad2c9dc4d9b3",
+      "out": "ff5bc50da798955a3639914ae085b357"
+    },
+    "U+1FC1 after_digit": {
+      "in": "0f97256353fd152a21239f83a72c2f67",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FC1 before_digit": {
+      "in": "bdb4c795e20c70e6326e6302d53dfc32",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FC1 letters": {
+      "in": "debd89ed03a6fa13e15df642a3a877e8",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FC1 start": {
+      "in": "738a18b5e76866c3f63924426aa64be7",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FC1 end": {
+      "in": "4a77a40e8fc0eb34553c1a6937b0ca31",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FCD digits": {
+      "in": "b6ac7ba4e16abefa7c2c5afaa67c3b02",
+      "out": "506739eae60fc64b8c5ddf592500243d"
+    },
+    "U+1FCD after_digit": {
+      "in": "ecf816378ea742df2cf74a986db8f5e6",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FCD before_digit": {
+      "in": "f1baeae651369490a58a06df598d69f2",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FCD letters": {
+      "in": "b354292c0a7b85ff173ac053602a8fd0",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FCD start": {
+      "in": "1cecc1a10442d27aff9f609300573ffd",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FCD end": {
+      "in": "4fc3bf74b03252fbbfbf295aeceeadbd",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FCE digits": {
+      "in": "8c25bf3fe4bd698e7b228412959d6218",
+      "out": "8f1890831f8ab348b9237d87cc05c0ab"
+    },
+    "U+1FCE after_digit": {
+      "in": "65a8cf8a7395651caa97e5e3fd9430d2",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FCE before_digit": {
+      "in": "e65579681c412ea11c0d049fda23eab0",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FCE letters": {
+      "in": "a86124afa442da5e07f07eaadaea850c",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FCE start": {
+      "in": "e0eb10bd6e0067e4e0b151625f9788f7",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FCE end": {
+      "in": "f8b078fca690a7a18e2d6ff3e1d32fad",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FCF digits": {
+      "in": "68333aa04e6f257b70016b625bf1e624",
+      "out": "527a506fa5059535353bdfeb495b9a81"
+    },
+    "U+1FCF after_digit": {
+      "in": "a0a4c28f8da9d2747536f874dbd3d020",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FCF before_digit": {
+      "in": "4e6214f5de663ebda23745f38fb90b5d",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FCF letters": {
+      "in": "879725c8b5050df5f5044848bd9719f3",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FCF start": {
+      "in": "c33a536b30ad95ae1288b0cb4ca7f1be",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FCF end": {
+      "in": "c77f556f64407190f28704a99bb1a4be",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FDD digits": {
+      "in": "24861116f618d581696cf523183e1f35",
+      "out": "4df00f7988dc5c7b235e6da81457624f"
+    },
+    "U+1FDD after_digit": {
+      "in": "7559d711e74c76438233c168da800d44",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FDD before_digit": {
+      "in": "70f9dddd17f394612b275ffecdcd3f15",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FDD letters": {
+      "in": "70e8033f251cce9ef0652321f03d91e4",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FDD start": {
+      "in": "241cd92ac0f68a85f284f1d79629c52a",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FDD end": {
+      "in": "24934083f2f7d22921b94aee3cef9b6d",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FDE digits": {
+      "in": "8463570c42f722c94696b4af011ce9ca",
+      "out": "ba82247ed5e397690156750a6c4e8e04"
+    },
+    "U+1FDE after_digit": {
+      "in": "9316d543155796798b5a39f29ea248ab",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FDE before_digit": {
+      "in": "8710ef4706dd02b0eaef115f96139fa0",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FDE letters": {
+      "in": "69821b4c65e04a395a1429d33fcafc32",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FDE start": {
+      "in": "28b8cc8a16d231c6086ab005b8934ea7",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FDE end": {
+      "in": "54aa5a7f5469512e5e2bf0ee4067ac0f",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FDF digits": {
+      "in": "f455ddbf41635a8de13dd7637e45c119",
+      "out": "341cf1411e2aa23b489485001d5ad3bc"
+    },
+    "U+1FDF after_digit": {
+      "in": "287f325c28998ba9ad10b75390dddc2e",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FDF before_digit": {
+      "in": "242c61d73588fd8f7b0d231dcf4d5a77",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FDF letters": {
+      "in": "baf19b1f966e845b26caf8085763f1ef",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FDF start": {
+      "in": "42e8b527f2fe5884800ee5efbd17ffeb",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FDF end": {
+      "in": "48604f6b4a924980b55e0506e3e43211",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FED digits": {
+      "in": "ff9f7c1f201e0eba954d3db2e2867910",
+      "out": "db9242ba0818c85f74c9a52397861eb4"
+    },
+    "U+1FED after_digit": {
+      "in": "f219d031040e87a3200e36bc7f865df9",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FED before_digit": {
+      "in": "24c655f570c00d08ee1a5effe6ec532e",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FED letters": {
+      "in": "6e37fa81e854ebaac48ce5777b5ea497",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FED start": {
+      "in": "f7a877cb1813b9e35c091cf1e3bd1a93",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FED end": {
+      "in": "529cf062a8966c7576a49d5f7b829108",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FEE digits": {
+      "in": "38576f3474e2942d2b56177ad565d59a",
+      "out": "f0ba8407937d148c288b95d17474d3a5"
+    },
+    "U+1FEE after_digit": {
+      "in": "582a674a44c0ecb64a62c137edbdf24a",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FEE before_digit": {
+      "in": "9c59232c0c3f2ac4cf5da6919af9acd1",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FEE letters": {
+      "in": "db48eb69cf7ee123545d669af376ca50",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FEE start": {
+      "in": "c7e41cf9270a375f21127796534def3d",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FEE end": {
+      "in": "02d82036c3c3b0299a66636a838998d0",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FFD digits": {
+      "in": "24e44fefabcd16321a30b86f0cc99463",
+      "out": "799d63c0c00c3319c317a67fbfd3dd8d"
+    },
+    "U+1FFD after_digit": {
+      "in": "5aebb5c9f86e5c4d9f88ae91e47370ad",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FFD before_digit": {
+      "in": "6afe6c55e09f09281220558b002d8131",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FFD letters": {
+      "in": "04f27a2bd8558ec9a9e7fe93258b65e9",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FFD start": {
+      "in": "2e5dddee092f5593b5540469a22ffa1b",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FFD end": {
+      "in": "7b2cc1220733fa5288937ad230f30820",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+1FFE digits": {
+      "in": "c5d01bfdc7b5fc9ad2a83be2cbe42c45",
+      "out": "3799a92b94474bd2616d7eeae476367e"
+    },
+    "U+1FFE after_digit": {
+      "in": "2865fa94f1bab85970763ba36ca0451d",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+1FFE before_digit": {
+      "in": "f0b93bc97221ecbf1589b582f6de8e9b",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+1FFE letters": {
+      "in": "3f3906dac4cbc8e52e02aabc75c71daa",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+1FFE start": {
+      "in": "7e142b0ebc41778dbca276f7283a9343",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+1FFE end": {
+      "in": "3bc366ab74af54c00b3afeb2b8bbe9dc",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+2017 digits": {
+      "in": "c7cf7383797408192892c147fe60d257",
+      "out": "0c1c01e5688ad29c8d5e88be5c371deb"
+    },
+    "U+2017 after_digit": {
+      "in": "07cbc562b8f3ec976e4e7c4816981135",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+2017 before_digit": {
+      "in": "3e87a366cbfdd64304f1a0ba6d47577e",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+2017 letters": {
+      "in": "206ecca66d9d8ec6e70425fc2dd451a0",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+2017 start": {
+      "in": "3bef201bf51314e00180ebae063bb031",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+2017 end": {
+      "in": "aab1b3938687fa4a15a6f6742c30c195",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+203E digits": {
+      "in": "1268dd781106e231d1a688e19ce04538",
+      "out": "3236d0b09351bccda1a9623f97dc9930"
+    },
+    "U+203E after_digit": {
+      "in": "817420fa92882e00170b491c50538b96",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+203E before_digit": {
+      "in": "a8842caa1e6eea89e6da27543013761d",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+203E letters": {
+      "in": "d42a494017a7c8bff8518cf58755b6eb",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+203E start": {
+      "in": "4b19ef5653463c465b1006bd92687bb2",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+203E end": {
+      "in": "6ce33de89dea9b60baeac8e14ec5283b",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+309B digits": {
+      "in": "064daf197836a0d9e1f4ec17d3a81675",
+      "out": "19a343c7fa24b1874d7aa04a939764ee"
+    },
+    "U+309B after_digit": {
+      "in": "92a34b5494b27a63bc5fac806d2d2663",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+309B before_digit": {
+      "in": "5ae572d4199909aa27f88fe48f9fa3bd",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+309B letters": {
+      "in": "75d2e7ec27116df97ed976ef00011007",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+309B start": {
+      "in": "3bb9f138e9005ec0c51f530c6994ff2f",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+309B end": {
+      "in": "d24eb1b0684cdc74f630df119cf41baa",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+309C digits": {
+      "in": "c37e5403dd6468e060d091752d227e7f",
+      "out": "3518d474d30c9bf5beb5c21461421276"
+    },
+    "U+309C after_digit": {
+      "in": "91a05038d03a70e2a05b3a188f14622b",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+309C before_digit": {
+      "in": "a9aa8aa1a3da67df4b73fce4303877ea",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+309C letters": {
+      "in": "88c64db5a86e93f00582ed00f9dc16be",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+309C start": {
+      "in": "f17d7dfa9633dc5981146153c63d75ea",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+309C end": {
+      "in": "e2c2d2fe027d44463c5d3adc22d7eae5",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FC5E digits": {
+      "in": "f20eda3bec914a529760ce83d7e8890d",
+      "out": "9e998cbcf0d04c78a349b16c25beeae3"
+    },
+    "U+FC5E after_digit": {
+      "in": "18cd91f0d589dee2e1428f0b5415c692",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FC5E before_digit": {
+      "in": "a97a806f884817d13ee9d5d8dee0ff85",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FC5E letters": {
+      "in": "ffc6b9e34ce367601d2f867be054143b",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FC5E start": {
+      "in": "684fba4e7b96ce83e845abead3574a7d",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FC5E end": {
+      "in": "7b83922f33863ed71d17855759c9ad9c",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FC5F digits": {
+      "in": "a320f3bed60009714b237618ebdfe5b9",
+      "out": "a5d98779a83057d1aa6e9f8332d49984"
+    },
+    "U+FC5F after_digit": {
+      "in": "17682022b91e37a716aeb720ec19e776",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FC5F before_digit": {
+      "in": "7b242e1a0ef458889131aabae4632c55",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FC5F letters": {
+      "in": "db6dacafdd24b2109d601bcf73058ef5",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FC5F start": {
+      "in": "1b8691b60e0c1ec9fb57f0c3650e5a49",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FC5F end": {
+      "in": "764fa6671a418b92defc1d5a074ab3fd",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FC60 digits": {
+      "in": "d7787309773dfbda59ef055e957e6ac2",
+      "out": "fd68eb733901e43f2900099223b7a798"
+    },
+    "U+FC60 after_digit": {
+      "in": "beb857d304d19d21a83d28ff0fa5b5c7",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FC60 before_digit": {
+      "in": "ac3953657a6012ec2d816ec4bb72b116",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FC60 letters": {
+      "in": "bba3aa2e9c3c4a073d53feea4da909b1",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FC60 start": {
+      "in": "17e3a966c260b21c21c9f4c307089854",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FC60 end": {
+      "in": "f320f3c45d807258eab2868e7c8c4f3a",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FC61 digits": {
+      "in": "ed738494c911cfbb2565485245700f55",
+      "out": "4b59b70ea5e3a56215f45213708b77c5"
+    },
+    "U+FC61 after_digit": {
+      "in": "3ad268ceaa5a79e4bd77a18db968f18f",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FC61 before_digit": {
+      "in": "e97264ae9d5db989b3461df9255e41d1",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FC61 letters": {
+      "in": "a19bc9819e9f79ee20bbb3f696abdf9e",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FC61 start": {
+      "in": "0e20f8092b3ed439e4fc483559037d3f",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FC61 end": {
+      "in": "a0be926a45db237e27d7e70295161a81",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FC62 digits": {
+      "in": "f49e9e3e22d21eb52288f0bf2e59ee3b",
+      "out": "e05ed3785b8cde216dc88a2003e59ad0"
+    },
+    "U+FC62 after_digit": {
+      "in": "17fca0e83787549c5845831bc39109c5",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FC62 before_digit": {
+      "in": "19fcd9763e734d17cc2acc57c6651c6b",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FC62 letters": {
+      "in": "49522d655a45ea6e9304eb82a06f658b",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FC62 start": {
+      "in": "8f50b378a6be57f0878d4e8cc227c7b0",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FC62 end": {
+      "in": "6ae1875c5e2cbd967c2e6f6138d906c7",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FC63 digits": {
+      "in": "f8dc1522a1f3853996117db7690b40a7",
+      "out": "e11625a0ba3daed87320bbabcd152109"
+    },
+    "U+FC63 after_digit": {
+      "in": "7dd888c5e08ad3392cd0a9a5ca47d3a2",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FC63 before_digit": {
+      "in": "fbcf9f7547a15dade596ed89bc7cafa3",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FC63 letters": {
+      "in": "811917bb004fd62c28be2b945e33728a",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FC63 start": {
+      "in": "6684675c786f6bd058700523bf26961b",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FC63 end": {
+      "in": "964ef132ba83e4d0c34f9129f51a299d",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE49 digits": {
+      "in": "ff7b3ed3a27525e287b83364ee5f2227",
+      "out": "bbceb213a247f4ba8665d3f2dc4fe12b"
+    },
+    "U+FE49 after_digit": {
+      "in": "4077e96339d99509a8ccc1c095227297",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE49 before_digit": {
+      "in": "939aaada1c2c97206f6227aa7b7902b4",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE49 letters": {
+      "in": "c2a2afb5b880a449c12cfd1eea8eb24c",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE49 start": {
+      "in": "502da04523df4232df7dc2ee0519aafb",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE49 end": {
+      "in": "00636bf676e69ae2ed3a68951849d399",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE4A digits": {
+      "in": "bd8fe069a4f6f8004cb7ed921d83502b",
+      "out": "537ab7d21c6de80392efcd8d7bc7d4af"
+    },
+    "U+FE4A after_digit": {
+      "in": "2171e58ff7abed9e93995777f9180e1e",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE4A before_digit": {
+      "in": "eaed869f8ebff6cd59b397720a01e844",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE4A letters": {
+      "in": "4f6236583613c29523672d99f2c1aba1",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE4A start": {
+      "in": "b080715e4afd3bc96e4efa8078a4f6e1",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE4A end": {
+      "in": "4c43afc8d5c1db49752e0676238c8e32",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE4B digits": {
+      "in": "52dcd9efda8fbc6eb3f6a2af2526e990",
+      "out": "2e74cfbe6d1046d397980dbbc32bbe21"
+    },
+    "U+FE4B after_digit": {
+      "in": "2b057761eed0e9f6a9b7a5b251b895c9",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE4B before_digit": {
+      "in": "226d8e4c97d323ce1562194244e6ab2b",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE4B letters": {
+      "in": "dec8af3651019b8b2a7d24c668f31cec",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE4B start": {
+      "in": "9bc372c5f804ddef665284da35976af2",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE4B end": {
+      "in": "78e4cb932987e5d37cd4a7f1999d7b28",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE4C digits": {
+      "in": "a5400334883daaa0fe811874134a3461",
+      "out": "cf9bee0379fadb38cc36f5e24df35483"
+    },
+    "U+FE4C after_digit": {
+      "in": "497cc01cbe7dc1647ebd68f02c50763c",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE4C before_digit": {
+      "in": "2d8aeea77807ea7165727a8fd4263d3a",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE4C letters": {
+      "in": "7caa5164e76ceb271abc3330e9582287",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE4C start": {
+      "in": "d4237ee09852ff0a36fd7a6247a44ae7",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE4C end": {
+      "in": "9a773f5ab6a92b42b81662778bdb0e02",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE70 digits": {
+      "in": "2b634e4024c6feebfd90a76bf3205502",
+      "out": "f31d65c59a8d73882d6ac5332498a823"
+    },
+    "U+FE70 after_digit": {
+      "in": "ada5e51452fe4d0b4c7a4b3f441a773c",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE70 before_digit": {
+      "in": "9f0fae69323f2a92ae4abec378e60f21",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE70 letters": {
+      "in": "1c54a8e550448b5bc0c8892eb186f357",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE70 start": {
+      "in": "2ab95ae73e7bddd88ede6cc6e1c2f472",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE70 end": {
+      "in": "acf775d5d69d9ea3c7d98f049d1698c2",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE72 digits": {
+      "in": "724d5a50f7dcabcbdefa1cdfc1f71cd0",
+      "out": "113b153c461ae6307cfc685de5dc6e78"
+    },
+    "U+FE72 after_digit": {
+      "in": "f6f667fb7c5d9089157f73c81fd4d786",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE72 before_digit": {
+      "in": "9f442ef5efcd41811c9758f6b58e0818",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE72 letters": {
+      "in": "87fca8f0115951b022a089122fe9c423",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE72 start": {
+      "in": "e80a12ccdad1434c60a5bef6f8262310",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE72 end": {
+      "in": "c7f728e1b46ee71375f285556ce5cbed",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE74 digits": {
+      "in": "859089d9e1ee2d469a5ffce62ade9d8d",
+      "out": "033476535c26e670a8ce78cabc69571e"
+    },
+    "U+FE74 after_digit": {
+      "in": "a2c6ac83b4f7c5a6f68607f586b81d31",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE74 before_digit": {
+      "in": "dd69e27ade29bbcd61e1dc8377186cac",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE74 letters": {
+      "in": "bece7f003f20c6d55241108ff124b780",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE74 start": {
+      "in": "6f4302f89a96116ae509e3cca4cd3ac2",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE74 end": {
+      "in": "a6ae2330dc808f9b34045b2ff6f3f388",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE76 digits": {
+      "in": "b406a35d3f91549505213649597b156a",
+      "out": "43b68cc2e38591fb9a02fb6a897da5c2"
+    },
+    "U+FE76 after_digit": {
+      "in": "9a01d08b5dc2bf5a5332db7d06156943",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE76 before_digit": {
+      "in": "0fe5f79ce8a12c580402ecf45e4ba4d4",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE76 letters": {
+      "in": "df407a7367ebdd168c46fd1b32c20f9e",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE76 start": {
+      "in": "f43381393c0e7931687b686c6f7e05d6",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE76 end": {
+      "in": "cc3bb0943460264c2b094a68a0f21065",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE78 digits": {
+      "in": "54402eaa6876fba7ecaafc487f1169ff",
+      "out": "5629d41a436ea3ef6f2ee1ef16ad876b"
+    },
+    "U+FE78 after_digit": {
+      "in": "50f84255016faebe81851c90e5051551",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE78 before_digit": {
+      "in": "eb9a2bff41a2357a72c570d07111c3a7",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE78 letters": {
+      "in": "b70d43f45303b5baa659dc0a560f5ec4",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE78 start": {
+      "in": "526d772b7046fe00acb937ea76db4069",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE78 end": {
+      "in": "57f86ed4e66cf0ccc1959d73c70eb00b",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE7A digits": {
+      "in": "91eacaec92b67fbd99e8b8f7196a2927",
+      "out": "683c4c1b68525c52a91ae6f60db02c92"
+    },
+    "U+FE7A after_digit": {
+      "in": "f9ae6912476524e85013335b1703ab1e",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE7A before_digit": {
+      "in": "353c78da0c2f0cfb23c705efd1a54c23",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE7A letters": {
+      "in": "6f25f483e728a987cbee9f16bbac7d24",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE7A start": {
+      "in": "6f39c63708e1fc9b00c31c1010a4b627",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE7A end": {
+      "in": "6853069e7e7d77547f454568094eaa00",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE7C digits": {
+      "in": "476b196ade349ba9e2386695833e3392",
+      "out": "0951010a3a763d176a66c5e84f968bb8"
+    },
+    "U+FE7C after_digit": {
+      "in": "e3ce8e775609a17e1334c2e71000ffad",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE7C before_digit": {
+      "in": "9c170062982edf6197e190df8e258e15",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE7C letters": {
+      "in": "73cb89400f2fb2c6e91037e0599012a4",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE7C start": {
+      "in": "22f434ac252176d08b0f80561a30736b",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE7C end": {
+      "in": "13504b1956a5b270deaadfa05be30e1d",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FE7E digits": {
+      "in": "1f64dc7d25974234bfa53a21a2bdeba8",
+      "out": "89c07b293fbc6f1b817ddacc0a3784d2"
+    },
+    "U+FE7E after_digit": {
+      "in": "310df93eefcb831ab46227e6c161e94e",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FE7E before_digit": {
+      "in": "5f3ba064061cf33efe2156d20e525005",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FE7E letters": {
+      "in": "986e236978e76899328446d10e51cb2c",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FE7E start": {
+      "in": "02c776ae575826d59e0a67eda2e3a48f",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FE7E end": {
+      "in": "962ec6ab8c5ba6b922e1855f60b98830",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "U+FFE3 digits": {
+      "in": "e0f5c2946196f0c8c7b9bbc3e74d68db",
+      "out": "c1ed67cb306a83833e679ccb6c96bc65"
+    },
+    "U+FFE3 after_digit": {
+      "in": "84022d1d590611f9f0b87bc182d603b8",
+      "out": "301f7df3220798ae7a3529d9a1ae37b5"
+    },
+    "U+FFE3 before_digit": {
+      "in": "97c9084afad0b710cfd6c9858ae34753",
+      "out": "f61858d01685764224f93a8249fc22a5"
+    },
+    "U+FFE3 letters": {
+      "in": "d2a6765665b62ed4b3e370cd657c91bc",
+      "out": "4944fa9b1ff8268031684a4bb1150f9f"
+    },
+    "U+FFE3 start": {
+      "in": "1599cabcfe1704b96632c58258a7fb19",
+      "out": "34df3846bd68b1339adf9770b4a68e53"
+    },
+    "U+FFE3 end": {
+      "in": "d634083359268516d0ac97d9d8b80cf0",
+      "out": "3f49cda4d8d699e46bbe550069f00cdc"
+    },
+    "cost acute sentence": {
+      "in": "6b05dcc111d1d5d8346c3206536a7a23",
+      "out": "15a5cae442068ea2d6ab76108ae8dea4"
+    },
+    "cost acute digits": {
+      "in": "6610a8427fcb7e45a49b0226635c51f7",
+      "out": "78efd856979884cf995414e2bb4ef061"
+    },
+    "cost acute_zwsp sentence": {
+      "in": "039700e718aeef1c44c73040da86dee7",
+      "out": "15a5cae442068ea2d6ab76108ae8dea4"
+    },
+    "cost acute_zwsp digits": {
+      "in": "b311c7a28860c52160bcba1d5d4742d4",
+      "out": "d2eeb6c263a0b6c608a13dd00e1c1b81"
+    },
+    "cost acute_mark sentence": {
+      "in": "868c3292bad18ac41e305bf3e7441ae5",
+      "out": "15a5cae442068ea2d6ab76108ae8dea4"
+    },
+    "cost acute_mark digits": {
+      "in": "e690c9f1313179a7596c3650ebc9cc0d",
+      "out": "3731f40d7ca05cef7ee6cb20e29fd639"
+    },
+    "cost double_low_line sentence": {
+      "in": "1be4e8645ffbcde7b53dd4ff20779d60",
+      "out": "15a5cae442068ea2d6ab76108ae8dea4"
+    },
+    "cost double_low_line digits": {
+      "in": "5bff61614503e2799f651f10b06c2401",
+      "out": "eff477f9173eb1a9b7ce553ab1fd7727"
+    },
+    "cost macron sentence": {
+      "in": "836289f02fcc1172b9f461b600e30fa2",
+      "out": "15a5cae442068ea2d6ab76108ae8dea4"
+    },
+    "cost macron digits": {
+      "in": "f84c214357b9b46cb0c58fcbdeac789e",
+      "out": "0b73ed32a23ae3d7da63d97f9d683eb1"
+    }
+  }
+}

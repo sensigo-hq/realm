@@ -41,7 +41,7 @@ import {
   brandClass,
   canonicalJson,
   checkCallbackRequest,
-  computeClaimDeadline,
+  claimDeadlineOf,
   decideIdempotencyPolicy,
   deriveRunPhase,
   driveFailureTextLoss,
@@ -854,8 +854,11 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
         const eligible = findEligibleSteps(definition, run);
         if (!eligible.includes(stepName)) throw notEligibleError(runId, stepName, eligible);
         const since = at.toISOString();
+        // Q1 (#592) f2: the deadline and, when there is none, why (written as `deadline_absent`).
+        const { deadline, absent } = claimDeadlineOf(definition, stepName, at);
         const claim = {
-          deadline: computeClaimDeadline(definition, stepName, at),
+          deadline,
+          ...(absent !== undefined ? { deadline_absent: absent } : {}),
           token: randomUUID(),
           since,
           ...(claimant !== undefined ? { holder: claimant } : {}),

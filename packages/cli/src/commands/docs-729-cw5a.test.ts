@@ -213,7 +213,7 @@ describe('#729 CW-5a — the other pages', () => {
     );
     claim(
       STATE,
-      'When Realm has no time limit for the step and its claim names no lease, `reason` and `evidence.state` are `claim_unknown_age`, `deadline` is `null`, and the finding is there from the start. A step a `realm agent` drive holds names a lease: there is no finding while its program holds the lease, `claim_stale` once no program holds it, and `claim_unknown_age` when its lease file is gone or the lease could not be checked (added after version 0.50.0).',
+      'When Realm has no time limit for the step and its claim names no lease, `reason` and `evidence.state` are `claim_unknown_age`, `deadline` is `null`, and the finding is there from the start. `evidence.deadline_absent` then says why there is no time limit — `step_not_auto`, `finalizer_bearing`, `not_recorded` (a claim written before this field was added or by a store that does not write it, or a step in progress with no claim record), or the word another store wrote (added after version 0.50.0). A step a `realm agent` drive holds names a lease: there is no finding while its program holds the lease, `claim_stale` once no program holds it, and `claim_unknown_age` when its lease file is gone or the lease could not be checked (added after version 0.50.0).',
     );
   });
 

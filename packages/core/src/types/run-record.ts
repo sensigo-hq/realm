@@ -3,6 +3,7 @@ import type { ToolCallRecord } from './mcp-types.js';
 import type { ExtensionIdentityEntry } from './extension-identity.js';
 import type { TriggerRule } from './workflow-definition.js';
 import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
+import type { ClaimDeadlineAbsent } from '../engine/claim-liveness.js';
 import type { AgentAction, ErrorCategory, ErrorCode } from './workflow-error.js';
 
 /**
@@ -1447,6 +1448,14 @@ export interface ClaimRecord {
    * auto-reclaimed. A concrete deadline is set only for reliably time-boundable claims.
    */
   deadline: string | null;
+  /**
+   * Q1 (#592) unit f2: why `deadline` is `null`, written in the same write that takes the claim
+   * (`claimDeadlineOf`'s `absent`): `step_not_auto` or `finalizer_bearing` from Realm's stores.
+   * Present exactly when `deadline` is `null` on a claim a Realm store writes; never beside a string
+   * deadline, which a reader then judges alone. A claim written before this field, or by a store that
+   * does not write it, has none, and readers say `not_recorded`.
+   */
+  deadline_absent?: ClaimDeadlineAbsent;
   /**
    * Issue #279 (increment 1, PR-A): an acquirer-minted fencing token, stamped atomically in the
    * SAME `claimStep` write that creates this claim record (uuid; each store's own existing uuid

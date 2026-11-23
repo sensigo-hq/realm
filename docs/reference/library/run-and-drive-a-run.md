@@ -923,6 +923,7 @@ The options of `classifyRunHealth`, the bag `classifyRecordHealth` takes.
 ```ts
 interface ClassifyRunHealthOptions {
     idleThresholdMs?: number;
+    owedThresholdMs?: number;
     definition?: WorkflowDefinition;
     definitionError?: {
         code: string;
@@ -1601,7 +1602,7 @@ A single, typed run-health observation: the shared vocabulary every surface rend
 
 ```ts
 interface RunHealthFinding {
-    kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'definition_unresolvable' | 'record_stamped_ahead';
+    kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'owed_undriven' | 'definition_unresolvable' | 'record_stamped_ahead';
     step?: string;
     reason: string;
     since?: string;
@@ -2880,6 +2881,7 @@ Names this job reaches whose entry is on another page.
 - [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): The marker on a step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
 - [`CappedRead`](implement-a-store.md#cappedread): What `WorkflowRegistrar.getCapped` resolves to.
 - [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).
+- [`ClaimDeadlineAbsent`](implement-a-store.md#claimdeadlineabsent): Why a claim has no time limit, written on the claim when it is taken (`ClaimRecord.deadline_absent`).
 - [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).
 - [`Clock`](implement-a-store.md#clock): The clock a run store reads the time from: `now()` and `at()`.
 - [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.

@@ -56,8 +56,8 @@ const OWN_CHECK: readonly Pair[] = [
   // R1.2: `--max-wait` by `option-parsers.ts`, `--max-waiting` by its own parser (digits only)
   'listen --max-wait',
   'listen --max-waiting',
-  // callback K2a-2: `--keep` by its own parser (a whole number of hours from 1 to 168)
-  'key --keep',
+  // callback K2a-2: `--keep-previous` by its own parser (a whole number of hours from 1 to 168)
+  'key --keep-previous',
   // in the action (36)
   'validate --registered',
   'validate --extensions-module',
@@ -155,9 +155,10 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
       // The filter-mask fix, PR 2: `realm db check --project` is guarded (26, 87). #616 R2:
       // `realm db migrate --to` checks its own value (62, 88). #922 P1b: `realm run reclaim
       // --claimed-at` is guarded (27, 89). Callback K2a-2: `realm callback key --host` is guarded and
-      // its `--keep` checks its own value (28, 63, 91). Callback C2c: `realm listen --callback-allow` and
-      // `--callback-allow-private` are guarded, each word of the array judged (30, 63, 93). Gap 2
-      // (iv-b1): `realm mcp` and `realm serve --failure-text` check their own value (65, 95).
+      // its `--keep-previous` checks its own value (28, 63, 91). Callback C2c: `realm listen
+      // --callback-allow` and `--callback-allow-private` are guarded, each word of the array judged
+      // (30, 63, 93). Gap 2 (iv-b1): `realm mcp` and `realm serve --failure-text` check their own
+      // value (65, 95).
       counts: { guarded: 30, ownCheck: 65 },
       tree: 95,
       inTwo: [],

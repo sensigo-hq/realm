@@ -385,6 +385,13 @@ CAPABILITY_BASES · value · public
   ];
 
 CLAIMABLE_ERROR_CLASSES · value · internal
+CLAIM_DEADLINE_ABSENT_CAUSES · value · public
+  const CLAIM_DEADLINE_ABSENT_CAUSES: readonly [
+      "step_unknown",
+      "step_not_auto",
+      "finalizer_bearing"
+  ];
+
 CLAIM_PROOF_ABSENT_CAUSES · value · internal
 CLAIM_STATES · value · internal
 CLOCK_READ_CLASSES · value · public
@@ -772,11 +779,15 @@ ChannelEvidence · type · public
   }
 
 ChosenClass · type · internal
+ClaimDeadlineAbsent · type · public
+  type ClaimDeadlineAbsent = 'step_unknown' | 'step_not_auto' | 'finalizer_bearing';
+
 ClaimHolderAbsentCause · type · internal
 ClaimProofAbsentCause · type · internal
 ClaimRecord · type · public
   interface ClaimRecord {
       deadline: string | null;
+      deadline_absent?: ClaimDeadlineAbsent;
       token?: string;
       holder?: Attributed;
       since?: string;
@@ -805,6 +816,7 @@ ClassifiableRun · type · public
 ClassifyRunHealthOptions · type · public
   interface ClassifyRunHealthOptions {
       idleThresholdMs?: number;
+      owedThresholdMs?: number;
       definition?: WorkflowDefinition;
       definitionError?: {
           code: string;
@@ -886,6 +898,7 @@ DEFAULT_EXECUTION_TIMEOUT_SECONDS · value · internal
 DEFAULT_GATE_CHOICES · value · internal
 DEFAULT_IDLE_THRESHOLD_MS · value · internal
 DEFAULT_MIN_PART_CHARS · value · internal
+DEFAULT_OWED_THRESHOLD_MS · value · internal
 DEFAULT_POLICY · value · internal
 DEFAULT_STEP_TIMEOUT_SECONDS · value · internal
 DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD · value · internal
@@ -1645,6 +1658,7 @@ FailedAttemptStore · type · public
 
 FailureText · type · internal
 FailureTextInput · type · internal
+FailureTextMark · type · internal
 FailureTextSetting · type · internal
 FailureView · type · internal
 FailureWordField · type · internal
@@ -2904,7 +2918,7 @@ RunCost · type · internal
 RunEnding · type · internal
 RunHealthFinding · type · public
   interface RunHealthFinding {
-      kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'definition_unresolvable' | 'record_stamped_ahead';
+      kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'owed_undriven' | 'definition_unresolvable' | 'record_stamped_ahead';
       step?: string;
       reason: string;
       since?: string;
@@ -4418,6 +4432,12 @@ chooseAutoLifetime · value · internal
 chooseAutoOneLifetime · value · internal
 chooseCacheLifetime · value · internal
 claimCallback · value · internal
+claimDeadlineOf · value · public
+  function claimDeadlineOf(definition: WorkflowDefinition, stepName: string, now: Date): {
+      deadline: string | null;
+      absent?: ClaimDeadlineAbsent;
+  };
+
 claimStepForDrive · value · beta
   function claimStepForDrive(store: RunStore, runId: string, stepName: string, options: ClaimStepForDriveOptions): Promise<DriveClaim>;
 
@@ -4599,6 +4619,7 @@ expiryReceiptOf · value · internal
 extensionIdentityDiffers · value · internal
 failedRequestSends · value · internal
 failureModelTextView · value · internal
+failureTextMarkOf · value · internal
 failureTextShape · value · internal
 fenceReaderMissingError · value · internal
 fileClock · value · internal

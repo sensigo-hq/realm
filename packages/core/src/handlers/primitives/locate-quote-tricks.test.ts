@@ -9,11 +9,14 @@
 // T2's rows of group `follow-up`, from the inputs of correction 3's review and its follow-up's audit
 // (`plans/issue-760/review/review-818c3-raw.md`, `walk-818c3-raw.md`, `audit-dt-raw.md`), one for
 // each case the docs' "can still read found" list names; and the `why` of eight T2 rows, re-titled:
-// `s3a-J1`, `s3a-J1@70`, `s3a-J2`, `s3a-J2@70`, `subject-to-payment`, `x_neg_squared_not`,
-// `e_sq_no_break` and `feff-inside-a-word`. The script carries both as data, so the fixture stays
+// `s3a-J1`, `s3a-J1@70`, `s3a-J2`, `s3a-J2@70`, `subject-to-payment`, `x_neg_squared_not` and
+// `e_sq_no_break`. The script carries both as data, so the fixture stays
 // what it writes (#855's correction). The language unit (#845's part before 0.48.0) moved two T2 rows
 // it closes to T1, each `not_found`: `x_strike_not` (a combining mark stays with its letter, so
-// `n̶o̶t̶` is no `not`) and `u034f-inside-a-word` (a combining mark makes no word edge). Every quote is fictional
+// `n̶o̶t̶` is no `not`) and `u034f-inside-a-word` (a combining mark makes no word edge). #845 unit 1a-i
+// moved three more: `feff-inside-a-word` (U+FEFF is invisible, so it makes no word edge),
+// `format-character-in-a-number` (an invisible character leaves before the number rules) and
+// `figure-space-group` (every `\p{Zs}` space groups thousands). Every quote is fictional
 // and runs against the fictional lease (`fixtures/lease-public.txt`), its word-wrapped copies, or a
 // short constructed document held in its row.
 //
@@ -74,10 +77,11 @@ const sourceOf = (row: Row): string =>
       : row.source.doc!;
 
 describe('the permanent test set, T1: every trick found so far is not_found', () => {
-  it('holds the derived rows: 187 distinct named rows (197 named, 10 exact repeats dropped)', () => {
+  it('holds the derived rows: 190 distinct named rows (200 named, 10 exact repeats dropped)', () => {
     // (a) red when a row is lost or added without its derivation; (b) prints the count. The language
-    //     unit: 185 → 187, `x_strike_not` and `u034f-inside-a-word` moved from T2.
-    expect(SET.T1.length).toBe(187);
+    //     unit: 185 → 187, `x_strike_not` and `u034f-inside-a-word` moved from T2; #845 unit 1a-i:
+    //     187 → 190, `feff-inside-a-word`, `format-character-in-a-number` and `figure-space-group`.
+    expect(SET.T1.length).toBe(190);
   });
   for (const row of SET.T1) {
     it(`T1 ${row.group} ${row.id} → not_found`, () => {
