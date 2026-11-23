@@ -255,7 +255,7 @@
     {
       "group": "walk",
       "id": "e_ls_drop_not",
-      "quote": "damage by the Insured Risks excepted. The Tenant shall\u2028be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall be responsible for repairs to the structure, roof, foundations or exterior of the Building",
       "source": {
         "fixture": true
       },
@@ -464,7 +464,7 @@
       "id": "A3-sh-lawful",
       "quote": "lawful use of the Premises",
       "source": {
-        "doc": "The Tenant shall not permit any un\u00adlawful use of the Premises."
+        "doc": "The Tenant shall not permit any un­lawful use of the Premises."
       },
       "expect": "not_found"
     },
@@ -473,7 +473,7 @@
       "id": "A3-sh-solvent",
       "quote": "solvent, the Landlord may re-enter the Premises",
       "source": {
-        "doc": "If the Tenant becomes in\u00adsolvent, the Landlord may re-enter the Premises at any time."
+        "doc": "If the Tenant becomes in­solvent, the Landlord may re-enter the Premises at any time."
       },
       "expect": "not_found"
     },
@@ -482,7 +482,7 @@
       "id": "A3-sh-notify",
       "quote": "the Landlord may not",
       "source": {
-        "doc": "Notices go to such other address as the Landlord may not\u00adify in writing."
+        "doc": "Notices go to such other address as the Landlord may not­ify in writing."
       },
       "expect": "not_found"
     },
@@ -491,7 +491,7 @@
       "id": "A3-zwsp-lawful",
       "quote": "lawful use of the Premises",
       "source": {
-        "doc": "The Tenant shall not permit any un\u200blawful use of the Premises."
+        "doc": "The Tenant shall not permit any un​lawful use of the Premises."
       },
       "expect": "not_found"
     },
@@ -741,7 +741,7 @@
     {
       "group": "wrapped-attack",
       "id": "e_ls_drop_not@60",
-      "quote": "damage by the Insured Risks excepted. The Tenant shall\u2028be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall be responsible for repairs to the structure, roof, foundations or exterior of the Building",
       "source": {
         "wrap": 60
       },
@@ -993,7 +993,7 @@
     {
       "group": "wrapped-attack",
       "id": "e_ls_drop_not@72",
-      "quote": "damage by the Insured Risks excepted. The Tenant shall\u2028be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall be responsible for repairs to the structure, roof, foundations or exterior of the Building",
       "source": {
         "wrap": 72
       },
@@ -1236,7 +1236,7 @@
     {
       "group": "wrapped-attack",
       "id": "e_ls_drop_not@90",
-      "quote": "damage by the Insured Risks excepted. The Tenant shall\u2028be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall be responsible for repairs to the structure, roof, foundations or exterior of the Building",
       "source": {
         "wrap": 90
       },
@@ -1679,7 +1679,34 @@
       "id": "u034f-inside-a-word",
       "quote": "lawful use of the Premises",
       "source": {
-        "doc": "The Tenant shall not permit any un\u034flawful use of the Premises."
+        "doc": "The Tenant shall not permit any un͏lawful use of the Premises."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "audit",
+      "id": "feff-inside-a-word",
+      "quote": "lawful use of the Premises",
+      "source": {
+        "doc": "The Tenant shall not permit any un﻿lawful use of the Premises."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "follow-up",
+      "id": "format-character-in-a-number",
+      "quote": "the fee is 12",
+      "source": {
+        "doc": "the fee is 12­500 euro"
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "follow-up",
+      "id": "figure-space-group",
+      "quote": "the rent is 1 200",
+      "source": {
+        "doc": "the rent is 1 200 000 euro"
       },
       "expect": "not_found"
     }
@@ -1950,17 +1977,6 @@
       "cut_short": false
     },
     {
-      "group": "audit",
-      "id": "feff-inside-a-word",
-      "quote": "lawful use of the Premises",
-      "source": {
-        "doc": "The Tenant shall not permit any un\ufefflawful use of the Premises."
-      },
-      "expect": "reformatted",
-      "why": "a quote that starts or ends at U+FEFF inside a word reads `reformatted`: the canonical form reads it as a space",
-      "cut_short": false
-    },
-    {
       "group": "follow-up",
       "id": "blank-line-mid-sentence",
       "quote": "The Landlord shall insure the Building … not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
@@ -1980,17 +1996,6 @@
       },
       "expect": "stitched",
       "why": "a dotted decimal before a capitalised word at a line start that counts reads as a clause label",
-      "cut_short": false
-    },
-    {
-      "group": "follow-up",
-      "id": "format-character-in-a-number",
-      "quote": "the fee is 12",
-      "source": {
-        "doc": "the fee is 12\u00ad500 euro"
-      },
-      "expect": "reformatted",
-      "why": "an invisible format character inside a number: part of the number reads found",
       "cut_short": false
     },
     {
@@ -2024,17 +2029,6 @@
       },
       "expect": "stitched",
       "why": "U.S. before a capital letter is read as a sentence end",
-      "cut_short": false
-    },
-    {
-      "group": "follow-up",
-      "id": "figure-space-group",
-      "quote": "the rent is 1\u2007200",
-      "source": {
-        "doc": "the rent is 1\u2007200\u2007000 euro"
-      },
-      "expect": "exact",
-      "why": "a group of thousands spaced with U+2007 is not read as one number",
       "cut_short": false
     },
     {

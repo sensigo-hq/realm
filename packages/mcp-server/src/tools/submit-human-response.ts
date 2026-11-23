@@ -46,6 +46,7 @@ import {
 import { boundedLines, boundedRefusal, moreUnknownKeys } from './refusal-format.js';
 import { ASSISTANT_DOOR_WORDS, renderOutcome } from '../form-path.js';
 import { noRunState } from './no-run-state.js';
+import { workflowErrorOfThrown } from './thrown-error.js';
 
 /** The answer tool's description: the server lists the tool under `permitted` only. */
 export const SUBMIT_HUMAN_RESPONSE_DESCRIPTION =
@@ -362,15 +363,7 @@ export function registerSubmitHumanResponse(
       },
       async (err, rawArgs) => {
         const args = rawArgs as z.infer<typeof submitHumanResponseArgsSchema>;
-        const workflowErr =
-          err instanceof WorkflowError
-            ? err
-            : new WorkflowError(err instanceof Error ? err.message : String(err), {
-                code: 'ENGINE_INTERNAL',
-                category: 'ENGINE',
-                agentAction: 'stop',
-                retryable: false,
-              });
+        const workflowErr = workflowErrorOfThrown(err);
         const contextHint =
           workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
             ? `Workflow definition for run '${args.run_id}' not found.`

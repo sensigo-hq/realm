@@ -798,8 +798,12 @@ function recordedByPhrase(
   ctx: RenderCtx,
 ): string {
   if (recordedBy.by !== null) {
-    // C1 (DQ 1): the recording program's label is a fact, printed whole.
-    return `${lead} ${recordedBy.channel}, running as ${ctx.cmd(`${recordedBy.by} (${RECORDED_BY_SOURCE_WORDS[recordedBy.by_source]})`)}`;
+    // C1 (DQ 1): the recording program's label is a fact, printed whole. #625 PR-2b, named keys: a
+    // key's name is the caller's, not what the server runs as, so the entry was recorded for it.
+    const label = ctx.cmd(`${recordedBy.by} (${RECORDED_BY_SOURCE_WORDS[recordedBy.by_source]})`);
+    return recordedBy.by_source === 'key'
+      ? `${lead} ${recordedBy.channel}, for ${label}`
+      : `${lead} ${recordedBy.channel}, running as ${label}`;
   }
   if (recordedBy.absent_cause === 'name_unreadable') return `${lead} ${UNSHOWABLE_NAME}`;
   return 'as recorded by a program that did not name itself';

@@ -58,7 +58,7 @@ function realm(args: string[], extra: Record<string, string> = {}) {
 }
 
 const HIDDEN_LINE = (from: string) =>
-  `Failure text over MCP: hidden (${from}). In get_run_state an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.`;
+  `Failure text over MCP: hidden (${from}). In get_run_state and in the replies to its own calls, an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.`;
 
 /** `realm mcp` over stdio: the capability its server advertises and its stderr lines. */
 async function mcpSession(args: string[], extra: Record<string, string> = {}) {
@@ -131,11 +131,11 @@ describe('gap 2 (iv-b1), check 1 — each command reads the flag and the variabl
   it('realm mcp: the flag and the variable each reach the server, with their start line; none under shown', async () => {
     claim(
       MCP_PAGE,
-      "| `--failure-text <value>` | `shown` | Whether an assistant sees a failure's words in `get_run_state`: `shown`, or `hidden`, which shows the step, its code, category or class where the record has them, and in place of the words their length (`‹string, N characters›`). With `REALM_MCP_FAILURE_TEXT` also set, `hidden` wins. Added after version 0.50.0. |",
+      "| `--failure-text <value>` | `shown` | Whether an assistant sees a failure's words in `get_run_state` and in the replies to its own calls: `shown`, or `hidden`, which shows the step, its code, category or class where the record has them, and in place of the words their length (`‹string, N characters›`). With `REALM_MCP_FAILURE_TEXT` also set, `hidden` wins. Added after version 0.50.0. |",
     );
     claim(
       MCP_PAGE,
-      "Under the failure-text value `hidden`, the start line is followed by one more: `Failure text over MCP: hidden (from --failure-text). In get_run_state an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.`, naming where the value came from as the gate-answers line does; under `shown` there is none. Added after version 0.50.0.",
+      "Under the failure-text value `hidden`, the start line is followed by one more: `Failure text over MCP: hidden (from --failure-text). In get_run_state and in the replies to its own calls, an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.`, naming where the value came from as the gate-answers line does; under `shown` there is none. Added after version 0.50.0.",
     );
     const flag = await mcpSession(['--failure-text', 'hidden']);
     const env = await mcpSession([], { REALM_MCP_FAILURE_TEXT: 'hidden' });
@@ -283,7 +283,7 @@ describe('gap 2 (iv-b1), check 9 — --check, --help and the environment table',
     const mcp = realm(['mcp', '--help']);
     const serve = realm(['serve', '--help']);
     const words =
-      "--failure-text <value> Whether the assistant sees a failure's words in get_run_state: shown (the default) or hidden. The most restrictive of this flag and REALM_MCP_FAILURE_TEXT wins.";
+      "--failure-text <value> Whether the assistant sees a failure's words in get_run_state and in the replies to its own calls: shown (the default) or hidden. The most restrictive of this flag and REALM_MCP_FAILURE_TEXT wins.";
     // (a) red when a command lacks the flag or its help says otherwise; (b) prints both lines.
     expect({ mcp: flagLine(mcp.stdout), serve: flagLine(serve.stdout) }).toEqual({
       mcp: words,
@@ -296,7 +296,7 @@ describe('gap 2 (iv-b1), check 9 — --check, --help and the environment table',
     // package's (the option, the fields, the receipt, the capability).
     claim(
       'CHANGELOG.md',
-      "- **An operator can keep a failure's words from an assistant in `get_run_state`.** `realm mcp --failure-text` and `realm serve --failure-text` take `shown` or `hidden` (`--failure-text <shown|hidden>`); `REALM_MCP_FAILURE_TEXT` sets it for them, for the `realm-mcp` command and for a program's `createRealmMcpServer`, and a program can pass it in `RealmMcpServerOptions` (`RealmMcpServerOptions.failureText`); `hidden` wins, and the default is `shown`.",
+      "- **An operator can keep a failure's words from an assistant in `get_run_state` and in the replies to its own calls.** `realm mcp --failure-text` and `realm serve --failure-text` take `shown` or `hidden` (`--failure-text <shown|hidden>`); `REALM_MCP_FAILURE_TEXT` sets it for them, for the `realm-mcp` command and for a program's `createRealmMcpServer`, and a program can pass it in `RealmMcpServerOptions` (`RealmMcpServerOptions.failureText`); `hidden` wins, and the default is `shown`.",
     );
     // Correction 1: what is shaped and what stays — executed by the MCP package's field cells (Realm's
     // words inside failures[].message shaped with the rest), its terminal_reason and drive_failing
@@ -312,7 +312,7 @@ describe('gap 2 (iv-b1), check 9 — --check, --help and the environment table',
     // MCP package's cells) and createRealmMcpServer (the embedder cell).
     claim(
       ENV_PAGE,
-      "| `REALM_MCP_FAILURE_TEXT` | `realm mcp`, `realm serve`, the `realm-mcp` command, a program's `createRealmMcpServer` | Whether an assistant sees a failure's words in `get_run_state`: `shown` (the default) or `hidden`. See [Run state and health](mcp/run-state-and-health.md#failure-text). Added after version 0.50.0. |",
+      "| `REALM_MCP_FAILURE_TEXT` | `realm mcp`, `realm serve`, the `realm-mcp` command, a program's `createRealmMcpServer` | Whether an assistant sees a failure's words in `get_run_state` and in the replies to its own calls: `shown` (the default) or `hidden`. See [Run state and health](mcp/run-state-and-health.md#failure-text). Added after version 0.50.0. |",
     );
   });
 });
@@ -384,7 +384,7 @@ describe('gap 2 (iv-b1) correction 1 — the project-code load warning', () => {
   it('check 1 — under hidden: Realm’s sentence and the code kept, the loader’s message a shape, its path in the receipt', async () => {
     claim(
       'docs/reference/mcp/run-state-and-health.md',
-      "| The warning that this server could not load the project's code (in `warnings`) | Realm's sentence, with the code's message as its shape: `this server could not load the project code for workflow '<workflow>' (<code>): ‹string, N characters›; …` | The workflow and the error code |",
+      "| The warning that this server could not load the project's code (in `warnings`) | Realm's sentence, with the code's message as its shape when the project's code threw it: `this server could not load the project code for workflow '<workflow>' (<code>): ‹string, N characters›; …` | The workflow and the error code, or `no error code` |",
     );
     const shown = await loadFailureState('shown');
     const hidden = await loadFailureState('hidden');

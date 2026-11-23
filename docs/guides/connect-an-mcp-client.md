@@ -150,7 +150,7 @@ Point the platform at that address and give it the token as a Bearer token. A re
 
 Three things to know:
 
-- **The token is one shared secret.** Everyone who has it can use every tool. Realm cannot tell callers apart.
+- **The token is one shared secret.** Everyone who has it can use every tool, and Realm cannot tell apart the callers that use it. To tell callers apart, give each its own [named key](../reference/cli/realm-mcp-and-serve.md#named-keys).
 - **It listens on this machine only**, unless you set `--host`.
 - **`--dev` turns the token check off.** It prints `Warning: Running in dev mode — authentication is disabled. Do not expose this to a network.` Use it only on your own machine.
 
@@ -164,7 +164,7 @@ A workflow registered from a project folder remembers that folder. When an assis
 
 ## If you see something else
 
-- **`Error: REALM_SERVE_TOKEN is not set.`** `realm serve` refuses to start without a token. Set `REALM_SERVE_TOKEN`, or use `--dev` on your own machine.
+- **`Error: REALM_SERVE_TOKEN is not set and there is no named key.`** `realm serve` refuses to start without a token or a named key. Set `REALM_SERVE_TOKEN`, or use `--dev` on your own machine.
 - **The assistant says it has no Realm tools.** The client did not start `realm mcp`. Check that `realm` is on the path the client uses, and restart the client.
 
 ## See also

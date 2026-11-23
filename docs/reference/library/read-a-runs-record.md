@@ -42,7 +42,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`WorkflowContextSnapshot`](#workflowcontextsnapshot) | interface | Snapshot of a single workflow context entry taken at run start. |
 | [`AdmittedBy`](#admittedby) | type | How an answer's sender was let through, or why it was not compared (`EvidenceSnapshot.admitted_by`). |
 | [`AnswerOnRecord`](#answeronrecord) | type | What an answer's entry holds about its route: the facts, or the absence a library caller leaves (`EvidenceSnapshot.answer`). |
-| [`BySourceClass`](#bysourceclass) | type | How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or `derived` from the OS user and host name (`Attributed.by_source`). |
+| [`BySourceClass`](#bysourceclass) | type | How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, `derived` from the OS user and host name, or `key` from a server key the caller presented. |
 | [`CacheAutoBasis`](#cacheautobasis) | type | One of the words in `CACHE_AUTO_BASES`: what `--prompt-cache auto` based a request's chosen cache lifetime on (`CacheAuto.basis`). |
 | [`CacheAutoPriceCause`](#cacheautopricecause) | type | One of the words in `CACHE_AUTO_PRICE_CAUSES`: why `--prompt-cache auto` chose without prices (`CacheAutoPrices`'s `cause` when `from` is `none`). |
 | [`CacheAutoPrices`](#cacheautoprices) | type | Where the `auto` choice took its prices: the runner's price file (`economics`), or none, with the cause (`CacheAuto.prices`). |
@@ -872,8 +872,9 @@ type AnswerOnRecord = AnswerFacts | {
 
 type · public
 
-How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, or
-`derived` from the OS user and host name (`Attributed.by_source`).
+How a program's name is known: `stated` by the host, `ambient` from `REALM_OPERATOR`, `derived`
+from the OS user and host name, or `key` from a server key the caller presented. It is
+`Attributed.by_source`.
 
 ```ts
 type BySourceClass = (typeof BY_SOURCE_CLASSES)[number];
@@ -1402,14 +1403,16 @@ const BLOCKING_DEP_STATES: readonly [
 const · public
 
 How a program's name is known. `stated` — a host passed an explicit name; `ambient` — the
-operator set `REALM_OPERATOR`; `derived` — the OS user and host name. `verified` (#603) and
+operator set `REALM_OPERATOR`; `derived` — the OS user and host name; `key` — the name of the
+server's key the caller presented (`realm serve`'s named keys, #625 PR-2b). `verified` (#603) and
 `capability` (#597) are added by the units that produce them.
 
 ```ts
 const BY_SOURCE_CLASSES: readonly [
     "stated",
     "ambient",
-    "derived"
+    "derived",
+    "key"
 ];
 ```
 

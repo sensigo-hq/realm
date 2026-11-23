@@ -320,6 +320,7 @@ describe(
       ['stated', 'nightly@box (as stated, via cron)'],
       ['ambient', 'nightly@box (from REALM_OPERATOR, via cron)'],
       ['derived', 'nightly@box (from the OS user, via cron)'],
+      ['key', "nightly@box (from the server's key, via cron)"],
     ] as const)(
       'C163 core-library.md: advanceRun with a driver (%s) — written as driven_by on the auto step it runs; realm run inspect shows it as Taken by:',
       async (bySource, shown) => {
@@ -329,7 +330,7 @@ describe(
         );
         claim(
           'core-library.md',
-          "`realm run inspect` shows a step's driver as `Taken by: <by> (as stated, via <channel>)`, `(from REALM_OPERATOR, via <channel>)` or `(from the OS user, via <channel>)`.",
+          "`realm run inspect` shows a step's driver as `Taken by: <by> (as stated, via <channel>)`, `(from REALM_OPERATOR, via <channel>)`, `(from the OS user, via <channel>)` or `(from the server's key, via <channel>)`.",
         );
         const def = {
           id: `dc-taken-${bySource}`,
