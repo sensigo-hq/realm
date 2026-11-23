@@ -1,8 +1,9 @@
 // delivery-pass.ts — callback C3a (R1.3; the callback design rev 4 §1.8, §2): the ONE pass that sends
-// what is due. For each due row it can serve, it claims the row, ends it when its time limit has passed,
-// builds the body once and freezes it, signs it with the pair's keys read fresh, posts it to the
-// address the door stored (exactly as stored), and records the answer. Every collaborator is passed
-// in; the pass is the shape `makePollRunner` takes. Not wired into `realm listen` here (C3b).
+// what is due. First (C3d) it ends every due row whose run finished 3 days or more ago, served here or
+// not (`endOverdue`), with a line for each. Then, for each due row it can serve, it claims the row, ends
+// it when its time limit has passed, builds the body once and freezes it, signs it with the pair's keys
+// read fresh, posts it to the address the door stored (exactly as stored), and records the answer.
+// Every collaborator is passed in; the pass is the shape `makePollRunner` takes.
 //
 // Nothing it logs, throws or marks carries a key, an address (beyond its host label), a body or a
 // result: host labels, workflow ids, run ids, attempt numbers, statuses and the closed words only.
@@ -34,8 +35,11 @@ import { callbackSignatureHeader, webhookTimestamp } from './signature.js';
 
 /** A pass's budget, on the monotonic clock: no row starts after it (the next pass comes 1 s later). */
 export const CALLBACK_PASS_BUDGET_MS = 45_000;
-/** How many due rows one listing asks for: the port's maximum, the pending cap. */
+/** How many due rows one listing asks for: the port's maximum, the number of the backlog cap. */
 export const CALLBACK_DUE_LISTING = 1_000;
+/** C3d: how many overdue rows one sweep ends at most (the port's maximum), and how many it names. */
+export const CALLBACK_OVERDUE_SWEEP = 1_000;
+const CALLBACK_OVERDUE_LINES = 10;
 /** A callback whose last answer was a 4xx (but 408, 425, 429) ends this long after its first try: 1 h. */
 export const CALLBACK_CLIENT_ERROR_END_SECONDS = 3_600;
 /** The 4xx answers that are tried again until the 3 days are up: timeout, too early, too many. */
@@ -313,9 +317,29 @@ export function makeCallbackPass(
     }
   };
 
+  /** C3d: ends what is overdue, before the listing; one line per row, at most 10, then a count. */
+  const sweep = async (): Promise<void> => {
+    const ended = await callbacks.endOverdue(CALLBACK_OVERDUE_SWEEP);
+    for (const row of ended) saidFor.delete(row.run_id);
+    for (const row of ended.slice(0, CALLBACK_OVERDUE_LINES)) {
+      const prefix = `callbacks: ${row.workflow_id} → ${row.host}:`;
+      logger.warn(
+        row.attempts >= 1
+          ? `${prefix} stopped at attempt ${row.attempts}: not delivered within its time limit`
+          : `${prefix} never sent: its time limit passed before a try could be made`,
+      );
+    }
+    const more = ended.length - CALLBACK_OVERDUE_LINES;
+    if (more > 0)
+      logger.warn(
+        `callbacks: and ${more} more ${more === 1 ? 'callback' : 'callbacks'} ended the same way`,
+      );
+  };
+
   return async (live) => {
     const started = performance.now();
     const spent = (): boolean => performance.now() - started >= CALLBACK_PASS_BUDGET_MS;
+    await sweep();
     /** The rows handled or skipped in this pass: a row due again within it waits for the next. */
     const seen = new Set<string>();
     const dead = new Set<string>();
