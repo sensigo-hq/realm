@@ -847,7 +847,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       );
       claim(
         AGENT_PAGE,
-        'The lines that say why the drive stopped (`✗ Step …` and `⚠ Step … is blocked`) go to stderr, and so do the `Resume:` line after them',
+        "The lines that say why the drive stopped (`✗ Step …`, `⚠ Step … is blocked`, and the `• Step '<step>' failed (<CODE>): …` and `• Step '<step>': the engine did not record its failure …` lines) go to stderr, and so do the `Resume:` line after them",
       );
       const { record: run } = await d.store.get(d.runId);
       // (a) red when the line names the step the drive called, drops the suffix, or the run does

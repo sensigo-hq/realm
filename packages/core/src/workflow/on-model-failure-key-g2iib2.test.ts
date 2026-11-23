@@ -20,8 +20,11 @@ function refusalOf(yaml: string): string | null {
   }
 }
 
-const WORDS_7 =
-  "'on_model_failure' is only valid on execution: agent steps — it decides what happens when the step's model request fails, and no other kind makes one, so here it would decide nothing. Move it to the agent step whose failure it should decide, or remove it. An auto step already fails after its handler's last try.";
+// Words 7: on a guard or a finalizer it ends after "or remove it." (correction 1); an auto step's
+// message adds its last sentence.
+const WORDS_7_ELSEWHERE =
+  "'on_model_failure' is only valid on execution: agent steps — it decides what happens when the step's model request fails, and no other kind makes one, so here it would decide nothing. Move it to the agent step whose failure it should decide, or remove it.";
+const AUTO_TAIL = " An auto step already fails after its handler's last try.";
 const WORDS_8 =
   "Step 's': on_model_failure: 'default' is not available yet: only 'fail' is. With 'fail', a failed model request fails the step; without the key, the drive stops and the run stays open. Write 'fail', or remove the key. 'default' (complete the step with its default answer) comes in a later version.";
 
@@ -81,13 +84,19 @@ describe('gap 2 (ii-b2), check 8 — on_model_failure at load', () => {
         '    on_model_failure: fail',
       ],
     ],
-  ])('refused on a %s step with Words 7', (_kind, steps) => {
+  ])('refused on a %s step with Words 7', (kind, steps) => {
     const message = refusalOf(
       ['id: g2iib2-load', 'name: x', 'version: 1', 'steps:', ...steps, ''].join('\n'),
     );
     // (a) red when the kind refusal is removed (the file loads), or its message changes; (b)
     //     prints the loader's message.
-    expect(message).toContain(`Step 's': ${WORDS_7}`);
+    const tail = message?.slice(message.indexOf(WORDS_7_ELSEWHERE) + WORDS_7_ELSEWHERE.length);
+    // (a) red when the guard's or finalizer's message keeps the auto step's last sentence, or the
+    //     auto step's loses it; (b) prints the message and what follows the shared part.
+    expect({
+      shared: message?.includes(`Step 's': ${WORDS_7_ELSEWHERE}`),
+      autoTail: tail?.startsWith(AUTO_TAIL),
+    }).toEqual({ shared: true, autoTail: kind === 'auto' });
   });
 
   it("'default' is refused with Words 8", () => {

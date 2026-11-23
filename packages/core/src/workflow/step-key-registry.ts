@@ -236,12 +236,14 @@ const MSG_LLM_TIMEOUT =
   'request, and no other kind makes one, so here it would bound nothing. Move it to the agent ' +
   "step whose request it should bound, or remove it. An auto step's dispatch is bounded by " +
   "'timeout_seconds', and a finalizer's handler by its own 'timeout_seconds'.";
-// Gap 2, unit (ii-b2), Words 7.
-const MSG_ON_MODEL_FAILURE =
+// Gap 2, unit (ii-b2), Words 7; correction 1: on a guard or a finalizer the message ends after
+// "or remove it." (the auto step's last sentence fits neither kind).
+const MSG_ON_MODEL_FAILURE_ELSEWHERE =
   "'on_model_failure' is only valid on execution: agent steps — it decides what happens when the " +
   "step's model request fails, and no other kind makes one, so here it would decide nothing. Move " +
-  'it to the agent step whose failure it should decide, or remove it. An auto step already fails ' +
-  "after its handler's last try.";
+  'it to the agent step whose failure it should decide, or remove it.';
+const MSG_ON_MODEL_FAILURE =
+  MSG_ON_MODEL_FAILURE_ELSEWHERE + " An auto step already fails after its handler's last try.";
 const MSG_IDEMPOTENT =
   "'idempotent' is only valid on execution: auto steps — it gates 'retry.on_timeout' and " +
   'reclaim eligibility, and both act on auto dispatch, so here it would gate nothing. Remove ' +
@@ -1477,12 +1479,17 @@ export const STEP_KEY_REGISTRY = {
       c: 'consumed',
       where: [{ file: RA, pattern: "if (stepDef.on_model_failure !== 'fail') return undefined;" }],
     },
-    guard: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_ON_MODEL_FAILURE },
+    guard: {
+      c: 'prohibited',
+      by: [MINT],
+      line: 'key',
+      message_data: MSG_ON_MODEL_FAILURE_ELSEWHERE,
+    },
     finalizer: {
       c: 'prohibited',
       by: [MINT],
       line: 'key',
-      message_data: MSG_ON_MODEL_FAILURE,
+      message_data: MSG_ON_MODEL_FAILURE_ELSEWHERE,
     },
   },
 } satisfies Record<(typeof KNOWN_STEP_KEYS)[number], Record<ExecutionMode, StepKeyCell>>;

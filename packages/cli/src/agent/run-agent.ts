@@ -1875,7 +1875,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // Gap 2, unit (ii-b2): the call that fails the step through `modelFailure`, with the
         // drive-failure entry its catch built (written only when the reply records no failure).
         let member: { modelFailure: ModelFailureMember; entry: DriveFailureRecord } | undefined;
-        let memberRefusalSaid = false;
+        // Correction 1: whether the catch's entry was written (once, before the give-back).
+        let memberEntryWritten = false;
         let repairsUsed = 0;
         let lastRejection: { kind: 'output' | 'input'; summary: string } | undefined;
 
@@ -2958,11 +2959,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               (result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ||
                 result.error_code === 'VALIDATION_INPUT_SCHEMA');
             if (!wedge) {
-              // Gap 2, unit (ii-b2): the engine refused the failure's save (its store failed): said
-              // before the give-back line, and the catch's entry is written below.
+              // Gap 2, unit (ii-b2), correction 1: the engine refused the failure's save (its store
+              // failed). The catch's entry is written first, before the give-back, as the catch writes
+              // it; the line says so only when the write did (otherwise the writer's LOST line is the
+              // one line about it).
               if (member !== undefined && result.status === 'error') {
-                console.error(memberNotSettledLine(stepName, result));
-                memberRefusalSaid = true;
+                memberEntryWritten = true;
+                if ((await recordFailure(member.entry)) === 'written') {
+                  console.error(memberNotSettledLine(stepName, result));
+                }
               }
               const released = await giveBack();
               // Correction 1: a give-back that threw leaves the claim, held by no program once this
@@ -3024,10 +3029,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             printResumeLine(errorSnapshot);
             return 'failed';
           }
-          await recordFailure(member.entry);
-          if (result.status === 'error' && resultStop?.kind === 'refused') {
-            if (!memberRefusalSaid) console.error(memberNotSettledLine(stepName, result));
-          } else {
+          const refused = result.status === 'error' && resultStop?.kind === 'refused';
+          if (!memberEntryWritten) {
+            const wrote = await recordFailure(member.entry);
+            if (refused && wrote === 'written')
+              console.error(memberNotSettledLine(stepName, result));
+          }
+          if (!refused) {
             const judged = judgedOf(result)?.record ?? currentRun;
             console.log(
               outcomeNotRecordedLine(

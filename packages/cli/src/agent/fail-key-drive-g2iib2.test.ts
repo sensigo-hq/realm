@@ -603,6 +603,43 @@ describe('gap 2 (ii-b2), check 5b — the store fails on the member’s path', (
     });
   });
 
+  it("(i) correction 1: the settle's write and the drive-failure write both fail: no Words 6b line, the writer's LOST line, the drive stops", async () => {
+    script = [fail(400, 'invalid_request_error', 'bad (fake)')];
+    const store = new InMemoryStore({ leases: createLeaseDouble() });
+    const settle = store.settleStep.bind(store);
+    const update = store.update.bind(store);
+    let settleArmed = false;
+    let updateArmed = false;
+    vi.spyOn(store, 'settleStep').mockImplementation(async (...a) => {
+      if (settleArmed) {
+        settleArmed = false;
+        updateArmed = true;
+        throw new Error('the disk is full (fake)');
+      }
+      return settle(...a);
+    });
+    // The drive-failure write (the store's `update`) fails once, after the settle did.
+    vi.spyOn(store, 'update').mockImplementation(async (...a) => {
+      if (updateArmed) {
+        updateArmed = false;
+        throw new Error('the disk is still full (fake)');
+      }
+      return update(...a);
+    });
+    onWire = async () => {
+      settleArmed = true;
+    };
+    const { result, run } = await drive(workflow('g2iib2-store-both', KEY), anthropic(), { store });
+    // (a) red when Words 6b's line is printed before the write, or whatever the write returned;
+    //     (b) prints the result, the entries and the stderr lines about the failure.
+    expect({
+      result,
+      entries: run.drive_failures?.entries.length ?? 0,
+      words: err.filter((l) => l.startsWith("• Step 's': the engine did not record its failure")),
+      lost: err.filter((l) => l.startsWith('⚠ drive-failure record LOST')).length,
+    }).toEqual({ result: 'failed', entries: 0, words: [], lost: 1 });
+  });
+
   it('(ii) the run cannot be read when executeChain starts: the last-resort entry carries the failing call’s texts', async () => {
     script = [fail(400, 'invalid_request_error', 'bad (fake)')];
     const store = new InMemoryStore({ leases: createLeaseDouble() });

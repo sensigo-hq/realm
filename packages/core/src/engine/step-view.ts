@@ -331,8 +331,9 @@ export type CostCacheRequested =
  * rule 5): `tool_calling_step` when the entry declares `tool_calls` and has no `cache` (written by
  * Realm 0.48.0 or earlier, or by a host that records tool calls without usage; issue #610);
  * `not_measured_by_realm` for an agent step realm has no usage figures
- * for — for example, an outside agent over MCP `execute_step` made it, a person typed its answer at
- * a `realm workflow run` prompt, or realm 0.45.0 or earlier recorded it.
+ * for — for example, its model request failed before an answer came, an outside agent over MCP
+ * `execute_step` made it, a person typed its answer at a `realm workflow run` prompt, or realm
+ * 0.45.0 or earlier recorded it.
  */
 export const COST_UNRECORDED_CAUSES = ['tool_calling_step', 'not_measured_by_realm'] as const;
 export type CostUnrecordedCause = (typeof COST_UNRECORDED_CAUSES)[number];

@@ -30,6 +30,15 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
       'docs/reference/workflow/step-fields.md',
       'This page lists every field a step can have. There are 37,',
     );
+    // Correction 1: the example file carries the key (docs-899's transcript cell loads it).
+    claim(
+      'docs/reference/workflow/step-fields.md',
+      'This file uses the 36 fields that a step itself can carry;',
+    );
+    claim(
+      'docs/reference/workflow/step-fields.md',
+      '    llm_timeout_seconds: 60\n    on_model_failure: fail\n',
+    );
     claim('docs/reference/workflow/step-fields.md', '| `on_model_failure` | no | yes | no | no |');
     claim(
       'docs/reference/workflow/step-fields.md',
@@ -46,14 +55,14 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
     // the key: the drive stops, gives the step back, the run open).
     claim(
       CONTROLS,
-      "`on_model_failure: fail` fails the step when its model request fails, so the workflow's failure route can run: a step with `trigger_rule: one_failed`, or a finalizer. Without it, the drive stops, gives the step back and leaves the run open, as before.",
+      "`on_model_failure: fail` fails the step when its model request fails, so the workflow's failure route can run: a step with `trigger_rule: one_failed`, or a finalizer. A step with `trigger_rule: one_failed` runs when the run is driven again: `realm agent` stops after the failed step, and `realm agent --run-id <run>` goes on. Without it, the drive stops, gives the step back and leaves the run open, as before.",
     );
     // Executed by check 2's rows (each code, and failure_kind read by the route), check 6 (a module
     // that handles its own retries: MODEL_REQUEST_FAILED) and check 4 (texts, tries, usage; no drive
     // failure).
     claim(
       CONTROLS,
-      "With `fail`, the step fails when its request fails for good. When Realm's own `retry` used up its tries or its time, the code is `STEP_RETRY_EXHAUSTED`. When a later try would fail the same way (an answer Realm cannot use, such as one cut off at `max_tokens` or not JSON after its one re-ask, included), `retry` does not try it again, or the step has no `retry`, the code is `MODEL_REQUEST_FAILED`. A provider module that handles its own retries reports `MODEL_REQUEST_FAILED` too. A later step reads `$settlement.<step>.failure_kind`: `transient` when a later try might pass, `permanent` when it would fail the same way. The step's error entry keeps the failure's message, the texts of its requests, its tries and their cost; no drive failure is recorded for it.",
+      "With `fail`, the step fails when its request fails for good. When Realm's own `retry` used up its tries or its time, the code is `STEP_RETRY_EXHAUSTED`. When a later try would fail the same way (an answer Realm cannot use, such as one cut off at `max_tokens` or not JSON after its one re-ask, included), `retry` does not try it again, or the step has no `retry`, the code is `MODEL_REQUEST_FAILED`. A provider module that handles its own retries reports `MODEL_REQUEST_FAILED` too. A later step reads `$settlement.<step>.failure_kind`: `transient` when a later try might pass, `permanent` when it would fail the same way. The step's error entry keeps the failure's message, the texts of its requests, its tries and, for the requests that were billed, their cost; no drive failure is recorded for it.",
     );
     // Executed by check 3 (a 401, a tool the server does not offer, a throw Realm cannot place).
     claim(
@@ -97,10 +106,22 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
   });
 
   it('realm-agent.md: the seventh row, the rows named, and what the first six cases become', () => {
-    // Executed by check 2 (one ✗ line from the catch, then the bullet line on stderr).
+    // Executed by check 2 (one ✗ line from the catch, then the bullet line on stderr; the retry row's
+    // STEP_RETRY_EXHAUSTED; a run the settle ended is `failed` with a Resume: line, and a run with a
+    // step that runs on the failure stays open).
     claim(
       AGENT,
-      "| An agent step with `on_model_failure: fail` whose model request failed | `✗ Step 'classify' LLM call failed: Connection error.` (`✗ Step 'classify' (tools) failed: …` on a step with tools), followed by `• Step 'classify' failed (MODEL_REQUEST_FAILED): its model request failed, and the step has on_model_failure: fail.` |",
+      "| An agent step with `on_model_failure: fail` whose model request failed | `✗ Step 'classify' LLM call failed: Connection error.` (`✗ Step 'classify' (tools) failed: …` on a step with tools), followed by `• Step 'classify' failed (MODEL_REQUEST_FAILED): its model request failed, and the step has on_model_failure: fail.` (`STEP_RETRY_EXHAUSTED` when the step's `retry` used up its tries) | Ended, in `failed`, with a `Resume:` line; open, in `running`, when a step that runs on its failure can still run. |",
+    );
+    // Correction 1's ride-along: the lease row's run afterwards (nothing was claimed).
+    claim(
+      AGENT,
+      'this drive could not take a lease in /home/dana/.realm/claim-leases (this program cannot write there); nothing was claimed and the model was not called.` | Open, in `running`. |',
+    );
+    // Executed by check 2 (the bullet line on stderr) and check 5b (Words 6b's line on stderr).
+    claim(
+      AGENT,
+      "(`✗ Step …`, `⚠ Step … is blocked`, and the `• Step '<step>' failed (<CODE>): …` and `• Step '<step>': the engine did not record its failure …` lines)",
     );
     claim(
       AGENT,
@@ -110,10 +131,24 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
       AGENT,
       'When nothing else can run and an `auto` step is refused before it is claimed, and the check is `input_schema`,',
     );
-    // Executed by check 2 (the 503 and timeout rows fail the step) and check 3 (a 401 stays).
+    // Executed by check 2 (the 503, timeout and 400 rows fail the step, the cap and the tries under
+    // retry) and check 3 (a 401 stays).
     claim(
       AGENT,
-      'With `on_model_failure: fail`, the third and fourth cases fail the step instead (the seventh row): `realm run inspect` lists it under `Failed:`. A refused key and a model that does not exist stay as above.',
+      "With `on_model_failure: fail`, a model request that failed for good fails the step instead (the seventh row), and `realm run inspect` lists it under `Failed:`: a lost connection, a timeout, a `5xx` or a `400` answer, or an answer Realm cannot use, once the step's `retry`, if it has one, has stopped. A refused key and a model that does not exist stay as above.",
+    );
+  });
+
+  it("run-state-and-health.md: cost_unrecorded's first example", () => {
+    // Executed by check 4's unbilled cell (a request that failed before an answer: no usage) and the
+    // inspect cost cells (inspect-cost-view, cost-view-disclosure-parity).
+    claim(
+      'docs/reference/mcp/run-state-and-health.md',
+      'for example because its model request failed before an answer came, an outside agent over MCP made it,',
+    );
+    claim(
+      'docs/reference/cli/realm-run-reading.md',
+      'realm has no usage figures for this attempt (for example: its model request failed before an answer came, an outside agent over MCP made it,',
     );
   });
 

@@ -184,7 +184,7 @@ A `–` is accepted. Where the loader can tell that the field will do nothing, i
 
 ## A file that uses every field
 
-This file uses the 35 fields that a step itself can carry; `use_template` is shown in [Top-level fields](top-level-fields.md#templates). The file was validated, registered and run to completion.
+This file uses the 36 fields that a step itself can carry; `use_template` is shown in [Top-level fields](top-level-fields.md#templates). The file was validated, registered and run to completion.
 
 ```yaml
 id: every-step-field
@@ -251,6 +251,7 @@ steps:
     max_fan_out: 1
     tool_timeout: 10
     llm_timeout_seconds: 60
+    on_model_failure: fail
     structured_output: strict
     validation_exhaustion:
       threshold: 3
