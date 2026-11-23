@@ -1,6 +1,7 @@
 // failure-text-setting.ts — gap 2, unit (iv-b1): the MCP door's failure-text setting, judged ONCE, in
 // the gate-answers judge's form — whether an assistant reads a failure's words in `get_run_state`
-// and (unit (iv-b2a)) in the replies of its own calls.
+// and (unit (iv-b2a)) in the replies of its own calls, and (unit (iv-b2b)) what a workflow's code
+// threw while it was loaded.
 // `hidden` wins over `shown` whichever source sets it (the most restrictive value); default `shown`.
 // Pure: every value is passed in — the server and the bins read their own flags and environment and
 // call this, so `--check` judges exactly what the server will start with.

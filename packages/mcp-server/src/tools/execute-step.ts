@@ -53,6 +53,7 @@ import {
 } from '@sensigo/realm';
 import { boundedRefusal } from './refusal-format.js';
 import { noRunState } from './no-run-state.js';
+import { workflowErrorOfThrown } from './thrown-error.js';
 
 /** Maximum `writer_nonce` length (issue #197 PR-2, design §6). */
 const WRITER_NONCE_MAX_LENGTH = 128;
@@ -463,15 +464,7 @@ export async function handleExecuteStepTool(
           audience: 'agent',
           table: MCP_ENVELOPE_TABLE,
         });
-      const workflowErr =
-        err instanceof WorkflowError
-          ? err
-          : new WorkflowError(err instanceof Error ? err.message : String(err), {
-              code: 'ENGINE_INTERNAL',
-              category: 'ENGINE',
-              agentAction: 'stop',
-              retryable: false,
-            });
+      const workflowErr = workflowErrorOfThrown(err);
       const contextHint =
         workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
           ? `Workflow definition for run '${args.run_id}' not found.`
