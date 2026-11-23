@@ -122,4 +122,53 @@ describe('callback C3d-A — the SQLite endOverdue', () => {
       rows: pure.writes.sort((a, b) => (a.run_id < b.run_id ? -1 : 1)),
     });
   });
+
+  // An analysed file (`ANALYZE`, `PRAGMA optimize`: the schema check allows their tables) plans the
+  // candidates through the due-time index, so rows tied on their anchor come in the order they were
+  // made, not by run_id; the statement's own tie-break then decides which row the limit takes.
+  it('in an analysed file, rows tied on their anchor still end by run_id, at limit 1 and after', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'realm-c3d-'));
+    dirs.push(dir);
+    const home = join(dir, '.realm');
+    const handle = await openHome({ home, clock }, {});
+    open.push(handle);
+    const callbacks = handle.runStore.callbacks!;
+    const made: string[] = [];
+    for (let i = 0; i < 64 && (made.length < 12 || !made.some((id) => id < made[0]!)); i++) {
+      now = T0 + i;
+      made.push((await handle.runStore.create({ ...RUN, callback: callback(10 + i) })).record.id);
+    }
+    now = T0 + 1000;
+    for (const id of made) await abandonRun(handle.runStore, id);
+    const c = await openForeignConnection(home);
+    let plan: string[];
+    try {
+      c.exec('ANALYZE');
+      plan = c
+        .prepare(
+          `EXPLAIN QUERY PLAN SELECT c.run_id FROM callbacks c JOIN runs r ON r.id = c.run_id
+  WHERE c.status = 'pending' AND c.next_attempt_at <= ? AND r.terminal_state IS 1
+    AND COALESCE(c.finished_at, r.updated_at) <= ?
+  ORDER BY COALESCE(c.finished_at, r.updated_at), c.run_id LIMIT ?`,
+        )
+        .all('9', '9', 1)
+        .map((r) => String(r['detail']));
+    } finally {
+      c.close();
+    }
+    const sorted = [...made].sort();
+    // (1) red when the setup no longer makes the first row something other than the smallest
+    //     run_id, or the analysed file no longer plans through the due-time index (the case this
+    //     cell is for is then not reached); (2) prints the rows made and the plan.
+    expect({
+      firstIsSmallest: sorted[0] === made[0],
+      dueIndex: plan.some((step) => step.includes('callbacks_due')),
+    }).toEqual({ firstIsSmallest: false, dueIndex: true });
+    now = T0 + 1000 + CALLBACK_DELIVERY_WINDOW_SECONDS * 1000;
+    const first = (await callbacks.endOverdue(1)).map((e) => e.run_id);
+    const rest = (await callbacks.endOverdue(1000)).map((e) => e.run_id);
+    // (1) red when the statement's ORDER BY loses its run_id tie-break: the limit then takes the
+    //     first row made; (2) prints both lists against the run_id order.
+    expect({ first, rest }).toEqual({ first: [sorted[0]], rest: sorted.slice(1) });
+  });
 });
