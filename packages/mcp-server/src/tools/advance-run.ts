@@ -4,7 +4,6 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   capText,
   advanceRun,
-  WorkflowError,
   buildPreExecutionErrorEnvelope,
   getWorkflowForRun,
   endedRunWaysSentence,
@@ -40,6 +39,7 @@ import {
 } from '@sensigo/realm';
 import { boundedLines, boundedRefusal, moreUnknownKeys } from './refusal-format.js';
 import { noRunState } from './no-run-state.js';
+import { workflowErrorOfThrown } from './thrown-error.js';
 
 /** The arguments this tool takes. Anything else is named in the reply's `warnings`, not dropped. */
 const KNOWN_ARGS = ['run_id'] as const;
@@ -202,15 +202,7 @@ export function registerAdvanceRun(
       },
       async (err, rawArgs) => {
         const args = rawArgs as z.infer<typeof advanceRunArgsSchema>;
-        const workflowErr =
-          err instanceof WorkflowError
-            ? err
-            : new WorkflowError(err instanceof Error ? err.message : String(err), {
-                code: 'ENGINE_INTERNAL',
-                category: 'ENGINE',
-                agentAction: 'stop',
-                retryable: false,
-              });
+        const workflowErr = workflowErrorOfThrown(err);
         const contextHint =
           workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
             ? `Workflow definition for run '${args.run_id}' not found.`

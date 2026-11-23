@@ -43,7 +43,7 @@ const ALICE: Attributed = { by: 'alice@host', by_source: 'derived', channel: 'ag
 describe('the vocabularies — one const each, exactly these members', () => {
   // Red when: a member is added or dropped without this list (and its producing cell) following.
   it('BY_SOURCE_CLASSES', () => {
-    expect([...BY_SOURCE_CLASSES]).toEqual(['stated', 'ambient', 'derived']);
+    expect([...BY_SOURCE_CLASSES]).toEqual(['stated', 'ambient', 'derived', 'key']);
   });
   it('ACTOR_ABSENT_CAUSES', () => {
     expect([...ACTOR_ABSENT_CAUSES]).toEqual([
@@ -185,7 +185,7 @@ describe('validateDriver — the five exact texts', () => {
     [
       'a source that is not a member',
       { by: 'alice', by_source: 'verified', channel: 'agent' },
-      'Invalid driver.by_source: not one of stated, ambient, derived.',
+      'Invalid driver.by_source: not one of stated, ambient, derived, key.',
     ],
     [
       'a channel outside [a-z0-9_-]',

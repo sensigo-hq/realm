@@ -83,6 +83,25 @@ export type CacheMissRule = (typeof CACHE_MISS_RULES)[number];
 export type CachePredecessorPlace =
   { from: 'list'; at: number } | { from: 'reference' } | { from: 'earlier_run' };
 
+/**
+ * Every place a request's predecessor can be, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ */
+export const PREDECESSOR_FROM_WORDS = [
+  'list',
+  'reference',
+  'earlier_run',
+] as const satisfies readonly CachePredecessorPlace['from'][];
+type MissingPredecessorFromWords = Exclude<
+  CachePredecessorPlace['from'],
+  (typeof PREDECESSOR_FROM_WORDS)[number]
+>;
+const _everyPredecessorFromWordsListed: [MissingPredecessorFromWords] extends [never]
+  ? true
+  : MissingPredecessorFromWords = true;
+void _everyPredecessorFromWordsListed;
+
 /** The answer for one request (Behaviour 6). */
 export type CacheReadVerdict =
   | { outcome: Extract<CacheReadOutcome, 'not_asked'> }

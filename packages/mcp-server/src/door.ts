@@ -123,7 +123,8 @@ export class McpDoor {
   readonly formWait: FormWaitSetting;
   /**
    * Gap 2, unit (iv-b1): whether an assistant reads a failure's words in `get_run_state`; unit
-   * (iv-b2a): and in the replies of its own calls (a failed step's, a handler's abort).
+   * (iv-b2a): and in the replies of its own calls (a failed step's, a handler's abort); unit
+   * (iv-b2b): and what a workflow's code threw while it was loaded, in every reply.
    */
   readonly failureText: FailureTextSetting;
   /** Set at `initialize` from the client's capabilities; `false` until then, and always on HTTP. */

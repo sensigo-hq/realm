@@ -5,6 +5,7 @@ import type {
   CacheControlsRejected,
   CacheReference,
   DriveFailureRecord,
+  ExecuteChainOptions,
   ModelAttempt,
   RequestEndpoint,
   RetryConfig,
@@ -12,8 +13,10 @@ import type {
 } from '@sensigo/realm';
 import {
   CLAIMABLE_ERROR_CLASSES,
+  WorkflowError,
   classifyModelFailure,
   describeValidationProblems,
+  failedRequestSends,
   modelRetryScheduleMs,
   modelRetryWaitMs,
   renderProblemsLines,
@@ -817,7 +820,8 @@ export async function driveCreate<T>(
   options: DriveCreateOptions = {},
 ): Promise<T> {
   // Gap 2, unit (i-b): a step without `retry` sends once, under its own fresh ceiling, exactly as
-  // before; one that declares it goes through the loop below.
+  // before; one that declares it goes through the loop below. Gap 2, unit (ii-b1): a failed send
+  // here keeps its kind beside it, for `decideModelFailure` (the error is thrown as it is).
   if (clock.retry === undefined) {
     return createOnce(
       rawCreate,
@@ -827,7 +831,10 @@ export async function driveCreate<T>(
       clock.ceilingMs,
       clock.ceilingMs,
       levers(clock),
-    );
+    ).catch((err: unknown) => {
+      keepNoRetryKind(err, options);
+      throw err;
+    });
   }
   const policy = clock.retry;
   const lever =
@@ -1152,6 +1159,177 @@ export async function tryModelRequest<T>(
       }
     }
   }
+}
+
+/**
+ * Gap 2, unit (ii-b1): the kinds of failed sends on a step without `retry`, where the model client's
+ * own tries ran (case 2 of `decideModelFailure`), keyed on the thrown error. They are computed in
+ * `driveCreate`, the one place the provider's workspace-refusal rule reaches, by the facts the retry
+ * loop reads (`attemptOf`). A lookup beside the error, never on it: nothing here reaches a record,
+ * and a provider module cannot set one.
+ */
+const NO_RETRY_KINDS = new WeakMap<object, ModelAttempt['kind']>();
+
+/** Keeps a failed send's kind beside its error. TOTAL: the failure is thrown as it is, whatever. */
+function keepNoRetryKind(err: unknown, options: DriveCreateOptions): void {
+  if (typeof err !== 'object' || err === null) return;
+  try {
+    NO_RETRY_KINDS.set(err, attemptOf(err, 0, options).kind);
+  } catch {
+    /* no kind kept: the failure is given back */
+  }
+}
+
+/**
+ * The kind kept for the error or the nearest error it wraps (a provider's ladder wraps the failure of
+ * its re-send, as `findDriveCall` walks), or `undefined` when none was kept.
+ */
+function noRetryKindOf(err: unknown): ModelAttempt['kind'] | undefined {
+  let e: unknown = err;
+  for (let depth = 0; e !== null && typeof e === 'object' && depth < 8; depth++) {
+    if (NO_RETRY_KINDS.has(e)) return NO_RETRY_KINDS.get(e);
+    e = (e as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/** The facts `executeChain`'s `modelFailure` takes. */
+export type ModelFailureMember = NonNullable<ExecuteChainOptions['modelFailure']>;
+
+/**
+ * Gap 2, unit (ii-b1): what the drive holds at a provider catch, for {@link decideModelFailure}.
+ */
+export interface FailedModelRequest {
+  /** The thrown value. */
+  err: unknown;
+  /** The drive-failure entry the catch built from it (`buildEntry`). */
+  entry: DriveFailureRecord;
+  /**
+   * Whether the provider was called. `false` for a throw before the first send: the step's MCP
+   * tools listed, a tool name the server does not offer or offers twice, the tool-capable check.
+   */
+  providerCalled: boolean;
+  /** The step's `retry` block, as declared; `undefined` when it declares none. */
+  retry: RetryConfig | undefined;
+  /** The step's failed tries as its entry keeps them; `undefined` when it recorded none. */
+  tries: readonly ModelAttempt[] | undefined;
+  /**
+   * Who sends: Realm's own providers (`realm`), a provider module that says it handles retries
+   * (`module_handles_retries`), or one that does not (`module`).
+   */
+  provider: 'realm' | 'module_handles_retries' | 'module';
+  /** Whether the step has tools. */
+  hasTools: boolean;
+}
+
+/** Either the facts `executeChain`'s `modelFailure` takes, or the step is given back (left open). */
+export type ModelFailureDecision =
+  | { readonly outcome: 'fail'; readonly modelFailure: ModelFailureMember }
+  | { readonly outcome: 'give_back' };
+
+const GIVE_BACK: ModelFailureDecision = { outcome: 'give_back' };
+
+/**
+ * Gap 2, unit (ii-b1): what a failed model request becomes — the facts `executeChain`'s
+ * `modelFailure` takes, or "give the step back" (it stays open, as today). The rows run in this
+ * order, and the first that matches wins:
+ * 1. The provider was not called: give back.
+ * 2. An answer Realm could not use (a throw carrying `ENGINE_STEP_FAILED` after a response, core's
+ *    phase `after_response`): `permanent` × `non_retryable`, attempt 1.
+ * 3. By who sends and the step's `retry`:
+ *    - Realm's providers with `retry`, and a module with `retry`, no tools and no own retries (Realm
+ *      tries its whole call): from the last try, when it ended a request. Marked used up:
+ *      `transient` × `attempts`; the cap fired: `transient` × `total_timeout`; a timeout under
+ *      `retry.on_timeout: false`: `transient` × `non_retryable`; any other transient try (the drive
+ *      stopped resending): give back; `permanent`: `permanent` × `non_retryable`; `setup` or no kind:
+ *      give back. The attempt is that request's sends.
+ *    - Realm's providers without `retry`: the kind of the failed send, by the facts the retry loop
+ *      reads (a workspace refusal and a used-up quota are `setup`).
+ *    - A module with `retry` and tools, and a module that handles its own retries with `retry`
+ *      (Realm's retry did not run): the error's kind × `non_retryable`.
+ *    - A module without `retry`: the error's kind.
+ *    For the last three, `transient` without `retry` is `no_retry_policy`, with it `non_retryable`;
+ *    `permanent` is `non_retryable`; `setup` or no kind gives back; the attempt is the model client's
+ *    `attempts_sdk` when it is 1 or more, else 1.
+ * 4. Anything else: give back.
+ * The class, status and message are the entry's (its class is never `startup_failure`; its message is
+ * masked and cut at 500 characters). An `attempts_sdk` of 0 is left out. Pure and TOTAL: no I/O, no
+ * write, and a value Realm did not make gives back rather than throwing.
+ */
+export function decideModelFailure(request: FailedModelRequest): ModelFailureDecision {
+  try {
+    return decide(request);
+  } catch {
+    return GIVE_BACK;
+  }
+}
+
+function decide(request: FailedModelRequest): ModelFailureDecision {
+  const { err, entry, retry } = request;
+  // Row 0: no model request was sent.
+  if (!request.providerCalled) return GIVE_BACK;
+  const cls = (CLAIMABLE_ERROR_CLASSES as readonly string[]).includes(entry.error_class)
+    ? (entry.error_class as ModelFailureMember['error_class'])
+    : 'other';
+  const observed = entry.last_observed_status;
+  const sdk = entry.attempts_sdk;
+  const sdkCount = typeof sdk === 'number' && Number.isInteger(sdk) && sdk >= 1 ? sdk : undefined;
+  const fail = (
+    kind: ModelFailureMember['kind'],
+    stopReason: ModelFailureMember['stop_reason'],
+    attempt: number,
+  ): ModelFailureDecision => ({
+    outcome: 'fail',
+    modelFailure: {
+      kind,
+      stop_reason: stopReason,
+      message: entry.message,
+      attempt,
+      error_class: cls,
+      status:
+        typeof observed === 'number' && Number.isInteger(observed) && observed >= 0
+          ? observed
+          : null,
+      ...(sdkCount !== undefined ? { attempts_sdk: sdkCount } : {}),
+    },
+  });
+  // Row 7: an answer arrived and could not be used. The phase is set from the code, because under
+  // `model_request` core places `ENGINE_STEP_FAILED` nowhere.
+  const realmCode = err instanceof WorkflowError ? err.code : null;
+  if (
+    realmCode === 'ENGINE_STEP_FAILED' &&
+    classifyModelFailure({ error_class: cls, realm_code: realmCode, phase: 'after_response' }) ===
+      'permanent'
+  ) {
+    return fail('permanent', 'non_retryable', 1);
+  }
+  const declared = retry !== undefined;
+  // Rows 1a-1f and case 3: Realm tried the request itself, so its tries say how it ended.
+  if (
+    declared &&
+    (request.provider === 'realm' || (request.provider === 'module' && !request.hasTools))
+  ) {
+    const tries = request.tries;
+    const sends = failedRequestSends(tries);
+    if (sends === undefined || tries === undefined) return GIVE_BACK;
+    const last = tries[tries.length - 1]!;
+    if (last.exhausted_by === 'attempts') return fail('transient', 'attempts', sends);
+    if (last.exhausted_by === 'total_timeout') return fail('transient', 'total_timeout', sends);
+    if (last.kind === 'transient') {
+      return last.error_class === 'connection_timeout' && retry.on_timeout === false
+        ? fail('transient', 'non_retryable', sends)
+        : GIVE_BACK;
+    }
+    return last.kind === 'permanent' ? fail('permanent', 'non_retryable', sends) : GIVE_BACK;
+  }
+  // Case 2 (Realm's providers, no `retry`): the kind kept where the send failed. Cases 4-6 (a module
+  // Realm did not try again): the error's kind, by the same facts (a module names no workspace rule).
+  const kind = request.provider === 'realm' ? noRetryKindOf(err) : attemptOf(err, 0, {}).kind;
+  const attempt = sdkCount ?? 1;
+  if (kind === 'transient')
+    return fail('transient', declared ? 'non_retryable' : 'no_retry_policy', attempt);
+  if (kind === 'permanent') return fail('permanent', 'non_retryable', attempt);
+  return GIVE_BACK;
 }
 
 /**

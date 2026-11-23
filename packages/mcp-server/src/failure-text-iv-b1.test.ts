@@ -372,7 +372,7 @@ describe('gap 2 (iv-b1), check 2 — each field of get_run_state that carries a 
   it('failures[].message: the shape of the record’s text; every field beside it unchanged; the words appear nowhere', async () => {
     claim(
       RUN_STATE,
-      "| `failures[].message` | `‹string, N characters›`, N the recorded text's length, also when it is over 500 characters | `step`, `code`, `category`, `stop_reason`, `agent_action` and `attempt` |",
+      "| `failures[].message` | `‹string, N characters›`, N the recorded text's length, also when it is over 500 characters | `step`, `code`, `category`, `stop_reason`, `agent_action`, `failure_kind`, `attempt` and `unknown` |",
     );
     claim(RUN_STATE, "The run's record and `realm run inspect` keep the words.");
     const w = await world();
@@ -1025,7 +1025,7 @@ describe('gap 2 (iv-b1), checks 1 and 9 — the realm-mcp bin', { timeout: 30_00
     //     (b) prints each run's stderr lines after the first.
     expect({ hidden: hidden.lines.slice(1), shown: shown.lines.slice(1) }).toEqual({
       hidden: [
-        "Failure text over MCP: hidden (from REALM_MCP_FAILURE_TEXT). In get_run_state an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.",
+        "Failure text over MCP: hidden (from REALM_MCP_FAILURE_TEXT). In get_run_state and in the replies to its own calls, an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.",
       ],
       shown: [],
     });
