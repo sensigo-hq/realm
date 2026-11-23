@@ -240,18 +240,18 @@ describe('C3c-2 — cell 1: the words, each held to its page', () => {
   // Item 6: each row, word for word. Pinned by: this file's cell 2 (each row against the code).
   const ROWS = [
     '| `info` | `listen: callbacks: <workflow> → <host>: delivered (attempt <n>)` | A callback was delivered (a `2xx` answer). Added after version 0.50.0. |',
-    '| `warn` | `listen: callbacks: <workflow> → <host>: attempt <n> failed (last answer <status or word>); it will try again` | The first time a try of a callback ends in that answer; the word is `redirect`, `refused_address`, `timeout` or `connection`. Added after version 0.50.0. |',
+    '| `warn` | `listen: callbacks: <workflow> → <host>: attempt <n> failed (last answer <status or word>); it will try again` | Once for each run and each answer, in each `realm listen` process: the first time a try of a callback ends in that answer; the word is `redirect`, `refused_address`, `timeout` or `connection`. Added after version 0.50.0. |',
     '| `warn` | `listen: callbacks: <workflow> → <host>: the receiver answered 410, so it will not be tried again` | A receiver answered `410`. Added after version 0.50.0. |',
-    '| `warn` | `listen: callbacks: <workflow> → <host>: not sent: its address is no longer allowed by this realm listen` | The address no longer has an entry. Added after version 0.50.0. |',
-    '| `warn` | `listen: callbacks: <workflow> → <host>: stopped at attempt <n>: not delivered within its time limit` | A callback was given up. Added after version 0.50.0. |',
-    '| `warn` | `listen: callbacks: <workflow> is not mounted by this realm listen, so its callbacks wait` | Once for a workflow whose callbacks are due and which this `realm listen` has not mounted. Added after version 0.50.0. |',
-    '| `warn` | `listen: callbacks: <workflow> → <host>: no signing key this process can read (none \\| sealed with encryption key <fingerprint>), so its callbacks wait` | Once for each workflow, host and key state, when the key cannot be read. Added after version 0.50.0. |',
+    '| `warn` | `listen: callbacks: <workflow> → <host>: not sent: its address is no longer allowed by this realm listen` | No entry of this `realm listen` allows the address any more. The callback is ended and is not sent, even if the entry is added back. Added after version 0.50.0. |',
+    '| `warn` | `listen: callbacks: <workflow> → <host>: stopped at attempt <n>: not delivered within its time limit` | A callback was given up: 3 days after its run ended, or 1 hour after its first try when the last answer was a `4xx` other than `408`, `425` or `429`. Added after version 0.50.0. |',
+    '| `warn` | `listen: callbacks: <workflow> is not mounted by this realm listen, so its callbacks wait` | Once for a workflow whose callbacks are due and which this `realm listen` has not mounted. Start a `realm listen` that mounts it: the callback is sent at its next pass. Added after version 0.50.0. |',
+    '| `warn` | `listen: callbacks: <workflow> → <host>: no signing key this process can read (none \\| sealed with encryption key <fingerprint>), so its callbacks wait` | Once for each workflow, host and key state, when the key cannot be read. For `none`, make the key with `realm callback key <workflow folder> --host <host>`: a `realm listen` that started with the master key uses it at the next pass, and any other must be restarted. For `sealed with …`, start `realm listen` with that encryption key, or make the key again with `--replace`. Added after version 0.50.0. |',
     '| `warn` | `listen: callbacks: <workflow> → <host>: could not build the body for run <run id>; it will try again` | Once for each run. Added after version 0.50.0. |',
     '| `warn` | `listen: callbacks: <workflow> → <host>: run <run id> was not found; it will try again` | Once for each run. Added after version 0.50.0. |',
     '| `error` | `listen: callbacks: <workflow> → <host>: unexpected error (<class>) for run <run id>` | Any other failure with one callback; the next one goes on. Added after version 0.50.0. |',
     '| `error` | `listen: callbacks: pass failed {"error"}` | A whole pass for due callbacks failed, for example the store could not be read. Added after version 0.50.0. |',
     '| `warn` | `webhook: callback not enabled {"path","workflow"}` | A request named a callback address and the workflow or this `realm listen` takes none. Added after version 0.50.0. |',
-    '| `warn` | `webhook: callback refused (<reason>) {"path","workflow"[,"host"]}` | A request\'s callback address was refused with `400`; for `no_key`, the first time, the line ends with the command that makes the key. Added after version 0.50.0. |',
+    '| `warn` | `webhook: callback refused (<reason>) {"path","workflow"[,"host"]}` | A request\'s callback address was refused with `400`; for `no_key`, the first time for each workflow, host and key state in this process, the message says what to do: the `realm callback key` command (for a key sealed under another master key, start `realm listen` with that key or make the key again with `--replace`). Added after version 0.50.0. |',
     '| `info` | `webhook: callback registered {"path","workflow","host"}` | A new run took a callback address. Added after version 0.50.0. |',
     '| `warn` | `webhook: callback backlog full {"path","workflow","host","pending"}` | The `503`: 1,000 callbacks are waiting. Added after version 0.50.0. |',
     '| `error` | `webhook: callback key could not be read {"path","workflow","host","error"}`, `webhook: callback backlog could not be counted {"path","workflow","host","error"}` | The store failed; the reply is `500`. Added after version 0.50.0. |',
@@ -267,7 +267,7 @@ describe('C3c-2 — cell 1: the words, each held to its page', () => {
     // Pinned by: CB-C3C2-AU (executed: `--shutdown-grace 3` with a 12 s try, exit 0 at 3.02 s, no line, the row pending for its next try; `--shutdown-drain 3 --shutdown-grace 3`, 6.03 s; a cut request, exit 1 and the cut line; a second signal ends the wait); CB-C3C1-RV (a cut try repeats ~62–73 s later with the same id); listen-callback-c3b2 (the runner's stop).
     claim(
       LISTEN,
-      'A callback being sent when `realm listen` is stopped finishes the one it is on, within the same grace and no longer, and starts no other. A try that the grace cuts is made again after the next start, with the same `webhook-id`, and the exit code stays 0: only a request that is cut makes it 1. A second Ctrl+C or `SIGTERM` ends the wait at once. Added after version 0.50.0.',
+      'A callback being sent when `realm listen` is stopped finishes the one it is on, within the same grace and no longer, and starts no other. A try that the grace cuts is made again about a minute after the next start, with the same `webhook-id`, and the exit code stays 0: only a request that is cut makes it 1. A second Ctrl+C or `SIGTERM` ends the wait at once. Added after version 0.50.0.',
     );
   });
 
@@ -275,7 +275,7 @@ describe('C3c-2 — cell 1: the words, each held to its page', () => {
     // Pinned by: delivery-pass-c3a 'a rotation: inside the overlap a try carries two tokens, current first; past the previous key’s end, one — the same pass function, no restart', 'the keys are read fresh for every try: a rotation made during the first POST is seen by the second row of the same pair in the same pass'; delivery-pass-sqlite-c3a 'a rotation made by another process (`realm callback key --rotate`) is seen by the next try of the same pass function, with no restart'.
     claim(
       CALLBACK,
-      "While the old key is kept after `--rotate`, `realm listen` signs each callback with both keys, the new key's signature first, so a receiver that has not yet been given the new key still checks it. Each try reads the keys afresh: a key made, rotated or ended here takes effect at the next try, with no restart.",
+      "While the old key is kept after `--rotate`, `realm listen` signs each callback with both keys, the new key's signature first, so a receiver that has not yet been given the new key still checks it. Each try reads the keys afresh: a key made, rotated or ended here takes effect at the next try, with no restart, provided the master key that seals the keys was there when `realm listen` started; a `realm listen` that started without it, or with another one, must be restarted, and its start lines say so.",
     );
   });
 
@@ -742,12 +742,23 @@ describe('C3c-2 — cell 4: the laws', () => {
     //     prints the anchors missing and the links. 8 links: the six this unit added (realm-listen.md's
     //     two flag rows, its --callback-allow section, Sending callbacks and the read address;
     //     realm-callback.md's first paragraph) and realm-callback.md's two to #getting-the-result-back.
+    // Correction 1: the no-key bullet's link to this page's own "Sending callbacks" heading.
+    const inPage = [...read(LISTEN).matchAll(/\]\(#(sending-callbacks)\)/g)].map((m) => m[1]!);
     expect({
       guide: existsSync(join(ROOT, GUIDE)),
       missing: ['receive-a-callback', 'seeing-how-a-callback-stands'].filter((a) => !own.has(a)),
       broken: links.filter((l) => !own.has(l.split('#')[1]!)),
       links: links.length,
-    }).toEqual({ guide: true, missing: [], broken: [], links: 8 });
+      inPage,
+      inPageBroken: inPage.filter((a) => !anchorsOf(LISTEN).has(a)),
+    }).toEqual({
+      guide: true,
+      missing: [],
+      broken: [],
+      links: 8,
+      inPage: ['sending-callbacks'],
+      inPageBroken: [],
+    });
   });
 });
 

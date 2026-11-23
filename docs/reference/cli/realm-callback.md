@@ -46,7 +46,7 @@ Printing, making, rotating and replacing seal or open a key, so they need the ma
 
 Running it again prints the same key. Two runs at the same moment, for the same workflow and receiver, end with the same key.
 
-While the old key is kept after `--rotate`, `realm listen` signs each callback with both keys, the new key's signature first, so a receiver that has not yet been given the new key still checks it. Each try reads the keys afresh: a key made, rotated or ended here takes effect at the next try, with no restart.
+While the old key is kept after `--rotate`, `realm listen` signs each callback with both keys, the new key's signature first, so a receiver that has not yet been given the new key still checks it. Each try reads the keys afresh: a key made, rotated or ended here takes effect at the next try, with no restart, provided the master key that seals the keys was there when `realm listen` started; a `realm listen` that started without it, or with another one, must be restarted, and its start lines say so.
 
 ```bash
 realm callback key ./my-workflow --host n8n.example.com --rotate --keep-previous 48
