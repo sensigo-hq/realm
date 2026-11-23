@@ -46,7 +46,7 @@ describe('gap 2, unit (i-b) — check 13: the words', () => {
           'When it declares none of `backoff`, `base_delay_ms` and `max_delay_ms`, it waits as the model client did: 500 ms, doubling, at most 8 s.',
           'otherwise `max_attempts` times the timeout of one try (`llm_timeout_seconds`, `--llm-timeout`, or 600 s), plus the waits, plus 60 s. A wait that would pass the limit is not taken: the drive stops at once.',
           'so a tool the model already called never runs again.',
-          'After the last try, the drive stops and the run stays open, as after any failed model call.',
+          'After the last try, the drive stops and the run stays open, as after any failed model call, unless the step declares [`on_model_failure: fail`](agent-step-controls.md#on_model_failure), which fails the step (`STEP_RETRY_EXHAUSTED`) and keeps the tries on its error entry.',
           '`retry` never asks the model again after it gave an answer that was refused; that is `--schema-retries`.',
           'For a module that does not, Realm tries its whole call again on a step without tools, and tries nothing again on a step with tools; the drive then says so once.',
           'A run an assistant drives over MCP makes no model call through Realm, so `retry` on an agent step does nothing there.',

@@ -361,6 +361,8 @@ describe('gap 2 (ii-b1), check 5 — the failure’s kind on both carriers', () 
         execution: 'agent',
         depends_on: [],
         retry: { max_attempts: 3 },
+        // Gap 2, unit (ii-b2): the member is given only for a step that declares the key.
+        on_model_failure: 'fail',
       },
     },
   };

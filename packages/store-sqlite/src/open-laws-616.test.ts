@@ -30,7 +30,9 @@
 // the scan also sees their own calls, so it cannot go blind. The schema ladder's in-memory
 // reference database is allowed anywhere. #729's claim window (CW-1) adds the lease module
 // (`claim-lease.ts`), which opens the claim leases' own files and never realm.db: its three calls are
-// named one by one, so a fourth open there still fails the law. #616 R1b: `open-file.ts` exports
+// named one by one, so a fourth open there still fails the law. #625's named keys add the key file's
+// lock (`serve-keys-lock.ts`), which opens `serve-keys.lock` in the home and never realm.db: its one
+// call is named, so a second open there fails the law. #616 R1b: `open-file.ts` exports
 // `openRawConnection`, a connection through that one call with none of the open's checks, for
 // `realm db restore`'s scratch copy of a backup, checked before the store's check runs on it, and
 // (R1c) its read-only, immutable look at a store file with side files and its raw hold on a store file
@@ -69,6 +71,8 @@ const OPENERS: Record<string, string> = {
   'src/maintenance.ts':
     'the maintenance entry (c6): it opens the COPY it just made — a file no process holds — to convert and check it, never realm.db',
   'src/claim-lease.ts': "the claim leases' own files, never realm.db (design C5 §4.1)",
+  'src/serve-keys-lock.ts':
+    "#625 named keys: the key file's lock, `serve-keys.lock` in the home, never realm.db",
 };
 
 function productionFiles(dir: string, out: string[] = []): string[] {
@@ -310,6 +314,8 @@ describe('#616 unit 7a — the source laws of the open', () => {
         'src/maintenance.ts: openDatabase(temporary)',
         // #616 PR-2c c8a1: the open's one call now passes the check's read-only option through.
         'src/open-file.ts: openDatabase(path, options)',
+        // #625 named keys: the one open of the key file's lock.
+        'src/serve-keys-lock.ts: openDatabase(join(home, SERVE_KEYS_LOCK_FILE))',
       ],
       raw: [
         // R1c: the read-only, immutable look before the store's open (B), with side files only.

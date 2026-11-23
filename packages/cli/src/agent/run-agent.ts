@@ -94,6 +94,8 @@ import {
   modelAttemptsOf,
   tryModelRequest,
   type ModelRetryPolicy,
+  decideModelFailure,
+  type ModelFailureMember,
 } from './providers/agent-utils.js';
 import {
   appendModelTexts,
@@ -614,6 +616,31 @@ async function pollUntilGateResolved(
     if (run.terminal_state) break;
     if (run.pending_gate === undefined || run.pending_gate.gate_id !== gateId) break;
   }
+}
+
+/**
+ * Gap 2, unit (ii-b2), Words 6b: the line for a call that failed the step through `modelFailure` and
+ * that the engine refused (its store failed at the save): the failure is not on the record, so this
+ * drive wrote it as a drive failure.
+ */
+function memberNotSettledLine(
+  step: string,
+  reply: { error_code?: string | undefined; errors: readonly string[] },
+): string {
+  return `• Step '${step}': the engine did not record its failure (${reply.error_code}: ${reply.errors.join(', ')}); this drive recorded it as a drive failure.`;
+}
+
+/**
+ * Gap 2, unit (ii-b2): which outcome sentence a reply that recorded no failure for `step` takes, read
+ * from the record as core's classifier reads a settle race: another program holds the step, it
+ * settled, the run ended, or the claim was removed.
+ */
+function notRecordedKindOf(record: RunRecord, step: string): NotRecordedKind {
+  const ended = record.terminal_state === true;
+  if (!ended && record.in_progress_steps.includes(step)) return 'held_elsewhere';
+  if (record.completed_steps.includes(step) || record.failed_steps.includes(step))
+    return 'step_settled';
+  return ended ? 'run_ended' : 'claim_removed';
 }
 
 /**
@@ -1793,6 +1820,31 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // The module's whole call, tried again here (a step without tools, the module silent).
         const wholeCallRetry =
           stepRetry !== undefined && moduleRetries && !stepHasTools ? stepRetry : undefined;
+        // Gap 2, unit (ii-b2): what this step's failed model request becomes, read by both provider
+        // catches. A step that declares `on_model_failure: fail` takes #1300's decision, and fails
+        // through `executeChain`'s `modelFailure` when it says `fail`; any other step, and any
+        // `give_back`, is given back as before (`undefined`).
+        const modelFailureOf = (
+          err: unknown,
+          entry: DriveFailureRecord,
+          providerCalled: boolean,
+        ): ModelFailureMember | undefined => {
+          if (stepDef.on_model_failure !== 'fail') return undefined;
+          const decision = decideModelFailure({
+            err,
+            entry,
+            providerCalled,
+            retry: retryBlock,
+            tries: entry.model_attempts,
+            provider: !fromModule
+              ? 'realm'
+              : caps.handlesRetries === true
+                ? 'module_handles_retries'
+                : 'module',
+            hasTools: stepHasTools,
+          });
+          return decision.outcome === 'fail' ? decision.modelFailure : undefined;
+        };
         const llmClock: LlmClock = {
           ceilingMs: derivedClock.ceilingMs,
           perAttemptSource,
@@ -1820,6 +1872,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         textsForStep = undefined;
         stepUsageSaved = false;
         let result: Awaited<ReturnType<typeof executeChain>>;
+        // Gap 2, unit (ii-b2): the call that fails the step through `modelFailure`, with the
+        // drive-failure entry its catch built (written only when the reply records no failure).
+        let member: { modelFailure: ModelFailureMember; entry: DriveFailureRecord } | undefined;
+        // Correction 1: whether the catch's entry was written (once, before the give-back).
+        let memberEntryWritten = false;
         let repairsUsed = 0;
         let lastRejection: { kind: 'output' | 'input'; summary: string } | undefined;
 
@@ -2047,7 +2104,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               }
             }
 
-            if (stepDef.tools && stepDef.tools.length > 0 && mcpClient) {
+            // Gap 2, unit (ii-b2): `toolsStep` — a failure taking `modelFailure` leaves the tools
+            // path from its catch, past the reads of the tools result, for the call below.
+            toolsStep: if (stepDef.tools && stepDef.tools.length > 0 && mcpClient) {
               // Tools path: build tool definitions, call callStepWithTools. Rebuilt every attempt
               // (issue #217) — safe: repair only ever follows a ZERO-toolCall attempt, so no budget
               // was spent and nothing can duplicate.
@@ -2366,15 +2425,24 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 }
                 // Gap 1, unit A2b: the texts of the requests this entry's usage lists, and any
                 // unanswered one, joined before the step's earlier calls are put in front.
-                entry.model_text = failureText(
-                  failedCallTexts(err, entry.usage, toolsProviderCalled),
-                );
+                const toolsTexts = failedCallTexts(err, entry.usage, toolsProviderCalled);
+                entry.model_text = failureText(toolsTexts);
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
                 }
                 // Gap 2, unit (i-b): the step's failed model tries, closed as on its evidence.
                 const toolsTries = triesOf(retryForStep);
                 if (toolsTries !== undefined) entry.model_attempts = toolsTries;
+                // Gap 2, unit (ii-b2): `fail` settles the step through `executeChain` below, with
+                // this entry's texts, usage (ids minted once, by `buildEntry`) and tries.
+                const toolsFailure = modelFailureOf(err, entry, toolsProviderCalled);
+                if (toolsFailure !== undefined) {
+                  member = { modelFailure: toolsFailure, entry };
+                  usageForStep = entry.usage;
+                  textsForStep = toolsTexts;
+                  stepInput = {};
+                  break toolsStep;
+                }
                 await recordFailure(entry);
                 if (held !== undefined) held.cause = 'step_failed';
                 return 'failed';
@@ -2611,18 +2679,25 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   );
                 }
                 // Gap 1, unit A2b: as at chokepoint (1).
-                entry.model_text = failureText(
-                  failedCallTexts(err, entry.usage, bareProviderCalled),
-                );
+                const bareTexts = failedCallTexts(err, entry.usage, bareProviderCalled);
+                entry.model_text = failureText(bareTexts);
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
                 }
                 // Gap 2, unit (i-b): the step's failed model tries, closed as on its evidence.
                 const bareTries = triesOf(retryForStep);
                 if (bareTries !== undefined) entry.model_attempts = bareTries;
-                await recordFailure(entry);
-                if (held !== undefined) held.cause = 'step_failed';
-                return 'failed';
+                // Gap 2, unit (ii-b2): as on the tools path; the call below follows this catch.
+                const bareFailure = modelFailureOf(err, entry, bareProviderCalled);
+                if (bareFailure === undefined) {
+                  await recordFailure(entry);
+                  if (held !== undefined) held.cause = 'step_failed';
+                  return 'failed';
+                }
+                member = { modelFailure: bareFailure, entry };
+                usageForStep = entry.usage;
+                textsForStep = bareTexts;
+                stepInput = {};
               }
             }
           }
@@ -2702,6 +2777,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // decision C151: an expiry this call carries out names `realm agent`.
             caller: 'agent',
             input: stepInput,
+            // Gap 2, unit (ii-b2): the step fails through its model request's failure.
+            ...(member !== undefined ? { modelFailure: member.modelFailure } : {}),
             // #729 PR-3 (RECORD 01 #15): the input the ENGINE passes — `_debug` stripped (recorded
             // apart as `debug_output`) — never the closed-over one (same key = same caller).
             dispatcher: async (_command, input) => input,
@@ -2717,9 +2794,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // issue #600 PR 1a: `usage` is the THIRD independent member. A cs1-shaped step (no
             // tools, no structured output) passed NO stepMeta at all before this, so its usage was
             // computed and dropped right here at the boundary.
+            // Gap 2, unit (ii-b2): texts alone too (an unbilled failure under `modelFailure` keeps
+            // its unanswered request); a successful call's texts come with its usage.
             ...(toolCallsForMeta !== undefined ||
             structuredOutputMetaForStep !== undefined ||
             usageForStep !== undefined ||
+            textsForStep !== undefined ||
             triesOf(retryForStep) !== undefined
               ? {
                   stepMeta: {
@@ -2814,6 +2894,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             stepDef.execution === 'agent' &&
             (toolCallsForMeta === undefined || toolCallsForMeta.length === 0) &&
             repairsUsed < schemaRetries &&
+            member === undefined &&
             // issue #401: a duplicate attached writer's version bump forfeits the repair BY
             // DESIGN (record R-3). The error-code-keyed mint below still records the wedge
             // truthfully, so forfeiting a repair never costs the operator the visibility.
@@ -2878,6 +2959,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               (result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ||
                 result.error_code === 'VALIDATION_INPUT_SCHEMA');
             if (!wedge) {
+              // Gap 2, unit (ii-b2), correction 1: the engine refused the failure's save (its store
+              // failed). The catch's entry is written first, before the give-back, as the catch writes
+              // it; the line says so only when the write did (otherwise the writer's LOST line is the
+              // one line about it).
+              if (member !== undefined && result.status === 'error') {
+                memberEntryWritten = true;
+                if ((await recordFailure(member.entry)) === 'written') {
+                  console.error(memberNotSettledLine(stepName, result));
+                }
+              }
               const released = await giveBack();
               // Correction 1: a give-back that threw leaves the claim, held by no program once this
               // drive ends; the reply is judged without it, as for an ended run, so no line names
@@ -2919,6 +3010,49 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // #134: a NOT-REGISTERED handler or adapter, detected structurally (core's classifier, never
         // the message text) — the dispositions below, or the hold just after.
         const isCapabilityBlock = resultStop?.kind === 'capability_missing';
+
+        // Gap 2, unit (ii-b2): the reply to a call that failed the step through `modelFailure`. When
+        // it records this step as failed, the failure has its one home there (the settle released
+        // the claim): the bullet line in place of the give-back. Any other reply records no failure,
+        // so the catch's drive-failure entry is written, its line says what happened instead, and
+        // the drive stops, as the catch would have.
+        if (member !== undefined) {
+          if (
+            result.status === 'error' &&
+            resultStop?.kind === 'failed' &&
+            result.stopped_step === stepName
+          ) {
+            console.error(
+              `• Step '${stepName}' failed (${result.error_code}): its model request failed, and the step has on_model_failure: fail.`,
+            );
+            if (errorSnapshot?.record.terminal_state === true) endingSaid = true;
+            printResumeLine(errorSnapshot);
+            return 'failed';
+          }
+          const refused = result.status === 'error' && resultStop?.kind === 'refused';
+          if (!memberEntryWritten) {
+            const wrote = await recordFailure(member.entry);
+            if (refused && wrote === 'written')
+              console.error(memberNotSettledLine(stepName, result));
+          }
+          if (!refused) {
+            // Correction 2: the snapshot the line's record comes from, held by name (the lease-facts
+            // census): the one the engine judged the reply on, else the drive's current one.
+            const judgedSnap = judgedOf(result) ?? currentSnap;
+            const judged = judgedSnap.record;
+            console.log(
+              outcomeNotRecordedLine(
+                notRecordedKindOf(judged, stepName),
+                judged,
+                stepName,
+                keepsClaims,
+                writerCtx(),
+                judgedSnap,
+              ),
+            );
+          }
+          return 'failed';
+        }
 
         // decision C64 (the census): the chain after an agent step can reach an engine step that
         // cannot run here (capability). The agent step completed and the reply is the chained step's

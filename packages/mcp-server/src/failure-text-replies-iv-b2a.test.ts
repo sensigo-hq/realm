@@ -342,8 +342,15 @@ describe('gap 2 (iv-b2a), check 1 — a failed step, per tool', () => {
 type ModelFailure = NonNullable<ExecuteChainOptions['modelFailure']>;
 
 describe('gap 2 (iv-b2a), check 1 — a step settled by modelFailure (through executeChain and renderReply; no tool passes it)', () => {
+  // Gap 2, unit (ii-b2): the member needs the key, and `attempts` a declared `retry`.
   const MODEL = def('b2a-model', {
-    classify: { description: 'Classify.', execution: 'agent', depends_on: [] },
+    classify: {
+      description: 'Classify.',
+      execution: 'agent',
+      depends_on: [],
+      on_model_failure: 'fail',
+      retry: { max_attempts: 3 },
+    },
   });
   const failure = (over: Partial<ModelFailure>): ModelFailure => ({
     kind: 'transient',

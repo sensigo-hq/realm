@@ -5,8 +5,7 @@
 // The per-request cells run the server in this process (`startHttpMcpServer`, the stores of a temp
 // home, the key file of that home) and talk to it over HTTP: through the MCP SDK's own client, or a
 // raw POST where a cell reads the 401 itself. The start cells run the built `realm serve` with a fresh
-// HOME. Keys are written into the home's key file by the key file module's own writer (the commands
-// that make keys come in unit 1b). Every assertion carries (1) the
+// HOME. Keys are made by `realm serve key add`'s body on the same home. Every assertion carries (1) the
 // break that turns it red and (2) what it prints when it fails: statuses, the recorded fields, the
 // lines, never a key's text.
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -20,15 +19,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { advanceRun, loadWorkflowFromString, type Attributed } from '@sensigo/realm';
 import { createTestHome } from '@sensigo/realm-testing';
-import {
-  keyFingerprint,
-  newServeKey,
-  readServeKeys,
-  serveKeysPath,
-  writeServeKeys,
-} from '../lib/serve-keys.js';
+import { takeServeKeysLock } from '@sensigo/realm-store-sqlite';
+import { serveKeysPath } from '../lib/serve-keys.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { startHttpMcpServer } from './serve.js';
+import { serveKeyAdd } from './serve-key.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', '..', 'dist', 'index.js');
@@ -69,26 +64,24 @@ async function tempHome(options: { home?: string } = {}): Promise<TempHome> {
   return h;
 }
 
-/**
- * Writes a key named `name` into `h`'s key file, made at the home clock's now and ending `days` days
- * later (no end by default), through the key file module's writer; returns its text.
- */
-async function addKey(h: TempHome, name: string, days?: number): Promise<string> {
-  const text = newServeKey();
-  const now = h.home.runStore.clock.now();
-  const read = readServeKeys(serveKeysPath(h.home.path));
-  const keys = read.state === 'valid' ? read.keys : [];
-  writeServeKeys(h.home.path, [
-    ...keys,
-    {
-      name,
-      sha256: keyFingerprint(text),
-      created_at: now.toISOString(),
-      expires_at:
-        days === undefined ? null : new Date(now.getTime() + days * 86_400_000).toISOString(),
-    },
-  ]);
-  return text;
+/** Makes a key on `h` through `realm serve key add`'s body; returns its text. */
+async function addKey(h: TempHome, name: string, expires?: string): Promise<string> {
+  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const code = await serveKeyAdd(name, expires, {
+      home: () => h.home.path,
+      // The cell's own handle stays open for the server: the command's close is a no-op here.
+      openHome: () => Promise.resolve({ ...h.home, close: () => Promise.resolve() }),
+      takeLock: (dir) => takeServeKeysLock(dir),
+    });
+    if (code !== 0)
+      throw new Error(`add ${name} failed: ${err.mock.calls.map((c) => String(c[0])).join(' | ')}`);
+    return String(out.mock.calls[0]![0]);
+  } finally {
+    out.mockRestore();
+    err.mockRestore();
+  }
 }
 
 /** Starts the server in this process on `h`'s stores and key file; returns its port. */
@@ -209,31 +202,28 @@ describe('check 2 — a keyed request works and names the key', () => {
   }, 60_000);
 });
 
-describe('check 3 — a key taken out of the file is refused with no restart', () => {
-  it('on a running server, a request with a key the file no longer holds gets the 401', async () => {
+describe('check 3 — remove works with no restart', () => {
+  it('on a running server, a request with a removed key gets the 401', async () => {
     const h = await tempHome();
     const key = await addKey(h, 'ana-laptop');
-    const other = await addKey(h, 'ci-runner');
     const port = await serveOn(h);
     expect(await post(port, `Bearer ${key}`)).toBe(200);
-    // The file rewritten with the other key only, as an operator's edit would leave it.
-    const read = readServeKeys(serveKeysPath(h.home.path));
-    if (read.state !== 'valid') throw new Error(`the key file is ${read.state}`);
-    writeServeKeys(
-      h.home.path,
-      read.keys.filter((k) => k.name !== 'ana-laptop'),
-    );
-    // (1) red when the file is read once at start; (2) prints the status. The other key still works,
-    //     so the 401 is this key's, not a server that stopped reading the file.
-    expect(await post(port, `Bearer ${other}`)).toBe(200);
+    const r = spawnSync(process.execPath, [CLI, 'serve', 'key', 'remove', 'ana-laptop'], {
+      env: { PATH: process.env['PATH'] ?? '', HOME: h.root! },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    expect(r.status).toBe(0);
+    // (1) red when the file is read once at start; (2) prints the status.
     expect(await post(port, `Bearer ${key}`)).toBe(401);
   }, 60_000);
 });
 
-describe('check 4 — an ended key is refused', () => {
-  it('on the test clock: works before its end, the 401 after it', async () => {
+describe('check 4 — an ended key is refused, and list says it ended', () => {
+  it('on the test clock: works before its end, the 401 after it, and list marks it (ended)', async () => {
     const root = (await tempHome()).root!;
-    // A home on a test clock (the file `.realm-test-clock`), which this process's store reads.
+    // The home of a second HOME, on a test clock (the file `.realm-test-clock`), which the built CLI
+    // and this process's store both read.
     const clockRoot = join(root, 'clocked');
     const th = await createTestHome({
       start: '2026-11-22T12:00:00.000Z',
@@ -241,12 +231,22 @@ describe('check 4 — an ended key is refused', () => {
     });
     onTestFinished(() => th.remove());
     const h = await tempHome({ home: th.root });
-    const key = await addKey(h, 'ana-laptop', 1);
+    const key = await addKey(h, 'ana-laptop', '1');
     const port = await serveOn(h);
     expect(await post(port, `Bearer ${key}`)).toBe(200);
     await th.clock.advance(25 * 60 * 60 * 1000);
     // (1) red when the end check is dropped; (2) prints the status.
     expect(await post(port, `Bearer ${key}`)).toBe(401);
+    const list = spawnSync(process.execPath, [CLI, 'serve', 'key', 'list'], {
+      env: { PATH: process.env['PATH'] ?? '', HOME: clockRoot },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    // (1) red when list's end check is dropped; (2) prints the code and stdout.
+    expect({ status: list.status, stdout: list.stdout }).toEqual({
+      status: 0,
+      stdout: 'ana-laptop  made 2026-11-22 12:00 UTC  works until 2026-11-23 12:00 UTC (ended)\n',
+    });
   }, 60_000);
 });
 
@@ -365,7 +365,7 @@ describe('check 9 — a file that stops parsing fails closed', () => {
 });
 
 describe('check 15 — two entries with one fingerprint make the file invalid', () => {
-  it('on a running server the key gets the 401', async () => {
+  it('list refuses with entry 2 named; on a running server the key gets the 401', async () => {
     const h = await tempHome();
     const key = await addKey(h, 'ana-laptop');
     const path = serveKeysPath(h.home.path);
@@ -383,6 +383,16 @@ describe('check 15 — two entries with one fingerprint make the file invalid', 
     } finally {
       warn.mockRestore();
     }
+    const list = spawnSync(process.execPath, [CLI, 'serve', 'key', 'list'], {
+      env: { PATH: process.env['PATH'] ?? '', HOME: h.root! },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    // (1) red when the rule is dropped (list prints both keys); (2) prints the code and stderr.
+    expect({ status: list.status, stderr: list.stderr }).toEqual({
+      status: 1,
+      stderr: `Error: ${path} cannot be read (entry 2 is not a valid key entry). Fix the file, or delete it to remove every key.\n`,
+    });
   }, 60_000);
 });
 
@@ -461,7 +471,7 @@ describe('check 6 — a server on keys alone', () => {
       code: 1,
       stderr:
         'Error: REALM_SERVE_TOKEN is not set and there is no named key.\n' +
-        'Set it to a secret token, or use --dev / REALM_DEV=1 for local development only.\n',
+        "Set it to a secret token, add a key with 'realm serve key add <name>', or use --dev / REALM_DEV=1 for local development only.\n",
     });
   }, 60_000);
 });

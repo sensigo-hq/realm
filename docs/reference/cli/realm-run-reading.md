@@ -131,14 +131,14 @@ Evidence (3 steps):
      Input:  {"category":"billing","confidence":0.9}
      Output: {"category":"billing","confidence":0.9}
      Diagnostics: ~10 tokens (estimate, step input) | no preconditions
-     cost: not recorded — realm has no usage figures for this attempt (for example: an outside agent over MCP made it, a person typed its answer at a realm workflow run prompt, or realm 0.45.0 or earlier recorded it)
+     cost: not recorded — realm has no usage figures for this attempt (for example: its model request failed before an answer came, an outside agent over MCP made it, a person typed its answer at a realm workflow run prompt, or realm 0.45.0 or earlier recorded it)
 
   2. draft                  success   0ms   hash: 626ebbef
      Question opened through: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"reply":"We have refunded the charge."}
      Output: {"reply":"We have refunded the charge."}
      Diagnostics: ~10 tokens (estimate, step input) | preconditions: classify.confidence >= 0.7 → true (0.9)
-     cost: not recorded — realm has no usage figures for this attempt (for example: an outside agent over MCP made it, a person typed its answer at a realm workflow run prompt, or realm 0.45.0 or earlier recorded it)
+     cost: not recorded — realm has no usage figures for this attempt (for example: its model request failed before an answer came, an outside agent over MCP made it, a person typed its answer at a realm workflow run prompt, or realm 0.45.0 or earlier recorded it)
      Answer: send · answered by (not stated) · through Realm's MCP answer tool (as its door declared), recorded by mcp-stdio, running as ops@server-1 (from the OS user) · given at 2026-11-12T10:02:14Z · the claim token matched the reply that opened this question
   …
 ```

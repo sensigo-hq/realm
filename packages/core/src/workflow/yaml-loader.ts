@@ -2174,6 +2174,28 @@ function parseWorkflowString(
         );
       }
 
+      // Gap 2, unit (ii-b2): on_model_failure's one value is 'fail'; 'default' (Words 8) comes later.
+      // As structured_output's value check: only on an agent step (a wrong-kind step gets only the
+      // minted refusal, never the value noise).
+      const onModelFailure = step['on_model_failure'];
+      if (
+        onModelFailure !== undefined &&
+        step['execution'] === 'agent' &&
+        onModelFailure !== 'fail'
+      ) {
+        errors.push(
+          withStepLine(
+            stepName,
+            onModelFailure === 'default'
+              ? `Step '${stepName}': on_model_failure: 'default' is not available yet: only 'fail' is. ` +
+                  "With 'fail', a failed model request fails the step; without the key, the drive " +
+                  "stops and the run stays open. Write 'fail', or remove the key. 'default' (complete " +
+                  'the step with its default answer) comes in a later version.'
+              : `Step '${stepName}': 'on_model_failure' must be the literal string 'fail' (got ${JSON.stringify(onModelFailure)})`,
+          ),
+        );
+      }
+
       // WARN (do not reject): an idempotent auto step in a finalizer-bearing workflow gets
       // `deadline: null` (issue #101), so the RECLAIM function is inert — `realm run reclaim --all`
       // can never select it. The author should know it stays per-step-manual-reclaim-only.
