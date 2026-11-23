@@ -13,6 +13,7 @@ import {
 } from './settlement.js';
 import { FIXED_TERMINAL_REASONS } from '../utils/disclosure-tables.js';
 import { shapeOf } from '../utils/disclosure-walk.js';
+import { WorkflowError } from '../types/workflow-error.js';
 
 /** A failure's words as such a view shows them: their length, `‹string, N characters›`. */
 export function failureTextShape(text: string): string {
@@ -147,4 +148,41 @@ export function failureTextMarkOf(reply: {
     if (marked !== undefined) return marked;
   }
   return typeof basis === 'object' && basis !== null ? MARKS.get(basis) : undefined;
+}
+
+// Gap 2, unit (iv-b2b): the project's code failing to load. Which thrown error carries a failure's
+// words is marked by the code that knows (the CLI loader, at its four throws that quote what the
+// project's code threw), never judged from its text.
+
+/** The errors (and the price sources a failed load returned) whose text is a failure's words. */
+const FAILURE_WORDS = new WeakSet<object>();
+/** The providers Realm builds itself (the CLI's), whose unmarked throws are Realm's own sentences. */
+const REALM_PROVIDERS = new WeakSet<object>();
+
+/** Internal: marks `thrown` (an error, or a price source a failed load returned) as a failure's
+ *  words, on the same object; returns it. */
+export function noteFailureWords<T extends object>(thrown: T): T {
+  FAILURE_WORDS.add(thrown);
+  return thrown;
+}
+
+/** Whether `thrown` was marked as a failure's words ({@link noteFailureWords}). */
+export function carriesFailureWords(thrown: unknown): boolean {
+  return typeof thrown === 'object' && thrown !== null && FAILURE_WORDS.has(thrown);
+}
+
+/** Internal: notes `provider` as one Realm builds itself; returns it. */
+export function noteRealmProvider<T extends object>(provider: T): T {
+  REALM_PROVIDERS.add(provider);
+  return provider;
+}
+
+/**
+ * The one rule for a throw from a provider that loads the project's code: a marked throw is a
+ * failure's words; a `WorkflowError` never is (Realm's or an embedder's typed refusal); any other
+ * throw is one only when `provider` is not Realm's own (an embedder's: fail closed).
+ */
+export function isFailureWordsThrow(thrown: unknown, provider: object): boolean {
+  if (thrown instanceof WorkflowError) return false;
+  return carriesFailureWords(thrown) || !REALM_PROVIDERS.has(provider);
 }

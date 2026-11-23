@@ -93,7 +93,7 @@ import {
   failureMessagesWithOverlay,
   handlerAbortHint,
 } from './settlement.js';
-import { failureTextShape, noteFailureText } from './failure-text.js';
+import { carriesFailureWords, failureTextShape, noteFailureText } from './failure-text.js';
 import type {
   SettleStepDelta,
   SettlementResult,
@@ -1322,6 +1322,10 @@ function errorEnvelope(
   contextHint?: string,
   runPhase?: RunPhase,
 ): EngineReply {
+  const error = replyErrorOf(err);
+  // Gap 2, unit (iv-b2b): an error marked as a failure's words (the project's code failing to load,
+  // carried over by the MCP tools' catch) marks the reply, so the door shapes `errors[0]`.
+  if (carriesFailureWords(err)) noteFailureText(error, { message: err.message });
   return {
     command,
     run_id: runId,
@@ -1333,7 +1337,7 @@ function errorEnvelope(
     errors: [err.message],
     error_code: err.code,
     ...(Object.keys(err.details).length > 0 ? { error_details: err.details } : {}),
-    error: replyErrorOf(err),
+    error,
     intrinsic_action: err.agentAction,
     reply_kind: 'error',
     ...(err.retry_after !== undefined ? { retry_after: err.retry_after } : {}),

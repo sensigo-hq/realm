@@ -11,7 +11,6 @@ import {
   composeWaysOn,
   waysStoreOf,
   hashParams,
-  WorkflowError,
   buildPreExecutionErrorEnvelope,
   unmetCapabilities,
   capabilityWarning,
@@ -160,6 +159,7 @@ import {
 } from '@sensigo/realm';
 import { boundedLines, boundedRefusal, moreUnmetSteps } from './refusal-format.js';
 import { noRunState } from './no-run-state.js';
+import { workflowErrorOfThrown } from './thrown-error.js';
 
 /**
  * The hint of a reply that hands back a run on which this call ran nothing (decisions C45, C57, C64,
@@ -620,15 +620,7 @@ export function registerStartRun(
             audience: 'agent',
             table: MCP_ENVELOPE_TABLE,
           });
-        const workflowErr =
-          err instanceof WorkflowError
-            ? err
-            : new WorkflowError(err instanceof Error ? err.message : String(err), {
-                code: 'ENGINE_INTERNAL',
-                category: 'ENGINE',
-                agentAction: 'stop',
-                retryable: false,
-              });
+        const workflowErr = workflowErrorOfThrown(err);
         const contextHint =
           workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
             ? `Workflow '${args.workflow_id}' not found.`

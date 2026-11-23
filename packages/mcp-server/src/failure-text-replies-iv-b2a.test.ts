@@ -589,7 +589,7 @@ describe('gap 2 (iv-b2a), check 7 — under shown, the reply is today’s', () =
     async (_name, d, drive) => {
       claim(
         RUN_STATE,
-        "The setting also covers the replies of the assistant's own calls (`execute_step`, `advance_run`, `start_run`, `submit_human_response` and `start_run_batch`):",
+        "The setting also covers the replies of the assistant's own calls (`execute_step`, `advance_run`, `start_run`, `submit_human_response`, `start_run_batch` and `present_question`):",
       );
       const w = await world();
       const r = await both(w, drive, d);
@@ -605,12 +605,13 @@ describe('gap 2 (iv-b2a), check 7 — under shown, the reply is today’s', () =
 
 describe('gap 2 (iv-b2a), check 8 — the words', () => {
   it('the run-state page’s paragraph and the CHANGELOG sentence say what the replies show', () => {
-    // Executed by checks 1–6 (each clause by its cell: errors[0], error_details' keys and numbers,
-    // the abort span, started[].terminal_reason, refusals kept) and (iv-b2b)'s load-error clause by
-    // its own unit; text a workflow copies is shown as its field always is (no field changed here).
+    // Executed by checks 1–6 (each clause by its cell: errors[0], error_details' top-level keys and
+    // numbers, the abort span, started[].terminal_reason, refusals kept, VALIDATION_EXHAUSTED kept)
+    // and (iv-b2b)'s load-error clause by its cells (failure-text-load-iv-b2b.test.ts, here and in the
+    // CLI); text a workflow copies is shown as its field always is (no field changed here).
     claim(
       RUN_STATE,
-      "The setting also covers the replies of the assistant's own calls (`execute_step`, `advance_run`, `start_run`, `submit_human_response` and `start_run_batch`): when a step fails, `errors[0]` shows as `‹string, N characters›`, and `error_details` keeps its keys, a retried step's `stepName`, `attempts` and `exhausted_by`, and any number in `status` or `retry_after`, and shows every other value as its shape; a handler's abort shows `Handler step '<step>' aborted the run: ‹string, N characters›` in `context_hint`; `start_run_batch`'s `started[].terminal_reason` shows as `terminal_reason` does here. A refusal of the call itself is Realm's own sentence and stays. A reply whose project code failed to load still shows the error's words. Text a workflow copies into a question, a prompt or an output is shown as that field always is.",
+      "The setting also covers the replies of the assistant's own calls (`execute_step`, `advance_run`, `start_run`, `submit_human_response`, `start_run_batch` and `present_question`): when a step fails, except because its answers were refused too many times (`VALIDATION_EXHAUSTED`, Realm's own sentence, which stays), `errors[0]` shows as `‹string, N characters›`, and `error_details` keeps its top-level keys, a retried step's `stepName`, `attempts` and `exhausted_by`, and any number in `status` or `retry_after`, and shows every other value as its shape; a handler's abort shows `Handler step '<step>' aborted the run: ‹string, N characters›` in `context_hint`; `start_run_batch`'s `started[].terminal_reason` shows as `terminal_reason` does here. A refusal of the call itself is Realm's own sentence and stays. When a workflow's code throws while it is loaded, the loader's message, which quotes what the code threw, shows as its shape in `errors[0]` and in `not_priced[].detail`; `error_code`, `agent_action` and `context_hint` stay, and so does a sentence Realm wrote about the project (an invalid manifest, a missing setting). Text a workflow copies into a question, a prompt or an output is shown as that field always is.",
     );
     claim(
       'CHANGELOG.md',
