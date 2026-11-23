@@ -12,7 +12,7 @@
 // returns, with nothing that yields between the read and the write.
 import type { PerRunArtifactStore } from './per-run-artifact-store.js';
 import type { CallbackKeyStore } from './callback-keys.js';
-import { isPastDeadline } from '../engine/instants.js';
+import { isPastDeadline, parseStamp } from '../engine/instants.js';
 
 /**
  * Where a run's caller asked to be told the run finished (`CreateRunOptions.callback`).
@@ -173,17 +173,36 @@ export type CallbackMarkResult =
   | { readonly applied: false; readonly reason: 'no_row' | 'not_pending' | 'lost_claim' };
 
 /**
+ * A row `endOverdue` ended, as it ended it: `attempts` is how many tries began (0: never sent).
+ * @beta
+ */
+export interface CallbackEnded {
+  readonly run_id: string;
+  readonly workflow_id: string;
+  readonly host: string;
+  readonly attempts: number;
+}
+
+/**
  * A store's callback store (`RunStore.callbacks`): one row per run, written by `create`.
- * `due`, `claim` and a `retry` mark each take ONE raw reading of the store's clock, refused or
- * applied; `read`, `countPending`, `freezeBody`, the other marks and the purge pair take none; a
- * malformed request throws before any reading. A run without a row is no error.
+ * `due`, `claim`, `endOverdue` and a `retry` mark each take ONE raw reading of the store's clock,
+ * refused or applied; `read`, `countPending`, `countWaiting`, `freezeBody`, the other marks and the
+ * purge pair take none; a malformed request throws before any reading. A run without a row is no
+ * error.
  * @beta
  */
 export interface CallbackStore extends PerRunArtifactStore {
   read(runId: string): Promise<CallbackView | undefined>;
   countPending(): Promise<number>;
+  /** How many rows wait to be sent: `pending`, and their run finished (a run that is gone is not). */
+  countWaiting(): Promise<number>;
   /** At most `limit` (1–1,000) rows to send now, one per host per round. */
   due(limit: number): Promise<CallbackItem[]>;
+  /**
+   * Ends, `failed` with `expired`, at most `limit` (1–1,000) rows that are due and whose run
+   * finished 3 days or more before the reading, oldest first; what it ended, in that order.
+   */
+  endOverdue(limit: number): Promise<CallbackEnded[]>;
   claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
   freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
   mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
@@ -421,9 +440,59 @@ export function markCallback(
       write: { ...row, next_attempt_at: next, last_status: result.lastStatus },
     };
   }
+  return { result: { applied: true }, write: endedRow(row, result.kind, result.lastStatus) };
+}
+
+/** A row ended: the status and last answer set, the address and body cleared, the rest kept. */
+function endedRow(
+  row: CallbackRow,
+  status: 'delivered' | 'failed',
+  lastStatus: CallbackLastStatus,
+): CallbackRow {
   const { url: _url, body: _body, ...kept } = row;
+  return { ...kept, status, last_status: lastStatus };
+}
+
+/** How many rows wait to be sent, pure: `pending`, and `finished(runId)` (a missing run: not). */
+export function countWaitingCallbacks(
+  rows: readonly CallbackRow[],
+  finished: (runId: string) => boolean,
+): number {
+  return rows.filter((row) => row.status === 'pending' && finished(row.run_id)).length;
+}
+
+/**
+ * What `endOverdue` ends at `at`, pure: `pending` rows whose `next_attempt_at` is at or before `at`,
+ * whose run is finished (`runOf`: `undefined` when it does not exist), and whose anchor (the row's
+ * `finished_at`, else the run's `updatedAt`, as the purge's hold reads it) is 3 days or more before
+ * `at`; oldest anchor first, ties by `run_id`, at most `limit`. Each is written as a `failed` mark
+ * writes it, with `expired`.
+ */
+export function endOverdueCallbacks(
+  rows: readonly CallbackRow[],
+  runOf: (runId: string) => { readonly finished: boolean; readonly updatedAt: string } | undefined,
+  at: Date,
+  limit: number,
+): { ended: CallbackEnded[]; writes: CallbackRow[] } {
+  const overdue: Array<{ row: CallbackRow; anchor: string }> = [];
+  for (const row of rows) {
+    if (row.status !== 'pending' || !isPastDeadline(row.next_attempt_at, at)) continue;
+    const run = runOf(row.run_id);
+    if (run === undefined || !run.finished) continue;
+    const anchor = row.finished_at ?? run.updatedAt;
+    const ms = parseStamp(anchor);
+    if (ms === undefined || at.getTime() < ms + CALLBACK_DELIVERY_WINDOW_SECONDS * 1000) continue;
+    overdue.push({ row, anchor });
+  }
+  overdue.sort((a, b) => binary(a.anchor, b.anchor) || binary(a.row.run_id, b.row.run_id));
+  const taken = overdue.slice(0, limit).map(({ row }) => row);
   return {
-    result: { applied: true },
-    write: { ...kept, status: result.kind, last_status: result.lastStatus },
+    ended: taken.map(({ run_id, workflow_id, host, attempts }) => ({
+      run_id,
+      workflow_id,
+      host,
+      attempts,
+    })),
+    writes: taken.map((row) => endedRow(row, 'failed', 'expired')),
   };
 }
