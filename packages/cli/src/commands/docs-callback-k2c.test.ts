@@ -105,7 +105,7 @@ describe("callback K2c — core-library.md: the callbacks row's keys sentences (
     // Pinned by: CB-K2C-AU-16 (purge.ts reads a run's callbacks row; callback-key.ts is the only user of keys). C3c-2: each caller, docs-callback-c3c2 '12. the callers the callbacks row names are the code's' (CB-C3C2-AU-14).
     claim(
       CORE,
-      "`realm callback key` uses `keys`. `realm listen` uses `countWaiting` (the callback backlog), `read` (a repeated event's lookup), the keys' `read` and `list`, `deleteAllForRun` (a run that did not start), and, to send, `endOverdue`, `due`, `claim`, `freezeBody` and `mark`; `realm run inspect` and the read address use `read`; `realm run purge` uses `read` (its hold), `statAllForRun` and `deleteAllForRun`.",
+      "`realm callback key` uses `keys`. `realm listen` uses `countWaiting` (the callback backlog), `read` (a repeated event's lookup), the keys' `read` and `list`, `deleteAllForRun` (a run that did not start), and, to send, `expireOverdue`, `due`, `claim`, `freezeBody` and `mark`; `realm run inspect` and the read address use `read`; `realm run purge` uses `read` (its hold), `statAllForRun` and `deleteAllForRun`.",
     );
   });
 });

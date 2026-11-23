@@ -839,8 +839,8 @@ describe('C3c-2 — cell 5: the callers are the code’s', () => {
         /callbacks\?\.deleteAllForRun\(run\.id\)/,
       ),
       'listen: the pass': has('commands/listen.ts', /makeCallbackPass\(\{/),
-      'pass: endOverdue, due, claim, freezeBody, mark': [
-        'endOverdue',
+      'pass: expireOverdue, due, claim, freezeBody, mark': [
+        'expireOverdue',
         'due',
         'claim',
         'freezeBody',
@@ -863,7 +863,7 @@ describe('C3c-2 — cell 5: the callers are the code’s', () => {
       'listen: keys.list': true,
       'listen: deleteAllForRun (a run that did not start)': true,
       'listen: the pass': true,
-      'pass: endOverdue, due, claim, freezeBody, mark': true,
+      'pass: expireOverdue, due, claim, freezeBody, mark': true,
       'inspect: read': true,
       'read address: read': true,
       'purge: read (its hold)': true,

@@ -3,7 +3,7 @@
 // laws of a store's callback store (`RunStore.callbacks`). The door side (A1a): registration inside
 // `create`, `read`, `countPending` and the purge pair. The sender side (A1b): `due` and `claim`, the
 // only methods that return the address, then `freezeBody` and `mark`. Callback C3d: `countWaiting`
-// and `endOverdue`. The signing keys (A2): the
+// and `expireOverdue`. The signing keys (A2): the
 // `CBK_` laws of `keys`. The store is ALSO a `PerRunArtifactStore`: a file wiring
 // this family runs `perRunArtifactStoreContract` on `store.callbacks` too, naming in its `NOT_RUN`
 // what its store cannot run there.
@@ -47,7 +47,7 @@ import { settableClock } from '../clock/settable-clock.js';
  *   `webhook_id` that is not a uuid, a missing field: each create throws, takes no reading and leaves
  *   no run and no row; a 1- and a 2,048-character `url` and a 255-character `host` are accepted.
  *   Callback A1b: a claim, freeze or mark token that is empty or 201 characters, a `limit` of 0, 1,001,
- *   1.5 or `NaN` (to `due` or, callback C3d, `endOverdue`), an empty body, a `delivered` status outside
+ *   1.5 or `NaN` (to `due` or, callback C3d, `expireOverdue`), an empty body, a `delivered` status outside
  *   200–299, an `afterSeconds` of 0, -1, `NaN`, `Infinity` or 86,401, a `lastStatus` outside 100–599
  *   and the closed words (`unsigned` included), a mark of another kind: each throws, takes no reading
  *   and changes no row; a 200-character token, a `limit` of 1,000 and an `afterSeconds` of 86,400 are
@@ -56,7 +56,7 @@ import { settableClock } from '../clock/settable-clock.js';
  *   (exactly at it; not 1 ms before) and its run finished; each conjunct alone keeps it out.
  * - `CB_DUE_RUN_GONE` — a row whose run is gone is not due, and its claim answers `run_not_finished`
  *   (an adapter hook removes the run; a store that cannot lists the law in its `NOT_RUN`). Callback
- *   C3d: nor is it counted by `countWaiting`, nor ended by `endOverdue` 3 days later.
+ *   C3d: nor is it counted by `countWaiting`, nor expired by `expireOverdue` 3 days later.
  * - `CB_DUE_FAIRNESS_AND_ORDER` — 60 rows of one host and the newest row of another, `limit` 50: the
  *   first host's oldest, the other host's row, then the first host's next 48; inside a round the hosts
  *   go by the `next_attempt_at` of the row each gives (z at +0 and +100 ms, a at +5 and +6 ms: z0, a0,
@@ -89,17 +89,17 @@ import { settableClock } from '../clock/settable-clock.js';
  *   takes, keyed and unkeyed, and the row is stamped with the create's own reading; `read`,
  *   `countPending` and the purge pair take none. Callback A1b: `due`, `claim` and a `retry` mark take
  *   one, applied or refused; `freezeBody` and the other marks take none. Callback C3d: `countWaiting`
- *   takes none, `endOverdue` one, whether it ends a row or none.
+ *   takes none, `expireOverdue` one, whether it expires a row or none.
  * - `CB_WAITING_COUNT` (callback C3d) — `countWaiting` counts the `pending` rows whose run finished, a
  *   row waiting for a retry included; never the row of a run still running, waiting at a question or
  *   resumed, nor a `delivered` or `failed` row; it takes no reading.
- * - `CB_OVERDUE_ENDS` (callback C3d) — `endOverdue` ends, `failed` with `expired`, a `pending` row due
+ * - `CB_OVERDUE_EXPIRES` (callback C3d) — `expireOverdue` expires, `failed` with `expired`, a `pending` row due
  *   at the reading whose run finished and whose anchor (`finished_at`, else the run's `updated_at`)
  *   is 3 days before the reading or more: exactly then, not 1 ms before, for a claimed row and a
  *   never-claimed one. It leaves a row under a live claim or waiting for a retry until that ends, a
- *   running run's row and a finished row. The ended row keeps its `attempts` and holds no address or
- *   body. It returns what it ended (`run_id`, `workflow_id`, `host`, `attempts`), oldest anchor first,
- *   ties by `run_id` in code-unit order, at most `limit`; a second call ends nothing; a later mark
+ *   running run's row and a finished row. The expired row keeps its `attempts` and holds no address or
+ *   body. It returns what it expired (`run_id`, `workflow_id`, `host`, `attempts`), oldest anchor first,
+ *   ties by `run_id` in code-unit order, at most `limit`; a second call expires nothing; a later mark
  *   answers `not_pending`.
  *
  * Callback A2, the signing keys (`store.callbacks.keys`), for each (workflow, host) a `current` and
@@ -155,7 +155,7 @@ export const CALLBACK_STORE_LAWS = [
   'CB_VIEW_HIDES',
   'CB_PURGE_PAIR',
   'CB_WAITING_COUNT',
-  'CB_OVERDUE_ENDS',
+  'CB_OVERDUE_EXPIRES',
   'CB_CLOCK_READINGS',
   'CBK_MAKE_ONE_KEY',
   'CBK_ROTATE_ATOMIC',
@@ -408,10 +408,10 @@ function family(adapter: CallbackStoreContractAdapter) {
       ['due 1,001', () => b.callbacks.due(1001)],
       ['due 1.5', () => b.callbacks.due(1.5)],
       ['due NaN', () => b.callbacks.due(Number.NaN)],
-      ['endOverdue 0', () => b.callbacks.endOverdue(0)],
-      ['endOverdue 1,001', () => b.callbacks.endOverdue(1001)],
-      ['endOverdue 1.5', () => b.callbacks.endOverdue(1.5)],
-      ['endOverdue NaN', () => b.callbacks.endOverdue(Number.NaN)],
+      ['expireOverdue 0', () => b.callbacks.expireOverdue(0)],
+      ['expireOverdue 1,001', () => b.callbacks.expireOverdue(1001)],
+      ['expireOverdue 1.5', () => b.callbacks.expireOverdue(1.5)],
+      ['expireOverdue NaN', () => b.callbacks.expireOverdue(Number.NaN)],
       ['a freeze with an empty token', () => b.callbacks.freezeBody(id, '', 'b')],
       ['an empty body', () => b.callbacks.freezeBody(id, 'X', '')],
       ['a mark with an empty token', mark({ kind: 'failed', lastStatus: 500 }, '')],
@@ -459,8 +459,8 @@ function family(adapter: CallbackStoreContractAdapter) {
     );
     same(
       law,
-      'a limit of 1,000 is accepted by endOverdue',
-      (await thrown(() => b.callbacks.endOverdue(1000))) === undefined,
+      'a limit of 1,000 is accepted by expireOverdue',
+      (await thrown(() => b.callbacks.expireOverdue(1000))) === undefined,
       true,
     );
     same(
@@ -555,7 +555,7 @@ function family(adapter: CallbackStoreContractAdapter) {
           b.callbacks.mark(id, 'X', { kind: 'failed', lastStatus: 500 }),
         ),
         waiting: await delta(() => b.callbacks.countWaiting()),
-        endsNone: await delta(() => b.callbacks.endOverdue(10)),
+        endsNone: await delta(() => b.callbacks.expireOverdue(10)),
       },
       {
         due: 1,
@@ -572,12 +572,12 @@ function family(adapter: CallbackStoreContractAdapter) {
     );
     const old = await finishedRun(b, 921);
     await b.at(30 * 24 * 60 * MIN);
-    let ended: unknown;
+    let expired: unknown;
     same(
       law,
-      'endOverdue takes one when it ends a row',
-      { reads: await delta(async () => (ended = await b.callbacks.endOverdue(10))), ended },
-      { reads: 1, ended: [{ run_id: old, workflow_id: WORKFLOW, host: HOST, attempts: 0 }] },
+      'expireOverdue takes one when it expires a row',
+      { reads: await delta(async () => (expired = await b.callbacks.expireOverdue(10))), expired },
+      { reads: 1, expired: [{ run_id: old, workflow_id: WORKFLOW, host: HOST, attempts: 0 }] },
     );
   }
 
@@ -915,12 +915,12 @@ function family(adapter: CallbackStoreContractAdapter) {
           await b.at(OVERDUE_MS + MIN);
           same(
             law,
-            'not ended 3 days later',
+            'not expired 3 days later',
             {
-              ended: await b.callbacks.endOverdue(1000),
+              expired: await b.callbacks.expireOverdue(1000),
               status: (await b.callbacks.read(id))?.status,
             },
-            { ended: [], status: 'pending' },
+            { expired: [], status: 'pending' },
           );
         });
       },
@@ -1438,11 +1438,11 @@ function family(adapter: CallbackStoreContractAdapter) {
         }),
     ),
     L(
-      'CB_OVERDUE_ENDS',
-      'endOverdue ends a due row 3 days after its run finished, failed with expired, oldest first',
+      'CB_OVERDUE_EXPIRES',
+      'expireOverdue expires a due row 3 days after its run finished, failed with expired, oldest first',
       () =>
-        on('CB_OVERDUE_ENDS', async (b) => {
-          const law = 'CB_OVERDUE_ENDS';
+        on('CB_OVERDUE_EXPIRES', async (b) => {
+          const law = 'CB_OVERDUE_EXPIRES';
           const W = OVERDUE_MS;
           const ends = (row: string, attempts: number) => ({
             run_id: row,
@@ -1452,7 +1452,7 @@ function family(adapter: CallbackStoreContractAdapter) {
           });
           const endsAt = async (ms: number) => {
             await b.at(ms);
-            return b.callbacks.endOverdue(1000);
+            return b.callbacks.expireOverdue(1000);
           };
           // a: claimed at 0, so its `finished_at` is its run's `updated_at`; the run is then stamped
           // again at 2,000 ms, so an anchor read from the run ends it 2 s late.
@@ -1494,7 +1494,7 @@ function family(adapter: CallbackStoreContractAdapter) {
           same(law, 'the live claim of c', (await claimNow(b, c, 'C')).applied, true);
           same(law, 'the claim of d', (await claimNow(b, d, 'D')).applied, true);
           await b.callbacks.mark(d, 'D', { kind: 'retry', afterSeconds: 30, lastStatus: 503 });
-          same(law, '1 ms before a’s end', await b.callbacks.endOverdue(1000), []);
+          same(law, '1 ms before a’s end', await b.callbacks.expireOverdue(1000), []);
           const aBefore = await b.callbacks.read(a);
           same(law, 'at a’s end, from its finished_at', await endsAt(aAnchor + W), [ends(a, 1)]);
           same(
@@ -1503,7 +1503,7 @@ function family(adapter: CallbackStoreContractAdapter) {
             { row: await b.callbacks.read(a), bytes: (await b.callbacks.statAllForRun(a)).bytes },
             { row: { ...aBefore, status: 'failed', last_status: 'expired' }, bytes: 0 },
           );
-          same(law, 'a second call at the same instant', await b.callbacks.endOverdue(1000), []);
+          same(law, 'a second call at the same instant', await b.callbacks.expireOverdue(1000), []);
           same(
             law,
             'a later mark of a',
@@ -1539,7 +1539,7 @@ function family(adapter: CallbackStoreContractAdapter) {
             await b.callbacks.deleteAllForRun(id);
           // The order: y finished before x though x was made first. Then two rows tied on their
           // anchor, the one made second with the smaller run_id, so a store that leaves ties in the
-          // order the rows were made (as a scan of the due-time index does) ends the wrong row at
+          // order the rows were made (as a scan of the due-time index does) expires the wrong row at
           // limit 1. Run ids are the store's own, so the pair is found, not chosen: rows are made one
           // per millisecond until a row's id is smaller than the id of the row made just before it,
           // and every row made before that pair loses its callback row. The tied set is then exactly
@@ -1570,20 +1570,20 @@ function family(adapter: CallbackStoreContractAdapter) {
           await b.finish(madeFirst);
           await b.finish(madeSecond);
           await b.at(tiedAt + W);
-          same(law, 'limit 2: the oldest anchors', await b.callbacks.endOverdue(2), [
+          same(law, 'limit 2: the oldest anchors', await b.callbacks.expireOverdue(2), [
             ends(y, 0),
             ends(x, 0),
           ]);
           same(
             law,
             'limit 1: ties by run_id, the row made second',
-            await b.callbacks.endOverdue(1),
+            await b.callbacks.expireOverdue(1),
             [ends(madeSecond, 0)],
           );
-          same(law, 'the rest: the row made first', await b.callbacks.endOverdue(1000), [
+          same(law, 'the rest: the row made first', await b.callbacks.expireOverdue(1000), [
             ends(madeFirst, 0),
           ]);
-          // The limit counts only rows it ends: a running run's row and a row under a live claim,
+          // The limit counts only rows it expires: a running run's row and a row under a live claim,
           // each older than the one row that is due, do not take its place at limit 1.
           const c0 = tiedAt + 2 * W;
           await b.at(c0);
@@ -1597,8 +1597,8 @@ function family(adapter: CallbackStoreContractAdapter) {
           await b.at(c0 + 2 + W);
           same(
             law,
-            'limit 1: the due row, past older rows it cannot end',
-            await b.callbacks.endOverdue(1),
+            'limit 1: the due row, past older rows it cannot expire',
+            await b.callbacks.expireOverdue(1),
             [ends(due, 0)],
           );
           same(
