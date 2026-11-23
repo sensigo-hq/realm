@@ -384,7 +384,7 @@ describe('gap 2 (iv-b1) correction 1 — the project-code load warning', () => {
   it('check 1 — under hidden: Realm’s sentence and the code kept, the loader’s message a shape, its path in the receipt', async () => {
     claim(
       'docs/reference/mcp/run-state-and-health.md',
-      "| The warning that this server could not load the project's code (in `warnings`) | Realm's sentence, with the code's message as its shape when the project's code threw it: `this server could not load the project code for workflow '<workflow>' (<code>): ‹string, N characters›; …` | The workflow and the error code |",
+      "| The warning that this server could not load the project's code (in `warnings`) | Realm's sentence, with the code's message as its shape when the project's code threw it: `this server could not load the project code for workflow '<workflow>' (<code>): ‹string, N characters›; …` | The workflow and the error code, or `no error code` |",
     );
     const shown = await loadFailureState('shown');
     const hidden = await loadFailureState('hidden');

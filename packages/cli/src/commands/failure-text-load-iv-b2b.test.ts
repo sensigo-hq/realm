@@ -6,8 +6,9 @@
 // what the code threw, and that text can carry data (a card number, a tenant). Every tool whose call
 // loads the code replies with it in `errors[0]`, and `get_run_state` repeats it in its load warning
 // and in each price's `not_priced[].detail`. Under `--failure-text hidden` the server shows its length
-// in its place; the code, the action and the hint stay. A sentence Realm wrote about the project (an
-// invalid manifest, a missing `use:`, a manifest outside the deployment root) is Realm's and stays.
+// in its place; the code, the action and the hint stay. A sentence Realm wrote about the project (a
+// missing `use:`, a manifest outside the deployment root) is Realm's and stays; an invalid `realm.yaml`
+// is withheld whole whatever the setting, as every value is when Realm cannot read the manifest.
 // The cells register a real project with `realm workflow register`, then change its code so it throws,
 // as a deploy that breaks it does, and call the tools of the built `realm mcp` over stdio. Every
 // assertion carries (a) the change that turns it red and (b) what it prints: replies' fields, never

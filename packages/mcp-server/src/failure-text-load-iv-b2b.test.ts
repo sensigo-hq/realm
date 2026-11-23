@@ -32,6 +32,15 @@ import { makeTempHome, seedRun, type TempHome } from './test-support/temp-home.j
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 
+/** (a) red when the page no longer holds the sentence word for word; (b) prints the sentence. */
+function claim(page: string, sentence: string): void {
+  const flat = (t: string): string => t.replace(/\s+/g, ' ');
+  expect(
+    flat(readFileSync(join(ROOT, page), 'utf8')),
+    `${page} no longer says: ${sentence}`,
+  ).toContain(flat(sentence));
+}
+
 const homes: TempHome[] = [];
 afterEach(async () => {
   for (const h of homes.splice(0).reverse()) await h.cleanup();
@@ -395,6 +404,14 @@ describe("gap 2 (iv-b2b), check 5 — get_run_state's load warning from an embed
 });
 
 describe('gap 2 (iv-b2b), check 8 — the words an embedder reads', () => {
+  it("the run-state page says how a program's own registryProvider is judged", () => {
+    // Executed by check 2 (a plain Error shaped, a WorkflowError kept) and check 5 (the warning).
+    claim(
+      'docs/reference/mcp/run-state-and-health.md',
+      "A program's own `registryProvider` is judged the same way: a `WorkflowError` it throws stays as written, and anything else it throws shows as its shape.",
+    );
+  });
+
   it("RealmMcpServerOptions.registryProvider's comment, in the published types, says what hidden does to its throws", () => {
     const types = readFileSync(join(ROOT, 'packages/mcp-server/dist/server.d.ts'), 'utf8').replace(
       /\s*\*\s*/g,
