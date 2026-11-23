@@ -212,6 +212,19 @@ realm serve --port — option, takes a value, default 3001
 realm serve --project — option, takes a value
 realm serve --shutdown-drain — option, takes a value, default 0
 realm serve --shutdown-grace — option, takes a value, default 30
+realm serve key — command
+realm serve key --help — option, short -h, no value
+realm serve key add — command
+realm serve key add <name> — argument 1, required
+realm serve key add --expires — option, takes a value
+realm serve key add --help — option, short -h, no value
+realm serve key help — command, Commander's help
+realm serve key help <command> — argument 1, optional
+realm serve key list — command
+realm serve key list --help — option, short -h, no value
+realm serve key remove — command
+realm serve key remove <name> — argument 1, required
+realm serve key remove --help — option, short -h, no value
 realm webhook — command
 realm webhook --help — option, short -h, no value
 realm workflow — command
