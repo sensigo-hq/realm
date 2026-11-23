@@ -7,7 +7,18 @@
 //
 // Every assertion names (a) the change that turns it red and (b) what it prints on failure.
 import { describe, expect, it } from 'vitest';
-import { compileDisclosure, discloseReply, type RunRecord } from '@sensigo/realm';
+import {
+  compileDisclosure,
+  discloseReply,
+  executeChain,
+  judgeFailureText,
+  judgeFormWait,
+  judgeGateAnswers,
+  type RunRecord,
+  type WorkflowDefinition,
+} from '@sensigo/realm';
+import { InMemoryStore } from '@sensigo/realm-testing';
+import { McpDoor } from '../door.js';
 import { REPLY_CEILING_CHARS, toolContentOf } from '../render-reply.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { RUN_STATE_PLAN, RUN_STATE_SUMMARY_TABLE, handleGetRunState } from './get-run-state.js';
@@ -169,6 +180,74 @@ describe('Q1 (#592) unit b — the first carrier, get_run_state', () => {
       failedSteps: COUNT,
       failedStepsMore: undefined,
       firstKept: names[0],
+    });
+  });
+});
+
+describe('gap 2 (ii-b1), check 5 — failures[].failure_kind on the reply an assistant reads', () => {
+  const def: WorkflowDefinition = {
+    id: 'wf-g2iib1',
+    name: 'wf g2iib1',
+    version: 1,
+    steps: { classify: { description: 'Classify.', execution: 'agent', depends_on: [] } },
+  };
+  const doorOf = (failureText: 'shown' | 'hidden'): McpDoor => {
+    const answers = judgeGateAnswers({});
+    const wait = judgeFormWait({});
+    const text = judgeFailureText({ flag: failureText });
+    if (!answers.ok || !wait.ok || !text.ok) throw new Error('fixture: the settings judge');
+    return new McpDoor({
+      gateAnswers: answers.setting,
+      formWait: wait.setting,
+      sendsForms: false,
+      failureText: text.setting,
+    });
+  };
+
+  it('a permanent failure written through modelFailure: failure_kind is on the disclosed reply, also under --failure-text hidden, where only the message is shaped', async () => {
+    const store = new InMemoryStore();
+    const { record } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const message = 'Anthropic 400: messages: bad (fake)';
+    await executeChain(store, def, {
+      runId: record.id,
+      command: 'classify',
+      input: {},
+      dispatcher: async () => ({}),
+      modelFailure: {
+        kind: 'permanent',
+        stop_reason: 'non_retryable',
+        message,
+        attempt: 1,
+        error_class: 'api_status',
+        status: 400,
+      },
+    });
+    const workflowStore = declared({
+      register: async () => {},
+      get: async () => def,
+      list: async () => [def],
+    }) as never;
+    const read = async (failureText: 'shown' | 'hidden') =>
+      shown(
+        (await handleGetRunState(
+          { run_id: record.id },
+          { runStore: store, workflowStore, door: doorOf(failureText) },
+        )) as unknown as Reply,
+      )['failures'];
+    const words = {
+      step: 'classify',
+      code: 'MODEL_REQUEST_FAILED',
+      category: 'SERVICE',
+      stop_reason: 'non_retryable',
+      agent_action: 'report_to_user',
+      failure_kind: 'permanent',
+      attempt: 1,
+    };
+    // (a) red when the composer does not read the kind, its disclosure row is not a fact (it is cut
+    //     or shaped under hidden), or its producer row is missing; (b) prints both disclosed lists.
+    expect({ shown: await read('shown'), hidden: await read('hidden') }).toEqual({
+      shown: [{ ...words, message }],
+      hidden: [{ ...words, message: `‹string, ${String(message.length)} characters›` }],
     });
   });
 });

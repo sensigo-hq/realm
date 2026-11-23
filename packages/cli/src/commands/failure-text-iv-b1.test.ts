@@ -131,7 +131,7 @@ describe('gap 2 (iv-b1), check 1 — each command reads the flag and the variabl
   it('realm mcp: the flag and the variable each reach the server, with their start line; none under shown', async () => {
     claim(
       MCP_PAGE,
-      "| `--failure-text <value>` | `shown` | Whether an assistant sees a failure's words in `get_run_state` and in the replies to its own calls: `shown`, or `hidden`, which shows the step, its code, category or class where the record has them, and in place of the words their length (`‹string, N characters›`). With `REALM_MCP_FAILURE_TEXT` also set, `hidden` wins. Added after version 0.50.0. |",
+      "| `--failure-text <value>` | `shown` | Whether an assistant sees a failure's words in `get_run_state` and in the replies to its own calls: `shown`, or `hidden`, which shows the step, its code, category or class and its kind where the record has them, and in place of the words their length (`‹string, N characters›`). With `REALM_MCP_FAILURE_TEXT` also set, `hidden` wins. Added after version 0.50.0. |",
     );
     claim(
       MCP_PAGE,

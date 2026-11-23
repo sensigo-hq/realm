@@ -1,6 +1,7 @@
 // openai-reasoning-provider.ts — OpenAI reasoning model provider (o1-series) for realm agent.
 // Extends LlmProvider (not ToolCapableLlmProvider) — o1-series models do not support the tools parameter.
 import type { RequestEndpoint, UsageRecord } from '@sensigo/realm';
+import { WorkflowError } from '@sensigo/realm';
 import {
   LlmProvider,
   endpointOf,
@@ -298,8 +299,10 @@ export class OpenAIReasoningProvider extends LlmProvider {
     const retryParsed = extractJsonObject(retry);
     if (retryParsed !== null) return { output: retryParsed, usage: requests, modelText: texts };
     // issue #600 PR 1a (D9): two billed, completed requests preceded this throw.
-    const err = new Error(
+    // Gap 2, unit (ii-b1): an answer Realm could not use carries Realm's code, as Anthropic's does.
+    const err = new WorkflowError(
       sanitizeError(`OpenAI returned non-JSON content after retry: ${passedSnippet(retry)}`),
+      { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
     );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (err as any).driveCall = { usage: requests };
