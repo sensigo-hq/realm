@@ -4459,6 +4459,143 @@ describe("#855's correction: each sentence's members", () => {
         initialism: 'not_found',
       });
     });
+
+    // ─── #845 1a-ii (check 6's half outside the BMP, check 10): the rows items 3–7 make "in any
+    //     plane", each walked over its members outside the Basic Multilingual Plane with one control;
+    //     and the two new sentences of rule 5 (items 1 and 10), each pinned and run. ─────────────
+    /** A row's properties' members outside the BMP (`glossaryProps` reads the BMP). */
+    const astralProps = (word: string, upTo?: string): number[] => {
+      const cell = GLOSSARY.get(word) ?? '';
+      const names = [
+        ...cell
+          .slice(0, upTo === undefined ? undefined : cell.indexOf(upTo))
+          .matchAll(/\\p\{(\w+)\}/g),
+      ];
+      if (names.length === 0) return [];
+      return codePoints(
+        new RegExp(`^[${names.map((m) => `\\p{${m[1]!}}`).join('')}]$`, 'u'),
+        0x10000,
+      );
+    };
+    const marksApprox = (c: string) => read(approx, `${approx}${c}412 square metres.`);
+
+    it('a capital letter, outside the BMP: every member opens a labelled item after a sentence; control U+1D41A', () => {
+      const members = astralProps('a capital letter');
+      const rows: Row[] = [
+        ...members.map((c): Row => [hex(c), label(`${ch(c)})`, keep), 'stitched']),
+        ['control U+1D41A', label('\u{1d41a})', keep), 'not_found'],
+      ];
+      // (1) red when the capital read is limited to the BMP, or the row stops saying "in any plane";
+      //     (2) prints the count and each differing row.
+      expect({
+        anyPlane: (GLOSSARY.get('a capital letter') ?? '').includes('in any plane'),
+        count: members.length > 700,
+        misses: misses(rows),
+      }).toEqual({ anyPlane: true, count: true, misses: [] });
+    });
+
+    it('a lowercase letter and a digit, outside the BMP: what an `exact` `approx.` is marked before; control U+10400', () => {
+      const lower = astralProps('a lowercase letter').filter((c) => !/^\p{M}$/u.test(ch(c)));
+      const digits = astralProps('a digit', ';');
+      const rows: Row[] = [
+        ...[...lower, ...digits].map((c): Row => [hex(c), marksApprox(ch(c)), 'exact+cut_short']),
+        ['control U+10400', marksApprox('\u{10400}'), 'exact'],
+      ];
+      // (1) red when the lowercase or digit read is limited to the BMP, or a row stops saying "in any
+      //     plane"; (2) prints the counts and each differing row.
+      expect({
+        anyPlane: ['a lowercase letter', 'a digit'].map((w) =>
+          (GLOSSARY.get(w) ?? '').includes('in any plane'),
+        ),
+        counts: [lower.length > 900, digits.length > 390],
+        misses: misses(rows),
+      }).toEqual({ anyPlane: [true, true], counts: [true, true], misses: [] });
+    });
+
+    it('a digit, outside the BMP: every member opens a clause number before a capital after a sentence; control U+10107', () => {
+      const members = astralProps('a digit', ';');
+      const rows: Row[] = [
+        ...members.map((c): Row => [hex(c), label(`${ch(c)})`, Keep), 'stitched']),
+        ['control U+10107', label('\u{10107})', Keep), 'not_found'],
+      ];
+      // (1) red when the digit read is limited to the BMP; (2) prints the count and each differing row.
+      expect({ count: members.length > 390, misses: misses(rows) }).toEqual({
+        count: true,
+        misses: [],
+      });
+    });
+
+    it('a dash and a list mark, outside the BMP: U+10D6E and U+10EAD read as `-` and open the line after a header; control U+1D400', () => {
+      const dashes = glossaryCodes('a dash').filter((c) => c > 0xffff);
+      const listDashes = astralProps('a list mark');
+      const rows: Row[] = [
+        ...dashes.map((c): Row => [
+          `${hex(c)} as -`,
+          state('-5 degrees', `${ch(c)}5 degrees`),
+          'reformatted',
+        ]),
+        ...listDashes.map((c): Row => [
+          `${hex(c)} a list mark`,
+          header('.', ch(c)),
+          'stitched/stitched',
+        ]),
+        ['control U+1D400 as -', state('-5 degrees', '\u{1d400}5 degrees'), 'not_found'],
+        ['control U+1D400 a list mark', header('.', '\u{1d400}'), 'not_found/not_found'],
+      ];
+      // (1) red when the dash read is limited to the BMP, the two rows stop naming them, or the list
+      //     mark row limits its dashes to the BMP again (Words item 3); (2) prints the members named
+      //     and each differing row.
+      expect({
+        listRow: (GLOSSARY.get('a list mark') ?? '').startsWith('a dash (`\\p{Pd}`),'),
+        dashes: dashes.map(hex),
+        listDashes: listDashes.map(hex),
+        misses: misses(rows),
+      }).toEqual({
+        listRow: true,
+        dashes: ['U+10D6E', 'U+10EAD'],
+        listDashes: ['U+10D6E', 'U+10EAD'],
+        misses: [],
+      });
+    });
+
+    it("the stitched row's initialism sentence (Words item 1): each one named ends no sentence, a lowercase one does", () => {
+      claimOn(
+        HANDLERS,
+        'Neither is the `.` after each capital of an initialism (`U.S.`, `U.K.`, `J.R.R.`).',
+      );
+      // (1) red when an initialism ends a sentence, or `a.m.` stops ending one; (2) prints each
+      //     initialism's piece count.
+      expect(
+        Object.fromEntries(
+          ['U.S.', 'U.K.', 'J.R.R.', 'a.m.'].map((a) => [
+            a,
+            segmentsOf(`made in the ${a} The roof`).length,
+          ]),
+        ),
+      ).toEqual({ 'U.S.': 1, 'U.K.': 1, 'J.R.R.': 1, 'a.m.': 2 });
+    });
+
+    it('a skip after an initialism (Words item 10): onto the next sentence, or onto the next line, reads `not_found`; after an ordinary stop it is `stitched`', () => {
+      claimOn(
+        HANDLERS,
+        'A skip onto the sentence after one that ends with an initialism (`…the U.S. The…`), and a skip onto the line after a line that ends with one: its `.` is read as part of the initialism, not as a sentence end.',
+      );
+      const A = 'The Tenant shall pay the rent.';
+      const B = 'The Landlord shall repair the roof.';
+      // (1) red when a skip lands after an initialism, or after an ordinary stop it is refused; (2)
+      //     prints the four states.
+      expect({
+        sentence: read(`${A} … ${B}`, `${A} We deliver across the U.S. ${B}`),
+        line: read(`${A} … ${B}`, `${A}\nDelivery is made within the U.S.\n${B}`),
+        controlSentence: read(`${A} … ${B}`, `${A} We deliver across the country. ${B}`),
+        controlLine: read(`${A} … ${B}`, `${A}\nDelivery is made within the country.\n${B}`),
+      }).toEqual({
+        sentence: 'not_found',
+        line: 'not_found',
+        controlSentence: 'stitched',
+        controlLine: 'stitched',
+      });
+    });
   });
 
   // ─── #845 1a-i correction 1 (`prompts/fix-845-1a-i-correction-1.md`, Words): the sentences the walk
