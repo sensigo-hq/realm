@@ -813,44 +813,54 @@ const CHANGELOG_LINE =
   "- **`get_run_state`'s reply has a published schema.** `docs/reference/mcp/run-state.schema.json` describes every field and word of the reply, built from the same lists the engine uses, so the file and the code cannot drift (a test regenerates it). Every list in it is open and every object accepts a key it does not know: a new word or field is never a breaking change. `run-state.added-after.json` says the release each field and word arrived after, and the page says what a program does with a word it does not know. The cost view is described loosely until a later release.";
 
 describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
-  it('(a) the committed files are the script output, from the committed sidecar and from none; a second run changes nothing', () => {
-    const kept = runOn(committed(SIDECAR), true);
-    const fresh = runOn(undefined);
-    // (a) red when the tree, the script or a committed file changes without a regeneration; (b)
-    //     prints the exit status, what the script printed and how to regenerate.
-    expect(
-      {
-        status: [kept.status, fresh.status],
-        schema: [kept.first.schema, kept.schema, fresh.schema].map((s) => s === committed(SCHEMA)),
-        sidecar: [kept.first.sidecar, kept.sidecar, fresh.sidecar].map(
-          (s) => s === committed(SIDECAR),
-        ),
-      },
-      `regenerate with ${REGENERATE}\n${kept.stderr}${fresh.stderr}`,
-    ).toEqual({ status: [0, 0], schema: [true, true, true], sidecar: [true, true, true] });
-  });
+  it(
+    '(a) the committed files are the script output, from the committed sidecar and from none; a second run changes nothing',
+    () => {
+      const kept = runOn(committed(SIDECAR), true);
+      const fresh = runOn(undefined);
+      // (a) red when the tree, the script or a committed file changes without a regeneration; (b)
+      //     prints the exit status, what the script printed and how to regenerate.
+      expect(
+        {
+          status: [kept.status, fresh.status],
+          schema: [kept.first.schema, kept.schema, fresh.schema].map(
+            (s) => s === committed(SCHEMA),
+          ),
+          sidecar: [kept.first.sidecar, kept.sidecar, fresh.sidecar].map(
+            (s) => s === committed(SIDECAR),
+          ),
+        },
+        `regenerate with ${REGENERATE}\n${kept.stderr}${fresh.stderr}`,
+      ).toEqual({ status: [0, 0], schema: [true, true, true], sidecar: [true, true, true] });
+    },
+    BUDGET,
+  );
 
-  it('(a) a new field with no release, and a field the tree no longer has, stop the script writing nothing', () => {
-    const sidecar = JSON.parse(committed(SIDECAR)) as {
-      ok: { fields: Record<string, string> };
-    };
-    delete sidecar.ok.fields['run_id'];
-    sidecar.ok.fields['a_field_the_tree_lacks'] = '0.50.0';
-    const run = runOn(JSON.stringify(sidecar));
-    // (a) red when the script stamps a new field silently or drops one; (b) prints what it printed.
-    expect({
-      status: run.status,
-      schema: run.first.schema,
-      lines: run.stderr.trim().split('\n'),
-    }).toEqual({
-      status: 1,
-      schema: undefined,
-      lines: [
-        `${SIDECAR}: ok field run_id is new: give it a release in RUN_STATE_ADDED_AFTER`,
-        `${SIDECAR}: ok field a_field_the_tree_lacks is gone from the tree`,
-      ],
-    });
-  });
+  it(
+    '(a) a new field with no release, and a field the tree no longer has, stop the script writing nothing',
+    () => {
+      const sidecar = JSON.parse(committed(SIDECAR)) as {
+        ok: { fields: Record<string, string> };
+      };
+      delete sidecar.ok.fields['run_id'];
+      sidecar.ok.fields['a_field_the_tree_lacks'] = '0.50.0';
+      const run = runOn(JSON.stringify(sidecar));
+      // (a) red when the script stamps a new field silently or drops one; (b) prints what it printed.
+      expect({
+        status: run.status,
+        schema: run.first.schema,
+        lines: run.stderr.trim().split('\n'),
+      }).toEqual({
+        status: 1,
+        schema: undefined,
+        lines: [
+          `${SIDECAR}: ok field run_id is new: give it a release in RUN_STATE_ADDED_AFTER`,
+          `${SIDECAR}: ok field a_field_the_tree_lacks is gone from the tree`,
+        ],
+      });
+    },
+    BUDGET,
+  );
 
   it('(b) every openWord argument is a list imported from its home, never minted here', () => {
     const source = readFileSync(join(HERE, 'run-state-schema.ts'), 'utf8');
