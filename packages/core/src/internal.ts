@@ -312,6 +312,8 @@ export {
   LEASE_NOT_KNOWN_HERE,
   // #729 CW-4b: the one clause of what a claim's lease check found, for the holder lines.
   leaseClause,
+  // Q1 (#592) d1b correction 1: every code a reply's enactor basis can name.
+  LOAD_ERROR_CODES,
 } from './engine/ways.js';
 export type { UncheckedLease, LeaseWordsInput } from './engine/ways.js';
 export type { FailureWordField, FailureWordsAbsentCause, FailureWordsRead } from './engine/ways.js';
@@ -716,6 +718,9 @@ export {
   composeRunCost,
   COST_UNRECORDED_CAUSES,
   isAnswerEntry,
+  // Q1 (#592) d1b correction 1: every reason a cache miss's provider can give (beside the cache
+  // misses' other lists, CACHE_MISS_CAUSES and CACHE_MISS_RULES).
+  PROVIDER_MISS_REASONS,
 } from './engine/step-view.js';
 export type {
   CostFigure,

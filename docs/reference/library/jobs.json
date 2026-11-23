@@ -235,6 +235,7 @@
         "DEFINITION_ABSENCES",
         "DefinitionAbsence",
         "LoadErrorCode",
+        "LOAD_ERROR_CODES",
         "ENACTOR_KINDS",
         "DECLARED_STATES",
         "DECLARED_CAUSES",

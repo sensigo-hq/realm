@@ -433,6 +433,23 @@ export type UnavailableCode = keyof typeof UNAVAILABLE_CODES;
 export type LoadErrorCode = ErrorCode | 'uncoded';
 
 /**
+ * Every code a reply's `basis.enactor.error_code` can hold: each error code, then `uncoded`.
+ * Built from `ERROR_CODES`, so a code added there reaches it with no edit; compile-checked both
+ * ways against {@link LoadErrorCode}, so a word the type gains of its own fails the build
+ * (Q1, #592, unit d1b, correction 1).
+ * @public
+ */
+export const LOAD_ERROR_CODES = [
+  ...ERROR_CODES,
+  'uncoded',
+] as const satisfies readonly LoadErrorCode[];
+type MissingLoadErrorCodes = Exclude<LoadErrorCode, (typeof LOAD_ERROR_CODES)[number]>;
+const _everyLoadErrorCodesListed: [MissingLoadErrorCodes] extends [never]
+  ? true
+  : MissingLoadErrorCodes = true;
+void _everyLoadErrorCodesListed;
+
+/**
  * The checks other than capability that refuse a step before its claim (`checkPreClaim`).
  * @public
  */
