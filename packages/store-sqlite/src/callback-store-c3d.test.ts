@@ -124,8 +124,10 @@ describe('callback C3d-A — the SQLite endOverdue', () => {
   });
 
   // An analysed file (`ANALYZE`, `PRAGMA optimize`: the schema check allows their tables) plans the
-  // candidates through the due-time index, so rows tied on their anchor come in the order they were
-  // made, not by run_id; the statement's own tie-break then decides which row the limit takes.
+  // candidates through the due-time index, so rows tied on their anchor come in the order of their
+  // `next_attempt_at`, not by run_id; the statement's own tie-break then decides which row the limit
+  // takes. No randomness: the twelve rows' `next_attempt_at` are set through a second connection in
+  // reverse run_id order, so the scan meets them largest id first, whatever the ids are.
   it('in an analysed file, rows tied on their anchor still end by run_id, at limit 1 and after', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'realm-c3d-'));
     dirs.push(dir);
@@ -134,15 +136,17 @@ describe('callback C3d-A — the SQLite endOverdue', () => {
     open.push(handle);
     const callbacks = handle.runStore.callbacks!;
     const made: string[] = [];
-    for (let i = 0; i < 64 && (made.length < 12 || !made.some((id) => id < made[0]!)); i++) {
-      now = T0 + i;
+    for (let i = 0; i < 12; i++)
       made.push((await handle.runStore.create({ ...RUN, callback: callback(10 + i) })).record.id);
-    }
     now = T0 + 1000;
     for (const id of made) await abandonRun(handle.runStore, id);
+    const sorted = [...made].sort();
     const c = await openForeignConnection(home);
     let plan: string[];
+    let scanned: string[];
     try {
+      const set = c.prepare('UPDATE callbacks SET next_attempt_at = ? WHERE run_id = ?');
+      [...sorted].reverse().forEach((id, k) => set.run(new Date(T0 + k).toISOString(), id));
       c.exec('ANALYZE');
       plan = c
         .prepare(
@@ -153,22 +157,28 @@ describe('callback C3d-A — the SQLite endOverdue', () => {
         )
         .all('9', '9', 1)
         .map((r) => String(r['detail']));
+      scanned = c
+        .prepare(
+          "SELECT run_id FROM callbacks WHERE status = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at",
+        )
+        .all('9')
+        .map((r) => String(r['run_id']));
     } finally {
       c.close();
     }
-    const sorted = [...made].sort();
-    // (1) red when the setup no longer makes the first row something other than the smallest
-    //     run_id, or the analysed file no longer plans through the due-time index (the case this
-    //     cell is for is then not reached); (2) prints the rows made and the plan.
+    // (1) red when the setup no longer puts the rows in reverse run_id order of their due time, or
+    //     the analysed file no longer plans through the due-time index (the case this cell is for is
+    //     then not reached); (2) prints the order of the due times and the plan.
     expect({
-      firstIsSmallest: sorted[0] === made[0],
+      dueOrderIsReversed: scanned.join() === [...sorted].reverse().join(),
       dueIndex: plan.some((step) => step.includes('callbacks_due')),
-    }).toEqual({ firstIsSmallest: false, dueIndex: true });
+    }).toEqual({ dueOrderIsReversed: true, dueIndex: true });
     now = T0 + 1000 + CALLBACK_DELIVERY_WINDOW_SECONDS * 1000;
     const first = (await callbacks.endOverdue(1)).map((e) => e.run_id);
     const rest = (await callbacks.endOverdue(1000)).map((e) => e.run_id);
     // (1) red when the statement's ORDER BY loses its run_id tie-break: the limit then takes the
-    //     first row made; (2) prints both lists against the run_id order.
+    //     row with the largest id, which the scan meets first; (2) prints both lists against the
+    //     run_id order.
     expect({ first, rest }).toEqual({ first: [sorted[0]], rest: sorted.slice(1) });
   });
 });

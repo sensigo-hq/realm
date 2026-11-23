@@ -1537,10 +1537,15 @@ function family(adapter: CallbackStoreContractAdapter) {
           );
           for (const id of [a, c, d, n, running, delivered, failed])
             await b.callbacks.deleteAllForRun(id);
-          // The order: y finished before x though x was made first. Then rows made one per millisecond
-          // until one has a smaller run_id than the first, all finished at one instant: the first made
-          // is never the smallest, so a store that leaves ties in the order the rows were made (as a
-          // scan of the due-time index does) ends the wrong row at limit 1.
+          // The order: y finished before x though x was made first. Then two rows tied on their
+          // anchor, the one made second with the smaller run_id, so a store that leaves ties in the
+          // order the rows were made (as a scan of the due-time index does) ends the wrong row at
+          // limit 1. Run ids are the store's own, so the pair is found, not chosen: rows are made one
+          // per millisecond until a row's id is smaller than the id of the row made just before it,
+          // and every row made before that pair loses its callback row. The tied set is then exactly
+          // those two rows, whatever the ids. Two rows already give such a pair 1 time in 2; 64 rows
+          // all made in ascending order has probability 1/64!, so the setup check never fails in
+          // practice. Only the port and the bench are used, so any store runs it.
           const base = 2 * W;
           await b.at(base);
           const x = await b.create(reg(10));
@@ -1550,35 +1555,34 @@ function family(adapter: CallbackStoreContractAdapter) {
           await b.finish(y);
           await b.at(base + 3);
           await b.finish(x);
-          const tied: string[] = [];
-          for (let i = 0; i < 64 && !tied.some((id) => id < tied[0]!); i++) {
+          const made: string[] = [];
+          const descends = (): boolean =>
+            made.length >= 2 && made[made.length - 1]! < made[made.length - 2]!;
+          for (let i = 0; i < 64 && !descends(); i++) {
             await b.at(base + 4 + i);
-            tied.push(await b.create(reg(20 + i)));
+            made.push(await b.create(reg(20 + i)));
           }
+          same(law, 'the setup ties: a row made after another with a smaller id', descends(), true);
+          for (const id of made.slice(0, -2)) await b.callbacks.deleteAllForRun(id);
+          const [madeFirst, madeSecond] = made.slice(-2) as [string, string];
           const tiedAt = base + 4 + 64;
           await b.at(tiedAt);
-          for (const id of tied) await b.finish(id);
-          const sorted = [...tied].sort();
-          same(
-            law,
-            'the setup ties: the first made is not the smallest',
-            sorted[0] !== tied[0],
-            true,
-          );
+          await b.finish(madeFirst);
+          await b.finish(madeSecond);
           await b.at(tiedAt + W);
           same(law, 'limit 2: the oldest anchors', await b.callbacks.endOverdue(2), [
             ends(y, 0),
             ends(x, 0),
           ]);
-          same(law, 'limit 1: ties by run_id', await b.callbacks.endOverdue(1), [
-            ends(sorted[0]!, 0),
-          ]);
           same(
             law,
-            'the rest, in run_id order',
-            await b.callbacks.endOverdue(10),
-            sorted.slice(1).map((id) => ends(id, 0)),
+            'limit 1: ties by run_id, the row made second',
+            await b.callbacks.endOverdue(1),
+            [ends(madeSecond, 0)],
           );
+          same(law, 'the rest: the row made first', await b.callbacks.endOverdue(1000), [
+            ends(madeFirst, 0),
+          ]);
           // The limit counts only rows it ends: a running run's row and a row under a live claim,
           // each older than the one row that is due, do not take its place at limit 1.
           const c0 = tiedAt + 2 * W;
