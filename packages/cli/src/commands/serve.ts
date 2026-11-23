@@ -49,6 +49,7 @@ import {
   serveKeysPath,
   type ServeKeysRead,
 } from '../lib/serve-keys.js';
+import { addServeKeyCommands } from './serve-key.js';
 
 const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MiB
 
@@ -352,280 +353,293 @@ function workingKeyCount(read: ServeKeysRead, clock: Clock): number {
  * `realm serve` — starts the Realm MCP server over HTTP.
  * Designed for hosted agent platforms (OpenClaw, Claude.ai, custom backends) that
  * cannot spawn a local stdio subprocess.
+ *
+ * #625 PR-2b, named keys: a factory. `topLevelCommands`, which realm-cloud's CLI registers, holds an
+ * instance with no `key` subcommand ({@link serveCommand}); `buildRealmProgram` makes its own instance
+ * with `realm serve key …` (`keys: true`), so realm-cloud's CLI gains no command. The start refusal
+ * names `realm serve key add` only on the instance that has it.
  */
-export const serveCommand = new Command('serve')
-  .description(
-    'Start the Realm MCP server over HTTP (for hosted agent platforms that cannot use stdio)',
-  )
-  // issues #944, #949: `--port` and `--host` are checked when the command line is read
-  // (`option-parsers.ts`), so a mistyped value is refused before anything is built or bound.
-  .option(
-    '--port <number>',
-    'Port to listen on: a whole number from 0 to 65535; 0 lets the system pick',
-    parseWholeNumber('--port', 0, 65535),
-    3001,
-  )
-  .option('--host <address>', 'Bind address', parseHost('--host'), '127.0.0.1')
-  // issue #960: checked when the command line is read, like `--port`.
-  .option(
-    '--shutdown-grace <seconds>',
-    'Seconds that requests being answered get to finish after Ctrl+C or SIGTERM, a whole number from 0 to 2147483. When it runs out they are cut and the exit code is 1; 0 cuts them at once.',
-    parseWholeNumber('--shutdown-grace', 0, 2_147_483),
-    30,
-  )
-  // #960 U2: checked when the command line is read, like `--shutdown-grace`.
-  .option(
-    '--shutdown-drain <seconds>',
-    'Seconds the program keeps serving, with /health answering 503, after Ctrl+C or SIGTERM before the stop begins and it stops accepting connections; a whole number from 0 to 2147483. 0 begins the stop at once.',
-    parseWholeNumber('--shutdown-drain', 0, 2_147_483),
-    0,
-  )
-  .option('--dev', 'Disable authentication (for local development only)')
-  .option(
-    '--extensions-module <path>',
-    "CODE override: module that REPLACES every workflow's declared 'extensions' modules (repair tool)",
-  )
-  .option(
-    '--project <dir>',
-    'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory — serve is operator-launched)',
-  )
-  .option(
-    '--gate-answers <value>',
-    'How this server handles gate answers: asked (the default), permitted or withheld. The most restrictive of this flag and REALM_MCP_GATE_ANSWERS wins.',
-  )
-  .option(
-    '--form-wait-seconds <seconds>',
-    'Refused here: this server sends no forms (accepted by realm mcp)',
-  )
-  .option(
-    '--failure-text <value>',
-    "Whether the assistant sees a failure's words in get_run_state and in the replies to its own calls: shown (the default) or hidden. The most restrictive of this flag and REALM_MCP_FAILURE_TEXT wins.",
-  )
-  .option(
-    '--check',
-    'Print the gate-answers and failure-text values this server would start with and the separation check, then exit without starting',
-  )
-  .action(async (options) => {
-    // #627 W (§5.1): the settings, read as the server will read them; a bad value, or a form wait on
-    // this door that sends no forms (W-s9), refuses the start before anything is bound.
-    const settings = readBinDoorSettings(
-      'serve',
-      {
-        gateAnswers: options.gateAnswers as string | undefined,
-        formWaitSeconds: options.formWaitSeconds as string | undefined,
-        failureText: options.failureText as string | undefined,
-      },
-      process.env,
-    );
-    if (!settings.ok) {
-      console.error(settings.line);
-      process.exit(1);
-    }
-    // The gate-answers default (2026-11-14; PR #1167 correction 1, item 11): the old name
-    // `offered`, given as the flag or the variable, through the deprecation channel (CP-W) — once
-    // per command, at start and under --check.
-    if (offeredGivenToProgram(settings.answers)) warnDeprecated(OFFERED_DEPRECATION_ID);
-    if (options.check === true) {
-      // W-s6 and the separation check (Part K): nothing is started.
-      console.log(
-        checkValueLine(settings.answers, (v) => writerCtx().word(v, GATE_ANSWERS_VALUES)),
-      );
-      // Gap 2, unit (iv-b1): the failure-text value, beside the gate-answers value.
-      console.log(failureTextCheckLine(settings.failureText));
-      const evidence = await measureSeparation({
-        probes: systemProbes(),
-        value: { value: settings.answers.value, source: settings.answers.source },
-        roots: [(options.project as string | undefined) ?? process.cwd()],
-        // Correction 1 (D3, D5): the code file this command line names, and this door.
-        extensionsModule: options.extensionsModule as string | undefined,
-        door: 'serve',
-      });
-      console.log(renderSeparation(evidence, writerCtx()).join('\n'));
-      process.exit(0);
-    }
-    // issue #625 (holder slice): this program's name, made once outside the per-request handler,
-    // before anything is bound. A name that cannot be used prints one line and exits 1.
-    const driver = resolveProgramIdentity('mcp-http');
-    const port = options.port as number;
-    const host = options.host as string;
-    const devMode = options.dev === true || process.env.REALM_DEV === '1';
-    const token = process.env.REALM_SERVE_TOKEN;
-    const tokenSet = token !== undefined && token !== '';
-    // issue #600 caching PR P: the registry and the prices share one load per definition call.
-    const { registryProvider, priceSourceProvider } = makeProjectProviders(
-      options.extensionsModule as string | undefined,
-      (options.project as string | undefined) ?? process.cwd(),
-    );
+export function makeServeCommand(options: { keys?: boolean } = {}): Command {
+  const serve = new Command('serve')
+    .description(
+      'Start the Realm MCP server over HTTP (for hosted agent platforms that cannot use stdio)',
+    )
+    // issues #944, #949: `--port` and `--host` are checked when the command line is read
+    // (`option-parsers.ts`), so a mistyped value is refused before anything is built or bound.
+    .option(
+      '--port <number>',
+      'Port to listen on: a whole number from 0 to 65535; 0 lets the system pick',
+      parseWholeNumber('--port', 0, 65535),
+      3001,
+    )
+    .option('--host <address>', 'Bind address', parseHost('--host'), '127.0.0.1')
+    // issue #960: checked when the command line is read, like `--port`.
+    .option(
+      '--shutdown-grace <seconds>',
+      'Seconds that requests being answered get to finish after Ctrl+C or SIGTERM, a whole number from 0 to 2147483. When it runs out they are cut and the exit code is 1; 0 cuts them at once.',
+      parseWholeNumber('--shutdown-grace', 0, 2_147_483),
+      30,
+    )
+    // #960 U2: checked when the command line is read, like `--shutdown-grace`.
+    .option(
+      '--shutdown-drain <seconds>',
+      'Seconds the program keeps serving, with /health answering 503, after Ctrl+C or SIGTERM before the stop begins and it stops accepting connections; a whole number from 0 to 2147483. 0 begins the stop at once.',
+      parseWholeNumber('--shutdown-drain', 0, 2_147_483),
+      0,
+    )
+    .option('--dev', 'Disable authentication (for local development only)')
+    .option(
+      '--extensions-module <path>',
+      "CODE override: module that REPLACES every workflow's declared 'extensions' modules (repair tool)",
+    )
+    .option(
+      '--project <dir>',
+      'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory — serve is operator-launched)',
+    )
+    .option(
+      '--gate-answers <value>',
+      'How this server handles gate answers: asked (the default), permitted or withheld. The most restrictive of this flag and REALM_MCP_GATE_ANSWERS wins.',
+    )
+    .option(
+      '--form-wait-seconds <seconds>',
+      'Refused here: this server sends no forms (accepted by realm mcp)',
+    )
+    .option(
+      '--failure-text <value>',
+      "Whether the assistant sees a failure's words in get_run_state and in the replies to its own calls: shown (the default) or hidden. The most restrictive of this flag and REALM_MCP_FAILURE_TEXT wins.",
+    )
+    .option(
+      '--check',
+      'Print the gate-answers and failure-text values this server would start with and the separation check, then exit without starting',
+    )
+    .action((opts: Record<string, unknown>) => serveAction(opts, options.keys === true));
+  if (options.keys === true) addServeKeyCommands(serve);
+  return serve;
+}
 
-    // #625 PR-2b, named keys (outside dev mode, which reads no key file): the key file at start. It
-    // starts with the token, or with at least one key that works; otherwise the start is refused, its
-    // first line naming the case.
-    const keyFile = devMode ? undefined : serveKeysPath(realmHomePath());
-    const keysRead: ServeKeysRead | undefined =
-      keyFile === undefined ? undefined : readServeKeys(keyFile);
-    const refuseStart = (first: string): never => {
-      console.error(
-        `${first}\nSet it to a secret token, or use --dev / REALM_DEV=1 for local development only.`,
+/** The `serve` command realm-cloud's CLI registers: no `realm serve key` (see {@link makeServeCommand}). */
+export const serveCommand = makeServeCommand();
+
+/** The start, for both instances; `keyCommands`: this instance has `realm serve key` (its refusal names it). */
+async function serveAction(options: Record<string, unknown>, keyCommands: boolean): Promise<void> {
+  // #627 W (§5.1): the settings, read as the server will read them; a bad value, or a form wait on
+  // this door that sends no forms (W-s9), refuses the start before anything is bound.
+  const settings = readBinDoorSettings(
+    'serve',
+    {
+      gateAnswers: options.gateAnswers as string | undefined,
+      formWaitSeconds: options.formWaitSeconds as string | undefined,
+      failureText: options.failureText as string | undefined,
+    },
+    process.env,
+  );
+  if (!settings.ok) {
+    console.error(settings.line);
+    process.exit(1);
+  }
+  // The gate-answers default (2026-11-14; PR #1167 correction 1, item 11): the old name
+  // `offered`, given as the flag or the variable, through the deprecation channel (CP-W) — once
+  // per command, at start and under --check.
+  if (offeredGivenToProgram(settings.answers)) warnDeprecated(OFFERED_DEPRECATION_ID);
+  if (options.check === true) {
+    // W-s6 and the separation check (Part K): nothing is started.
+    console.log(checkValueLine(settings.answers, (v) => writerCtx().word(v, GATE_ANSWERS_VALUES)));
+    // Gap 2, unit (iv-b1): the failure-text value, beside the gate-answers value.
+    console.log(failureTextCheckLine(settings.failureText));
+    const evidence = await measureSeparation({
+      probes: systemProbes(),
+      value: { value: settings.answers.value, source: settings.answers.source },
+      roots: [(options.project as string | undefined) ?? process.cwd()],
+      // Correction 1 (D3, D5): the code file this command line names, and this door.
+      extensionsModule: options.extensionsModule as string | undefined,
+      door: 'serve',
+    });
+    console.log(renderSeparation(evidence, writerCtx()).join('\n'));
+    process.exit(0);
+  }
+  // issue #625 (holder slice): this program's name, made once outside the per-request handler,
+  // before anything is bound. A name that cannot be used prints one line and exits 1.
+  const driver = resolveProgramIdentity('mcp-http');
+  const port = options.port as number;
+  const host = options.host as string;
+  const devMode = options.dev === true || process.env.REALM_DEV === '1';
+  const token = process.env.REALM_SERVE_TOKEN;
+  const tokenSet = token !== undefined && token !== '';
+  // issue #600 caching PR P: the registry and the prices share one load per definition call.
+  const { registryProvider, priceSourceProvider } = makeProjectProviders(
+    options.extensionsModule as string | undefined,
+    (options.project as string | undefined) ?? process.cwd(),
+  );
+
+  // #625 PR-2b, named keys (outside dev mode, which reads no key file): the key file at start. It
+  // starts with the token, or with at least one key that works; otherwise the start is refused, its
+  // first line naming the case.
+  const keyFile = devMode ? undefined : serveKeysPath(realmHomePath());
+  const keysRead: ServeKeysRead | undefined =
+    keyFile === undefined ? undefined : readServeKeys(keyFile);
+  const refuseStart = (first: string): never => {
+    console.error(
+      `${first}\nSet it to a secret token, ${keyCommands ? "add a key with 'realm serve key add <name>', " : ''}or use --dev / REALM_DEV=1 for local development only.`,
+    );
+    process.exit(1);
+  };
+  if (keyFile !== undefined && keysRead !== undefined) {
+    if (keysRead.state !== 'absent' && keysRead.openMode !== undefined)
+      console.warn(keyFileOpenWarning(keyFile, keysRead.openMode));
+    if (!tokenSet && keysRead.state === 'invalid')
+      refuseStart(
+        `Error: REALM_SERVE_TOKEN is not set and the named keys in ${keyPath(keyFile)} cannot be read (${keysRead.cause}).`,
       );
-      process.exit(1);
-    };
-    if (keyFile !== undefined && keysRead !== undefined) {
-      if (keysRead.state !== 'absent' && keysRead.openMode !== undefined)
-        console.warn(keyFileOpenWarning(keyFile, keysRead.openMode));
-      if (!tokenSet && keysRead.state === 'invalid')
+    if (
+      !tokenSet &&
+      (keysRead.state === 'absent' || (keysRead.state === 'valid' && keysRead.keys.length === 0))
+    )
+      refuseStart('Error: REALM_SERVE_TOKEN is not set and there is no named key.');
+  }
+
+  if (devMode) {
+    console.warn(
+      'Warning: Running in dev mode — authentication is disabled. ' +
+        'Do not expose this to a network.',
+    );
+  }
+
+  // issue #620 PR-C: a server that cannot be built is one line on stderr and exit 1 — never a
+  // `listening` line over a server that fails every request (a release-line refusal there means
+  // this command's own install is split: `hostRefusalLine` says so). Issue #949: a failure to
+  // listen (the port in use, permission denied, an address that is not this machine's, a name
+  // that does not resolve) is first told as such, in one line naming the host and the port; a
+  // listen failure it does not know still propagates.
+  let httpServer: Server;
+  let tracker: ConnectionTracker | undefined;
+  // #960 U2: set in the first signal's turn (below); the health address reads it per request.
+  let stopping = false;
+  // #625 PR-2b, named keys: how many keys work at start, judged by the home's clock.
+  let working = 0;
+  try {
+    // Outside dev mode the home is opened here, before the server is built, for its clock.
+    const home = devMode ? undefined : await openCliHome();
+    let warnedCause: string | undefined;
+    if (keyFile !== undefined && keysRead !== undefined && home !== undefined) {
+      working = workingKeyCount(keysRead, home.runStore.clock);
+      if (!tokenSet && working === 0)
         refuseStart(
-          `Error: REALM_SERVE_TOKEN is not set and the named keys in ${keyPath(keyFile)} cannot be read (${keysRead.cause}).`,
+          `Error: REALM_SERVE_TOKEN is not set and every named key in ${keyPath(keyFile)} has ended.`,
         );
-      if (
-        !tokenSet &&
-        (keysRead.state === 'absent' || (keysRead.state === 'valid' && keysRead.keys.length === 0))
-      )
-        refuseStart('Error: REALM_SERVE_TOKEN is not set and there is no named key.');
-    }
-
-    if (devMode) {
-      console.warn(
-        'Warning: Running in dev mode — authentication is disabled. ' +
-          'Do not expose this to a network.',
-      );
-    }
-
-    // issue #620 PR-C: a server that cannot be built is one line on stderr and exit 1 — never a
-    // `listening` line over a server that fails every request (a release-line refusal there means
-    // this command's own install is split: `hostRefusalLine` says so). Issue #949: a failure to
-    // listen (the port in use, permission denied, an address that is not this machine's, a name
-    // that does not resolve) is first told as such, in one line naming the host and the port; a
-    // listen failure it does not know still propagates.
-    let httpServer: Server;
-    let tracker: ConnectionTracker | undefined;
-    // #960 U2: set in the first signal's turn (below); the health address reads it per request.
-    let stopping = false;
-    // #625 PR-2b, named keys: how many keys work at start, judged by the home's clock.
-    let working = 0;
-    try {
-      // Outside dev mode the home is opened here, before the server is built, for its clock.
-      const home = devMode ? undefined : await openCliHome();
-      let warnedCause: string | undefined;
-      if (keyFile !== undefined && keysRead !== undefined && home !== undefined) {
-        working = workingKeyCount(keysRead, home.runStore.clock);
-        if (!tokenSet && working === 0)
-          refuseStart(
-            `Error: REALM_SERVE_TOKEN is not set and every named key in ${keyPath(keyFile)} has ended.`,
-          );
-        if (tokenSet && keysRead.state === 'invalid') {
-          warnedCause = keysRead.cause;
-          console.warn(
-            `Warning: the named keys in ${keyPath(keyFile)} cannot be read (${keysRead.cause}). Every request with a named key is refused until it is fixed; REALM_SERVE_TOKEN still works.`,
-          );
-        }
+      if (tokenSet && keysRead.state === 'invalid') {
+        warnedCause = keysRead.cause;
+        console.warn(
+          `Warning: the named keys in ${keyPath(keyFile)} cannot be read (${keysRead.cause}). Every request with a named key is refused until it is fixed; REALM_SERVE_TOKEN still works.`,
+        );
       }
-      httpServer = await startHttpMcpServer({
-        ...(home !== undefined
-          ? {
-              workflowStore: home.workflowStore,
-              runStore: home.runStore,
-              traceBufferStore: home.traceBufferStore,
-              failedAttemptStore: home.failedAttemptStore,
-            }
-          : {}),
-        ...(keyFile !== undefined
-          ? { keys: { path: keyFile, ...(warnedCause !== undefined ? { warnedCause } : {}) } }
-          : {}),
-        port,
-        host,
-        devMode,
-        token,
-        registryProvider,
-        priceSourceProvider,
-        ...(driver !== undefined ? { driver } : {}),
-        ...(options.gateAnswers !== undefined
-          ? { gateAnswersFlag: options.gateAnswers as string }
-          : {}),
-        ...(options.failureText !== undefined
-          ? { failureTextFlag: options.failureText as string }
-          : {}),
-        beforeListen: (server) => {
-          tracker = trackConnections(server);
-        },
-        isStopping: () => stopping,
-      });
-    } catch (err) {
-      const line = bindFailureLine(err, host, port);
-      if (line !== undefined) {
-        console.error(line);
-        process.exit(1);
-      }
-      if (isListenFailure(err)) throw err;
-      console.error(hostRefusalLine('serve', err));
+    }
+    httpServer = await startHttpMcpServer({
+      ...(home !== undefined
+        ? {
+            workflowStore: home.workflowStore,
+            runStore: home.runStore,
+            traceBufferStore: home.traceBufferStore,
+            failedAttemptStore: home.failedAttemptStore,
+          }
+        : {}),
+      ...(keyFile !== undefined
+        ? { keys: { path: keyFile, ...(warnedCause !== undefined ? { warnedCause } : {}) } }
+        : {}),
+      port,
+      host,
+      devMode,
+      token,
+      registryProvider,
+      priceSourceProvider,
+      ...(driver !== undefined ? { driver } : {}),
+      ...(options.gateAnswers !== undefined
+        ? { gateAnswersFlag: options.gateAnswers as string }
+        : {}),
+      ...(options.failureText !== undefined
+        ? { failureTextFlag: options.failureText as string }
+        : {}),
+      beforeListen: (server) => {
+        tracker = trackConnections(server);
+      },
+      isStopping: () => stopping,
+    });
+  } catch (err) {
+    const line = bindFailureLine(err, host, port);
+    if (line !== undefined) {
+      console.error(line);
       process.exit(1);
     }
-    // The port the server is on: with `--port 0` the system picked it, and the start line says
-    // which (a TCP server's `address()` is an object; a pipe path or a closed server falls back to
-    // the requested port).
-    const address = httpServer.address();
-    const listeningPort = typeof address === 'object' && address !== null ? address.port : port;
-    console.log(serveStartLine(host, listeningPort));
-    if (keyFile !== undefined) {
-      // "Named keys" only when at least one key works.
-      console.log(
-        working === 0
-          ? 'Authentication: Bearer token (REALM_SERVE_TOKEN)'
-          : tokenSet
-            ? `Authentication: Bearer token (REALM_SERVE_TOKEN, and named keys in ${keyPath(keyFile)})`
-            : `Authentication: Bearer token (named keys in ${keyPath(keyFile)})`,
+    if (isListenFailure(err)) throw err;
+    console.error(hostRefusalLine('serve', err));
+    process.exit(1);
+  }
+  // The port the server is on: with `--port 0` the system picked it, and the start line says
+  // which (a TCP server's `address()` is an object; a pipe path or a closed server falls back to
+  // the requested port).
+  const address = httpServer.address();
+  const listeningPort = typeof address === 'object' && address !== null ? address.port : port;
+  console.log(serveStartLine(host, listeningPort));
+  if (keyFile !== undefined) {
+    // "Named keys" only when at least one key works.
+    console.log(
+      working === 0
+        ? 'Authentication: Bearer token (REALM_SERVE_TOKEN)'
+        : tokenSet
+          ? `Authentication: Bearer token (REALM_SERVE_TOKEN, and named keys in ${keyPath(keyFile)})`
+          : `Authentication: Bearer token (named keys in ${keyPath(keyFile)})`,
+    );
+  }
+  // #627 W: the start line (stdout on this door), and W-s5 when dev mode leaves the answer tool open
+  // (under `permitted` only: no other value lists it).
+  console.log(gateAnswersStartLine(settings.answers, true));
+  // Gap 2, unit (iv-b1): under `hidden` only, the failure-text line, on this door's stdout.
+  const failureTextLine = failureTextStartLine(settings.failureText);
+  if (failureTextLine !== undefined) console.log(failureTextLine);
+  if (devMode && settings.answers.value === 'permitted') console.warn(DEV_MODE_ANSWER_WARNING);
+
+  // Issue #960: on Ctrl+C or SIGTERM `/health` answers 503 at once (U2); with `--shutdown-drain N`
+  // the server goes on serving for N seconds; then it stops accepting, and each open connection
+  // is ended by its state (`graceful-stop.ts`): requests being answered get `--shutdown-grace`
+  // seconds. A second signal cuts everything at once, the drain included. The exit code is 0 when
+  // no request was cut, else 1, after one line saying how many were.
+  const graceSeconds = options.shutdownGrace as number;
+  const drainSeconds = options.shutdownDrain as number;
+  const stopper = tracker!;
+  let drainTimer: NodeJS.Timeout | undefined;
+  const finish = ({ cut, because }: StopOutcome): void => {
+    if (cut > 0) {
+      console.error(
+        because === 'second_signal'
+          ? `realm serve: a second signal arrived. Requests cut: ${cut}.`
+          : `realm serve: --shutdown-grace ${graceSeconds} ran out. Requests cut: ${cut}.`,
       );
     }
-    // #627 W: the start line (stdout on this door), and W-s5 when dev mode leaves the answer tool open
-    // (under `permitted` only: no other value lists it).
-    console.log(gateAnswersStartLine(settings.answers, true));
-    // Gap 2, unit (iv-b1): under `hidden` only, the failure-text line, on this door's stdout.
-    const failureTextLine = failureTextStartLine(settings.failureText);
-    if (failureTextLine !== undefined) console.log(failureTextLine);
-    if (devMode && settings.answers.value === 'permitted') console.warn(DEV_MODE_ANSWER_WARNING);
-
-    // Issue #960: on Ctrl+C or SIGTERM `/health` answers 503 at once (U2); with `--shutdown-drain N`
-    // the server goes on serving for N seconds; then it stops accepting, and each open connection
-    // is ended by its state (`graceful-stop.ts`): requests being answered get `--shutdown-grace`
-    // seconds. A second signal cuts everything at once, the drain included. The exit code is 0 when
-    // no request was cut, else 1, after one line saying how many were.
-    const graceSeconds = options.shutdownGrace as number;
-    const drainSeconds = options.shutdownDrain as number;
-    const stopper = tracker!;
-    let drainTimer: NodeJS.Timeout | undefined;
-    const finish = ({ cut, because }: StopOutcome): void => {
-      if (cut > 0) {
-        console.error(
-          because === 'second_signal'
-            ? `realm serve: a second signal arrived. Requests cut: ${cut}.`
-            : `realm serve: --shutdown-grace ${graceSeconds} ran out. Requests cut: ${cut}.`,
-        );
-      }
-      process.exit(cut > 0 ? 1 : 0);
-    };
-    const onSignal = (): void => {
-      if (stopping) {
-        if (drainTimer !== undefined) {
-          clearTimeout(drainTimer);
-          drainTimer = undefined;
-          void stopper.cutAll().then(finish);
-        } else {
-          void stopper.cutAll();
-        }
-        return;
-      }
-      stopping = true;
-      if (drainSeconds === 0) {
-        void stopper.stop(graceSeconds * 1000).then(finish);
-        return;
-      }
-      console.error(
-        `realm serve: --shutdown-drain ${drainSeconds} started. /health answers 503 now; connections are accepted until the drain ends. A second Ctrl+C ends it at once.`,
-      );
-      drainTimer = setTimeout(() => {
+    process.exit(cut > 0 ? 1 : 0);
+  };
+  const onSignal = (): void => {
+    if (stopping) {
+      if (drainTimer !== undefined) {
+        clearTimeout(drainTimer);
         drainTimer = undefined;
-        void stopper.stop(graceSeconds * 1000).then(finish);
-      }, drainSeconds * 1000);
-    };
-    process.on('SIGINT', onSignal);
-    process.on('SIGTERM', onSignal);
-  });
+        void stopper.cutAll().then(finish);
+      } else {
+        void stopper.cutAll();
+      }
+      return;
+    }
+    stopping = true;
+    if (drainSeconds === 0) {
+      void stopper.stop(graceSeconds * 1000).then(finish);
+      return;
+    }
+    console.error(
+      `realm serve: --shutdown-drain ${drainSeconds} started. /health answers 503 now; connections are accepted until the drain ends. A second Ctrl+C ends it at once.`,
+    );
+    drainTimer = setTimeout(() => {
+      drainTimer = undefined;
+      void stopper.stop(graceSeconds * 1000).then(finish);
+    }, drainSeconds * 1000);
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+}

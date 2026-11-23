@@ -1,6 +1,5 @@
-// serve-keys.ts — #625 PR-2b, named keys unit 1a: the key file `<home>/serve-keys.json`, which
-// `realm serve` reads on every request the shared token does not settle (the commands that write it,
-// `realm serve key …`, come in unit 1b; until then its writer serves the tests).
+// serve-keys.ts — #625 PR-2b, named keys unit 1: the key file `<home>/serve-keys.json`, which
+// `realm serve key` writes and `realm serve` reads on every request the shared token does not settle.
 //
 // The file holds each key's name, the SHA-256 of its text, when it was made and when it ends; never
 // the key's text, nor any part of it. It is written whole, at 0600: a temporary file in the home,
@@ -20,7 +19,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { writerCtx } from '../output/writer.js';
+import { escapeC1, writerCtx } from '../output/writer.js';
 import { typedWord } from './callback/master-key-words.js';
 
 /** The key file's name in a Realm home. */
@@ -154,9 +153,21 @@ export function readServeKeys(path: string): ServeKeysRead {
 }
 
 /**
+ * #625 PR-2b 1b, correction 1: a write refused because the new file would break the reader's rules
+ * (`keyFileCause` is the reader's cause word). The old file is unchanged and the temporary file gone.
+ */
+export class ServeKeysWriteRefused extends Error {
+  constructor(readonly keyFileCause: string) {
+    super(`the new key file would not be valid (${keyFileCause})`);
+    this.name = 'ServeKeysWriteRefused';
+  }
+}
+
+/**
  * Writes `keys` as the whole key file of `home`, at 0600: a temporary file in the home (exclusive,
- * owner-only, synced), renamed over the old file. Throws the system's error; the temporary file is
- * removed in every outcome.
+ * owner-only, synced), checked with the reader's own rules, then renamed over the old file. A new file
+ * the reader would refuse is never renamed: {@link ServeKeysWriteRefused}. Throws the system's error
+ * otherwise; the temporary file is removed in every outcome but the rename.
  */
 export function writeServeKeys(home: string, keys: readonly ServeKeyEntry[]): void {
   const target = serveKeysPath(home);
@@ -174,6 +185,9 @@ export function writeServeKeys(home: string, keys: readonly ServeKeyEntry[]): vo
     } finally {
       closeSync(fd);
     }
+    // The file as written, judged as `readServeKeys` judges it (an end past year 9999, for one).
+    const judged = judge(readFileSync(temp, 'utf8'));
+    if ('cause' in judged) throw new ServeKeysWriteRefused(judged.cause);
     renameSync(temp, target);
     renamed = true;
   } finally {
@@ -219,12 +233,22 @@ export function keyEnded(key: ServeKeyEntry, now: Date): boolean {
   return key.expires_at !== null && now.getTime() >= Date.parse(key.expires_at);
 }
 
+/** An instant as the key words print it: `YYYY-MM-DD HH:MM UTC`. */
+export function keyInstant(iso: string): string {
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
 /**
  * A path as the key words print it: quoted as a typed word (`typedWord`), and printed whole, a path
  * under HOME included, as a path the reader acts on (the writer's command span).
  */
 export function keyPath(path: string): string {
   return writerCtx().cmd(typedWord(path));
+}
+
+/** A typed key name as a refusal quotes it: every control character escaped, never the raw byte. */
+export function escapedKeyName(name: string): string {
+  return escapeC1(JSON.stringify(name).slice(1, -1));
 }
 
 /**

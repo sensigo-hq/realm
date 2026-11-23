@@ -23,7 +23,7 @@ import { watchCommand } from './commands/watch.js';
 import { workflowListCommand } from './commands/workflow-list.js';
 import { listCommand } from './commands/list.js';
 import { mcpCommand } from './commands/mcp.js';
-import { serveCommand } from './commands/serve.js';
+import { makeServeCommand, serveCommand } from './commands/serve.js';
 // issue #367 (part 3): `realm run migrate`, run-scoped.
 import { runMigrateCommand } from './commands/run-migrate.js';
 import { runImportCommand } from './commands/run-import.js';
@@ -151,6 +151,13 @@ export function buildRealmProgram(): Command {
   program.addCommand(
     group('callback', 'Manage the keys callbacks are signed with', callbackCommands),
   );
-  for (const cmd of [...storeTopLevelCommands, ...topLevelCommands]) program.addCommand(cmd);
+  // #625 PR-2b, named keys: realm's own `serve`, with `realm serve key …`, made for this program, so the
+  // shared `serveCommand` that realm-cloud's CLI registers gains no command, and a second program can
+  // be built in one process. It gets the guard and the writer's hook, as the six lists do.
+  const serve = makeServeCommand({ keys: true });
+  attachOptionValueGuard([[serve]]);
+  attachWriterHook([[serve]]);
+  for (const cmd of [...storeTopLevelCommands, ...topLevelCommands])
+    program.addCommand(cmd === serveCommand ? serve : cmd);
   return program;
 }

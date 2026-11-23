@@ -586,6 +586,14 @@ CallbackClaimedItem · type · beta
       readonly first_attempt_at: string;
   };
 
+CallbackEnded · type · beta
+  interface CallbackEnded {
+      readonly run_id: string;
+      readonly workflow_id: string;
+      readonly host: string;
+      readonly attempts: number;
+  }
+
 CallbackFreezeResult · type · beta
   type CallbackFreezeResult = {
       readonly applied: true;
@@ -763,7 +771,9 @@ CallbackStore · type · beta
   interface CallbackStore extends PerRunArtifactStore {
       read(runId: string): Promise<CallbackView | undefined>;
       countPending(): Promise<number>;
+      countWaiting(): Promise<number>;
       due(limit: number): Promise<CallbackItem[]>;
+      endOverdue(limit: number): Promise<CallbackEnded[]>;
       claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
       freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
       mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
@@ -4726,6 +4736,7 @@ countResults · value · public
       candidates_found: number;
   };
 
+countWaitingCallbacks · value · internal
 countWitnessMatches · value · internal
 createDefaultRegistry · value · public
   function createDefaultRegistry(): ExtensionRegistry;
@@ -4819,6 +4830,7 @@ dueExpiryWords · value · internal
 dueReminderWork · value · internal
 durationWords · value · internal
 emptyDisclosureSet · value · internal
+endOverdueCallbacks · value · internal
 endedByLine · value · internal
 endedRunWayOutOf · value · internal
 endedRunWaysSentence · value · internal

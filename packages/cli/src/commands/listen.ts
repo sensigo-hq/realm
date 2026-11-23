@@ -576,10 +576,11 @@ export function makeListenHandler(
         cmd: callbackKeyCommand(entry.workflowDir, address.host),
       });
     }
-    // C3b1: the cap, judged last; every pending row counts, a running run's too.
-    let pending: number;
+    // C3b1: the cap, judged last. C3d: it counts what waits to be sent (the run finished), never a
+    // run still running or waiting for a person.
+    let waiting: number;
     try {
-      pending = await callbacks.countPending();
+      waiting = await callbacks.countWaiting();
     } catch (err) {
       deps.logger.error('webhook: callback backlog could not be counted', {
         path,
@@ -589,12 +590,12 @@ export function makeListenHandler(
       });
       return 'store_failed';
     }
-    if (pending >= CALLBACK_BACKLOG_CAP) {
+    if (waiting >= CALLBACK_BACKLOG_CAP) {
       deps.logger.warn('webhook: callback backlog full', {
         path,
         workflow,
         host: address.host,
-        pending,
+        waiting,
       });
       return 'backlog';
     }

@@ -2,7 +2,8 @@
 // `feat-callback-a1-delivery-port.md` and its split amendment, `feat-callback-a2-keys-port.md`): the
 // laws of a store's callback store (`RunStore.callbacks`). The door side (A1a): registration inside
 // `create`, `read`, `countPending` and the purge pair. The sender side (A1b): `due` and `claim`, the
-// only methods that return the address, then `freezeBody` and `mark`. The signing keys (A2): the
+// only methods that return the address, then `freezeBody` and `mark`. Callback C3d: `countWaiting`
+// and `endOverdue`. The signing keys (A2): the
 // `CBK_` laws of `keys`. The store is ALSO a `PerRunArtifactStore`: a file wiring
 // this family runs `perRunArtifactStoreContract` on `store.callbacks` too, naming in its `NOT_RUN`
 // what its store cannot run there.
@@ -46,14 +47,16 @@ import { settableClock } from '../clock/settable-clock.js';
  *   `webhook_id` that is not a uuid, a missing field: each create throws, takes no reading and leaves
  *   no run and no row; a 1- and a 2,048-character `url` and a 255-character `host` are accepted.
  *   Callback A1b: a claim, freeze or mark token that is empty or 201 characters, a `limit` of 0, 1,001,
- *   1.5 or `NaN`, an empty body, a `delivered` status outside 200–299, an `afterSeconds` of 0, -1,
- *   `NaN`, `Infinity` or 86,401, a `lastStatus` outside 100–599 and the closed words (`unsigned`
- *   included), a mark of another kind: each throws, takes no reading and changes no row; a 200-character
- *   token, a `limit` of 1,000 and an `afterSeconds` of 86,400 are accepted.
+ *   1.5 or `NaN` (to `due` or, callback C3d, `endOverdue`), an empty body, a `delivered` status outside
+ *   200–299, an `afterSeconds` of 0, -1, `NaN`, `Infinity` or 86,401, a `lastStatus` outside 100–599
+ *   and the closed words (`unsigned` included), a mark of another kind: each throws, takes no reading
+ *   and changes no row; a 200-character token, a `limit` of 1,000 and an `afterSeconds` of 86,400 are
+ *   accepted.
  * - `CB_DUE_CONJUNCTS` — a row is due only when `pending`, its `next_attempt_at` at or before the reading
  *   (exactly at it; not 1 ms before) and its run finished; each conjunct alone keeps it out.
  * - `CB_DUE_RUN_GONE` — a row whose run is gone is not due, and its claim answers `run_not_finished`
- *   (an adapter hook removes the run; a store that cannot lists the law in its `NOT_RUN`).
+ *   (an adapter hook removes the run; a store that cannot lists the law in its `NOT_RUN`). Callback
+ *   C3d: nor is it counted by `countWaiting`, nor ended by `endOverdue` 3 days later.
  * - `CB_DUE_FAIRNESS_AND_ORDER` — 60 rows of one host and the newest row of another, `limit` 50: the
  *   first host's oldest, the other host's row, then the first host's next 48; inside a round the hosts
  *   go by the `next_attempt_at` of the row each gives (z at +0 and +100 ms, a at +5 and +6 ms: z0, a0,
@@ -85,7 +88,19 @@ import { settableClock } from '../clock/settable-clock.js';
  * - `CB_CLOCK_READINGS` — a create with a `callback` takes the readings the same create without one
  *   takes, keyed and unkeyed, and the row is stamped with the create's own reading; `read`,
  *   `countPending` and the purge pair take none. Callback A1b: `due`, `claim` and a `retry` mark take
- *   one, applied or refused; `freezeBody` and the other marks take none.
+ *   one, applied or refused; `freezeBody` and the other marks take none. Callback C3d: `countWaiting`
+ *   takes none, `endOverdue` one, whether it ends a row or none.
+ * - `CB_WAITING_COUNT` (callback C3d) — `countWaiting` counts the `pending` rows whose run finished, a
+ *   row waiting for a retry included; never the row of a run still running, waiting at a question or
+ *   resumed, nor a `delivered` or `failed` row; it takes no reading.
+ * - `CB_OVERDUE_ENDS` (callback C3d) — `endOverdue` ends, `failed` with `expired`, a `pending` row due
+ *   at the reading whose run finished and whose anchor (`finished_at`, else the run's `updated_at`)
+ *   is 3 days before the reading or more: exactly then, not 1 ms before, for a claimed row and a
+ *   never-claimed one. It leaves a row under a live claim or waiting for a retry until that ends, a
+ *   running run's row and a finished row. The ended row keeps its `attempts` and holds no address or
+ *   body. It returns what it ended (`run_id`, `workflow_id`, `host`, `attempts`), oldest anchor first,
+ *   ties by `run_id` in code-unit order, at most `limit`; a second call ends nothing; a later mark
+ *   answers `not_pending`.
  *
  * Callback A2, the signing keys (`store.callbacks.keys`), for each (workflow, host) a `current` and
  * a `previous`. A previous counts only while live (at its `expires_at` it is gone, for every method):
@@ -139,6 +154,8 @@ export const CALLBACK_STORE_LAWS = [
   'CB_NULLING_ONE_WRITE',
   'CB_VIEW_HIDES',
   'CB_PURGE_PAIR',
+  'CB_WAITING_COUNT',
+  'CB_OVERDUE_ENDS',
   'CB_CLOCK_READINGS',
   'CBK_MAKE_ONE_KEY',
   'CBK_ROTATE_ATOMIC',
@@ -203,6 +220,8 @@ export interface CallbackStoreContractCase {
 }
 
 const MIN = 60_000;
+/** Callback C3d: the 3 days after a run's end that its callback may wait, in milliseconds. */
+const OVERDUE_MS = 259_200_000;
 const T0 = Date.parse('2026-01-01T00:00:00.000Z');
 const WORKFLOW = 'wf-callback-law';
 const HOST = 'hooks.example:443';
@@ -389,6 +408,10 @@ function family(adapter: CallbackStoreContractAdapter) {
       ['due 1,001', () => b.callbacks.due(1001)],
       ['due 1.5', () => b.callbacks.due(1.5)],
       ['due NaN', () => b.callbacks.due(Number.NaN)],
+      ['endOverdue 0', () => b.callbacks.endOverdue(0)],
+      ['endOverdue 1,001', () => b.callbacks.endOverdue(1001)],
+      ['endOverdue 1.5', () => b.callbacks.endOverdue(1.5)],
+      ['endOverdue NaN', () => b.callbacks.endOverdue(Number.NaN)],
       ['a freeze with an empty token', () => b.callbacks.freezeBody(id, '', 'b')],
       ['an empty body', () => b.callbacks.freezeBody(id, 'X', '')],
       ['a mark with an empty token', mark({ kind: 'failed', lastStatus: 500 }, '')],
@@ -432,6 +455,12 @@ function family(adapter: CallbackStoreContractAdapter) {
       law,
       'a limit of 1,000 is accepted',
       (await thrown(() => b.callbacks.due(1000))) === undefined,
+      true,
+    );
+    same(
+      law,
+      'a limit of 1,000 is accepted by endOverdue',
+      (await thrown(() => b.callbacks.endOverdue(1000))) === undefined,
       true,
     );
     same(
@@ -525,6 +554,8 @@ function family(adapter: CallbackStoreContractAdapter) {
         failedRefused: await delta(() =>
           b.callbacks.mark(id, 'X', { kind: 'failed', lastStatus: 500 }),
         ),
+        waiting: await delta(() => b.callbacks.countWaiting()),
+        endsNone: await delta(() => b.callbacks.endOverdue(10)),
       },
       {
         due: 1,
@@ -535,7 +566,18 @@ function family(adapter: CallbackStoreContractAdapter) {
         retry: 1,
         delivered: 0,
         failedRefused: 0,
+        waiting: 0,
+        endsNone: 1,
       },
+    );
+    const old = await finishedRun(b, 921);
+    await b.at(30 * 24 * 60 * MIN);
+    let ended: unknown;
+    same(
+      law,
+      'endOverdue takes one when it ends a row',
+      { reads: await delta(async () => (ended = await b.callbacks.endOverdue(10))), ended },
+      { reads: 1, ended: [{ run_id: old, workflow_id: WORKFLOW, host: HOST, attempts: 0 }] },
     );
   }
 
@@ -860,6 +902,7 @@ function family(adapter: CallbackStoreContractAdapter) {
         await on(law, async (b) => {
           const id = await finishedRun(b, 1);
           const next = (await b.callbacks.read(id))!.next_attempt_at;
+          same(law, 'counted while its run is there', await b.callbacks.countWaiting(), 1);
           await remove(b.store, id);
           same(law, 'not due', await dueIds(b), []);
           same(
@@ -867,6 +910,17 @@ function family(adapter: CallbackStoreContractAdapter) {
             'its claim',
             answer(await b.callbacks.claim(id, { expectedNextAttemptAt: next, token: 'X' })),
             'run_not_finished',
+          );
+          same(law, 'not counted', await b.callbacks.countWaiting(), 0);
+          await b.at(OVERDUE_MS + MIN);
+          same(
+            law,
+            'not ended 3 days later',
+            {
+              ended: await b.callbacks.endOverdue(1000),
+              status: (await b.callbacks.read(id))?.status,
+            },
+            { ended: [], status: 'pending' },
           );
         });
       },
@@ -1330,6 +1384,233 @@ function family(adapter: CallbackStoreContractAdapter) {
           { stat: { bytes: 0 }, delete: { bytes_deleted: 0 } },
         );
       }),
+    ),
+    L(
+      'CB_WAITING_COUNT',
+      'countWaiting counts the pending rows of finished runs, and no others',
+      () =>
+        on('CB_WAITING_COUNT', async (b) => {
+          const law = 'CB_WAITING_COUNT';
+          same(law, 'an empty store', await b.callbacks.countWaiting(), 0);
+          const running = await b.create(reg(1));
+          const gated = await b.create(reg(2));
+          await b.plant({
+            ...(await b.record(gated)),
+            pending_gate: {
+              gate_id: 'law-gate',
+              step_name: 'a',
+              preview: {},
+              choices: ['approve'],
+              opened_at: T(0),
+            },
+          });
+          await finishedRun(b, 3);
+          const resumed = await b.create(reg(4));
+          const open = await b.record(resumed);
+          await b.finish(resumed);
+          await b.plant(open);
+          const delivered = await finishedRun(b, 5);
+          await claimNow(b, delivered, 'X');
+          await b.callbacks.mark(delivered, 'X', { kind: 'delivered', lastStatus: 200 });
+          const failed = await finishedRun(b, 6);
+          await claimNow(b, failed, 'X');
+          await b.callbacks.mark(failed, 'X', { kind: 'failed', lastStatus: 500 });
+          const retrying = await finishedRun(b, 7);
+          await claimNow(b, retrying, 'X');
+          await b.callbacks.mark(retrying, 'X', {
+            kind: 'retry',
+            afterSeconds: 60,
+            lastStatus: 503,
+          });
+          const reads = b.reads();
+          same(
+            law,
+            'a finished run’s row and a retry wait; not a running, gate-waiting or resumed run’s row, nor a delivered or failed one',
+            {
+              waiting: await b.callbacks.countWaiting(),
+              reads: b.reads() - reads,
+              pending: await b.callbacks.countPending(),
+            },
+            { waiting: 2, reads: 0, pending: 5 },
+          );
+          await b.finish(running);
+          same(law, 'a run that finishes is then counted', await b.callbacks.countWaiting(), 3);
+        }),
+    ),
+    L(
+      'CB_OVERDUE_ENDS',
+      'endOverdue ends a due row 3 days after its run finished, failed with expired, oldest first',
+      () =>
+        on('CB_OVERDUE_ENDS', async (b) => {
+          const law = 'CB_OVERDUE_ENDS';
+          const W = OVERDUE_MS;
+          const ends = (row: string, attempts: number) => ({
+            run_id: row,
+            workflow_id: WORKFLOW,
+            host: HOST,
+            attempts,
+          });
+          const endsAt = async (ms: number) => {
+            await b.at(ms);
+            return b.callbacks.endOverdue(1000);
+          };
+          // a: claimed at 0, so its `finished_at` is its run's `updated_at`; the run is then stamped
+          // again at 2,000 ms, so an anchor read from the run ends it 2 s late.
+          const a = await finishedRun(b, 1);
+          const aRun = await b.record(a);
+          same(law, 'the setup claim of a', (await claimNow(b, a, 'X')).applied, true);
+          // c is claimed again just before the end (a live claim), d is waiting for a retry then.
+          const c = await finishedRun(b, 3);
+          const d = await finishedRun(b, 4);
+          const running = await b.create(reg(5));
+          const delivered = await finishedRun(b, 6);
+          await claimNow(b, delivered, 'X');
+          await b.callbacks.mark(delivered, 'X', { kind: 'delivered', lastStatus: 200 });
+          const failed = await finishedRun(b, 7);
+          await claimNow(b, failed, 'X');
+          await b.callbacks.mark(failed, 'X', { kind: 'failed', lastStatus: 500 });
+          // n: never claimed, created at 500 ms and finished at 1,000 ms: its anchor is the run's
+          // `updated_at`, so an anchor read from `created_at` ends it 0.5 s early.
+          await b.at(500);
+          const n = await b.create(reg(2));
+          await b.at(1000);
+          await b.finish(n);
+          await b.at(2000);
+          await b.plant({ ...(await b.record(a)), updated_at: T(2000) });
+          const aAnchor = Date.parse(aRun.updated_at) - T0;
+          const nAnchor = Date.parse((await b.record(n)).updated_at) - T0;
+          same(
+            law,
+            'the setup anchors',
+            { a: (await b.callbacks.read(a))?.finished_at, n: nAnchor },
+            { a: aRun.updated_at, n: 1000 },
+          );
+          const left = {
+            running: await b.callbacks.read(running),
+            delivered: await b.callbacks.read(delivered),
+            failed: await b.callbacks.read(failed),
+          };
+          await b.at(aAnchor + W - 1);
+          same(law, 'the live claim of c', (await claimNow(b, c, 'C')).applied, true);
+          same(law, 'the claim of d', (await claimNow(b, d, 'D')).applied, true);
+          await b.callbacks.mark(d, 'D', { kind: 'retry', afterSeconds: 30, lastStatus: 503 });
+          same(law, '1 ms before a’s end', await b.callbacks.endOverdue(1000), []);
+          const aBefore = await b.callbacks.read(a);
+          same(law, 'at a’s end, from its finished_at', await endsAt(aAnchor + W), [ends(a, 1)]);
+          same(
+            law,
+            'a ended: failed with expired, its attempts kept, no address',
+            { row: await b.callbacks.read(a), bytes: (await b.callbacks.statAllForRun(a)).bytes },
+            { row: { ...aBefore, status: 'failed', last_status: 'expired' }, bytes: 0 },
+          );
+          same(law, 'a second call at the same instant', await b.callbacks.endOverdue(1000), []);
+          same(
+            law,
+            'a later mark of a',
+            answer(await b.callbacks.mark(a, 'X', { kind: 'delivered', lastStatus: 200 })),
+            'not_pending',
+          );
+          const nBefore = await b.callbacks.read(n);
+          same(law, '1 ms before n’s end', await endsAt(nAnchor + W - 1), []);
+          same(law, 'at n’s end, from its run', await endsAt(nAnchor + W), [ends(n, 0)]);
+          same(
+            law,
+            'n ended: failed with expired, never claimed',
+            { row: await b.callbacks.read(n), bytes: (await b.callbacks.statAllForRun(n)).bytes },
+            { row: { ...nBefore, status: 'failed', last_status: 'expired' }, bytes: 0 },
+          );
+          const dNext = Date.parse((await b.callbacks.read(d))!.next_attempt_at) - T0;
+          same(law, 'd while its retry waits', await endsAt(dNext - 1), []);
+          same(law, 'd once its retry is due', await endsAt(dNext), [ends(d, 1)]);
+          const cNext = Date.parse((await b.callbacks.read(c))!.next_attempt_at) - T0;
+          same(law, 'c while its claim lasts', await endsAt(cNext - 1), []);
+          same(law, 'c once its claim is over', await endsAt(cNext), [ends(c, 1)]);
+          same(
+            law,
+            'a running run’s row, a delivered and a failed row are left',
+            {
+              running: await b.callbacks.read(running),
+              delivered: await b.callbacks.read(delivered),
+              failed: await b.callbacks.read(failed),
+            },
+            left,
+          );
+          for (const id of [a, c, d, n, running, delivered, failed])
+            await b.callbacks.deleteAllForRun(id);
+          // The order: y finished before x though x was made first. Then two rows tied on their
+          // anchor, the one made second with the smaller run_id, so a store that leaves ties in the
+          // order the rows were made (as a scan of the due-time index does) ends the wrong row at
+          // limit 1. Run ids are the store's own, so the pair is found, not chosen: rows are made one
+          // per millisecond until a row's id is smaller than the id of the row made just before it,
+          // and every row made before that pair loses its callback row. The tied set is then exactly
+          // those two rows, whatever the ids. Two rows already give such a pair 1 time in 2; 64 rows
+          // all made in ascending order has probability 1/64!, so the setup check never fails in
+          // practice. Only the port and the bench are used, so any store runs it.
+          const base = 2 * W;
+          await b.at(base);
+          const x = await b.create(reg(10));
+          await b.at(base + 1);
+          const y = await b.create(reg(11));
+          await b.at(base + 2);
+          await b.finish(y);
+          await b.at(base + 3);
+          await b.finish(x);
+          const made: string[] = [];
+          const descends = (): boolean =>
+            made.length >= 2 && made[made.length - 1]! < made[made.length - 2]!;
+          for (let i = 0; i < 64 && !descends(); i++) {
+            await b.at(base + 4 + i);
+            made.push(await b.create(reg(20 + i)));
+          }
+          same(law, 'the setup ties: a row made after another with a smaller id', descends(), true);
+          for (const id of made.slice(0, -2)) await b.callbacks.deleteAllForRun(id);
+          const [madeFirst, madeSecond] = made.slice(-2) as [string, string];
+          const tiedAt = base + 4 + 64;
+          await b.at(tiedAt);
+          await b.finish(madeFirst);
+          await b.finish(madeSecond);
+          await b.at(tiedAt + W);
+          same(law, 'limit 2: the oldest anchors', await b.callbacks.endOverdue(2), [
+            ends(y, 0),
+            ends(x, 0),
+          ]);
+          same(
+            law,
+            'limit 1: ties by run_id, the row made second',
+            await b.callbacks.endOverdue(1),
+            [ends(madeSecond, 0)],
+          );
+          same(law, 'the rest: the row made first', await b.callbacks.endOverdue(1000), [
+            ends(madeFirst, 0),
+          ]);
+          // The limit counts only rows it ends: a running run's row and a row under a live claim,
+          // each older than the one row that is due, do not take its place at limit 1.
+          const c0 = tiedAt + 2 * W;
+          await b.at(c0);
+          const older = await b.create(reg(90));
+          await b.at(c0 + 1);
+          const held = await finishedRun(b, 91);
+          await b.at(c0 + 2);
+          const due = await finishedRun(b, 92);
+          await b.at(c0 + W);
+          same(law, 'the setup claim of held', (await claimNow(b, held, 'H')).applied, true);
+          await b.at(c0 + 2 + W);
+          same(
+            law,
+            'limit 1: the due row, past older rows it cannot end',
+            await b.callbacks.endOverdue(1),
+            [ends(due, 0)],
+          );
+          same(
+            law,
+            'the running run’s row and the held row are left',
+            {
+              older: (await b.callbacks.read(older))?.status,
+              held: (await b.callbacks.read(held))?.status,
+            },
+            { older: 'pending', held: 'pending' },
+          );
+        }),
     ),
     L(
       'CB_CLOCK_READINGS',

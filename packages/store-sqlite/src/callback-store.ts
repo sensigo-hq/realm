@@ -19,16 +19,19 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
   brandClass,
+  CALLBACK_DELIVERY_WINDOW_SECONDS,
   callbackRowOf,
   callbackViewOf,
   checkCallbackRequest,
   claimCallback,
+  endOverdueCallbacks,
   freezeCallbackBody,
   markCallback,
   WorkflowError,
   type ArtifactDeletionReport,
   type CallbackClaimRequest,
   type CallbackClaimResult,
+  type CallbackEnded,
   type CallbackFreezeResult,
   type CallbackItem,
   type CallbackKeyStore,
@@ -117,6 +120,23 @@ const DUE = `SELECT run_id, workflow_id, host, url, webhook_id, attempts, next_a
   FROM callbacks c JOIN runs r ON r.id = c.run_id
   WHERE c.status = 'pending' AND c.next_attempt_at <= ? AND r.terminal_state IS 1
 ) ORDER BY round, next_attempt_at, host LIMIT ?`;
+
+/** Callback C3d: how many rows wait to be sent (core's `countWaitingCallbacks`): pending, run finished. */
+const WAITING = `SELECT count(*) AS n FROM callbacks c JOIN runs r ON r.id = c.run_id
+  WHERE c.status = 'pending' AND r.terminal_state IS 1`;
+
+/**
+ * Callback C3d: the rows `endOverdue` may end (core's `endOverdueCallbacks` decides): pending, due at
+ * the reading, the run there and finished, and the anchor (`finished_at`, else the run's
+ * `updated_at`) at or before the cutoff, 3 days before the reading; oldest anchor first, then
+ * `run_id`. Every stamp is `toISOString()` text, so text order is time order.
+ */
+const OVERDUE = `SELECT ${COLUMNS.map((column) => `c.${column}`).join(', ')},
+  r.terminal_state AS run_terminal, r.updated_at AS run_updated_at
+  FROM callbacks c JOIN runs r ON r.id = c.run_id
+  WHERE c.status = 'pending' AND c.next_attempt_at <= ? AND r.terminal_state IS 1
+    AND COALESCE(c.finished_at, r.updated_at) <= ?
+  ORDER BY COALESCE(c.finished_at, r.updated_at), c.run_id LIMIT ?`;
 
 /** A row as core's `CallbackRow`: each column that has a value, a NULL left out. */
 function rowOf(row: object): CallbackRow {
@@ -221,6 +241,38 @@ export class SqliteCallbackStore implements CallbackStore {
         ),
       { takesReading: false },
     );
+  }
+
+  /** How many rows wait to be sent, read with no reading. */
+  async countWaiting(): Promise<number> {
+    return this.#db.snapshot((db) => Number(db.prepare(WAITING).get()?.['n']), {
+      takesReading: false,
+    });
+  }
+
+  /**
+   * Ends the overdue rows: core's `endOverdueCallbacks` over the candidates, in one write
+   * transaction with its one reading; landed when every written row reads back as written.
+   */
+  async endOverdue(limit: number): Promise<CallbackEnded[]> {
+    checkCallbackRequest({ kind: 'due', limit });
+    const decided = await this.#db.immediate(
+      (db, reading) => {
+        const cutoff = new Date(reading.getTime() - CALLBACK_DELIVERY_WINDOW_SECONDS * 1000);
+        const found = db.prepare(OVERDUE).all(reading.toISOString(), cutoff.toISOString(), limit);
+        const facts = new Map(
+          found.map((row) => [
+            String(row['run_id']),
+            { finished: row['run_terminal'] === 1, updatedAt: String(row['run_updated_at']) },
+          ]),
+        );
+        const out = endOverdueCallbacks(found.map(rowOf), (id) => facts.get(id), reading, limit);
+        for (const row of out.writes) storeCallbackRow(db, row);
+        return out;
+      },
+      (db, out) => out.writes.every((row) => callbackRowLanded(db, row)),
+    );
+    return decided.ended;
   }
 
   /** At most `limit` rows to send now, one per host per round, at the read's one reading. */

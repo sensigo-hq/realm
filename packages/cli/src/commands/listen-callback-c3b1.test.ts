@@ -151,6 +151,12 @@ async function pendingRuns(store: RunStore, n: number): Promise<string[]> {
   for (let i = 0; i < n; i += 1) ids.push(await runWith(store, reg()));
   return ids;
 }
+/** C3d: `n` ended runs, each with a pending callback row: callbacks that wait to be sent. */
+async function waitingRuns(store: RunStore, n: number): Promise<string[]> {
+  const ids = await pendingRuns(store, n);
+  for (const id of ids) await abandonRun(store, id);
+  return ids;
+}
 /** Completes refunds' one step with `approved` (the run's result). */
 const complete = (store: RunStore, runId: string, approved = true) =>
   executeStep(store, OPTED, {
@@ -188,9 +194,11 @@ async function fail(store: RunStore, runId: string, lastStatus: 410 | 'expired')
 describe('C3b1 — the cap, both sides of the line', { timeout: 120_000 }, () => {
   it('999 waiting: 202 registered; 1,000: 503 callback_backlog, connection kept, nothing made, one warn', async () => {
     const store = await keyedStore();
-    await pendingRuns(store, CALLBACK_BACKLOG_CAP - 1);
+    await waitingRuns(store, CALLBACK_BACKLOG_CAP - 1);
     const s = await serveDoor(store);
     const below = await post(s.port, { id: 'evt-999' }, URL_);
+    // C3d: the run evt-999 made ends, so its callback is the 1,000th waiting to be sent.
+    await abandonRun(store, String(json(below.body)['run_id']));
     const runs = await runCount(store);
     const pending = await store.callbacks!.countPending();
     const at = await post(s.port, { id: 'evt-1000' }, URL_);
@@ -212,7 +220,7 @@ describe('C3b1 — the cap, both sides of the line', { timeout: 120_000 }, () =>
         {
           level: 'warn',
           msg: 'webhook: callback backlog full',
-          data: { path: PATH, workflow: W, host: LABEL, pending: 1000 },
+          data: { path: PATH, workflow: W, host: LABEL, waiting: 1000 },
         },
       ],
     });
@@ -220,8 +228,7 @@ describe('C3b1 — the cap, both sides of the line', { timeout: 120_000 }, () =>
 
   it('only waiting rows count: 1,000 rows of which 450 are delivered and 50 failed is 202', async () => {
     const store = await keyedStore();
-    const ids = await pendingRuns(store, CALLBACK_BACKLOG_CAP);
-    for (const id of ids.slice(0, 500)) await abandonRun(store, id);
+    const ids = await waitingRuns(store, CALLBACK_BACKLOG_CAP);
     for (const id of ids.slice(0, 450)) await deliver(store, id);
     for (const id of ids.slice(450, 500)) await fail(store, id, 410);
     const s = await serveDoor(store);
@@ -235,15 +242,41 @@ describe('C3b1 — the cap, both sides of the line', { timeout: 120_000 }, () =>
       after: await store.callbacks!.countPending(),
     }).toEqual({ before: 500, reply: [202, 'registered'], after: 501 });
   });
+
+  it('C3d: only ended runs count: 1,000 rows of running runs is 202, and so is 999 ended beside them', async () => {
+    const store = await keyedStore();
+    await pendingRuns(store, CALLBACK_BACKLOG_CAP);
+    const s = await serveDoor(store);
+    const running = await post(s.port, { id: 'evt-running' }, URL_);
+    await waitingRuns(store, CALLBACK_BACKLOG_CAP - 1);
+    const beside = await post(s.port, { id: 'evt-beside' }, URL_);
+    // (1) red when the door counts every pending row (`countPending`: 1,000 running runs' rows are
+    //     refused), or counts the running runs beside the ended ones; (2) prints both replies and the
+    //     two counts.
+    expect({
+      running: [running.status, json(running.body)['callback']],
+      beside: [beside.status, json(beside.body)['callback']],
+      counts: {
+        pending: await store.callbacks!.countPending(),
+        waiting: await store.callbacks!.countWaiting(),
+      },
+    }).toEqual({
+      running: [202, 'registered'],
+      beside: [202, 'registered'],
+      counts: { pending: 2001, waiting: 999 },
+    });
+  });
 });
 
 describe('C3b1 — what the cap does not touch', { timeout: 120_000 }, () => {
   it('at 1,000: no header is 202 with no count; a refused address, a host with no key and no lists keep their 400; a repeat step 8 answers is 200', async () => {
     const store = await keyedStore();
-    await pendingRuns(store, CALLBACK_BACKLOG_CAP - 1);
+    await waitingRuns(store, CALLBACK_BACKLOG_CAP - 1);
     const s = await serveDoor(store);
     const first = await post(s.port, { id: 'evt-dup' }, URL_);
-    const count = vi.spyOn(store.callbacks!, 'countPending');
+    // C3d: evt-dup's run is still running, so one more ended run brings the waiting rows to 1,000.
+    await waitingRuns(store, 1);
+    const count = vi.spyOn(store.callbacks!, 'countWaiting');
     const none = await post(s.port, { id: 'evt-none' });
     const countedForNone = count.mock.calls.length;
     const refused = await post(s.port, { id: 'evt-bad' }, 'https://other.example.com/x');
@@ -267,7 +300,7 @@ describe('C3b1 — what the cap does not touch', { timeout: 120_000 }, () => {
         repeat['callback'],
       ],
     }).toEqual({
-      pending: 1000,
+      pending: 1001,
       first: 202,
       none: [202, 0],
       refused: [400, '{"error":"callback_refused","reason":"not_allowed"}'],
@@ -279,7 +312,7 @@ describe('C3b1 — what the cap does not touch', { timeout: 120_000 }, () => {
 
   it('a count that throws: 500 store_error, one error line, nothing made', async () => {
     const store = await keyedStore();
-    vi.spyOn(store.callbacks!, 'countPending').mockRejectedValue(new Error('disk gone'));
+    vi.spyOn(store.callbacks!, 'countWaiting').mockRejectedValue(new Error('disk gone'));
     const s = await serveDoor(store);
     const r = await post(s.port, { id: 'evt-broken' }, URL_);
     // (1) red when the throw escapes the door (another reply or line) or a run is made; (2) prints the
