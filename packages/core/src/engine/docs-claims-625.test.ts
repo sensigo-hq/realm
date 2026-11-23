@@ -2084,7 +2084,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     // marks a quote leaves out — run by locate-quote-language-0480.test.ts's §2 and §4 cells.
     claimOn(
       HANDLERS,
-      "with every dash and hyphen read as `-` (two hyphens outside the Basic Multilingual Plane excepted; a soft hyphen is not a dash: it is invisible, and makes no word edge), every punctuation mark and quotation mark dropped, and every spacing accent not next to a digit, and spaces collapsed, keeping letters with their visible combining marks (a mark is part of its letter, so a quote must carry it; an Arabic or Hebrew vowel mark a quote leaves out is optional, and one it writes must match; a mark on anything but a letter is dropped), digits, `%`, `‰`, `°`, `‱`, currency signs, the 13 number signs (U+0600–U+0605 and the others the glossary names), every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions (never folded into digits), a `-` directly before a digit, a `.` or `,` directly before a digit that follows no letter or digit, and the separators between two digits (a spacing accent between two digits is one, kept as itself). A number written in digits is one unit: a digit never matches inside a longer number of `source`, or next to its letters, and a quote never starts or ends on a number's separator or beside a group of thousands.",
+      "with every dash and hyphen read as `-` (a soft hyphen is not a dash: it is invisible, and makes no word edge), every punctuation mark and quotation mark dropped, and every spacing accent not next to a digit, and spaces collapsed, keeping letters with their visible combining marks (a mark is part of its letter, so a quote must carry it; an Arabic or Hebrew vowel mark a quote leaves out is optional, and one it writes must match; a mark on anything but a letter is dropped), digits, `%`, `‰`, `°`, `‱`, currency signs, the 13 number signs (U+0600–U+0605 and the others the glossary names), every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions (never folded into digits), a `-` directly before a digit, a `.` or `,` directly before a digit that follows no letter or digit, and the separators between two digits (a spacing accent between two digits is one, kept as itself). A number written in digits is one unit: a digit never matches inside a longer number of `source`, or next to its letters, and a quote never starts or ends on a number's separator or beside a group of thousands.",
     );
     // (a) red when a mid-word quote or piece is found, a skip lands mid-sentence, a quote with no
     //     break stitches, a sign, a superscript, a dash or a leading decimal is folded, or a number
@@ -2690,7 +2690,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   it("§2 `cut_short`: an `exact` quote is marked when its last character is its stop and the document goes on with a lowercase letter or a digit, not when the quote carries a space after it (every member: #855's correction §1)", () => {
     claimOn(
       HANDLERS,
-      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past closing marks and whitespace other than a line break, goes on with a lowercase letter or a digit (`approx. 412`); a line break there, an invisible character, a lowercase letter or a digit outside the Basic Multilingual Plane, or whitespace the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote, but the dots of `...` and a `.` right after `…`, that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
+      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past closing marks, whitespace other than a line break, and invisible characters, goes on with a lowercase letter or a digit (`approx. 412`); a line break there, or whitespace the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote, but the dots of `...` and a `.` right after `…`, that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
     );
     // #866 correction 1 (C4): the handlers paragraph carries the CHANGELOG's `….` words too.
     // the owner's word, 2026-10-24 ("i agree"): a `.` right after `…` is no sentence end inside a
@@ -3281,7 +3281,7 @@ describe("#855's correction: each sentence's members", () => {
     },
   );
 
-  it('S1 every dash in the Basic Multilingual Plane reads as `-`: every BMP `\\p{Pd}`, `isDash`’s additions and the NFKC minus signs; the dashes outside it do not', () => {
+  it('S1 every dash reads as `-`: every `\\p{Pd}` in every plane, `isDash`’s additions and the NFKC minus signs (#845 R-A2: the two outside the BMP too)', () => {
     const outside = codePoints(/^\p{Pd}$/u, 0x10000);
     whole(DASHES.slice(0, -DASH_ADDED.length), /^\p{Pd}$/u, 0, BMP);
     whole(outside, /^\p{Pd}$/u, 0x10000);
@@ -3292,12 +3292,13 @@ describe("#855's correction: each sentence's members", () => {
         minus5(d),
         d === 0x2d ? 'exact' : 'reformatted',
       ]),
-      ...outside.map((d): Row => [hex(d), minus5(d), 'not_found']),
+      // #845 (R-A2) re-pin: the two dashes outside the BMP are dashes, read as `-`
+      ...outside.map((d): Row => [hex(d), minus5(d), 'reformatted']),
     ];
     // #855's last commit (M7): the whole-BMP walk against the glossary's dash set is the glossary
     // describe's "a dash" rows; the copy's own check, true by construction, is gone.
-    // (1) red when a member is left out of an iteration, a BMP dash stops reading as `-`, or one
-    //     outside the BMP starts to; (2) prints the members missing and each differing code point and
+    // (1) red when a member is left out of an iteration, or a dash in any plane stops reading as
+    //     `-`; (2) prints the members missing and each differing code point and
     //     state.
     expect({
       named: [0x10d6e, 0x10ead].filter((d) => !outside.includes(d)).map(hex),
@@ -3323,12 +3324,16 @@ describe("#855's correction: each sentence's members", () => {
     }).toEqual({ named: [], misses: [] });
   });
 
-  it('S3 a sign or a dash written right before a number belongs to it: every BMP `Sc` and `Sm` and every dash `isDash` reads, before `5`; a dash after `5` does not; a sign outside the BMP does too, a hyphen outside it does not', () => {
-    // The language unit re-pin (§5.4): the sentence names the two astral hyphens only.
-    claimOn(
-      HANDLERS,
-      'A hyphen outside the Basic Multilingual Plane (U+10D6E, U+10EAD) does not belong to its number: `5` is found after it.',
-    );
+  it('S3 a sign or a dash written right before a number belongs to it: every BMP `Sc` and `Sm` and every dash `isDash` reads, before `5`; a dash after `5` does not; outside the BMP every sign and both hyphens bind it too (#845 R-A2)', () => {
+    // #845 (R-A2) re-pin, Words item 11a: the page no longer says an astral hyphen leaves its number
+    // found; both bind it, as every other dash does.
+    expect(
+      flatten(raw(HANDLERS)).includes(
+        flatten(
+          'A hyphen outside the Basic Multilingual Plane (U+10D6E, U+10EAD) does not belong to its number',
+        ),
+      ),
+    ).toBe(false);
     whole(SIGNS, /^[\p{Sc}\p{Sm}]$/u, 0, BMP);
     const astral = codePoints(/^[\p{Sc}\p{Sm}\p{Pd}]$/u, 0x10000);
     whole(astral, /^[\p{Sc}\p{Sm}\p{Pd}]$/u, 0x10000);
@@ -3343,12 +3348,8 @@ describe("#855's correction: each sentence's members", () => {
         'exact',
       ]),
       // the language unit (§3): the character before a match is read by code point, so a sign outside
-      // the BMP is a sign; its two hyphens (U+10D6E, U+10EAD) are no number symbols and stay `exact`
-      ...astral.map((s): Row => [
-        `${hex(s)} before 5`,
-        before5(ch(s)),
-        /^\p{Pd}$/u.test(ch(s)) ? 'exact' : 'not_found',
-      ]),
+      // the BMP is a sign; #845 (R-A2): its two hyphens (U+10D6E, U+10EAD) are dashes and bind too
+      ...astral.map((s): Row => [`${hex(s)} before 5`, before5(ch(s)), 'not_found']),
     ];
     // (1) red when a member is left out of an iteration, currency signs leave `isNumberSymbol` (every
     //     `Sc` row), a dash after the number starts to bind, or a sign outside the BMP starts to;
@@ -3412,7 +3413,7 @@ describe("#855's correction: each sentence's members", () => {
     };
     claimOn(
       HANDLERS,
-      'past closing marks and whitespace other than a line break, goes on with a lowercase letter or a digit (`approx. 412`)',
+      'past closing marks, whitespace other than a line break, and invisible characters, goes on with a lowercase letter or a digit (`approx. 412`)',
     );
     whole(MARKS, MARK_GROUP, 0, BMP);
     const rent = 'The Tenant shall pay the Rent';
@@ -4007,7 +4008,7 @@ describe("#855's correction: each sentence's members", () => {
     );
 
     it.each(BLOCKS)(
-      'a closing mark, whitespace other than a line break, a lowercase letter, a digit: what an `exact` `approx.` is marked before, %s',
+      'a closing mark, whitespace other than a line break, an invisible character, a lowercase letter, a digit: what an `exact` `approx.` is marked before, %s',
       (_, from, to) => {
         const got = range(from, to).filter(
           (c) => read(approx, `${approx}${ch(c)}412 square metres.`) === 'exact+cut_short',
@@ -4018,6 +4019,8 @@ describe("#855's correction: each sentence's members", () => {
         const want = [
           ...glossaryCodes('a closing mark'),
           ...glossaryCodes('whitespace').filter((w) => !lineBreaks.includes(w)),
+          // #845 (R-C2) re-pin: the walk steps over invisible characters, so the `4` after one marks
+          ...glossaryCodes('an invisible character'),
           // a combining mark with the Lowercase property (U+0345, the only one) attaches to the
           // stop, so no exact quote ends before it (UAX #29 GB9)
           ...glossaryProps('a lowercase letter').filter((c) => !/^\p{M}$/u.test(ch(c))),
@@ -4123,7 +4126,7 @@ describe("#855's correction: each sentence's members", () => {
       }).toEqual({ 'U.S.': true, 'xA.': true, '2A.': false });
     });
 
-    it('B1 and M5: whitespace other than a line break marks, a line break does not (#845); a `\\p{Ll}` or `\\p{Nd}` character outside the BMP leaves the quote unmarked; the dots of `...` and a `.` right after `…` do not mark', () => {
+    it('B1 and M5: whitespace other than a line break marks, a line break does not (#845); a `\\p{Ll}` or `\\p{Nd}` character outside the BMP marks it too (#845 R-A2); the dots of `...` and a `.` right after `…` do not mark', () => {
       // #845 (R-B) re-pin: every whitespace other than a line break marks now, not only a plain space
       // and a tab
       const lineBreaks = glossaryCodes('a line break');
@@ -4135,11 +4138,11 @@ describe("#855's correction: each sentence's members", () => {
           read(approx, `${approx}${ch(w)}412 square metres.`),
           marking.includes(w) ? 'exact+cut_short' : 'exact',
         ]),
-        // pinned: the code half is #845 item 13 (`exactGoesOn` reads one UTF-16 unit)
+        // #845 (R-A2) re-pin, item 13: `exactGoesOn` reads by code point, so these mark
         ...codePoints(/^[\p{Ll}\p{Nd}]$/u, 0x10000).map((c): Row => [
           hex(c),
           read(approx, `${approx} ${ch(c)}12 square metres.`),
-          'exact',
+          'exact+cut_short',
         ]),
         [
           '`...` before a space',
@@ -4153,8 +4156,8 @@ describe("#855's correction: each sentence's members", () => {
           'reformatted',
         ],
       ];
-      // (1) red when whitespace other than a plain space or a tab marks the quote, an astral letter or
-      //     digit starts to (then #845's code half has landed), or the dots of `...` or a `.` right
+      // (1) red when whitespace other than a line break stops marking the quote, an astral letter or
+      //     digit leaves it unmarked (read as one UTF-16 unit), or the dots of `...` or a `.` right
       //     after `…` mark (the `…` run no longer taking the dots after it); (2) prints each differing
       //     row.
       expect(misses(rows)).toEqual([]);

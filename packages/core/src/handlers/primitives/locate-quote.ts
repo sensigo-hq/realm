@@ -106,16 +106,14 @@ const MAX_MARKS = 30;
 /** A8: how many times a tile may be shortened to find it with its edges holding. */
 const MAX_TILE_RETREATS = 3;
 
-/** N4: a dash or hyphen, read as `-`: every BMP `\p{Pd}` character (25 of them), the minus sign
- *  U+2212, the heavy minus sign U+2796 and the modifier letter minus sign U+02D7 — 28 in all. One code
- *  unit maps to one, so every offset stays the source's own. The two `\p{Pd}` characters outside the
- *  BMP (U+10D6E, U+10EAD) are left out: each is two code units, and reading one as a one-unit `-`
- *  would shift every later offset of the dash-mapped copy. */
+/** N4, #845 (R-A2): a dash or hyphen, read as `-`: every `\p{Pd}` character, in every plane (the
+ *  two outside the BMP are U+10D6E and U+10EAD), the minus sign U+2212, the heavy minus sign U+2796
+ *  and the modifier letter minus sign U+02D7. The canonical form writes each as `-`; the literal
+ *  layer's dash-mapped copy keeps an astral one as itself (one code unit cannot stand for two), and
+ *  its edge reads take it as `-` through this test. Read by code point. */
 const DASH = /^\p{Pd}$/u;
 const isDash = (c: string | undefined): boolean =>
-  c !== undefined &&
-  c.length === 1 &&
-  (DASH.test(c) || c === '\u2212' || c === '\u2796' || c === '\u02d7');
+  c !== undefined && (DASH.test(c) || c === '\u2212' || c === '\u2796' || c === '\u02d7');
 /** `%` `‰` `°`; N5: `‱`, the primes `′` `″` `‴` `‵` `‶` `‷` (U+2031–U+2037), the ballot boxes
  *  `☐` `☑` `☒` (U+2610–U+2612), the check and cross marks `✓` `✔` `✕` `✖` `✗` `✘` (U+2713–U+2718),
  *  `✅` `❌` `❎`. Every other `\p{So}` (bullets, emoji) stays set aside. `+` and the comparison signs are
@@ -183,7 +181,7 @@ const MATH = /^\p{Sm}$/u;
 const MARK = /^\p{M}$/u;
 const WORD_CHAR = /[\p{L}\p{Nd}]/u;
 /** #845 (R-B): a lowercase letter — Unicode's Lowercase property (UAX #29 SB8's Lower): every
- *  `\p{Ll}`, and `ª`, `º`, small Roman numerals (`ⅳ`) …. */
+ *  `\p{Ll}`, and `ª`, `º`, small Roman numerals (`ⅳ`) …, in every plane. */
 const LOWERCASE = /^\p{Lowercase}$/u;
 /** §4: a code point whose script extensions hold Arabic or Hebrew — read by property, never a range
  *  list. */
@@ -572,6 +570,8 @@ function cpBefore(s: string, i: number): string | undefined {
   return s[i - 1];
 }
 
+const isHighSurrogate = (unit: number): boolean => unit >= 0xd800 && unit <= 0xdbff;
+
 /** The code point that starts at `i`, or `undefined` at the end. */
 function cpAt(s: string, i: number): string | undefined {
   if (i >= s.length) return undefined;
@@ -591,6 +591,38 @@ function pastMarksAfter(s: string, i: number): number {
   let k = i;
   for (let c = cpAt(s, k); isMark(c); c = cpAt(s, k)) k += c!.length;
   return k;
+}
+
+/** #845 (R-C2): from `i` back past every invisible character (`isInvisible`), as if it were absent. */
+function pastInvisibleBefore(s: string, i: number): number {
+  let k = i;
+  for (let c = cpBefore(s, k); isInvisible(c); c = cpBefore(s, k)) k -= c!.length;
+  return k;
+}
+
+/** #845 (R-C2): from `i` forward past every invisible character. */
+function pastInvisibleAfter(s: string, i: number): number {
+  let k = i;
+  for (let c = cpAt(s, k); isInvisible(c); c = cpAt(s, k)) k += c!.length;
+  return k;
+}
+
+/** #845 (R-C2, R-A2): a raw-text walk's step — the code point before `at` (`dir` -1) or from `at`
+ *  (`dir` 1), past invisible characters, and the offset past it in that direction (`undefined`, and
+ *  the offset reached, at an end). */
+interface Step {
+  readonly c: string | undefined;
+  readonly at: number;
+}
+function stepBack(s: string, at: number): Step {
+  const k = pastInvisibleBefore(s, at);
+  const c = cpBefore(s, k);
+  return { c, at: c === undefined ? k : k - c.length };
+}
+function stepOn(s: string, at: number): Step {
+  const k = pastInvisibleAfter(s, at);
+  const c = cpAt(s, k);
+  return { c, at: c === undefined ? k : k + c.length };
 }
 
 /** UAX #29 GB9: whether a visible mark stands at `i`, past invisible characters — a span starting
@@ -675,45 +707,70 @@ function numberEdgesHold(hay: string, at: number, needle: string): boolean {
   return leftNumberEdgeHolds(hay, at, needle) && rightNumberEdgeHolds(hay, at, needle);
 }
 
+/** #845 (R-A2): the first `n` characters of `s` from `from`, read by code point, each past the marks
+ *  on it (UAX #29 WB4: a mark is part of the character before it). */
+function codePoints(s: string, from: number, n: number): Array<string | undefined> {
+  const out: Array<string | undefined> = [];
+  for (let k = pastMarksAfter(s, from); out.length < n;) {
+    const c = cpAt(s, k);
+    out.push(c);
+    if (c !== undefined) k = pastMarksAfter(s, k + c.length);
+  }
+  return out;
+}
+
+/** #845 (R-A2): how many digits (`\p{Nd}`, by code point) end at `at`, and where they start. */
+function digitsBack(s: string, at: number): { n: number; start: number } {
+  let k = at;
+  let n = 0;
+  for (let c = cpBefore(s, k); isDigit(c); c = cpBefore(s, k)) {
+    k -= c!.length;
+    n++;
+  }
+  return { n, start: k };
+}
+
 function leftNumberEdgeHolds(hay: string, at: number, needle: string): boolean {
-  const first = needle[0];
   // the language unit (§3, UAX #29 WB4): the characters before read by code point, each past its
-  // marks (the needle's own reads stay code-unit until #845's R-A2)
+  // marks; #845 (R-A2): the needle's own characters by code point too
+  const [first, second, third, fourth] = codePoints(needle, 0, 4);
   const p1 = pastMarks(hay, at);
   const b1 = cpBefore(hay, p1);
   const b2 = b1 === undefined ? undefined : cpBefore(hay, pastMarks(hay, p1 - b1.length));
   if (isNum(first)) {
     if (isAlnum(b1)) return false;
     if (isJoiner(b1) && isNum(b2)) return false;
-    if (b1 === '-' || isNumberSymbol(b1)) return false;
+    if (isDash(b1) || isNumberSymbol(b1)) return false;
     // N3: a leading decimal — a `.` or `,` before the digit that follows no letter or digit.
     if ((b1 === '.' || b1 === ',') && !isAlnum(b2)) return false;
   } else if (isLetter(first) && isNum(b1)) return false;
-  if (first === '-' && isNum(needle[1]) && isAlnum(b1)) return false;
+  if (isDash(first) && isNum(second) && isAlnum(b1)) return false;
   // N1: a quote that opens on a number's separator (`.5%` in `4.5%`).
-  if (isJoiner(first) && isNum(needle[1]) && isNum(b1)) return false;
+  if (isJoiner(first) && isNum(second) && isNum(b1)) return false;
   // N2: a quote that opens with a group of exactly three digits after one group space and a run of
   //     1–3 digits that follows no letter (`200 000` in `1 200 000`; never `500` in `2024 500`).
   if (
     isDigit(first) &&
-    isDigit(needle[1]) &&
-    isDigit(needle[2]) &&
-    !isDigit(needle[3]) &&
+    isDigit(second) &&
+    isDigit(third) &&
+    !isDigit(fourth) &&
     isGroupSpace(b1) &&
     isDigit(b2)
   ) {
-    let s = at - 1;
-    while (s > 0 && isDigit(hay[s - 1])) s--;
-    if (at - 1 - s <= 3 && !isLetter(hay[s - 1])) return false;
+    const run = digitsBack(hay, p1 - b1!.length);
+    if (run.n <= 3 && !isLetter(cpBefore(hay, run.start))) return false;
   }
   return true;
 }
 
 function rightNumberEdgeHolds(hay: string, at: number, needle: string): boolean {
-  const last = needle[needle.length - 1];
   const end = at + needle.length;
-  // the language unit (§3): the characters after read by code point, past marks (the needle's last
-  // character stays as today until #845's R-A2)
+  // the language unit (§3): the characters after read by code point, past marks; #845 (R-A2): the
+  // needle's own last characters by code point too
+  const lastAt = pastMarks(needle, needle.length);
+  const last = cpBefore(needle, lastAt);
+  const beforeLast =
+    last === undefined ? undefined : cpBefore(needle, pastMarks(needle, lastAt - last.length));
   const q1 = pastMarksAfter(hay, end);
   const a1 = cpAt(hay, q1);
   const a2 = a1 === undefined ? undefined : cpAt(hay, pastMarksAfter(hay, q1 + a1.length));
@@ -723,20 +780,20 @@ function rightNumberEdgeHolds(hay: string, at: number, needle: string): boolean 
     if (isNumberSymbol(a1)) return false;
   } else if (isLetter(last) && isNum(a1)) return false;
   // N1: a quote that ends on a number's separator (`18.` in `18.5`).
-  if (isJoiner(last) && isNum(needle[needle.length - 2]) && isNum(a1)) return false;
+  if (isJoiner(last) && isNum(beforeLast) && isNum(a1)) return false;
   // N2: a quote whose last digit ends a run of 1–3 digits that follows no letter, where the source
   //     goes on with one group space, exactly three digits and then no digit (`1 200` in
   //     `1 200 000`; never `Q1` in `Q1 120`).
   if (isDigit(last) && isGroupSpace(a1)) {
-    let s = end;
-    while (s > 0 && isDigit(hay[s - 1])) s--;
+    const run = digitsBack(hay, end);
+    const [d1, d2, d3, d4] = codePoints(hay, q1 + a1!.length, 4);
     if (
-      end - s <= 3 &&
-      !isLetter(hay[s - 1]) &&
-      isDigit(hay[end + 1]) &&
-      isDigit(hay[end + 2]) &&
-      isDigit(hay[end + 3]) &&
-      !isDigit(hay[end + 4])
+      run.n <= 3 &&
+      !isLetter(cpBefore(hay, run.start)) &&
+      isDigit(d1) &&
+      isDigit(d2) &&
+      isDigit(d3) &&
+      !isDigit(d4)
     ) {
       return false;
     }
@@ -762,8 +819,21 @@ function wordEdgesHold(hay: string, at: number, needle: string): boolean {
   if (isAlnum(cpBefore(hay, pastMarks(hay, at))) && isAlnum(first)) return false;
   const last = cpBefore(needle, pastMarks(needle, needle.length));
   if (isAlnum(cpAt(hay, pastMarksAfter(hay, end))) && isAlnum(last)) return false;
-  if (isLetter(needle[0]) && isWordHyphen(hay[at - 1]) && isLetter(hay[at - 2])) return false;
-  if (isLetter(needle[needle.length - 1]) && isWordHyphen(hay[end]) && isLetter(hay[end + 1])) {
+  // #845 (R-A2): the hyphen reads by code point, each letter past its marks
+  const hyphenBefore = cpBefore(hay, at);
+  if (
+    isLetter(first) &&
+    isWordHyphen(hyphenBefore) &&
+    isLetter(cpBefore(hay, pastMarks(hay, at - hyphenBefore!.length)))
+  ) {
+    return false;
+  }
+  const hyphenAfter = cpAt(hay, end);
+  if (
+    isLetter(last) &&
+    isWordHyphen(hyphenAfter) &&
+    isLetter(cpAt(hay, end + hyphenAfter!.length))
+  ) {
     return false;
   }
   return true;
@@ -876,13 +946,22 @@ const LINE_BREAKS: ReadonlySet<string> = new Set([
   '\u2028',
   '\u2029',
 ]);
+const isLineBreak = (c: string | undefined): boolean => c !== undefined && LINE_BREAKS.has(c);
 const ABBREVIATIONS: ReadonlySet<string> = new Set(NOT_SENTENCE_ENDS.map((a) => a.toLowerCase()));
 
-/** L1: the `.` at `at` ends an abbreviation or an initial, never a sentence. */
-function endsAbbreviation(quote: string, at: number): boolean {
+/** L1: the `.` at `at` ends an abbreviation or an initial, never a sentence. #845 (R-C2, R-A2): the
+ *  word before it — letters and `.` — is read back by code point, past invisible characters. */
+function endsAbbreviation(text: string, at: number): boolean {
   let s = at;
-  while (s > 0 && (isLetter(quote[s - 1]) || quote[s - 1] === '.')) s--;
-  const token = quote.slice(s, at);
+  for (let p = stepBack(text, s); isLetter(p.c) || p.c === '.'; p = stepBack(text, s)) {
+    s = p.at;
+  }
+  let token = '';
+  for (let k = s; k < at;) {
+    const c = cpAt(text, k)!;
+    if (!isInvisible(c)) token += c;
+    k += c.length;
+  }
   if (token === '') return false;
   if (ABBREVIATIONS.has(`${token}.`.toLowerCase())) return true;
   return token.length === 1 && token !== token.toLowerCase();
@@ -930,12 +1009,13 @@ function segmentsWithin(quote: string): Segment[] {
       start = i = j;
       continue;
     }
-    const next = quote[i + 1];
+    // #845 (R-C2, R-A2): the neighbours by code point, past invisible characters
+    const next = stepOn(quote, i + 1).c;
     const sentenceEnd =
       (c === '.' || c === '!' || c === '?') &&
       (next === undefined || SPACE.test(next)) &&
       !(c === '.' && endsAbbreviation(quote, i));
-    const clauseBreak = c === ';' || (c === ':' && !(isNum(quote[i - 1]) && isNum(next)));
+    const clauseBreak = c === ';' || (c === ':' && !(isNum(stepBack(quote, i).c) && isNum(next)));
     if (sentenceEnd || clauseBreak || DOUBLE_QUOTES.has(c) || LINE_BREAKS.has(c)) {
       close(i, sentenceEnd);
       start = i = i + 1;
@@ -1047,6 +1127,7 @@ const LIST_MARKS: ReadonlySet<string> = new Set([
 ]);
 const isListMark = (c: string | undefined): boolean =>
   c !== undefined && (isDash(c) || LIST_MARKS.has(c));
+/** #845 (R-B): a capital letter, `\p{Lu}` or `\p{Lt}`, in every plane (read by code point). */
 const CAPITAL = /^[\p{Lu}\p{Lt}]$/u;
 
 /** #845 (R-B): a blank — whitespace (`\p{White_Space}`) other than a line break. */
@@ -1056,9 +1137,12 @@ const isCapital = (c: string | undefined): boolean => c !== undefined && CAPITAL
 /** A capital letter or an opening mark: what a sentence may begin with after a full stop. */
 const isSentenceOpening = (c: string | undefined): boolean => isCapital(c) || isOpeningMark(c);
 
+/** From `at` back past blanks, and (#845, R-C2) past invisible characters. */
 function blanksBack(source: string, at: number): number {
-  let i = at;
-  while (i > 0 && isBlank(source[i - 1])) i--;
+  let i = pastInvisibleBefore(source, at);
+  for (let p = stepBack(source, i); isBlank(p.c); p = stepBack(source, i)) {
+    i = pastInvisibleBefore(source, p.at);
+  }
   return i;
 }
 
@@ -1066,27 +1150,30 @@ function blanksBack(source: string, at: number): number {
  *  by `.` with at least one joiner (`6.2`, `3.4.1`), digits closed by `.` or `)` (`12.`, `12)`), or a
  *  bracketed group of 1–4 letters or digits (`(a)`, `(iv)`). Never bare digits (`12`, `2`). */
 function clauseNumberBack(source: string, at: number): number {
-  if (source[at - 1] === ')') {
-    let j = at - 2;
+  // #845 (R-C2, R-A2): read back by code point, past invisible characters
+  const last = stepBack(source, at);
+  if (last.c === ')') {
     let n = 0;
-    while (j >= 0 && n < 5 && (isLetter(source[j]) || isDigit(source[j]))) {
-      j--;
+    let p = stepBack(source, last.at);
+    while (n < 5 && (isLetter(p.c) || isDigit(p.c))) {
       n++;
+      p = stepBack(source, p.at);
     }
-    if (n >= 1 && n <= 4 && source[j] === '(') return j;
+    if (n >= 1 && n <= 4 && p.c === '(') return p.at;
   }
   let j = at;
   let closed = false;
-  if ((source[j - 1] === '.' || source[j - 1] === ')') && isDigit(source[j - 2])) {
-    j--;
+  if ((last.c === '.' || last.c === ')') && isDigit(stepBack(source, last.at).c)) {
+    j = last.at;
     closed = true;
   }
-  if (!isDigit(source[j - 1])) return -1;
+  if (!isDigit(stepBack(source, j).c)) return -1;
   let dotted = false;
   for (;;) {
-    while (isDigit(source[j - 1])) j--;
-    if (source[j - 1] === '.' && isDigit(source[j - 2])) {
-      j--;
+    for (let p = stepBack(source, j); isDigit(p.c); p = stepBack(source, j)) j = p.at;
+    const dot = stepBack(source, j);
+    if (dot.c === '.' && isDigit(stepBack(source, dot.at).c)) {
+      j = dot.at;
       dotted = true;
       continue;
     }
@@ -1098,36 +1185,41 @@ function clauseNumberBack(source: string, at: number): number {
  *  bare digits) followed by spaces and a capital letter or an opening mark (`2. Send…`,
  *  `6.2 The Tenant…`, quoted with their number). */
 function opensWithClauseNumber(source: string, start: number): boolean {
+  // #845 (R-C2, R-A2): read on by code point, past invisible characters
   let j = start;
-  if (!isDigit(source[j])) return false;
+  if (!isDigit(stepOn(source, j).c)) return false;
   let dotted = false;
   for (;;) {
-    while (isDigit(source[j])) j++;
-    if (source[j] === '.' && isDigit(source[j + 1])) {
-      j++;
+    for (let p = stepOn(source, j); isDigit(p.c); p = stepOn(source, j)) j = p.at;
+    const dot = stepOn(source, j);
+    if (dot.c === '.' && isDigit(stepOn(source, dot.at).c)) {
+      j = dot.at;
       dotted = true;
       continue;
     }
     break;
   }
   let closed = false;
-  if (source[j] === '.' || source[j] === ')') {
-    j++;
+  const close = stepOn(source, j);
+  if (close.c === '.' || close.c === ')') {
+    j = close.at;
     closed = true;
   }
-  if ((!dotted && !closed) || !isBlank(source[j])) return false;
-  while (isBlank(source[j])) j++;
-  return isSentenceOpening(source[j]);
+  if ((!dotted && !closed) || !isBlank(stepOn(source, j).c)) return false;
+  for (let p = stepOn(source, j); isBlank(p.c); p = stepOn(source, j)) j = p.at;
+  return isSentenceOpening(stepOn(source, j).c);
 }
 
 /** Read 3: the start of one list mark (or a run of `#`) that ends at `at`, or -1. */
 function listMarkBack(source: string, at: number): number {
-  if (source[at - 1] === '#') {
-    let j = at - 1;
-    while (j > 0 && source[j - 1] === '#') j--;
+  // #845 (R-C2, R-A2): read back by code point, past invisible characters
+  const mark = stepBack(source, at);
+  if (mark.c === '#') {
+    let j = mark.at;
+    for (let p = stepBack(source, j); p.c === '#'; p = stepBack(source, j)) j = p.at;
     return j;
   }
-  return at > 0 && isListMark(source[at - 1]) ? at - 1 : -1;
+  return isListMark(mark.c) ? mark.at : -1;
 }
 
 /** How the line break at `lineBreak` counts as a line start: `free` when the line before it is blank,
@@ -1135,21 +1227,22 @@ function listMarkBack(source: string, at: number): number {
  *  `sentence` when it ends with `.` `!` `?` under L1's test (read 1's capital condition then
  *  applies); `undefined` when it does not count. What the new line opens with never exempts it. */
 function lineStart(source: string, lineBreak: number): 'free' | 'sentence' | undefined {
-  let i = lineBreak;
-  while (i > 0 && (isBlank(source[i - 1]) || source[i - 1] === '\r')) i--;
-  if (i === 0 || LINE_BREAKS.has(source[i - 1]!)) return 'free';
-  while (i > 0 && isClosingMark(source[i - 1])) i--;
-  const c = source[i - 1];
+  // #845 (R-C2, R-A2): read back by code point, past invisible characters
+  let p = stepBack(source, lineBreak);
+  while (isBlank(p.c) || p.c === '\r') p = stepBack(source, p.at);
+  if (p.c === undefined || isLineBreak(p.c)) return 'free';
+  while (isClosingMark(p.c)) p = stepBack(source, p.at);
+  const c = p.c;
   if (c === ';' || c === ':' || c === '|') return 'free';
-  if ((c === '.' && !endsAbbreviation(source, i - 1)) || c === '!' || c === '?') return 'sentence';
+  if ((c === '.' && !endsAbbreviation(source, p.at)) || c === '!' || c === '?') return 'sentence';
   return undefined;
 }
 
-/** Reads 2 and 3: past spaces and tabs, `at` is the source's start or a line start that counts. */
+/** Reads 2 and 3: past blanks, `at` is the source's start or a line start that counts. */
 function atCountedLineStart(source: string, at: number): boolean {
-  const i = blanksBack(source, at);
-  if (i === 0) return true;
-  return LINE_BREAKS.has(source[i - 1]!) && lineStart(source, i - 1) !== undefined;
+  const p = stepBack(source, blanksBack(source, at));
+  if (p.c === undefined) return true;
+  return isLineBreak(p.c) && lineStart(source, p.at) !== undefined;
 }
 
 /** Read 1's accepted character before `at`, past spaces, tabs and closing marks: the source's start;
@@ -1159,17 +1252,20 @@ function atCountedLineStart(source: string, at: number): boolean {
  *  sentence, the same capital condition holds, or `numbered` (the part opens with a clause number
  *  and a capital). */
 function acceptedBefore(source: string, at: number, opening: boolean, numbered: boolean): boolean {
-  let i = blanksBack(source, at);
-  while (i > 0 && isClosingMark(source[i - 1])) i--;
-  if (i === 0) return true;
-  const c = source[i - 1]!;
-  if (LINE_BREAKS.has(c)) {
-    const kind = lineStart(source, i - 1);
+  // #845 (R-C2, R-A2): read back by code point, past invisible characters
+  let p = stepBack(source, blanksBack(source, at));
+  while (isClosingMark(p.c)) p = stepBack(source, p.at);
+  const c = p.c;
+  if (c === undefined) return true;
+  if (isLineBreak(c)) {
+    const kind = lineStart(source, p.at);
     return kind === 'free' || (kind === 'sentence' && (opening || numbered));
   }
   if (c === ';') return true;
-  if (c === ':') return !(isNum(source[i - 2]) && isNum(source[i]));
-  if (c === '.') return opening && !endsAbbreviation(source, i - 1);
+  if (c === ':') {
+    return !(isNum(stepBack(source, p.at).c) && isNum(stepOn(source, p.at + c.length).c));
+  }
+  if (c === '.') return opening && !endsAbbreviation(source, p.at);
   if (c === '!' || c === '?') return opening;
   return false;
 }
@@ -1188,18 +1284,20 @@ function acceptedBefore(source: string, at: number, opening: boolean, numbered: 
  *    sitting at a line start that counts.
  */
 function partStartHolds(source: string, start: number): boolean {
+  // #845 (R-C2, R-A2): every read by code point, past invisible characters
   const first = blanksBack(source, start);
-  const opening = isSentenceOpening(source[start]);
+  const own = stepOn(source, start).c;
+  const opening = isSentenceOpening(own);
   const numbered = opensWithClauseNumber(source, start);
   // Where the part's own opening mark (and the spaces before it) ends, when it has one.
-  const beforeMark =
-    first > 0 && isOpeningMark(source[first - 1]) ? blanksBack(source, first - 1) : -1;
+  const openingMark = stepBack(source, first);
+  const beforeMark = isOpeningMark(openingMark.c) ? blanksBack(source, openingMark.at) : -1;
   // Read 1.
   if (acceptedBefore(source, first, opening, numbered)) return true;
   if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered)) return true;
   // Reads 2 and 3, the label ending right before the part, or before its opening mark.
   for (const end of beforeMark >= 0 ? [first, beforeMark] : [first]) {
-    const after = end === first ? source[start] : source[first - 1];
+    const after = end === first ? own : openingMark.c;
     if (isSentenceOpening(after)) {
       const label = clauseNumberBack(source, end);
       if (label >= 0 && atCountedLineStart(source, label)) return true;
@@ -1254,12 +1352,18 @@ function placeParts(
 /** A1: the start of the number that a cut at `end` would split, so a cut never falls inside one. */
 function retreatFromNumber(quote: string, start: number, end: number): number {
   if (end <= start || end >= quote.length) return end;
-  const joins = (k: number): boolean =>
-    (isNum(quote[k - 1]) && isNum(quote[k])) ||
-    (isJoiner(quote[k]) && isNum(quote[k - 1]) && isNum(quote[k + 1])) ||
-    (isJoiner(quote[k - 1]) && isNum(quote[k - 2]) && isNum(quote[k]));
+  // #845 (R-A2): by code point, so a cut never splits a surrogate pair
+  const joins = (k: number): boolean => {
+    const before = cpBefore(quote, k);
+    const at = cpAt(quote, k);
+    return (
+      (isNum(before) && isNum(at)) ||
+      (isJoiner(at) && isNum(before) && isNum(cpAt(quote, k + at!.length))) ||
+      (isJoiner(before) && isNum(cpBefore(quote, k - before!.length)) && isNum(at))
+    );
+  };
   let s = end;
-  while (s > start && joins(s)) s--;
+  while (s > start && joins(s)) s -= cpBefore(quote, s)!.length;
   return s;
 }
 
@@ -1302,6 +1406,9 @@ function tilesOf(budget: Budget, quote: string, source: string, tiles: Tile[]): 
       if (budget.includes(source, quote.slice(i, i + mid))) lo = mid;
       else hi = mid - 1;
     }
+    // #845 (R-A2): the longest found prefix, rounded down to a code-point boundary — a high surrogate
+    // found alone is no character (one test, never a boundary array per tile: 845-V-44)
+    if (lo > 0 && isHighSurrogate(quote.charCodeAt(i + lo - 1))) lo--;
     let end = retreatFromNumber(quote, i, i + lo);
     let at = -1;
     for (let retreats = 0; end > i; retreats++) {
@@ -1310,12 +1417,17 @@ function tilesOf(budget: Budget, quote: string, source: string, tiles: Tile[]): 
       if (at >= 0 || retreats >= MAX_TILE_RETREATS) break;
       const first = budget.indexOf(source, text, 0);
       if (first >= 0 && !leftNumberEdgeHolds(source, first, text)) break;
-      end = retreatFromNumber(quote, i, end - 1);
+      end = retreatFromNumber(quote, i, end - cpBefore(quote, end)!.length);
     }
     if (at < 0) {
-      let unfoundEnd = i + 1;
-      if (isNum(quote[i]))
-        while (unfoundEnd < quote.length && isNum(quote[unfoundEnd])) unfoundEnd++;
+      // #845 (R-A2): one character, or one number, by code point
+      const own = cpAt(quote, i)!;
+      let unfoundEnd = i + own.length;
+      if (isNum(own)) {
+        for (let c = cpAt(quote, unfoundEnd); isNum(c); c = cpAt(quote, unfoundEnd)) {
+          unfoundEnd += c!.length;
+        }
+      }
       tiles.push({ text: quote.slice(i, unfoundEnd), at: -1 });
       i = unfoundEnd;
       continue;
@@ -1359,17 +1471,22 @@ function edgeClass(c: string): string {
 }
 
 /** L3: how far a span's start moves back (`dir` -1) or its end forward (`dir` 1) to take in the
- *  quotation marks, brackets and full stops the quote has at that edge and the source has there. */
+ *  quotation marks, brackets and full stops the quote has at that edge and the source has there —
+ *  #845 (R-C2): each side read past invisible characters, the span ending at the last mark taken. */
 function edgeMarks(quote: string, qAt: number, source: string, sAt: number, dir: -1 | 1): number {
   const marks = dir < 0 ? OPENING : CLOSING;
-  let n = 0;
+  const step = dir < 0 ? stepBack : stepOn;
+  let qk = qAt;
+  let sk = sAt;
   for (;;) {
-    const q = dir < 0 ? quote[qAt - 1 - n] : quote[qAt + n];
-    const s = dir < 0 ? source[sAt - 1 - n] : source[sAt + n];
-    if (q === undefined || s === undefined || !marks.has(q) || !marks.has(s)) return n;
-    if (edgeClass(q) !== edgeClass(s)) return n;
-    n++;
+    const q = step(quote, qk);
+    const s = step(source, sk);
+    if (q.c === undefined || s.c === undefined || !marks.has(q.c) || !marks.has(s.c)) break;
+    if (edgeClass(q.c) !== edgeClass(s.c)) break;
+    qk = q.at;
+    sk = s.at;
   }
+  return Math.abs(sk - sAt);
 }
 
 /** L3: a span trimmed by one rule — it starts at the first character the quote and the source share
@@ -1391,24 +1508,24 @@ function trimmed(
 /** L2: whether the source's sentence goes on after `at` (past closing marks and spaces it reaches
  *  no sentence end, line break or end of text). */
 function sentenceGoesOn(source: string, at: number): boolean {
-  // #845 (R-B): closing marks and blanks are the property sets
-  let k = at;
-  while (k < source.length && isClosingMark(source[k])) k++;
-  if (source[k] === '.' || source[k] === '!' || source[k] === '?') return false;
-  while (k < source.length && isBlank(source[k])) k++;
-  const c = source[k];
-  return c !== undefined && !LINE_BREAKS.has(c);
+  // #845 (R-C2, R-A2, R-B): by code point, past invisible characters; closing marks and blanks are
+  // the property sets
+  let p = stepOn(source, at);
+  while (isClosingMark(p.c)) p = stepOn(source, p.at);
+  if (p.c === '.' || p.c === '!' || p.c === '?') return false;
+  while (isBlank(p.c)) p = stepOn(source, p.at);
+  return p.c !== undefined && !isLineBreak(p.c);
 }
 
 /** N7: whether the source's sentence goes on after an exact quote's own closing `.` `!` `?` at `at`:
  *  past closing marks, spaces and tabs, the next character is a lowercase letter or a digit
  *  (`approx. 412`). */
 function exactGoesOn(source: string, at: number): boolean {
-  // #845 (R-B): closing marks, blanks and lowercase letters are the property sets
-  let k = at;
-  while (k < source.length && (isClosingMark(source[k]) || isBlank(source[k]))) k++;
-  const c = source[k];
-  return c !== undefined && (isLowercase(c) || isDigit(c));
+  // #845 (R-C2, R-A2, R-B): by code point, past invisible characters; closing marks, blanks and
+  // lowercase letters are the property sets
+  let p = stepOn(source, at);
+  while (isClosingMark(p.c) || isBlank(p.c)) p = stepOn(source, p.at);
+  return p.c !== undefined && (isLowercase(p.c) || isDigit(p.c));
 }
 
 // ─── The ladder ─────────────────────────────────────────────────────────────────────────────────
