@@ -77,11 +77,12 @@ const sourceOf = (row: Row): string =>
       : row.source.doc!;
 
 describe('the permanent test set, T1: every trick found so far is not_found', () => {
-  it('holds the derived rows: 190 distinct named rows (200 named, 10 exact repeats dropped)', () => {
+  it('holds the derived rows: 191 distinct named rows (201 named, 10 exact repeats dropped)', () => {
     // (a) red when a row is lost or added without its derivation; (b) prints the count. The language
     //     unit: 185 → 187, `x_strike_not` and `u034f-inside-a-word` moved from T2; #845 unit 1a-i:
-    //     187 → 190, `feff-inside-a-word`, `format-character-in-a-number` and `figure-space-group`.
-    expect(SET.T1.length).toBe(190);
+    //     187 → 190, `feff-inside-a-word`, `format-character-in-a-number` and `figure-space-group`;
+    //     #845 unit 1a-ii: 190 → 191, `us-before-a-capital` (an initialism ends no sentence).
+    expect(SET.T1.length).toBe(191);
   });
   for (const row of SET.T1) {
     it(`T1 ${row.group} ${row.id} → not_found`, () => {
