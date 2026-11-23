@@ -567,8 +567,15 @@ export {
   resolveCapMs,
   // Q1 (#592) d1: every claim state, as a list.
   CLAIM_STATES,
+  // Q1 (#592) f2: a claim's deadline with its cause, and every cause.
+  claimDeadlineOf,
+  CLAIM_DEADLINE_ABSENT_CAUSES,
 } from './engine/claim-liveness.js';
-export type { ClaimState, InProgressClaimInfo } from './engine/claim-liveness.js';
+export type {
+  ClaimState,
+  InProgressClaimInfo,
+  ClaimDeadlineAbsent,
+} from './engine/claim-liveness.js';
 export { reclaimStep } from './engine/reclaim-step.js';
 export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine/reclaim-step.js';
 // #729, the claim window (CW-3b): the automatic take-back, internal (`realm agent`'s watch

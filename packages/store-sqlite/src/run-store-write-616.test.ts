@@ -479,7 +479,12 @@ describe('#616 unit 12b — claimStep', () => {
       ],
       // (1) red when an agent's step gets a deadline, or a null deadline is not stored as null;
       //     (2) prints the claim read back.
-      agentKept: { keys: ['deadline', 'token', 'since'], deadline: null, since: T },
+      // Q1 (#592) f2: an agent's step has no time limit, and its claim says why.
+      agentKept: {
+        keys: ['deadline', 'deadline_absent', 'token', 'since'],
+        deadline: null,
+        since: T,
+      },
       agentVersion: 2,
       // (1) red when a claim of a step in flight is let through, or its refusal's words or details
       //     are not the JSON store's; (2) prints each refusal.

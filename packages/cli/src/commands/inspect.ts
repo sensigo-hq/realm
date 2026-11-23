@@ -470,6 +470,26 @@ function warnLine(warn: string): string {
   return warn.replace(/[\u0000-\u001f\u007f-\u009f]/g, controlEscape);
 }
 
+/**
+ * Q1 (#592) unit f2: why a claim has no time limit, in words, from its finding's
+ * `evidence.deadline_absent`: Realm's three words, the readers' `not_recorded`, and a word another
+ * store wrote, quoted as stored (its control characters escaped, as a warning's are).
+ */
+function noTimeLimitWords(cause: string): string {
+  switch (cause) {
+    case 'step_not_auto':
+      return 'no time limit: the step is an agent step';
+    case 'finalizer_bearing':
+      return 'no time limit: the workflow has finalizers';
+    case 'step_unknown':
+      return 'no time limit: the step is not in the workflow';
+    case 'not_recorded':
+      return 'no time limit; the cause was not recorded';
+    default:
+      return `no time limit: the cause '${warnLine(cause)}' is not one Realm knows`;
+  }
+}
+
 /** #729 PR-3 (D3/08 S2): escape → pass → cut, with a dimmed `…` (`escapePassCut`). Correction 3
  *  (H-7''): a census render of a stored value, so through the value span while values are withheld
  *  (its shape). */
@@ -1954,7 +1974,10 @@ export async function inspectRun(
         f.kind === 'definition_unresolvable'
           ? withCommand(f.reason, definitionError?.repairCommand, writerCtx())
           : f.reason;
-      lines.push(`  ${chalk.yellow(f.kind)}${stepLabel}: ${reason}${idleSuffix}`);
+      // Q1 (#592) unit f2: a claim with no time limit says why, after its state.
+      const cause = f.reason === 'claim_unknown_age' ? f.evidence?.['deadline_absent'] : undefined;
+      const causeSuffix = typeof cause === 'string' ? ` (${noTimeLimitWords(cause)})` : '';
+      lines.push(`  ${chalk.yellow(f.kind)}${stepLabel}: ${reason}${causeSuffix}${idleSuffix}`);
     }
   }
 
