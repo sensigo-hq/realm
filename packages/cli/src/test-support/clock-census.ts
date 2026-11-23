@@ -219,7 +219,17 @@ export const CENSUS: Record<string, Entry> = {
     'outside',
     "the dedup window's bucket and TTL (#177): a delivery's age, no run record",
   ],
-  // #625 PR-2b, named keys: the home's clock, read once per request or start, judges a key's end.
+  // #625 PR-2b, named keys: the home's clock, read once per command or request, judges a key's end.
+  'cli/src/commands/serve-key.ts#serveKeyAdd#clock.now()': [
+    1,
+    'event',
+    "a named key's making: its created_at, the instant its end is counted from, and the UTC day a last day (YYYY-MM-DD) must come after",
+  ],
+  'cli/src/commands/serve-key.ts#serveKeyList#clock.now()': [
+    1,
+    'read',
+    "the instant each key's expires_at is judged at, for the list's (ended)",
+  ],
   'cli/src/commands/serve.ts#admitKey#clock.now()': [
     1,
     'read',

@@ -1,6 +1,5 @@
-// serve-keys.ts — #625 PR-2b, named keys unit 1a: the key file `<home>/serve-keys.json`, which
-// `realm serve` reads on every request the shared token does not settle (the commands that write it,
-// `realm serve key …`, come in unit 1b; until then its writer serves the tests).
+// serve-keys.ts — #625 PR-2b, named keys unit 1: the key file `<home>/serve-keys.json`, which
+// `realm serve key` writes and `realm serve` reads on every request the shared token does not settle.
 //
 // The file holds each key's name, the SHA-256 of its text, when it was made and when it ends; never
 // the key's text, nor any part of it. It is written whole, at 0600: a temporary file in the home,
@@ -20,7 +19,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { writerCtx } from '../output/writer.js';
+import { escapeC1, writerCtx } from '../output/writer.js';
 import { typedWord } from './callback/master-key-words.js';
 
 /** The key file's name in a Realm home. */
@@ -219,12 +218,22 @@ export function keyEnded(key: ServeKeyEntry, now: Date): boolean {
   return key.expires_at !== null && now.getTime() >= Date.parse(key.expires_at);
 }
 
+/** An instant as the key words print it: `YYYY-MM-DD HH:MM UTC`. */
+export function keyInstant(iso: string): string {
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
 /**
  * A path as the key words print it: quoted as a typed word (`typedWord`), and printed whole, a path
  * under HOME included, as a path the reader acts on (the writer's command span).
  */
 export function keyPath(path: string): string {
   return writerCtx().cmd(typedWord(path));
+}
+
+/** A typed key name as a refusal quotes it: every control character escaped, never the raw byte. */
+export function escapedKeyName(name: string): string {
+  return escapeC1(JSON.stringify(name).slice(1, -1));
 }
 
 /**
