@@ -94,7 +94,12 @@ export function mcpHostOf(
   return {
     ...(stores?.operatorRoute !== undefined ? { operatorRoute: stores.operatorRoute } : {}),
     ...(door !== undefined
-      ? { answers: door.answers(), formFacts: (gateId: string) => door.formFacts(gateId) }
+      ? {
+          answers: door.answers(),
+          formFacts: (gateId: string) => door.formFacts(gateId),
+          // Gap 2, unit (iv-b2a): the failure-text setting, for renderReply.
+          failureText: door.failureText.value,
+        }
       : {}),
   };
 }

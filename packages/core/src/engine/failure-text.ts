@@ -96,3 +96,55 @@ export function abortMessageHidingFailureText(run: RunRecord): string | undefine
   const arm = sealArmOf(run);
   return arm === 'handler_abort' || arm === undefined ? failureTextShape(message) : undefined;
 }
+
+// ── The replies to an assistant's own call (gap 2, unit (iv-b2a)) ──────────────────────────────
+
+/**
+ * Which text in an engine reply is a failure's words, as core wrote it, at the places that know: a
+ * failed step's reply (its `errors[0]` and its `error_details`) and a handler's abort (the span of
+ * `context_hint` core wrote). A refusal of the call is never marked. The door shapes a field only
+ * while it still holds the marked text (`errors[0]` equal to `message`, `error_details` the marked
+ * object, `context_hint` holding `abort.text`); finding it is applying the mark, never judging text.
+ */
+export interface FailureTextMark {
+  /** `errors[0]` as core wrote it: the failing code's message (a retried step's: Realm's wrapper). */
+  readonly message?: string;
+  /**
+   * The `error_details` object core put on the reply, and which of its values are a failure's words:
+   * `last_error` where core minted the details itself (the retry wrap; a model failure's), so only
+   * their `lastError` is; `failing_code` where they are the failing code's own (a handler's, an
+   * adapter's, and Realm's own on that path, which Step 5 cannot tell apart): every value but a
+   * number in `status` or `retry_after`.
+   */
+  readonly details?: {
+    readonly object: Readonly<Record<string, unknown>>;
+    readonly words: 'last_error' | 'failing_code';
+  };
+  /** A handler's abort: the sentence core wrote into `context_hint`, and its shaped twin. */
+  readonly abort?: { readonly text: string; readonly shaped: string };
+}
+
+/** The marks, keyed as `noteErrorSnapshot` keys its snapshot: on a failed reply's `error` object, on
+ *  an abort reply's `basis` (it has no `error`); both survive the spreads on the way to the door. */
+const MARKS = new WeakMap<object, FailureTextMark>();
+
+/** Internal to core: marks the reply that `key` (its `error` object, or its `basis`) belongs to. */
+export function noteFailureText(key: object, mark: FailureTextMark): void {
+  MARKS.set(key, mark);
+}
+
+/**
+ * The failure-text mark of an engine reply, read through its `error` object, else its `basis`;
+ * `undefined` when core marked none (every refusal, every reply with no failed step).
+ */
+export function failureTextMarkOf(reply: {
+  readonly error?: unknown;
+  readonly basis?: unknown;
+}): FailureTextMark | undefined {
+  const { error, basis } = reply;
+  if (typeof error === 'object' && error !== null) {
+    const marked = MARKS.get(error);
+    if (marked !== undefined) return marked;
+  }
+  return typeof basis === 'object' && basis !== null ? MARKS.get(basis) : undefined;
+}

@@ -121,7 +121,10 @@ interface GateSends {
 export class McpDoor {
   readonly gateAnswers: GateAnswersSetting;
   readonly formWait: FormWaitSetting;
-  /** Gap 2, unit (iv-b1): whether an assistant reads a failure's words in `get_run_state`. */
+  /**
+   * Gap 2, unit (iv-b1): whether an assistant reads a failure's words in `get_run_state`; unit
+   * (iv-b2a): and in the replies of its own calls (a failed step's, a handler's abort).
+   */
   readonly failureText: FailureTextSetting;
   /** Set at `initialize` from the client's capabilities; `false` until then, and always on HTTP. */
   forms: { shown: boolean; source: Source };
