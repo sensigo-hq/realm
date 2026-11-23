@@ -462,3 +462,100 @@ describe('Q1 (#592) unit b — check 6: resume', () => {
     });
   });
 });
+
+describe('gap 2 (ii-b1) — the composer reads the failure’s kind (check 5)', () => {
+  const words = {
+    error: 'boom',
+    error_code: 'MODEL_REQUEST_FAILED' as never,
+    error_category: 'SERVICE' as never,
+    agent_action: 'report_to_user' as never,
+    stop_reason: 'non_retryable' as never,
+    attempt: 1,
+  };
+  const viewOf = (diagnostics: unknown) =>
+    composeFailures(
+      recordOf(['work'], [entry({ ...words, diagnostics: diagnostics as never })]),
+    )[0];
+  const base = {
+    step: 'work',
+    code: 'MODEL_REQUEST_FAILED',
+    category: 'SERVICE',
+    stop_reason: 'non_retryable',
+    agent_action: 'report_to_user',
+    attempt: 1,
+    message: 'boom',
+  };
+
+  it("an entry a model failure's path wrote (executeChain's modelFailure): failure_kind, after agent_action", async () => {
+    const def = {
+      id: 'fv-g2iib1',
+      name: 'g2iib1',
+      version: 1,
+      steps: { classify: { description: 'Classify.', execution: 'agent', depends_on: [] } },
+    } as WorkflowDefinition;
+    const store = new InMemoryStore();
+    const { record } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    await executeChain(store, def, {
+      runId: record.id,
+      command: 'classify',
+      input: {},
+      dispatcher: async () => ({}),
+      modelFailure: {
+        kind: 'transient',
+        stop_reason: 'attempts',
+        message: 'Anthropic 529: overloaded (fake)',
+        attempt: 3,
+        error_class: 'api_status',
+        status: 529,
+      },
+    });
+    const [view] = composeFailures((await store.get(record.id)).record);
+    // (a) red when the composer does not read diagnostics.failure_kind, or places it elsewhere;
+    //     (b) prints the view and its key order.
+    expect([view, Object.keys(view!)]).toEqual([
+      {
+        step: 'classify',
+        code: 'STEP_RETRY_EXHAUSTED',
+        category: 'ENGINE',
+        stop_reason: 'attempts',
+        agent_action: 'report_to_user',
+        failure_kind: 'transient',
+        attempt: 3,
+        message: 'Anthropic 529: overloaded (fake)',
+      },
+      [
+        'step',
+        'code',
+        'category',
+        'stop_reason',
+        'agent_action',
+        'failure_kind',
+        'attempt',
+        'message',
+      ],
+    ]);
+  });
+
+  it('permanent is kept with no unknown; a word outside transient and permanent is kept and named in unknown', () => {
+    // (a) red when the closure is removed (`setup` not named), or a known kind is named unknown;
+    //     (b) prints the views.
+    expect([
+      viewOf({ precondition_trace: [], failure_kind: 'permanent' }),
+      viewOf({ precondition_trace: [], failure_kind: 'setup' }),
+    ]).toEqual([
+      { ...base, failure_kind: 'permanent' },
+      { ...base, failure_kind: 'setup', unknown: ['failure_kind'] },
+    ]);
+  });
+
+  it('a kind that is not a string, or diagnostics that are not an object: no failure_kind, no throw', () => {
+    // (a) red when a non-string kind is carried, or a malformed diagnostics throws; (b) prints the
+    //     views.
+    expect([
+      viewOf({ precondition_trace: [], failure_kind: 7 }),
+      viewOf('not an object'),
+      viewOf(null),
+      viewOf(undefined),
+    ]).toEqual([base, base, base, base]);
+  });
+});
