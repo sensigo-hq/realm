@@ -26,6 +26,15 @@ ACTOR_ABSENT_CAUSES · value · public
   ];
 
 ADMITTED_BY_ABSENT_CAUSES · value · internal
+ADMITTED_BY_WORDS · value · public
+  const ADMITTED_BY_WORDS: readonly [
+      "owner",
+      "answerers",
+      "project_answerers",
+      "no_named_answerer",
+      "owner_not_checked_on_route"
+  ];
+
 ADVANCE_OWED · value · internal
 AGENT_ACTIONS · value · internal
 AGENT_PRE_CLAIM_REFUSALS · value · internal
@@ -207,6 +216,13 @@ AuthStripe · type · public
   }
 
 AutoPriceInput · type · internal
+BLOCKING_DEP_STATES · value · public
+  const BLOCKING_DEP_STATES: readonly [
+      "completed",
+      "failed",
+      "skipped"
+  ];
+
 BUFFER_BACKSTOP_BYTES · value · internal
 BUFFER_BACKSTOP_COUNT · value · internal
 BUFFER_LIMIT_BYTES · value · internal
@@ -261,6 +277,12 @@ CACHE_AUTO_BASES · value · public
       "tool_step"
   ];
 
+CACHE_AUTO_PRICES_FROM_WORDS · value · public
+  const CACHE_AUTO_PRICES_FROM_WORDS: readonly [
+      "economics",
+      "none"
+  ];
+
 CACHE_AUTO_PRICE_CAUSES · value · public
   const CACHE_AUTO_PRICE_CAUSES: readonly [
       "no_file",
@@ -283,6 +305,12 @@ CACHE_BASES · value · public
   const CACHE_BASES: readonly [
       "provider_reported",
       "unobservable"
+  ];
+
+CACHE_CONTROLS_PROVEN_WORDS · value · public
+  const CACHE_CONTROLS_PROVEN_WORDS: readonly [
+      "cache_fields",
+      "none"
   ];
 
 CACHE_CONTROL_FIELDS · value · public
@@ -310,6 +338,7 @@ CACHE_MARKED_PARTS · value · public
   ];
 
 CACHE_MISS_CAUSES · value · internal
+CACHE_MISS_RULES · value · internal
 CACHE_MISS_TYPES · value · public
   const CACHE_MISS_TYPES: readonly [
       "messages_changed",
@@ -893,6 +922,21 @@ CreateRunOptions · type · public (beta: callback)
       callback?: CallbackRegistration;
   }
 
+DECLARED_CAUSES · value · public
+  const DECLARED_CAUSES: readonly [
+      "no_manifest",
+      "load_failed",
+      "embedder_none",
+      "manifest_changed"
+  ];
+
+DECLARED_STATES · value · public
+  const DECLARED_STATES: readonly [
+      "resolved",
+      "partial",
+      "unknown"
+  ];
+
 DEFAULT_CHARS_PER_TOKEN_HIGH · value · internal
 DEFAULT_CHARS_PER_TOKEN_LOW · value · internal
 DEFAULT_EXECUTION_TIMEOUT_SECONDS · value · internal
@@ -918,6 +962,7 @@ DEPLOYMENT_MANIFEST_JSON_SCHEMA · value · internal
 DEPRECATIONS · value · internal
 DISCLOSURE_FLOORS · value · internal
 DISCLOSURE_MAX_DEPTH · value · internal
+DISCLOSURE_QUESTIONS · value · internal
 DOOR_SERVES · value · internal
 DRAIN_LEASE_MAX · value · internal
 DamagedCopyFault · type · internal
@@ -1095,6 +1140,13 @@ DueExpiry · type · public
       on_expiry: 'settle_default' | 'abort';
   }
 
+ENACTOR_KINDS · value · public
+  const ENACTOR_KINDS: readonly [
+      "this_program",
+      "observer",
+      "load_failed"
+  ];
+
 ENTRY_CALLERS · value · public
   const ENTRY_CALLERS: {
       readonly advanceRun: readonly [
@@ -1128,6 +1180,12 @@ ENTRY_CALLERS · value · public
           "agent"
       ];
   };
+
+ENVIRONMENT_STATES · value · public
+  const ENVIRONMENT_STATES: readonly [
+      "swept",
+      "not_swept"
+  ];
 
 ERROR_CATEGORIES · value · internal
 ERROR_CLASSES · value · internal
@@ -1461,8 +1519,10 @@ ExtensionRegistry · both · public
   }
 
 FAILED_ATTEMPT_SIDECAR_MAX_BYTES · value · internal
+FAILURE_ABSENT_CAUSES · value · internal
 FAILURE_TEXT_ENV · value · internal
 FAILURE_TEXT_VALUES · value · internal
+FAILURE_UNKNOWN_WORDS · value · internal
 FENCE_PREDICATE_KINDS · value · internal
 FENCE_REQUIRES_RUN · value · internal
 FENCE_TARGETS_STEP · value · public
@@ -1714,6 +1774,12 @@ GATE_ANSWERS_VALUES · value · public
   ];
 
 GATE_INFO_TABLE · value · internal
+GATE_ON_EXPIRY_WORDS · value · public
+  const GATE_ON_EXPIRY_WORDS: readonly [
+      "settle_default",
+      "abort"
+  ];
+
 GATE_PROOFS · value · internal
 GATE_PROOF_CAUSES · value · internal
 GATE_TRUST_LEVELS · value · internal
@@ -1953,6 +2019,127 @@ LIBRARY_WORDS · value · public
   const LIBRARY_WORDS: WayRenderer<string, LibraryHost>;
 
 LIVE_CLAIM_MARKER · value · internal
+LOAD_ERROR_CODES · value · public
+  const LOAD_ERROR_CODES: readonly [
+      "NETWORK_TIMEOUT",
+      "NETWORK_UNREACHABLE",
+      "NETWORK_DNS_FAILED",
+      "NETWORK_CONNECTION_RESET",
+      "SERVICE_HTTP_4XX",
+      "SERVICE_HTTP_5XX",
+      "SERVICE_RATE_LIMITED",
+      "SERVICE_AUTH_FAILED",
+      "SERVICE_NOT_FOUND",
+      "SERVICE_RESPONSE_INVALID",
+      "SERVICE_UNEXPECTED_REDIRECT",
+      "MODEL_REQUEST_FAILED",
+      "STATE_BLOCKED",
+      "STATE_PRECONDITION_FAILED",
+      "STATE_RUN_NOT_FOUND",
+      "STATE_WORKFLOW_NOT_FOUND",
+      "STATE_WORKFLOW_UNREADABLE",
+      "STATE_RUN_TERMINAL",
+      "STATE_SNAPSHOT_MISMATCH",
+      "STATE_RUN_LOCKED",
+      "STATE_RUN_BUSY",
+      "STATE_TRANSITION_DENIED",
+      "STATE_LEGACY_FORMAT",
+      "STATE_NEWER_FORMAT",
+      "STATE_STEP_ALREADY_CLAIMED",
+      "STATE_STEP_NOT_ELIGIBLE",
+      "STATE_STEP_ALREADY_SETTLED",
+      "STATE_CLAIM_LOST",
+      "STATE_ANSWERER_MISMATCH",
+      "STATE_RUN_DIVERGED",
+      "STATE_RUN_ALREADY_ACTIVE",
+      "STATE_IDEMPOTENCY_KEY_USED",
+      "STATE_TEST_CLOCK_FOREIGN",
+      "STATE_HOME_UNUSABLE",
+      "STATE_STORE_DRIVER_UNAVAILABLE",
+      "STATE_STORE_FILESYSTEM_REFUSED",
+      "STATE_STORE_SETTINGS_REFUSED",
+      "STATE_STORE_VERSION_OLDER",
+      "STATE_STORE_VERSION_NEWER",
+      "STATE_STORE_SCHEMA_TAMPERED",
+      "STATE_STORE_FULL",
+      "STATE_STORE_READONLY",
+      "STATE_STORE_WRITES_FENCED",
+      "STATE_STORE_LIMIT_EXCEEDED",
+      "STATE_STORE_BACKUP_REFUSED",
+      "STATE_STORE_BACKUP_UNVERIFIED",
+      "STATE_STORE_MIGRATE_REFUSED",
+      "STATE_STORE_MIGRATE_FAILED",
+      "STATE_STORE_IN_USE",
+      "STATE_STORE_RESTORE_REFUSED",
+      "STATE_STORE_CHECK_REFUSED",
+      "STATE_HOME_HOLDS_LEGACY_STORE",
+      "STATE_RUN_PURGED",
+      "STATE_RUN_TIMESTAMP_INVALID",
+      "STATE_WRITE_ONCE_REWRITTEN",
+      "STATE_EVIDENCE_REWRITTEN",
+      "STATE_RUN_IDENTITY",
+      "RUN_ABORTING",
+      "VALIDATION_INPUT_SCHEMA",
+      "VALIDATION_OUTPUT_SCHEMA",
+      "VALIDATION_TRACE_SCHEMA",
+      "VALIDATION_EXHAUSTED",
+      "VALIDATION_WORKFLOW_SCHEMA",
+      "VALIDATION_HASH_MISMATCH",
+      "VALIDATION_QUOTE_NOT_FOUND",
+      "VALIDATION_FIELD_UNKNOWN",
+      "VALIDATION_FIELD_EXCLUDED",
+      "VALIDATION_EMPTY_VALUE",
+      "VALIDATION_BATCH_TOO_LARGE",
+      "VALIDATION_BATCH_ITEMS",
+      "VALIDATION_TRUST_VALUE",
+      "VALIDATION_ACTOR_INVALID",
+      "VALIDATION_CALLER_INVALID",
+      "VALIDATION_OPTION_INVALID",
+      "VALIDATION_CURSOR",
+      "STEP_HANDLER_ERROR",
+      "ENGINE_INTERNAL",
+      "ENGINE_STORE_FAILED",
+      "ENGINE_ARTIFACT_DELETE_FAILED",
+      "ENGINE_ADAPTER_FAILED",
+      "ENGINE_ADAPTER_NOT_REGISTERED",
+      "ENGINE_PROCESSOR_FAILED",
+      "ENGINE_HANDLER_FAILED",
+      "ENGINE_HANDLER_NOT_REGISTERED",
+      "ENGINE_STEP_FAILED",
+      "ENGINE_GATE_OPEN_FAILED",
+      "ENGINE_RELEASE_LINE_MISMATCH",
+      "ENGINE_RELEASE_LINE_UNDECLARED",
+      "GATE_MESSAGE_UNRESOLVABLE",
+      "FILTER_UNKNOWN",
+      "ADAPTER_OP_UNSUPPORTED",
+      "ADAPTER_VALIDATION_FAILED",
+      "ADAPTER_REQUEST_FAILED",
+      "STEP_TIMEOUT",
+      "STEP_ABORTED",
+      "STEP_RETRY_EXHAUSTED",
+      "STATE_STEP_PENDING",
+      "STATE_SEAL_UNSTAMPED",
+      "STATE_SEAL_ORPHANED",
+      "STATE_SEAL_ERASED",
+      "STATE_SEAL_UNKNOWN_ARM",
+      "STATE_SEAL_INCOHERENT",
+      "STATE_SEAL_REWRITTEN",
+      "STEP_NOT_FOUND",
+      "GUARD_RESOLUTION_ERROR",
+      "INPUT_MAP_DEPTH_EXCEEDED",
+      "INPUT_MAP_UNKNOWN_DIRECTIVE",
+      "RESOURCE_FETCH_FAILED",
+      "RESOURCE_TOO_LARGE",
+      "RESOURCE_FORMAT_INVALID",
+      "RESOURCE_NOT_ACCESSIBLE",
+      "BUFFER_FULL",
+      "TRACE_CAPABILITY_INCONSISTENT",
+      "MCP_CONNECTION_FAILED",
+      "MCP_TOOL_NOT_FOUND",
+      "MCP_TOOL_NAME_COLLISION",
+      "uncoded"
+  ];
+
 LeaseFact · type · public
   type LeaseFact = {
       readonly state: 'held' | 'not_held' | 'absent';
@@ -2084,6 +2271,13 @@ LoaderWarning · type · public
 MCP_FORM_RENDERER · value · internal
 MINT_WITNESS_PATTERN · value · internal
 MIN_PART_CHARS_LEAST · value · internal
+MODEL_ATTEMPT_THEN_WORDS · value · public
+  const MODEL_ATTEMPT_THEN_WORDS: readonly [
+      "gateway",
+      "cache_probe",
+      "strict_ladder"
+  ];
+
 MODEL_FAILURE_KINDS · value · public
   const MODEL_FAILURE_KINDS: readonly [
       "transient",
@@ -2412,6 +2606,7 @@ PARTIES · value · public
   ];
 
 PENDING_GATE_TABLE · value · internal
+PREDECESSOR_FROM_WORDS · value · internal
 PREVENTS_CONDITIONS · value · internal
 PRE_CLAIM_REFUSALS · value · public
   const PRE_CLAIM_REFUSALS: readonly [
@@ -2419,6 +2614,12 @@ PRE_CLAIM_REFUSALS · value · public
       "precondition",
       "input_schema",
       "capability"
+  ];
+
+PRICE_SOURCE_CLASSES · value · public
+  const PRICE_SOURCE_CLASSES: readonly [
+      "economics",
+      "price_list"
   ];
 
 PRINCIPAL_ABSENCES · value · public
@@ -2433,6 +2634,7 @@ PROBE_FAILURE_CLASSES · value · internal
 PROGRAM_FITS · value · internal
 PROGRESS_VERBS · value · internal
 PROMPT_CACHE_SETTINGS · value · internal
+PROVIDER_MISS_REASONS · value · internal
 ParcelPanelAdapter · both · internal
 ParcelPanelAdapterConfig · type · internal
 ParcelPanelOrderBody · type · internal
@@ -2692,6 +2894,12 @@ REQUEST_ENDPOINTS · value · public
   ];
 
 REQUEST_FACT_ABSENT_CAUSES · value · internal
+REQUIREMENT_KINDS · value · public
+  const REQUIREMENT_KINDS: readonly [
+      "handler",
+      "adapter"
+  ];
+
 RESERVED_EXTENSION_PREFIX · value · internal
 RESUMABLE_PHASES · value · internal
 RESUMABLE_STATES · value · internal
@@ -2701,6 +2909,14 @@ RUN_HEALTH_STUCK_EXCLUDED · value · internal
 RUN_ID_LENGTH · value · internal
 RUN_PHASES · value · internal
 RUN_RECORD_TABLE · value · internal
+RUN_STATUSES · value · public
+  const RUN_STATUSES: readonly [
+      "ok",
+      "error",
+      "blocked",
+      "confirm_required"
+  ];
+
 RaceEntry · type · public
   interface RaceEntry {
       step: string;
@@ -3728,6 +3944,16 @@ TRACE_POLICY · value · internal
 TRACE_POLICY_HASH · value · internal
 TRACE_POLICY_VERSION · value · internal
 TRACKED_RESIDUALS · value · internal
+TRIGGER_RULES · value · public
+  const TRIGGER_RULES: readonly [
+      "all_success",
+      "all_failed",
+      "all_done",
+      "one_failed",
+      "one_success",
+      "none_failed"
+  ];
+
 TRUST_LEVELS · value · internal
 TakeBackNotTakenReason · type · internal
 TakeBackOutcome · type · internal

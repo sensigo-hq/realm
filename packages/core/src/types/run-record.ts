@@ -543,6 +543,25 @@ export type CacheAutoPrices =
   | { from: 'none'; cause: CacheAutoPriceCause; missing?: CacheAutoRate[] };
 
 /**
+ * Every place the `auto` cache choice can take its prices from (`CacheAutoPrices.from`), in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const CACHE_AUTO_PRICES_FROM_WORDS = [
+  'economics',
+  'none',
+] as const satisfies readonly CacheAutoPrices['from'][];
+type MissingCacheAutoPricesFromWords = Exclude<
+  CacheAutoPrices['from'],
+  (typeof CACHE_AUTO_PRICES_FROM_WORDS)[number]
+>;
+const _everyCacheAutoPricesFromWordsListed: [MissingCacheAutoPricesFromWords] extends [never]
+  ? true
+  : MissingCacheAutoPricesFromWords = true;
+void _everyCacheAutoPricesFromWordsListed;
+
+/**
  * A request's `cache_auto`: the basis of the `auto` choice, the gaps it read, and where its prices
  * came from. `prices` is absent when no price was needed (no kept gap).
  * Normalised where it enters the record (`normalizeCacheAuto`).
@@ -763,6 +782,25 @@ export interface CacheControlsRejected {
   proven: 'cache_fields' | 'none';
   fields: readonly CacheControlField[];
 }
+
+/**
+ * Every word a rejected request's `proven` can hold, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const CACHE_CONTROLS_PROVEN_WORDS = [
+  'cache_fields',
+  'none',
+] as const satisfies readonly CacheControlsRejected['proven'][];
+type MissingCacheControlsProvenWords = Exclude<
+  CacheControlsRejected['proven'],
+  (typeof CACHE_CONTROLS_PROVEN_WORDS)[number]
+>;
+const _everyCacheControlsProvenWordsListed: [MissingCacheControlsProvenWords] extends [never]
+  ? true
+  : MissingCacheControlsProvenWords = true;
+void _everyCacheControlsProvenWordsListed;
 
 /**
  * One request a step sent to a model provider, as the record keeps it: its index and start, its
@@ -1395,6 +1433,25 @@ export interface PendingGate {
 }
 
 /**
+ * Every word a pending gate's `on_expiry` can hold, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const GATE_ON_EXPIRY_WORDS = [
+  'settle_default',
+  'abort',
+] as const satisfies readonly NonNullable<PendingGate['on_expiry']>[];
+type MissingGateOnExpiryWords = Exclude<
+  NonNullable<PendingGate['on_expiry']>,
+  (typeof GATE_ON_EXPIRY_WORDS)[number]
+>;
+const _everyGateOnExpiryWordsListed: [MissingGateOnExpiryWords] extends [never]
+  ? true
+  : MissingGateOnExpiryWords = true;
+void _everyGateOnExpiryWordsListed;
+
+/**
  * Derived phase of a workflow run. Always computed from the four step sets and run state;
  * never set directly by callers outside the engine.
  * @public
@@ -1521,6 +1578,25 @@ export interface CapabilityBlock {
 }
 
 /**
+ * Every kind a capability block's `requirement` can name, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const REQUIREMENT_KINDS = [
+  'handler',
+  'adapter',
+] as const satisfies readonly CapabilityBlock['requirement']['kind'][];
+type MissingRequirementKinds = Exclude<
+  CapabilityBlock['requirement']['kind'],
+  (typeof REQUIREMENT_KINDS)[number]
+>;
+const _everyRequirementKindsListed: [MissingRequirementKinds] extends [never]
+  ? true
+  : MissingRequirementKinds = true;
+void _everyRequirementKindsListed;
+
+/**
  * Why a step was skipped, keyed by step name (`RunRecord.skip_details`).
  * Additive-optional, definition-free surfacing metadata —
  * `skipped_steps` stays the authoritative set; this only explains *why*.
@@ -1592,6 +1668,28 @@ export const SKIP_KINDS = [
 type MissingSkipKind = Exclude<SkipDetail['kind'], (typeof SKIP_KINDS)[number]>;
 const _everySkipKindListed: [MissingSkipKind] extends [never] ? true : MissingSkipKind = true;
 void _everySkipKindListed;
+
+/** The words of a skip detail's `blocking_deps[].state`: the type the list below is checked against. */
+type BlockingDepState = Extract<
+  SkipDetail,
+  { kind: 'trigger_rule_unsatisfiable' }
+>['blocking_deps'][number]['state'];
+/**
+ * Every state a dependency that makes a trigger rule unsatisfiable can be in, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const BLOCKING_DEP_STATES = [
+  'completed',
+  'failed',
+  'skipped',
+] as const satisfies readonly BlockingDepState[];
+type MissingBlockingDepStates = Exclude<BlockingDepState, (typeof BLOCKING_DEP_STATES)[number]>;
+const _everyBlockingDepStatesListed: [MissingBlockingDepStates] extends [never]
+  ? true
+  : MissingBlockingDepStates = true;
+void _everyBlockingDepStatesListed;
 
 /**
  * Every way a run can be sealed, as a closed list read at run time (`SealedBy.arm`). The type
@@ -1952,6 +2050,26 @@ export interface ModelAttempt {
 }
 
 /**
+ * Every word a failed model attempt's `then` can hold: the re-send that followed it, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const MODEL_ATTEMPT_THEN_WORDS = [
+  'gateway',
+  'cache_probe',
+  'strict_ladder',
+] as const satisfies readonly NonNullable<ModelAttempt['then']>[];
+type MissingModelAttemptThenWords = Exclude<
+  NonNullable<ModelAttempt['then']>,
+  (typeof MODEL_ATTEMPT_THEN_WORDS)[number]
+>;
+const _everyModelAttemptThenWordsListed: [MissingModelAttemptThenWords] extends [never]
+  ? true
+  : MissingModelAttemptThenWords = true;
+void _everyModelAttemptThenWordsListed;
+
+/**
  * A run's recent drive failures: the last few, plus the total and the time of the first, which do
  * not reset when the oldest is dropped (`RunRecord.drive_failures`).
  *
@@ -2267,6 +2385,25 @@ export interface ChannelEvidence {
  */
 export type AdmittedBy =
   'owner' | 'answerers' | 'project_answerers' | 'no_named_answerer' | 'owner_not_checked_on_route';
+
+/**
+ * Every word an answer's `admitted_by` can hold, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const ADMITTED_BY_WORDS = [
+  'owner',
+  'answerers',
+  'project_answerers',
+  'no_named_answerer',
+  'owner_not_checked_on_route',
+] as const satisfies readonly AdmittedBy[];
+type MissingAdmittedByWords = Exclude<AdmittedBy, (typeof ADMITTED_BY_WORDS)[number]>;
+const _everyAdmittedByWordsListed: [MissingAdmittedByWords] extends [never]
+  ? true
+  : MissingAdmittedByWords = true;
+void _everyAdmittedByWordsListed;
 
 /**
  * What an answer's entry holds about its route: the facts, or the absence a library caller leaves

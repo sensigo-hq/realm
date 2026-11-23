@@ -42,10 +42,16 @@ Where the docs teach it: [Core library: serve MCP from your own program](../core
 | [`NotPricedCause`](#notpricedcause) | type | Why a request has no price, one member per producer (`PriceResult`'s `not_priced`). |
 | [`PriceResult`](#priceresult) | type | A price source's answer: the price, with what the same request would cost with no caching and what priced it, or why it has no price. |
 | [`Source`](#source) | type | Where a door setting came from: a flag, the environment, an option, the configuration, the default, or negotiated with the client (`DoorAnswers.source`). |
+| [`DECLARED_CAUSES`](#declared_causes) | const | Every cause a disclosure receipt can give for declared values it could not resolve, in the type's order. |
+| [`DECLARED_STATES`](#declared_states) | const | Every state the declared values of a disclosure receipt can be in, in the type's order. |
 | [`DEFINITION_ABSENCES`](#definition_absences) | const | How a `definition_absent` code arose: one per arm of `getWorkflowForRun`. |
+| [`ENACTOR_KINDS`](#enactor_kinds) | const | Every kind a reply's enactor basis can name, in the type's order. |
+| [`ENVIRONMENT_STATES`](#environment_states) | const | Every state the environment sweep of a disclosure receipt can be in, in the type's order. |
 | [`GATE_ANSWERS_VALUES`](#gate_answers_values) | const | How the MCP door handles gate answers (`DoorAnswers.value`). |
 | [`KIND`](#kind) | const | The kind codes of a disclosure set's marks: where marks overlap, the higher code wins. |
+| [`LOAD_ERROR_CODES`](#load_error_codes) | const | Every code a reply's `basis.enactor.error_code` can hold: each error code, then `uncoded`. |
 | [`NOT_PRICED_CAUSES`](#not_priced_causes) | const | Why a request has no price. |
+| [`PRICE_SOURCE_CLASSES`](#price_source_classes) | const | Every class of source a priced request can name (`PricedBy.source_class`), in the type's order. |
 
 ## Functions
 
@@ -599,6 +605,39 @@ type Source = {
 
 ## Constants
 
+### DECLARED_CAUSES
+
+const · public
+
+Every cause a disclosure receipt can give for declared values it could not resolve, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const DECLARED_CAUSES: readonly [
+    "no_manifest",
+    "load_failed",
+    "embedder_none",
+    "manifest_changed"
+];
+```
+
+### DECLARED_STATES
+
+const · public
+
+Every state the declared values of a disclosure receipt can be in, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const DECLARED_STATES: readonly [
+    "resolved",
+    "partial",
+    "unknown"
+];
+```
+
 ### DEFINITION_ABSENCES
 
 const · public
@@ -614,6 +653,37 @@ const DEFINITION_ABSENCES: readonly [
     "legacy",
     "not_read",
     "newer"
+];
+```
+
+### ENACTOR_KINDS
+
+const · public
+
+Every kind a reply's enactor basis can name, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const ENACTOR_KINDS: readonly [
+    "this_program",
+    "observer",
+    "load_failed"
+];
+```
+
+### ENVIRONMENT_STATES
+
+const · public
+
+Every state the environment sweep of a disclosure receipt can be in, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const ENVIRONMENT_STATES: readonly [
+    "swept",
+    "not_swept"
 ];
 ```
 
@@ -651,6 +721,137 @@ const KIND: {
 };
 ```
 
+### LOAD_ERROR_CODES
+
+const · public
+
+Every code a reply's `basis.enactor.error_code` can hold: each error code, then `uncoded`.
+Built from `ERROR_CODES`, so a code added there reaches it with no edit; compile-checked both
+ways against `LoadErrorCode`, so a word the type gains of its own fails the build
+(Q1, #592, unit d1b, correction 1).
+
+```ts
+const LOAD_ERROR_CODES: readonly [
+    "NETWORK_TIMEOUT",
+    "NETWORK_UNREACHABLE",
+    "NETWORK_DNS_FAILED",
+    "NETWORK_CONNECTION_RESET",
+    "SERVICE_HTTP_4XX",
+    "SERVICE_HTTP_5XX",
+    "SERVICE_RATE_LIMITED",
+    "SERVICE_AUTH_FAILED",
+    "SERVICE_NOT_FOUND",
+    "SERVICE_RESPONSE_INVALID",
+    "SERVICE_UNEXPECTED_REDIRECT",
+    "MODEL_REQUEST_FAILED",
+    "STATE_BLOCKED",
+    "STATE_PRECONDITION_FAILED",
+    "STATE_RUN_NOT_FOUND",
+    "STATE_WORKFLOW_NOT_FOUND",
+    "STATE_WORKFLOW_UNREADABLE",
+    "STATE_RUN_TERMINAL",
+    "STATE_SNAPSHOT_MISMATCH",
+    "STATE_RUN_LOCKED",
+    "STATE_RUN_BUSY",
+    "STATE_TRANSITION_DENIED",
+    "STATE_LEGACY_FORMAT",
+    "STATE_NEWER_FORMAT",
+    "STATE_STEP_ALREADY_CLAIMED",
+    "STATE_STEP_NOT_ELIGIBLE",
+    "STATE_STEP_ALREADY_SETTLED",
+    "STATE_CLAIM_LOST",
+    "STATE_ANSWERER_MISMATCH",
+    "STATE_RUN_DIVERGED",
+    "STATE_RUN_ALREADY_ACTIVE",
+    "STATE_IDEMPOTENCY_KEY_USED",
+    "STATE_TEST_CLOCK_FOREIGN",
+    "STATE_HOME_UNUSABLE",
+    "STATE_STORE_DRIVER_UNAVAILABLE",
+    "STATE_STORE_FILESYSTEM_REFUSED",
+    "STATE_STORE_SETTINGS_REFUSED",
+    "STATE_STORE_VERSION_OLDER",
+    "STATE_STORE_VERSION_NEWER",
+    "STATE_STORE_SCHEMA_TAMPERED",
+    "STATE_STORE_FULL",
+    "STATE_STORE_READONLY",
+    "STATE_STORE_WRITES_FENCED",
+    "STATE_STORE_LIMIT_EXCEEDED",
+    "STATE_STORE_BACKUP_REFUSED",
+    "STATE_STORE_BACKUP_UNVERIFIED",
+    "STATE_STORE_MIGRATE_REFUSED",
+    "STATE_STORE_MIGRATE_FAILED",
+    "STATE_STORE_IN_USE",
+    "STATE_STORE_RESTORE_REFUSED",
+    "STATE_STORE_CHECK_REFUSED",
+    "STATE_HOME_HOLDS_LEGACY_STORE",
+    "STATE_RUN_PURGED",
+    "STATE_RUN_TIMESTAMP_INVALID",
+    "STATE_WRITE_ONCE_REWRITTEN",
+    "STATE_EVIDENCE_REWRITTEN",
+    "STATE_RUN_IDENTITY",
+    "RUN_ABORTING",
+    "VALIDATION_INPUT_SCHEMA",
+    "VALIDATION_OUTPUT_SCHEMA",
+    "VALIDATION_TRACE_SCHEMA",
+    "VALIDATION_EXHAUSTED",
+    "VALIDATION_WORKFLOW_SCHEMA",
+    "VALIDATION_HASH_MISMATCH",
+    "VALIDATION_QUOTE_NOT_FOUND",
+    "VALIDATION_FIELD_UNKNOWN",
+    "VALIDATION_FIELD_EXCLUDED",
+    "VALIDATION_EMPTY_VALUE",
+    "VALIDATION_BATCH_TOO_LARGE",
+    "VALIDATION_BATCH_ITEMS",
+    "VALIDATION_TRUST_VALUE",
+    "VALIDATION_ACTOR_INVALID",
+    "VALIDATION_CALLER_INVALID",
+    "VALIDATION_OPTION_INVALID",
+    "VALIDATION_CURSOR",
+    "STEP_HANDLER_ERROR",
+    "ENGINE_INTERNAL",
+    "ENGINE_STORE_FAILED",
+    "ENGINE_ARTIFACT_DELETE_FAILED",
+    "ENGINE_ADAPTER_FAILED",
+    "ENGINE_ADAPTER_NOT_REGISTERED",
+    "ENGINE_PROCESSOR_FAILED",
+    "ENGINE_HANDLER_FAILED",
+    "ENGINE_HANDLER_NOT_REGISTERED",
+    "ENGINE_STEP_FAILED",
+    "ENGINE_GATE_OPEN_FAILED",
+    "ENGINE_RELEASE_LINE_MISMATCH",
+    "ENGINE_RELEASE_LINE_UNDECLARED",
+    "GATE_MESSAGE_UNRESOLVABLE",
+    "FILTER_UNKNOWN",
+    "ADAPTER_OP_UNSUPPORTED",
+    "ADAPTER_VALIDATION_FAILED",
+    "ADAPTER_REQUEST_FAILED",
+    "STEP_TIMEOUT",
+    "STEP_ABORTED",
+    "STEP_RETRY_EXHAUSTED",
+    "STATE_STEP_PENDING",
+    "STATE_SEAL_UNSTAMPED",
+    "STATE_SEAL_ORPHANED",
+    "STATE_SEAL_ERASED",
+    "STATE_SEAL_UNKNOWN_ARM",
+    "STATE_SEAL_INCOHERENT",
+    "STATE_SEAL_REWRITTEN",
+    "STEP_NOT_FOUND",
+    "GUARD_RESOLUTION_ERROR",
+    "INPUT_MAP_DEPTH_EXCEEDED",
+    "INPUT_MAP_UNKNOWN_DIRECTIVE",
+    "RESOURCE_FETCH_FAILED",
+    "RESOURCE_TOO_LARGE",
+    "RESOURCE_FORMAT_INVALID",
+    "RESOURCE_NOT_ACCESSIBLE",
+    "BUFFER_FULL",
+    "TRACE_CAPABILITY_INCONSISTENT",
+    "MCP_CONNECTION_FAILED",
+    "MCP_TOOL_NOT_FOUND",
+    "MCP_TOOL_NAME_COLLISION",
+    "uncoded"
+];
+```
+
 ### NOT_PRICED_CAUSES
 
 const · public
@@ -685,6 +886,21 @@ const NOT_PRICED_CAUSES: readonly [
     "date_unreadable",
     "price_list_error",
     "rate_missing"
+];
+```
+
+### PRICE_SOURCE_CLASSES
+
+const · public
+
+Every class of source a priced request can name (`PricedBy.source_class`), in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const PRICE_SOURCE_CLASSES: readonly [
+    "economics",
+    "price_list"
 ];
 ```
 

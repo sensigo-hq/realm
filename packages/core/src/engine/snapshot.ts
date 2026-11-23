@@ -223,6 +223,22 @@ export type EnactorBasis =
   | { kind: 'load_failed'; error_code: LoadErrorCode };
 
 /**
+ * Every kind a reply's enactor basis can name, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const ENACTOR_KINDS = [
+  'this_program',
+  'observer',
+  'load_failed',
+] as const satisfies readonly EnactorBasis['kind'][];
+type MissingEnactorKinds = Exclude<EnactorBasis['kind'], (typeof ENACTOR_KINDS)[number]>;
+const _everyEnactorKindsListed: [MissingEnactorKinds] extends [never] ? true : MissingEnactorKinds =
+  true;
+void _everyEnactorKindsListed;
+
+/**
  * The definition the ways were judged against: the run's workflow by id, or why it is absent. The
  * absence is in the one vocabulary of `definition_absent`'s facts, never a second list.
  * Not the author's `version:` (P-7: not identity). #493's content hash enters with
