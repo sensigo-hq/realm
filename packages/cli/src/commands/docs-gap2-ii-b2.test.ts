@@ -51,11 +51,11 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
       CONTROLS,
       '| [`on_model_failure`](#on_model_failure) | What happens to the step when its model request fails. | `realm agent` drives the step |',
     );
-    // Executed by check 2 (the step fails, a later drive's one_failed step runs) and check 1 (without
-    // the key: the drive stops, gives the step back, the run open).
+    // Executed by check 2 (the step fails, and its one_failed step runs; gap 2 (ii-b3): in the same
+    // drive) and check 1 (without the key: the drive stops, gives the step back, the run open).
     claim(
       CONTROLS,
-      "`on_model_failure: fail` fails the step when its model request fails, so the workflow's failure route can run: a step with `trigger_rule: one_failed`, or a finalizer. A step with `trigger_rule: one_failed` runs when the run is driven again: `realm agent` stops after the failed step, and `realm agent --run-id <run>` goes on. Without it, the drive stops, gives the step back and leaves the run open, as before.",
+      "`on_model_failure: fail` fails the step when its model request fails, so the workflow's failure route can run: a step with `trigger_rule: one_failed`, or a finalizer. A step with `trigger_rule: one_failed` runs in the same drive: `realm agent` goes on after the failed step. Without it, the drive stops, gives the step back and leaves the run open, as before.",
     );
     // Executed by check 2's rows (each code, and failure_kind read by the route), check 6 (a module
     // that handles its own retries: MODEL_REQUEST_FAILED) and check 4 (texts, tries, usage; no drive
@@ -69,10 +69,11 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
       CONTROLS,
       'A failure that needs a fix first (a refused key, a model that does not exist, used-up credit or quota), a failure before the model was called, and one Realm cannot place still stop the drive and leave the run open.',
     );
-    // Executed by check 2 (the result is `failed`, which `realm agent` exits 1 for).
+    // Executed by check 2 (the result is `failed`, which `realm agent` exits 1 for; gap 2 (ii-b3):
+    // the drive goes on first).
     claim(
       CONTROLS,
-      'After the step fails, `realm agent` stops with exit code 1, as after any failed step.',
+      'After the step fails, `realm agent` goes on with whatever became ready, and exits with code 1 at the end.',
     );
     // Executed by check 8 (refused on auto, guard, finalizer; `default` and another value refused).
     claim(
@@ -107,11 +108,11 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
 
   it('realm-agent.md: the seventh row, the rows named, and what the first six cases become', () => {
     // Executed by check 2 (one ✗ line from the catch, then the bullet line on stderr; the retry row's
-    // STEP_RETRY_EXHAUSTED; a run the settle ended is `failed` with a Resume: line, and a run with a
-    // step that runs on the failure stays open).
+    // STEP_RETRY_EXHAUSTED; a run the settle ended is `failed`). Gap 2 (ii-b3): the run afterwards
+    // cell — the drive goes on — is executed by goes-on-drive-g2iib3.test.ts, check 3.
     claim(
       AGENT,
-      "| An agent step with `on_model_failure: fail` whose model request failed | `✗ Step 'classify' LLM call failed: Connection error.` (`✗ Step 'classify' (tools) failed: …` on a step with tools), followed by `• Step 'classify' failed (MODEL_REQUEST_FAILED): its model request failed, and the step has on_model_failure: fail.` (`STEP_RETRY_EXHAUSTED` when the step's `retry` used up its tries) | Ended, in `failed`, with a `Resume:` line; open, in `running`, when a step that runs on its failure can still run. |",
+      "| An agent step with `on_model_failure: fail` whose model request failed | `✗ Step 'classify' LLM call failed: Connection error.` (`✗ Step 'classify' (tools) failed: …` on a step with tools), followed by `• Step 'classify' failed (MODEL_REQUEST_FAILED): its model request failed, and the step has on_model_failure: fail.` (`STEP_RETRY_EXHAUSTED` when the step's `retry` used up its tries) | The drive goes on. Ended, in `failed`, when nothing runs after the failure; otherwise as its last step leaves it (`completed`, with the failed step listed). |",
     );
     // Correction 1's ride-along: the lease row's run afterwards (nothing was claimed).
     claim(

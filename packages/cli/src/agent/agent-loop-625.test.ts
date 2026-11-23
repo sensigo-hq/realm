@@ -182,7 +182,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
     ]);
   });
 
-  it('L7: an owed auto step that fails at the loop top is named; no model call follows', async () => {
+  it('L7: an owed auto step that fails at the loop top is named; the drive goes on with the agent step, and exits 1 (gap 2 (ii-b3))', async () => {
     const def: WorkflowDefinition = {
       id: 'loop-fail-wf',
       name: 'loop fail',
@@ -216,7 +216,13 @@ describe('#625 PR-2a — the realm agent loop', () => {
     expect(result).toBe('failed');
     expect(out).toContain('→ [auto] boom');
     expect(err).toContain("✗ Step 'boom' failed:");
-    expect(provider.callStep).not.toHaveBeenCalled();
+    // Gap 2 (ii-b3): the drive goes on after the failure with the independent agent step (before,
+    // it stopped and no model call followed); the run completes, and its last line says a step
+    // failed during the drive.
+    expect(provider.callStep).toHaveBeenCalledTimes(1);
+    expect(err).toContain(
+      '✗ The run completed, but a step failed during this drive (boom); realm agent exits with code 1.',
+    );
   });
 
   it('L7 / D6.1: an ENGINE step another process took is said with the same line, and the loop goes on', async () => {
