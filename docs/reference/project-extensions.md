@@ -256,7 +256,7 @@ Extension Identity (1 entry):
 
 The tree hash covers files ending in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts` or `.json`, at any depth under the folder of each named file. It leaves out `node_modules`, `.git` and links. It stops at 2000 files or 50 MB. A file that the code imports from another folder is not covered.
 
-The lockfile is every one of `npm-shrinkwrap.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` and `bun.lockb` in the nearest folder that holds one, looking first in the project's folder and then in each folder above it, up to the repository's root (the first folder with a `.git` directory). Outside a repository it never looks in the user's home folder or above it, unless the project is in the home folder itself. When `npm-shrinkwrap.json` is present, `package-lock.json` beside it is left out, as npm itself ignores it. It records what the project declares, not what `node_modules` holds.
+The lockfile is every one of `npm-shrinkwrap.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` and `bun.lockb` in the nearest folder that holds one, looking first in the project's folder and then in each folder above it, up to the repository's root (the first folder with a `.git` directory). Outside a repository it never looks in the user's home folder or above it, unless the project's folder is the home folder itself; then it looks there and no higher. When `npm-shrinkwrap.json` is present, `package-lock.json` beside it is left out, as npm itself ignores it. It records what the project declares, not what `node_modules` holds.
 
 A process takes each file's hash at one of two moments: a module's own file just before that module first loads; any other file when a sweep of its folder first finds it, just before a module of that folder first loads. It reads each lockfile once, just before it first loads the code of a project that uses it (for a project with no code of its own, when it first loads `realm.yaml`), and keeps it for every project that uses it, even when an import fails, so a package installed afterwards without a restart shows as a changed lockfile. It keeps each file's hash, so a process that keeps running after a file changes records the file as it loaded it, with three exceptions:
 
@@ -294,6 +294,7 @@ The run goes on. The warning does not stop it.
 Drift check (pure recompute of the last execution entry under its recorded rules):
   module /srv/shop/ext/a.mjs: same
   tree: same
+  lockfile: same
 ```
 
 A file that differs is shown with both hashes:

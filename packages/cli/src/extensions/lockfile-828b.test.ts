@@ -515,7 +515,7 @@ describe('#828 PR B — the Words, each pinned (named beside it)', () => {
       // Where Realm looks: check 9 (a)–(k).
       [
         page,
-        "The lockfile is every one of `npm-shrinkwrap.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` and `bun.lockb` in the nearest folder that holds one, looking first in the project's folder and then in each folder above it, up to the repository's root (the first folder with a `.git` directory). Outside a repository it never looks in the user's home folder or above it, unless the project is in the home folder itself. When `npm-shrinkwrap.json` is present, `package-lock.json` beside it is left out, as npm itself ignores it. It records what the project declares, not what `node_modules` holds.",
+        "The lockfile is every one of `npm-shrinkwrap.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` and `bun.lockb` in the nearest folder that holds one, looking first in the project's folder and then in each folder above it, up to the repository's root (the first folder with a `.git` directory). Outside a repository it never looks in the user's home folder or above it, unless the project's folder is the home folder itself; then it looks there and no higher. When `npm-shrinkwrap.json` is present, `package-lock.json` beside it is left out, as npm itself ignores it. It records what the project declares, not what `node_modules` holds.",
       ],
       // When it is read: checks 6, 15, 16, 16b and 17.
       [

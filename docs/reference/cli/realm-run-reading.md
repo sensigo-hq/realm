@@ -271,7 +271,7 @@ Each block is printed only when the run has something for it.
 | `Drive failures`     | `realm agent` gave up on the run at least once | The time, the step, the model provider, the kind of failure, and what the provider had billed; with prices, what that cost (added after version 0.47.0). |
 | `Run Health`         | Realm finds something wrong with the run       | One line for each finding: its name, the step, and a sentence.                                                                                           |
 | `Extension Identity` | The run used code from the project             | Each time the code was loaded: the files, their hashes, and which folder the hashes cover.                                                               |
-| `Drift check`        | `--check-drift` was given                      | For each recorded file, `same`, `DIFFERS` or `MISSING`.                                                                                                  |
+| `Drift check`        | `--check-drift` was given                      | For each recorded file, `same`, `DIFFERS` or `MISSING`; for the lockfile, `same`, `DIFFERS` or `not checked` (added after version 0.50.0).               |
 | `Trace Summary`      | A step recorded trace entries                  | How many steps have entries, how many entries were kept and dropped, and the most frequent events.                                                       |
 
 ```text
@@ -302,6 +302,7 @@ Drift check (pure recompute of the last execution entry under its recorded rules
   module /srv/shop/handlers.mjs: DIFFERS (recorded 074edb9b29c550845e841aa1cc5a50a3e3db987fcb7d0507578386c94636c5a2, current 47deda97f85b1ad782597ae27a4d52018e681f1d12faed33d081fbe507609fa4)
   manifest /srv/shop/realm.yaml: same
   tree: DIFFERS (recorded 651600beac492f14fe9677119e5a98e61490fb3f28dca090d5eae80fbb9e4f0a, current 6dec55f0ef0b606aa70ea9c0414b86d3749fe594b4efd9dfb47acfd3b37d7fa4)
+  lockfile: same
 ```
 
 The check reads the files and computes their hashes. It does not load or run them. For a run that used no project code, it prints `Drift check: no extension identity recorded for this run.`; for a run whose only entry is the one written when it was created, `Drift check: no execution has recorded project code yet; the run's creation entry is not compared.`
