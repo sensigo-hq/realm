@@ -19,3 +19,9 @@ packages/cli/src/corpus/[0-9]*/
 # (`npm run docs:library`). A cell compares the committed pages with the generator's output byte for
 # byte, so formatting them would make that cell red. Their input, jobs.json, stays checked.
 docs/reference/library/*.md
+
+# Q1 (#592) d2a: get_run_state's published schema and its sidecar, written by
+# scripts/generate-run-state-schema.mjs (`npm run docs:schema`). A cell compares the committed files
+# with the generator's output byte for byte, so formatting them would make that cell red.
+docs/reference/mcp/run-state.schema.json
+docs/reference/mcp/run-state.added-after.json

@@ -244,6 +244,14 @@ const EXPECTED: Record<string, CensusEntry> = {
       "The response type field, the envelope echo of the stored value, and the summary's class-table row (#729 PR-3).",
     suppression: 'Inline at the echo: an envelope shape, not a writer — it reaches no store.',
   },
+  'packages/mcp-server/src/tools/run-state-schema.ts': {
+    count: 1,
+    classes: ['type-decl'],
+    reason:
+      "Q1 (#592) d2a: the published schema's ok arm describing the reply's field (`z.boolean()`) — a schema, not a write.",
+    suppression:
+      'Inline at the ok arm: a description of the reply, not a writer — it reaches no store.',
+  },
   'packages/testing/src/runner/test-runner.ts': {
     count: 1,
     classes: ['stripper-false'],
@@ -454,8 +462,9 @@ describe('#367 — the terminal-writer census', () => {
     // #616 PR-1a unit 15a: +1, run-rows.ts's key-holder read.
     // #616 PR-2c c3: +1, run-scan.ts's facts-row read. c4-i: +1, in-memory-store.ts's facts-row read.
     // Q1 (#592) unit c: +1, startup-failure.ts's two prose disables.
+    // Q1 (#592) d2a: +1, run-state-schema.ts's ok arm (a schema, not a write).
     // Gap 2 (ii-b3): +1, run-agent.ts's one prose disable (the closing line after a failed step).
-    expect(claimed).toHaveLength(15);
+    expect(claimed).toHaveLength(16);
   });
 
   it("turbo.json globalDependencies matches the sweep table's join-list", () => {
@@ -487,11 +496,12 @@ describe('#367 — the terminal-writer census', () => {
   // filter's SQL term), in two new files.
   // #616 PR-2c c4-i: +2 (in-memory-store.ts, the facts row's read; run-store-fidelity-contract.ts,
   // `endRun`), in two mapped files.
-  it('the post-strip total is 85 across 20 files — the figure the map is built from', () => {
+  // Q1 (#592) d2a: +1 (run-state-schema.ts, the published schema's ok arm), in a new file.
+  it('the post-strip total is 86 across 21 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(85);
-    expect(Object.keys(scan.hits)).toHaveLength(20);
+    expect(total).toBe(86);
+    expect(Object.keys(scan.hits)).toHaveLength(21);
   });
 });
 
