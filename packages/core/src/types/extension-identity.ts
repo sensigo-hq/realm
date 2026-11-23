@@ -53,6 +53,21 @@ export interface ExtensionIdentitySignals {
 }
 
 /**
+ * The project's lockfile, as an identity entry records it: its files and a sha256 over them, none
+ * found, or unreadable.
+ *
+ * @remarks
+ * `files` are the lockfiles' paths from the project's folder, with `/` separators, sorted. `sha256` is the sha256 of the lines `<path>\0<the file's sha256>` joined with `\n`. `none_found`:
+ * no folder up to the repository's root holds one. `unreadable`: any of `files` cannot be read; it is
+ * compared by its file names only. Added after version 0.50.0 (#828).
+ * @public
+ */
+export type ExtensionIdentityLockfile =
+  | { files: string[]; sha256: string }
+  | { absent: 'none_found' }
+  | { files: string[]; absent: 'unreadable' };
+
+/**
  * One point-in-time identity of the extension code executing a run. Appended to
  * `RunRecord.extension_identity` on change (history, newest last). The shape is
  * load-bearing evidence — never collapsible to a boolean.
@@ -93,6 +108,12 @@ export interface ExtensionIdentityEntry {
   /** Present when capture (or the extension load itself) failed — the failure is itself a record. */
   error?: string;
   /**
+   * #828 unit 1 (PR B): the project's lockfile, read once per process before the project's code
+   * first loaded. Written on every computed entry (not on one with `error`): a missing member means
+   * the entry was written before this was recorded, and it is left out of the comparison.
+   */
+  lockfile?: ExtensionIdentityLockfile;
+  /**
    * #729 PR-3 correction 5 (J-5, R48): `'start'` on the entry a program that loaded a project writes
    * when it CREATES the run, so a run that never executes a step still names its manifest. Absent
    * on every other entry — those an execution appends, and every entry written before this build.
@@ -124,15 +145,37 @@ export function lastExecutionIdentity(
 }
 
 /**
+ * #828 unit 1 (PR B): whether two recorded lockfiles differ. A member missing on either side (an
+ * entry written before the lockfile was recorded, or one with `error`) leaves it out: false. Two
+ * hashes differ when they are not equal; two `none_found` are the same; two `unreadable` are the same
+ * when they name the same files; any other pair of shapes differs.
+ */
+export function extensionLockfileDiffers(
+  a: ExtensionIdentityLockfile | undefined,
+  b: ExtensionIdentityLockfile | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return false;
+  if ('sha256' in a && 'sha256' in b) return a.sha256 !== b.sha256;
+  if ('absent' in a && 'absent' in b && a.absent === b.absent) {
+    if (a.absent === 'none_found') return false;
+    const af = 'files' in a ? a.files : [];
+    const bf = 'files' in b ? b.files : [];
+    return af.length !== bf.length || af.some((f, i) => f !== bf[i]);
+  }
+  return true;
+}
+
+/**
  * Returns true when two identity entries denote DIFFERENT extension code:
- * tree_hash, the per-module entry hashes (as an ordered resolved→hash list), or the
- * override flag differ. Signals, timestamps, and pid are advisory — never compared.
+ * tree_hash, the per-module entry hashes (as an ordered resolved→hash list), the override flag, or
+ * (#828 PR B) the lockfile differ. Signals, timestamps, and pid are advisory — never compared.
  */
 export function extensionIdentityDiffers(
   a: ExtensionIdentityEntry,
   b: ExtensionIdentityEntry,
 ): boolean {
   if (a.tree.tree_hash !== b.tree.tree_hash) return true;
+  if (extensionLockfileDiffers(a.lockfile, b.lockfile)) return true;
   if (a.manifest?.content_hash !== b.manifest?.content_hash) return true;
   if ((a.override_active === true) !== (b.override_active === true)) return true;
   if (a.modules.length !== b.modules.length) return true;

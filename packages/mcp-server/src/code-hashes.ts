@@ -18,14 +18,21 @@
 //   retry. No folder's sweep changes: the map keeps the latest sweep any load took, as when every
 //   load succeeds, and the retry's first import sweeps the folder again. Any other failure keeps
 //   everything, as a success does;
-// - the signals are taken once per trust root, just before the first import that reads them.
+// - the signals are taken once per trust root, just before the first import that reads them;
+// - the project's lockfile (#828 PR B) is located once per process per project folder, and each
+//   lockfile file is read once per process, by its real path, in maps of their own: just before the
+//   first import of the first load that needs it, or at the identity step of a load that made no
+//   first import. It is kept whatever happens to that load or a later one, as the signals are: Node
+//   loads each package once per process and never reloads it, so the packages that run came from the
+//   lockfile read first. A failed import never drops it, even when its folder's sweep lists the file.
 //
 // This module loads no code: no dynamic import, no module-require creation. It imports only `node:`
 // modules and `@sensigo/realm` (types). A structural test in the CLI holds it to that.
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
-import type { ExtensionIdentitySignals } from '@sensigo/realm';
+import type { ExtensionIdentityLockfile, ExtensionIdentitySignals } from '@sensigo/realm';
 
 /** The one sweep-rule version this module can compute. Comparison ALWAYS recomputes under
  *  the RECORDED rule string — a future rules change must add a new version, never mutate v1. */
@@ -188,6 +195,110 @@ export function sweepTree(roots: readonly string[]): TreeSweepResult {
   return joinSweeps(roots.map((root) => sweepFolder(root)));
 }
 
+/** The lockfile names a folder may hold (#828 PR B). */
+const LOCKFILE_NAMES = [
+  'npm-shrinkwrap.json',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'yarn.lock',
+  'bun.lock',
+  'bun.lockb',
+] as const;
+
+/** Whether `path` is a file once its links are followed, readable or not; a dangling link is not. */
+function isFilePath(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isDirectoryPath(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** The real path of `path`, or `path` itself when it cannot be resolved. */
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * The project's lockfiles (#828 PR B, rev 3.1 item 4): from `projectFolder` (a real path) up, the
+ * first folder holding any of {@link LOCKFILE_NAMES}, every one present taken, and
+ * `package-lock.json` left out beside `npm-shrinkwrap.json`, as npm ignores it. The walk passes a
+ * folder that holds none, stops after the first folder holding a `.git` directory (a `.git` file does
+ * not stop it), and outside a repository never looks in the user's home folder or above it, unless
+ * the project's folder is the home folder. `undefined`: none found.
+ */
+function locateLockfiles(projectFolder: string): string[] | undefined {
+  const home = realOrSelf(homedir());
+  let folder = projectFolder;
+  for (;;) {
+    if (folder === home && folder !== projectFolder) return undefined;
+    const present = LOCKFILE_NAMES.filter((name) => isFilePath(join(folder, name)));
+    if (present.length > 0) {
+      const taken = present.includes('npm-shrinkwrap.json')
+        ? present.filter((name) => name !== 'package-lock.json')
+        : present;
+      return taken.map((name) => join(folder, name));
+    }
+    if (isDirectoryPath(join(folder, '.git'))) return undefined;
+    if (folder === home) return undefined;
+    const parent = dirname(folder);
+    if (parent === folder) return undefined;
+    folder = parent;
+  }
+}
+
+/** A lockfile's kept read: its hash, or that it cannot be read. */
+type LockfileRead = FileHash | 'unreadable';
+
+/**
+ * The `lockfile` member for a project folder, from the files found and each file's read (#828 PR B,
+ * rev 3.1 item 4): the paths from the project's folder with `/` separators, sorted, and the sha256 of
+ * the lines `<path>\0<the file's sha256>` joined with `\n`; `unreadable` when any cannot be read.
+ */
+function lockfileMember(
+  projectFolder: string,
+  files: readonly string[] | undefined,
+  readOf: (path: string) => LockfileRead,
+): ExtensionIdentityLockfile {
+  if (files === undefined) return { absent: 'none_found' };
+  const named = files
+    .map((path) => ({
+      rel: relative(projectFolder, path).split(sep).join('/'),
+      read: readOf(path),
+    }))
+    .sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+  const rels = named.map((n) => n.rel);
+  if (named.some((n) => n.read === 'unreadable')) return { files: rels, absent: 'unreadable' };
+  const lines = named.map((n) => `${n.rel}\u0000${(n.read as FileHash).sha256}`);
+  return { files: rels, sha256: sha256Hex(lines.join('\n')) };
+}
+
+/** Reads one lockfile now: its hash, or `unreadable`. */
+function readLockfile(path: string): LockfileRead {
+  return hashFile(path) ?? 'unreadable';
+}
+
+/**
+ * The project's lockfile read from the disk now (#828 PR B): pure and uncached, for an identity
+ * computed without a loader's values and for `--check-drift`'s recompute. `undefined` folder: none.
+ */
+export function lockfileNow(projectFolder: string | undefined): ExtensionIdentityLockfile {
+  if (projectFolder === undefined) return { absent: 'none_found' };
+  return lockfileMember(projectFolder, locateLockfiles(projectFolder), readLockfile);
+}
+
 /**
  * What this process keeps: each file's first hash by its real path, the modules whose import
  * succeeded (their own file's hash is final), each folder's sweep, and the signals by trust root.
@@ -197,9 +308,20 @@ interface Kept {
   readonly modules: Set<string>;
   readonly folders: Map<string, FolderSweep>;
   readonly signals: Map<string, ExtensionIdentitySignals | undefined>;
+  /** #828 PR B: each project folder's lockfiles, located once (`undefined`: none found). */
+  readonly lockfileChoices: Map<string, string[] | undefined>;
+  /** #828 PR B: each lockfile file's read, once, by its real path. Never dropped by a failure. */
+  readonly lockfiles: Map<string, LockfileRead>;
 }
 
-const kept: Kept = { files: new Map(), modules: new Set(), folders: new Map(), signals: new Map() };
+const kept: Kept = {
+  files: new Map(),
+  modules: new Set(),
+  folders: new Map(),
+  signals: new Map(),
+  lockfileChoices: new Map(),
+  lockfiles: new Map(),
+};
 
 /** Test-only: forgets every kept hash, as a new process would start with none. */
 export function clearCodeHashes(): void {
@@ -207,12 +329,18 @@ export function clearCodeHashes(): void {
   kept.modules.clear();
   kept.folders.clear();
   kept.signals.clear();
+  kept.lockfileChoices.clear();
+  kept.lockfiles.clear();
 }
 
-/** What a load needs to read the signals: its trust root, and the reader (the CLI's). */
+/**
+ * What a load needs: its trust root and the reader for the signals (the CLI's), and (#828 PR B) its
+ * project folder, `realpath(trust_root ?? projectDir)`, for the lockfile.
+ */
 export interface CodeHashLoadOptions {
   readonly trustRoot?: string;
   readonly readSignals: (trustRoot: string) => ExtensionIdentitySignals | undefined;
+  readonly projectFolder?: string;
 }
 
 /**
@@ -236,6 +364,11 @@ export interface CodeHashLoad {
   tree(roots: readonly string[]): TreeSweepResult;
   /** The signals: taken once per trust root per process. */
   signals(): ExtensionIdentitySignals | undefined;
+  /**
+   * #828 PR B: the lockfile member, from the kept reads (read now when none is kept: a load that made
+   * no first import). With no project folder, `none_found`.
+   */
+  lockfile(): ExtensionIdentityLockfile;
 }
 
 /**
@@ -264,6 +397,8 @@ class Load implements CodeHashLoad {
     this.takeSignals();
     const root = dirname(entry);
     if (!kept.modules.has(entry)) {
+      // A first import: the lockfile is read just before it, when not kept yet (#828 PR B).
+      this.takeLockfile();
       this.own.set(entry, hashFile(entry));
       this.sweep(root);
     } else if (!kept.folders.has(root)) this.sweep(root);
@@ -308,6 +443,15 @@ class Load implements CodeHashLoad {
     return trustRoot === undefined ? undefined : kept.signals.get(trustRoot);
   }
 
+  lockfile(): ExtensionIdentityLockfile {
+    this.takeLockfile();
+    const folder = this.options.projectFolder;
+    if (folder === undefined) return { absent: 'none_found' };
+    return lockfileMember(folder, kept.lockfileChoices.get(folder), (path) => {
+      return kept.lockfiles.get(realOrSelf(path)) ?? 'unreadable';
+    });
+  }
+
   /** A file's hash: a loaded module's final one, this load's own-file one, the kept one, else read now. */
   private fileHash(path: string): FileHash | undefined {
     if (kept.modules.has(path) || !this.own.has(path)) {
@@ -328,6 +472,18 @@ class Load implements CodeHashLoad {
       root,
       sweepFolder(root, (path) => this.fileHash(path)),
     );
+  }
+
+  /** Locates this load's project folder's lockfiles and reads each file, once per process. */
+  private takeLockfile(): void {
+    const folder = this.options.projectFolder;
+    if (folder === undefined) return;
+    if (!kept.lockfileChoices.has(folder))
+      kept.lockfileChoices.set(folder, locateLockfiles(folder));
+    for (const path of kept.lockfileChoices.get(folder) ?? []) {
+      const real = realOrSelf(path);
+      if (!kept.lockfiles.has(real)) kept.lockfiles.set(real, readLockfile(path));
+    }
   }
 
   private takeSignals(): void {

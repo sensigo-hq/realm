@@ -713,6 +713,7 @@ Names this job reaches whose entry is on another page.
 - [`ErrorFacts`](write-a-handler.md#errorfacts): Any typed error facts.
 - [`ErrorFactsByCode`](write-a-handler.md#errorfactsbycode): The error codes whose facts are typed: one facts type per code, entering with the unit that types it.
 - [`ExtensionIdentityEntry`](write-a-handler.md#extensionidentityentry): One point-in-time identity of the extension code executing a run.
+- [`ExtensionIdentityLockfile`](write-a-handler.md#extensionidentitylockfile): The project's lockfile, as an identity entry records it: its files and a sha256 over them, none found, or unreadable.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.
 - [`ExtensionIdentitySignals`](write-a-handler.md#extensionidentitysignals): Labeled advisory signals — each independently fail-soft; never part of the comparison.
 - [`ExtensionIdentityTree`](write-a-handler.md#extensionidentitytree): Versioned deterministic directory-tree fingerprint over the module roots.

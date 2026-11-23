@@ -533,6 +533,8 @@ const EXTENSION_IDENTITY_TABLE = {
   error: 'bounded',
   // #729 PR-3 correction 5 (J-5): `'start'` — realm's own word.
   origin: 'fact',
+  // #828 unit 1 (PR B): the lockfile's paths and hash, classed as `manifest` is.
+  lockfile: 'fact',
 } as const satisfies Row<ExtensionIdentityEntry>;
 
 /**
@@ -841,6 +843,8 @@ export const EXTENSION_IDENTITY_FACTS = {
   manifest: 'path_fact',
   secret_names: 'author_literal',
   origin: 'enum',
+  // #828 PR B: the lockfile's paths and their hash, as `manifest`'s.
+  lockfile: 'path_fact',
 } as const satisfies FactProducers<typeof EXTENSION_IDENTITY_TABLE, ExtensionIdentityEntry>;
 
 export const RUN_RECORD_FACTS = {

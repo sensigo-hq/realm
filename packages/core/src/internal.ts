@@ -923,12 +923,15 @@ export {
 export type { SecretRefSite, SecretScanResult } from './manifest/secret-refs.js';
 export type {
   ExtensionIdentityEntry,
+  ExtensionIdentityLockfile,
   ExtensionIdentityModule,
   ExtensionIdentityTree,
   ExtensionIdentitySignals,
 } from './types/extension-identity.js';
 export {
   extensionIdentityDiffers,
+  // #828 unit 1 (PR B): the lockfile's comparison, for the drift readers' words.
+  extensionLockfileDiffers,
   // #729 PR-3 correction 5 (J-5): the creators' start entry and the drift readers' baseline.
   startIdentityEntry,
   lastExecutionIdentity,

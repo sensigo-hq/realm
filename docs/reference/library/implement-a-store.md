@@ -2954,6 +2954,7 @@ Names this job reaches whose entry is on another page.
 - [`EvidenceSnapshot`](read-a-runs-record.md#evidencesnapshot): One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered question recorded, with its times, its input and output, its status and its hash.
 - [`ExecutionMode`](define-and-load-a-workflow.md#executionmode): The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer` (`StepDefinition.execution`).
 - [`ExtensionIdentityEntry`](write-a-handler.md#extensionidentityentry): One point-in-time identity of the extension code executing a run.
+- [`ExtensionIdentityLockfile`](write-a-handler.md#extensionidentitylockfile): The project's lockfile, as an identity entry records it: its files and a sha256 over them, none found, or unreadable.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.
 - [`ExtensionIdentitySignals`](write-a-handler.md#extensionidentitysignals): Labeled advisory signals — each independently fail-soft; never part of the comparison.
 - [`ExtensionIdentityTree`](write-a-handler.md#extensionidentitytree): Versioned deterministic directory-tree fingerprint over the module roots.

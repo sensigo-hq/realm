@@ -66,6 +66,7 @@ import type {
 import {
   collectSignals,
   computeExtensionIdentity,
+  realOrSelf,
   errorExtensionIdentityEntry,
   sha256HexOf,
 } from './extension-identity.js';
@@ -475,9 +476,13 @@ export async function loadProjectExtensions(
   // #828 unit 1 (correction 1): the code's hashes are taken just before each first import, through
   // one load of the per-process map: a module's own file and its folder's sweep before its import;
   // an import that throws drops what this load read in its folder, so the retry reads it again.
+  // #828 PR B: the project's folder, realpath(trust_root ?? projectDir), where the lockfile's walk
+  // starts (fail-soft: the path as given when it cannot be resolved). With neither, no lockfile.
+  const projectRoot = definition.trust_root ?? opts?.projectDir;
   const hashes = beginCodeHashLoad({
     ...(definition.trust_root !== undefined ? { trustRoot: definition.trust_root } : {}),
     readSignals: collectSignals,
+    ...(projectRoot !== undefined ? { projectFolder: realOrSelf(resolve(projectRoot)) } : {}),
   });
   const importTracked: ImportModule = async (resolvedPath, label) => {
     hashes.beforeImport(resolvedPath);
@@ -566,6 +571,7 @@ export async function loadProjectExtensions(
           entryHash: (resolvedPath) => hashes.entryHash(resolvedPath),
           tree: (roots) => hashes.tree(roots),
           signals: () => hashes.signals(),
+          lockfile: () => hashes.lockfile(),
         },
         ...(manifestCtx !== undefined
           ? {

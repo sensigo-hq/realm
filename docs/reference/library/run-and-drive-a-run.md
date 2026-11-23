@@ -2931,6 +2931,7 @@ Names this job reaches whose entry is on another page.
 - [`ExecutionMode`](define-and-load-a-workflow.md#executionmode): The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer` (`StepDefinition.execution`).
 - [`ExpireGateDelta`](implement-a-store.md#expiregatedelta): Carries out a gate's frozen timeout disposition once the gate has expired unanswered.
 - [`ExtensionIdentityEntry`](write-a-handler.md#extensionidentityentry): One point-in-time identity of the extension code executing a run.
+- [`ExtensionIdentityLockfile`](write-a-handler.md#extensionidentitylockfile): The project's lockfile, as an identity entry records it: its files and a sha256 over them, none found, or unreadable.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.
 - [`ExtensionIdentitySignals`](write-a-handler.md#extensionidentitysignals): Labeled advisory signals — each independently fail-soft; never part of the comparison.
 - [`ExtensionIdentityTree`](write-a-handler.md#extensionidentitytree): Versioned deterministic directory-tree fingerprint over the module roots.

@@ -299,7 +299,8 @@ describe('#828 correction 1 — the words', () => {
       // The two moments: checks 3 and 6 above (a module's own file), rev 3.1's check 2 (a sweep).
       "A process takes each file's hash at one of two moments: a module's own file just before that module first loads; any other file when a sweep of its folder first finds it, just before a module of that folder first loads.",
       // As loaded: checks 1 and 2 above, rev 3.1's checks 1 and 2.
-      'It keeps that hash, so a process that keeps running after a file changes records the file as it loaded it, with three exceptions:',
+      // #828 PR B: "It keeps that hash" became "It keeps each file's hash" (its Words).
+      "It keeps each file's hash, so a process that keeps running after a file changes records the file as it loaded it, with three exceptions:",
       // Exception 1: plans/issue-828/LEFTOVERS.md (a file first loaded later; a nice to have).
       '- A file first loaded later, through a module that loads later, keeps its first hash.',
       // Exception 2: LEFTOVERS.md (audit S1).
