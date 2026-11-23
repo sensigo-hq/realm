@@ -27,11 +27,12 @@
 //   lockfile read first. A failed import never drops it, even when its folder's sweep lists the file.
 //
 // This module loads no code: no dynamic import, no module-require creation. It imports only `node:`
-// modules and `@sensigo/realm` (types). A structural test in the CLI holds it to that.
+// modules and `@sensigo/realm` (types, and `realmHomePath`, realm's one asker for the home folder). A
+// structural test in the CLI holds it to that.
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
+import { realmHomePath } from '@sensigo/realm';
 import type { ExtensionIdentityLockfile, ExtensionIdentitySignals } from '@sensigo/realm';
 
 /** The one sweep-rule version this module can compute. Comparison ALWAYS recomputes under
@@ -232,6 +233,18 @@ function realOrSelf(path: string): string {
 }
 
 /**
+ * The user's home folder (a real path), from realm's one place that asks the system for it (the folder
+ * above `~/.realm`); `undefined` when there is none to use, and then the walk has no home stop.
+ */
+function userHome(): string | undefined {
+  try {
+    return realOrSelf(dirname(realmHomePath()));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The project's lockfiles (#828 PR B, rev 3.1 item 4): from `projectFolder` (a real path) up, the
  * first folder holding any of {@link LOCKFILE_NAMES}, every one present taken, and
  * `package-lock.json` left out beside `npm-shrinkwrap.json`, as npm ignores it. The walk passes a
@@ -240,7 +253,7 @@ function realOrSelf(path: string): string {
  * the project's folder is the home folder. `undefined`: none found.
  */
 function locateLockfiles(projectFolder: string): string[] | undefined {
-  const home = realOrSelf(homedir());
+  const home = userHome();
   let folder = projectFolder;
   for (;;) {
     if (folder === home && folder !== projectFolder) return undefined;
