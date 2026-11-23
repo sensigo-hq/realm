@@ -19,7 +19,8 @@
  *   skipped only between parts, never inside a piece (the owner's yes, 2026-10-18).
  * - `stitched_out_of_order`: the same, with the parts in another order.
  * - `not_found`: otherwise; `nearest` is the longest piece of the quote found in the source, when it
- *   covers at least one whole word.
+ *   covers at least one whole word. A quote placed in order only by joining text across a blank line
+ *   inside a sentence carries `cause` and `join_at` instead (#845, Q-C).
  * (`unquoted` is the handler's, for a candidate with no quote and no value; this never returns it.)
  *
  * A quote that ends a sentence where the source's sentence goes on is marked `cut_short` (L2). Every
@@ -71,6 +72,12 @@ export interface QuoteCheck {
   readonly cut_short?: true;
   /** L2: the source offset of each such end. Present with `cut_short`. */
   readonly cut_short_at?: readonly number[];
+  /** #845 (Q-C): on a `not_found` quote refused only for joining text across a blank line inside a
+   *  sentence; each part, quoted on its own, may still be found. Absent otherwise. */
+  readonly cause?: 'blank_line_join';
+  /** #845 (Q-C): the QUOTE's offsets where each refused join sits (where the piece after the join
+   *  begins), in quote order. Present with `cause`. */
+  readonly join_at?: readonly number[];
 }
 
 /** The shortest part a stitch may rest on, in canonical characters (Eve's floor). */
@@ -1238,44 +1245,73 @@ function listMarkBack(source: string, at: number): number {
   return isListMark(mark.c) ? mark.at : -1;
 }
 
-/** How the line break at `lineBreak` counts as a line start: `free` when the line before it is blank,
- *  or ends (past spaces, `\r` and closing marks) with `;`, `:` or `|` (a table row's end);
- *  `sentence` when it ends with `.` `!` `?` under L1's test (read 1's capital condition then
- *  applies); `undefined` when it does not count. What the new line opens with never exempts it. */
-function lineStart(source: string, lineBreak: number): 'free' | 'sentence' | undefined {
-  // #845 (R-C2, R-A2): read back by code point, past invisible characters
-  let p = stepBack(source, lineBreak);
-  while (isBlank(p.c) || p.c === '\r') p = stepBack(source, p.at);
-  if (p.c === undefined || isLineBreak(p.c)) return 'free';
+/** How a line counts as a line start, by its kind (`lineStart`). */
+type LineStart = 'free' | 'sentence' | 'blank';
+
+/** How a line ends, read back from `p`, its last character past spaces and invisible characters:
+ *  `clause` with `;`, `:` or `|` (a table row's end), `sentence` with `.` `!` `?` under L1's test,
+ *  `undefined` with anything else. Closing marks before the end are walked past. */
+function lineEnding(source: string, p: Step): 'clause' | 'sentence' | undefined {
   while (isClosingMark(p.c)) p = stepBack(source, p.at);
   const c = p.c;
-  if (c === ';' || c === ':' || c === '|') return 'free';
+  if (c === ';' || c === ':' || c === '|') return 'clause';
   if ((c === '.' && !endsAbbreviation(source, p.at)) || c === '!' || c === '?') return 'sentence';
   return undefined;
 }
 
-/** Reads 2 and 3: past blanks, `at` is the source's start or a line start that counts. */
-function atCountedLineStart(source: string, at: number): boolean {
+/** How the line break at `lineBreak` counts as a line start: `free` when the line before it ends
+ *  (past spaces, `\r` and closing marks) with `;`, `:` or `|` (a table row's end); `sentence` when it
+ *  ends with `.` `!` `?` under L1's test (read 1's capital condition then applies); `undefined` when it
+ *  does not count. What the new line opens with never exempts it.
+ *  #845 (B3): when the line before is blank (it holds only blanks and invisible characters), the walk
+ *  passes every blank line to the last line holding anything else. After a line that ends a sentence,
+ *  a clause or a table row, or at the text's start, the blank line changes nothing (`free`); after a
+ *  line that ends none of those, it is `blank`: the next piece begins as a sentence does after a full
+ *  stop, and a clause number or a list mark counts only before such a beginning. With `strict` false
+ *  — rule 1 left out, for a held-back candidate (Q-C) — a blank line counts `free`. */
+function lineStart(source: string, lineBreak: number, strict: boolean): LineStart | undefined {
+  // #845 (R-C2, R-A2): read back by code point, past invisible characters
+  let p = stepBack(source, lineBreak);
+  while (isBlank(p.c) || p.c === '\r') p = stepBack(source, p.at);
+  if (p.c === undefined) return 'free';
+  if (isLineBreak(p.c)) {
+    if (!strict) return 'free';
+    while (isBlank(p.c) || isLineBreak(p.c)) p = stepBack(source, p.at);
+    return p.c === undefined || lineEnding(source, p) !== undefined ? 'free' : 'blank';
+  }
+  const ending = lineEnding(source, p);
+  return ending === 'clause' ? 'free' : ending;
+}
+
+/** Reads 2 and 3: past blanks, how `at` sits at the source's start (`free`) or at a line start that
+ *  counts (its kind); `undefined` when it does not. */
+function countedLineStart(source: string, at: number, strict: boolean): LineStart | undefined {
   const p = stepBack(source, blanksBack(source, at));
-  if (p.c === undefined) return true;
-  return isLineBreak(p.c) && lineStart(source, p.at) !== undefined;
+  if (p.c === undefined) return 'free';
+  return isLineBreak(p.c) ? lineStart(source, p.at, strict) : undefined;
 }
 
 /** Read 1's accepted character before `at`, past spaces, tabs and closing marks: the source's start;
  *  `;`; a `:` not between two digits; a line break that counts; a `.` `!` `?` that ends a sentence
  *  (L1's test for `.`) only when `opening` (the part, or its opening mark, begins with a capital
  *  letter or an opening mark). At a line break that counts only because the line before ends a
- *  sentence, the same capital condition holds, or `numbered` (the part opens with a clause number
- *  and a capital). */
-function acceptedBefore(source: string, at: number, opening: boolean, numbered: boolean): boolean {
+ *  sentence, or (#845, B3) after a blank line under a line that ends nothing, the same capital
+ *  condition holds, or `numbered` (the part opens with a clause number and a capital). */
+function acceptedBefore(
+  source: string,
+  at: number,
+  opening: boolean,
+  numbered: boolean,
+  strict: boolean,
+): boolean {
   // #845 (R-C2, R-A2): read back by code point, past invisible characters
   let p = stepBack(source, blanksBack(source, at));
   while (isClosingMark(p.c)) p = stepBack(source, p.at);
   const c = p.c;
   if (c === undefined) return true;
   if (isLineBreak(c)) {
-    const kind = lineStart(source, p.at);
-    return kind === 'free' || (kind === 'sentence' && (opening || numbered));
+    const kind = lineStart(source, p.at, strict);
+    return kind === 'free' || (kind !== undefined && (opening || numbered));
   }
   if (c === ';') return true;
   if (c === ':') {
@@ -1297,9 +1333,11 @@ function acceptedBefore(source: string, at: number, opening: boolean, numbered: 
  *    spaces, sitting at a line start that counts — and the part, or its opening mark, begins with a
  *    capital letter or an opening mark (never `4.5 per cent`).
  * 3. A list mark, then spaces, then an optional opening mark and spaces, right before the part,
- *    sitting at a line start that counts.
+ *    sitting at a line start that counts — after a blank line under a line that ends nothing (#845,
+ *    B3), only before a capital letter or an opening mark.
+ * `strict` false leaves rule 1 (B3) out: the test of a held-back candidate (Q-C).
  */
-function partStartHolds(source: string, start: number): boolean {
+function partStartHolds(source: string, start: number, strict: boolean): boolean {
   // #845 (R-C2, R-A2): every read by code point, past invisible characters
   const first = blanksBack(source, start);
   const own = stepOn(source, start).c;
@@ -1309,58 +1347,86 @@ function partStartHolds(source: string, start: number): boolean {
   const openingMark = stepBack(source, first);
   const beforeMark = isOpeningMark(openingMark.c) ? blanksBack(source, openingMark.at) : -1;
   // Read 1.
-  if (acceptedBefore(source, first, opening, numbered)) return true;
-  if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered)) return true;
+  if (acceptedBefore(source, first, opening, numbered, strict)) return true;
+  if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered, strict)) return true;
   // Reads 2 and 3, the label ending right before the part, or before its opening mark.
   for (const end of beforeMark >= 0 ? [first, beforeMark] : [first]) {
     const after = end === first ? own : openingMark.c;
     if (isSentenceOpening(after)) {
       const label = clauseNumberBack(source, end);
-      if (label >= 0 && atCountedLineStart(source, label)) return true;
+      if (label >= 0 && countedLineStart(source, label, strict) !== undefined) return true;
     }
     const mark = listMarkBack(source, end);
-    if (mark >= 0 && atCountedLineStart(source, mark)) return true;
+    if (mark >= 0) {
+      const kind = countedLineStart(source, mark, strict);
+      if (kind !== undefined && (kind !== 'blank' || isSentenceOpening(after))) return true;
+    }
   }
   return false;
+}
+
+/** #845 (Q-C): how an occurrence of a part's first piece may start the part after a skip:
+ *  `accepted`; `held` back, when every rule accepts it but rule 1 (B3, a blank line inside a
+ *  sentence); `refused`. */
+type StartHold = 'accepted' | 'held' | 'refused';
+
+/** A placement of every piece: its parts, and the quote offset of each piece placed only at a
+ *  held-back candidate (`segments[k].start`), in quote order. */
+interface Placement {
+  readonly parts: Part[];
+  readonly joins: readonly number[];
 }
 
 /** Places the pieces as parts: each part's first piece at the occurrence (at or after `after` when
  *  `inOrder`) that joins the most pieces after it, the earliest of those. Every part after the first
  *  follows a skip, so an occurrence of its first piece is a candidate only where `startHolds` (the
  *  canonical offset) says the document starts a sentence, a clause or a line there (correction 2).
- *  `undefined` when a piece is found nowhere it may be. */
+ *  #845 (Q-C): with `heldBack`, a held-back occurrence is a candidate too, compared with the other
+ *  held-back ones as above, but an accepted candidate always wins over it, and it never ends the
+ *  search for its piece early; it is used only when its piece has no accepted candidate. The same
+ *  searches find both kinds. `undefined` when a piece is found nowhere it may be. */
 function placeParts(
   budget: Budget,
   source: Bare,
   segments: readonly Segment[],
   inOrder: boolean,
-  startHolds: (at: number) => boolean,
-): Part[] | undefined {
+  startHolds: (at: number) => StartHold,
+  heldBack: boolean,
+): Placement | undefined {
   const hay = source.text;
   const parts: Part[] = [];
+  const joins: number[] = [];
   let after = 0;
   for (let k = 0; k < segments.length;) {
     const piece = segments[k]!.canonical.text;
     let best: Part | undefined;
+    let held: Part | undefined;
     for (let at = budget.indexOf(hay, piece, inOrder ? after : 0); at >= 0;) {
       if (
         wordEdgesHold(hay, at, piece) &&
         numberEdgesHold(hay, at, piece) &&
-        marksHold(source, at, segments[k]!.marks) &&
-        (k === 0 || startHolds(at))
+        marksHold(source, at, segments[k]!.marks)
       ) {
-        const part = extend(budget, source, segments, k, at);
-        if (best === undefined || part.last > best.last) best = part;
-        if (part.last === segments.length - 1) break;
+        const hold = k === 0 ? 'accepted' : startHolds(at);
+        if (hold === 'accepted') {
+          const part = extend(budget, source, segments, k, at);
+          if (best === undefined || part.last > best.last) best = part;
+          if (part.last === segments.length - 1) break;
+        } else if (hold === 'held' && heldBack) {
+          const part = extend(budget, source, segments, k, at);
+          if (held === undefined || part.last > held.last) held = part;
+        }
       }
       at = budget.indexOf(hay, piece, at + 1);
     }
-    if (best === undefined) return undefined;
-    parts.push(best);
-    after = best.end;
-    k = best.last + 1;
+    const chosen = best ?? held;
+    if (chosen === undefined) return undefined;
+    if (best === undefined) joins.push(segments[k]!.start);
+    parts.push(chosen);
+    after = chosen.end;
+    k = chosen.last + 1;
   }
-  return parts;
+  return { parts, joins };
 }
 
 // ─── The tiles, for `nearest` only ──────────────────────────────────────────────────────────────
@@ -1651,13 +1717,23 @@ function ladder(
   }
 
   if (segments.length > 1) {
-    const startHolds = (at: number): boolean => partStartHolds(source, canonical.from[at]!);
-    const inOrder = placeParts(budget, canonical, segments, true, startHolds);
+    const startHolds = (at: number): StartHold => {
+      const raw = canonical.from[at]!;
+      if (partStartHolds(source, raw, true)) return 'accepted';
+      return partStartHolds(source, raw, false) ? 'held' : 'refused';
+    };
+    const long = (ps: readonly Part[]): boolean => ps.every((p) => p.end - p.at >= minPartChars);
+    // #845 (Q-C): only the in-order placement takes held-back candidates. When it completes by one,
+    // every part long enough, rule 1 alone refused the quote: say why and where, and stop there.
+    const inOrder = placeParts(budget, canonical, segments, true, startHolds, true);
+    if (inOrder !== undefined && inOrder.joins.length > 0 && long(inOrder.parts)) {
+      return { ...notFound, cause: 'blank_line_join', join_at: inOrder.joins };
+    }
     const parts =
-      inOrder !== undefined && inOrder.every((p) => p.end - p.at >= minPartChars)
-        ? inOrder
-        : placeParts(budget, canonical, segments, false, startHolds);
-    if (parts !== undefined && parts.every((p) => p.end - p.at >= minPartChars)) {
+      inOrder !== undefined && inOrder.joins.length === 0 && long(inOrder.parts)
+        ? inOrder.parts
+        : placeParts(budget, canonical, segments, false, startHolds, false)?.parts;
+    if (parts !== undefined && long(parts)) {
       const ordered = parts.every((p, i) => i === 0 || p.at >= parts[i - 1]!.end);
       const spans = parts.map((p) => {
         const first = segments[p.first]!;

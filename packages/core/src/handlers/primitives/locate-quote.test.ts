@@ -1598,7 +1598,20 @@ describe('locateQuote — correction 3, 01: the start rule, rev 3 (labels, accep
       'not_found',
     ],
     // a line break, read 1
-    ['line break: after a blank line, onto a lowercase word', '\n\n', LOWER, 'stitched'],
+    // #845 1b-i (B3) re-pin: a blank line under a line that ends nothing is no line start before a
+    // lowercase word (main: `stitched`); under a line that ends a sentence it changes nothing.
+    [
+      'line break: after a blank line under a line that ends nothing, onto a lowercase word',
+      '\n\n',
+      LOWER,
+      'not_found',
+    ],
+    [
+      'line break, twin: after a blank line under a line that ends a sentence, onto a lowercase word',
+      '.\n\n',
+      LOWER,
+      'stitched',
+    ],
     ['line break: after a line ending `.`, onto a capital', '.\n', CAPITAL, 'stitched'],
     ['line break, twin: after a line ending `.`, onto a lowercase word', '.\n', LOWER, 'not_found'],
     ['line break: after a line ending `!`, onto a capital', '!\n', CAPITAL, 'stitched'],

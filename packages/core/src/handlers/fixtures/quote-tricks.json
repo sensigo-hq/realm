@@ -1718,6 +1718,15 @@
         "doc": "The Landlord shall insure the Building for its cost in the U.S. Capital rules apply to the Tenant at all times."
       },
       "expect": "not_found"
+    },
+    {
+      "group": "follow-up",
+      "id": "blank-line-mid-sentence",
+      "quote": "The Landlord shall insure the Building … not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "doc": "The Landlord shall insure the Building for its full reinstatement cost. The Tenant shall\n\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building."
+      },
+      "expect": "not_found"
     }
   ],
   "T2": [
@@ -1983,17 +1992,6 @@
       },
       "expect": "stitched",
       "why": "an abbreviation the check does not know, before a capitalised word: a skip may land there",
-      "cut_short": false
-    },
-    {
-      "group": "follow-up",
-      "id": "blank-line-mid-sentence",
-      "quote": "The Landlord shall insure the Building … not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
-      "source": {
-        "doc": "The Landlord shall insure the Building for its full reinstatement cost. The Tenant shall\n\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building."
-      },
-      "expect": "stitched",
-      "why": "a blank line inside a sentence counts as a line start, as at a PDF page break",
       "cut_short": false
     },
     {

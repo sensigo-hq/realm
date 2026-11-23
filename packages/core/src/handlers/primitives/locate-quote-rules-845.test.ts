@@ -4,7 +4,7 @@
 // a number), check 6 (the sets, read in the Basic Multilingual Plane) and check 7 (the spacing
 // accent). Unit 1a-ii adds checks 3, 4 and 5 and the sets' reads outside the BMP (check 6's other
 // half) here; check 8 is in locate-quote.test.ts. Every input is written as code points.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
@@ -1244,4 +1244,330 @@ describe('#845 1a-ii correction 1, check 2 (GROUNDING, not acceptance): the read
     //     after 30 of them); (2) prints each case whose result moved, with dfda322b's beside it.
     expect(moved).toEqual([]);
   }, 120_000);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 unit 1b-i (`prompts/fix-845-1b-i-lines-and-joins.md`): line starts, list items, and the
+// blank-line join the quote check refuses (rules 1–7, checks 1–9).
+
+/** The quote check's result, with its refusal's fields when it has them. */
+const lq = (quote: string, source: string, minPartChars?: number) => {
+  releaseQuoteCache();
+  return locateQuote(quote, source, minPartChars === undefined ? undefined : { minPartChars });
+};
+const SHALL_F = 'The Landlord shall insure the Building';
+const SHALL_REST =
+  'not be responsible for repairs to the structure, roof, foundations or exterior of the Building';
+/** extra2's document: SHALL_F's sentence, `The Tenant shall`, then `between`, then `rest`. */
+const shallDoc = (between: string, rest = SHALL_REST) =>
+  `${SHALL_F} for its full reinstatement cost. The Tenant shall${between}${rest}.`;
+
+/** The re-check's extra2 rows 1–31 (Q-C), built as `extra2.mjs` builds them: [row, quote, doc]. */
+const QC_ROWS: ReadonlyArray<readonly [row: number, quote: string, doc: string]> = (() => {
+  const F = SHALL_F;
+  const rest = SHALL_REST;
+  const A = `${F} for its full reinstatement cost. The Tenant shall`;
+  const r2 = 'not be responsible for repairs to the structure';
+  const H = 'Lease of Office Premises — page 4';
+  const P = 'The Tenant shall pay the Rent on the usual';
+  const before = 'The Tenant shall pay the Rent on the usual quarter days\n\n';
+  const keep = 'keep the Premises in good and substantial repair';
+  const rows: Array<readonly [string, string]> = [
+    [`${F} … ${rest}`, shallDoc('\n\n')],
+    [`${F} … ${rest}`, shallDoc(`\n\n${H}\n\n`)],
+    [`${F} … ${rest}`, shallDoc('\n\n- ')],
+    [`${F} … - ${rest}`, shallDoc('\n\n- ')],
+    [`${F}. ${rest}`, shallDoc('\n\n')],
+    [
+      `As agreed, The Landlord shall insure the Building … ${r2}`,
+      `As agreed, The Landlord shall insure the Building\nat its own cost and the Tenant shall\n\n${r2}.`,
+    ],
+    [
+      `As agreed, The Landlord shall insure the Building … ${r2}`,
+      `As agreed, The Landlord shall insure the Building\nat its own cost.\n\nThe Tenant shall keep it clean and\n\n${r2}.`,
+    ],
+    [
+      `As agreed, The Landlord shall insure the Building … ${r2}`,
+      `As agreed, The Landlord shall insure the Building\n\nThe Tenant shall keep it clean and\n\n${r2}.`,
+    ],
+    [`${A} … ${r2}`, `${A}\n\n${r2}.`],
+    [`${A} … ${r2}`, `${A}\n\n${H}\n\n${r2}.`],
+    [`${A}\n${r2}`, `${A}\n\n${H}\n\n${r2}.`],
+    [`${A} … ${r2}`, `${A}\n${H}\n\n${r2}.`],
+    [`${A}\n${r2}`, `${A}\n${H}\n\n${r2}.`],
+    ...['2.', '12.', '2)', '6.2', 'b.', 'a)', '3.4.1'].map(
+      (l) => [`${P} … ${l} ${keep}`, `${before}${l} ${keep} at all times.`] as const,
+    ),
+    ...['b.', 'a)'].map(
+      (l) =>
+        [
+          `${P} … ${l} Keep the Premises in good and substantial repair`,
+          `${before}${l} Keep the Premises in good and substantial repair at all times.`,
+        ] as const,
+    ),
+    ...['b.', 'a)'].map(
+      (l) =>
+        [
+          `${P} … ${l} (the Premises) in good and substantial repair`,
+          `${before}${l} (the Premises) in good and substantial repair at all times.`,
+        ] as const,
+    ),
+    ...['+', '%', '\u{20ac}', '='].map(
+      (m) => [`${P} … ${m} ${keep}`, `${before}${m} ${keep} at all times.`] as const,
+    ),
+    [`${P} … ${keep}`, `${before}- ${keep} at all times.`],
+    [
+      `${F} … The Landlord shall insure the Premises against loss`,
+      `${F} for its full reinstatement cost.\n\n6. INSURANCE\n\n6.1 The Landlord shall insure the Premises against loss.`,
+    ],
+    [
+      `${F} … The Tenant shall pay the insurance rent`,
+      `${F} for its full reinstatement cost.\n\nINSURANCE\n\nThe Tenant shall pay the insurance rent.`,
+    ],
+  ];
+  return rows.map(([q, s], i) => [i + 1, q, s] as const);
+})();
+/** A quote's one join: the break it replaces (`…`, else a line break, else a stop and a space). */
+const breakOf = (quote: string): string => ['…', '\n', '. '].find((b) => quote.includes(b)) ?? '';
+/** Where a quote's one join sits: the first code unit after its break. */
+const joinOf = (quote: string): number => quote.indexOf(breakOf(quote)) + 1;
+/** The two parts of a quote with one join, each quoted alone (a stop before the join kept off). */
+const partsOf = (quote: string): string[] => {
+  const at = quote.indexOf(breakOf(quote));
+  return [quote.slice(0, at).trimEnd(), quote.slice(at + breakOf(quote).length).trimStart()];
+};
+const FOUND_STATES: readonly string[] = [
+  'exact',
+  'reformatted',
+  'stitched',
+  'stitched_out_of_order',
+];
+
+describe('#845 1b-i check 1: the refusal (Q-C) — `not_found` with `cause` and `join_at`, only when rule 1 alone refused the quote', () => {
+  it('extra2 rows 1–8 and 10–29 read `not_found` with `cause` and `join_at` at the refused join, each part quoted alone found; rows 9, 30 and 31 keep their states, with no field', () => {
+    const want = (row: number) =>
+      row === 9 ? 'reformatted' : row >= 30 ? 'stitched' : `not_found@${row}`;
+    const rows = QC_ROWS.map(([row, quote, doc]) => {
+      const c = lq(quote, doc);
+      const fields = 'cause' in c || 'join_at' in c;
+      const read =
+        c.state === 'not_found' && c.cause === 'blank_line_join'
+          ? JSON.stringify(c.join_at) === JSON.stringify([joinOf(quote)])
+            ? `not_found@${row}`
+            : `not_found join_at ${JSON.stringify(c.join_at)}`
+          : `${c.state}${fields ? ' with a field' : ''}`;
+      const alone =
+        row === 9 || row >= 30
+          ? []
+          : partsOf(quote).filter((p) => !FOUND_STATES.includes(lq(p, doc).state));
+      return { row, read, alone };
+    });
+    // (1) red when a refused row loses `cause`, its `join_at` is not the quote offset after its break,
+    //     a part alone is refused, or a kept row gains a field or moves; (2) prints each row's read
+    //     and the parts refused alone.
+    expect(rows).toEqual(QC_ROWS.map(([row]) => ({ row, read: want(row), alone: [] })));
+  });
+
+  it('the probes: a made-up third piece (Q1) and a part under the floor (R3) are ordinary `not_found`; two joins (Q2) give two offsets; no out-of-order placement after the refusal (Q3); an accepted candidate wins (R1); the out-of-order placement takes no held-back one (R2)', () => {
+    const F = SHALL_F;
+    const rest = SHALL_REST;
+    const q1 = `${F} … ${rest} … The Tenant shall pay a deposit of twenty-four thousand euro`;
+    const q2 = `${F} … not be responsible for repairs to the structure … keep the Premises insured at all times`;
+    const two = `${F} for its full reinstatement cost. The Tenant shall\n\nnot be responsible for repairs to the structure, and the Landlord shall\n\nkeep the Premises insured at all times.`;
+    const q3 = `${F} … not be responsible for repairs to the structure`;
+    const ooo = `Not be responsible for repairs to the structure is the rule. ${F} for its full reinstatement cost. The Tenant shall\n\nnot be responsible for repairs to the structure.`;
+    const r1 = `${F} … not be responsible for repairs; the roof is excluded from the lease`;
+    const d1 = `${F} for its cost. Not be responsible for repairs is the rule here. The Tenant shall\n\nnot be responsible for repairs; the roof is excluded from the lease.`;
+    const C = 'The Tenant shall keep the Premises in good and substantial repair';
+    const d2 = `${C} at all times. ${F} for its full reinstatement cost. The Tenant shall\n\n${rest}.`;
+    const read = (quote: string, doc: string) => {
+      const c = lq(quote, doc);
+      return {
+        state: c.state,
+        cause: c.cause ?? null,
+        join_at: c.join_at ?? null,
+        nearest: c.nearest ?? null,
+      };
+    };
+    // (1) red when the refusal is returned before every piece is tried (Q1), names one join only (Q2),
+    //     falls through to the out-of-order placement (Q3), prefers a held-back candidate of greater
+    //     `last` to an accepted one (R1), lets the out-of-order placement take a held-back candidate
+    //     (R2), or skips the floor on a held-back completion (R3); (2) prints each record.
+    expect({
+      Q1: read(q1, shallDoc('\n\n')),
+      Q2: read(q2, two),
+      Q3: read(q3, ooo),
+      R1: read(r1, d1).state,
+      R2: read(`${F} … ${rest} … ${C}`, d2),
+      R3: read(`${F} … not be liable`, shallDoc('\n\n', 'not be liable for repairs')),
+    }).toEqual({
+      Q1: { state: 'not_found', cause: null, join_at: null, nearest: { start: 90, end: 184 } },
+      Q2: {
+        state: 'not_found',
+        cause: 'blank_line_join',
+        join_at: [q2.indexOf('…') + 1, q2.lastIndexOf('…') + 1],
+        nearest: null,
+      },
+      Q3: {
+        state: 'not_found',
+        cause: 'blank_line_join',
+        join_at: [q3.indexOf('…') + 1],
+        nearest: null,
+      },
+      R1: 'stitched',
+      R2: { state: 'not_found', cause: null, join_at: null, nearest: { start: 170, end: 264 } },
+      R3: { state: 'not_found', cause: null, join_at: null, nearest: { start: 0, end: 38 } },
+    });
+  });
+});
+
+describe('#845 1b-i check 2: the refusal re-places nothing', () => {
+  it('extra2 rows 1–8: the substring searches are at most those for the same quote against the document with a `.` ending the line before the refused blank line (the same canonical text, read `stitched`), plus one', () => {
+    const searches = (quote: string, doc: string) => {
+      releaseQuoteCache();
+      const spies = (['includes', 'indexOf', 'startsWith'] as const).map((m) =>
+        vi.spyOn(String.prototype, m),
+      );
+      let state: string;
+      try {
+        state = locateQuote(quote, doc).state;
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+      }
+      return { state, n: spies.reduce((n, spy) => n + spy.mock.calls.length, 0) };
+    };
+    const rows = QC_ROWS.filter(([row]) => row <= 8).map(([row, quote, doc]) => {
+      const at = doc.lastIndexOf('\n\n');
+      const legal = `${doc.slice(0, at)}.${doc.slice(at)}`;
+      const refused = searches(quote, doc);
+      const control = searches(quote, legal);
+      return {
+        row,
+        sameCanonical: canonicalForm(doc) === canonicalForm(legal),
+        legal: control.state,
+        within: refused.n <= control.n + 1 ? 'within' : `${refused.n} > ${control.n} + 1`,
+      };
+    });
+    // (1) red when the refusal re-places the parts with the rule relaxed (about 2×), or falls through
+    //     to the out-of-order placement and the tiling (about 5×); (2) prints each row's counts.
+    expect(rows).toEqual(
+      QC_ROWS.filter(([row]) => row <= 8).map(([row]) => ({
+        row,
+        sameCanonical: true,
+        legal: 'stitched',
+        within: 'within',
+      })),
+    );
+  });
+});
+
+describe('#845 1b-i check 4: B3, a blank line inside a sentence', () => {
+  it('items3 rows 47–50; T1 across every blank-line form; a blank line after a `.`, a `;` or a table row keeps main’s start', () => {
+    const F = SHALL_F;
+    const rest = SHALL_REST;
+    const T1 = `${F} … ${rest}`;
+    const tail =
+      'not be responsible for repairs to the structure, roof, foundations or exterior of the Building';
+    const forms: Record<string, string> = {
+      'LF LF': '\n\n',
+      'CR LF CR LF': '\r\n\r\n',
+      'LF, spaces and a tab, LF': '\n  \t\n',
+      'LF, U+00A0, LF': '\n\u{a0}\n',
+      'LF, U+200B, LF': '\n\u{200b}\n',
+      'four LF': '\n\n\n\n',
+      'LF FF': '\n\u{c}',
+      'LF FF LF': '\n\u{c}\n',
+      'U+2029 U+2029': '\u{2029}\u{2029}',
+      'CR LF, spaces, CR LF': '\r\n   \r\n',
+    };
+    const cause = (quote: string, doc: string) => {
+      const c = lq(quote, doc);
+      return `${c.state}${c.cause === undefined ? '' : `+${c.cause}`}`;
+    };
+    const rows: Row[] = [
+      ['items3 47', cause(T1, shallDoc('\n\n')), 'not_found+blank_line_join'],
+      ['items3 48', cause(T1, shallDoc('\n\n- ')), 'not_found+blank_line_join'],
+      [
+        'items3 49',
+        cause(
+          `${F} … The Tenant shall pay the insurance rent`,
+          `${F} for its full reinstatement cost.\n\nINSURANCE\n\nThe Tenant shall pay the insurance rent at the end of each year.`,
+        ),
+        'stitched',
+      ],
+      [
+        'items3 50',
+        cause(
+          `${F} … The Landlord shall insure the Premises against loss`,
+          `${F} for its full reinstatement cost.\n\n6. INSURANCE\n\n6.1 The Landlord shall insure the Premises against loss.`,
+        ),
+        'stitched',
+      ],
+      ...Object.entries(forms).map(([name, between]): Row => [
+        `T1, ${name}`,
+        cause(T1, shallDoc(between)),
+        'not_found+blank_line_join',
+      ]),
+      [
+        'K1: a `;` line, a blank line, a lowercase line',
+        cause(`${F} … ${tail}`, `${F} for its cost; the Tenant shall pay;\n\n${tail}.`),
+        'stitched',
+      ],
+      [
+        'K2: a `.` line, a blank line, a lowercase line',
+        cause(`${F} … ${tail}`, `${F} for its full reinstatement cost.\n\n${tail}.`),
+        'stitched',
+      ],
+      [
+        'K3: a table row, a blank line, a lowercase line',
+        cause(`${F} … ${tail}`, `| ${F} for its cost | x |\n\n${tail}.`),
+        'stitched',
+      ],
+    ];
+    // (1) red when rule 1 is removed, the walk back stops after one line or reads only `\n\n`, or the
+    //     line before the blank line is read as ending nothing whatever it ends; (2) prints each
+    //     differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the conjunct controls stay `stitched`: a list mark with a capital item after such a blank line, skipped onto and quoted with its mark; an opening mark before a lowercase word', () => {
+    const A = 'The Tenant covenants with the Landlord as set out below';
+    const rows: Row[] = [
+      [
+        'a list mark, a capital item, the mark skipped',
+        lq(
+          `${A} … To pay the rent on the usual quarter days`,
+          `${A} in this clause\n\n- To pay the rent on the usual quarter days.`,
+        ).state,
+        'stitched',
+      ],
+      [
+        'a list mark, a capital item, the mark quoted',
+        lq(
+          `${A} … - To pay the rent on the usual quarter days`,
+          `${A} in this clause\n\n- To pay the rent on the usual quarter days.`,
+        ).state,
+        'stitched',
+      ],
+      [
+        'an opening mark before a capital word',
+        lq(
+          `${A} … \u{201c}The Premises\u{201d} means the whole of the Building`,
+          `${A} in this clause\n\n\u{201c}The Premises\u{201d} means the whole of the Building.`,
+        ).state,
+        'stitched',
+      ],
+      [
+        'an opening mark before a lowercase word',
+        lq(
+          `${A} … \u{201c}the Premises\u{201d} means the whole of the Building`,
+          `${A} in this clause\n\n\u{201c}the Premises\u{201d} means the whole of the Building.`,
+        ).state,
+        'stitched',
+      ],
+    ];
+    // (1) red when every list mark is refused after such a blank line, or the opening-mark allowance
+    //     is removed; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
 });

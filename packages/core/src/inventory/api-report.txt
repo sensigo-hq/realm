@@ -2861,6 +2861,8 @@ QuoteCheck · type · public
       readonly nearest?: QuoteSpan;
       readonly cut_short?: true;
       readonly cut_short_at?: readonly number[];
+      readonly cause?: 'blank_line_join';
+      readonly join_at?: readonly number[];
   }
 
 QuoteSpan · type · public
