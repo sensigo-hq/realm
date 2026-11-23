@@ -56,6 +56,7 @@ import {
   type PendingGate,
   type CallbackClaimRequest,
   type CallbackClaimResult,
+  type CallbackEnded,
   type CallbackFreezeResult,
   type CallbackItem,
   type CallbackMarkRequest,
@@ -67,7 +68,9 @@ import {
   callbackViewOf,
   checkCallbackRequest,
   claimCallback,
+  countWaitingCallbacks,
   dueCallbacks,
+  endOverdueCallbacks,
   freezeCallbackBody,
   markCallback,
   type CallbackKeyDecision,
@@ -419,11 +422,31 @@ export class InMemoryCallbackStore implements CallbackStore {
     return [...this.rows.values()].filter((row) => row.status === 'pending').length;
   }
 
+  async countWaiting(): Promise<number> {
+    return countWaitingCallbacks(
+      [...this.rows.values()],
+      (id) => this.runOf(id)?.finished === true,
+    );
+  }
+
   async due(limit: number): Promise<CallbackItem[]> {
     checkCallbackRequest({ kind: 'due', limit });
     const at = takeRawReading(this.clock);
     const finished = (runId: string): boolean => this.runOf(runId)?.finished === true;
     return dueCallbacks([...this.rows.values()], finished, at, limit);
+  }
+
+  async endOverdue(limit: number): Promise<CallbackEnded[]> {
+    checkCallbackRequest({ kind: 'due', limit });
+    const at = takeRawReading(this.clock);
+    const { ended, writes } = endOverdueCallbacks(
+      [...this.rows.values()],
+      (id) => this.runOf(id),
+      at,
+      limit,
+    );
+    for (const row of writes) this.rows.set(row.run_id, row);
+    return ended;
   }
 
   async claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult> {

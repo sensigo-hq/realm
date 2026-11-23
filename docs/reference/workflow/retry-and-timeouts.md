@@ -144,7 +144,7 @@ Each request has one time limit, for all its tries, waits and re-sends: `total_t
 
 Only the request that failed is sent again, with the conversation as it stood before it, so a tool the model already called never runs again.
 
-After the last try, the drive stops and the run stays open, as after any failed model call. The drive-failure entry keeps each failed try (`model_attempts`), and `realm run inspect` lists them as `Failed tries:`. When the step succeeds after a failed try, its evidence entry keeps them.
+After the last try, the drive stops and the run stays open, as after any failed model call, unless the step declares [`on_model_failure: fail`](agent-step-controls.md#on_model_failure), which fails the step (`STEP_RETRY_EXHAUSTED`) and keeps the tries on its error entry. The drive-failure entry keeps each failed try (`model_attempts`), and `realm run inspect` lists them as `Failed tries:`. When the step succeeds after a failed try, its evidence entry keeps them.
 
 `retry` never asks the model again after it gave an answer that was refused; that is `--schema-retries`.
 

@@ -486,10 +486,12 @@ export interface ExecuteChainOptions {
    * `STEP_RETRY_EXHAUSTED` when the step's `retry` used up its tries (`stop_reason: 'attempts'`) or
    * its time (`'total_timeout'`), otherwise `MODEL_REQUEST_FAILED`. Five pairs of `kind` and
    * `stop_reason` are admitted: `transient` with `attempts`, `total_timeout`, `non_retryable` (the
-   * step's `retry` does not try it again) or `no_retry_policy` (no `retry`, and the model client's
-   * own tries ran out); `permanent` with `non_retryable`. Any other pair, a value outside its type,
-   * a step that is not an agent step or a non-empty `input` is refused before anything is read or
-   * written. The entry's `diagnostics.failure_kind` is `kind`, which a later step reads as
+   * step's `retry` does not try it again) or `no_retry_policy` (the step has no `retry`);
+   * `permanent` with `non_retryable`. Any other pair, a value outside its type, a step that is not
+   * an agent step or a non-empty `input` is refused before anything is read or written. So are (gap
+   * 2, unit (ii-b2)) a step that does not declare `on_model_failure: fail`, a `stop_reason` of
+   * `attempts` or `total_timeout` for a step that declares no `retry`, and `no_retry_policy` for a
+   * step that declares one. The entry's `diagnostics.failure_kind` is `kind`, which a later step reads as
    * `$settlement.<step>.failure_kind`.
    */
   modelFailure?: {

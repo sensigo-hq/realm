@@ -10,6 +10,14 @@
 export { openRealmHome, type OpenRealmHomeOptions, type RealmHome } from './open-realm-home.js';
 // #729 CW-5a: the folder a home's claim leases are kept in, for the line that names it.
 export { claimLeasesFolder } from './claim-lease.js';
+// #625 PR-2b, named keys: the lock a `realm serve key` command holds while it changes the key file.
+export {
+  takeServeKeysLock,
+  SERVE_KEYS_LOCK_FILE,
+  type ServeKeysLock,
+  type ServeKeysLockResult,
+  type ServeKeysLockWait,
+} from './serve-keys-lock.js';
 // Callback B1a: what seals a home's signing keys, given to `openRealmHome` as `sealer`.
 export type { CallbackKeySealer } from './callback-keys.js';
 // Callback K1: the AES-256-GCM sealer under the master key, and the master key's fingerprint.

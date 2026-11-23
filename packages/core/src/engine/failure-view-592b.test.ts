@@ -491,7 +491,16 @@ describe('gap 2 (ii-b1) — the composer reads the failure’s kind (check 5)', 
       id: 'fv-g2iib1',
       name: 'g2iib1',
       version: 1,
-      steps: { classify: { description: 'Classify.', execution: 'agent', depends_on: [] } },
+      // Gap 2, unit (ii-b2): the member needs the key, and `attempts` a declared `retry`.
+      steps: {
+        classify: {
+          description: 'Classify.',
+          execution: 'agent',
+          depends_on: [],
+          on_model_failure: 'fail',
+          retry: { max_attempts: 3 },
+        },
+      },
     } as WorkflowDefinition;
     const store = new InMemoryStore();
     const { record } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
