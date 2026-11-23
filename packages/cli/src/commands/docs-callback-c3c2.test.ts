@@ -6,7 +6,7 @@
 //   1. every paragraph and row this unit added, word for word (spaces folded, as a table's padding moves),
 //      each with the cell or record that executes what it says;
 //   2. the log rows are real: the door's `webhook: …callback…` rows against their log calls, both ways;
-//      the ten pass rows against the lines `makeCallbackPass` says when each is triggered, through the
+//      the twelve pass rows against the lines `makeCallbackPass` says when each is triggered, through the
 //      page's own rows; `pass failed` through `makePollRunner`;
 //   3. the false sentences are gone from docs/ and the CHANGELOG;
 //   4. the laws: the Log lines table's cell count, the markers, the anchors the new links name;
@@ -103,11 +103,13 @@ function patternOf(template: string): RegExp {
   }
   return new RegExp(`^${out}$`);
 }
-/** A `listen: callbacks: <workflow> …` row the pass says: not a start line (those are C2c's, in
+/** C3d-A: the sweep's count line, whose Line cell also names the singular (`callback`, `<n>`). */
+const MORE = 'listen: callbacks: and <n> more callbacks ended the same way';
+/** A `listen: callbacks: <workflow> …` row the pass says, or the sweep's count line: not a start line (those are C2c's, in
  * `lib/callback/start-lines.ts`, pinned by docs-callback-c2c), which the page marks "At startup". */
 const isPassRow = (r: Row): boolean =>
-  r.spans.length === 1 &&
-  r.spans[0]!.startsWith('listen: callbacks: <workflow> ') &&
+  ((r.spans.length === 1 && r.spans[0]!.startsWith('listen: callbacks: <workflow> ')) ||
+    r.spans[0] === MORE) &&
   !r.when.startsWith('At startup');
 /** The pass rows of the page: each one's level and line. */
 const passRows = (): Array<{ level: string; template: string }> =>
@@ -243,7 +245,11 @@ describe('C3c-2 — cell 1: the words, each held to its page', () => {
     '| `warn` | `listen: callbacks: <workflow> → <host>: attempt <n> failed (last answer <status or word>); it will try again` | Once for each run and each answer, in each `realm listen` process: the first time a try of a callback ends in that answer; the word is `redirect`, `refused_address`, `timeout` or `connection`. Added after version 0.50.0. |',
     '| `warn` | `listen: callbacks: <workflow> → <host>: the receiver answered 410, so it will not be tried again` | A receiver answered `410`. Added after version 0.50.0. |',
     '| `warn` | `listen: callbacks: <workflow> → <host>: not sent: its address is no longer allowed by this realm listen` | No entry of this `realm listen` allows the address any more. The callback is ended and is not sent, even if the entry is added back. Added after version 0.50.0. |',
-    '| `warn` | `listen: callbacks: <workflow> → <host>: stopped at attempt <n>: not delivered within its time limit` | A callback was given up: 3 days after its run ended, or 1 hour after its first try when the last answer was a `4xx` other than `408`, `425` or `429`. Added after version 0.50.0. |',
+    '| `warn` | `listen: callbacks: <workflow> → <host>: stopped at attempt <n>: not delivered within its time limit` | A callback was given up: 3 days after its run ended, or 1 hour after its first try when the last answer was a `4xx` other than `408`, `425` or `429`, or a callback that was due and ended by this pass. Added after version 0.50.0. |',
+    // C3d-A: the sweep's two lines. Pinned by: this file's cell 2d (each against the code), and
+    // delivery-pass-c3d (the three states a never-sent row comes from; 25 and 11 rows ended).
+    '| `warn` | `listen: callbacks: <workflow> → <host>: never sent: its time limit passed before a try could be made` | A callback that no `realm listen` sent within 3 days of its run ending: its workflow was not mounted by any, its key could not be read, or none was running. Added after version 0.50.0. |',
+    '| `warn` | `listen: callbacks: and <n> more callbacks ended the same way` (`callback` when `<n>` is 1) | More than 10 callbacks ended in one pass. Added after version 0.50.0. |',
     '| `warn` | `listen: callbacks: <workflow> is not mounted by this realm listen, so its callbacks wait` | Once for a workflow whose callbacks are due and which this `realm listen` has not mounted. Start a `realm listen` that mounts it: the callback is sent at its next pass. Added after version 0.50.0. |',
     '| `warn` | `listen: callbacks: <workflow> → <host>: no signing key this process can read (none \\| sealed with encryption key <fingerprint>), so its callbacks wait` | Once for each workflow, host and key state, when the key cannot be read. For `none`, make the key with `realm callback key <workflow folder> --host <host>`: a `realm listen` that started with the master key uses it at the next pass, and any other must be restarted. For `sealed with …`, start `realm listen` with that encryption key, or make the key again with `--replace`. Added after version 0.50.0. |',
     '| `warn` | `listen: callbacks: <workflow> → <host>: could not build the body for run <run id>; it will try again` | Once for each run. Added after version 0.50.0. |',
@@ -253,7 +259,7 @@ describe('C3c-2 — cell 1: the words, each held to its page', () => {
     '| `warn` | `webhook: callback not enabled {"path","workflow"}` | A request named a callback address and the workflow or this `realm listen` takes none. Added after version 0.50.0. |',
     '| `warn` | `webhook: callback refused (<reason>) {"path","workflow"[,"host"]}` | A request\'s callback address was refused with `400`; for `no_key`, the first time for each workflow, host and key state in this process, the message says what to do: the `realm callback key` command (for a key sealed under another master key, start `realm listen` with that key or make the key again with `--replace`). Added after version 0.50.0. |',
     '| `info` | `webhook: callback registered {"path","workflow","host"}` | A new run took a callback address. Added after version 0.50.0. |',
-    '| `warn` | `webhook: callback backlog full {"path","workflow","host","pending"}` | The `503`: 1,000 callbacks are waiting. Added after version 0.50.0. |',
+    '| `warn` | `webhook: callback backlog full {"path","workflow","host","waiting"}` | The `503`: 1,000 callbacks are waiting. Added after version 0.50.0. |',
     '| `error` | `webhook: callback key could not be read {"path","workflow","host","error"}`, `webhook: callback backlog could not be counted {"path","workflow","host","error"}` | The store failed; the reply is `500`. Added after version 0.50.0. |',
     '| `warn` | `webhook: the callback of a repeated event could not be read {…,"run_id","error"}` | A repeat\'s reply could not say `ignored_duplicate` or `none`. Added after version 0.50.0. |',
     '| `error` | `webhook: failed to remove the callback of a run that did not start {"run_id","error"}` | A spawn failed and the run\'s callback row could not be removed. Added after version 0.50.0. |',
@@ -451,7 +457,7 @@ describe('C3c-2 — cell 2: the log rows are real', { timeout: 60_000 }, () => {
     });
   });
 
-  it('2d. the ten pass rows, each from the line its trigger makes the pass say', async () => {
+  it('2d. the twelve pass rows, each from the line its trigger makes the pass say', async () => {
     const said: Record<string, string[]> = {};
     // delivered: a 2xx.
     {
@@ -493,7 +499,7 @@ describe('C3c-2 — cell 2: the log rows are real', { timeout: 60_000 }, () => {
       await w.pass(port, { lists: privateList('http://127.0.0.1:1') })(live);
       said['notAllowed'] = w.rows();
     }
-    // stopped: 3 days after the run finished.
+    // C3d-A: never sent: 3 days after the run finished, no try made (the sweep ends it).
     {
       const w = await world();
       const port = await receiver(200);
@@ -501,7 +507,27 @@ describe('C3c-2 — cell 2: the log rows are real', { timeout: 60_000 }, () => {
       await w.callbacks.keys.make(W, host, KEY);
       await w.clock.advance(3 * DAY + 1);
       await w.pass(port)(live);
+      said['neverSent'] = w.rows();
+    }
+    // stopped: one try made (503), then 3 days after the run finished (the sweep ends it).
+    {
+      const w = await world();
+      const port = await receiver(503);
+      const { host } = await w.run(port);
+      await w.callbacks.keys.make(W, host, KEY);
+      await w.pass(port)(live);
+      await w.clock.advance(3 * DAY + 1);
+      await w.pass(port)(live);
       said['stopped'] = w.rows();
+    }
+    // C3d-A: more than 10 ended in one pass: 10 lines, then the count (12 rows: "2 more callbacks").
+    {
+      const w = await world();
+      const port = await receiver(200);
+      for (let i = 0; i < 12; i += 1) await w.run(port);
+      await w.clock.advance(3 * DAY + 1);
+      await w.pass(port)(live);
+      said['more'] = w.rows();
     }
     // not mounted.
     {
@@ -574,11 +600,30 @@ describe('C3c-2 — cell 2: the log rows are real', { timeout: 60_000 }, () => {
           '<workflow> → <host>: not sent: its address is no longer allowed by this realm listen',
         ),
       ],
+      neverSent: [
+        row(
+          'warn',
+          '<workflow> → <host>: never sent: its time limit passed before a try could be made',
+        ),
+      ],
       stopped: [
+        row(
+          'warn',
+          '<workflow> → <host>: attempt <n> failed (last answer <status or word>); it will try again',
+        ),
         row(
           'warn',
           '<workflow> → <host>: stopped at attempt <n>: not delivered within its time limit',
         ),
+      ],
+      more: [
+        ...Array.from({ length: 10 }, () =>
+          row(
+            'warn',
+            '<workflow> → <host>: never sent: its time limit passed before a try could be made',
+          ),
+        ),
+        row('warn', 'and <n> more callbacks ended the same way'),
       ],
       unmounted: [
         row('warn', '<workflow> is not mounted by this realm listen, so its callbacks wait'),
@@ -728,7 +773,7 @@ describe('C3c-2 — cell 4: the laws', () => {
       read: flat(readAddress).includes(
         '#seeing-how-a-callback-stands); added after version 0.50.0); the `202` gives',
       ),
-    }).toEqual({ sending: 1, rows: 19, rowsMarked: 19, stop: 1, read: true });
+    }).toEqual({ sending: 1, rows: 21, rowsMarked: 21, stop: 1, read: true });
   });
 
   it('the links the new words name resolve: the guide has both anchors, and every link added here points at one', () => {
@@ -776,7 +821,7 @@ describe('C3c-2 — cell 5: the callers are the code’s', () => {
         'commands/callback-key.ts',
         /\bkeys\.(make|rotate|replace|delete|endPrevious|read)\(/,
       ),
-      'listen: countPending': has('commands/listen.ts', /callbacks\.countPending\(\)/),
+      'listen: countWaiting': has('commands/listen.ts', /callbacks\.countWaiting\(\)/),
       'listen: read (a repeated event)': has(
         'commands/listen.ts',
         /\(await callbacks\.read\(runId\)\) !== undefined \? 'ignored_duplicate'/,
@@ -791,9 +836,13 @@ describe('C3c-2 — cell 5: the callers are the code’s', () => {
         /callbacks\?\.deleteAllForRun\(run\.id\)/,
       ),
       'listen: the pass': has('commands/listen.ts', /makeCallbackPass\(\{/),
-      'pass: due, claim, freezeBody, mark': ['due', 'claim', 'freezeBody', 'mark'].every((m) =>
-        has('lib/callback/delivery-pass.ts', new RegExp(`callbacks\\.${m}\\(`)),
-      ),
+      'pass: endOverdue, due, claim, freezeBody, mark': [
+        'endOverdue',
+        'due',
+        'claim',
+        'freezeBody',
+        'mark',
+      ].every((m) => has('lib/callback/delivery-pass.ts', new RegExp(`callbacks\\.${m}\\(`))),
       'inspect: read':
         has('lib/callback/inspect-line.ts', /callbacks\.read\(/) &&
         has('commands/inspect.ts', /from '\.\.\/lib\/callback\/inspect-line\.js'/),
@@ -805,13 +854,13 @@ describe('C3c-2 — cell 5: the callers are the code’s', () => {
         has('commands/purge.ts', /store\.deleteAllForRun\(run\.id, dirEntries\)/),
     }).toEqual({
       'callback key: keys': true,
-      'listen: countPending': true,
+      'listen: countWaiting': true,
       'listen: read (a repeated event)': true,
       'listen: keys.read': true,
       'listen: keys.list': true,
       'listen: deleteAllForRun (a run that did not start)': true,
       'listen: the pass': true,
-      'pass: due, claim, freezeBody, mark': true,
+      'pass: endOverdue, due, claim, freezeBody, mark': true,
       'inspect: read': true,
       'read address: read': true,
       'purge: read (its hold)': true,
