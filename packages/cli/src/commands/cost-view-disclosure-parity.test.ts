@@ -1042,6 +1042,13 @@ const HOLDER_CLAIM_RECORD = {
       'not a holder-slice field and not printed on the claim line: a stale or unknown-age claim ' +
       'reaches an operator as a run-health finding (stale_claim / claim_unknown_age) computed from it',
   },
+  // Q1 (#592) f2: why a claim has no time limit.
+  deadline_absent: {
+    surface: 'waived',
+    reason:
+      'not a holder-slice field and not printed on the claim line: it reaches an operator on the ' +
+      "run-health finding's evidence and in realm run inspect's Run Health line",
+  },
   token: {
     surface: 'waived',
     reason:
@@ -1137,7 +1144,7 @@ describe('#625 PR-H — context 1b, the holder slice', () => {
     unreadableAccountOut = await inspectRun('run_ctx1', makeStore(run), workflowStore);
   });
 
-  it("only the three waivers the header names: the deadline (not printed), the token (one door) and the lease (the cost view does not show a claim's lease); the answer view's only waivers are admitted_by and admitted_by_absent", () => {
+  it("only the four waivers the header names: the deadline and why it is null (not printed), the token (one door) and the lease (the cost view does not show a claim's lease); the answer view's only waivers are admitted_by and admitted_by_absent", () => {
     for (const registry of [HOLDER_CLAIM_RECORD, HOLDER_ATTRIBUTED, HOLDER_ANSWER_VIEW]) {
       for (const [field, route] of Object.entries(registry as Record<string, DisclosureRoute>)) {
         if (route.surface === 'waived') {
@@ -1152,7 +1159,8 @@ describe('#625 PR-H — context 1b, the holder slice', () => {
       .filter(([, r]) => r.surface === 'waived')
       .map(([f]) => f)
       .sort();
-    expect(waived).toEqual(['deadline', 'lease', 'token']);
+    // Q1 (#592) f2: and why a claim has no time limit, which the cost view does not print either.
+    expect(waived).toEqual(['deadline', 'deadline_absent', 'lease', 'token']);
     expect(
       Object.values(HOLDER_ATTRIBUTED as Record<string, DisclosureRoute>).filter(
         (x) => x.surface === 'waived',

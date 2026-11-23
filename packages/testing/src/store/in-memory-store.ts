@@ -4,7 +4,7 @@ import {
   findEligibleSteps,
   deriveRunPhase,
   decideIdempotencyPolicy,
-  computeClaimDeadline,
+  claimDeadlineOf,
   isStepSettledOrInFlight,
   applySettlement,
   assertSealIntegrity,
@@ -864,7 +864,8 @@ export class InMemoryStore implements RunStore {
     }
     // Per-claim liveness clock (issue #101) — mirrors JsonFileStore.claimStep: stamp claims[S]
     // atomically with the in_progress add (OVERWRITE, so a missed settle-site delete self-heals).
-    const deadline = computeClaimDeadline(definition, stepName, at);
+    // Q1 (#592) f2: the deadline and, when there is none, why (written as `deadline_absent`).
+    const { deadline, absent } = claimDeadlineOf(definition, stepName, at);
     // issue #279 (increment 1, PR-A): mint an acquirer-minted fencing token alongside the
     // deadline, in the SAME synchronous stretch — dormant until PR-B's settleStep migration.
     const token = crypto.randomUUID();
@@ -882,6 +883,7 @@ export class InMemoryStore implements RunStore {
         // the caller passed one.
         [stepName]: {
           deadline,
+          ...(absent !== undefined ? { deadline_absent: absent } : {}),
           token,
           since: at.toISOString(),
           ...(claimant !== undefined ? { holder: claimant } : {}),

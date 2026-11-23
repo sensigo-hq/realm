@@ -16,6 +16,23 @@ import type { EnactedVia } from '../engine/execution-loop.js';
 export type RunStatus = 'ok' | 'error' | 'blocked' | 'confirm_required';
 
 /**
+ * Every status a reply's `status` can hold, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const RUN_STATUSES = [
+  'ok',
+  'error',
+  'blocked',
+  'confirm_required',
+] as const satisfies readonly RunStatus[];
+type MissingRunStatuses = Exclude<RunStatus, (typeof RUN_STATUSES)[number]>;
+const _everyRunStatusesListed: [MissingRunStatuses] extends [never] ? true : MissingRunStatuses =
+  true;
+void _everyRunStatusesListed;
+
+/**
  * What a `blocked` reply says can be called instead: the steps that can be called now
  * (`EngineReply.blocked_reason`).
  * @public

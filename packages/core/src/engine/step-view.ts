@@ -174,6 +174,26 @@ export interface CostMiss {
   extra_usd?: number;
 }
 
+/** The words a cache miss's `provider.reason` can hold: the type the list below is checked against. */
+type ProviderMissReason = NonNullable<CostMiss['provider']>['reason'];
+/**
+ * Every reason a cache miss's `provider.reason` can give: each miss type, then `no_divergence`.
+ * Built from `CACHE_MISS_TYPES`, so a type added there reaches it with no edit; compile-checked
+ * both ways (Q1, #592, unit d1b, correction 1).
+ */
+export const PROVIDER_MISS_REASONS = [
+  ...CACHE_MISS_TYPES,
+  'no_divergence',
+] as const satisfies readonly ProviderMissReason[];
+type MissingProviderMissReasons = Exclude<
+  ProviderMissReason,
+  (typeof PROVIDER_MISS_REASONS)[number]
+>;
+const _everyProviderMissReasonsListed: [MissingProviderMissReasons] extends [never]
+  ? true
+  : MissingProviderMissReasons = true;
+void _everyProviderMissReasonsListed;
+
 /** Issue #600 caching PR P — the requests sent to a custom endpoint, or why none records one. */
 export type CostEndpoints =
   { custom: number; of: number } | { absent_cause: RequestFactAbsentCause };
