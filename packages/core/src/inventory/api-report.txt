@@ -4422,6 +4422,7 @@ capText · value · internal
 capabilityRefusalWords · value · internal
 capabilityWarning · value · internal
 captureEvidence · value · internal
+carriesFailureWords · value · internal
 checkBufferBudget · value · internal
 checkCallbackKeyRequest · value · internal
 checkCallbackRequest · value · internal
@@ -4682,6 +4683,7 @@ isCopyOfReadableRun · value · public
 
 isCredentialName · value · internal
 isExtensionKey · value · internal
+isFailureWordsThrow · value · internal
 isFenceRunReader · value · internal
 isFinalReminder · value · internal
 isGateTrust · value · internal
@@ -4780,6 +4782,8 @@ normalizeSource · value · internal
 notKeptMarker · value · internal
 notSecretIntersection · value · internal
 notSecretNames · value · internal
+noteFailureWords · value · internal
+noteRealmProvider · value · internal
 offeredResumeWay · value · internal
 omitClaim · value · internal
 oneOf · value · internal

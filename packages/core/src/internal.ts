@@ -1353,6 +1353,12 @@ export {
   abortMessageHidingFailureText,
   // Gap 2, unit (iv-b2a): the reader of core's failure-text mark on an engine reply.
   failureTextMarkOf,
+  // Gap 2, unit (iv-b2b): the mark on a thrown error that is a failure's words (the CLI loader's),
+  // Realm's own providers, and the one rule the MCP door applies to a provider's throw.
+  noteFailureWords,
+  carriesFailureWords,
+  noteRealmProvider,
+  isFailureWordsThrow,
 } from './engine/failure-text.js';
 export type { FailureTextMark } from './engine/failure-text.js';
 
