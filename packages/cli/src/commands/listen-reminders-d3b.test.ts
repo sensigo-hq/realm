@@ -1910,7 +1910,8 @@ describe('C3d-B — the stop says what it waits for and what it cuts', { timeout
 
   it('the grace cuts the try: ONE cut line, said before the exit with 0, even after a second signal; the row waits, and the next start sends it with the same webhook-id', async () => {
     const w = await withDueCallback({ hold: true });
-    const l = await listener(w.r, { lists: w.rcv.lists, graceSeconds: 0 });
+    // Correction 1: a grace of 1 s, so the stop waits (and says so) before the grace cuts.
+    const l = await listener(w.r, { lists: w.rcv.lists, graceSeconds: 1 });
     await l.wake();
     await until(() => w.rcv.held() >= 1, 'the try to be held');
     l.signal();
@@ -1942,6 +1943,21 @@ describe('C3d-B — the stop says what it waits for and what it cuts', { timeout
       rowAfterCut: { status: 'pending', attempts: 1 },
       ids: [WEBHOOK_ID, WEBHOOK_ID],
     });
+  });
+
+  it('correction 1: a grace of 0 and no drain, a try in flight: NO wait line (the stop does not wait), ONE cut line, then the exit with 0', async () => {
+    const w = await withDueCallback({ hold: true });
+    const l = await listener(w.r, { lists: w.rcv.lists, graceSeconds: 0 });
+    await l.wake();
+    await until(() => w.rcv.held() >= 1, 'the try to be held');
+    l.signal();
+    await until(() => w.exited().length >= 1, 'the exit');
+    // (1) red when the wait line is said although the stop does not wait (it came 3 ms before the
+    //     cut line), or the cut line is not said at a grace of 0; (2) prints the lines and the order.
+    expect({
+      lines: stopLines(w.r),
+      order: w.order.filter((x) => x === CUT || x.startsWith('exit ')),
+    }).toEqual({ lines: [CUT], order: [CUT, 'exit 0'] });
   });
 
   it('a second signal during the wait cuts at once: ONE cut line, then the exit with 0', async () => {

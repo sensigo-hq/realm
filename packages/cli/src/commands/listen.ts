@@ -1995,9 +1995,10 @@ export function startListen(
     const passesUnderWay = [reminders?.stop(), callbackRunner?.stop()].filter(
       (pass): pass is Promise<void> => pass !== undefined,
     );
-    // C3d-B: the stop says what it waits for, and what its end cuts (tries, never their ids).
+    // C3d-B: the stop says what it waits for, and what its end cuts (tries, never their ids). No
+    // wait line when the stop does not wait (no drain and a grace of 0): its cut line comes at once.
     const sending = callbacksInFlight?.() ?? 0;
-    if (sending > 0)
+    if (sending > 0 && drainSeconds + graceSeconds > 0)
       deps.logger.info(
         `listen: callbacks: waiting for ${sending} ${sending === 1 ? 'callback' : 'callbacks'} to be sent`,
       );
