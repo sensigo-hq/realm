@@ -8,13 +8,14 @@
 // agent (detached, `stdio: 'inherit'`, unref'd), as listen-wait-r12's C5 does.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { classifyRunHealth, type RunRecord, type Snapshot } from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
-import { makeAgentSpawner } from './listen.js';
+import { markSignalDeath, type ChildExit } from '../agent/startup-failure.js';
+import { makeAgentSpawner, type SpawnResult } from './listen.js';
 import {
   capturingLogger,
   post,
@@ -201,4 +202,189 @@ describe('Q1 (#592) unit c — check 6: a stop awaits a mark being written', () 
       ['startup_failure', KILLED],
     ]);
   }, 30_000);
+});
+
+const MALFORMED =
+  "listen: the agent's exit arrived without a code or signal; no startup failure recorded";
+const UNLEARNED = "listen: the agent's exit could not be learned; no startup failure recorded";
+
+/**
+ * A process-level `unhandledRejection` listener for this cell, recording into `seen`, removed when
+ * the cell ends. While it is there, vitest's own listener steps aside (vitest 4: it reports only
+ * when it is the one listener), so the cell must assert on `seen` itself.
+ */
+function armNet(): string[] {
+  const seen: string[] = [];
+  const net = (reason: unknown): void => {
+    seen.push(String(reason));
+  };
+  process.on('unhandledRejection', net);
+  onTestFinished(() => {
+    process.off('unhandledRejection', net);
+  });
+  return seen;
+}
+
+/** Listen with a spawn double whose `exited` is `exited()`, and one event posted to it. */
+async function deliverDouble(exited: () => Promise<ChildExit>) {
+  const store = new InMemoryStore();
+  const settled: Promise<unknown>[] = [];
+  const spawnAgent = vi.fn(async (): Promise<SpawnResult> => {
+    const e = exited();
+    settled.push(
+      e.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return { pid: 4242, exited: e };
+  });
+  const s = await serveListen([refunds], { store, workflowDir: tmpdir(), over: { spawnAgent } });
+  const res = await post(s.port, '/refunds', { id: 'evt-592c2' });
+  const runId = String((JSON.parse(res.body) as { run_id: unknown }).run_id);
+  await until(() => settled.length === 1);
+  await settled[0];
+  await until(() => markLines(s.logger.lines).length > 0, 5_000);
+  // One macrotask past the settle: an unhandled rejection has been reported by now.
+  await sleep(50);
+  const lines = s.logger.lines.filter((l) => l.msg.includes('startup failure'));
+  return { store, runId, status: res.status, lines };
+}
+
+describe('Q1 (#592) c2: the startup mark never throws', () => {
+  it('check 1: a spawner whose `exited` resolves nothing (the C3b1 double): no unhandled rejection, nothing written, one warn line with the run id', async () => {
+    const seen = armNet();
+    const { store, runId, status, lines } = await deliverDouble(
+      () => sleep(50).then(() => undefined) as unknown as Promise<ChildExit>,
+    );
+    const run = (await store.get(runId)).record;
+    // (a) red when the guard is gone (the mark reads `.code` of nothing: an error line, or with
+    //     the body's `try` gone too, an unhandled rejection in `seen`), or the exit is marked;
+    //     (b) prints the rejections seen, the ring and listen's lines.
+    expect({ status, seen, ring: run.drive_failures, lines }).toEqual({
+      status: 202,
+      seen: [],
+      ring: undefined,
+      lines: [{ level: 'warn', msg: MALFORMED, data: { run_id: runId } }],
+    });
+  }, 30_000);
+
+  it('check 2: a spawner whose `exited` rejects: the chain logs it at warn with the error, nothing written, no unhandled rejection', async () => {
+    const seen = armNet();
+    const { store, runId, status, lines } = await deliverDouble(() =>
+      sleep(50).then(() => {
+        throw new Error('the spawner lost the child');
+      }),
+    );
+    const run = (await store.get(runId)).record;
+    // (a) red when the chain's `.catch` is gone (an unhandled rejection in `seen`, no line);
+    //     (b) prints the rejections seen, the ring and listen's lines.
+    expect({ status, seen, ring: run.drive_failures, lines }).toEqual({
+      status: 202,
+      seen: [],
+      ring: undefined,
+      lines: [
+        {
+          level: 'warn',
+          msg: UNLEARNED,
+          data: { run_id: runId, error: 'Error: the spawner lost the child' },
+        },
+      ],
+    });
+  }, 30_000);
+
+  it('the mark judges each exit by its values: a code is silent, a signal marks, every other shape warns; an exit that cannot be read is an error line; the promise never rejects', async () => {
+    const unreadable = Object.defineProperty({}, 'code', {
+      get() {
+        throw new Error('unreadable exit');
+      },
+    });
+    const shapes: [string, unknown][] = [
+      ['undefined', undefined],
+      ['null', null],
+      ['a number', 1],
+      ['a string', 'SIGTERM'],
+      ['{}', {}],
+      ['{ code: null } (no signal)', { code: null }],
+      ['{ signal: SIGTERM } (no code)', { signal: 'SIGTERM' }],
+      ['{ code: null, signal: null }', { code: null, signal: null }],
+      ['{ code: 1, signal: null }', { code: 1, signal: null }],
+      ['{ code: 0 } (no signal)', { code: 0 }],
+      ['{ code: null, signal: SIGTERM }', { code: null, signal: 'SIGTERM' }],
+      ['an exit whose code cannot be read', unreadable],
+    ];
+    const got: Record<string, unknown> = {};
+    for (const [name, shape] of shapes) {
+      const store = new InMemoryStore();
+      const { record } = await store.create({
+        workflowId: 'refunds',
+        workflowVersion: 1,
+        params: {},
+      });
+      const logger = capturingLogger();
+      const settled = await markSignalDeath(
+        store,
+        logger,
+        record,
+        shape as ChildExit,
+        performance.now(),
+      ).then(
+        () => 'resolved',
+        (err: unknown) => `rejected: ${String(err)}`,
+      );
+      const entries = (await store.get(record.id)).record.drive_failures?.entries ?? [];
+      got[name] = {
+        settled,
+        entries: entries.map((e) => e.message),
+        // The run id shown as `<this run>` when it is this shape's run.
+        lines: logger.lines.map((l) => {
+          const data = l.data as Record<string, unknown>;
+          return [
+            l.level,
+            l.msg,
+            { ...data, run_id: data['run_id'] === record.id ? '<this run>' : data['run_id'] },
+          ];
+        }),
+      };
+    }
+    const run = '<this run>';
+    const warned = {
+      settled: 'resolved',
+      entries: [],
+      lines: [['warn', MALFORMED, { run_id: run }]],
+    };
+    const silent = { settled: 'resolved', entries: [], lines: [] };
+    // (a) red when one conjunct of the guard is gone (`code !== null`: `{ signal }` marks; the
+    //     signal's type: `{ code: null }` writes "killed by undefined"; the object check: null and
+    //     undefined throw), the outer `try` is gone (the unreadable exit rejects), or its line
+    //     loses its words; (b) prints every shape's outcome.
+    expect(got).toEqual({
+      undefined: warned,
+      null: warned,
+      'a number': warned,
+      'a string': warned,
+      '{}': warned,
+      '{ code: null } (no signal)': warned,
+      '{ signal: SIGTERM } (no code)': warned,
+      '{ code: null, signal: null }': warned,
+      '{ code: 1, signal: null }': silent,
+      '{ code: 0 } (no signal)': silent,
+      '{ code: null, signal: SIGTERM }': {
+        settled: 'resolved',
+        entries: [KILLED],
+        lines: [['warn', 'listen: recorded a startup failure', { run_id: run, signal: 'SIGTERM' }]],
+      },
+      'an exit whose code cannot be read': {
+        settled: 'resolved',
+        entries: [],
+        lines: [
+          [
+            'error',
+            'listen: failed to record a startup failure',
+            { run_id: run, error: 'Error: unreadable exit' },
+          ],
+        ],
+      },
+    });
+  });
 });

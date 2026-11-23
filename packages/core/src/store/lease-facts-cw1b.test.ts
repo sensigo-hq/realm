@@ -362,11 +362,19 @@ describe('#729 CW-1b — the consumers carry a leased claim’s fact', () => {
     // (a) red when the info drops the fact, or its state is judged without it (held with a null
     //     deadline would read claim_unknown_age); (b) prints each info.
     expect(classifyInProgressClaims(both)).toEqual([
-      { step: 'probed', state: 'healthy', deadline: null, lease: HELD },
+      // Q1 (#592) f2: both claims were written with no cause, so each reads not_recorded.
+      {
+        step: 'probed',
+        state: 'healthy',
+        deadline: null,
+        deadline_absent: 'not_recorded',
+        lease: HELD,
+      },
       {
         step: 'missing',
         state: 'claim_unknown_age',
         deadline: null,
+        deadline_absent: 'not_recorded',
         lease: unknown('not_checked'),
       },
     ]);
@@ -547,6 +555,8 @@ describe('#729 CW-1b — a store written before CW-1b works unchanged', () => {
           step: 'leased',
           state: 'claim_unknown_age',
           deadline: null,
+          // Q1 (#592) f2: written with no cause.
+          deadline_absent: 'not_recorded',
           lease: unknown('not_checked'),
         },
       ],

@@ -124,6 +124,12 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
   // construction because the JSON store (or registry) is their subject. PR-3 deletes them.
   core: [
     {
+      file: 'engine/claim-deadline-cause-592f2.test.ts',
+      sites: 1,
+      subject:
+        "Q1 (#592) f2 check 2: the JSON store's claimStep writes deadline_absent, one of the three writers (the in-memory and SQLite stores are held by the fidelity law CLAIM_KEEPS_DEADLINE_CAUSE); PR-3",
+    },
+    {
       file: 'engine/docs-claims-625.test.ts',
       sites: 2,
       subject:

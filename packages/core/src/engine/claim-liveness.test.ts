@@ -221,7 +221,8 @@ describe('classifyInProgressClaims', () => {
     expect(infos).toEqual([
       { step: 'a', state: 'healthy', deadline: expect.any(String) },
       { step: 'b', state: 'claim_stale', deadline: expect.any(String) },
-      { step: 'c', state: 'claim_unknown_age', deadline: null },
+      // Q1 (#592) f2: no claim record, so no cause recorded.
+      { step: 'c', state: 'claim_unknown_age', deadline: null, deadline_absent: 'not_recorded' },
     ]);
   });
 });

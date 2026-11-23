@@ -331,6 +331,7 @@ Written atomically when a step is claimed.
 ```ts
 interface ClaimRecord {
     deadline: string | null;
+    deadline_absent?: ClaimDeadlineAbsent;
     token?: string;
     holder?: Attributed;
     since?: string;
@@ -1796,6 +1797,7 @@ Names this job reaches whose entry is on another page.
 - [`AuthNone`](define-and-load-a-workflow.md#authnone): Documented, discouraged escape hatch — accept without verification (trusted network / localhost only).
 - [`AuthSharedSecret`](define-and-load-a-workflow.md#authsharedsecret): Header-token auth — the request carries a user-configured header equal to a shared secret.
 - [`AuthStripe`](define-and-load-a-workflow.md#authstripe): Stripe timestamped HMAC body signature (header 'Stripe-Signature').
+- [`ClaimDeadlineAbsent`](implement-a-store.md#claimdeadlineabsent): Why a claim has no time limit, written on the claim when it is taken (`ClaimRecord.deadline_absent`).
 - [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
 - [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the `run_phase` from the run record's fields.
