@@ -1537,8 +1537,10 @@ function family(adapter: CallbackStoreContractAdapter) {
           );
           for (const id of [a, c, d, n, running, delivered, failed])
             await b.callbacks.deleteAllForRun(id);
-          // The order: y finished before x though x was made first; six rows finished at one instant
-          // go by run_id (their creation order is sorted 1 time in 720).
+          // The order: y finished before x though x was made first. Then rows made one per millisecond
+          // until one has a smaller run_id than the first, all finished at one instant: the first made
+          // is never the smallest, so a store that leaves ties in the order the rows were made (as a
+          // scan of the due-time index does) ends the wrong row at limit 1.
           const base = 2 * W;
           await b.at(base);
           const x = await b.create(reg(10));
@@ -1548,11 +1550,22 @@ function family(adapter: CallbackStoreContractAdapter) {
           await b.finish(y);
           await b.at(base + 3);
           await b.finish(x);
-          await b.at(base + 4);
           const tied: string[] = [];
-          for (let i = 0; i < 6; i++) tied.push(await finishedRun(b, 20 + i));
+          for (let i = 0; i < 64 && !tied.some((id) => id < tied[0]!); i++) {
+            await b.at(base + 4 + i);
+            tied.push(await b.create(reg(20 + i)));
+          }
+          const tiedAt = base + 4 + 64;
+          await b.at(tiedAt);
+          for (const id of tied) await b.finish(id);
           const sorted = [...tied].sort();
-          await b.at(base + 4 + W);
+          same(
+            law,
+            'the setup ties: the first made is not the smallest',
+            sorted[0] !== tied[0],
+            true,
+          );
+          await b.at(tiedAt + W);
           same(law, 'limit 2: the oldest anchors', await b.callbacks.endOverdue(2), [
             ends(y, 0),
             ends(x, 0),
@@ -1565,6 +1578,33 @@ function family(adapter: CallbackStoreContractAdapter) {
             'the rest, in run_id order',
             await b.callbacks.endOverdue(10),
             sorted.slice(1).map((id) => ends(id, 0)),
+          );
+          // The limit counts only rows it ends: a running run's row and a row under a live claim,
+          // each older than the one row that is due, do not take its place at limit 1.
+          const c0 = tiedAt + 2 * W;
+          await b.at(c0);
+          const older = await b.create(reg(90));
+          await b.at(c0 + 1);
+          const held = await finishedRun(b, 91);
+          await b.at(c0 + 2);
+          const due = await finishedRun(b, 92);
+          await b.at(c0 + W);
+          same(law, 'the setup claim of held', (await claimNow(b, held, 'H')).applied, true);
+          await b.at(c0 + 2 + W);
+          same(
+            law,
+            'limit 1: the due row, past older rows it cannot end',
+            await b.callbacks.endOverdue(1),
+            [ends(due, 0)],
+          );
+          same(
+            law,
+            'the running run’s row and the held row are left',
+            {
+              older: (await b.callbacks.read(older))?.status,
+              held: (await b.callbacks.read(held))?.status,
+            },
+            { older: 'pending', held: 'pending' },
           );
         }),
     ),
