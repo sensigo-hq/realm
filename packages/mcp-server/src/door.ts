@@ -5,9 +5,11 @@
 // the person saw, never on the run record: Amendment 4).
 import {
   judgeGateAnswers,
+  FAILURE_TEXT_ENV,
   GATE_ANSWERS_ENV,
   type DoorAnswers,
   type DoorFormFacts,
+  type FailureTextSetting,
   type FormWaitSetting,
   type GateAnswersSetting,
   type Source,
@@ -21,12 +23,15 @@ export {
   FORM_WAIT_SECONDS_DEFAULT,
   FORM_WAIT_SECONDS_MIN,
   FORM_WAIT_SECONDS_MAX,
+  judgeFailureText,
+  FAILURE_TEXT_ENV,
 } from '@sensigo/realm';
 export type {
   GateAnswersSetting,
   GateAnswersInput,
   FormWaitSetting,
   FormWaitInput,
+  FailureTextSetting,
 } from '@sensigo/realm';
 
 /**
@@ -73,6 +78,21 @@ export function effectiveGateAnswers(
   return judged.setting;
 }
 
+/** Gap 2, unit (iv-b1): a failure-text value the library was given that is neither word — no server
+ *  is built (W-s4's form). */
+export function failureTextLibraryRefusal(kind: SetKind, raw: string): string {
+  const where =
+    kind === 'env' ? FAILURE_TEXT_ENV : kind === 'flag' ? '--failure-text' : 'failureText option';
+  return `createRealmMcpServer: invalid ${where} value '${raw}': expected shown or hidden — refused: no server is built while it is set, because a misspelt value would show an assistant a failure's words when you believe they are hidden. Fix the value where this program reads it, or remove it; a program that reads its environment only at start must be restarted.`;
+}
+
+/** The failure-text setting a door built without one runs with: `shown`, from the default. */
+const FAILURE_TEXT_DEFAULT: FailureTextSetting = {
+  value: 'shown',
+  source: { kind: 'default', ref: 'the default' },
+  alsoSet: [],
+};
+
 /** W-s8 (library): a form-wait value out of bounds — no server is built. */
 export function formWaitLibraryRefusal(raw: string): string {
   return `createRealmMcpServer: invalid formWaitSeconds value '${raw}': expected a whole number of seconds from 30 to 3600 — refused: no server is built while it is set. Fix the value or remove it.`;
@@ -101,6 +121,11 @@ interface GateSends {
 export class McpDoor {
   readonly gateAnswers: GateAnswersSetting;
   readonly formWait: FormWaitSetting;
+  /**
+   * Gap 2, unit (iv-b1): whether an assistant reads a failure's words in `get_run_state`; unit
+   * (iv-b2a): and in the replies of its own calls (a failed step's, a handler's abort).
+   */
+  readonly failureText: FailureTextSetting;
   /** Set at `initialize` from the client's capabilities; `false` until then, and always on HTTP. */
   forms: { shown: boolean; source: Source };
   /** Whether this door can send a form at all (stdio); `false` on stateless HTTP. */
@@ -114,9 +139,11 @@ export class McpDoor {
     formWait: FormWaitSetting;
     sendsForms: boolean;
     monotonicNow?: () => number;
+    failureText?: FailureTextSetting;
   }) {
     this.gateAnswers = args.gateAnswers;
     this.formWait = args.formWait;
+    this.failureText = args.failureText ?? FAILURE_TEXT_DEFAULT;
     this.sendsForms = args.sendsForms;
     this.monotonicNow = args.monotonicNow ?? (() => performance.now());
     this.forms = {

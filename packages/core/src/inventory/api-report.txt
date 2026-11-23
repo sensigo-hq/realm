@@ -385,6 +385,13 @@ CAPABILITY_BASES · value · public
   ];
 
 CLAIMABLE_ERROR_CLASSES · value · internal
+CLAIM_DEADLINE_ABSENT_CAUSES · value · public
+  const CLAIM_DEADLINE_ABSENT_CAUSES: readonly [
+      "step_unknown",
+      "step_not_auto",
+      "finalizer_bearing"
+  ];
+
 CLAIM_PROOF_ABSENT_CAUSES · value · internal
 CLAIM_STATES · value · internal
 CLOCK_READ_CLASSES · value · public
@@ -772,11 +779,15 @@ ChannelEvidence · type · public
   }
 
 ChosenClass · type · internal
+ClaimDeadlineAbsent · type · public
+  type ClaimDeadlineAbsent = 'step_unknown' | 'step_not_auto' | 'finalizer_bearing';
+
 ClaimHolderAbsentCause · type · internal
 ClaimProofAbsentCause · type · internal
 ClaimRecord · type · public
   interface ClaimRecord {
       deadline: string | null;
+      deadline_absent?: ClaimDeadlineAbsent;
       token?: string;
       holder?: Attributed;
       since?: string;
@@ -795,7 +806,9 @@ ClaimStepForDriveOptions · type · beta
       driver?: Attributed;
   }
 
-ClaimableErrorClass · type · internal
+ClaimableErrorClass · type · public
+  type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
+
 ClassTable · type · internal
 ClassifiableRun · type · public
   type ClassifiableRun = Pick<RunRecord, 'terminal_state' | 'failed_steps' | 'terminal_reason' | 'aborted_at' | 'abandoned_at'>;
@@ -803,6 +816,7 @@ ClassifiableRun · type · public
 ClassifyRunHealthOptions · type · public
   interface ClassifyRunHealthOptions {
       idleThresholdMs?: number;
+      owedThresholdMs?: number;
       definition?: WorkflowDefinition;
       definitionError?: {
           code: string;
@@ -884,6 +898,7 @@ DEFAULT_EXECUTION_TIMEOUT_SECONDS · value · internal
 DEFAULT_GATE_CHOICES · value · internal
 DEFAULT_IDLE_THRESHOLD_MS · value · internal
 DEFAULT_MIN_PART_CHARS · value · internal
+DEFAULT_OWED_THRESHOLD_MS · value · internal
 DEFAULT_POLICY · value · internal
 DEFAULT_STEP_TIMEOUT_SECONDS · value · internal
 DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD · value · internal
@@ -1230,7 +1245,7 @@ ErrorCategory · type · public
   type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
 
 ErrorCode · type · public
-  type ErrorCode = 'NETWORK_TIMEOUT' | 'NETWORK_UNREACHABLE' | 'NETWORK_DNS_FAILED' | 'NETWORK_CONNECTION_RESET' | 'SERVICE_HTTP_4XX' | 'SERVICE_HTTP_5XX' | 'SERVICE_RATE_LIMITED' | 'SERVICE_AUTH_FAILED' | 'SERVICE_NOT_FOUND' | 'SERVICE_RESPONSE_INVALID' | 'SERVICE_UNEXPECTED_REDIRECT' | 'STATE_BLOCKED' | 'STATE_PRECONDITION_FAILED' | 'STATE_RUN_NOT_FOUND' | 'STATE_WORKFLOW_NOT_FOUND' | 'STATE_WORKFLOW_UNREADABLE' | 'STATE_RUN_TERMINAL' | 'STATE_SNAPSHOT_MISMATCH' | 'STATE_RUN_LOCKED' | 'STATE_RUN_BUSY' | 'STATE_TRANSITION_DENIED' | 'STATE_LEGACY_FORMAT' | 'STATE_NEWER_FORMAT' | 'STATE_STEP_ALREADY_CLAIMED' | 'STATE_STEP_NOT_ELIGIBLE' | 'STATE_STEP_ALREADY_SETTLED' | 'STATE_CLAIM_LOST' | 'STATE_ANSWERER_MISMATCH' | 'STATE_RUN_DIVERGED' | 'STATE_RUN_ALREADY_ACTIVE' | 'STATE_IDEMPOTENCY_KEY_USED' | 'STATE_TEST_CLOCK_FOREIGN' | 'STATE_HOME_UNUSABLE' | 'STATE_STORE_DRIVER_UNAVAILABLE' | 'STATE_STORE_FILESYSTEM_REFUSED' | 'STATE_STORE_SETTINGS_REFUSED' | 'STATE_STORE_VERSION_OLDER' | 'STATE_STORE_VERSION_NEWER' | 'STATE_STORE_SCHEMA_TAMPERED' | 'STATE_STORE_FULL' | 'STATE_STORE_READONLY' | 'STATE_STORE_WRITES_FENCED' | 'STATE_STORE_LIMIT_EXCEEDED' | 'STATE_STORE_BACKUP_REFUSED' | 'STATE_STORE_BACKUP_UNVERIFIED' | 'STATE_STORE_MIGRATE_REFUSED' | 'STATE_STORE_MIGRATE_FAILED' | 'STATE_STORE_IN_USE' | 'STATE_STORE_RESTORE_REFUSED' | 'STATE_STORE_CHECK_REFUSED' | 'STATE_HOME_HOLDS_LEGACY_STORE' | 'STATE_RUN_PURGED' | 'STATE_RUN_TIMESTAMP_INVALID' | 'STATE_WRITE_ONCE_REWRITTEN' | 'STATE_EVIDENCE_REWRITTEN' | 'STATE_RUN_IDENTITY' | 'RUN_ABORTING' | 'VALIDATION_INPUT_SCHEMA' | 'VALIDATION_OUTPUT_SCHEMA' | 'VALIDATION_TRACE_SCHEMA' | 'VALIDATION_EXHAUSTED' | 'VALIDATION_WORKFLOW_SCHEMA' | 'VALIDATION_HASH_MISMATCH' | 'VALIDATION_QUOTE_NOT_FOUND' | 'VALIDATION_FIELD_UNKNOWN' | 'VALIDATION_FIELD_EXCLUDED' | 'VALIDATION_EMPTY_VALUE' | 'VALIDATION_BATCH_TOO_LARGE' | 'VALIDATION_BATCH_ITEMS' | 'VALIDATION_TRUST_VALUE' | 'VALIDATION_ACTOR_INVALID' | 'VALIDATION_CALLER_INVALID' | 'VALIDATION_OPTION_INVALID' | 'VALIDATION_CURSOR' | 'STEP_HANDLER_ERROR' | 'ENGINE_INTERNAL' | 'ENGINE_STORE_FAILED' | 'ENGINE_ARTIFACT_DELETE_FAILED' | 'ENGINE_ADAPTER_FAILED' | 'ENGINE_ADAPTER_NOT_REGISTERED' | 'ENGINE_PROCESSOR_FAILED' | 'ENGINE_HANDLER_FAILED' | 'ENGINE_HANDLER_NOT_REGISTERED' | 'ENGINE_STEP_FAILED' | 'ENGINE_GATE_OPEN_FAILED' | 'ENGINE_RELEASE_LINE_MISMATCH' | 'ENGINE_RELEASE_LINE_UNDECLARED' | 'GATE_MESSAGE_UNRESOLVABLE' | 'FILTER_UNKNOWN' | 'ADAPTER_OP_UNSUPPORTED' | 'ADAPTER_VALIDATION_FAILED' | 'ADAPTER_REQUEST_FAILED' | 'STEP_TIMEOUT' | 'STEP_ABORTED' | 'STEP_RETRY_EXHAUSTED' | 'STATE_STEP_PENDING' | 'STATE_SEAL_UNSTAMPED' | 'STATE_SEAL_ORPHANED' | 'STATE_SEAL_ERASED' | 'STATE_SEAL_UNKNOWN_ARM' | 'STATE_SEAL_INCOHERENT' | 'STATE_SEAL_REWRITTEN' | 'STEP_NOT_FOUND' | 'GUARD_RESOLUTION_ERROR' | 'INPUT_MAP_DEPTH_EXCEEDED' | 'INPUT_MAP_UNKNOWN_DIRECTIVE' | 'RESOURCE_FETCH_FAILED' | 'RESOURCE_TOO_LARGE' | 'RESOURCE_FORMAT_INVALID' | 'RESOURCE_NOT_ACCESSIBLE' | 'BUFFER_FULL' | 'TRACE_CAPABILITY_INCONSISTENT' | 'MCP_CONNECTION_FAILED' | 'MCP_TOOL_NOT_FOUND' | 'MCP_TOOL_NAME_COLLISION';
+  type ErrorCode = 'NETWORK_TIMEOUT' | 'NETWORK_UNREACHABLE' | 'NETWORK_DNS_FAILED' | 'NETWORK_CONNECTION_RESET' | 'SERVICE_HTTP_4XX' | 'SERVICE_HTTP_5XX' | 'SERVICE_RATE_LIMITED' | 'SERVICE_AUTH_FAILED' | 'SERVICE_NOT_FOUND' | 'SERVICE_RESPONSE_INVALID' | 'SERVICE_UNEXPECTED_REDIRECT' | 'MODEL_REQUEST_FAILED' | 'STATE_BLOCKED' | 'STATE_PRECONDITION_FAILED' | 'STATE_RUN_NOT_FOUND' | 'STATE_WORKFLOW_NOT_FOUND' | 'STATE_WORKFLOW_UNREADABLE' | 'STATE_RUN_TERMINAL' | 'STATE_SNAPSHOT_MISMATCH' | 'STATE_RUN_LOCKED' | 'STATE_RUN_BUSY' | 'STATE_TRANSITION_DENIED' | 'STATE_LEGACY_FORMAT' | 'STATE_NEWER_FORMAT' | 'STATE_STEP_ALREADY_CLAIMED' | 'STATE_STEP_NOT_ELIGIBLE' | 'STATE_STEP_ALREADY_SETTLED' | 'STATE_CLAIM_LOST' | 'STATE_ANSWERER_MISMATCH' | 'STATE_RUN_DIVERGED' | 'STATE_RUN_ALREADY_ACTIVE' | 'STATE_IDEMPOTENCY_KEY_USED' | 'STATE_TEST_CLOCK_FOREIGN' | 'STATE_HOME_UNUSABLE' | 'STATE_STORE_DRIVER_UNAVAILABLE' | 'STATE_STORE_FILESYSTEM_REFUSED' | 'STATE_STORE_SETTINGS_REFUSED' | 'STATE_STORE_VERSION_OLDER' | 'STATE_STORE_VERSION_NEWER' | 'STATE_STORE_SCHEMA_TAMPERED' | 'STATE_STORE_FULL' | 'STATE_STORE_READONLY' | 'STATE_STORE_WRITES_FENCED' | 'STATE_STORE_LIMIT_EXCEEDED' | 'STATE_STORE_BACKUP_REFUSED' | 'STATE_STORE_BACKUP_UNVERIFIED' | 'STATE_STORE_MIGRATE_REFUSED' | 'STATE_STORE_MIGRATE_FAILED' | 'STATE_STORE_IN_USE' | 'STATE_STORE_RESTORE_REFUSED' | 'STATE_STORE_CHECK_REFUSED' | 'STATE_HOME_HOLDS_LEGACY_STORE' | 'STATE_RUN_PURGED' | 'STATE_RUN_TIMESTAMP_INVALID' | 'STATE_WRITE_ONCE_REWRITTEN' | 'STATE_EVIDENCE_REWRITTEN' | 'STATE_RUN_IDENTITY' | 'RUN_ABORTING' | 'VALIDATION_INPUT_SCHEMA' | 'VALIDATION_OUTPUT_SCHEMA' | 'VALIDATION_TRACE_SCHEMA' | 'VALIDATION_EXHAUSTED' | 'VALIDATION_WORKFLOW_SCHEMA' | 'VALIDATION_HASH_MISMATCH' | 'VALIDATION_QUOTE_NOT_FOUND' | 'VALIDATION_FIELD_UNKNOWN' | 'VALIDATION_FIELD_EXCLUDED' | 'VALIDATION_EMPTY_VALUE' | 'VALIDATION_BATCH_TOO_LARGE' | 'VALIDATION_BATCH_ITEMS' | 'VALIDATION_TRUST_VALUE' | 'VALIDATION_ACTOR_INVALID' | 'VALIDATION_CALLER_INVALID' | 'VALIDATION_OPTION_INVALID' | 'VALIDATION_CURSOR' | 'STEP_HANDLER_ERROR' | 'ENGINE_INTERNAL' | 'ENGINE_STORE_FAILED' | 'ENGINE_ARTIFACT_DELETE_FAILED' | 'ENGINE_ADAPTER_FAILED' | 'ENGINE_ADAPTER_NOT_REGISTERED' | 'ENGINE_PROCESSOR_FAILED' | 'ENGINE_HANDLER_FAILED' | 'ENGINE_HANDLER_NOT_REGISTERED' | 'ENGINE_STEP_FAILED' | 'ENGINE_GATE_OPEN_FAILED' | 'ENGINE_RELEASE_LINE_MISMATCH' | 'ENGINE_RELEASE_LINE_UNDECLARED' | 'GATE_MESSAGE_UNRESOLVABLE' | 'FILTER_UNKNOWN' | 'ADAPTER_OP_UNSUPPORTED' | 'ADAPTER_VALIDATION_FAILED' | 'ADAPTER_REQUEST_FAILED' | 'STEP_TIMEOUT' | 'STEP_ABORTED' | 'STEP_RETRY_EXHAUSTED' | 'STATE_STEP_PENDING' | 'STATE_SEAL_UNSTAMPED' | 'STATE_SEAL_ORPHANED' | 'STATE_SEAL_ERASED' | 'STATE_SEAL_UNKNOWN_ARM' | 'STATE_SEAL_INCOHERENT' | 'STATE_SEAL_REWRITTEN' | 'STEP_NOT_FOUND' | 'GUARD_RESOLUTION_ERROR' | 'INPUT_MAP_DEPTH_EXCEEDED' | 'INPUT_MAP_UNKNOWN_DIRECTIVE' | 'RESOURCE_FETCH_FAILED' | 'RESOURCE_TOO_LARGE' | 'RESOURCE_FORMAT_INVALID' | 'RESOURCE_NOT_ACCESSIBLE' | 'BUFFER_FULL' | 'TRACE_CAPABILITY_INCONSISTENT' | 'MCP_CONNECTION_FAILED' | 'MCP_TOOL_NOT_FOUND' | 'MCP_TOOL_NAME_COLLISION';
 
 ErrorFacts · type · public
   type ErrorFacts = ErrorFactsByCode[keyof ErrorFactsByCode];
@@ -1311,6 +1326,15 @@ ExecuteChainOptions · type · public (beta: heldClaim)
       disclosure?: DisclosureSet;
       heldClaim?: {
           hold: LeaseHold;
+      };
+      modelFailure?: {
+          kind: 'transient' | 'permanent';
+          stop_reason: NonNullable<EvidenceSnapshot['stop_reason']>;
+          message: string;
+          attempt: number;
+          error_class: ClaimableErrorClass;
+          status: number | null;
+          attempts_sdk?: number;
       };
       onStep?: AdvanceRunOptions['onStep'];
       onTaken?: AdvanceRunOptions['onTaken'];
@@ -1436,6 +1460,8 @@ ExtensionRegistry · both · public
   }
 
 FAILED_ATTEMPT_SIDECAR_MAX_BYTES · value · internal
+FAILURE_TEXT_ENV · value · internal
+FAILURE_TEXT_VALUES · value · internal
 FENCE_PREDICATE_KINDS · value · internal
 FENCE_REQUIRES_RUN · value · internal
 FENCE_TARGETS_STEP · value · public
@@ -1630,6 +1656,10 @@ FailedAttemptStore · type · public
       read(runId: string): Promise<FailedAttemptReadResult>;
   }
 
+FailureText · type · internal
+FailureTextInput · type · internal
+FailureTextMark · type · internal
+FailureTextSetting · type · internal
 FailureView · type · internal
 FailureWordField · type · internal
 FailureWordsAbsentCause · type · internal
@@ -2888,7 +2918,7 @@ RunCost · type · internal
 RunEnding · type · internal
 RunHealthFinding · type · public
   interface RunHealthFinding {
-      kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'definition_unresolvable' | 'record_stamped_ahead';
+      kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'owed_undriven' | 'definition_unresolvable' | 'record_stamped_ahead';
       step?: string;
       reason: string;
       since?: string;
@@ -3510,6 +3540,7 @@ StepDiagnostics · type · public
       }>;
       validation_rejections?: number;
       settled_by_default?: boolean;
+      failure_kind?: 'transient' | 'permanent';
       structured_output?: StructuredOutputMeta;
       cache?: StepCacheDetail;
   }
@@ -4300,6 +4331,7 @@ abandonRun · value · public
       door?: 'realm_run_abandon' | 'abandon_run';
   }): Promise<RunRecord>;
 
+abortMessageHidingFailureText · value · internal
 admitWay · value · internal
 adoptsLine · value · internal
 advanceRun · value · public
@@ -4400,6 +4432,12 @@ chooseAutoLifetime · value · internal
 chooseAutoOneLifetime · value · internal
 chooseCacheLifetime · value · internal
 claimCallback · value · internal
+claimDeadlineOf · value · public
+  function claimDeadlineOf(definition: WorkflowDefinition, stepName: string, now: Date): {
+      deadline: string | null;
+      absent?: ClaimDeadlineAbsent;
+  };
+
 claimStepForDrive · value · beta
   function claimStepForDrive(store: RunStore, runId: string, stepName: string, options: ClaimStepForDriveOptions): Promise<DriveClaim>;
 
@@ -4581,6 +4619,8 @@ expiryReceiptOf · value · internal
 extensionIdentityDiffers · value · internal
 failedRequestSends · value · internal
 failureModelTextView · value · internal
+failureTextMarkOf · value · internal
+failureTextShape · value · internal
 fenceReaderMissingError · value · internal
 fileClock · value · internal
 finalizerOutcomeLines · value · internal
@@ -4660,6 +4700,7 @@ isTerminalState · value · internal
 isTestLocationClock · value · internal
 isWorkflowComplete · value · internal
 judgeAnswerer · value · internal
+judgeFailureText · value · internal
 judgeFormWait · value · internal
 judgeGateAnswers · value · internal
 judgeGateProof · value · internal
@@ -4914,6 +4955,7 @@ takeReading · value · public
   }, delta?: SettlementDelta): Date;
 
 terminalAnswerRefusalMessage · value · internal
+terminalReasonHidingFailureText · value · internal
 testClockFilePath · value · internal
 testClockNoticeLine · value · internal
 tierFor · value · internal

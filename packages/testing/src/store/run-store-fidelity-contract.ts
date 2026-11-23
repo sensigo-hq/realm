@@ -20,6 +20,7 @@ import {
   WorkflowError,
   SCAN_MAX_PAGE_SIZE,
   type Attributed,
+  type ClaimRecord,
   type EvidenceSnapshot,
   type CreateResult,
   type DriveFailureModelText,
@@ -88,7 +89,16 @@ import {
  * `RECORD_KEEPS_MODEL_ATTEMPTS`: an evidence entry and a drive-failure entry written with
  * `model_attempts` (a step's failed model tries) read back with it unchanged, from `get` and from a
  * listing, and an `update` that keeps it unchanged is accepted; entries written without it read back
- * without it (its listing case is skipped for a store with no `scanListed`).
+ * without it (its listing case is skipped for a store with no `scanListed`). Gap 2, unit (ii-a), adds
+ * `EVIDENCE_KEEPS_FAILURE_KIND`: an evidence entry written with `diagnostics.failure_kind` (why a
+ * step's failed model request failed it) reads back with it unchanged, from `get` and from a
+ * listing, and an `update` that keeps it unchanged is accepted; an entry written without it reads
+ * back without it (its listing case is skipped for a store with no `scanListed`). Q1 (#592), unit
+ * f2, adds `CLAIM_KEEPS_DEADLINE_CAUSE`: a claim on a step Realm cannot time-box carries
+ * `deadline: null` and why, `deadline_absent` (`step_not_auto` on an agent step, `finalizer_bearing`
+ * on an `auto` step of a workflow with finalizer steps), written in the claim's own write, and a
+ * claim with a string deadline carries no cause; each reads back from `get`. The law makes its own
+ * three workflows, and is skipped for a store that keeps no claims.
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -114,6 +124,8 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'DRIVE_FAILURE_KEEPS_MODEL_TEXT',
   'EVIDENCE_KEEPS_FAILURE_WORDS',
   'RECORD_KEEPS_MODEL_ATTEMPTS',
+  'EVIDENCE_KEEPS_FAILURE_KIND',
+  'CLAIM_KEEPS_DEADLINE_CAUSE',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -763,6 +775,50 @@ function attemptsListingCase(
   return { law: 'RECORD_KEEPS_MODEL_ATTEMPTS', name, run };
 }
 
+/**
+ * `EVIDENCE_KEEPS_FAILURE_KIND`'s fixture: a run of a workflow of its own whose one evidence entry, a
+ * failed step's, carries `diagnostics.failure_kind` when `withKind`, written by `update`.
+ */
+async function runWithFailureKind(
+  adapter: RunStoreFidelityContractAdapter,
+  what: string,
+  withKind: boolean,
+): Promise<{ tag: string; runId: string }> {
+  const tag = `tck-failure-kind-${what}-${Math.random().toString(36).slice(2)}`;
+  const { record: run } = await adapter.store.create({
+    workflowId: tag,
+    workflowVersion: 1,
+    params: {},
+  });
+  const entry: EvidenceSnapshot = {
+    step_id: adapter.stepName,
+    started_at: '2026-01-01T00:00:00.000Z',
+    completed_at: '2026-01-01T00:00:00.000Z',
+    duration_ms: 0,
+    input_summary: {},
+    output_summary: {},
+    status: 'error',
+    error: 'TCK model request failed',
+    evidence_hash: `tck-failure-kind-${what}`,
+    diagnostics: {
+      input_token_estimate: 1,
+      precondition_trace: [],
+      ...(withKind ? { failure_kind: 'permanent' as const } : {}),
+    },
+  };
+  await adapter.store.update({ ...run, evidence: [entry] });
+  return { tag, runId: run.id };
+}
+
+/** `record`'s evidence entry's `diagnostics.failure_kind`, as JSON (`absent` where none). */
+function failureKindOf(record: RunRecord | ListedRecord | undefined): string {
+  const diag = record?.evidence[0]?.diagnostics;
+  if (diag === undefined) return 'no entry or no diagnostics';
+  return Object.prototype.hasOwnProperty.call(diag, 'failure_kind')
+    ? JSON.stringify(diag.failure_kind)
+    : 'absent';
+}
+
 /** Runs `write`, and returns the error it threw, or `undefined` when it was accepted. */
 async function refusalOf(write: () => Promise<unknown>): Promise<unknown> {
   try {
@@ -1032,6 +1088,98 @@ const SAMPLE_VALUES: {
  * backend (e.g. a Postgres store's suite exercising genuine multi-connection contention) — do
  * NOT read a green result here as proof of cross-host safety.
  */
+/**
+ * `CLAIM_KEEPS_DEADLINE_CAUSE`'s three workflows, each with one step, `work`, eligible on a fresh run:
+ * an `auto` step without finalizers (a time limit, so no cause), an agent step (`step_not_auto`) and
+ * an `auto` step beside a finalizer step (`finalizer_bearing`).
+ */
+const DEADLINE_CAUSE_SHAPES: ReadonlyArray<{
+  shape: string;
+  cause: ClaimRecord['deadline_absent'];
+  definition: WorkflowDefinition;
+}> = [
+  {
+    shape: 'an auto step of a workflow without finalizers',
+    cause: undefined,
+    definition: {
+      id: 'tck-deadline-auto',
+      name: 'tck-deadline-auto',
+      version: 1,
+      steps: { work: { description: 'Work.', execution: 'auto', depends_on: [] } },
+    },
+  },
+  {
+    shape: 'an agent step',
+    cause: 'step_not_auto',
+    definition: {
+      id: 'tck-deadline-agent',
+      name: 'tck-deadline-agent',
+      version: 1,
+      steps: { work: { description: 'Work.', execution: 'agent', depends_on: [] } },
+    },
+  },
+  {
+    shape: 'an auto step of a workflow with a finalizer',
+    cause: 'finalizer_bearing',
+    definition: {
+      id: 'tck-deadline-finalizer',
+      name: 'tck-deadline-finalizer',
+      version: 1,
+      steps: {
+        work: { description: 'Work.', execution: 'auto', depends_on: [] },
+        tidy: { description: 'Tidy.', execution: 'finalizer', depends_on: [] },
+      },
+    },
+  },
+];
+
+/**
+ * `CLAIM_KEEPS_DEADLINE_CAUSE`'s one assertion: a claim with a time limit carries a string `deadline`
+ * and no `deadline_absent`; one without carries `deadline: null` and the cause; never both.
+ */
+function assertDeadlineCause(
+  record: RunRecord,
+  stepName: string,
+  shape: string,
+  cause: ClaimRecord['deadline_absent'],
+  where: string,
+): void {
+  const claim = record.claims?.[stepName];
+  if (claim === undefined) {
+    throw new Error(
+      `CLAIM_KEEPS_DEADLINE_CAUSE (${where}): the store wrote no claim for step '${stepName}' (${shape})`,
+    );
+  }
+  if (cause === undefined) {
+    if (typeof claim.deadline !== 'string') {
+      throw new Error(
+        `CLAIM_KEEPS_DEADLINE_CAUSE (${where}): the claim on step '${stepName}' (${shape}) has a time ` +
+          `limit, so it must carry a string deadline (got ${JSON.stringify(claim.deadline)})`,
+      );
+    }
+    if ('deadline_absent' in claim) {
+      throw new Error(
+        `CLAIM_KEEPS_DEADLINE_CAUSE (${where}): the claim on step '${stepName}' (${shape}) has a ` +
+          `deadline, so it must carry no deadline_absent (got ${JSON.stringify(claim.deadline_absent)})`,
+      );
+    }
+    return;
+  }
+  if (claim.deadline !== null) {
+    throw new Error(
+      `CLAIM_KEEPS_DEADLINE_CAUSE (${where}): the claim on step '${stepName}' (${shape}) has no time ` +
+        `limit, so its deadline must be null (got ${JSON.stringify(claim.deadline)})`,
+    );
+  }
+  if (claim.deadline_absent !== cause) {
+    throw new Error(
+      `CLAIM_KEEPS_DEADLINE_CAUSE (${where}): the claim on step '${stepName}' (${shape}) has no time ` +
+        `limit and must say why: expected deadline_absent '${cause}', got ` +
+        `${claim.deadline_absent === undefined ? 'none' : JSON.stringify(claim.deadline_absent)}`,
+    );
+  }
+}
+
 export function runStoreFidelityContract(
   adapter: RunStoreFidelityContractAdapter,
 ): RunStoreFidelityContractCase[] {
@@ -2386,6 +2534,117 @@ export function runStoreFidelityContract(
       },
     ),
   );
+
+  // Gap 2, unit (ii-a) — EVIDENCE_KEEPS_FAILURE_KIND. The round trips are always active: every store
+  // round-trips evidence. The listing case needs `scanListed`.
+  const wroteKind = JSON.stringify('permanent');
+  const kindListing = (name: string, run: () => Promise<void>): RunStoreFidelityContractCase =>
+    typeof adapter.store.scanListed !== 'function'
+      ? {
+          law: 'EVIDENCE_KEEPS_FAILURE_KIND',
+          name: `SKIPPED — store has no scanListed: ${name}`,
+          skipped: true,
+          run: async () => {
+            // Intentional no-op — see the case name for why.
+          },
+        }
+      : { law: 'EVIDENCE_KEEPS_FAILURE_KIND', name, run };
+  cases.push(
+    {
+      law: 'EVIDENCE_KEEPS_FAILURE_KIND',
+      name: 'an evidence entry written with diagnostics.failure_kind reads back from get with it unchanged',
+      run: async () => {
+        const { runId } = await runWithFailureKind(adapter, 'get', true);
+        const { record } = await adapter.store.get(runId);
+        const read = failureKindOf(record);
+        if (read !== wroteKind) {
+          throw new Error(
+            `EVIDENCE_KEEPS_FAILURE_KIND: get must read diagnostics.failure_kind back as written; wrote ${wroteKind}, read back ${read}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'EVIDENCE_KEEPS_FAILURE_KIND',
+      name: 'an update that keeps the entry diagnostics.failure_kind unchanged is accepted, and it still reads back with it',
+      run: async () => {
+        const { runId } = await runWithFailureKind(adapter, 'update', true);
+        const { record } = await adapter.store.get(runId);
+        const refusal = await refusalOf(() => adapter.store.update({ ...record }));
+        const read = failureKindOf((await adapter.store.get(runId)).record);
+        if (refusal !== undefined || read !== wroteKind) {
+          throw new Error(
+            `EVIDENCE_KEEPS_FAILURE_KIND: an update that keeps diagnostics.failure_kind unchanged must be accepted and keep it; ${refusal === undefined ? 'accepted' : `refused (${String(refusal)})`}, then read back ${read}, wrote ${wroteKind}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'EVIDENCE_KEEPS_FAILURE_KIND',
+      name: 'an evidence entry written without diagnostics.failure_kind reads back without it, never with a kind the store made up',
+      run: async () => {
+        const { runId } = await runWithFailureKind(adapter, 'absent', false);
+        const read = failureKindOf((await adapter.store.get(runId)).record);
+        if (read !== 'absent') {
+          throw new Error(
+            `EVIDENCE_KEEPS_FAILURE_KIND: an entry written without diagnostics.failure_kind must read back without it; read back ${read}`,
+          );
+        }
+      },
+    },
+    kindListing(
+      'a listing keeps diagnostics.failure_kind on the evidence entry, as get reads it',
+      async () => {
+        const { tag, runId } = await runWithFailureKind(adapter, 'listing', true);
+        const listed = await listedRun(adapter, tag, runId);
+        const read = failureKindOf(listed?.record);
+        if (read !== wroteKind) {
+          throw new Error(
+            `EVIDENCE_KEEPS_FAILURE_KIND: scanListed must keep diagnostics.failure_kind; wrote ${wroteKind}, listed ${listed === undefined ? 'no such run' : read}`,
+          );
+        }
+      },
+    ),
+  );
+
+  // Q1 (#592), unit f2 — CLAIM_KEEPS_DEADLINE_CAUSE. Active only for a store that keeps claims, as
+  // CLAIM_NAMES_HOLDER is; a store that keeps none is told so by a skipped case.
+  if (adapter.store.persistsClaims === true) {
+    for (const { shape, cause, definition } of DEADLINE_CAUSE_SHAPES) {
+      cases.push({
+        law: 'CLAIM_KEEPS_DEADLINE_CAUSE',
+        name:
+          cause === undefined
+            ? `a claim on ${shape} carries a string deadline and no deadline_absent — returned and re-read`
+            : `a claim on ${shape} carries deadline null and deadline_absent '${cause}' — returned and re-read`,
+        run: async () => {
+          const { record: run } = await adapter.store.create({
+            workflowId: `${definition.id}-${Math.random().toString(36).slice(2)}`,
+            workflowVersion: 1,
+            params: {},
+          });
+          const { record: claimed } = await adapter.store.claimStep(run.id, 'work', definition);
+          assertDeadlineCause(claimed, 'work', shape, cause, 'the returned record');
+          assertDeadlineCause(
+            (await adapter.store.get(run.id)).record,
+            'work',
+            shape,
+            cause,
+            'a re-read of the stored record',
+          );
+        },
+      });
+    }
+  } else {
+    cases.push({
+      law: 'CLAIM_KEEPS_DEADLINE_CAUSE',
+      name: "SKIPPED — store does not declare 'persistsClaims': a claim's deadline cause",
+      skipped: true,
+      run: async () => {
+        // Intentional no-op — see the case name for why.
+      },
+    });
+  }
 
   cases.push({
     law: 'STORE_RELEASE_LINE_TRUE',

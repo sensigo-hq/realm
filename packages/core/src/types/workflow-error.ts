@@ -79,6 +79,9 @@ export type ErrorCode =
   | 'SERVICE_RESPONSE_INVALID'
   // a 3xx redirect where a direct response was required (e.g. on a write) — non-retryable
   | 'SERVICE_UNEXPECTED_REDIRECT'
+  // gap 2, unit (ii-a): an agent step's model request failed and the step took its failure path, and
+  // Realm's retry did not use up its tries or its time (`ExecuteChainOptions.modelFailure`)
+  | 'MODEL_REQUEST_FAILED'
   // STATE
   | 'STATE_BLOCKED'
   | 'STATE_PRECONDITION_FAILED'
@@ -317,6 +320,7 @@ export const ERROR_CODES = [
   'SERVICE_NOT_FOUND',
   'SERVICE_RESPONSE_INVALID',
   'SERVICE_UNEXPECTED_REDIRECT',
+  'MODEL_REQUEST_FAILED',
   'STATE_BLOCKED',
   'STATE_PRECONDITION_FAILED',
   'STATE_RUN_NOT_FOUND',

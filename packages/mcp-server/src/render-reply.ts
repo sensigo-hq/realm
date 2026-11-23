@@ -66,6 +66,9 @@ import {
   buildDisclosureSet,
   disclose,
   discloseLeaf,
+  failureTextMarkOf,
+  failureTextShape,
+  shapeOf,
   discloseReply,
   discloseSplit,
   stripSpanMarks,
@@ -296,6 +299,12 @@ export interface McpHost {
    * show a field the reply does not have.
    */
   replyGateWithoutDisplay?: true;
+  /**
+   * Gap 2, unit (iv-b2a): this server's failure-text setting. Under `hidden`, {@link renderReply}
+   * shows the text core marked as a failure's words (a failed step's `errors[0]` and
+   * `error_details`, a handler's abort in `context_hint`) as its shape. Absent ⇒ `shown`.
+   */
+  failureText?: 'shown' | 'hidden';
 }
 
 /**
@@ -1414,13 +1423,75 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
     ...(gate !== undefined ? { gate: withAuthorLabel(gate) } : {}),
   };
   if (tokenStrayed(envelope, narrowed)) return heldBackReply(reply, host);
+  // Gap 2, unit (iv-b2a): under `hidden`, the text core marked as a failure's words, shaped where it
+  // stands, after every other part of the envelope is composed (the hint's tails included).
+  const shown = host.failureText === 'hidden' ? hidingFailureText(reply, envelope) : envelope;
   const person = [
     personBlockOf(elsewhereEntries, reply.basis, host, heldOf(narrowed)),
     cutWayOf(reply, host),
   ]
     .filter((part): part is string => part !== undefined)
     .join('\n');
-  return { envelope, ...(person !== '' ? { person } : {}) };
+  return { envelope: shown, ...(person !== '' ? { person } : {}) };
+}
+
+/**
+ * Gap 2, unit (iv-b2a): `envelope` with the text core marked on `reply` (`failureTextMarkOf`) shown
+ * as its shape, each field only while it still holds the marked text: `errors[0]` while it equals
+ * core's message; `error_details` while the reply carries the marked details object (or its error's
+ * own facts); in `context_hint`, the abort's span alone, everything around it kept. The shaped
+ * top-level paths ride the envelope under {@link FAILURE_TEXT_SHAPED}, for the receipt.
+ */
+function hidingFailureText(reply: EngineReply, envelope: McpEnvelope): McpEnvelope {
+  const mark = failureTextMarkOf(reply);
+  if (mark === undefined) return envelope;
+  const paths: string[] = [];
+  let next: McpEnvelope = envelope;
+  if (mark.message !== undefined && envelope.errors[0] === mark.message) {
+    next = { ...next, errors: [failureTextShape(mark.message), ...envelope.errors.slice(1)] };
+    paths.push('errors');
+  }
+  const details = envelope.error_details;
+  const facts = reply.error?.facts as unknown;
+  if (details !== undefined && (details === mark.details?.object || details === facts)) {
+    const words = details === mark.details?.object ? mark.details.words : 'failing_code';
+    next = { ...next, error_details: detailsHidingFailureText(details, words) };
+    paths.push('error_details');
+  }
+  const hint = next.context_hint;
+  const at = mark.abort !== undefined ? hint.indexOf(mark.abort.text) : -1;
+  if (mark.abort !== undefined && at >= 0) {
+    next = {
+      ...next,
+      context_hint: `${hint.slice(0, at)}${mark.abort.shaped}${hint.slice(at + mark.abort.text.length)}`,
+    };
+    paths.push('context_hint');
+  }
+  if (paths.length === 0) return next;
+  const marked: McpEnvelope & { [FAILURE_TEXT_SHAPED]?: readonly string[] } = {
+    ...next,
+    [FAILURE_TEXT_SHAPED]: paths,
+  };
+  return marked;
+}
+
+/**
+ * Gap 2, unit (iv-b2a): a failed step's `error_details` with its failure's words as their shape, every
+ * key kept. `last_error` (details core minted: the retry wrap's, a model failure's): only `lastError`
+ * is. `failing_code` (the failing code's own, Realm's own on that path included): a number in
+ * `status` or `retry_after` stays; every other value is shown as its shape (fail closed).
+ */
+function detailsHidingFailureText(
+  details: Readonly<Record<string, unknown>>,
+  words: 'last_error' | 'failing_code',
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(details).map(([key, value]) => {
+      if (words === 'last_error') return [key, key === 'lastError' ? shapeOf(value) : value];
+      const kept = (key === 'status' || key === 'retry_after') && typeof value === 'number';
+      return [key, kept ? value : shapeOf(value)];
+    }),
+  );
 }
 
 /**
@@ -1625,8 +1696,20 @@ export const PERSON_BLOCK: unique symbol = Symbol('realm.mcp.person_block');
  */
 export const REPLY_PLAN: unique symbol = Symbol('realm.mcp.reply_plan');
 
+/**
+ * Gap 2, unit (iv-b1): the dotted paths of the fields a composer showed as their shape under the
+ * door's failure-text setting `hidden` ride its reply under this symbol — never serialized, kept by
+ * object spread. {@link toolContentOf} hands them to the walk, which lists each it meets in the
+ * receipt's `shaped` and says `failure_text: 'withheld'`; the walk shapes nothing more.
+ */
+export const FAILURE_TEXT_SHAPED: unique symbol = Symbol('realm.mcp.failure_text_shaped');
+
 /** A handler's reply: the envelope, the person block when there is one, and its plan. */
-export type WithPersonBlock<T> = T & { [PERSON_BLOCK]?: string; [REPLY_PLAN]?: ReplyPlan };
+export type WithPersonBlock<T> = T & {
+  [PERSON_BLOCK]?: string;
+  [REPLY_PLAN]?: ReplyPlan;
+  [FAILURE_TEXT_SHAPED]?: readonly string[];
+};
 
 /** The envelope of a rendered reply, carrying its person block under {@link PERSON_BLOCK}. */
 /**
@@ -2172,11 +2255,18 @@ export function toolContentOf(
     };
   }
   const person = reply[PERSON_BLOCK];
+  // Gap 2, unit (iv-b1): the fields the composer shaped under the failure-text setting, read from the
+  // reply as given; every walk (the ceiling's cut copies too) lists those it meets.
+  const shapedPaths = reply[FAILURE_TEXT_SHAPED];
+  const walkOptions =
+    shapedPaths !== undefined && shapedPaths.length > 0
+      ? { failureTextShaped: new Set(shapedPaths) }
+      : {};
   // Caching 3-B (B2): each `run_step` entry's boundary, computed on the RAW reply before the first
   // walk, so the ceiling's cut copies (`fitted`) inherit it; the internal key goes from every entry.
   const raw = withStablePrefixes(reply, disclosure) as Record<string, unknown>;
   const walk = (r: Readonly<Record<string, unknown>>): Record<string, unknown> =>
-    discloseReply(r, disclosure.set, disclosure.audience, disclosure.table) as Record<
+    discloseReply(r, disclosure.set, disclosure.audience, disclosure.table, walkOptions) as Record<
       string,
       unknown
     >;

@@ -87,6 +87,7 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`AnswerCaller`](#answercaller) | type | The names a call to `submitHumanResponse` can give for where it came from (`SubmitGateOptions.caller`). |
 | [`CapabilityBasis`](#capabilitybasis) | type | What a capability refusal was judged from: the caller's own registry, or the run's marker when the caller passed none. |
 | [`ChainCaller`](#chaincaller) | type | The names a call to `executeChain` can give for where it came from (`ExecuteChainOptions.caller`). |
+| [`ClaimableErrorClass`](#claimableerrorclass) | type | An `error_class` word a provider or a program may claim: every word but `startup_failure`, which only `realm agent`'s and `realm listen`'s own startup writers mint. |
 | [`ClaimState`](#claimstate) | type | How alive a single in-progress claim is: `healthy`, `claim_stale` or `claim_unknown_age`. |
 | [`Cond`](#cond) | type | A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`). |
 | [`DisclosureTier`](#disclosuretier) | type | `declared` hides declared members only (question text, private terminals); `all` adds the environment members and the patterns. |
@@ -922,6 +923,7 @@ The options of `classifyRunHealth`, the bag `classifyRecordHealth` takes.
 ```ts
 interface ClassifyRunHealthOptions {
     idleThresholdMs?: number;
+    owedThresholdMs?: number;
     definition?: WorkflowDefinition;
     definitionError?: {
         code: string;
@@ -1107,6 +1109,15 @@ interface ExecuteChainOptions {
     disclosure?: DisclosureSet;
     heldClaim?: {
         hold: LeaseHold;
+    };
+    modelFailure?: {
+        kind: 'transient' | 'permanent';
+        stop_reason: NonNullable<EvidenceSnapshot['stop_reason']>;
+        message: string;
+        attempt: number;
+        error_class: ClaimableErrorClass;
+        status: number | null;
+        attempts_sdk?: number;
     };
     onStep?: AdvanceRunOptions['onStep'];
     onTaken?: AdvanceRunOptions['onTaken'];
@@ -1591,7 +1602,7 @@ A single, typed run-health observation: the shared vocabulary every surface rend
 
 ```ts
 interface RunHealthFinding {
-    kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'definition_unresolvable' | 'record_stamped_ahead';
+    kind: 'never_claimed_idle' | 'drive_failing' | 'stale_claim' | 'wedged_gate_sibling' | 'capability_block' | 'terminal_pending_finalizer' | 'terminal_with_stale_gate' | 'gate_corruption' | 'guard_awaiting_settlement' | 'completed_with_failed_steps' | 'gate_expired_awaiting_drive' | 'structured_output_downgraded' | 'trust_value_invalid' | 'cannot_go_on' | 'owed_undriven' | 'definition_unresolvable' | 'record_stamped_ahead';
     step?: string;
     reason: string;
     since?: string;
@@ -1812,6 +1823,17 @@ The names a call to `executeChain` can give for where it came from
 
 ```ts
 type ChainCaller = (typeof ENTRY_CALLERS.executeChain)[number];
+```
+
+### ClaimableErrorClass
+
+type · public
+
+An `error_class` word a provider or a program may claim: every word but `startup_failure`, which
+only `realm agent`'s and `realm listen`'s own startup writers mint. Q1 (#592) unit c.
+
+```ts
+type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
 ```
 
 ### ClaimState
@@ -2859,6 +2881,7 @@ Names this job reaches whose entry is on another page.
 - [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): The marker on a step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
 - [`CappedRead`](implement-a-store.md#cappedread): What `WorkflowRegistrar.getCapped` resolves to.
 - [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).
+- [`ClaimDeadlineAbsent`](implement-a-store.md#claimdeadlineabsent): Why a claim has no time limit, written on the claim when it is taken (`ClaimRecord.deadline_absent`).
 - [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).
 - [`Clock`](implement-a-store.md#clock): The clock a run store reads the time from: `now()` and `at()`.
 - [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.

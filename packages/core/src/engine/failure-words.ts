@@ -34,7 +34,9 @@ export interface StopFacts {
  * Why retrying stopped, judged in this order (the cap before the error's retryability, as
  * `exhausted_by` already does): no `retry` block; the total-time cap spent; an error the decision
  * would not retry; otherwise the attempts were used up (the loop leaves a retried error only on its
- * last slot). It reads only what the decision read, and decides nothing.
+ * last slot). It reads only what the decision read, and decides nothing. It does not judge an agent
+ * step's model failure (`ExecuteChainOptions.modelFailure`, gap 2 unit (ii-a)): there the caller
+ * states the stop reason, and a permanent failure reads `non_retryable` even without a `retry` block.
  */
 export function stopReasonOf(facts: StopFacts): StopReason {
   if (!facts.hasRetryBlock) return 'no_retry_policy';

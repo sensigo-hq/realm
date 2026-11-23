@@ -617,7 +617,7 @@ describe('#960 `realm serve` stops when asked (built CLI)', { timeout: 120_000 }
         code: 1,
         lines: ['realm serve: --shutdown-grace 0 ran out. Requests cut: 1.'],
         inProgress: ['In Progress: slow', '  slow: taken by … via mcp-http'],
-        stuck: ['No stuck runs found (threshold 24h).'],
+        stuck: ['No stuck runs found (threshold 24h; owed work 1m).'],
         reclaimSays: ['  • slow: healthy  (deadline: …)'],
         fenced: {
           code: 1,

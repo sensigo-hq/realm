@@ -244,7 +244,8 @@ describe('#922 P2-1 — check 3, each other state on advance_run’s reply', () 
     );
     claim(
       'run-record-and-export.md',
-      "| `deadline` | When the claim's time runs out, or `null` if Realm cannot tell.",
+      // Q1 (#592) f2: the row now says why a deadline is null.
+      "| `deadline` | When the claim's time runs out, or `null` when Realm set no time limit for the step; `deadline_absent` then says why.",
     );
     const words = async (claims: Record<string, Claim>, keepsClaims = true) => {
       const d = await door(

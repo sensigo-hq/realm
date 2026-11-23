@@ -267,6 +267,8 @@ export const STEP_DIAGNOSTICS_TABLE = {
   guard_conditions: { nested: GUARD_CONDITION_TABLE },
   validation_rejections: 'fact',
   settled_by_default: 'fact',
+  // gap 2, unit (ii-a): a closed word (`transient`, `permanent`), never the provider's text.
+  failure_kind: 'fact',
   structured_output: { nested: STRUCTURED_OUTPUT_TABLE },
   cache: { nested: STEP_CACHE_TABLE },
 } as const satisfies Row<StepDiagnostics>;
@@ -435,6 +437,8 @@ export const CALLBACK_VIEW_TABLE = {
  *  replaces a live one with its own marker. */
 const CLAIM_TABLE = {
   deadline: 'fact',
+  // Q1 (#592) unit f2: a word from a closed list, like `deadline`.
+  deadline_absent: 'fact',
   token: 'fact',
   holder: { nested: ATTRIBUTED_TABLE },
   since: 'fact',
@@ -693,10 +697,9 @@ export const GUARD_CONDITION_FACTS = {
   Element<NonNullable<StepDiagnostics['guard_conditions']>>
 >;
 
-export const STEP_DIAGNOSTICS_FACTS = {} as const satisfies FactProducers<
-  typeof STEP_DIAGNOSTICS_TABLE,
-  StepDiagnostics
->;
+export const STEP_DIAGNOSTICS_FACTS = {
+  failure_kind: 'enum',
+} as const satisfies FactProducers<typeof STEP_DIAGNOSTICS_TABLE, StepDiagnostics>;
 
 export const ATTRIBUTED_FACTS = {
   by: 'id',
@@ -765,6 +768,8 @@ export const SKIP_DETAIL_FACTS = {
 
 export const CLAIM_FACTS = {
   deadline: 'time',
+  // Q1 (#592) unit f2: a word from claimDeadlineOf's closed list.
+  deadline_absent: 'enum',
   token: 'id',
   since: 'time',
 } as const satisfies FactProducers<typeof CLAIM_TABLE, ClaimRecord>;

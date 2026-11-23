@@ -3,6 +3,7 @@ import type { ToolCallRecord } from './mcp-types.js';
 import type { ExtensionIdentityEntry } from './extension-identity.js';
 import type { TriggerRule } from './workflow-definition.js';
 import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
+import type { ClaimDeadlineAbsent } from '../engine/claim-liveness.js';
 import type { AgentAction, ErrorCategory, ErrorCode } from './workflow-error.js';
 
 /**
@@ -326,6 +327,13 @@ export interface StepDiagnostics {
    * even one that previously accrued rejections, carries only `validation_rejections` here.
    */
   settled_by_default?: boolean;
+  /**
+   * Gap 2, unit (ii-a): on the entry of an agent step that failed because its model request failed
+   * and it took its failure path, why: `transient` (a later try might pass) or `permanent` (it will
+   * fail the same way). A later step reads it as `$settlement.<step>.failure_kind`. Absent on every
+   * other entry, and on every entry written before this field existed.
+   */
+  failure_kind?: 'transient' | 'permanent';
   /** Issue #236 — disclosure for a `structured_output: 'strict'`-declared step's attempt. See
    *  {@link StructuredOutputMeta}. Absent on a step that never declared `structured_output`. */
   structured_output?: StructuredOutputMeta;
@@ -1302,7 +1310,12 @@ void _everyExhaustedByListed;
  */
 export type StopReason = NonNullable<EvidenceSnapshot['stop_reason']>;
 
-/** Every {@link StopReason}, in judging order; compile-checked both ways, ⊇ {@link ExhaustedBy}. */
+/**
+ * Every {@link StopReason}, in the dispatch loop's judging order; compile-checked both ways,
+ * ⊇ {@link ExhaustedBy}. On an agent step whose model request failed and that took its failure
+ * path (`ExecuteChainOptions.modelFailure`), the caller states the stop reason and no judging order
+ * applies: a permanent model failure reads `non_retryable` even on a step with no `retry` block.
+ */
 export const STOP_REASONS = [
   'no_retry_policy',
   'total_timeout',
@@ -1435,6 +1448,14 @@ export interface ClaimRecord {
    * auto-reclaimed. A concrete deadline is set only for reliably time-boundable claims.
    */
   deadline: string | null;
+  /**
+   * Q1 (#592) unit f2: why `deadline` is `null`, written in the same write that takes the claim
+   * (`claimDeadlineOf`'s `absent`): `step_not_auto` or `finalizer_bearing` from Realm's stores.
+   * Present exactly when `deadline` is `null` on a claim a Realm store writes; never beside a string
+   * deadline, which a reader then judges alone. A claim written before this field, or by a store that
+   * does not write it, has none, and readers say `not_recorded`.
+   */
+  deadline_absent?: ClaimDeadlineAbsent;
   /**
    * Issue #279 (increment 1, PR-A): an acquirer-minted fencing token, stamped atomically in the
    * SAME `claimStep` write that creates this claim record (uuid; each store's own existing uuid
@@ -1856,8 +1877,9 @@ const _everyErrorClassListed: [MissingErrorClass] extends [never] ? true : Missi
 void _everyErrorClassListed;
 
 /**
- * Q1 (#592) unit c: an `error_class` word a provider or a program may claim — every word but
- * `startup_failure`, which only `realm agent`'s and `realm listen`'s own startup writers mint.
+ * An `error_class` word a provider or a program may claim: every word but `startup_failure`, which
+ * only `realm agent`'s and `realm listen`'s own startup writers mint. Q1 (#592) unit c.
+ * @public
  */
 export type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'startup_failure'>;
 
@@ -1866,7 +1888,8 @@ export type ClaimableErrorClass = Exclude<DriveFailureRecord['error_class'], 'st
  * {@link ERROR_CLASSES} word but `startup_failure`, which only `realm agent`'s and `realm listen`'s
  * own startup writers mint. The readers that take a claimed class close against this one list: the
  * CLI's payload reader and model-try reader (a provider's thrown payload, a third-party
- * `--provider-module`'s included) and `closeModelAttempts` (a program's `model_attempts`).
+ * `--provider-module`'s included), `closeModelAttempts` (a program's `model_attempts`), and
+ * `executeChain`'s admission of `modelFailure.error_class`.
  * Checked both ways, as `ERROR_CLASSES` is.
  */
 export const CLAIMABLE_ERROR_CLASSES = [
