@@ -1072,3 +1072,176 @@ describe('#845 check 6, outside the Basic Multilingual Plane: lowercase letters,
     });
   });
 });
+
+// ---------------------------------------------------------------------------------------------------
+// #845 1a-ii correction 1 (`prompts/fix-845-1a-ii-correction-1.md`): a quote carrying a run of
+// invisible characters is read in time proportional to its length, and its readings do not move.
+
+/** correction 1's runs: the four invisible characters the walk found read in quadratic time. */
+const INVISIBLE_RUNS: Record<string, string> = {
+  'U+200B': '\u{200b}',
+  'U+00AD': '\u{ad}',
+  'U+FEFF': '\u{feff}',
+  'U+FE0F': '\u{fe0f}',
+};
+const RENT = 'The Tenant pays the rent monthly in advance.';
+/** correction 1's places: a quote and its document, with the run inside the quote. */
+const RUN_PLACES: Record<string, (run: string) => readonly [quote: string, doc: string]> = {
+  end_after_stop: (run) => [`the tenant pays the rent.${run}`, RENT],
+  mid_sentence: (run) => [`the tenant${run} pays the rent`, RENT],
+  stitched: (run) => [
+    `The Tenant pays the rent monthly in advance. … The Landlord${run} repairs the roof every spring`,
+    'The Tenant pays the rent monthly in advance. The deposit is due now. The Landlord repairs the roof every spring.',
+  ],
+};
+
+describe('#845 1a-ii correction 1, check 1: a quote carrying a run of invisible characters is read in time proportional to its length', () => {
+  const N = 1000;
+  for (const [name, invisible] of Object.entries(INVISIBLE_RUNS)) {
+    for (const [place, at] of Object.entries(RUN_PLACES)) {
+      it(`${name}, ${place}: reads at 2N at most 2.5 times those at N`, () => {
+        const readsAt = (n: number): number => {
+          const [quote, doc] = at(invisible.repeat(n));
+          releaseQuoteCache();
+          return readsOf(() => {
+            locateQuote(quote, doc);
+          });
+        };
+        const atN = readsAt(N);
+        const at2N = readsAt(2 * N);
+        const ratio = Math.round((at2N / atN) * 100) / 100;
+        console.log(
+          `correction 1 check 1 ${name} ${place}: ${String(atN)} → ${String(at2N)} reads, ×${String(ratio)}`,
+        );
+        // (1) red when each character of the run walks the rest of it (about ×4 at dfda322b);
+        //     (2) prints the reads at N and 2N and the ratio.
+        expect({ atN, at2N, ratio, linear: at2N <= 2.5 * atN }).toEqual({
+          atN,
+          at2N,
+          ratio,
+          linear: true,
+        });
+      }, 120_000);
+    }
+  }
+});
+
+describe('#845 1a-ii correction 1, check 2 (GROUNDING, not acceptance): the readings do not move', () => {
+  it("check 1's inputs at N and 2N, and the walk's W3 cells: each locateQuote result is dfda322b's", () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL('../fixtures/invisible-runs-845.json', import.meta.url), 'utf8'),
+    ) as { cases: Record<string, { in: string; out: unknown }> };
+    const digest = (v: unknown): string =>
+      createHash('sha256').update(JSON.stringify(v), 'utf8').digest('hex').slice(0, 32);
+    const cases: Array<readonly [key: string, quote: string, doc: string]> = [];
+    for (const [name, invisible] of Object.entries(INVISIBLE_RUNS)) {
+      for (const [place, at] of Object.entries(RUN_PLACES)) {
+        for (const n of [1000, 2000])
+          cases.push([`run ${name} ${place} ${String(n)}`, ...at(invisible.repeat(n))]);
+      }
+    }
+    // The walk's W3 cells (845-WALK1AII), its inputs as written there.
+    const ZW = '\u{200b}';
+    const SHY = '\u{ad}';
+    const BOM = '\u{feff}';
+    const COST = 'The Tenant pays the full yearly … The Landlord repairs the roof every spring';
+    const FLAT = 'The flat measures approx.';
+    const ITEMS = (pre1: string, pre2: string): string =>
+      `During the whole lease term the Tenant shall:\n${pre1}- keep the flat clean and in good order;\n${pre2}- pay the heating costs every quarter;\n- return every key when the lease ends.`;
+    const Q1 =
+      'During the whole lease term the Tenant shall: … keep the flat clean and in good order';
+    const Q2 =
+      'During the whole lease term the Tenant shall: … pay the heating costs every quarter';
+    const NINE = (between: string): string => `The office opens at 9:${between}30 every weekday.`;
+    const SEND =
+      'The Tenant pays the rent every month. … Send every notice in writing to the Landlord';
+    const SEND2 =
+      'The Tenant pays the rent every month. … 2. Send every notice in writing to the Landlord';
+    const LABEL = (line: string): string =>
+      `The Tenant pays the rent every month.\n${line} Send every notice in writing to the Landlord.`;
+    const ITEMS2 = (pre: string): string =>
+      `During the whole lease term the Tenant shall, when asked:\n${pre}- keep the flat clean and in good order;\n- pay the heating costs every quarter.`;
+    const QF =
+      'During the whole lease term the Tenant shall … keep the flat clean and in good order';
+    const DEPOSIT = (line: string, word: string): string =>
+      `The Tenant pays the rent every month. The deposit is due now.\n${line} ${word} every notice in writing to the Landlord.`;
+    cases.push(
+      [
+        'W3.1a',
+        COST,
+        `The Tenant pays the full yearly heating cost.${ZW} The Landlord repairs the roof every spring.`,
+      ],
+      [
+        'W3.1b',
+        COST,
+        `The Tenant pays the full yearly heating cost. ${ZW}The Landlord repairs the roof every spring.`,
+      ],
+      [
+        'W3.1c',
+        COST,
+        `The Tenant pays the full yearly heating cost.${BOM} The Landlord repairs the roof every spring.`,
+      ],
+      [
+        'W3.1d',
+        COST,
+        'The Tenant pays the full yearly heating cost. The Landlord repairs the roof every spring.',
+      ],
+      [
+        'W3.1e',
+        'The Tenant pays the full yearly … the Landlord repairs the roof every spring',
+        `The Tenant pays the full yearly heating cost.${ZW} the Landlord repairs the roof every spring.`,
+      ],
+      ['W3.2a', FLAT, `The flat measures approx.${SHY} 412 square metres.`],
+      ['W3.2b', FLAT, `The flat measures approx.${ZW}412 square metres.`],
+      ['W3.2c', FLAT, `The flat measures approx.${SHY}\n412 square metres.`],
+      ['W3.2d', FLAT, 'The flat measures approx. 412 square metres.'],
+      ['W3.2e', `the tenant pays the rent.${ZW}`, RENT],
+      ['W3.3a', Q2, ITEMS('', ZW)],
+      ['W3.3b', Q1, ITEMS(ZW, '')],
+      ['W3.3c', Q1, ITEMS(SHY, '')],
+      ['W3.3d', Q2, ITEMS('', BOM)],
+      ['W3.3e', Q2, ITEMS('', '')],
+      ['W3.3f', Q2, ITEMS('', '').replace('- pay', `-${ZW} pay`)],
+      ['W3.4a', '9', NINE(ZW)],
+      ['W3.4b', 'The office opens at 9', NINE(ZW)],
+      ['W3.4c', 'the office opens at 9:30 every weekday', NINE(ZW)],
+      ['W3.4d', 'The office opens at 9: … 30 every weekday', NINE(ZW)],
+      ['W3.4e', '9', NINE('')],
+      ['W3.5a', SEND, LABEL(`2.${ZW}`)],
+      ['W3.5b', SEND2, LABEL(`2.${ZW}`)],
+      ['W3.5c', SEND, LABEL('2.')],
+      ['W3.5d', SEND, LABEL(`2${ZW}.`)],
+      ['W3.5e', SEND, LABEL(`${ZW}2.`)],
+      ['FIX W3.3b', QF, ITEMS2(ZW)],
+      ['FIX W3.3c', QF, ITEMS2(SHY)],
+      ['FIX W3.3g', QF, ITEMS2(BOM)],
+      ['FIX W3.3h', QF, ITEMS2('')],
+      ['FIX W3.3i', QF, ITEMS2('').replace(':\n', `:${ZW}\n`)],
+      ['FIX W3.5b', SEND2, DEPOSIT(`2.${ZW}`, 'Send')],
+      ['FIX W3.5f', SEND2, DEPOSIT('2.', 'Send')],
+      [
+        'FIX W3.5g',
+        'The Tenant pays the rent every month. … send every notice in writing to the Landlord',
+        DEPOSIT(`2.${ZW}`, 'send'),
+      ],
+    );
+    // The fixture's precondition: the same cases and inputs as at dfda322b.
+    expect({
+      keys: cases.map(([key]) => key).sort(),
+      inputs: cases
+        .filter(([key, quote, doc]) => fixture.cases[key]?.in !== digest([quote, doc]))
+        .map(([key]) => key),
+    }).toEqual({ keys: Object.keys(fixture.cases).sort(), inputs: [] });
+    const moved = cases
+      .map(([key, quote, doc]) => {
+        releaseQuoteCache();
+        const now = JSON.stringify(locateQuote(quote, doc));
+        const then = JSON.stringify(fixture.cases[key]?.out);
+        return now === then ? '' : `${key}: ${now}, at dfda322b ${then}`;
+      })
+      .filter((line) => line !== '');
+    // (1) red when a run of invisible characters is crossed only part of the way (the walk stopped
+    //     after 30 of them); (2) prints each case whose result moved, with dfda322b's beside it.
+    expect(moved).toEqual([]);
+  }, 120_000);
+});

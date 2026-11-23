@@ -1022,10 +1022,13 @@ function segmentsWithin(quote: string): Segment[] {
       start = i = j;
       continue;
     }
-    // #845 (R-C2, R-A2): the neighbours by code point, past invisible characters
-    const next = stepOn(quote, i + 1).c;
+    // #845 (R-C2, R-A2): the neighbours by code point, past invisible characters. Read only at a
+    // stop or a `:`, the two breaks that look at them, so a run of invisible characters is crossed
+    // once, from the character before it, never from each of its own characters (1a-ii correction 1).
+    const stop = c === '.' || c === '!' || c === '?';
+    const next = stop || c === ':' ? stepOn(quote, i + 1).c : undefined;
     const sentenceEnd =
-      (c === '.' || c === '!' || c === '?') &&
+      stop &&
       (next === undefined || SPACE.test(next)) &&
       !(c === '.' && endsAbbreviation(quote, i));
     const clauseBreak = c === ';' || (c === ':' && !(isNum(stepBack(quote, i).c) && isNum(next)));
