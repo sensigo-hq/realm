@@ -150,7 +150,7 @@ Point the platform at that address and give it the token as a Bearer token. A re
 
 Three things to know:
 
-- **The token is one shared secret.** Everyone who has it can use every tool. Realm cannot tell callers apart.
+- **The token is one shared secret.** Everyone who has it can use every tool, and Realm cannot tell apart the callers that use it. To tell callers apart, give each its own [named key](../reference/cli/realm-mcp-and-serve.md#named-keys).
 - **It listens on this machine only**, unless you set `--host`.
 - **`--dev` turns the token check off.** It prints `Warning: Running in dev mode — authentication is disabled. Do not expose this to a network.` Use it only on your own machine.
 
