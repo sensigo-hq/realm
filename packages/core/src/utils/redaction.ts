@@ -246,16 +246,67 @@ export type DisclosureTier = 'declared' | 'all';
  * @public
  */
 export type DeclaredState = 'resolved' | 'partial' | 'unknown';
+
+/**
+ * Every state the declared values of a disclosure receipt can be in, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const DECLARED_STATES = [
+  'resolved',
+  'partial',
+  'unknown',
+] as const satisfies readonly DeclaredState[];
+type MissingDeclaredStates = Exclude<DeclaredState, (typeof DECLARED_STATES)[number]>;
+const _everyDeclaredStatesListed: [MissingDeclaredStates] extends [never]
+  ? true
+  : MissingDeclaredStates = true;
+void _everyDeclaredStatesListed;
 /**
  * Why they are not (or `resolved` with zero members because there is no manifest).
  * @public
  */
 export type DeclaredCause = 'no_manifest' | 'load_failed' | 'embedder_none' | 'manifest_changed';
+
+/**
+ * Every cause a disclosure receipt can give for declared values it could not resolve, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const DECLARED_CAUSES = [
+  'no_manifest',
+  'load_failed',
+  'embedder_none',
+  'manifest_changed',
+] as const satisfies readonly DeclaredCause[];
+type MissingDeclaredCauses = Exclude<DeclaredCause, (typeof DECLARED_CAUSES)[number]>;
+const _everyDeclaredCausesListed: [MissingDeclaredCauses] extends [never]
+  ? true
+  : MissingDeclaredCauses = true;
+void _everyDeclaredCausesListed;
 /**
  * Whether the environment was swept.
  * @public
  */
 export type EnvironmentState = 'swept' | 'not_swept';
+
+/**
+ * Every state the environment sweep of a disclosure receipt can be in, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d1b).
+ * @public
+ */
+export const ENVIRONMENT_STATES = [
+  'swept',
+  'not_swept',
+] as const satisfies readonly EnvironmentState[];
+type MissingEnvironmentStates = Exclude<EnvironmentState, (typeof ENVIRONMENT_STATES)[number]>;
+const _everyEnvironmentStatesListed: [MissingEnvironmentStates] extends [never]
+  ? true
+  : MissingEnvironmentStates = true;
+void _everyEnvironmentStatesListed;
 /**
  * Why the environment was not swept: the host set the members itself and passed no environment
  * (`DisclosureSet.environmentCause`).

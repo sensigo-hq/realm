@@ -48,6 +48,7 @@ Where the docs teach it: [Workflow file: top-level fields](../workflow/top-level
 | [`TriggerRule`](#triggerrule) | type | Controls when a step becomes eligible based on its dependencies' outcomes. |
 | [`TrustLevel`](#trustlevel) | type | The words a step's `trust` takes: `auto`, or `human_confirmed` and `human_reviewed`, which open a gate a person answers (`StepDefinition.trust`). |
 | [`WebhookAuth`](#webhookauth) | type | How a webhook trigger checks that a request is genuine: a shared secret, GitHub's or Stripe's signature, an HMAC, or none (`WebhookTrigger.auth`). |
+| [`TRIGGER_RULES`](#trigger_rules) | const | Every trigger rule a step can declare, in the type's order. |
 
 ## Functions
 
@@ -670,6 +671,27 @@ signature, an HMAC, or none (`WebhookTrigger.auth`).
 
 ```ts
 type WebhookAuth = AuthSharedSecret | AuthGithub | AuthStripe | AuthHmac | AuthNone;
+```
+
+## Constants
+
+### TRIGGER_RULES
+
+const · public
+
+Every trigger rule a step can declare, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const TRIGGER_RULES: readonly [
+    "all_success",
+    "all_failed",
+    "all_done",
+    "one_failed",
+    "one_success",
+    "none_failed"
+];
 ```
 
 ## Also used by this job

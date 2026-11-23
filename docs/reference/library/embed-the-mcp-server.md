@@ -42,10 +42,15 @@ Where the docs teach it: [Core library: serve MCP from your own program](../core
 | [`NotPricedCause`](#notpricedcause) | type | Why a request has no price, one member per producer (`PriceResult`'s `not_priced`). |
 | [`PriceResult`](#priceresult) | type | A price source's answer: the price, with what the same request would cost with no caching and what priced it, or why it has no price. |
 | [`Source`](#source) | type | Where a door setting came from: a flag, the environment, an option, the configuration, the default, or negotiated with the client (`DoorAnswers.source`). |
+| [`DECLARED_CAUSES`](#declared_causes) | const | Every cause a disclosure receipt can give for declared values it could not resolve, in the type's order. |
+| [`DECLARED_STATES`](#declared_states) | const | Every state the declared values of a disclosure receipt can be in, in the type's order. |
 | [`DEFINITION_ABSENCES`](#definition_absences) | const | How a `definition_absent` code arose: one per arm of `getWorkflowForRun`. |
+| [`ENACTOR_KINDS`](#enactor_kinds) | const | Every kind a reply's enactor basis can name, in the type's order. |
+| [`ENVIRONMENT_STATES`](#environment_states) | const | Every state the environment sweep of a disclosure receipt can be in, in the type's order. |
 | [`GATE_ANSWERS_VALUES`](#gate_answers_values) | const | How the MCP door handles gate answers (`DoorAnswers.value`). |
 | [`KIND`](#kind) | const | The kind codes of a disclosure set's marks: where marks overlap, the higher code wins. |
 | [`NOT_PRICED_CAUSES`](#not_priced_causes) | const | Why a request has no price. |
+| [`PRICE_SOURCE_CLASSES`](#price_source_classes) | const | Every class of source a priced request can name (`PricedBy.source_class`), in the type's order. |
 
 ## Functions
 
@@ -599,6 +604,39 @@ type Source = {
 
 ## Constants
 
+### DECLARED_CAUSES
+
+const · public
+
+Every cause a disclosure receipt can give for declared values it could not resolve, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const DECLARED_CAUSES: readonly [
+    "no_manifest",
+    "load_failed",
+    "embedder_none",
+    "manifest_changed"
+];
+```
+
+### DECLARED_STATES
+
+const · public
+
+Every state the declared values of a disclosure receipt can be in, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const DECLARED_STATES: readonly [
+    "resolved",
+    "partial",
+    "unknown"
+];
+```
+
 ### DEFINITION_ABSENCES
 
 const · public
@@ -614,6 +652,37 @@ const DEFINITION_ABSENCES: readonly [
     "legacy",
     "not_read",
     "newer"
+];
+```
+
+### ENACTOR_KINDS
+
+const · public
+
+Every kind a reply's enactor basis can name, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const ENACTOR_KINDS: readonly [
+    "this_program",
+    "observer",
+    "load_failed"
+];
+```
+
+### ENVIRONMENT_STATES
+
+const · public
+
+Every state the environment sweep of a disclosure receipt can be in, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const ENVIRONMENT_STATES: readonly [
+    "swept",
+    "not_swept"
 ];
 ```
 
@@ -685,6 +754,21 @@ const NOT_PRICED_CAUSES: readonly [
     "date_unreadable",
     "price_list_error",
     "rate_missing"
+];
+```
+
+### PRICE_SOURCE_CLASSES
+
+const · public
+
+Every class of source a priced request can name (`PricedBy.source_class`), in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const PRICE_SOURCE_CLASSES: readonly [
+    "economics",
+    "price_list"
 ];
 ```
 

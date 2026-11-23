@@ -401,6 +401,8 @@ export {
   stampOf,
   judgedSnapshotOf,
   listedSnapshotOf,
+  // Q1 (#592) d1b: every kind an enactor basis can name.
+  ENACTOR_KINDS,
 } from './engine/snapshot.js';
 export type {
   Snapshot,
@@ -738,9 +740,18 @@ export type {
 // Q1 (#592) unit b: a run's failures, read from the record — one composer, shown by get_run_state's
 // `failures[]` and by `realm run inspect` under `Failed:`.
 export { composeFailures } from './engine/failure-view.js';
+// Q1 (#592) d1b: the words a failure's `unknown` and `absent` can hold.
+export { FAILURE_UNKNOWN_WORDS, FAILURE_ABSENT_CAUSES } from './engine/failure-view.js';
 export type { FailureView } from './engine/failure-view.js';
 // caching 3-M A-2b1: the words a cost view's misses carry (the functions stay inside core).
-export { CACHE_MISS_CAUSES, CACHE_LIFETIME_SOURCES } from './engine/cache-misses.js';
+export {
+  CACHE_MISS_CAUSES,
+  CACHE_LIFETIME_SOURCES,
+  // Q1 (#592) d1b: the rule a request is judged by (the list existed, on no entry), and where its
+  // predecessor is.
+  CACHE_MISS_RULES,
+  PREDECESSOR_FROM_WORDS,
+} from './engine/cache-misses.js';
 export type {
   CacheMissCause,
   CacheMissRule,
@@ -785,7 +796,12 @@ export type {
   CacheShare,
   CacheabilityStep,
 } from './economics/cacheability.js';
-export { NOT_PRICED_CAUSES, priceRequest } from './economics/price-source.js';
+export {
+  NOT_PRICED_CAUSES,
+  priceRequest,
+  // Q1 (#592) d1b: every class of source a priced request can name.
+  PRICE_SOURCE_CLASSES,
+} from './economics/price-source.js';
 export type {
   NotPricedCause,
   PriceInput,
@@ -1026,6 +1042,8 @@ export { generateSchemaSkeleton } from './utils/schema-skeleton.js';
 // issue #729 PR-0 (E1 (b), (d)): the ONE escaped, bounded value renderer — a value read from a run or
 // stored text from elsewhere, printed as one line with no terminal escape (the doors use it).
 export { escapedBoundedValue } from './utils/redaction.js';
+// Q1 (#592) d1b: the receipt's states and causes, as lists.
+export { DECLARED_STATES, DECLARED_CAUSES, ENVIRONMENT_STATES } from './utils/redaction.js';
 // #729 PR-3: the disclosure law — one law for every exit, applied at the door (RECORD 01 #1–#8).
 export {
   REDACTED_MARKER,
@@ -1089,6 +1107,8 @@ export {
   WITHHELD_WORDS,
   withheldCauseOf,
   withheldQuestion,
+  // Q1 (#592) d1b: every word a receipt's `question` can hold.
+  DISCLOSURE_QUESTIONS,
 } from './utils/disclosure-walk.js';
 export type {
   DisclosureClass,

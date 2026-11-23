@@ -131,6 +131,7 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`PARTIES`](#parties) | const | Who can take a way: the operator, the agent, or the person a question is asked of. |
 | [`PRE_CLAIM_REFUSALS`](#pre_claim_refusals) | const | The checks that refuse a step before it is claimed, in the order `executeStep` runs them. |
 | [`REPLY_KINDS`](#reply_kinds) | const | The kinds of reply `agentActionOf` tells apart. |
+| [`RUN_STATUSES`](#run_statuses) | const | Every status a reply's `status` can hold, in the type's order. |
 | [`STOP_KINDS`](#stop_kinds) | const | The kinds of stop a loop meets on a step it picked or ran (`StopKind`). |
 | [`UNAVAILABLE_CODES`](#unavailable_codes) | const | The codes that say why a way is unavailable, each with how it is judged and the verbs it applies to. |
 | [`WAY_VERBS`](#way_verbs) | const | Every verb a way can name, as a closed list (`WayVerb`). |
@@ -2520,6 +2521,23 @@ const REPLY_KINDS: readonly [
     "refusal",
     "blocked",
     "error"
+];
+```
+
+### RUN_STATUSES
+
+const · public
+
+Every status a reply's `status` can hold, in the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d1b).
+
+```ts
+const RUN_STATUSES: readonly [
+    "ok",
+    "error",
+    "blocked",
+    "confirm_required"
 ];
 ```
 
