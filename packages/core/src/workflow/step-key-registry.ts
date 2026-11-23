@@ -1,7 +1,7 @@
 // step-key-registry.ts — issue #417 PR-2 (the map) + #517 (the drive-flip: MINTS the
 // kind-prohibitions FROM these cells).
 //
-// Every member of KNOWN_STEP_KEYS crossed with every ExecutionMode (36 × 4 = 144 cells) is
+// Every member of KNOWN_STEP_KEYS crossed with every ExecutionMode (37 × 4 = 148 cells) is
 // classified here with evidence: where the engine actually reads it, where the loader refuses it
 // — since #517, the loader's per-step walk looks every declared key up here and MINTS exactly one
 // refusal per key × kind, with the message text carried as per-cell data; companion/value rules
@@ -236,6 +236,12 @@ const MSG_LLM_TIMEOUT =
   'request, and no other kind makes one, so here it would bound nothing. Move it to the agent ' +
   "step whose request it should bound, or remove it. An auto step's dispatch is bounded by " +
   "'timeout_seconds', and a finalizer's handler by its own 'timeout_seconds'.";
+// Gap 2, unit (ii-b2), Words 7.
+const MSG_ON_MODEL_FAILURE =
+  "'on_model_failure' is only valid on execution: agent steps — it decides what happens when the " +
+  "step's model request fails, and no other kind makes one, so here it would decide nothing. Move " +
+  'it to the agent step whose failure it should decide, or remove it. An auto step already fails ' +
+  "after its handler's last try.";
 const MSG_IDEMPOTENT =
   "'idempotent' is only valid on execution: auto steps — it gates 'retry.on_timeout' and " +
   'reclaim eligibility, and both act on auto dispatch, so here it would gate nothing. Remove ' +
@@ -1462,6 +1468,21 @@ export const STEP_KEY_REGISTRY = {
       by: [MINT],
       line: 'key',
       message_data: MSG_LLM_TIMEOUT,
+    },
+  },
+  // Gap 2, unit (ii-b2): read by the drive's one helper, which both provider catches call.
+  on_model_failure: {
+    auto: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_ON_MODEL_FAILURE },
+    agent: {
+      c: 'consumed',
+      where: [{ file: RA, pattern: "if (stepDef.on_model_failure !== 'fail') return undefined;" }],
+    },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_ON_MODEL_FAILURE },
+    finalizer: {
+      c: 'prohibited',
+      by: [MINT],
+      line: 'key',
+      message_data: MSG_ON_MODEL_FAILURE,
     },
   },
 } satisfies Record<(typeof KNOWN_STEP_KEYS)[number], Record<ExecutionMode, StepKeyCell>>;

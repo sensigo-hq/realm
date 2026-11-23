@@ -189,7 +189,15 @@ describe('gap 2 (ii-b1), check 5 — failures[].failure_kind on the reply an ass
     id: 'wf-g2iib1',
     name: 'wf g2iib1',
     version: 1,
-    steps: { classify: { description: 'Classify.', execution: 'agent', depends_on: [] } },
+    // Gap 2, unit (ii-b2): the member is given only for a step that declares the key.
+    steps: {
+      classify: {
+        description: 'Classify.',
+        execution: 'agent',
+        depends_on: [],
+        on_model_failure: 'fail',
+      },
+    },
   };
   const doorOf = (failureText: 'shown' | 'hidden'): McpDoor => {
     const answers = judgeGateAnswers({});

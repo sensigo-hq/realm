@@ -2,7 +2,7 @@
 
 <!-- description: Every field a step can have in workflow.yaml: which step kinds can use it, its type and default, what it does, and one example that uses them all. -->
 
-This page lists every field a step can have. There are 36, taken from the list the loader checks steps against. For each one it says which kinds of step can use it, its type and default, and what it does. One example file that uses all of them is at the end.
+This page lists every field a step can have. There are 37, taken from the list the loader checks steps against. For each one it says which kinds of step can use it, its type and default, and what it does. One example file that uses all of them is at the end.
 
 For the fields at the top of the file, see [Top-level fields](top-level-fields.md).
 
@@ -36,6 +36,7 @@ For the fields at the top of the file, see [Top-level fields](top-level-fields.m
 | `structured_output`     | no     | yes     | no      | no          |
 | `validation_exhaustion` | no     | yes     | no      | no          |
 | `llm_timeout_seconds`   | no     | yes     | no      | no          |
+| `on_model_failure`      | no     | yes     | no      | no          |
 | `tools`                 | no     | yes     | no      | no          |
 | `max_tool_calls`        | –      | yes     | –       | –           |
 | `max_fan_out`           | –      | yes     | –       | –           |
@@ -93,22 +94,23 @@ See [Input maps, template expressions and filters](input-map-and-templates.md) a
 
 ## What an agent step is given and must return
 
-| Field                   | Type                              | Default     | What it does                                                                                                        |
-| ----------------------- | --------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------- |
-| `prompt`                | string, with `{{ … }}` references | None        | The task, sent with the step when it becomes the next action.                                                       |
-| `instructions`          | string                            | None        | Standing instructions for the step, returned by `get_workflow_protocol`.                                            |
-| `agent_profile`         | string                            | None        | The name of a profile file whose text is given to the agent.                                                        |
-| `input_schema`          | JSON Schema                       | None        | On an agent step, the shape the answer must have. On an auto step, the shape the step's input must have.            |
-| `output_schema`         | JSON Schema                       | None        | Also checks the answer. If both schemas are declared, the answer must fit both, and the loader advises keeping one. |
-| `structured_output`     | `strict`                          | None        | Asks the model provider to hold answers to the schema, under `realm agent`.                                         |
-| `validation_exhaustion` | map                               | threshold 6 | How many refused answers end the step, and what happens then.                                                       |
-| `llm_timeout_seconds`   | whole number                      | None        | The longest one model request may take, under `realm agent`.                                                        |
-| `tools`                 | list of `server:tool`             | None        | The tools the model may call, under `realm agent`.                                                                  |
-| `max_tool_calls`        | whole number                      | 20          | The most tool calls in one run of the step.                                                                         |
-| `max_fan_out`           | whole number                      | No limit    | The most `start_run` and `start_run_batch` tool calls.                                                              |
-| `tool_timeout`          | whole number                      | 30          | The longest one tool call may take, in seconds. Requires `tools`.                                                   |
-| `trace_schema`          | JSON Schema                       | None        | The shape of the trace entries an assistant records for the step.                                                   |
-| `trace_validation_mode` | `warn` or `enforce`               | `warn`      | Whether a trace that does not fit is reported or refused.                                                           |
+| Field                   | Type                              | Default     | What it does                                                                                                                                    |
+| ----------------------- | --------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt`                | string, with `{{ … }}` references | None        | The task, sent with the step when it becomes the next action.                                                                                   |
+| `instructions`          | string                            | None        | Standing instructions for the step, returned by `get_workflow_protocol`.                                                                        |
+| `agent_profile`         | string                            | None        | The name of a profile file whose text is given to the agent.                                                                                    |
+| `input_schema`          | JSON Schema                       | None        | On an agent step, the shape the answer must have. On an auto step, the shape the step's input must have.                                        |
+| `output_schema`         | JSON Schema                       | None        | Also checks the answer. If both schemas are declared, the answer must fit both, and the loader advises keeping one.                             |
+| `structured_output`     | `strict`                          | None        | Asks the model provider to hold answers to the schema, under `realm agent`.                                                                     |
+| `validation_exhaustion` | map                               | threshold 6 | How many refused answers end the step, and what happens then.                                                                                   |
+| `llm_timeout_seconds`   | whole number                      | None        | The longest one model request may take, under `realm agent`.                                                                                    |
+| `on_model_failure`      | `fail`                            | None        | What happens to the step when its model request fails, under `realm agent`: see [Agent-step controls](agent-step-controls.md#on_model_failure). |
+| `tools`                 | list of `server:tool`             | None        | The tools the model may call, under `realm agent`.                                                                                              |
+| `max_tool_calls`        | whole number                      | 20          | The most tool calls in one run of the step.                                                                                                     |
+| `max_fan_out`           | whole number                      | No limit    | The most `start_run` and `start_run_batch` tool calls.                                                                                          |
+| `tool_timeout`          | whole number                      | 30          | The longest one tool call may take, in seconds. Requires `tools`.                                                                               |
+| `trace_schema`          | JSON Schema                       | None        | The shape of the trace entries an assistant records for the step.                                                                               |
+| `trace_validation_mode` | `warn` or `enforce`               | `warn`      | Whether a trace that does not fit is reported or refused.                                                                                       |
 
 See [Agent-step controls](agent-step-controls.md) and [JSON Schema blocks](json-schema-blocks.md).
 

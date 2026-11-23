@@ -9,6 +9,7 @@ This page covers the settings that limit and shape what a model does on an `agen
 | [`validation_exhaustion`](#validation_exhaustion) | How many refused answers end the step, and what happens then. | Always                        |
 | [`structured_output`](#structured_output)         | Whether the provider holds answers to the step's schema.      | `realm agent` drives the step |
 | [`llm_timeout_seconds`](#llm_timeout_seconds)     | How long one model request may take.                          | `realm agent` drives the step |
+| [`on_model_failure`](#on_model_failure)           | What happens to the step when its model request fails.        | `realm agent` drives the step |
 | [`tools`](#tools-and-the-tool-limits)             | Which tools the model may call.                               | `realm agent` drives the step |
 | [`max_tool_calls`](#tools-and-the-tool-limits)    | How many tool calls the model may make.                       | `realm agent` drives the step |
 | [`max_fan_out`](#tools-and-the-tool-limits)       | How many other runs the model may start.                      | `realm agent` drives the step |
@@ -227,6 +228,18 @@ Drive failures:
 ```
 
 `declared` is the limit for one request. `ceiling` is the longest the three requests together are allowed, which Realm works out from it; on a step that declares retry, the cap of its tries. The run was still `running`, so it can be driven again. See [Operate runs](../../guides/operate-runs.md#open-with-no-driver).
+
+## `on_model_failure`
+
+`on_model_failure: fail` fails the step when its model request fails, so the workflow's failure route can run: a step with `trigger_rule: one_failed`, or a finalizer. Without it, the drive stops, gives the step back and leaves the run open, as before.
+
+With `fail`, the step fails when its request fails for good. When Realm's own `retry` used up its tries or its time, the code is `STEP_RETRY_EXHAUSTED`. When a later try would fail the same way (an answer Realm cannot use, such as one cut off at `max_tokens` or not JSON after its one re-ask, included), `retry` does not try it again, or the step has no `retry`, the code is `MODEL_REQUEST_FAILED`. A provider module that handles its own retries reports `MODEL_REQUEST_FAILED` too. A later step reads `$settlement.<step>.failure_kind`: `transient` when a later try might pass, `permanent` when it would fail the same way. The step's error entry keeps the failure's message, the texts of its requests, its tries and their cost; no drive failure is recorded for it.
+
+A failure that needs a fix first (a refused key, a model that does not exist, used-up credit or quota), a failure before the model was called, and one Realm cannot place still stop the drive and leave the run open.
+
+After the step fails, `realm agent` stops with exit code 1, as after any failed step.
+
+`fail` is the one value. The key is refused on `auto`, `guard` and `finalizer` steps. A run an assistant drives over MCP makes no model call through Realm, so the key does nothing there.
 
 ## `tools` and the tool limits
 

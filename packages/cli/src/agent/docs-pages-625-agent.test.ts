@@ -819,7 +819,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
   });
 
   describe('the When it stops table: the rows #625 PR-2a added, and the eighth', () => {
-    it('the eighth row, and "the line names it and adds (run by the engine after \'<step>\' finished)": the line and the run ended in failed', async () => {
+    it('the row for an auto step the engine ran after it, and "the line names it and adds (run by the engine after \'<step>\' finished)": the line and the run ended in failed', async () => {
       const LINE =
         "✗ Step 'file' (run by the engine after 'classify' finished) failed: Handler 'file_ticket' threw: the filing system is down";
       claim(
@@ -828,7 +828,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       );
       claim(
         AGENT_PAGE,
-        "When the step that stopped is one the engine ran after the step the drive called, the line names it and adds `(run by the engine after '<step>' finished)`, as in the eighth row.",
+        "When the step that stopped is one the engine ran after the step the drive called, the line names it and adds `(run by the engine after '<step>' finished)`, as in the row for an `auto` step the engine ran after it.",
       );
       const registry = createDefaultRegistry();
       registry.register('handler', 'file_ticket', {
@@ -864,7 +864,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       });
     });
 
-    it('the ninth row (an auto step refused before its claim, nothing else) and the ninth case: the schema refused the input the engine built; open, in running', async () => {
+    it('the row for an auto step refused before its claim (nothing else can run), and its input_schema case: the schema refused the input the engine built; open, in running', async () => {
       const LINE =
         "✗ The drive stops: nothing else can run, and 'file' cannot run (input_schema). Run 50e31961-… stays open (phase 'running'): for 'file', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance 50e31961-… — or end it: realm run abandon 50e31961-…";
       claim(
@@ -873,7 +873,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       );
       claim(
         AGENT_PAGE,
-        "In the ninth case, when the check is `input_schema`, the step's schema refused the input the engine built for it.",
+        "When nothing else can run and an `auto` step is refused before it is claimed, and the check is `input_schema`, the step's schema refused the input the engine built for it.",
       );
       // issue #688 (add-only): a step with a handler or a service can build its input with a map.
       claim(
