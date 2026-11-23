@@ -192,6 +192,16 @@ export interface McpAlsoEntry extends McpNextAction {
 }
 
 /**
+ * Every verb an `also` entry's `verb` can hold, in the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d2a).
+ */
+export const ALSO_VERBS = ['inspect', 'abandon'] as const satisfies readonly McpAlsoEntry['verb'][];
+type MissingAlsoVerbs = Exclude<McpAlsoEntry['verb'], (typeof ALSO_VERBS)[number]>;
+const _everyAlsoVerbsListed: [MissingAlsoVerbs] extends [never] ? true : MissingAlsoVerbs = true;
+void _everyAlsoVerbsListed;
+
+/**
  * A way this door cannot enact (D2 §5; the conservation law): its verb, its step, the party that can
  * take it, and why — never a command (P-6: an operator's command is rendered only in the block
  * addressed to the person, and only when the launching door injected an operator route).
