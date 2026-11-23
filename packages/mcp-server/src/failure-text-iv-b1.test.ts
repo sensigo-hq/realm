@@ -372,7 +372,7 @@ describe('gap 2 (iv-b1), check 2 — each field of get_run_state that carries a 
   it('failures[].message: the shape of the record’s text; every field beside it unchanged; the words appear nowhere', async () => {
     claim(
       RUN_STATE,
-      "| `failures[].message` | `‹string, N characters›`, N the recorded text's length, also when it is over 500 characters | `step`, `code`, `category`, `stop_reason`, `agent_action`, `failure_kind` and `attempt` |",
+      "| `failures[].message` | `‹string, N characters›`, N the recorded text's length, also when it is over 500 characters | `step`, `code`, `category`, `stop_reason`, `agent_action`, `failure_kind`, `attempt` and `unknown` |",
     );
     claim(RUN_STATE, "The run's record and `realm run inspect` keep the words.");
     const w = await world();
